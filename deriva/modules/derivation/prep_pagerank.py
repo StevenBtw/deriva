@@ -16,7 +16,9 @@ from deriva.common.types import PipelineResult
 from .base import create_result
 
 
-def run_pagerank(graph_manager: Any, params: dict[str, Any] | None = None) -> PipelineResult:
+def run_pagerank(
+    graph_manager: Any, params: dict[str, Any] | None = None
+) -> PipelineResult:
     """
     Run PageRank on graph nodes and store scores.
 
