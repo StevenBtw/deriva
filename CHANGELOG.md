@@ -6,7 +6,37 @@ Deriving ArchiMate models from code using LLMs - a journey through architectural
 
 # v0.6.x - Deriva (December 2025 - January 2026)
 
-## v0.6.0 - Rename to Deriva
+## v0.6.1 - Extraction Refactor & AST Foundation (January 3, 2026)
+
+### Extraction Module Refactor
+
+- Flattened `modules/extraction/` structure - removed `llm/` and `structural/` subdirs
+- New `extract.py` orchestrator for unified extraction flow
+- Added `common/chunking.py` (395 lines) - file chunking with overlap support
+- New database scripts: `5_chunking_config.sql`, `6_extraction_method.sql`
+
+### AST Parser Foundation
+
+- Enhanced `adapters/ast/manager.py` - Python AST analysis (classes, functions, imports)
+- Added `tree-sitter>=0.24.6` dependency for future multi-language support
+- Updated `adapters/ast/models.py` with improved code element types
+
+### Code Quality
+
+- Added `types-lxml>=2025.3.30` for lxml type stubs
+- Created `@runtime_checkable` `HasToDict` Protocol
+- Reduced `# type: ignore` from 8 to 2 (neo4j stubs limitations)
+- Fixed `ast.get_docstring()` type narrowing
+
+### CI/CD & Tests
+
+- Added Codecov configuration
+- Fixed `test_cypher_query` label mismatch
+- All 166 tests passing
+
+---
+
+## v0.6.0 - Rename to Deriva (January 1, 2026)
 
 **AutoMate is now Deriva.**
 

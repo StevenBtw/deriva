@@ -90,12 +90,23 @@ src/
 │   ├── archimate/   - ArchiMate CRUD (namespace: Model)
 │   └── llm/         - LLM provider abstraction (Azure, OpenAI, Anthropic, Ollama)
 │
+├── common/ (Shared utilities)
+│   ├── types.py     - Shared TypedDicts and Protocols
+│   ├── logging.py   - Pipeline logging (JSON Lines)
+│   ├── chunking.py  - File chunking with overlap support
+│   └── utils.py     - File encoding, helpers
+│
 └── modules/ (Pure business logic)
     └── extraction/
         ├── classification.py - File type classification
-        ├── structural/       - File system extraction (no LLM)
-        ├── llm/              - LLM-based extraction
-        └── ast/              - AST-based extraction (future)
+        ├── extract.py        - Unified extraction orchestrator
+        ├── base.py           - Shared extraction utilities
+        ├── repository.py     - Repository node extraction
+        ├── directory.py      - Directory node extraction
+        ├── file.py           - File node extraction
+        ├── type_definition.py - Classes/functions (LLM)
+        ├── business_concept.py - Domain concepts (LLM)
+        └── ...               - Other extraction modules
     └── derivation/
         ├── graph/            - Graph algorithms for refinement phase
         └── llm/              - LLM-based derivation
