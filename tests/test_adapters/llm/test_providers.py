@@ -227,9 +227,7 @@ class TestAnthropicProvider:
         mock_response.raise_for_status = MagicMock()
         mock_post.return_value = mock_response
 
-        result = provider.complete(
-            messages=[{"role": "user", "content": "Hi"}]
-        )
+        result = provider.complete(messages=[{"role": "user", "content": "Hi"}])
 
         assert result.content == "Hello from Claude!"
         assert result.usage == {
@@ -292,9 +290,7 @@ class TestOllamaProvider:
         mock_response.raise_for_status = MagicMock()
         mock_post.return_value = mock_response
 
-        result = provider.complete(
-            messages=[{"role": "user", "content": "Hi"}]
-        )
+        result = provider.complete(messages=[{"role": "user", "content": "Hi"}])
 
         assert result.content == "Hello from Llama!"
         assert result.usage == {

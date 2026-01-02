@@ -134,7 +134,9 @@ def estimate_tokens(content: str) -> int:
     return len(content) // 4
 
 
-def should_chunk(content: str, max_tokens: int | None = None, model: str | None = None) -> bool:
+def should_chunk(
+    content: str, max_tokens: int | None = None, model: str | None = None
+) -> bool:
     """Check if content should be chunked.
 
     Args:
@@ -180,7 +182,9 @@ def chunk_by_lines(
 
     if not should_chunk(content, max_tokens):
         lines = content.splitlines()
-        return [Chunk(content=content, index=0, total=1, start_line=1, end_line=len(lines))]
+        return [
+            Chunk(content=content, index=0, total=1, start_line=1, end_line=len(lines))
+        ]
 
     lines = content.splitlines(keepends=True)
     chunks: list[Chunk] = []
@@ -267,7 +271,9 @@ def chunk_by_delimiter(
 
     if not should_chunk(content, max_tokens):
         lines = content.splitlines()
-        return [Chunk(content=content, index=0, total=1, start_line=1, end_line=len(lines))]
+        return [
+            Chunk(content=content, index=0, total=1, start_line=1, end_line=len(lines))
+        ]
 
     # Split by delimiter, keeping delimiter at start of each section
     sections = content.split(delimiter)

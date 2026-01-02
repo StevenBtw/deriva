@@ -121,13 +121,7 @@ class TestCreateExtractionResult:
 
     def test_success_result(self):
         """Should create success result structure."""
-        result = create_extraction_result(
-            success=True,
-            nodes=[{"id": "node1"}],
-            edges=[{"from": "a", "to": "b"}],
-            errors=[],
-            stats={"count": 1}
-        )
+        result = create_extraction_result(success=True, nodes=[{"id": "node1"}], edges=[{"from": "a", "to": "b"}], errors=[], stats={"count": 1})
 
         assert result["success"] is True
         assert len(result["elements"]) == 1
@@ -141,14 +135,7 @@ class TestCreateExtractionResult:
     def test_result_with_llm_details(self):
         """Should include LLM details when provided."""
         llm_details: LLMDetails = {"tokens_in": 100, "tokens_out": 50}
-        result = create_extraction_result(
-            success=True,
-            nodes=[],
-            edges=[],
-            errors=[],
-            stats={},
-            llm_details=llm_details
-        )
+        result = create_extraction_result(success=True, nodes=[], edges=[], errors=[], stats={}, llm_details=llm_details)
 
         assert result["llm_details"] == llm_details
 

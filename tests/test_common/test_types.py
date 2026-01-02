@@ -1,6 +1,5 @@
 """Tests for common.types module."""
 
-
 from deriva.common.types import (
     BaseResult,
     DerivationData,

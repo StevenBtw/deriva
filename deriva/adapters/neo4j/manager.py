@@ -10,15 +10,17 @@ import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv
 
+if TYPE_CHECKING:
+    from neo4j import Driver
+
 try:
-    from neo4j import Driver, GraphDatabase
+    from neo4j import GraphDatabase
 except ModuleNotFoundError:
-    Driver = Any  # type: ignore[assignment]
-    GraphDatabase = None  # type: ignore[assignment]
+    GraphDatabase = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 
@@ -175,8 +177,9 @@ class Neo4jConnection:
             logger.debug(f"Parameters: {parameters}")
 
         try:
+            params: dict[str, Any] = parameters if parameters is not None else {}
             with self.driver.session(database=database) as session:
-                result = session.run(query, parameters or {})  # type: ignore[arg-type]
+                result = session.run(query, params)  # type: ignore[arg-type] # neo4j stubs require LiteralString
                 records = [dict(record) for record in result]
                 return records
 
@@ -214,10 +217,9 @@ class Neo4jConnection:
             logger.debug(f"Parameters: {parameters}")
 
         try:
+            params: dict[str, Any] = parameters if parameters is not None else {}
             with self.driver.session(database=database) as session:
-                result = session.execute_write(
-                    lambda tx: list(tx.run(query, parameters or {}))  # type: ignore[arg-type]
-                )
+                result = session.execute_write(lambda tx: list(tx.run(query, params)))
                 return [dict(record) for record in result]
 
         except Exception as e:
@@ -254,10 +256,9 @@ class Neo4jConnection:
             logger.debug(f"Parameters: {parameters}")
 
         try:
+            params: dict[str, Any] = parameters if parameters is not None else {}
             with self.driver.session(database=database) as session:
-                result = session.execute_read(
-                    lambda tx: list(tx.run(query, parameters or {}))  # type: ignore[arg-type]
-                )
+                result = session.execute_read(lambda tx: list(tx.run(query, params)))
                 return [dict(record) for record in result]
 
         except Exception as e:

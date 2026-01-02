@@ -60,11 +60,7 @@ def test_context_manager():
 
 def test_add_element(archimate_manager):
     """Test adding an element."""
-    element = Element(
-        name="Test Component",
-        element_type="ApplicationComponent",
-        documentation="A test application component"
-    )
+    element = Element(name="Test Component", element_type="ApplicationComponent", documentation="A test application component")
 
     element_id = archimate_manager.add_element(element)
     assert element_id == element.identifier
@@ -108,11 +104,7 @@ def test_add_relationship(archimate_manager):
     archimate_manager.add_element(e2)
 
     # Create relationship
-    rel = Relationship(
-        source=e1.identifier,
-        target=e2.identifier,
-        relationship_type="Composition"
-    )
+    rel = Relationship(source=e1.identifier, target=e2.identifier, relationship_type="Composition")
 
     rel_id = archimate_manager.add_relationship(rel)
     assert rel_id == rel.identifier
@@ -182,11 +174,7 @@ def test_xml_export(archimate_manager, tmp_path):
 
 def test_element_properties(archimate_manager):
     """Test element with custom properties."""
-    element = Element(
-        name="Test",
-        element_type="ApplicationComponent",
-        properties={"version": "1.0", "owner": "Team A"}
-    )
+    element = Element(name="Test", element_type="ApplicationComponent", properties={"version": "1.0", "owner": "Team A"})
 
     archimate_manager.add_element(element)
     retrieved = archimate_manager.get_element(element.identifier)
@@ -205,8 +193,9 @@ def test_cypher_query(archimate_manager):
     archimate_manager.add_element(e2)
 
     # Custom query to count elements (namespace-aware label)
+    # Elements are created with their type as label (e.g., Model:ApplicationComponent)
     assert archimate_manager.neo4j is not None
-    element_label = archimate_manager.neo4j.get_label("Element")
+    element_label = archimate_manager.neo4j.get_label("ApplicationComponent")
     query = f"""
         MATCH (e:`{element_label}`)
         RETURN count(e) as element_count

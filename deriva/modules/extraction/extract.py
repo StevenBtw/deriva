@@ -146,7 +146,9 @@ def _extract_single(
                 "stats": {"total_nodes": 0, "total_edges": 0},
                 "llm_details": create_empty_llm_details(),
             }
-        return ast_extractor_fn(file_path, file_content, repo_name, node_type, chunk_info)
+        return ast_extractor_fn(
+            file_path, file_content, repo_name, node_type, chunk_info
+        )
     else:  # Default to LLM
         return _extract_with_llm(
             file_path=file_path,
@@ -216,7 +218,9 @@ def _extract_chunked(
             "chunks_processed": len(chunks),
             "node_types": {node_type: len(unique_nodes)},
         },
-        "llm_details": llm_details_list[0] if llm_details_list else create_empty_llm_details(),
+        "llm_details": llm_details_list[0]
+        if llm_details_list
+        else create_empty_llm_details(),
         "chunks_processed": len(chunks),
     }
 
@@ -247,7 +251,9 @@ def _extract_with_llm(
     # Add chunk info to file path for context
     effective_path = file_path
     if chunk_info:
-        effective_path = f"{file_path} (lines {chunk_info.start_line}-{chunk_info.end_line})"
+        effective_path = (
+            f"{file_path} (lines {chunk_info.start_line}-{chunk_info.end_line})"
+        )
 
     return extraction_fn(
         file_path=effective_path,

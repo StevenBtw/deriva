@@ -33,6 +33,7 @@ from deriva.adapters.graph import GraphManager
 from deriva.adapters.neo4j import Neo4jConnection
 from deriva.adapters.repository import RepoManager
 from deriva.common.logging import RunLogger
+from deriva.common.types import HasToDict
 
 from . import benchmark_analysis, benchmarking, config, derivation, extraction, pipeline
 
@@ -271,8 +272,8 @@ class PipelineSession:
         for r in repos:
             if isinstance(r, str):
                 result.append({"name": r})
-            elif hasattr(r, "to_dict"):
-                result.append(r.to_dict())  # type: ignore[union-attr]
+            elif isinstance(r, HasToDict):
+                result.append(r.to_dict())
             else:
                 result.append({"name": str(r)})
         return result
@@ -495,8 +496,8 @@ class PipelineSession:
         file_types = config.get_file_types(self._engine)
         result: list[dict] = []
         for ft in file_types:
-            if hasattr(ft, "to_dict"):
-                result.append(ft.to_dict())  # type: ignore[union-attr]
+            if isinstance(ft, HasToDict):
+                result.append(ft.to_dict())
             elif hasattr(ft, "__dict__"):
                 result.append(vars(ft))
             else:
@@ -527,9 +528,7 @@ class PipelineSession:
         self._ensure_connected()
         assert self._repo_manager is not None
         try:
-            result = self._repo_manager.clone_repository(
-                repo_url=url, target_name=name, branch=branch, overwrite=overwrite
-            )
+            result = self._repo_manager.clone_repository(repo_url=url, target_name=name, branch=branch, overwrite=overwrite)
             return {"success": True, "name": result.name, "path": str(result.path), "url": result.url}
         except Exception as e:
             return {"success": False, "error": str(e)}

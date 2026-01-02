@@ -649,7 +649,9 @@ class RepoManager:
         cmd.extend([repo_url, str(target_path)])
 
         try:
-            subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", check=True)
+            subprocess.run(
+                cmd, capture_output=True, encoding="utf-8", errors="replace", check=True
+            )
         except subprocess.CalledProcessError as e:
             raise CloneError(f"Git clone failed: {e.stderr or e.stdout or str(e)}")
         except FileNotFoundError:

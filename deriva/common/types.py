@@ -8,7 +8,7 @@ across extraction, derivation, and validation modules.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
 # =============================================================================
 # Base Result Types
@@ -179,6 +179,20 @@ class ValidationConfig(TypedDict, total=False):
 
 
 # =============================================================================
+# Utility Protocols
+# =============================================================================
+
+
+@runtime_checkable
+class HasToDict(Protocol):
+    """Protocol for objects that can be converted to a dictionary."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the object to a dictionary representation."""
+        ...
+
+
+# =============================================================================
 # Function Protocols
 # =============================================================================
 
@@ -317,6 +331,7 @@ __all__ = [
     "ValidationResult",
     "ValidationConfig",
     # Protocols
+    "HasToDict",
     "ExtractionFunction",
     "BatchExtractionFunction",
     "DerivationFunction",

@@ -15,7 +15,9 @@ from .models import ExtractedImport, ExtractedMethod, ExtractedType
 class ASTManager:
     """Manager for AST-based code extraction from Python files."""
 
-    def extract_types(self, source: str, file_path: str | None = None) -> list[ExtractedType]:
+    def extract_types(
+        self, source: str, file_path: str | None = None
+    ) -> list[ExtractedType]:
         """Extract type definitions (classes, functions, type aliases) from Python source.
 
         Args:
@@ -46,7 +48,9 @@ class ASTManager:
 
         return types
 
-    def extract_methods(self, source: str, file_path: str | None = None) -> list[ExtractedMethod]:
+    def extract_methods(
+        self, source: str, file_path: str | None = None
+    ) -> list[ExtractedMethod]:
         """Extract method and function definitions from Python source.
 
         Args:
@@ -76,7 +80,9 @@ class ASTManager:
 
         return methods
 
-    def extract_imports(self, source: str, file_path: str | None = None) -> list[ExtractedImport]:
+    def extract_imports(
+        self, source: str, file_path: str | None = None
+    ) -> list[ExtractedImport]:
         """Extract import statements from Python source.
 
         Args:
@@ -120,9 +126,7 @@ class ASTManager:
 
         return imports
 
-    def extract_all(
-        self, source: str, file_path: str | None = None
-    ) -> dict[str, Any]:
+    def extract_all(self, source: str, file_path: str | None = None) -> dict[str, Any]:
         """Extract all elements from Python source.
 
         Args:
@@ -155,9 +159,13 @@ class ASTManager:
 
     def _get_docstring(self, node: ast.AST) -> str | None:
         """Extract docstring from a class or function node."""
-        return ast.get_docstring(node)
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef | ast.ClassDef | ast.Module):
+            return ast.get_docstring(node)
+        return None
 
-    def _get_decorators(self, node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    def _get_decorators(
+        self, node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> list[str]:
         """Extract decorator names from a node."""
         decorators = []
         for dec in node.decorator_list:
@@ -255,7 +263,9 @@ class ASTManager:
             is_property=is_property,
         )
 
-    def _extract_parameters(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[dict[str, Any]]:
+    def _extract_parameters(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> list[dict[str, Any]]:
         """Extract function/method parameters with type annotations."""
         params = []
         args = node.args
@@ -280,19 +290,27 @@ class ASTManager:
 
         # *args
         if args.vararg:
-            params.append({
-                "name": f"*{args.vararg.arg}",
-                "annotation": ast.unparse(args.vararg.annotation) if args.vararg.annotation else None,
-                "has_default": False,
-            })
+            params.append(
+                {
+                    "name": f"*{args.vararg.arg}",
+                    "annotation": ast.unparse(args.vararg.annotation)
+                    if args.vararg.annotation
+                    else None,
+                    "has_default": False,
+                }
+            )
 
         # **kwargs
         if args.kwarg:
-            params.append({
-                "name": f"**{args.kwarg.arg}",
-                "annotation": ast.unparse(args.kwarg.annotation) if args.kwarg.annotation else None,
-                "has_default": False,
-            })
+            params.append(
+                {
+                    "name": f"**{args.kwarg.arg}",
+                    "annotation": ast.unparse(args.kwarg.annotation)
+                    if args.kwarg.annotation
+                    else None,
+                    "has_default": False,
+                }
+            )
 
         return params
 

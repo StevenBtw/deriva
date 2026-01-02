@@ -374,10 +374,7 @@ def update_derivation_config(
 
 def get_file_types(engine: Any) -> list[FileType]:
     """Get all file type registry entries."""
-    rows = engine.execute(
-        "SELECT extension, file_type, subtype, chunk_delimiter, chunk_max_tokens, chunk_overlap "
-        "FROM file_type_registry ORDER BY file_type, extension"
-    ).fetchall()
+    rows = engine.execute("SELECT extension, file_type, subtype, chunk_delimiter, chunk_max_tokens, chunk_overlap FROM file_type_registry ORDER BY file_type, extension").fetchall()
     return [
         FileType(
             extension=row[0],
@@ -394,8 +391,7 @@ def get_file_types(engine: Any) -> list[FileType]:
 def get_file_type(engine: Any, extension: str) -> FileType | None:
     """Get a specific file type by extension."""
     row = engine.execute(
-        "SELECT extension, file_type, subtype, chunk_delimiter, chunk_max_tokens, chunk_overlap "
-        "FROM file_type_registry WHERE extension = ?",
+        "SELECT extension, file_type, subtype, chunk_delimiter, chunk_max_tokens, chunk_overlap FROM file_type_registry WHERE extension = ?",
         [extension],
     ).fetchone()
 

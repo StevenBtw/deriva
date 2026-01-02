@@ -463,7 +463,9 @@ def cmd_repo_clone(args: argparse.Namespace) -> int:
         print(f"Branch: {branch}")
 
     with PipelineSession() as session:
-        result = session.clone_repository(url=url, name=name, branch=branch, overwrite=overwrite)
+        result = session.clone_repository(
+            url=url, name=name, branch=branch, overwrite=overwrite
+        )
         if result.get("success"):
             print("\nRepository cloned successfully!")
             print(f"  Name: {result.get('name', 'N/A')}")
@@ -971,7 +973,9 @@ def create_parser() -> argparse.ArgumentParser:
     # repo command
     # -------------------------------------------------------------------------
     repo_parser = subparsers.add_parser("repo", help="Manage repositories")
-    repo_subparsers = repo_parser.add_subparsers(dest="repo_action", help="Repository actions")
+    repo_subparsers = repo_parser.add_subparsers(
+        dest="repo_action", help="Repository actions"
+    )
 
     # repo clone
     repo_clone = repo_subparsers.add_parser("clone", help="Clone a repository")
