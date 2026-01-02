@@ -96,6 +96,32 @@ def validate_required_fields(
     return errors
 
 
+def deduplicate_nodes(
+    nodes: list[dict[str, Any]], key: str = "node_id"
+) -> list[dict[str, Any]]:
+    """
+    Deduplicate nodes by a key field, preserving order.
+
+    Used when aggregating results from chunked extraction where the same
+    node might be extracted from overlapping chunks.
+
+    Args:
+        nodes: List of node dictionaries to deduplicate
+        key: Field name to use for deduplication (default: "node_id")
+
+    Returns:
+        List of unique nodes, preserving first occurrence order
+    """
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for node in nodes:
+        node_key = node.get(key, "")
+        if node_key and node_key not in seen:
+            seen.add(node_key)
+            unique.append(node)
+    return unique
+
+
 def create_extraction_result(
     success: bool,
     nodes: list[dict[str, Any]],
@@ -153,6 +179,7 @@ __all__ = [
     "current_timestamp",
     "parse_json_response",
     "validate_required_fields",
+    "deduplicate_nodes",
     "create_extraction_result",
     "create_empty_llm_details",
     "extract_llm_details_from_response",

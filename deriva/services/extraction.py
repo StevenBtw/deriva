@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from deriva.adapters.graph import GraphManager
+from deriva.common.chunking import chunk_content, should_chunk
 
 if TYPE_CHECKING:
     from deriva.common.logging import RunLogger
@@ -36,6 +37,7 @@ from deriva.adapters.repository import RepoManager
 from deriva.common.file_utils import read_file_with_encoding
 from deriva.modules import extraction
 from deriva.modules.extraction import classification
+from deriva.modules.extraction.base import deduplicate_nodes
 from deriva.services import config
 
 
@@ -363,49 +365,112 @@ def _extract_llm_based(
             errors.append(f"Could not read {file_path}: {e}")
             continue
 
-        # Call extraction function with proper arguments
-        # The extraction module functions handle LLM calls internally
-        result = extract_fn(
-            file_info["path"],
-            content,
-            repo.name,
-            llm_query_fn,
-            extraction_config,
+        # Extract from file, with chunking if needed
+        file_nodes, file_edges, file_errors = _extract_file_content(
+            file_path=file_info["path"],
+            content=content,
+            repo_name=repo.name,
+            extract_fn=extract_fn,
+            extraction_config=extraction_config,
+            llm_query_fn=llm_query_fn,
         )
 
-        if result["success"]:
-            for node_data in result["data"]["nodes"]:
-                # Create appropriate node type
-                node = _create_node_from_data(node_type, node_data, repo.name)
-                if node:
-                    # Pass the explicit node_id so edges can reference it correctly
-                    node_id = node_data.get("node_id")
-                    graph_manager.add_node(node, node_id=node_id)
-                    nodes_created += 1
+        errors.extend(file_errors)
 
-            for edge_data in result["data"].get("edges", []):
-                src_id = edge_data.get("from_id", edge_data.get("from_node_id"))
-                dst_id = edge_data.get("to_id", edge_data.get("to_node_id"))
-                relationship = edge_data.get("relationship", edge_data.get("relationship_type"))
-                try:
-                    graph_manager.add_edge(
-                        src_id=src_id,
-                        dst_id=dst_id,
-                        relationship=relationship,
-                    )
-                    edges_created += 1
-                except RuntimeError as e:
-                    # Edge creation failed (likely missing source/target node)
-                    # Add as error but continue processing other edges
-                    errors.append(f"Error in {node_type}: {e}")
-        else:
-            errors.extend(result.get("errors", []))
+        # Persist extracted nodes
+        for node_data in file_nodes:
+            node = _create_node_from_data(node_type, node_data, repo.name)
+            if node:
+                node_id = node_data.get("node_id")
+                graph_manager.add_node(node, node_id=node_id)
+                nodes_created += 1
+
+        # Persist extracted edges
+        for edge_data in file_edges:
+            src_id = edge_data.get("from_id", edge_data.get("from_node_id"))
+            dst_id = edge_data.get("to_id", edge_data.get("to_node_id"))
+            relationship = edge_data.get("relationship", edge_data.get("relationship_type"))
+            try:
+                graph_manager.add_edge(
+                    src_id=src_id,
+                    dst_id=dst_id,
+                    relationship=relationship,
+                )
+                edges_created += 1
+            except RuntimeError as e:
+                errors.append(f"Error in {node_type}: {e}")
 
     return {
         "nodes_created": nodes_created,
         "edges_created": edges_created,
         "errors": errors,
     }
+
+
+def _extract_file_content(
+    file_path: str,
+    content: str,
+    repo_name: str,
+    extract_fn: Callable,
+    extraction_config: dict[str, Any],
+    llm_query_fn: Callable,
+) -> tuple[list[dict], list[dict], list[str]]:
+    """
+    Extract from file content, with automatic chunking for large files.
+
+    Args:
+        file_path: Relative path to file
+        content: File content
+        repo_name: Repository name
+        extract_fn: Extraction function to call
+        extraction_config: Config with instruction/example
+        llm_query_fn: LLM query function
+
+    Returns:
+        Tuple of (nodes, edges, errors)
+    """
+    # Check if chunking is needed
+    if not should_chunk(content):
+        # Extract from entire file
+        result = extract_fn(
+            file_path,
+            content,
+            repo_name,
+            llm_query_fn,
+            extraction_config,
+        )
+        if result["success"]:
+            return result["data"]["nodes"], result["data"].get("edges", []), []
+        return [], [], result.get("errors", [])
+
+    # Chunk the content and extract from each chunk
+    chunks = chunk_content(content)
+    all_nodes: list[dict] = []
+    all_edges: list[dict] = []
+    all_errors: list[str] = []
+
+    for chunk in chunks:
+        # Add chunk context to file path for LLM
+        chunk_path = f"{file_path} (lines {chunk.start_line}-{chunk.end_line})"
+
+        result = extract_fn(
+            chunk_path,
+            chunk.content,
+            repo_name,
+            llm_query_fn,
+            extraction_config,
+        )
+
+        if result["success"]:
+            all_nodes.extend(result["data"]["nodes"])
+            all_edges.extend(result["data"].get("edges", []))
+        else:
+            all_errors.extend(result.get("errors", []))
+
+    # Deduplicate nodes (same node might appear in overlapping chunks)
+    unique_nodes = deduplicate_nodes(all_nodes)
+
+    return unique_nodes, all_edges, all_errors
 
 
 def _get_extraction_config(node_type: str) -> tuple:

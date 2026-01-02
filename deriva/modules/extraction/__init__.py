@@ -23,6 +23,7 @@ from .base import (
     create_empty_llm_details,
     create_extraction_result,
     current_timestamp,
+    deduplicate_nodes,
     extract_llm_details_from_response,
     generate_edge_id,
     generate_node_id,
@@ -95,7 +96,6 @@ from .external_dependency import (
     extract_external_dependencies_batch,
     parse_llm_response as parse_external_dependency_response,
 )
-from .extract import extract_with_chunking
 from .test import (
     TEST_SCHEMA,
     build_test_node,
@@ -112,6 +112,7 @@ __all__ = [
     "current_timestamp",
     "parse_json_response",
     "validate_required_fields",
+    "deduplicate_nodes",
     "create_extraction_result",
     "create_empty_llm_details",
     "extract_llm_details_from_response",
@@ -173,6 +174,4 @@ __all__ = [
     "get_node_sources",
     "has_file_sources",
     "has_node_sources",
-    # Generic extraction
-    "extract_with_chunking",
 ]
