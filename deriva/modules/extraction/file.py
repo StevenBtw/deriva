@@ -1,26 +1,25 @@
 """
-Directory extraction - Build Directory graph nodes from repository filesystem.
+File extraction - Build File graph nodes from repository filesystem.
 
-This module extracts Directory nodes representing folders in the repository structure.
+This module extracts File nodes representing individual files in the repository.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ..base import current_timestamp
+from .base import current_timestamp
 
 
-def build_directory_node(
-    dir_metadata: dict[str, Any], repo_name: str
-) -> dict[str, Any]:
+def build_file_node(file_metadata: dict[str, Any], repo_name: str) -> dict[str, Any]:
     """
-    Build a Directory graph node from directory metadata.
+    Build a File graph node from file metadata.
 
     Args:
-        dir_metadata: Dictionary containing directory metadata
-            Expected keys: path, name, file_count, subdirectory_count, total_size_bytes
+        file_metadata: Dictionary containing file metadata
+            Expected keys: path, name, extension, size_bytes, language, last_modified
         repo_name: The repository name for node ID generation
 
     Returns:
@@ -35,7 +34,7 @@ def build_directory_node(
     # Validate required fields
     required_fields = ["path", "name"]
     for field in required_fields:
-        if field not in dir_metadata or not dir_metadata[field]:
+        if field not in file_metadata or not file_metadata[field]:
             errors.append(f"Missing required field: {field}")
 
     if errors:
@@ -47,17 +46,18 @@ def build_directory_node(
         }
 
     # Build the node structure
-    path_value = str(dir_metadata["path"])
+    path_value = str(file_metadata["path"])
     safe_path = path_value.replace("/", "_").replace("\\", "_")
     node_data = {
-        "node_id": f"dir_{repo_name}_{safe_path}",
-        "label": "Directory",
+        "node_id": f"file_{repo_name}_{safe_path}",
+        "label": "File",
         "properties": {
-            "path": dir_metadata["path"],
-            "name": dir_metadata["name"],
-            "file_count": dir_metadata.get("file_count", 0),
-            "subdirectory_count": dir_metadata.get("subdirectory_count", 0),
-            "total_size_bytes": dir_metadata.get("total_size_bytes", 0),
+            "path": file_metadata["path"],
+            "name": file_metadata["name"],
+            "extension": file_metadata.get("extension", ""),
+            "size_bytes": file_metadata.get("size_bytes", 0),
+            "language": file_metadata.get("language", ""),
+            "last_modified": file_metadata.get("last_modified", ""),
             "extracted_at": current_timestamp(),
         },
     }
@@ -66,15 +66,15 @@ def build_directory_node(
         "success": True,
         "data": node_data,
         "errors": [],
-        "stats": {"nodes_created": 1, "node_type": "Directory"},
+        "stats": {"nodes_created": 1, "node_type": "File"},
     }
 
 
-def extract_directories(repo_path: str, repo_name: str) -> dict[str, Any]:
+def extract_files(repo_path: str, repo_name: str) -> dict[str, Any]:
     """
-    Extract all directories from a repository path.
+    Extract all files from a repository path.
 
-    Scans the repository filesystem and builds Directory nodes for each directory
+    Scans the repository filesystem and builds File nodes for each file
     found (excluding .git directories). Also creates CONTAINS relationships.
 
     Args:
@@ -105,40 +105,31 @@ def extract_directories(repo_path: str, repo_name: str) -> dict[str, Any]:
 
         repo_id = f"repo_{repo_name}"
 
-        # Walk through all directories
-        for dir_path in repo_path_obj.rglob("*"):
-            # Skip non-directories and .git directories
-            if not dir_path.is_dir() or ".git" in dir_path.parts:
+        # Walk through all files
+        for file_path in repo_path_obj.rglob("*"):
+            # Skip directories and files in .git
+            if file_path.is_dir() or ".git" in file_path.parts:
                 continue
 
             try:
-                rel_path = dir_path.relative_to(repo_path_obj)
+                rel_path = file_path.relative_to(repo_path_obj)
                 rel_path_str = str(rel_path).replace("\\", "/")
 
-                # Count files and subdirectories
-                file_count = len([f for f in dir_path.iterdir() if f.is_file()])
-                subdir_count = len(
-                    [
-                        d
-                        for d in dir_path.iterdir()
-                        if d.is_dir() and ".git" not in d.parts
-                    ]
-                )
+                file_stats = file_path.stat()
 
-                # Calculate total size
-                total_size = sum(
-                    f.stat().st_size for f in dir_path.rglob("*") if f.is_file()
-                )
-
-                dir_metadata = {
+                file_metadata = {
                     "path": rel_path_str,
-                    "name": dir_path.name,
-                    "file_count": file_count,
-                    "subdirectory_count": subdir_count,
-                    "total_size_bytes": total_size,
+                    "name": file_path.name,
+                    "extension": file_path.suffix,
+                    "size_bytes": file_stats.st_size,
+                    "language": "",  # Will be filled by classification
+                    "last_modified": datetime.fromtimestamp(
+                        file_stats.st_mtime
+                    ).isoformat()
+                    + "Z",
                 }
 
-                result = build_directory_node(dir_metadata, repo_name)
+                result = build_file_node(file_metadata, repo_name)
 
                 if result["success"]:
                     node_data = result["data"]
@@ -165,7 +156,7 @@ def extract_directories(repo_path: str, repo_name: str) -> dict[str, Any]:
                     errors.extend(result["errors"])
 
             except Exception as e:
-                errors.append(f"Error processing directory {dir_path}: {str(e)}")
+                errors.append(f"Error processing file {file_path}: {str(e)}")
 
         return {
             "success": len(errors) == 0 or len(nodes) > 0,
@@ -174,7 +165,7 @@ def extract_directories(repo_path: str, repo_name: str) -> dict[str, Any]:
             "stats": {
                 "total_nodes": len(nodes),
                 "total_edges": len(edges),
-                "node_types": {"Directory": len(nodes)},
+                "node_types": {"File": len(nodes)},
             },
         }
 
@@ -182,6 +173,6 @@ def extract_directories(repo_path: str, repo_name: str) -> dict[str, Any]:
         return {
             "success": False,
             "data": {"nodes": [], "edges": []},
-            "errors": [f"Fatal error during directory extraction: {str(e)}"],
+            "errors": [f"Fatal error during file extraction: {str(e)}"],
             "stats": {"total_nodes": 0, "total_edges": 0},
         }

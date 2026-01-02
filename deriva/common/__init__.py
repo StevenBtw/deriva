@@ -10,6 +10,7 @@ This package provides:
 - llm_utils: LLM response handling
 - schema_utils: JSON Schema builders for structured output
 - file_utils: File encoding utilities
+- chunking: File chunking for large content handling
 """
 
 from __future__ import annotations
@@ -42,6 +43,16 @@ from .llm_utils import (
 from .schema_utils import (
     build_array_schema,
     build_object_schema,
+)
+from .chunking import (
+    Chunk,
+    chunk_by_delimiter,
+    chunk_by_lines,
+    chunk_content,
+    estimate_tokens,
+    get_model_token_limit,
+    MODEL_TOKEN_LIMITS,
+    should_chunk,
 )
 from .time_utils import (
     calculate_duration_ms,
@@ -156,4 +167,13 @@ __all__ = [
     # Schema utils
     "build_array_schema",
     "build_object_schema",
+    # Chunking utils
+    "Chunk",
+    "chunk_by_delimiter",
+    "chunk_by_lines",
+    "chunk_content",
+    "estimate_tokens",
+    "get_model_token_limit",
+    "MODEL_TOKEN_LIMITS",
+    "should_chunk",
 ]

@@ -1,8 +1,8 @@
 """
-Method extraction - LLM-based extraction of methods from TypeDefinition code snippets.
+TypeDefinition extraction - LLM-based extraction of type definitions from source files.
 
-This module extracts Method nodes from TypeDefinition code snippets using LLM analysis.
-It identifies methods, functions, and their signatures within type definitions.
+This module extracts TypeDefinition nodes from source code files using LLM analysis.
+It identifies classes, interfaces, structs, enums, functions, and other type definitions.
 """
 
 from __future__ import annotations
@@ -11,56 +11,62 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from ..base import current_timestamp
+from .base import current_timestamp
 
 # JSON schema for LLM structured output
-METHOD_SCHEMA = {
-    "name": "methods_extraction",
+TYPE_DEFINITION_SCHEMA = {
+    "name": "type_definitions_extraction",
     "strict": True,
     "schema": {
         "type": "object",
         "properties": {
-            "methods": {
+            "types": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "methodName": {
+                        "typeName": {
                             "type": "string",
-                            "description": "Name of the method or function",
+                            "description": "Name of the type (class, interface, function, etc.)",
                         },
-                        "returnType": {
+                        "category": {
                             "type": "string",
-                            "description": "Return type of the method (e.g., 'str', 'int', 'void', 'None', 'Promise<User>')",
-                        },
-                        "visibility": {
-                            "type": "string",
-                            "enum": ["public", "private", "protected"],
-                            "description": "Visibility/access level of the method",
-                        },
-                        "parameters": {
-                            "type": "string",
-                            "description": "Parameter signature (e.g., 'self, name: str, age: int' or 'userId: number, options?: Options')",
+                            "enum": [
+                                "class",
+                                "interface",
+                                "struct",
+                                "enum",
+                                "function",
+                                "alias",
+                                "module",
+                                "other",
+                            ],
+                            "description": "Category of the type definition",
                         },
                         "description": {
                             "type": "string",
-                            "description": "Brief description of what the method does",
+                            "description": "Brief description of what this type does",
                         },
-                        "isStatic": {
-                            "type": "boolean",
-                            "description": "Whether this is a static method",
-                        },
-                        "isAsync": {
-                            "type": "boolean",
-                            "description": "Whether this is an async method",
+                        "interfaceType": {
+                            "type": "string",
+                            "enum": [
+                                "REST API",
+                                "GraphQL",
+                                "gRPC",
+                                "WebSocket",
+                                "CLI",
+                                "Internal API",
+                                "none",
+                            ],
+                            "description": "Type of interface this definition exposes, or 'none' if not an interface",
                         },
                         "startLine": {
                             "type": "integer",
-                            "description": "Line number where the method starts (relative to the snippet, 1-indexed)",
+                            "description": "Line number where the type definition starts (1-indexed)",
                         },
                         "endLine": {
                             "type": "integer",
-                            "description": "Line number where the method ends (relative to the snippet, 1-indexed)",
+                            "description": "Line number where the type definition ends (1-indexed)",
                         },
                         "confidence": {
                             "type": "number",
@@ -68,13 +74,10 @@ METHOD_SCHEMA = {
                         },
                     },
                     "required": [
-                        "methodName",
-                        "returnType",
-                        "visibility",
-                        "parameters",
+                        "typeName",
+                        "category",
                         "description",
-                        "isStatic",
-                        "isAsync",
+                        "interfaceType",
                         "startLine",
                         "endLine",
                         "confidence",
@@ -83,43 +86,34 @@ METHOD_SCHEMA = {
                 },
             }
         },
-        "required": ["methods"],
+        "required": ["types"],
         "additionalProperties": False,
     },
 }
 
 
 def build_extraction_prompt(
-    code_snippet: str,
-    type_name: str,
-    type_category: str,
-    file_path: str,
-    instruction: str,
-    example: str,
+    file_content: str, file_path: str, instruction: str, example: str
 ) -> str:
     """
-    Build the LLM prompt for method extraction from a TypeDefinition code snippet.
+    Build the LLM prompt for type definition extraction.
 
     Args:
-        code_snippet: The code snippet from the TypeDefinition node
-        type_name: Name of the type (class, interface, etc.)
-        type_category: Category of the type (class, interface, struct, etc.)
-        file_path: Path to the file where the type is defined
+        file_content: Content of the source file to analyze
+        file_path: Path to the file being analyzed
         instruction: Extraction instruction from config
         example: Example output from config
 
     Returns:
         Formatted prompt string
     """
-    # Add line numbers to the code snippet for accurate line references
-    lines = code_snippet.split("\n")
+    # Add line numbers to the file content for accurate line references
+    lines = file_content.split("\n")
     numbered_content = "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(lines))
 
-    prompt = f"""You are analyzing a {type_category} definition to extract its methods.
+    prompt = f"""You are analyzing a source code file to extract type definitions.
 
 ## Context
-- **Type Name:** {type_name}
-- **Category:** {type_category}
 - **File Path:** {file_path}
 
 ## Instructions
@@ -128,32 +122,28 @@ def build_extraction_prompt(
 ## Example Output
 {example}
 
-## Code (with line numbers)
+## File Content (with line numbers)
 ```
 {numbered_content}
 ```
 
-Extract all methods and functions from this {type_category}. Return ONLY a JSON object with a "methods" array. If no methods are found, return {{"methods": []}}.
+Extract all type definitions from this file. Return ONLY a JSON object with a "types" array. If no type definitions are found, return {{"types": []}}.
 """
     return prompt
 
 
-def build_method_node(
-    method_data: dict[str, Any],
-    type_name: str,
-    file_path: str,
-    repo_name: str,
-    type_start_line: int = 0,
+def build_type_definition_node(
+    type_data: dict[str, Any], file_path: str, repo_name: str, file_content: str = ""
 ) -> dict[str, Any]:
     """
-    Build a Method graph node from extracted method data.
+    Build a TypeDefinition graph node from extracted type data.
 
     Args:
-        method_data: Dictionary containing method data from LLM
-        type_name: Name of the parent type
-        file_path: Path to the file where the type is defined
+        type_data: Dictionary containing type data from LLM
+            Expected keys: typeName, category, description, interfaceType, startLine, endLine, confidence
+        file_path: Path to the file where the type was found
         repo_name: Repository name for node ID generation
-        type_start_line: Start line of the parent type (to calculate absolute line numbers)
+        file_content: Full content of the source file (used to extract code snippet)
 
     Returns:
         Dictionary with:
@@ -165,9 +155,9 @@ def build_method_node(
     errors = []
 
     # Validate required fields
-    required_fields = ["methodName", "returnType", "visibility"]
+    required_fields = ["typeName", "category", "description"]
     for field in required_fields:
-        if field not in method_data:
+        if field not in type_data or not type_data[field]:
             errors.append(f"Missing required field: {field}")
 
     if errors:
@@ -178,39 +168,66 @@ def build_method_node(
             "stats": {"nodes_created": 0},
         }
 
-    # Validate visibility
-    valid_visibilities = ["public", "private", "protected"]
-    visibility = method_data.get("visibility", "public").lower()
-    if visibility not in valid_visibilities:
-        visibility = "public"
+    # Validate category
+    valid_categories = [
+        "class",
+        "interface",
+        "struct",
+        "enum",
+        "function",
+        "alias",
+        "module",
+        "other",
+    ]
+    category = type_data["category"].lower()
+    if category not in valid_categories:
+        category = "other"
 
-    # Extract line numbers (relative to snippet)
-    start_line = method_data.get("startLine", 0)
-    end_line = method_data.get("endLine", 0)
+    # Validate interface type
+    valid_interface_types = [
+        "REST API",
+        "GraphQL",
+        "gRPC",
+        "WebSocket",
+        "CLI",
+        "Internal API",
+        "none",
+    ]
+    interface_type = type_data.get("interfaceType", "none")
+    if interface_type not in valid_interface_types:
+        interface_type = "none"
+
+    # Extract line numbers
+    start_line = type_data.get("startLine", 0)
+    end_line = type_data.get("endLine", 0)
+
+    # Extract code snippet from file content using line numbers
+    code_snippet = ""
+    if file_content and start_line > 0 and end_line >= start_line:
+        lines = file_content.split("\n")
+        # Convert to 0-indexed and extract the range
+        snippet_lines = lines[start_line - 1 : end_line]
+        code_snippet = "\n".join(snippet_lines)
 
     # Generate unique node ID
-    method_name_slug = method_data["methodName"].replace(" ", "_").replace("-", "_")
-    type_name_slug = type_name.replace(" ", "_").replace("-", "_")
+    type_name_slug = type_data["typeName"].replace(" ", "_").replace("-", "_")
     file_path_slug = file_path.replace("/", "_").replace("\\", "_")
-    node_id = f"method_{repo_name}_{file_path_slug}_{type_name_slug}_{method_name_slug}"
+    node_id = f"typedef_{repo_name}_{file_path_slug}_{type_name_slug}"
 
     # Build the node structure
     node_data = {
         "node_id": node_id,
-        "label": "Method",
+        "label": "TypeDefinition",
         "properties": {
-            "methodName": method_data["methodName"],
-            "returnType": method_data.get("returnType", "None"),
-            "visibility": visibility,
-            "parameters": method_data.get("parameters", ""),
-            "description": method_data.get("description", ""),
-            "isStatic": method_data.get("isStatic", False),
-            "isAsync": method_data.get("isAsync", False),
-            "typeName": type_name,
+            "typeName": type_data["typeName"],
+            "category": category,
+            "description": type_data["description"],
+            "interfaceType": interface_type if interface_type != "none" else None,
             "filePath": file_path,
             "startLine": start_line,
             "endLine": end_line,
-            "confidence": method_data.get("confidence", 0.8),
+            "codeSnippet": code_snippet,
+            "confidence": type_data.get("confidence", 0.8),
             "extracted_at": current_timestamp(),
         },
     }
@@ -219,7 +236,7 @@ def build_method_node(
         "success": True,
         "data": node_data,
         "errors": [],
-        "stats": {"nodes_created": 1, "node_type": "Method"},
+        "stats": {"nodes_created": 1, "node_type": "TypeDefinition"},
     }
 
 
@@ -233,27 +250,27 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
     Returns:
         Dictionary with:
             - success: bool
-            - data: Parsed methods list
+            - data: Parsed types list
             - errors: List of parsing errors
     """
     try:
         parsed = json.loads(response_content)
 
-        if "methods" not in parsed:
+        if "types" not in parsed:
             return {
                 "success": False,
                 "data": [],
-                "errors": ['Response missing "methods" array'],
+                "errors": ['Response missing "types" array'],
             }
 
-        if not isinstance(parsed["methods"], list):
+        if not isinstance(parsed["types"], list):
             return {
                 "success": False,
                 "data": [],
-                "errors": ['"methods" must be an array'],
+                "errors": ['"types" must be an array'],
             }
 
-        return {"success": True, "data": parsed["methods"], "errors": []}
+        return {"success": True, "data": parsed["types"], "errors": []}
 
     except json.JSONDecodeError as e:
         return {
@@ -263,21 +280,25 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
         }
 
 
-def extract_methods(
-    type_node: dict[str, Any], repo_name: str, llm_query_fn, config: dict[str, Any]
+def extract_type_definitions(
+    file_path: str,
+    file_content: str,
+    repo_name: str,
+    llm_query_fn,
+    config: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Extract methods from a single TypeDefinition node using LLM.
+    Extract type definitions from a single source file using LLM.
 
     This is the main extraction function that:
-    1. Uses the codeSnippet from the TypeDefinition node
-    2. Builds the prompt using config instruction/example
-    3. Calls the LLM via the provided query function
-    4. Parses the response and builds Method nodes
-    5. Creates CONTAINS edges from TypeDefinition to Method
+    1. Builds the prompt using config instruction/example
+    2. Calls the LLM via the provided query function
+    3. Parses the response and builds nodes
+    4. Creates CONTAINS edges from File to TypeDefinition
 
     Args:
-        type_node: TypeDefinition node dict with properties including codeSnippet
+        file_path: Path to the file being analyzed (relative to repo)
+        file_content: Content of the file
         repo_name: Repository name
         llm_query_fn: Function to call LLM (signature: (prompt, schema) -> response)
         config: Extraction config with 'instruction' and 'example' keys
@@ -303,34 +324,13 @@ def extract_methods(
         "cache_used": False,
     }
 
-    # Extract type information
-    type_props = type_node.get("properties", type_node)
-    type_name = type_props.get("typeName", "")
-    type_category = type_props.get("category", "class")
-    file_path = type_props.get("filePath", "")
-    code_snippet = type_props.get("codeSnippet", "")
-    type_start_line = type_props.get("startLine", 0)
-    type_node_id = type_node.get("node_id", "")
-
-    # Skip if no code snippet
-    if not code_snippet or not code_snippet.strip():
-        return {
-            "success": True,
-            "data": {"nodes": [], "edges": []},
-            "errors": [],
-            "stats": {"total_nodes": 0, "total_edges": 0, "skipped": "no_code_snippet"},
-            "llm_details": llm_details,
-        }
-
     try:
         # Build the prompt
         instruction = config.get("instruction", "")
         example = config.get("example", "{}")
 
         prompt = build_extraction_prompt(
-            code_snippet=code_snippet,
-            type_name=type_name,
-            type_category=type_category,
+            file_content=file_content,
             file_path=file_path,
             instruction=instruction,
             example=example,
@@ -338,7 +338,7 @@ def extract_methods(
         llm_details["prompt"] = prompt
 
         # Call LLM
-        response = llm_query_fn(prompt, METHOD_SCHEMA)
+        response = llm_query_fn(prompt, TYPE_DEFINITION_SCHEMA)
 
         # Extract LLM details from response
         if hasattr(response, "content"):
@@ -374,24 +374,26 @@ def extract_methods(
                 "llm_details": llm_details,
             }
 
-        # Build nodes for each method
-        for method_data in parse_result["data"]:
-            node_result = build_method_node(
-                method_data=method_data,
-                type_name=type_name,
+        # Build nodes for each type definition
+        safe_path = file_path.replace("/", "_").replace("\\", "_")
+        file_node_id = f"file_{repo_name}_{safe_path}"
+
+        for type_data in parse_result["data"]:
+            node_result = build_type_definition_node(
+                type_data=type_data,
                 file_path=file_path,
                 repo_name=repo_name,
-                type_start_line=type_start_line,
+                file_content=file_content,
             )
 
             if node_result["success"]:
                 node_data = node_result["data"]
                 nodes.append(node_data)
 
-                # Create CONTAINS edge: TypeDefinition -> Method
+                # Create CONTAINS edge: File -> TypeDefinition
                 edge = {
-                    "edge_id": f"contains_{type_node_id}_to_{node_data['node_id']}",
-                    "from_node_id": type_node_id,
+                    "edge_id": f"contains_{file_node_id}_to_{node_data['node_id']}",
+                    "from_node_id": file_node_id,
                     "to_node_id": node_data["node_id"],
                     "relationship_type": "CONTAINS",
                     "properties": {"created_at": current_timestamp()},
@@ -407,9 +409,9 @@ def extract_methods(
             "stats": {
                 "total_nodes": len(nodes),
                 "total_edges": len(edges),
-                "node_types": {"Method": len(nodes)},
-                "methods_found": len(nodes),
-                "methods_from_llm": len(parse_result["data"]),
+                "node_types": {"TypeDefinition": len(nodes)},
+                "types_found": len(nodes),
+                "types_from_llm": len(parse_result["data"]),
             },
             "llm_details": llm_details,
         }
@@ -418,76 +420,76 @@ def extract_methods(
         return {
             "success": False,
             "data": {"nodes": [], "edges": []},
-            "errors": [f"Fatal error during method extraction: {str(e)}"],
+            "errors": [f"Fatal error during type definition extraction: {str(e)}"],
             "stats": {"total_nodes": 0, "total_edges": 0},
             "llm_details": llm_details,
         }
 
 
-def extract_methods_batch(
-    type_nodes: list[dict[str, Any]],
+def extract_type_definitions_batch(
+    files: list[dict[str, str]],
     repo_name: str,
     llm_query_fn,
     config: dict[str, Any],
     progress_callback: Callable | None = None,
 ) -> dict[str, Any]:
     """
-    Extract methods from multiple TypeDefinition nodes.
+    Extract type definitions from multiple source files.
 
     Args:
-        type_nodes: List of TypeDefinition node dicts with codeSnippet property
+        files: List of dicts with 'path' and 'content' keys
         repo_name: Repository name
         llm_query_fn: Function to call LLM
         config: Extraction config
-        progress_callback: Optional callback(current, total, type_name)
+        progress_callback: Optional callback(current, total, file_path)
 
     Returns:
-        Aggregated results from all type extractions including llm_details per type
+        Aggregated results from all file extractions including llm_details per file
     """
     all_nodes: list[dict[str, Any]] = []
     all_edges: list[dict[str, Any]] = []
     all_errors: list[str] = []
-    all_type_results: list[dict[str, Any]] = []  # Per-type results with llm_details
-    types_processed = 0
-    types_with_methods = 0
+    all_file_results: list[dict[str, Any]] = []  # Per-file results with llm_details
+    files_processed = 0
+    files_with_types = 0
 
-    total_types = len(type_nodes)
+    total_files = len(files)
 
-    for i, type_node in enumerate(type_nodes):
-        type_props = type_node.get("properties", type_node)
-        type_name = type_props.get("typeName", "Unknown")
+    for i, file_info in enumerate(files):
+        file_path = file_info["path"]
+        file_content = file_info["content"]
 
         if progress_callback:
-            progress_callback(i + 1, total_types, type_name)
+            progress_callback(i + 1, total_files, file_path)
 
-        result = extract_methods(
-            type_node=type_node,
+        result = extract_type_definitions(
+            file_path=file_path,
+            file_content=file_content,
             repo_name=repo_name,
             llm_query_fn=llm_query_fn,
             config=config,
         )
 
-        types_processed += 1
+        files_processed += 1
 
-        # Store per-type result with llm_details for L3 logging
-        all_type_results.append(
+        # Store per-file result with llm_details for L3 logging
+        all_file_results.append(
             {
-                "type_name": type_name,
-                "file_path": type_props.get("filePath", ""),
+                "file_path": file_path,
                 "success": result["success"],
-                "methods_extracted": len(result["data"]["nodes"]),
+                "types_extracted": len(result["data"]["nodes"]),
                 "llm_details": result.get("llm_details", {}),
                 "errors": result["errors"],
             }
         )
 
         if result["success"] and result["data"]["nodes"]:
-            types_with_methods += 1
+            files_with_types += 1
             all_nodes.extend(result["data"]["nodes"])
             all_edges.extend(result["data"]["edges"])
 
         if result["errors"]:
-            all_errors.extend([f"{type_name}: {e}" for e in result["errors"]])
+            all_errors.extend([f"{file_path}: {e}" for e in result["errors"]])
 
     return {
         "success": len(all_nodes) > 0 or len(all_errors) == 0,
@@ -496,9 +498,9 @@ def extract_methods_batch(
         "stats": {
             "total_nodes": len(all_nodes),
             "total_edges": len(all_edges),
-            "node_types": {"Method": len(all_nodes)},
-            "types_processed": types_processed,
-            "types_with_methods": types_with_methods,
+            "node_types": {"TypeDefinition": len(all_nodes)},
+            "files_processed": files_processed,
+            "files_with_types": files_with_types,
         },
-        "type_results": all_type_results,  # Per-type details for L3 logging
+        "file_results": all_file_results,  # Per-file details for L3 logging
     }

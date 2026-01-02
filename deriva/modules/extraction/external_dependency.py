@@ -1,8 +1,8 @@
 """
-Test extraction - LLM-based extraction of test definitions from test files.
+ExternalDependency extraction - LLM-based extraction of external dependencies.
 
-This module extracts Test nodes representing test cases, their types,
-and what they're testing.
+This module extracts ExternalDependency nodes representing libraries, external APIs,
+and external service integrations that the application depends on.
 """
 
 from __future__ import annotations
@@ -11,56 +11,45 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from ..base import current_timestamp
+from .base import current_timestamp
 
 # JSON schema for LLM structured output
-TEST_SCHEMA = {
-    "name": "test_extraction",
+EXTERNAL_DEPENDENCY_SCHEMA = {
+    "name": "external_dependency_extraction",
     "strict": True,
     "schema": {
         "type": "object",
         "properties": {
-            "tests": {
+            "dependencies": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "testName": {
+                        "dependencyName": {
                             "type": "string",
-                            "description": "Name of the test function/method",
+                            "description": "Name of the dependency",
                         },
-                        "testType": {
+                        "dependencyCategory": {
                             "type": "string",
                             "enum": [
-                                "unit",
-                                "integration",
-                                "e2e",
-                                "performance",
-                                "smoke",
-                                "regression",
-                                "other",
+                                "library",
+                                "external_api",
+                                "external_service",
+                                "external_database",
                             ],
-                            "description": "Type of test",
+                            "description": "Category of external dependency",
+                        },
+                        "version": {
+                            "type": ["string", "null"],
+                            "description": "Version constraint if applicable",
+                        },
+                        "ecosystem": {
+                            "type": ["string", "null"],
+                            "description": "Package ecosystem or provider",
                         },
                         "description": {
                             "type": "string",
-                            "description": "What the test verifies",
-                        },
-                        "testedElement": {
-                            "type": ["string", "null"],
-                            "description": "What is being tested (class, function, feature)",
-                        },
-                        "framework": {
-                            "type": ["string", "null"],
-                            "description": "Test framework used",
-                        },
-                        "startLine": {
-                            "type": "integer",
-                            "description": "Line number where test starts",
-                        },
-                        "endLine": {
-                            "type": "integer",
-                            "description": "Line number where test ends",
+                            "description": "What this dependency is used for",
                         },
                         "confidence": {
                             "type": "number",
@@ -68,20 +57,18 @@ TEST_SCHEMA = {
                         },
                     },
                     "required": [
-                        "testName",
-                        "testType",
+                        "dependencyName",
+                        "dependencyCategory",
+                        "version",
+                        "ecosystem",
                         "description",
-                        "testedElement",
-                        "framework",
-                        "startLine",
-                        "endLine",
                         "confidence",
                     ],
                     "additionalProperties": False,
                 },
             }
         },
-        "required": ["tests"],
+        "required": ["dependencies"],
         "additionalProperties": False,
     },
 }
@@ -91,10 +78,10 @@ def build_extraction_prompt(
     file_content: str, file_path: str, instruction: str, example: str
 ) -> str:
     """
-    Build the LLM prompt for test extraction.
+    Build the LLM prompt for external dependency extraction.
 
     Args:
-        file_content: Content of the test file to analyze
+        file_content: Content of the file to analyze
         file_path: Path to the file being analyzed
         instruction: Extraction instruction from config
         example: Example output from config
@@ -102,11 +89,7 @@ def build_extraction_prompt(
     Returns:
         Formatted prompt string
     """
-    # Add line numbers to the file content for accurate line references
-    lines = file_content.split("\n")
-    numbered_content = "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(lines))
-
-    prompt = f"""You are analyzing a test file to extract test definitions.
+    prompt = f"""You are analyzing a file to extract external dependencies.
 
 ## Context
 - **File Path:** {file_path}
@@ -117,25 +100,25 @@ def build_extraction_prompt(
 ## Example Output
 {example}
 
-## File Content (with line numbers)
+## File Content
 ```
-{numbered_content}
+{file_content}
 ```
 
-Extract all test definitions from this file. Return ONLY a JSON object with a "tests" array. If no tests are found, return {{"tests": []}}.
+Extract external dependencies. Return ONLY a JSON object with a "dependencies" array. If no dependencies are found, return {{"dependencies": []}}.
 """
     return prompt
 
 
-def build_test_node(
-    test_data: dict[str, Any], file_path: str, repo_name: str
+def build_external_dependency_node(
+    dep_data: dict[str, Any], origin_source: str, repo_name: str
 ) -> dict[str, Any]:
     """
-    Build a Test graph node from extracted test data.
+    Build an ExternalDependency graph node from extracted data.
 
     Args:
-        test_data: Dictionary containing test data from LLM
-        file_path: Path to the file where the test was found
+        dep_data: Dictionary containing dependency data from LLM
+        origin_source: Path to the file where the dependency was found
         repo_name: Repository name for node ID generation
 
     Returns:
@@ -144,9 +127,9 @@ def build_test_node(
     errors = []
 
     # Validate required fields
-    required_fields = ["testName", "testType", "description"]
+    required_fields = ["dependencyName", "dependencyCategory"]
     for field in required_fields:
-        if field not in test_data or not test_data[field]:
+        if field not in dep_data or not dep_data[field]:
             errors.append(f"Missing required field: {field}")
 
     if errors:
@@ -157,39 +140,34 @@ def build_test_node(
             "stats": {"nodes_created": 0},
         }
 
-    # Validate test type
-    valid_types = [
-        "unit",
-        "integration",
-        "e2e",
-        "performance",
-        "smoke",
-        "regression",
-        "other",
+    # Validate category
+    valid_categories = [
+        "library",
+        "external_api",
+        "external_service",
+        "external_database",
     ]
-    test_type = test_data["testType"].lower()
-    if test_type not in valid_types:
-        test_type = "other"
+    category = dep_data["dependencyCategory"].lower()
+    if category not in valid_categories:
+        category = "library"
 
     # Generate unique node ID
-    test_name_slug = test_data["testName"].replace(" ", "_").replace("-", "_")
-    file_path_slug = file_path.replace("/", "_").replace("\\", "_")
-    node_id = f"test_{repo_name}_{file_path_slug}_{test_name_slug}"
+    dep_name_slug = dep_data["dependencyName"].lower()
+    dep_name_slug = dep_name_slug.replace(" ", "_").replace("-", "_").replace("/", "_")
+    node_id = f"extdep_{repo_name}_{dep_name_slug}"
 
     # Build the node structure
     node_data = {
         "node_id": node_id,
-        "label": "Test",
+        "label": "ExternalDependency",
         "properties": {
-            "testName": test_data["testName"],
-            "testType": test_type,
-            "description": test_data["description"],
-            "testedElement": test_data.get("testedElement"),
-            "framework": test_data.get("framework"),
-            "filePath": file_path,
-            "startLine": test_data.get("startLine", 0),
-            "endLine": test_data.get("endLine", 0),
-            "confidence": test_data.get("confidence", 0.8),
+            "dependencyName": dep_data["dependencyName"],
+            "dependencyCategory": category,
+            "version": dep_data.get("version"),
+            "ecosystem": dep_data.get("ecosystem"),
+            "description": dep_data.get("description", ""),
+            "originSource": origin_source,
+            "confidence": dep_data.get("confidence", 0.8),
             "extracted_at": current_timestamp(),
         },
     }
@@ -198,7 +176,7 @@ def build_test_node(
         "success": True,
         "data": node_data,
         "errors": [],
-        "stats": {"nodes_created": 1, "node_type": "Test"},
+        "stats": {"nodes_created": 1, "node_type": "ExternalDependency"},
     }
 
 
@@ -215,21 +193,21 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
     try:
         parsed = json.loads(response_content)
 
-        if "tests" not in parsed:
+        if "dependencies" not in parsed:
             return {
                 "success": False,
                 "data": [],
-                "errors": ['Response missing "tests" array'],
+                "errors": ['Response missing "dependencies" array'],
             }
 
-        if not isinstance(parsed["tests"], list):
+        if not isinstance(parsed["dependencies"], list):
             return {
                 "success": False,
                 "data": [],
-                "errors": ['"tests" must be an array'],
+                "errors": ['"dependencies" must be an array'],
             }
 
-        return {"success": True, "data": parsed["tests"], "errors": []}
+        return {"success": True, "data": parsed["dependencies"], "errors": []}
 
     except json.JSONDecodeError as e:
         return {
@@ -239,7 +217,7 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
         }
 
 
-def extract_tests(
+def extract_external_dependencies(
     file_path: str,
     file_content: str,
     repo_name: str,
@@ -247,7 +225,7 @@ def extract_tests(
     config: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Extract tests from a single test file using LLM.
+    Extract external dependencies from a single file using LLM.
 
     Args:
         file_path: Path to the file being analyzed
@@ -261,7 +239,6 @@ def extract_tests(
     """
     errors: list[str] = []
     nodes: list[dict[str, Any]] = []
-    edges: list[dict[str, Any]] = []
 
     # Initialize LLM details for logging
     llm_details = {
@@ -286,7 +263,7 @@ def extract_tests(
         llm_details["prompt"] = prompt
 
         # Call LLM
-        response = llm_query_fn(prompt, TEST_SCHEMA)
+        response = llm_query_fn(prompt, EXTERNAL_DEPENDENCY_SCHEMA)
 
         # Extract LLM details from response
         if hasattr(response, "content"):
@@ -303,9 +280,9 @@ def extract_tests(
         if hasattr(response, "error"):
             return {
                 "success": False,
-                "data": {"nodes": [], "edges": []},
+                "data": {"nodes": []},
                 "errors": [f"LLM error: {response.error}"],
-                "stats": {"total_nodes": 0, "total_edges": 0, "llm_error": True},
+                "stats": {"total_nodes": 0, "llm_error": True},
                 "llm_details": llm_details,
             }
 
@@ -316,47 +293,32 @@ def extract_tests(
             errors.extend(parse_result["errors"])
             return {
                 "success": False,
-                "data": {"nodes": [], "edges": []},
+                "data": {"nodes": []},
                 "errors": errors,
-                "stats": {"total_nodes": 0, "total_edges": 0, "parse_error": True},
+                "stats": {"total_nodes": 0, "parse_error": True},
                 "llm_details": llm_details,
             }
 
-        # Build nodes for each test and create CONTAINS edge from File
-        safe_path = file_path.replace("/", "_").replace("\\", "_")
-        file_node_id = f"file_{repo_name}_{safe_path}"
-
-        for test_data in parse_result["data"]:
-            node_result = build_test_node(
-                test_data=test_data, file_path=file_path, repo_name=repo_name
+        # Build nodes for each dependency
+        for dep_data in parse_result["data"]:
+            node_result = build_external_dependency_node(
+                dep_data=dep_data, origin_source=file_path, repo_name=repo_name
             )
 
             if node_result["success"]:
-                node_data = node_result["data"]
-                nodes.append(node_data)
-
-                # Create CONTAINS edge: File -> Test
-                edge = {
-                    "edge_id": f"contains_{file_node_id}_to_{node_data['node_id']}",
-                    "from_node_id": file_node_id,
-                    "to_node_id": node_data["node_id"],
-                    "relationship_type": "CONTAINS",
-                    "properties": {"created_at": current_timestamp()},
-                }
-                edges.append(edge)
+                nodes.append(node_result["data"])
             else:
                 errors.extend(node_result["errors"])
 
         return {
             "success": len(nodes) > 0 or len(errors) == 0,
-            "data": {"nodes": nodes, "edges": edges},
+            "data": {"nodes": nodes},
             "errors": errors,
             "stats": {
                 "total_nodes": len(nodes),
-                "total_edges": len(edges),
-                "node_types": {"Test": len(nodes)},
-                "tests_found": len(nodes),
-                "tests_from_llm": len(parse_result["data"]),
+                "node_types": {"ExternalDependency": len(nodes)},
+                "dependencies_found": len(nodes),
+                "dependencies_from_llm": len(parse_result["data"]),
             },
             "llm_details": llm_details,
         }
@@ -364,14 +326,14 @@ def extract_tests(
     except Exception as e:
         return {
             "success": False,
-            "data": {"nodes": [], "edges": []},
-            "errors": [f"Fatal error during test extraction: {str(e)}"],
-            "stats": {"total_nodes": 0, "total_edges": 0},
+            "data": {"nodes": []},
+            "errors": [f"Fatal error during dependency extraction: {str(e)}"],
+            "stats": {"total_nodes": 0},
             "llm_details": llm_details,
         }
 
 
-def extract_tests_batch(
+def extract_external_dependencies_batch(
     files: list[dict[str, str]],
     repo_name: str,
     llm_query_fn,
@@ -379,7 +341,7 @@ def extract_tests_batch(
     progress_callback: Callable | None = None,
 ) -> dict[str, Any]:
     """
-    Extract tests from multiple test files.
+    Extract external dependencies from multiple files.
 
     Args:
         files: List of dicts with 'path' and 'content' keys
@@ -392,11 +354,13 @@ def extract_tests_batch(
         Aggregated results from all file extractions
     """
     all_nodes: list[dict[str, Any]] = []
-    all_edges: list[dict[str, Any]] = []
     all_errors: list[str] = []
     all_file_results: list[dict[str, Any]] = []
     files_processed = 0
-    files_with_tests = 0
+    files_with_deps = 0
+
+    # Track unique dependencies by name to avoid duplicates
+    seen_dependencies: set = set()
 
     total_files = len(files)
 
@@ -407,7 +371,7 @@ def extract_tests_batch(
         if progress_callback:
             progress_callback(i + 1, total_files, file_path)
 
-        result = extract_tests(
+        result = extract_external_dependencies(
             file_path=file_path,
             file_content=file_content,
             repo_name=repo_name,
@@ -422,30 +386,33 @@ def extract_tests_batch(
             {
                 "file_path": file_path,
                 "success": result["success"],
-                "tests_extracted": len(result["data"]["nodes"]),
+                "dependencies_extracted": len(result["data"]["nodes"]),
                 "llm_details": result.get("llm_details", {}),
                 "errors": result["errors"],
             }
         )
 
         if result["success"] and result["data"]["nodes"]:
-            files_with_tests += 1
-            all_nodes.extend(result["data"]["nodes"])
-            all_edges.extend(result["data"]["edges"])
+            files_with_deps += 1
+            # Deduplicate dependencies by name
+            for node in result["data"]["nodes"]:
+                dep_name = node["properties"]["dependencyName"].lower()
+                if dep_name not in seen_dependencies:
+                    seen_dependencies.add(dep_name)
+                    all_nodes.append(node)
 
         if result["errors"]:
             all_errors.extend([f"{file_path}: {e}" for e in result["errors"]])
 
     return {
         "success": len(all_nodes) > 0 or len(all_errors) == 0,
-        "data": {"nodes": all_nodes, "edges": all_edges},
+        "data": {"nodes": all_nodes},
         "errors": all_errors,
         "stats": {
             "total_nodes": len(all_nodes),
-            "total_edges": len(all_edges),
-            "node_types": {"Test": len(all_nodes)},
+            "node_types": {"ExternalDependency": len(all_nodes)},
             "files_processed": files_processed,
-            "files_with_tests": files_with_tests,
+            "files_with_dependencies": files_with_deps,
         },
         "file_results": all_file_results,
     }

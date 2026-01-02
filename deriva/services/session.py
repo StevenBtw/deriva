@@ -521,12 +521,15 @@ class PipelineSession:
         url: str,
         name: str | None = None,
         branch: str | None = None,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
         """Clone a repository."""
         self._ensure_connected()
         assert self._repo_manager is not None
         try:
-            result = self._repo_manager.clone_repository(repo_url=url, target_name=name, branch=branch)
+            result = self._repo_manager.clone_repository(
+                repo_url=url, target_name=name, branch=branch, overwrite=overwrite
+            )
             return {"success": True, "name": result.name, "path": str(result.path), "url": result.url}
         except Exception as e:
             return {"success": False, "error": str(e)}

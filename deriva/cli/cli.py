@@ -5,6 +5,10 @@ Provides headless command-line interface for pipeline operations.
 Uses PipelineSession from the services layer.
 
 Usage:
+    python -m deriva.cli.cli repo clone <url>
+    python -m deriva.cli.cli repo list --detailed
+    python -m deriva.cli.cli repo delete <name> --force
+    python -m deriva.cli.cli repo info <name>
     python -m deriva.cli.cli config list extraction
     python -m deriva.cli.cli config list derivation --phase generate
     python -m deriva.cli.cli config enable extraction BusinessConcept
@@ -438,6 +442,130 @@ def cmd_clear(args: argparse.Namespace) -> int:
 
 
 # =============================================================================
+# Repository Commands
+# =============================================================================
+
+
+def cmd_repo_clone(args: argparse.Namespace) -> int:
+    """Clone a repository."""
+    url = args.url
+    name = getattr(args, "name", None)
+    branch = getattr(args, "branch", None)
+    overwrite = getattr(args, "overwrite", False)
+
+    print(f"\n{'=' * 60}")
+    print("DERIVA - Cloning Repository")
+    print(f"{'=' * 60}")
+    print(f"URL: {url}")
+    if name:
+        print(f"Name: {name}")
+    if branch:
+        print(f"Branch: {branch}")
+
+    with PipelineSession() as session:
+        result = session.clone_repository(url=url, name=name, branch=branch, overwrite=overwrite)
+        if result.get("success"):
+            print("\nRepository cloned successfully!")
+            print(f"  Name: {result.get('name', 'N/A')}")
+            print(f"  Path: {result.get('path', 'N/A')}")
+            print(f"  URL:  {result.get('url', url)}")
+            return 0
+        else:
+            print(f"\nError: {result.get('error', 'Unknown error')}")
+            return 1
+
+
+def cmd_repo_list(args: argparse.Namespace) -> int:
+    """List all repositories."""
+    detailed = getattr(args, "detailed", False)
+
+    with PipelineSession() as session:
+        repos = session.get_repositories(detailed=detailed)
+
+        if not repos:
+            print("\nNo repositories found.")
+            print(f"Workspace: {session.workspace_dir}")
+            print("\nClone a repository with:")
+            print("  deriva repo clone <url>")
+            return 0
+
+        print(f"\n{'=' * 60}")
+        print("REPOSITORIES")
+        print(f"{'=' * 60}")
+        print(f"Workspace: {session.workspace_dir}\n")
+
+        for repo in repos:
+            if detailed:
+                dirty = " (dirty)" if repo.get("is_dirty") else ""
+                print(f"  {repo['name']}{dirty}")
+                print(f"    URL:    {repo.get('url', 'N/A')}")
+                print(f"    Branch: {repo.get('branch', 'N/A')}")
+                print(f"    Size:   {repo.get('size_mb', 0):.2f} MB")
+                print(f"    Cloned: {repo.get('cloned_at', 'N/A')}")
+                print()
+            else:
+                print(f"  {repo['name']}")
+
+        print(f"\nTotal: {len(repos)} repositories")
+    return 0
+
+
+def cmd_repo_delete(args: argparse.Namespace) -> int:
+    """Delete a repository."""
+    name = args.name
+    force = getattr(args, "force", False)
+
+    print(f"\n{'=' * 60}")
+    print("DERIVA - Deleting Repository")
+    print(f"{'=' * 60}")
+    print(f"Repository: {name}")
+
+    with PipelineSession() as session:
+        try:
+            result = session.delete_repository(name=name, force=force)
+            if result.get("success"):
+                print(f"\nRepository '{name}' deleted successfully.")
+                return 0
+            else:
+                print(f"\nError: {result.get('error', 'Unknown error')}")
+                return 1
+        except Exception as e:
+            print(f"\nError: {e}")
+            if "uncommitted changes" in str(e).lower():
+                print("Use --force to delete anyway.")
+            return 1
+
+
+def cmd_repo_info(args: argparse.Namespace) -> int:
+    """Show repository details."""
+    name = args.name
+
+    with PipelineSession() as session:
+        try:
+            info = session.get_repository_info(name)
+
+            if not info:
+                print(f"\nRepository '{name}' not found.")
+                return 1
+
+            print(f"\n{'=' * 60}")
+            print(f"REPOSITORY: {info['name']}")
+            print(f"{'=' * 60}")
+            print(f"  Path:        {info.get('path', 'N/A')}")
+            print(f"  URL:         {info.get('url', 'N/A')}")
+            print(f"  Branch:      {info.get('branch', 'N/A')}")
+            print(f"  Last Commit: {info.get('last_commit', 'N/A')}")
+            print(f"  Dirty:       {info.get('is_dirty', False)}")
+            print(f"  Size:        {info.get('size_mb', 0):.2f} MB")
+            print(f"  Cloned At:   {info.get('cloned_at', 'N/A')}")
+            print()
+            return 0
+        except Exception as e:
+            print(f"\nError: {e}")
+            return 1
+
+
+# =============================================================================
 # Consistency Commands
 # =============================================================================
 
@@ -840,6 +968,62 @@ def create_parser() -> argparse.ArgumentParser:
     clear_parser.set_defaults(func=cmd_clear)
 
     # -------------------------------------------------------------------------
+    # repo command
+    # -------------------------------------------------------------------------
+    repo_parser = subparsers.add_parser("repo", help="Manage repositories")
+    repo_subparsers = repo_parser.add_subparsers(dest="repo_action", help="Repository actions")
+
+    # repo clone
+    repo_clone = repo_subparsers.add_parser("clone", help="Clone a repository")
+    repo_clone.add_argument("url", help="Repository URL to clone")
+    repo_clone.add_argument(
+        "-n",
+        "--name",
+        type=str,
+        default=None,
+        help="Custom name for the repository (default: derived from URL)",
+    )
+    repo_clone.add_argument(
+        "-b",
+        "--branch",
+        type=str,
+        default=None,
+        help="Branch to clone (default: default branch)",
+    )
+    repo_clone.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing repository if it exists",
+    )
+    repo_clone.set_defaults(func=cmd_repo_clone)
+
+    # repo list
+    repo_list = repo_subparsers.add_parser("list", help="List all repositories")
+    repo_list.add_argument(
+        "-d",
+        "--detailed",
+        action="store_true",
+        help="Show detailed information",
+    )
+    repo_list.set_defaults(func=cmd_repo_list)
+
+    # repo delete
+    repo_delete = repo_subparsers.add_parser("delete", help="Delete a repository")
+    repo_delete.add_argument("name", help="Repository name to delete")
+    repo_delete.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Force delete even with uncommitted changes",
+    )
+    repo_delete.set_defaults(func=cmd_repo_delete)
+
+    # repo info
+    repo_info = repo_subparsers.add_parser("info", help="Show repository details")
+    repo_info.add_argument("name", help="Repository name")
+    repo_info.set_defaults(func=cmd_repo_info)
+
+    # -------------------------------------------------------------------------
     # benchmark command
     # -------------------------------------------------------------------------
     benchmark_parser = subparsers.add_parser(
@@ -952,6 +1136,10 @@ def main() -> int:
 
     if args.command == "benchmark" and not getattr(args, "benchmark_action", None):
         parser.parse_args(["benchmark", "--help"])
+        return 0
+
+    if args.command == "repo" and not getattr(args, "repo_action", None):
+        parser.parse_args(["repo", "--help"])
         return 0
 
     if hasattr(args, "func"):
