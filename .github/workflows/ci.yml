@@ -76,7 +76,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run tests
-        run: uv run pytest --cov=deriva --cov-report=xml -v -m "not integration"
+        run: uv run pytest --cov=deriva --cov-branch --cov-report=xml -v -m "not integration"
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
