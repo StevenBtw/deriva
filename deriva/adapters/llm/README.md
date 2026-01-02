@@ -1,0 +1,106 @@
+# LLM Adapter
+
+Multi-provider LLM abstraction with caching and structured output support.
+
+## Purpose
+
+The LLM adapter provides a unified interface for querying multiple LLM providers (Azure OpenAI, OpenAI, Anthropic, Ollama) with automatic caching and Pydantic-based structured output parsing.
+
+## Key Exports
+
+```python
+from deriva.adapters.llm import (
+    LLMManager,             # Main service class
+    # Providers
+    create_provider,        # Factory function
+    AzureOpenAIProvider,
+    OpenAIProvider,
+    AnthropicProvider,
+    OllamaProvider,
+    ProviderConfig,
+    # Response types
+    LLMResponse,
+    LiveResponse,
+    CachedResponse,
+    FailedResponse,
+    ResponseType,
+    # Caching
+    CacheManager,
+)
+```
+
+## Basic Usage
+
+```python
+from deriva.adapters.llm import LLMManager
+
+# Uses provider from .env (LLM_PROVIDER, LLM_MODEL, etc.)
+llm = LLMManager()
+
+# Simple query
+response = llm.query("What is Python?")
+if response.response_type == "live":
+    print(response.content)
+```
+
+## Structured Output with Pydantic
+
+```python
+from pydantic import BaseModel, Field
+from deriva.adapters.llm import LLMManager
+
+class BusinessConcept(BaseModel):
+    name: str = Field(description="Concept name")
+    concept_type: str = Field(description="actor, service, entity, etc.")
+    description: str
+
+llm = LLMManager()
+result = llm.query(
+    prompt="Extract the main business concept from this code...",
+    response_model=BusinessConcept
+)
+# result is a validated BusinessConcept instance
+print(result.name)
+```
+
+## Configuration
+
+Set provider via environment variables in `.env`:
+
+```bash
+# Primary provider
+LLM_PROVIDER=azure          # azure, openai, anthropic, ollama
+LLM_MODEL=gpt-4o-mini
+LLM_API_KEY=your-key
+LLM_API_URL=https://...     # Optional custom endpoint
+
+# Multiple models for benchmarking
+LLM_OLLAMA_LLAMA_PROVIDER=ollama
+LLM_OLLAMA_LLAMA_MODEL=llama3.2
+LLM_OLLAMA_LLAMA_URL=http://localhost:11434/api/chat
+```
+
+## Response Types
+
+| Type | When | Key Fields |
+|------|------|------------|
+| `LiveResponse` | Fresh API call | `content`, `usage`, `finish_reason` |
+| `CachedResponse` | From cache | `content`, `cache_key`, `cached_at` |
+| `FailedResponse` | Error occurred | `error`, `error_type` |
+
+## LLMManager Methods
+
+| Method | Description |
+|--------|-------------|
+| `query(prompt, response_model, temperature, max_tokens)` | Send LLM query |
+| `load_benchmark_models()` | Load multiple model configs from env |
+
+## Caching
+
+- Responses cached to `workspace/cache/` by default
+- Cache key = SHA256(prompt + model + schema)
+- Disable with `LLM_NOCACHE=true` in `.env`
+
+## See Also
+
+- [CONTRIBUTING.md](../../../CONTRIBUTING.md) - Architecture and LLM usage guidelines

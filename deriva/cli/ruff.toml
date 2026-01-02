@@ -1,0 +1,9 @@
+# Architectural boundaries for the CLI layer
+# CLI is the command-line interface layer and should only import from services.
+# Services act as the API layer, providing orchestrated functionality.
+# CLI must NOT directly access: managers, modules, or common.
+
+[lint.flake8-tidy-imports.banned-api]
+"deriva.adapters" = { msg = "Architecture violation: CLI should only import from services (use services as the API layer)" }
+"deriva.modules" = { msg = "Architecture violation: CLI should only import from services (use services as the API layer)" }
+"deriva.common" = { msg = "Architecture violation: CLI should only import from services (services handle common types)" }

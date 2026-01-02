@@ -1,0 +1,8 @@
+# Architectural boundaries for the COMMON layer
+# Common is the base layer and can only import from stdlib and third-party packages.
+# It must NOT import from any internal layers: adapters, modules, services, or cli.
+
+[lint.flake8-tidy-imports.banned-api]
+"deriva.adapters" = { msg = "Architecture violation: common cannot import from adapters (common is the base layer)" }
+"deriva.modules" = { msg = "Architecture violation: common cannot import from modules (common is the base layer)" }
+"deriva.services" = { msg = "Architecture violation: common cannot import from services (common is the base layer)" }

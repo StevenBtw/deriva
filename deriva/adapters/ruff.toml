@@ -1,0 +1,7 @@
+# Architectural boundaries for the MANAGERS layer
+# Managers is the data access layer and can only import from common.
+# It must NOT import from peer or higher layers: modules, services, or cli.
+
+[lint.flake8-tidy-imports.banned-api]
+"deriva.modules" = { msg = "Architecture violation: managers cannot import from modules (use common layer for shared types)" }
+"deriva.services" = { msg = "Architecture violation: managers cannot import from services (managers is a lower layer)" }

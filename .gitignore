@@ -1,0 +1,10 @@
+*__pycache__*
+temp_*
+tmp_*
+.cl*/*
+.env
+workspace/*
+deriva/adapters/neo4j/data/*
+deriva/adapters/neo4j/logs/*
+deriva/adapters/database/sql.db
+deriva/adapters/database/sql.db.wal
