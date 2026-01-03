@@ -17,6 +17,8 @@ from deriva.common.exceptions import LLMError as LLMError
 from deriva.common.exceptions import ValidationError as ValidationError
 from pydantic import BaseModel
 
+from deriva.adapters.llm.providers import VALID_PROVIDERS
+
 __all__ = [
     # Exceptions (re-exported)
     "APIError",
@@ -67,10 +69,9 @@ class BenchmarkModelConfig:
 
     def __post_init__(self):
         """Validate provider."""
-        valid_providers = {"azure", "openai", "anthropic", "ollama"}
-        if self.provider not in valid_providers:
+        if self.provider not in VALID_PROVIDERS:
             raise ValueError(
-                f"Invalid provider: {self.provider}. Must be one of {valid_providers}"
+                f"Invalid provider: {self.provider}. Must be one of {VALID_PROVIDERS}"
             )
 
     def get_api_key(self) -> str | None:
