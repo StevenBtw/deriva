@@ -1,3 +1,5 @@
+## Version v0.6.
+
 ## Description
 Brief description of changes.
 
