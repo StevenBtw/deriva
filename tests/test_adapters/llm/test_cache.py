@@ -186,3 +186,149 @@ class TestCacheManagerCorruptedCache:
             cache_manager.get_from_disk(cache_key)
 
         assert "Corrupted cache file" in str(exc_info.value)
+
+
+class TestCacheManagerErrors:
+    """Tests for error handling in CacheManager."""
+
+    @pytest.fixture
+    def temp_cache_dir(self):
+        """Create a temporary cache directory."""
+        temp_dir = tempfile.mkdtemp()
+        yield temp_dir
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_get_from_disk_generic_error(self, temp_cache_dir):
+        """Should raise CacheError for generic read errors."""
+        from unittest.mock import patch
+
+        cache_manager = CacheManager(temp_cache_dir)
+
+        # Create a valid cache file first
+        cache_key = "test_key"
+        cache_file = Path(temp_cache_dir) / f"{cache_key}.json"
+        cache_file.write_text('{"content": "test"}')
+
+        # Mock open to raise a generic exception
+        with patch("builtins.open", side_effect=PermissionError("Access denied")):
+            with pytest.raises(CacheError) as exc_info:
+                cache_manager.get_from_disk(cache_key)
+
+            assert "Error reading cache file" in str(exc_info.value)
+
+    def test_set_write_error(self, temp_cache_dir):
+        """Should raise CacheError when write fails."""
+        from unittest.mock import patch
+
+        cache_manager = CacheManager(temp_cache_dir)
+
+        # Mock open to raise exception during write
+        with patch("builtins.open", side_effect=PermissionError("Access denied")):
+            with pytest.raises(CacheError) as exc_info:
+                cache_manager.set("key", "content", "prompt", "model")
+
+            assert "Error writing cache file" in str(exc_info.value)
+
+    def test_clear_disk_error(self, temp_cache_dir):
+        """Should raise CacheError when delete fails."""
+        from unittest.mock import patch
+
+        cache_manager = CacheManager(temp_cache_dir)
+
+        # Add a cache entry
+        cache_manager.set("key", "content", "prompt", "model")
+
+        # Mock unlink to fail
+        with patch.object(Path, "unlink", side_effect=PermissionError("Access denied")):
+            with pytest.raises(CacheError) as exc_info:
+                cache_manager.clear_disk()
+
+            assert "Error clearing disk cache" in str(exc_info.value)
+
+
+class TestCachedLLMCallDecorator:
+    """Tests for the cached_llm_call decorator."""
+
+    @pytest.fixture
+    def temp_cache_dir(self):
+        """Create a temporary cache directory."""
+        temp_dir = tempfile.mkdtemp()
+        yield temp_dir
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_decorator_caches_result(self, temp_cache_dir):
+        """Should cache function results."""
+        from deriva.adapters.llm.cache import cached_llm_call
+
+        cache_manager = CacheManager(temp_cache_dir)
+        call_count = {"count": 0}
+
+        @cached_llm_call(cache_manager)
+        def mock_llm_call(prompt: str, model: str, schema=None):
+            call_count["count"] += 1
+            return {"content": f"Response to: {prompt}"}
+
+        # First call should execute function
+        result1 = mock_llm_call("test prompt", "gpt-4")
+        assert result1["content"] == "Response to: test prompt"
+        assert call_count["count"] == 1
+
+        # Second call with same params should use lru_cache
+        result2 = mock_llm_call("test prompt", "gpt-4")
+        assert result2["content"] == "Response to: test prompt"
+        # lru_cache will prevent actual function call
+        assert call_count["count"] == 1
+
+    def test_decorator_uses_cache_manager(self, temp_cache_dir):
+        """Should store results in cache manager."""
+        from deriva.adapters.llm.cache import cached_llm_call
+
+        cache_manager = CacheManager(temp_cache_dir)
+
+        @cached_llm_call(cache_manager)
+        def mock_llm_call(prompt: str, model: str, schema=None):
+            return {"content": "cached content", "usage": {"tokens": 10}}
+
+        # Call function
+        mock_llm_call("test prompt", "gpt-4")
+
+        # Verify cache manager has the entry
+        cache_key = CacheManager.generate_cache_key("test prompt", "gpt-4", None)
+        cached = cache_manager.get(cache_key)
+        assert cached is not None
+        assert cached["content"] == "cached content"
+
+    def test_decorator_with_schema(self, temp_cache_dir):
+        """Should include schema in cache key."""
+        import json
+
+        from deriva.adapters.llm.cache import cached_llm_call
+
+        cache_manager = CacheManager(temp_cache_dir)
+
+        @cached_llm_call(cache_manager)
+        def mock_llm_call(prompt: str, model: str, schema=None):
+            return {"content": f"schema: {schema}"}
+
+        schema = {"type": "object"}
+        result = mock_llm_call("test", "gpt-4", json.dumps(schema))
+
+        assert "schema:" in result["content"]
+
+    def test_decorator_handles_no_content(self, temp_cache_dir):
+        """Should not cache results without content key."""
+        from deriva.adapters.llm.cache import cached_llm_call
+
+        cache_manager = CacheManager(temp_cache_dir)
+
+        @cached_llm_call(cache_manager)
+        def mock_llm_call(prompt: str, model: str, schema=None):
+            return {"error": "something went wrong"}  # No content key
+
+        result = mock_llm_call("test", "gpt-4")
+        assert result == {"error": "something went wrong"}
+
+        # Should not be cached (no content key)
+        cache_key = CacheManager.generate_cache_key("test", "gpt-4", None)
+        cached = cache_manager.get(cache_key)
+        assert cached is None

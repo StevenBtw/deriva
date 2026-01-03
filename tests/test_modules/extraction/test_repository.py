@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from deriva.modules.extraction.repository import (
     build_repository_node,
     extract_repository,

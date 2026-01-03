@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from deriva.adapters.archimate.models import Element, Relationship
 from deriva.adapters.archimate.validation import ArchiMateValidator, ValidationError
 

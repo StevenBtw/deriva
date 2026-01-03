@@ -6,8 +6,6 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from deriva.common.file_utils import (
     create_pipeline_result,
     read_file_with_encoding,

@@ -32,8 +32,7 @@ Internal services (used by PipelineSession):
     extraction: Extraction orchestration
     derivation: Derivation and validation orchestration
     pipeline: Full pipeline orchestration
-    benchmarking: Multi-model benchmarking with OCEL logging
-    benchmark_analysis: Post-run analysis of benchmark results
+    benchmarking: Multi-model benchmarking with OCEL logging and analysis
 """
 
 from __future__ import annotations

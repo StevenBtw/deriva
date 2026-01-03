@@ -142,10 +142,21 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["deriva/adapters", "deriva/modules", "deriva/common"]
-omit = ["*/__init__.py", "*/tests/*"]
+source = ["deriva/adapters", "deriva/modules", "deriva/common", "deriva/services"]
+omit = [
+    "*/__init__.py",
+    "*/tests/*",
+    # Marimo app (interactive UI, not unit testable)
+    "deriva/app/*",
+    # External adapters requiring infrastructure (Neo4j, Docker, etc.)
+    "deriva/adapters/neo4j/*",
+    "deriva/adapters/graph/*",
+    "deriva/adapters/database/*",
+    "deriva/adapters/archimate/*",
+]
 
 [tool.coverage.report]
+fail_under = 70
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

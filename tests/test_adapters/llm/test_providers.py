@@ -8,6 +8,7 @@ import pytest
 from deriva.adapters.llm.providers import (
     AnthropicProvider,
     AzureOpenAIProvider,
+    ClaudeCodeProvider,
     CompletionResult,
     OllamaProvider,
     OpenAIProvider,
@@ -75,6 +76,15 @@ class TestCreateProvider:
         assert isinstance(provider, OllamaProvider)
         assert provider.name == "ollama"
 
+    @patch("deriva.adapters.llm.providers.subprocess.run")
+    def test_create_claudecode_provider(self, mock_run, config):
+        """Should create ClaudeCode provider."""
+        # Mock successful CLI verification
+        mock_run.return_value = MagicMock(returncode=0)
+        provider = create_provider("claudecode", config)
+        assert isinstance(provider, ClaudeCodeProvider)
+        assert provider.name == "claudecode"
+
     def test_create_provider_case_insensitive(self, config):
         """Should handle case-insensitive provider names."""
         provider = create_provider("AZURE", config)
@@ -85,7 +95,7 @@ class TestCreateProvider:
         with pytest.raises(ValueError) as exc_info:
             create_provider("unknown", config)
         assert "Unknown provider" in str(exc_info.value)
-        assert "azure, openai, anthropic, ollama" in str(exc_info.value)
+        assert "claudecode" in str(exc_info.value)
 
 
 class TestAzureOpenAIProvider:
@@ -336,6 +346,167 @@ class TestOllamaProvider:
         call_args = mock_post.call_args
         body = call_args.kwargs["json"]
         assert body["format"] == "json"
+
+
+class TestClaudeCodeProvider:
+    """Tests for ClaudeCodeProvider."""
+
+    @pytest.fixture
+    def provider(self):
+        config = ProviderConfig(
+            api_url="cli",
+            api_key=None,
+            model="haiku",
+            timeout=60,
+        )
+        return ClaudeCodeProvider(config)
+
+    def test_name(self, provider):
+        """Should return 'claudecode' as name."""
+        assert provider.name == "claudecode"
+
+    def test_model_aliases(self, provider):
+        """Should resolve model aliases."""
+        assert provider._resolve_model("haiku") == "haiku"
+        assert provider._resolve_model("sonnet") == "sonnet"
+        assert provider._resolve_model("opus") == "opus"
+        assert provider._resolve_model("claude-haiku-4-5-20251001") == "haiku"
+
+    def test_format_prompt_user_only(self, provider):
+        """Should format user message."""
+        messages = [{"role": "user", "content": "Hello"}]
+        result = provider._format_prompt(messages)
+        assert result == "Hello"
+
+    def test_format_prompt_with_system(self, provider):
+        """Should wrap system message in tags."""
+        messages = [
+            {"role": "system", "content": "Be helpful"},
+            {"role": "user", "content": "Hi"},
+        ]
+        result = provider._format_prompt(messages)
+        assert "<system>" in result
+        assert "Be helpful" in result
+        assert "Hi" in result
+
+    @patch("deriva.adapters.llm.providers.subprocess.run")
+    def test_verify_cli_success(self, mock_run, provider):
+        """Should verify CLI is available."""
+        mock_run.return_value = MagicMock(returncode=0)
+        provider._verify_cli()
+        assert provider._cli_verified is True
+
+    @patch("deriva.adapters.llm.providers.subprocess.run")
+    def test_verify_cli_not_found(self, mock_run, provider):
+        """Should raise ProviderError when CLI not found."""
+        mock_run.side_effect = FileNotFoundError()
+        with pytest.raises(ProviderError) as exc_info:
+            provider._verify_cli()
+        assert "not found" in str(exc_info.value).lower()
+
+    @patch("deriva.adapters.llm.providers.subprocess.run")
+    def test_complete_success(self, mock_run, provider):
+        """Should parse CLI JSON output correctly."""
+        # First call for verification, second for completion
+        mock_run.side_effect = [
+            MagicMock(returncode=0),  # verify
+            MagicMock(
+                returncode=0,
+                stdout='{"result": "Hello from Claude!"}',
+                stderr="",
+            ),
+        ]
+
+        result = provider.complete(
+            messages=[{"role": "user", "content": "Hi"}],
+        )
+
+        assert isinstance(result, CompletionResult)
+        assert result.content == "Hello from Claude!"
+        assert result.finish_reason == "stop"
+
+    @patch("deriva.adapters.llm.providers.subprocess.run")
+    def test_complete_plain_text_fallback(self, mock_run, provider):
+        """Should handle plain text output."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0),  # verify
+            MagicMock(
+                returncode=0,
+                stdout="Plain text response",
+                stderr="",
+            ),
+        ]
+
+        result = provider.complete(
+            messages=[{"role": "user", "content": "Hi"}],
+        )
+
+        assert result.content == "Plain text response"
+
+    @patch("deriva.adapters.llm.providers.subprocess.run")
+    def test_complete_cli_error(self, mock_run, provider):
+        """Should raise ProviderError on CLI error."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0),  # verify
+            MagicMock(
+                returncode=1,
+                stdout="",
+                stderr="CLI error message",
+            ),
+        ]
+
+        with pytest.raises(ProviderError) as exc_info:
+            provider.complete(messages=[{"role": "user", "content": "Hi"}])
+
+        assert "CLI error" in str(exc_info.value)
+
+    def test_strip_markdown_json_block(self, provider):
+        """Should strip markdown code blocks from JSON content."""
+        content = '```json\n{"name": "test"}\n```'
+        result = provider._strip_markdown_code_block(content)
+        assert result == '{"name": "test"}'
+
+    def test_strip_markdown_plain_block(self, provider):
+        """Should strip plain markdown code blocks."""
+        content = '```\n{"name": "test"}\n```'
+        result = provider._strip_markdown_code_block(content)
+        assert result == '{"name": "test"}'
+
+    def test_strip_preserves_non_markdown(self, provider):
+        """Should preserve content without markdown blocks."""
+        content = '{"name": "test"}'
+        result = provider._strip_markdown_code_block(content)
+        assert result == '{"name": "test"}'
+
+    def test_strip_converts_python_dict_to_json(self, provider):
+        """Should convert Python dict syntax to JSON."""
+        content = "{'name': 'test'}"
+        result = provider._strip_markdown_code_block(content)
+        assert result == '{"name": "test"}'
+
+    def test_strip_handles_nested_python_dict(self, provider):
+        """Should handle nested Python dict syntax."""
+        content = "{'outer': {'inner': 'value'}}"
+        result = provider._strip_markdown_code_block(content)
+        assert result == '{"outer": {"inner": "value"}}'
+
+    @patch("deriva.adapters.llm.providers.subprocess.run")
+    def test_complete_strips_markdown_from_result(self, mock_run, provider):
+        """Should strip markdown from CLI result field."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0),  # verify
+            MagicMock(
+                returncode=0,
+                stdout='{"result": "```json\\n{\\"name\\": \\"test\\"}\\n```"}',
+                stderr="",
+            ),
+        ]
+
+        result = provider.complete(
+            messages=[{"role": "user", "content": "Hi"}],
+        )
+
+        assert result.content == '{"name": "test"}'
 
 
 class TestProviderErrors:

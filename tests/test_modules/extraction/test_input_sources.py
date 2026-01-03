@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from deriva.modules.extraction.input_sources import (
     filter_files_by_input_sources,
     get_node_sources,

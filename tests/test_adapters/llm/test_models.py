@@ -1,10 +1,12 @@
 """Tests for managers.llm.models module."""
 
+
 import pytest
 from pydantic import BaseModel, Field
 
 from deriva.adapters.llm.models import (
     BaseResponse,
+    BenchmarkModelConfig,
     CachedResponse,
     FailedResponse,
     LiveResponse,
@@ -190,3 +192,169 @@ class TestStructuredOutputMixin:
         schema = Outer.to_prompt_schema()
         # Should not crash and should include the field
         assert '"inner"' in schema
+
+    def test_array_type_in_schema(self):
+        """Should handle array types in schema."""
+
+        class WithArray(StructuredOutputMixin):
+            items: list[str] = Field(description="List of items")
+
+        schema = WithArray.to_prompt_schema()
+        assert '"items"' in schema
+        assert "List of items" in schema
+
+    def test_enum_type_in_schema(self):
+        """Should handle enum types in schema."""
+        from enum import Enum
+
+        class Status(str, Enum):
+            ACTIVE = "active"
+            INACTIVE = "inactive"
+
+        class WithEnum(StructuredOutputMixin):
+            status: Status = Field(description="Current status")
+
+        schema = WithEnum.to_prompt_schema()
+        assert '"status"' in schema
+
+
+class TestBenchmarkModelConfig:
+    """Tests for BenchmarkModelConfig dataclass."""
+
+    def test_creates_with_valid_provider(self):
+        """Should create config with valid provider."""
+        config = BenchmarkModelConfig(
+            name="test-azure",
+            provider="azure",
+            model="gpt-4",
+        )
+        assert config.name == "test-azure"
+        assert config.provider == "azure"
+        assert config.model == "gpt-4"
+
+    def test_creates_with_openai_provider(self):
+        """Should accept openai provider."""
+        config = BenchmarkModelConfig(
+            name="test-openai",
+            provider="openai",
+            model="gpt-4-turbo",
+        )
+        assert config.provider == "openai"
+
+    def test_creates_with_anthropic_provider(self):
+        """Should accept anthropic provider."""
+        config = BenchmarkModelConfig(
+            name="test-anthropic",
+            provider="anthropic",
+            model="claude-3-sonnet",
+        )
+        assert config.provider == "anthropic"
+
+    def test_creates_with_ollama_provider(self):
+        """Should accept ollama provider."""
+        config = BenchmarkModelConfig(
+            name="test-ollama",
+            provider="ollama",
+            model="llama2",
+        )
+        assert config.provider == "ollama"
+
+    def test_rejects_invalid_provider(self):
+        """Should raise ValueError for invalid provider."""
+        with pytest.raises(ValueError) as exc_info:
+            BenchmarkModelConfig(
+                name="test",
+                provider="invalid_provider",
+                model="model",
+            )
+        assert "Invalid provider" in str(exc_info.value)
+        assert "invalid_provider" in str(exc_info.value)
+
+    def test_get_api_key_direct(self):
+        """Should return direct api_key when set."""
+        config = BenchmarkModelConfig(
+            name="test",
+            provider="openai",
+            model="gpt-4",
+            api_key="sk-direct-key",
+        )
+        assert config.get_api_key() == "sk-direct-key"
+
+    def test_get_api_key_from_env(self, monkeypatch):
+        """Should read api_key from environment variable."""
+        monkeypatch.setenv("TEST_API_KEY", "sk-from-env")
+        config = BenchmarkModelConfig(
+            name="test",
+            provider="openai",
+            model="gpt-4",
+            api_key_env="TEST_API_KEY",
+        )
+        assert config.get_api_key() == "sk-from-env"
+
+    def test_get_api_key_direct_takes_precedence(self, monkeypatch):
+        """Direct api_key should take precedence over env."""
+        monkeypatch.setenv("TEST_API_KEY", "sk-from-env")
+        config = BenchmarkModelConfig(
+            name="test",
+            provider="openai",
+            model="gpt-4",
+            api_key="sk-direct",
+            api_key_env="TEST_API_KEY",
+        )
+        assert config.get_api_key() == "sk-direct"
+
+    def test_get_api_key_returns_none(self):
+        """Should return None when no key configured."""
+        config = BenchmarkModelConfig(
+            name="test",
+            provider="ollama",
+            model="llama2",
+        )
+        assert config.get_api_key() is None
+
+    def test_get_api_url_direct(self):
+        """Should return direct api_url when set."""
+        config = BenchmarkModelConfig(
+            name="test",
+            provider="azure",
+            model="gpt-4",
+            api_url="https://my-azure.openai.azure.com/",
+        )
+        assert config.get_api_url() == "https://my-azure.openai.azure.com/"
+
+    def test_get_api_url_openai_default(self):
+        """Should return OpenAI default URL."""
+        config = BenchmarkModelConfig(
+            name="test",
+            provider="openai",
+            model="gpt-4",
+        )
+        assert "openai.com" in config.get_api_url()
+
+    def test_get_api_url_anthropic_default(self):
+        """Should return Anthropic default URL."""
+        config = BenchmarkModelConfig(
+            name="test",
+            provider="anthropic",
+            model="claude-3",
+        )
+        assert "anthropic.com" in config.get_api_url()
+
+    def test_get_api_url_ollama_default(self):
+        """Should return Ollama default URL."""
+        config = BenchmarkModelConfig(
+            name="test",
+            provider="ollama",
+            model="llama2",
+        )
+        assert "localhost:11434" in config.get_api_url()
+
+    def test_get_api_url_azure_no_default(self):
+        """Azure has no default URL (requires custom endpoint)."""
+        config = BenchmarkModelConfig(
+            name="test",
+            provider="azure",
+            model="gpt-4",
+        )
+        # Azure returns empty string if no url set
+        assert config.get_api_url() == ""

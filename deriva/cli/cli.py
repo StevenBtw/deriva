@@ -207,7 +207,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     phase = getattr(args, "phase", None)
 
     print(f"\n{'=' * 60}")
-    print(f"AUTOMATE - Running {stage.upper()} pipeline")
+    print(f"DERIVA - Running {stage.upper()} pipeline")
     print(f"{'=' * 60}")
 
     if repo_name:
@@ -346,7 +346,7 @@ def _print_pipeline_result(result: dict) -> None:
 def cmd_status(args: argparse.Namespace) -> int:
     """Show current pipeline status."""
     with PipelineSession() as session:
-        print("\nAUTOMATE STATUS")
+        print("\nDERIVA STATUS")
         print("=" * 60)
 
         # Count enabled steps per type
@@ -391,7 +391,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     verbose = getattr(args, "verbose", False)
 
     print(f"\n{'=' * 60}")
-    print("AUTOMATE - Exporting ArchiMate Model")
+    print("DERIVA - Exporting ArchiMate Model")
     print(f"{'=' * 60}")
 
     with PipelineSession() as session:
@@ -421,7 +421,7 @@ def cmd_clear(args: argparse.Namespace) -> int:
     target = args.target
 
     print(f"\n{'=' * 60}")
-    print(f"AUTOMATE - Clearing {target.upper()}")
+    print(f"DERIVA - Clearing {target.upper()}")
     print(f"{'=' * 60}")
 
     with PipelineSession() as session:
@@ -587,7 +587,7 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     verbose = getattr(args, "verbose", False)
 
     print(f"\n{'=' * 60}")
-    print("AUTOMATE - Multi-Model Benchmark")
+    print("DERIVA- Multi-Model Benchmark")
     print(f"{'=' * 60}")
     print(f"Repositories: {repos}")
     print(f"Models: {models}")

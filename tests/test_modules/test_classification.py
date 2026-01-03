@@ -92,6 +92,21 @@ class TestClassifyFiles:
 
         assert result["stats"]["undefined_count"] == 2
 
+    def test_skips_malformed_registry_entries(self):
+        """Should skip registry entries missing extension or file_type."""
+        registry = [
+            {"extension": ".py", "file_type": "source"},  # Valid
+            {"extension": ".js"},  # Missing file_type
+            {"file_type": "config"},  # Missing extension
+            {},  # Missing both
+        ]
+        result = classify_files(file_paths=["main.py", "index.js"], file_type_registry=registry)
+
+        # Only .py should be classified
+        assert result["stats"]["classified_count"] == 1
+        assert result["stats"]["undefined_count"] == 1
+        assert result["classified"][0]["subtype"] == ""  # No subtype for .py entry
+
 
 class TestGetUndefinedExtensions:
     """Tests for get_undefined_extensions function."""

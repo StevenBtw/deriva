@@ -35,7 +35,7 @@ from deriva.adapters.repository import RepoManager
 from deriva.common.logging import RunLogger
 from deriva.common.types import HasToDict
 
-from . import benchmark_analysis, benchmarking, config, derivation, extraction, pipeline
+from . import benchmarking, config, derivation, extraction, pipeline
 
 
 class PipelineSession:
@@ -820,7 +820,7 @@ class PipelineSession:
 
         return orchestrator.run(verbose=verbose)
 
-    def analyze_benchmark(self, session_id: str) -> benchmark_analysis.BenchmarkAnalyzer:
+    def analyze_benchmark(self, session_id: str) -> benchmarking.BenchmarkAnalyzer:
         """
         Load and analyze a completed benchmark.
 
@@ -838,9 +838,7 @@ class PipelineSession:
         self._ensure_connected()
         assert self._engine is not None
 
-        from deriva.services import benchmark_analysis
-
-        return benchmark_analysis.BenchmarkAnalyzer(session_id, self._engine)
+        return benchmarking.BenchmarkAnalyzer(session_id, self._engine)
 
     def list_benchmarks(self, limit: int = 10) -> list[dict]:
         """

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from deriva.common.chunking import (
     MODEL_TOKEN_LIMITS,
     TOKEN_SAFETY_MARGIN,

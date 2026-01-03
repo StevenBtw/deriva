@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, Mock
-
-import pytest
+from unittest.mock import Mock
 
 from deriva.modules.derivation.generate import generate_element
 
@@ -126,10 +124,10 @@ class TestGenerateElement:
         archimate_manager = Mock()
 
         llm_response = Mock()
-        llm_response.content = '''{"elements": [
+        llm_response.content = """{"elements": [
             {"identifier": "comp-core", "name": "Core Component"},
             {"identifier": "comp-utils", "name": "Utils Component"}
-        ]}'''
+        ]}"""
         llm_query_fn = Mock(return_value=llm_response)
 
         result = generate_element(
