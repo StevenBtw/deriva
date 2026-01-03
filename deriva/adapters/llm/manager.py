@@ -155,6 +155,7 @@ class LLMManager:
         self.cache_ttl = self.config.get("cache_ttl", 0)
         self.nocache = self.config.get("nocache", False)
         self.temperature = self.config.get("temperature", 0.7)
+        self.max_tokens = self.config.get("max_tokens")  # None = provider default
 
     @classmethod
     def from_config(
@@ -237,6 +238,7 @@ class LLMManager:
         instance.cache_ttl = 0
         instance.nocache = nocache
         instance.temperature = effective_temperature
+        instance.max_tokens = None  # None = use provider default
 
         return instance
 
@@ -302,6 +304,10 @@ class LLMManager:
             else:
                 raise ConfigurationError(f"Unknown LLM provider: {provider}")
 
+        # Parse max_tokens - None if not set or empty
+        max_tokens_str = os.getenv("LLM_MAX_TOKENS", "")
+        max_tokens = int(max_tokens_str) if max_tokens_str else None
+
         return {
             "provider": provider,
             "api_url": api_url,
@@ -312,6 +318,7 @@ class LLMManager:
             "max_retries": int(os.getenv("LLM_MAX_RETRIES", "3")),
             "timeout": int(os.getenv("LLM_TIMEOUT", "60")),
             "temperature": float(os.getenv("LLM_TEMPERATURE", "0.7")),
+            "max_tokens": max_tokens,  # None = use provider default
             "nocache": os.getenv("LLM_NOCACHE", "false").strip("'\"").lower() == "true",
         }
 
@@ -458,9 +465,12 @@ Return only the JSON object, no additional text."""
             If response_model is provided: Validated Pydantic model instance or FailedResponse
             Otherwise: LiveResponse, CachedResponse, or FailedResponse
         """
-        # Use configured temperature if not explicitly provided
+        # Use configured values if not explicitly provided
         effective_temperature = (
             temperature if temperature is not None else self.temperature
+        )
+        effective_max_tokens = (
+            max_tokens if max_tokens is not None else self.max_tokens
         )
 
         # Determine if we need JSON mode
@@ -528,7 +538,7 @@ Return only the JSON object, no additional text."""
                     result = self.provider.complete(
                         messages=messages,
                         temperature=effective_temperature,
-                        max_tokens=max_tokens,
+                        max_tokens=effective_max_tokens,
                         json_mode=json_mode,
                     )
 

@@ -319,7 +319,7 @@ uv run python -m deriva.cli.cli export -o workspace/output/model.archimate
 
 ## Benchmarking
 
-Deriva includes a multi-model benchmarking system for comparing LLM performance across different providers and models.
+Deriva includes a multi-model benchmarking system for comparing LLM performance across different providers and models. See [benchmarks.md](benchmarks.md) for the full optimization guide.
 
 ### Running Benchmarks
 

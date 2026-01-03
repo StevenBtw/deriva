@@ -2,8 +2,8 @@
 
 ## Getting Help
 
-- **Issues**: For bugs and feature requests, please use [GitHub Issues](https://github.com/StevenBtw/Deriva2/issues)
-- **Discussions**: For questions and general discussion, use [GitHub Discussions](https://github.com/StevenBtw/Deriva2/discussions)
+- **Issues**: For bugs and feature requests, please use [GitHub Issues](https://github.com/StevenBtw/Deriva/issues)
+- **Discussions**: For questions and general discussion, use [GitHub Discussions](https://github.com/StevenBtw/Deriva/discussions)
 
 ## Documentation
 

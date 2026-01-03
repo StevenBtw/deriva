@@ -32,6 +32,8 @@ class ExtractionConfig:
         instruction: str | None,
         example: str | None,
         extraction_method: str = "llm",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ):
         self.node_type = node_type
         self.sequence = sequence
@@ -40,6 +42,8 @@ class ExtractionConfig:
         self.instruction = instruction
         self.example = example
         self.extraction_method = extraction_method  # 'llm', 'ast', or 'structural'
+        self.temperature = temperature  # None = use env default (LLM_TEMPERATURE)
+        self.max_tokens = max_tokens  # None = use env default (LLM_MAX_TOKENS)
 
 
 class DerivationConfig:
@@ -57,6 +61,8 @@ class DerivationConfig:
         instruction: str | None,
         example: str | None,
         params: str | None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ):
         self.step_name = step_name
         self.phase = phase  # "prep" | "generate" | "refine"
@@ -68,6 +74,8 @@ class DerivationConfig:
         self.instruction = instruction
         self.example = example
         self.params = params  # JSON parameters for graph algorithms
+        self.temperature = temperature  # None = use env default (LLM_TEMPERATURE)
+        self.max_tokens = max_tokens  # None = use env default (LLM_MAX_TOKENS)
 
     # Backward compatibility alias
     @property
@@ -114,7 +122,8 @@ def get_extraction_configs(engine: Any, enabled_only: bool = False) -> list[Extr
         List of ExtractionConfig objects ordered by sequence
     """
     query = """
-        SELECT node_type, sequence, enabled, input_sources, instruction, example, extraction_method
+        SELECT node_type, sequence, enabled, input_sources, instruction, example,
+               extraction_method, temperature, max_tokens
         FROM extraction_config
         WHERE is_active = TRUE
     """
@@ -132,6 +141,8 @@ def get_extraction_configs(engine: Any, enabled_only: bool = False) -> list[Extr
             instruction=row[4],
             example=row[5],
             extraction_method=row[6] or "llm",
+            temperature=row[7],
+            max_tokens=row[8],
         )
         for row in rows
     ]
@@ -150,7 +161,8 @@ def get_extraction_config(engine: Any, node_type: str) -> ExtractionConfig | Non
     """
     row = engine.execute(
         """
-        SELECT node_type, sequence, enabled, input_sources, instruction, example, extraction_method
+        SELECT node_type, sequence, enabled, input_sources, instruction, example,
+               extraction_method, temperature, max_tokens
         FROM extraction_config
         WHERE node_type = ? AND is_active = TRUE
         """,
@@ -168,6 +180,8 @@ def get_extraction_config(engine: Any, node_type: str) -> ExtractionConfig | Non
         instruction=row[4],
         example=row[5],
         extraction_method=row[6] or "llm",
+        temperature=row[7],
+        max_tokens=row[8],
     )
 
 
@@ -180,6 +194,8 @@ def update_extraction_config(
     instruction: str | None = None,
     example: str | None = None,
     input_sources: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> bool:
     """
     Update an extraction configuration.
@@ -192,6 +208,8 @@ def update_extraction_config(
         instruction: LLM instruction prompt
         example: Example output for LLM
         input_sources: JSON string of input sources
+        temperature: LLM temperature override (None = use env default)
+        max_tokens: LLM max_tokens override (None = use env default)
 
     Returns:
         True if updated, False if not found
@@ -214,6 +232,12 @@ def update_extraction_config(
     if input_sources is not None:
         updates.append("input_sources = ?")
         params.append(input_sources)
+    if temperature is not None:
+        updates.append("temperature = ?")
+        params.append(temperature)
+    if max_tokens is not None:
+        updates.append("max_tokens = ?")
+        params.append(max_tokens)
 
     if not updates:
         return False
@@ -250,7 +274,7 @@ def get_derivation_configs(
     """
     query = """
         SELECT step_name, phase, sequence, enabled, llm, input_graph_query,
-               input_model_query, instruction, example, params
+               input_model_query, instruction, example, params, temperature, max_tokens
         FROM derivation_config
         WHERE is_active = TRUE
     """
@@ -285,6 +309,8 @@ def get_derivation_configs(
             instruction=row[7],
             example=row[8],
             params=row[9],
+            temperature=row[10],
+            max_tokens=row[11],
         )
         for row in rows
     ]
@@ -295,7 +321,7 @@ def get_derivation_config(engine: Any, step_name: str) -> DerivationConfig | Non
     row = engine.execute(
         """
         SELECT step_name, phase, sequence, enabled, llm, input_graph_query,
-               input_model_query, instruction, example, params
+               input_model_query, instruction, example, params, temperature, max_tokens
         FROM derivation_config
         WHERE step_name = ? AND is_active = TRUE
         """,
@@ -316,6 +342,8 @@ def get_derivation_config(engine: Any, step_name: str) -> DerivationConfig | Non
         instruction=row[7],
         example=row[8],
         params=row[9],
+        temperature=row[10],
+        max_tokens=row[11],
     )
 
 
@@ -330,6 +358,8 @@ def update_derivation_config(
     instruction: str | None = None,
     example: str | None = None,
     params: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> bool:
     """Update a derivation configuration."""
     updates = []
@@ -356,6 +386,12 @@ def update_derivation_config(
     if params is not None:
         updates.append("params = ?")
         query_params.append(params)
+    if temperature is not None:
+        updates.append("temperature = ?")
+        query_params.append(temperature)
+    if max_tokens is not None:
+        updates.append("max_tokens = ?")
+        query_params.append(max_tokens)
 
     if not updates:
         return False
@@ -583,6 +619,8 @@ def create_derivation_config_version(
     input_model_query: str | None = None,
     params: str | None = None,
     enabled: bool | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """
     Create a new version of a derivation config (versioned update).
@@ -598,6 +636,8 @@ def create_derivation_config_version(
         input_model_query: New model query (or None to keep current)
         params: New params JSON (or None to keep current)
         enabled: Enable/disable (or None to keep current)
+        temperature: LLM temperature override (or None to keep current)
+        max_tokens: LLM max_tokens override (or None to keep current)
 
     Returns:
         Dict with success, new_version, old_version
@@ -606,7 +646,8 @@ def create_derivation_config_version(
     current = engine.execute(
         """
         SELECT id, version, phase, sequence, enabled, llm,
-               input_graph_query, input_model_query, instruction, example, params
+               input_graph_query, input_model_query, instruction, example, params,
+               temperature, max_tokens
         FROM derivation_config
         WHERE step_name = ? AND is_active = TRUE
         """,
@@ -616,7 +657,11 @@ def create_derivation_config_version(
     if not current:
         return {"success": False, "error": f"Config not found for {step_name}"}
 
-    (old_id, old_version, phase, sequence, cur_enabled, llm, cur_graph_query, cur_model_query, cur_instruction, cur_example, cur_params) = current
+    (
+        old_id, old_version, phase, sequence, cur_enabled, llm,
+        cur_graph_query, cur_model_query, cur_instruction, cur_example, cur_params,
+        cur_temperature, cur_max_tokens
+    ) = current
     new_version = old_version + 1
 
     # Use current values if not provided
@@ -626,6 +671,8 @@ def create_derivation_config_version(
     new_model_query = input_model_query if input_model_query is not None else cur_model_query
     new_params = params if params is not None else cur_params
     new_enabled = enabled if enabled is not None else cur_enabled
+    new_temperature = temperature if temperature is not None else cur_temperature
+    new_max_tokens = max_tokens if max_tokens is not None else cur_max_tokens
 
     # Deactivate old config
     engine.execute(
@@ -643,10 +690,14 @@ def create_derivation_config_version(
         INSERT INTO derivation_config
         (id, step_name, phase, version, sequence, enabled, llm,
          input_graph_query, input_model_query, instruction, example, params,
-         is_active, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
+         temperature, max_tokens, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
         """,
-        [next_id, step_name, phase, new_version, sequence, new_enabled, llm, new_graph_query, new_model_query, new_instruction, new_example, new_params],
+        [
+            next_id, step_name, phase, new_version, sequence, new_enabled, llm,
+            new_graph_query, new_model_query, new_instruction, new_example, new_params,
+            new_temperature, new_max_tokens
+        ],
     )
 
     return {
@@ -665,11 +716,14 @@ def create_extraction_config_version(
     example: str | None = None,
     input_sources: str | None = None,
     enabled: bool | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Create a new version of an extraction config."""
     current = engine.execute(
         """
-        SELECT id, version, sequence, enabled, input_sources, instruction, example
+        SELECT id, version, sequence, enabled, input_sources, instruction, example,
+               temperature, max_tokens
         FROM extraction_config
         WHERE node_type = ? AND is_active = TRUE
         """,
@@ -679,13 +733,18 @@ def create_extraction_config_version(
     if not current:
         return {"success": False, "error": f"Config not found for {node_type}"}
 
-    old_id, old_version, sequence, cur_enabled, cur_sources, cur_instruction, cur_example = current
+    (
+        old_id, old_version, sequence, cur_enabled, cur_sources,
+        cur_instruction, cur_example, cur_temperature, cur_max_tokens
+    ) = current
     new_version = old_version + 1
 
     new_instruction = instruction if instruction is not None else cur_instruction
     new_example = example if example is not None else cur_example
     new_sources = input_sources if input_sources is not None else cur_sources
     new_enabled = enabled if enabled is not None else cur_enabled
+    new_temperature = temperature if temperature is not None else cur_temperature
+    new_max_tokens = max_tokens if max_tokens is not None else cur_max_tokens
 
     engine.execute(
         "UPDATE extraction_config SET is_active = FALSE WHERE id = ?",
@@ -693,16 +752,22 @@ def create_extraction_config_version(
     )
 
     # Get next ID
-    next_id_result = engine.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM extraction_config").fetchone()
+    next_id_result = engine.execute(
+        "SELECT COALESCE(MAX(id), 0) + 1 FROM extraction_config"
+    ).fetchone()
     next_id = next_id_result[0]
 
     engine.execute(
         """
         INSERT INTO extraction_config
-        (id, node_type, version, sequence, enabled, input_sources, instruction, example, is_active, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
+        (id, node_type, version, sequence, enabled, input_sources, instruction, example,
+         temperature, max_tokens, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
         """,
-        [next_id, node_type, new_version, sequence, new_enabled, new_sources, new_instruction, new_example],
+        [
+            next_id, node_type, new_version, sequence, new_enabled, new_sources,
+            new_instruction, new_example, new_temperature, new_max_tokens
+        ],
     )
 
     return {

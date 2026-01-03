@@ -145,23 +145,29 @@ class TestGetExtractionConfigs:
     def test_returns_all_configs(self):
         """Should return all active extraction configs."""
         engine = MagicMock()
+        # Columns: node_type, sequence, enabled, input_sources, instruction, example,
+        #          extraction_method, temperature, max_tokens
         engine.execute.return_value.fetchall.return_value = [
-            ("BusinessConcept", 1, True, '{"files": []}', "instruction1", "example1", "llm"),
-            ("TypeDefinition", 2, True, '{"files": []}', "instruction2", "example2", "ast"),
+            ("BusinessConcept", 1, True, '{"files": []}', "instruction1", "example1", "llm", None, None),
+            ("TypeDefinition", 2, True, '{"files": []}', "instruction2", "example2", "ast", 0.5, 2000),
         ]
 
         configs = get_extraction_configs(engine)
 
         assert len(configs) == 2
         assert configs[0].node_type == "BusinessConcept"
+        assert configs[0].temperature is None
+        assert configs[0].max_tokens is None
         assert configs[1].node_type == "TypeDefinition"
         assert configs[1].extraction_method == "ast"
+        assert configs[1].temperature == 0.5
+        assert configs[1].max_tokens == 2000
 
     def test_filters_enabled_only(self):
         """Should filter to enabled configs when requested."""
         engine = MagicMock()
         engine.execute.return_value.fetchall.return_value = [
-            ("BusinessConcept", 1, True, None, None, None, "llm"),
+            ("BusinessConcept", 1, True, None, None, None, "llm", None, None),
         ]
 
         configs = get_extraction_configs(engine, enabled_only=True)
@@ -184,7 +190,7 @@ class TestGetExtractionConfigs:
         """Should default extraction_method to llm when None."""
         engine = MagicMock()
         engine.execute.return_value.fetchall.return_value = [
-            ("BusinessConcept", 1, True, None, None, None, None),
+            ("BusinessConcept", 1, True, None, None, None, None, None, None),
         ]
 
         configs = get_extraction_configs(engine)
@@ -198,8 +204,10 @@ class TestGetExtractionConfig:
     def test_returns_config_when_found(self):
         """Should return config when found."""
         engine = MagicMock()
+        # Columns: node_type, sequence, enabled, input_sources, instruction, example,
+        #          extraction_method, temperature, max_tokens
         engine.execute.return_value.fetchone.return_value = (
-            "BusinessConcept", 1, True, '{"files": []}', "instruction", "example", "llm"
+            "BusinessConcept", 1, True, '{"files": []}', "instruction", "example", "llm", 0.7, 4096
         )
 
         config = get_extraction_config(engine, "BusinessConcept")
@@ -207,6 +215,8 @@ class TestGetExtractionConfig:
         assert config is not None
         assert config.node_type == "BusinessConcept"
         assert config.enabled is True
+        assert config.temperature == 0.7
+        assert config.max_tokens == 4096
 
     def test_returns_none_when_not_found(self):
         """Should return None when config not found."""
@@ -266,9 +276,11 @@ class TestGetDerivationConfigs:
     def test_returns_all_configs(self):
         """Should return all active derivation configs."""
         engine = MagicMock()
+        # Columns: step_name, phase, sequence, enabled, llm, input_graph_query, input_model_query,
+        #          instruction, example, params, temperature, max_tokens
         engine.execute.return_value.fetchall.return_value = [
-            ("PageRank", "prep", 1, True, False, "MATCH (n) RETURN n", None, None, None, '{"damping": 0.85}'),
-            ("ApplicationComponent", "generate", 1, True, True, None, None, "instruction", "example", None),
+            ("PageRank", "prep", 1, True, False, "MATCH (n) RETURN n", None, None, None, '{"damping": 0.85}', None, None),
+            ("ApplicationComponent", "generate", 1, True, True, None, None, "instruction", "example", None, 0.5, 2000),
         ]
 
         configs = get_derivation_configs(engine)
@@ -277,14 +289,20 @@ class TestGetDerivationConfigs:
         assert configs[0].step_name == "PageRank"
         assert configs[0].phase == "prep"
         assert configs[0].llm is False
+        assert configs[0].temperature is None
+        assert configs[0].max_tokens is None
         assert configs[1].step_name == "ApplicationComponent"
         assert configs[1].llm is True
+        assert configs[1].temperature == 0.5
+        assert configs[1].max_tokens == 2000
 
     def test_filters_by_phase(self):
         """Should filter by phase when specified."""
         engine = MagicMock()
+        # Columns: step_name, phase, sequence, enabled, llm, input_graph_query, input_model_query,
+        #          instruction, example, params, temperature, max_tokens
         engine.execute.return_value.fetchall.return_value = [
-            ("ApplicationComponent", "generate", 1, True, True, None, None, None, None, None),
+            ("ApplicationComponent", "generate", 1, True, True, None, None, None, None, None, None, None),
         ]
 
         configs = get_derivation_configs(engine, phase="generate")
@@ -321,8 +339,10 @@ class TestGetDerivationConfig:
     def test_returns_config_when_found(self):
         """Should return config when found."""
         engine = MagicMock()
+        # Columns: step_name, phase, sequence, enabled, llm, input_graph_query, input_model_query,
+        #          instruction, example, params, temperature, max_tokens
         engine.execute.return_value.fetchone.return_value = (
-            "ApplicationComponent", "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None
+            "ApplicationComponent", "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None, 0.8, 3000
         )
 
         config = get_derivation_config(engine, "ApplicationComponent")
@@ -330,6 +350,8 @@ class TestGetDerivationConfig:
         assert config is not None
         assert config.step_name == "ApplicationComponent"
         assert config.phase == "generate"
+        assert config.temperature == 0.8
+        assert config.max_tokens == 3000
 
     def test_returns_none_when_not_found(self):
         """Should return None when config not found."""

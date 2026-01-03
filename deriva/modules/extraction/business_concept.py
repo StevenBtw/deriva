@@ -11,7 +11,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from .base import current_timestamp
+from .base import current_timestamp, strip_chunk_suffix
 
 # JSON schema for LLM structured output
 BUSINESS_CONCEPT_SCHEMA = {
@@ -323,7 +323,9 @@ def extract_business_concepts(
             }
 
         # Build nodes for each concept
-        safe_path = file_path.replace("/", "_").replace("\\", "_")
+        # Strip chunk suffix from file_path to get original file node ID
+        original_path = strip_chunk_suffix(file_path)
+        safe_path = original_path.replace("/", "_").replace("\\", "_")
         file_node_id = f"file_{repo_name}_{safe_path}"
 
         for concept_data in parse_result["data"]:

@@ -124,6 +124,80 @@ def seed_database(force: bool = False) -> bool:
     return True
 
 
+def run_migrations() -> int:
+    """Run any pending migrations (ALTER TABLE scripts).
+
+    Migrations are scripts that start with a digit and contain ALTER statements.
+    This function safely skips columns that already exist.
+
+    Returns:
+        Number of migrations applied
+    """
+    conn = get_connection()
+    migrations_applied = 0
+
+    # Find migration scripts (numbered SQL files)
+    migration_files = sorted(
+        [
+            f
+            for f in SCRIPTS_DIR.glob("*.sql")
+            if f.stem[0].isdigit() and int(f.stem.split("_")[0]) >= 7  # Migrations start at 7
+        ]
+    )
+
+    for migration_file in migration_files:
+        with open(migration_file, encoding="utf-8") as f:
+            sql = f.read()
+
+        # Process ALTER TABLE ADD COLUMN statements safely
+        statements = [s.strip() for s in sql.split(";") if s.strip()]
+
+        for statement in statements:
+            if not statement or statement.startswith("--"):
+                continue
+
+            # Check if this is an ALTER TABLE ADD COLUMN
+            if "ALTER TABLE" in statement.upper() and "ADD COLUMN" in statement.upper():
+                # Extract table and column names
+                try:
+                    # Parse: ALTER TABLE table_name ADD COLUMN column_name TYPE
+                    parts = statement.upper().split()
+                    table_idx = parts.index("TABLE") + 1
+                    col_idx = parts.index("COLUMN") + 1
+                    table_name = statement.split()[table_idx]
+                    col_name = statement.split()[col_idx]
+
+                    # Check if column already exists
+                    result = conn.execute(
+                        """
+                        SELECT COUNT(*) FROM information_schema.columns
+                        WHERE table_name = ? AND column_name = ?
+                        """,
+                        [table_name.lower(), col_name.lower()],
+                    ).fetchone()
+
+                    if result and result[0] > 0:
+                        logger.debug("Column %s.%s already exists, skipping", table_name, col_name)
+                        continue
+
+                    # Column doesn't exist, add it
+                    conn.execute(statement)
+                    migrations_applied += 1
+                    logger.info("Added column %s.%s", table_name, col_name)
+
+                except Exception as e:
+                    logger.warning("Migration statement failed: %s - %s", statement[:50], e)
+            else:
+                # Non-ALTER statements, just run them
+                try:
+                    conn.execute(statement)
+                except Exception as e:
+                    logger.debug("Statement failed (may be expected): %s", e)
+
+    conn.close()
+    return migrations_applied
+
+
 def reset_database() -> None:
     """Drop all tables and recreate from scratch.
 
@@ -152,9 +226,12 @@ def reset_database() -> None:
 
 
 if __name__ == "__main__":
-    # When run directly, initialize and seed
+    # When run directly, initialize, seed, and run migrations
     logging.basicConfig(level=logging.INFO)
     logger.info("Initializing Deriva database...")
     init_database()
     seed_database()
+    migrations = run_migrations()
+    if migrations > 0:
+        logger.info("Applied %d migrations", migrations)
     logger.info("Done!")

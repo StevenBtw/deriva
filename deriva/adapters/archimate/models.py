@@ -125,49 +125,111 @@ ELEMENT_TYPES: dict[str, ElementType] = {
 }
 
 
-# ArchiMate 3.1 Relationship Types
+# =============================================================================
+# Element Type Groupings by Aspect (for relationship constraints)
+# =============================================================================
+
+# Structure elements (active structure)
+STRUCTURE_ELEMENTS: set[str] = {
+    "ApplicationComponent",
+    "ApplicationInterface",
+    "BusinessActor",
+    "Node",
+    "Device",
+    "SystemSoftware",
+}
+
+# Behavior elements (processes, services, functions)
+BEHAVIOR_ELEMENTS: set[str] = {
+    "ApplicationService",
+    "BusinessProcess",
+    "BusinessFunction",
+    "BusinessEvent",
+    "TechnologyService",
+}
+
+# Passive elements (data/objects)
+PASSIVE_ELEMENTS: set[str] = {
+    "DataObject",
+    "BusinessObject",
+}
+
+# All elements
+ALL_ELEMENTS: set[str] = STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS | PASSIVE_ELEMENTS
+
+# Layer groupings
+APPLICATION_LAYER: set[str] = {
+    "ApplicationComponent",
+    "ApplicationInterface",
+    "ApplicationService",
+    "DataObject",
+}
+
+BUSINESS_LAYER: set[str] = {
+    "BusinessActor",
+    "BusinessProcess",
+    "BusinessFunction",
+    "BusinessEvent",
+    "BusinessObject",
+}
+
+TECHNOLOGY_LAYER: set[str] = {
+    "Node",
+    "Device",
+    "SystemSoftware",
+    "TechnologyService",
+}
+
+
+# =============================================================================
+# ArchiMate 3.1 Relationship Types with Constraints
+# =============================================================================
+
 RELATIONSHIP_TYPES: dict[str, RelationshipType] = {
+    # Structural Relationships
     "Composition": RelationshipType(
         name="Composition",
-        description="Indicates that an element consists of one or more other concepts",
-        allowed_sources=set(),  # Any element can be source
-        allowed_targets=set(),  # Any element can be target
+        description="Element consists of other elements (same aspect, same layer)",
+        allowed_sources=STRUCTURE_ELEMENTS,  # Only structure elements can compose
+        allowed_targets=STRUCTURE_ELEMENTS,  # Only structure elements can be composed
     ),
     "Aggregation": RelationshipType(
         name="Aggregation",
-        description="Indicates that an element combines one or more other concepts",
-        allowed_sources=set(),
-        allowed_targets=set(),
+        description="Element combines other elements (same or compatible aspects)",
+        allowed_sources=STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS,
+        allowed_targets=STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS | PASSIVE_ELEMENTS,
     ),
+    # Dependency Relationships
     "Assignment": RelationshipType(
         name="Assignment",
-        description="Allocates responsibility, performance, or execution",
-        allowed_sources=set(),
-        allowed_targets=set(),
+        description="Structure element performs or is responsible for behavior",
+        allowed_sources=STRUCTURE_ELEMENTS,  # Only structure elements can be assigned
+        allowed_targets=BEHAVIOR_ELEMENTS,  # Only to behavior elements
     ),
     "Realization": RelationshipType(
         name="Realization",
-        description="Indicates that an entity plays a critical role in the creation of another",
-        allowed_sources=set(),
-        allowed_targets=set(),
+        description="Structure element realizes behavior; lower layer realizes higher",
+        allowed_sources=STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS,
+        allowed_targets=BEHAVIOR_ELEMENTS | PASSIVE_ELEMENTS,
     ),
     "Serving": RelationshipType(
         name="Serving",
-        description="Indicates that an element provides services to another element",
-        allowed_sources=set(),
-        allowed_targets=set(),
+        description="Element provides services to another element",
+        allowed_sources=BEHAVIOR_ELEMENTS | STRUCTURE_ELEMENTS,  # Services/components serve
+        allowed_targets=STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS,  # Other elements are served
     ),
     "Access": RelationshipType(
         name="Access",
-        description="Models the ability to observe or act upon passive structure elements",
-        allowed_sources=set(),
-        allowed_targets={"DataObject"},  # Typically targets passive elements
+        description="Behavior/structure accesses passive elements (data)",
+        allowed_sources=BEHAVIOR_ELEMENTS | STRUCTURE_ELEMENTS,
+        allowed_targets=PASSIVE_ELEMENTS,  # Only passive elements can be accessed
     ),
+    # Dynamic Relationships
     "Flow": RelationshipType(
         name="Flow",
-        description="Transfer of information or value between elements",
-        allowed_sources=set(),
-        allowed_targets=set(),
+        description="Transfer of information between behavior elements",
+        allowed_sources=BEHAVIOR_ELEMENTS,  # Only behavior elements can flow
+        allowed_targets=BEHAVIOR_ELEMENTS,  # Only to behavior elements
     ),
 }
 
@@ -256,6 +318,46 @@ class ArchiMateMetamodel:
     def get_elements_by_layer(self, layer: str) -> list[str]:
         """Get all element types in a specific layer."""
         return [name for name, et in self.element_types.items() if et.layer == layer]
+
+    def get_valid_relationships_from(
+        self, source_element_type: str
+    ) -> list[dict[str, Any]]:
+        """Get valid relationship types and their allowed targets for a source element type.
+
+        Args:
+            source_element_type: The source element type (e.g., "ApplicationComponent")
+
+        Returns:
+            List of dicts with relationship_type, description, and allowed_targets
+        """
+        if not self.is_valid_element_type(source_element_type):
+            return []
+
+        valid_relationships = []
+
+        for rel_name, rel_type in self.relationship_types.items():
+            # Check if source is allowed (empty set means any source is allowed)
+            if rel_type.allowed_sources and source_element_type not in rel_type.allowed_sources:
+                continue
+
+            # Determine allowed targets
+            if rel_type.allowed_targets:
+                # Only include target types that exist in our element_types
+                allowed_targets = [
+                    t for t in rel_type.allowed_targets if t in self.element_types
+                ]
+            else:
+                # All element types are allowed
+                allowed_targets = list(self.element_types.keys())
+
+            if allowed_targets:  # Only include if there are valid targets
+                valid_relationships.append({
+                    "relationship_type": rel_name,
+                    "description": rel_type.description,
+                    "allowed_targets": allowed_targets,
+                })
+
+        return valid_relationships
 
 
 # =============================================================================

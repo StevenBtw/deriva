@@ -20,10 +20,15 @@ from deriva.common.types import PipelineResult
 
 if TYPE_CHECKING:
     from deriva.common.logging import RunLogger
-from deriva.adapters.archimate.models import RELATIONSHIP_TYPES, Relationship
+from deriva.adapters.archimate.models import (
+    RELATIONSHIP_TYPES,
+    ArchiMateMetamodel,
+    Relationship,
+)
 from deriva.adapters.graph import GraphManager
 from deriva.modules.derivation import (
     RELATIONSHIP_SCHEMA,
+    build_element_relationship_prompt,
     build_relationship_prompt,
     parse_relationship_response,
 )
@@ -110,14 +115,14 @@ def run_derivation(
         llm_query_fn: Function to call LLM (prompt, schema) -> response
         enabled_only: Only run enabled derivation steps
         verbose: Print progress to stdout
-        phases: List of phases to run ("prep", "generate").
+        phases: List of phases to run ("prep", "generate", "relationship").
         run_logger: Optional RunLogger for structured logging
 
     Returns:
         Dict with success, stats, errors
     """
     if phases is None:
-        phases = ["prep", "generate"]
+        phases = ["prep", "generate", "relationship"]
 
     stats = {
         "elements_created": 0,
@@ -127,6 +132,11 @@ def run_derivation(
     }
     errors: list[str] = []
     all_created_elements: list[dict] = []
+
+    # Check if per-element relationship configs exist
+    rel_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="relationship")
+    rel_config_map = {c.step_name.replace("_relationships", ""): c for c in rel_configs}
+    use_per_element_relationships = bool(rel_configs) and "relationship" in phases
 
     # Start phase logging
     if run_logger:
@@ -179,11 +189,20 @@ def run_derivation(
             if run_logger:
                 step_ctx = run_logger.step_start(cfg.step_name, f"Generating {cfg.element_type} elements")
 
+            # Wrap llm_query_fn with per-step temperature/max_tokens overrides
+            def step_llm_query_fn(prompt: str, schema: dict) -> Any:
+                return llm_query_fn(
+                    prompt,
+                    schema,
+                    temperature=cfg.temperature,
+                    max_tokens=cfg.max_tokens,
+                )
+
             try:
                 step_result = generate_element(
                     graph_manager=graph_manager,
                     archimate_manager=archimate_manager,
-                    llm_query_fn=llm_query_fn,
+                    llm_query_fn=step_llm_query_fn,
                     element_type=cfg.element_type,
                     query=cfg.input_graph_query or "",
                     instruction=cfg.instruction or "",
@@ -198,8 +217,31 @@ def run_derivation(
                     step_ctx.items_created = elements_created
                     step_ctx.complete()
 
-                if step_result.get("created_elements"):
-                    all_created_elements.extend(step_result["created_elements"])
+                step_created_elements = step_result.get("created_elements", [])
+                if step_created_elements:
+                    all_created_elements.extend(step_created_elements)
+
+                    # Per-element relationship derivation (if configured)
+                    if use_per_element_relationships and cfg.element_type in rel_config_map:
+                        rel_cfg = rel_config_map[cfg.element_type]
+                        if verbose:
+                            print(f"    Deriving relationships FROM {cfg.element_type}...")
+
+                        rel_result = _derive_element_relationships(
+                            source_element_type=cfg.element_type,
+                            source_elements=step_created_elements,
+                            all_elements=all_created_elements,
+                            archimate_manager=archimate_manager,
+                            llm_query_fn=llm_query_fn,
+                            instruction=rel_cfg.instruction,
+                            example=rel_cfg.example,
+                            temperature=rel_cfg.temperature,
+                            max_tokens=rel_cfg.max_tokens,
+                        )
+
+                        stats["relationships_created"] += rel_result.get("relationships_created", 0)
+                        if rel_result.get("errors"):
+                            errors.extend(rel_result["errors"])
 
                 if step_result.get("errors"):
                     errors.extend(step_result["errors"])
@@ -210,10 +252,10 @@ def run_derivation(
                 if step_ctx:
                     step_ctx.error(str(e))
 
-        # Derive relationships between created elements
-        if all_created_elements and len(all_created_elements) > 1:
+        # Fallback: Derive relationships using single-pass if no per-element configs exist
+        if not use_per_element_relationships and all_created_elements and len(all_created_elements) > 1:
             if verbose:
-                print(f"  Deriving relationships between {len(all_created_elements)} elements...")
+                print(f"  Deriving relationships between {len(all_created_elements)} elements (single-pass)...")
 
             rel_result = _derive_relationships(
                 elements=all_created_elements,
@@ -292,6 +334,139 @@ def _derive_relationships(
             errors.append(f"Relationship target not found: {target_ref}")
             continue
 
+        relationship = Relationship(
+            source=source,
+            target=target,
+            relationship_type=rel_type,
+            name=rel_data.get("name"),
+            properties={"confidence": rel_data.get("confidence", 0.5)},
+        )
+
+        try:
+            archimate_manager.add_relationship(relationship)
+            relationships_created += 1
+        except Exception as e:
+            errors.append(f"Failed to persist relationship: {e}")
+
+    return {
+        "relationships_created": relationships_created,
+        "errors": errors,
+    }
+
+
+def _derive_element_relationships(
+    source_element_type: str,
+    source_elements: list[dict],
+    all_elements: list[dict],
+    archimate_manager: ArchimateManager,
+    llm_query_fn: Callable | None,
+    instruction: str | None = None,
+    example: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    """Derive relationships FROM a specific element type using metamodel constraints.
+
+    Args:
+        source_element_type: ArchiMate element type of the source elements
+        source_elements: Elements of the current type to derive relationships FROM
+        all_elements: All elements available as potential targets
+        archimate_manager: ArchimateManager for persistence
+        llm_query_fn: Function to call LLM (prompt, schema) -> response
+        instruction: Custom instruction from database config
+        example: Custom example from database config
+        temperature: LLM temperature override
+        max_tokens: LLM max_tokens override
+
+    Returns:
+        Dict with relationships_created and errors
+    """
+    relationships_created = 0
+    errors: list[str] = []
+
+    if llm_query_fn is None:
+        return {"relationships_created": 0, "errors": ["LLM not configured"]}
+
+    if not source_elements:
+        return {"relationships_created": 0, "errors": []}
+
+    # Get valid relationships from metamodel
+    metamodel = ArchiMateMetamodel()
+    valid_relationships = metamodel.get_valid_relationships_from(source_element_type)
+
+    if not valid_relationships:
+        logger.warning(f"No valid relationships for {source_element_type}")
+        return {"relationships_created": 0, "errors": []}
+
+    # Build element-specific prompt
+    prompt = build_element_relationship_prompt(
+        source_elements=source_elements,
+        target_elements=all_elements,
+        source_element_type=source_element_type,
+        valid_relationships=valid_relationships,
+        instruction=instruction,
+        example=example,
+    )
+
+    # Call LLM with per-step overrides if provided
+    try:
+        if temperature is not None or max_tokens is not None:
+            response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA, temperature=temperature, max_tokens=max_tokens)
+        else:
+            response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA)
+        response_content = response.content if hasattr(response, "content") else str(response)
+    except Exception as e:
+        return {"relationships_created": 0, "errors": [f"LLM error: {e}"]}
+
+    parse_result = parse_relationship_response(response_content)
+
+    if not parse_result["success"]:
+        return {"relationships_created": 0, "errors": parse_result.get("errors", [])}
+
+    # Build lookup maps for identifier resolution and element types
+    source_ids = {e["identifier"] for e in source_elements}
+    all_ids = {e["identifier"] for e in all_elements}
+    element_type_lookup = {e["identifier"]: e.get("element_type", "") for e in all_elements}
+
+    # Build normalized lookup for fuzzy matching
+    normalized_lookup = {_normalize_identifier(eid): eid for eid in all_ids}
+
+    def resolve_identifier(ref: str, valid_set: set[str]) -> str | None:
+        """Resolve identifier with fuzzy matching fallback."""
+        if ref in valid_set:
+            return ref
+        # Try normalized matching
+        normalized = _normalize_identifier(ref)
+        resolved = normalized_lookup.get(normalized)
+        if resolved and resolved in valid_set:
+            return resolved
+        return None
+
+    for rel_data in parse_result["data"]:
+        source_ref = rel_data.get("source")
+        target_ref = rel_data.get("target")
+        rel_type = _normalize_relationship_type(rel_data.get("relationship_type", "Association"))
+
+        # Resolve identifiers
+        source = resolve_identifier(source_ref, source_ids)
+        target = resolve_identifier(target_ref, all_ids)
+
+        if source is None:
+            errors.append(f"Relationship source not found in {source_element_type} elements: {source_ref}")
+            continue
+        if target is None:
+            errors.append(f"Relationship target not found: {target_ref}")
+            continue
+
+        # Validate relationship using metamodel
+        target_type = element_type_lookup.get(target, "")
+        can_relate, reason = metamodel.can_relate(source_element_type, rel_type, target_type)
+
+        if not can_relate:
+            errors.append(f"Invalid relationship rejected: {reason}")
+            continue
+
+        # Create and persist relationship
         relationship = Relationship(
             source=source,
             target=target,

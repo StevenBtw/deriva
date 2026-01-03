@@ -34,6 +34,7 @@ from .file_utils import (
 )
 from .json_utils import (
     ParseResult,
+    extract_json_from_response,
     parse_json_array,
 )
 from .llm_utils import (
@@ -160,6 +161,7 @@ __all__ = [
     "calculate_duration_ms",
     # JSON utils
     "parse_json_array",
+    "extract_json_from_response",
     "ParseResult",
     # LLM utils
     "create_empty_llm_details",

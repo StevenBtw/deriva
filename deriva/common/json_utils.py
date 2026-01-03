@@ -6,9 +6,47 @@ Provides consistent JSON parsing with error handling for LLM responses.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
-__all__ = ["parse_json_array", "ParseResult"]
+__all__ = ["parse_json_array", "ParseResult", "extract_json_from_response"]
+
+
+def extract_json_from_response(content: str) -> str:
+    """
+    Extract JSON from LLM response, handling common wrapping patterns.
+
+    Handles:
+    - Markdown code blocks (```json ... ``` or ``` ... ```)
+    - Leading/trailing whitespace
+    - Raw JSON (passed through as-is)
+
+    Args:
+        content: Raw LLM response that may contain JSON
+
+    Returns:
+        Extracted JSON string ready for parsing
+    """
+    content = content.strip()
+
+    # Handle markdown code blocks: ```json ... ``` or ``` ... ```
+    code_block_pattern = r"```(?:json)?\s*([\s\S]*?)```"
+    match = re.search(code_block_pattern, content)
+    if match:
+        return match.group(1).strip()
+
+    # If content looks like JSON object/array, return as-is
+    if content.startswith(("{", "[")):
+        return content
+
+    # Try to find JSON object within the response
+    json_obj_pattern = r"(\{[\s\S]*\})"
+    match = re.search(json_obj_pattern, content)
+    if match:
+        return match.group(1)
+
+    # Return original if no patterns match
+    return content
 
 
 class ParseResult:
@@ -61,7 +99,9 @@ def parse_json_array(content: str, array_key: str) -> ParseResult:
         ['Response missing "items" array']
     """
     try:
-        parsed = json.loads(content)
+        # Extract JSON from potential markdown wrapping
+        extracted = extract_json_from_response(content)
+        parsed = json.loads(extracted)
 
         if array_key not in parsed:
             return ParseResult(

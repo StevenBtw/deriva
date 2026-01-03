@@ -166,9 +166,19 @@ class PipelineSession:
         if no_cache:
             self._llm_manager.nocache = True
 
-        def query_fn(prompt: str, schema: dict) -> Any:
+        def query_fn(
+            prompt: str,
+            schema: dict,
+            temperature: float | None = None,
+            max_tokens: int | None = None,
+        ) -> Any:
             assert self._llm_manager is not None
-            return self._llm_manager.query(prompt, schema=schema)
+            return self._llm_manager.query(
+                prompt,
+                schema=schema,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
 
         return query_fn
 

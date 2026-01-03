@@ -651,7 +651,7 @@ class BenchmarkOrchestrator:
         cached_llm: LLMManager,
         nocache_llm: LLMManager,
         run_logger: OCELRunLogger,
-    ) -> Callable[[str, dict], Any]:
+    ) -> Callable[..., Any]:
         """
         Create an LLM query function with per-config cache control.
 
@@ -665,7 +665,12 @@ class BenchmarkOrchestrator:
         """
         nocache_configs = self.config.nocache_configs
 
-        def query_fn(prompt: str, schema: dict) -> Any:
+        def query_fn(
+            prompt: str,
+            schema: dict,
+            temperature: float | None = None,
+            max_tokens: int | None = None,
+        ) -> Any:
             # Check if current config should skip cache
             current_config = run_logger.current_config
             skip_cache = current_config in nocache_configs if current_config else False
@@ -673,8 +678,10 @@ class BenchmarkOrchestrator:
             # Select appropriate LLM manager
             llm = nocache_llm if skip_cache else cached_llm
 
-            # Call the actual LLM
-            response = llm.query(prompt, schema=schema)
+            # Call the actual LLM with optional parameters
+            response = llm.query(
+                prompt, schema=schema, temperature=temperature, max_tokens=max_tokens
+            )
 
             # Log the query as an OCEL event (metadata only)
             usage = getattr(response, "usage", None) or {}

@@ -12,6 +12,7 @@ All extraction modules should use these utilities to maintain consistency.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -23,6 +24,28 @@ from deriva.common import (
     parse_json_array,
 )
 from deriva.common.types import LLMDetails, PipelineResult
+
+
+def strip_chunk_suffix(file_path: str) -> str:
+    """
+    Strip chunk suffix from file path.
+
+    When files are chunked, paths get "(lines X-Y)" suffix. This strips it
+    to get the original file path for node ID generation.
+
+    Args:
+        file_path: File path potentially with chunk suffix
+
+    Returns:
+        Original file path without chunk suffix
+
+    Examples:
+        >>> strip_chunk_suffix("src/app.py (lines 1-100)")
+        'src/app.py'
+        >>> strip_chunk_suffix("src/app.py")
+        'src/app.py'
+    """
+    return re.sub(r"\s*\(lines \d+-\d+\)$", "", file_path)
 
 
 def generate_node_id(prefix: str, repo_name: str, identifier: str) -> str:
@@ -183,4 +206,5 @@ __all__ = [
     "create_extraction_result",
     "create_empty_llm_details",
     "extract_llm_details_from_response",
+    "strip_chunk_suffix",
 ]

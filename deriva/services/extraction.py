@@ -352,6 +352,15 @@ def _extract_llm_based(
         "input_sources": cfg.input_sources or "",
     }
 
+    # Wrap llm_query_fn with per-step temperature/max_tokens overrides
+    def step_llm_query_fn(prompt: str, schema: dict) -> Any:
+        return llm_query_fn(
+            prompt,
+            schema,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+        )
+
     # Process each matching file
     for file_info in matching_files:
         file_path = repo_path / file_info["path"]
@@ -372,7 +381,7 @@ def _extract_llm_based(
             repo_name=repo.name,
             extract_fn=extract_fn,
             extraction_config=extraction_config,
-            llm_query_fn=llm_query_fn,
+            llm_query_fn=step_llm_query_fn,
         )
 
         errors.extend(file_errors)
@@ -387,9 +396,10 @@ def _extract_llm_based(
 
         # Persist extracted edges
         for edge_data in file_edges:
-            src_id = edge_data.get("from_id", edge_data.get("from_node_id"))
-            dst_id = edge_data.get("to_id", edge_data.get("to_node_id"))
-            relationship = edge_data.get("relationship", edge_data.get("relationship_type"))
+            # Note: extraction modules use from_node_id/to_node_id/relationship_type
+            src_id = edge_data.get("from_node_id", edge_data.get("from_id"))
+            dst_id = edge_data.get("to_node_id", edge_data.get("to_id"))
+            relationship = edge_data.get("relationship_type", edge_data.get("relationship"))
             try:
                 graph_manager.add_edge(
                     src_id=src_id,

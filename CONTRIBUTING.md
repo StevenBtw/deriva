@@ -23,10 +23,10 @@ cp .env.example .env
 # Edit .env with your configuration (Neo4j, LLM keys, etc.)
 
 # Install with dev dependencies
-uv sync --extra dev
+uv sync --all-extras
 
 # Run the marimo notebook
-uv run marimo edit src/app/app.py
+uv run marimo edit deriva/app/app.py
 
 # Run linter
 uv run ruff check .
@@ -1552,6 +1552,33 @@ Manager tests may require external services (Neo4j, DuckDB) - use fixtures for s
 | YAML configuration files | Multiple config sources | Use .env for all config |
 | Manual state management in marimo | Fights reactivity | Let marimo handle state |
 | Creating adapters in individual cells | Multiple instances, connection issues | Create PipelineSession once |
+
+---
+
+## Related Documentation
+
+This project includes several specialized documentation files:
+
+| Document | Description |
+|----------|-------------|
+| [README.md](README.md) | Main project overview, setup, and usage guide |
+| [benchmarks.md](benchmarks.md) | Benchmarking & optimization guide for LLM consistency |
+| [CHANGELOG.md](CHANGELOG.md) | Version history and release notes |
+| [.github/SECURITY.md](.github/SECURITY.md) | Security policy and vulnerability reporting |
+| [.github/SUPPORT.md](.github/SUPPORT.md) | How to get help and support |
+
+### Component Documentation
+
+| Component | README |
+|-----------|--------|
+| CLI | [deriva/cli/README.md](deriva/cli/README.md) |
+| LLM Adapter | [deriva/adapters/llm/README.md](deriva/adapters/llm/README.md) |
+| Graph Adapter | [deriva/adapters/graph/README.md](deriva/adapters/graph/README.md) |
+| Database Adapter | [deriva/adapters/database/README.md](deriva/adapters/database/README.md) |
+| Neo4j Adapter | [deriva/adapters/neo4j/README.md](deriva/adapters/neo4j/README.md) |
+| ArchiMate Adapter | [deriva/adapters/archimate/README.md](deriva/adapters/archimate/README.md) |
+| Repository Adapter | [deriva/adapters/repository/README.md](deriva/adapters/repository/README.md) |
+| Marimo App | [deriva/app/README.md](deriva/app/README.md) |
 
 ---
 

@@ -26,6 +26,7 @@ from .manager import (
     get_connection,
     init_database,
     reset_database,
+    run_migrations,
     seed_database,
 )
 
@@ -34,6 +35,7 @@ __all__ = [
     "init_database",
     "seed_database",
     "reset_database",
+    "run_migrations",
     "DB_PATH",
 ]
 
