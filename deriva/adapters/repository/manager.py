@@ -222,7 +222,8 @@ def _get_repository_info_from_path(repo_path: Path, repo_url: str) -> Repository
         result = subprocess.run(
             ["git", "-C", str(repo_path), "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         )
         branch = result.stdout.strip()
@@ -235,7 +236,8 @@ def _get_repository_info_from_path(repo_path: Path, repo_url: str) -> Repository
         result = subprocess.run(
             ["git", "-C", str(repo_path), "log", "-1", "--format=%H %s"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         )
         last_commit = result.stdout.strip()
@@ -248,7 +250,8 @@ def _get_repository_info_from_path(repo_path: Path, repo_url: str) -> Repository
         result = subprocess.run(
             ["git", "-C", str(repo_path), "status", "--porcelain"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         )
         is_dirty = bool(result.stdout.strip())
@@ -646,7 +649,9 @@ class RepoManager:
         cmd.extend([repo_url, str(target_path)])
 
         try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            subprocess.run(
+                cmd, capture_output=True, encoding="utf-8", errors="replace", check=True
+            )
         except subprocess.CalledProcessError as e:
             raise CloneError(f"Git clone failed: {e.stderr or e.stdout or str(e)}")
         except FileNotFoundError:

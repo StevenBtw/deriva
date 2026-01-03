@@ -26,10 +26,7 @@ class TestClassifyFiles:
 
     def test_classifies_by_extension(self, sample_registry):
         """Should classify files by extension."""
-        result = classify_files(
-            file_paths=["src/main.py", "src/utils.js"],
-            file_type_registry=sample_registry
-        )
+        result = classify_files(file_paths=["src/main.py", "src/utils.js"], file_type_registry=sample_registry)
 
         assert result["stats"]["classified_count"] == 2
         assert result["stats"]["undefined_count"] == 0
@@ -38,10 +35,7 @@ class TestClassifyFiles:
 
     def test_classifies_by_full_filename(self, sample_registry):
         """Should classify files by full filename match."""
-        result = classify_files(
-            file_paths=["requirements.txt", "Makefile"],
-            file_type_registry=sample_registry
-        )
+        result = classify_files(file_paths=["requirements.txt", "Makefile"], file_type_registry=sample_registry)
 
         assert result["stats"]["classified_count"] == 2
         classified_types = [c["file_type"] for c in result["classified"]]
@@ -50,30 +44,21 @@ class TestClassifyFiles:
 
     def test_classifies_by_wildcard_pattern(self, sample_registry):
         """Should classify files by wildcard pattern."""
-        result = classify_files(
-            file_paths=["test_main.py", "test_utils.py"],
-            file_type_registry=sample_registry
-        )
+        result = classify_files(file_paths=["test_main.py", "test_utils.py"], file_type_registry=sample_registry)
 
         assert result["stats"]["classified_count"] == 2
         assert all(c["file_type"] == "test" for c in result["classified"])
 
     def test_undefined_for_unknown_extension(self, sample_registry):
         """Should mark unknown extensions as undefined."""
-        result = classify_files(
-            file_paths=["src/style.css", "data/config.yaml"],
-            file_type_registry=sample_registry
-        )
+        result = classify_files(file_paths=["src/style.css", "data/config.yaml"], file_type_registry=sample_registry)
 
         assert result["stats"]["undefined_count"] == 2
         assert result["undefined"][0]["reason"] == "unknown_extension"
 
     def test_undefined_for_no_extension(self, sample_registry):
         """Should mark files without extension as undefined."""
-        result = classify_files(
-            file_paths=["src/LICENSE", "docs/README"],
-            file_type_registry=sample_registry
-        )
+        result = classify_files(file_paths=["src/LICENSE", "docs/README"], file_type_registry=sample_registry)
 
         # These should be undefined since they don't match filename patterns
         # and have no extension
@@ -82,20 +67,14 @@ class TestClassifyFiles:
     def test_priority_filename_over_extension(self, sample_registry):
         """Full filename should have priority over extension."""
         # requirements.txt should match filename, not .txt extension
-        result = classify_files(
-            file_paths=["requirements.txt"],
-            file_type_registry=sample_registry
-        )
+        result = classify_files(file_paths=["requirements.txt"], file_type_registry=sample_registry)
 
         assert result["classified"][0]["file_type"] == "dependency"
 
     def test_priority_wildcard_over_extension(self, sample_registry):
         """Wildcard pattern should have priority over extension."""
         # test_main.py should match test_*.py, not .py
-        result = classify_files(
-            file_paths=["test_main.py"],
-            file_type_registry=sample_registry
-        )
+        result = classify_files(file_paths=["test_main.py"], file_type_registry=sample_registry)
 
         assert result["classified"][0]["file_type"] == "test"
 
@@ -109,12 +88,24 @@ class TestClassifyFiles:
 
     def test_handles_empty_registry(self):
         """Should mark all files as undefined with empty registry."""
-        result = classify_files(
-            file_paths=["main.py", "index.js"],
-            file_type_registry=[]
-        )
+        result = classify_files(file_paths=["main.py", "index.js"], file_type_registry=[])
 
         assert result["stats"]["undefined_count"] == 2
+
+    def test_skips_malformed_registry_entries(self):
+        """Should skip registry entries missing extension or file_type."""
+        registry = [
+            {"extension": ".py", "file_type": "source"},  # Valid
+            {"extension": ".js"},  # Missing file_type
+            {"file_type": "config"},  # Missing extension
+            {},  # Missing both
+        ]
+        result = classify_files(file_paths=["main.py", "index.js"], file_type_registry=registry)
+
+        # Only .py should be classified
+        assert result["stats"]["classified_count"] == 1
+        assert result["stats"]["undefined_count"] == 1
+        assert result["classified"][0]["subtype"] == ""  # No subtype for .py entry
 
 
 class TestGetUndefinedExtensions:

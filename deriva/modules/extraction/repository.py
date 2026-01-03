@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..base import current_timestamp
+from .base import current_timestamp
 
 
 def build_repository_node(repo_metadata: dict[str, Any]) -> dict[str, Any]:

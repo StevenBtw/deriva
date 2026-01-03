@@ -1,8 +1,8 @@
 """
-TypeDefinition extraction - LLM-based extraction of type definitions from source files.
+Test extraction - LLM-based extraction of test definitions from test files.
 
-This module extracts TypeDefinition nodes from source code files using LLM analysis.
-It identifies classes, interfaces, structs, enums, functions, and other type definitions.
+This module extracts Test nodes representing test cases, their types,
+and what they're testing.
 """
 
 from __future__ import annotations
@@ -11,62 +11,56 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from ..base import current_timestamp
+from .base import current_timestamp
 
 # JSON schema for LLM structured output
-TYPE_DEFINITION_SCHEMA = {
-    "name": "type_definitions_extraction",
+TEST_SCHEMA = {
+    "name": "test_extraction",
     "strict": True,
     "schema": {
         "type": "object",
         "properties": {
-            "types": {
+            "tests": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "typeName": {
+                        "testName": {
                             "type": "string",
-                            "description": "Name of the type (class, interface, function, etc.)",
+                            "description": "Name of the test function/method",
                         },
-                        "category": {
+                        "testType": {
                             "type": "string",
                             "enum": [
-                                "class",
-                                "interface",
-                                "struct",
-                                "enum",
-                                "function",
-                                "alias",
-                                "module",
+                                "unit",
+                                "integration",
+                                "e2e",
+                                "performance",
+                                "smoke",
+                                "regression",
                                 "other",
                             ],
-                            "description": "Category of the type definition",
+                            "description": "Type of test",
                         },
                         "description": {
                             "type": "string",
-                            "description": "Brief description of what this type does",
+                            "description": "What the test verifies",
                         },
-                        "interfaceType": {
-                            "type": "string",
-                            "enum": [
-                                "REST API",
-                                "GraphQL",
-                                "gRPC",
-                                "WebSocket",
-                                "CLI",
-                                "Internal API",
-                                "none",
-                            ],
-                            "description": "Type of interface this definition exposes, or 'none' if not an interface",
+                        "testedElement": {
+                            "type": ["string", "null"],
+                            "description": "What is being tested (class, function, feature)",
+                        },
+                        "framework": {
+                            "type": ["string", "null"],
+                            "description": "Test framework used",
                         },
                         "startLine": {
                             "type": "integer",
-                            "description": "Line number where the type definition starts (1-indexed)",
+                            "description": "Line number where test starts",
                         },
                         "endLine": {
                             "type": "integer",
-                            "description": "Line number where the type definition ends (1-indexed)",
+                            "description": "Line number where test ends",
                         },
                         "confidence": {
                             "type": "number",
@@ -74,10 +68,11 @@ TYPE_DEFINITION_SCHEMA = {
                         },
                     },
                     "required": [
-                        "typeName",
-                        "category",
+                        "testName",
+                        "testType",
                         "description",
-                        "interfaceType",
+                        "testedElement",
+                        "framework",
                         "startLine",
                         "endLine",
                         "confidence",
@@ -86,7 +81,7 @@ TYPE_DEFINITION_SCHEMA = {
                 },
             }
         },
-        "required": ["types"],
+        "required": ["tests"],
         "additionalProperties": False,
     },
 }
@@ -96,10 +91,10 @@ def build_extraction_prompt(
     file_content: str, file_path: str, instruction: str, example: str
 ) -> str:
     """
-    Build the LLM prompt for type definition extraction.
+    Build the LLM prompt for test extraction.
 
     Args:
-        file_content: Content of the source file to analyze
+        file_content: Content of the test file to analyze
         file_path: Path to the file being analyzed
         instruction: Extraction instruction from config
         example: Example output from config
@@ -111,7 +106,7 @@ def build_extraction_prompt(
     lines = file_content.split("\n")
     numbered_content = "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(lines))
 
-    prompt = f"""You are analyzing a source code file to extract type definitions.
+    prompt = f"""You are analyzing a test file to extract test definitions.
 
 ## Context
 - **File Path:** {file_path}
@@ -127,37 +122,31 @@ def build_extraction_prompt(
 {numbered_content}
 ```
 
-Extract all type definitions from this file. Return ONLY a JSON object with a "types" array. If no type definitions are found, return {{"types": []}}.
+Extract all test definitions from this file. Return ONLY a JSON object with a "tests" array. If no tests are found, return {{"tests": []}}.
 """
     return prompt
 
 
-def build_type_definition_node(
-    type_data: dict[str, Any], file_path: str, repo_name: str, file_content: str = ""
+def build_test_node(
+    test_data: dict[str, Any], file_path: str, repo_name: str
 ) -> dict[str, Any]:
     """
-    Build a TypeDefinition graph node from extracted type data.
+    Build a Test graph node from extracted test data.
 
     Args:
-        type_data: Dictionary containing type data from LLM
-            Expected keys: typeName, category, description, interfaceType, startLine, endLine, confidence
-        file_path: Path to the file where the type was found
+        test_data: Dictionary containing test data from LLM
+        file_path: Path to the file where the test was found
         repo_name: Repository name for node ID generation
-        file_content: Full content of the source file (used to extract code snippet)
 
     Returns:
-        Dictionary with:
-            - success: bool - Whether the operation succeeded
-            - data: Dict - The node data ready for GraphManager.add_node()
-            - errors: List[str] - Any validation or transformation errors
-            - stats: Dict - Statistics about the extraction
+        Dictionary with success, data, errors, and stats
     """
     errors = []
 
     # Validate required fields
-    required_fields = ["typeName", "category", "description"]
+    required_fields = ["testName", "testType", "description"]
     for field in required_fields:
-        if field not in type_data or not type_data[field]:
+        if field not in test_data or not test_data[field]:
             errors.append(f"Missing required field: {field}")
 
     if errors:
@@ -168,66 +157,39 @@ def build_type_definition_node(
             "stats": {"nodes_created": 0},
         }
 
-    # Validate category
-    valid_categories = [
-        "class",
-        "interface",
-        "struct",
-        "enum",
-        "function",
-        "alias",
-        "module",
+    # Validate test type
+    valid_types = [
+        "unit",
+        "integration",
+        "e2e",
+        "performance",
+        "smoke",
+        "regression",
         "other",
     ]
-    category = type_data["category"].lower()
-    if category not in valid_categories:
-        category = "other"
-
-    # Validate interface type
-    valid_interface_types = [
-        "REST API",
-        "GraphQL",
-        "gRPC",
-        "WebSocket",
-        "CLI",
-        "Internal API",
-        "none",
-    ]
-    interface_type = type_data.get("interfaceType", "none")
-    if interface_type not in valid_interface_types:
-        interface_type = "none"
-
-    # Extract line numbers
-    start_line = type_data.get("startLine", 0)
-    end_line = type_data.get("endLine", 0)
-
-    # Extract code snippet from file content using line numbers
-    code_snippet = ""
-    if file_content and start_line > 0 and end_line >= start_line:
-        lines = file_content.split("\n")
-        # Convert to 0-indexed and extract the range
-        snippet_lines = lines[start_line - 1 : end_line]
-        code_snippet = "\n".join(snippet_lines)
+    test_type = test_data["testType"].lower()
+    if test_type not in valid_types:
+        test_type = "other"
 
     # Generate unique node ID
-    type_name_slug = type_data["typeName"].replace(" ", "_").replace("-", "_")
+    test_name_slug = test_data["testName"].replace(" ", "_").replace("-", "_")
     file_path_slug = file_path.replace("/", "_").replace("\\", "_")
-    node_id = f"typedef_{repo_name}_{file_path_slug}_{type_name_slug}"
+    node_id = f"test_{repo_name}_{file_path_slug}_{test_name_slug}"
 
     # Build the node structure
     node_data = {
         "node_id": node_id,
-        "label": "TypeDefinition",
+        "label": "Test",
         "properties": {
-            "typeName": type_data["typeName"],
-            "category": category,
-            "description": type_data["description"],
-            "interfaceType": interface_type if interface_type != "none" else None,
+            "testName": test_data["testName"],
+            "testType": test_type,
+            "description": test_data["description"],
+            "testedElement": test_data.get("testedElement"),
+            "framework": test_data.get("framework"),
             "filePath": file_path,
-            "startLine": start_line,
-            "endLine": end_line,
-            "codeSnippet": code_snippet,
-            "confidence": type_data.get("confidence", 0.8),
+            "startLine": test_data.get("startLine", 0),
+            "endLine": test_data.get("endLine", 0),
+            "confidence": test_data.get("confidence", 0.8),
             "extracted_at": current_timestamp(),
         },
     }
@@ -236,7 +198,7 @@ def build_type_definition_node(
         "success": True,
         "data": node_data,
         "errors": [],
-        "stats": {"nodes_created": 1, "node_type": "TypeDefinition"},
+        "stats": {"nodes_created": 1, "node_type": "Test"},
     }
 
 
@@ -248,29 +210,26 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
         response_content: Raw JSON string from LLM
 
     Returns:
-        Dictionary with:
-            - success: bool
-            - data: Parsed types list
-            - errors: List of parsing errors
+        Dictionary with success, data, and errors
     """
     try:
         parsed = json.loads(response_content)
 
-        if "types" not in parsed:
+        if "tests" not in parsed:
             return {
                 "success": False,
                 "data": [],
-                "errors": ['Response missing "types" array'],
+                "errors": ['Response missing "tests" array'],
             }
 
-        if not isinstance(parsed["types"], list):
+        if not isinstance(parsed["tests"], list):
             return {
                 "success": False,
                 "data": [],
-                "errors": ['"types" must be an array'],
+                "errors": ['"tests" must be an array'],
             }
 
-        return {"success": True, "data": parsed["types"], "errors": []}
+        return {"success": True, "data": parsed["tests"], "errors": []}
 
     except json.JSONDecodeError as e:
         return {
@@ -280,7 +239,7 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
         }
 
 
-def extract_type_definitions(
+def extract_tests(
     file_path: str,
     file_content: str,
     repo_name: str,
@@ -288,28 +247,17 @@ def extract_type_definitions(
     config: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Extract type definitions from a single source file using LLM.
-
-    This is the main extraction function that:
-    1. Builds the prompt using config instruction/example
-    2. Calls the LLM via the provided query function
-    3. Parses the response and builds nodes
-    4. Creates CONTAINS edges from File to TypeDefinition
+    Extract tests from a single test file using LLM.
 
     Args:
-        file_path: Path to the file being analyzed (relative to repo)
+        file_path: Path to the file being analyzed
         file_content: Content of the file
         repo_name: Repository name
-        llm_query_fn: Function to call LLM (signature: (prompt, schema) -> response)
+        llm_query_fn: Function to call LLM
         config: Extraction config with 'instruction' and 'example' keys
 
     Returns:
-        Dictionary with:
-            - success: bool - Whether the extraction succeeded
-            - data: Dict - Contains 'nodes' list and 'edges' list
-            - errors: List[str] - Any errors encountered
-            - stats: Dict - Statistics about the extraction
-            - llm_details: Dict - LLM call details for logging
+        Dictionary with success, data, errors, stats, and llm_details
     """
     errors: list[str] = []
     nodes: list[dict[str, Any]] = []
@@ -338,7 +286,7 @@ def extract_type_definitions(
         llm_details["prompt"] = prompt
 
         # Call LLM
-        response = llm_query_fn(prompt, TYPE_DEFINITION_SCHEMA)
+        response = llm_query_fn(prompt, TEST_SCHEMA)
 
         # Extract LLM details from response
         if hasattr(response, "content"):
@@ -374,23 +322,20 @@ def extract_type_definitions(
                 "llm_details": llm_details,
             }
 
-        # Build nodes for each type definition
+        # Build nodes for each test and create CONTAINS edge from File
         safe_path = file_path.replace("/", "_").replace("\\", "_")
         file_node_id = f"file_{repo_name}_{safe_path}"
 
-        for type_data in parse_result["data"]:
-            node_result = build_type_definition_node(
-                type_data=type_data,
-                file_path=file_path,
-                repo_name=repo_name,
-                file_content=file_content,
+        for test_data in parse_result["data"]:
+            node_result = build_test_node(
+                test_data=test_data, file_path=file_path, repo_name=repo_name
             )
 
             if node_result["success"]:
                 node_data = node_result["data"]
                 nodes.append(node_data)
 
-                # Create CONTAINS edge: File -> TypeDefinition
+                # Create CONTAINS edge: File -> Test
                 edge = {
                     "edge_id": f"contains_{file_node_id}_to_{node_data['node_id']}",
                     "from_node_id": file_node_id,
@@ -409,9 +354,9 @@ def extract_type_definitions(
             "stats": {
                 "total_nodes": len(nodes),
                 "total_edges": len(edges),
-                "node_types": {"TypeDefinition": len(nodes)},
-                "types_found": len(nodes),
-                "types_from_llm": len(parse_result["data"]),
+                "node_types": {"Test": len(nodes)},
+                "tests_found": len(nodes),
+                "tests_from_llm": len(parse_result["data"]),
             },
             "llm_details": llm_details,
         }
@@ -420,13 +365,13 @@ def extract_type_definitions(
         return {
             "success": False,
             "data": {"nodes": [], "edges": []},
-            "errors": [f"Fatal error during type definition extraction: {str(e)}"],
+            "errors": [f"Fatal error during test extraction: {str(e)}"],
             "stats": {"total_nodes": 0, "total_edges": 0},
             "llm_details": llm_details,
         }
 
 
-def extract_type_definitions_batch(
+def extract_tests_batch(
     files: list[dict[str, str]],
     repo_name: str,
     llm_query_fn,
@@ -434,7 +379,7 @@ def extract_type_definitions_batch(
     progress_callback: Callable | None = None,
 ) -> dict[str, Any]:
     """
-    Extract type definitions from multiple source files.
+    Extract tests from multiple test files.
 
     Args:
         files: List of dicts with 'path' and 'content' keys
@@ -444,14 +389,14 @@ def extract_type_definitions_batch(
         progress_callback: Optional callback(current, total, file_path)
 
     Returns:
-        Aggregated results from all file extractions including llm_details per file
+        Aggregated results from all file extractions
     """
     all_nodes: list[dict[str, Any]] = []
     all_edges: list[dict[str, Any]] = []
     all_errors: list[str] = []
-    all_file_results: list[dict[str, Any]] = []  # Per-file results with llm_details
+    all_file_results: list[dict[str, Any]] = []
     files_processed = 0
-    files_with_types = 0
+    files_with_tests = 0
 
     total_files = len(files)
 
@@ -462,7 +407,7 @@ def extract_type_definitions_batch(
         if progress_callback:
             progress_callback(i + 1, total_files, file_path)
 
-        result = extract_type_definitions(
+        result = extract_tests(
             file_path=file_path,
             file_content=file_content,
             repo_name=repo_name,
@@ -472,19 +417,19 @@ def extract_type_definitions_batch(
 
         files_processed += 1
 
-        # Store per-file result with llm_details for L3 logging
+        # Store per-file result for L3 logging
         all_file_results.append(
             {
                 "file_path": file_path,
                 "success": result["success"],
-                "types_extracted": len(result["data"]["nodes"]),
+                "tests_extracted": len(result["data"]["nodes"]),
                 "llm_details": result.get("llm_details", {}),
                 "errors": result["errors"],
             }
         )
 
         if result["success"] and result["data"]["nodes"]:
-            files_with_types += 1
+            files_with_tests += 1
             all_nodes.extend(result["data"]["nodes"])
             all_edges.extend(result["data"]["edges"])
 
@@ -498,9 +443,9 @@ def extract_type_definitions_batch(
         "stats": {
             "total_nodes": len(all_nodes),
             "total_edges": len(all_edges),
-            "node_types": {"TypeDefinition": len(all_nodes)},
+            "node_types": {"Test": len(all_nodes)},
             "files_processed": files_processed,
-            "files_with_types": files_with_types,
+            "files_with_tests": files_with_tests,
         },
-        "file_results": all_file_results,  # Per-file details for L3 logging
+        "file_results": all_file_results,
     }

@@ -1,6 +1,6 @@
 [project]
 name = "Deriva"
-version = "0.6.0"
+version = "0.6.1"
 description = "Automatically generate ArchiMate enterprise architecture models from software repositories"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -44,6 +44,8 @@ dependencies = [
     # HTTP & server
     "requests>=2.32.5",
     "python-dotenv>=1.2.1",
+    # Code parsing (multi-language AST)
+    "tree-sitter>=0.24.6",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +54,7 @@ dev = [
     "pytest-cov>=7.0.0",
     "ruff>=0.14.10",
     "ty>=0.0.8",
+    "types-lxml>=2025.3.30",
     "pre-commit>=4.5.1",
 ]
 
@@ -139,10 +142,21 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["deriva/adapters", "deriva/modules", "deriva/common"]
-omit = ["*/__init__.py", "*/tests/*"]
+source = ["deriva/adapters", "deriva/modules", "deriva/common", "deriva/services"]
+omit = [
+    "*/__init__.py",
+    "*/tests/*",
+    # Marimo app (interactive UI, not unit testable)
+    "deriva/app/*",
+    # External adapters requiring infrastructure (Neo4j, Docker, etc.)
+    "deriva/adapters/neo4j/*",
+    "deriva/adapters/graph/*",
+    "deriva/adapters/database/*",
+    "deriva/adapters/archimate/*",
+]
 
 [tool.coverage.report]
+fail_under = 69
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

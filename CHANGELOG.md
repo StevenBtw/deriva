@@ -6,7 +6,48 @@ Deriving ArchiMate models from code using LLMs - a journey through architectural
 
 # v0.6.x - Deriva (December 2025 - January 2026)
 
-## v0.6.0 - Rename to Deriva
+## v0.6.1 - Extraction Refactor, Chunking, AST & Tests (January 3, 2026)
+
+### Extraction Module Refactor
+
+- Flattened `modules/extraction/` structure, removed `llm/` and `structural/` subdirs
+- Added `common/chunking.py`, file chunking with overlap support
+- New database scripts: `5_chunking_config.sql`, `6_extraction_method.sql`
+
+### AST Parser Foundation
+
+- Enhanced `adapters/ast/manager.py`, Python AST analysis (classes, functions, imports)
+- Added `tree-sitter` dependency for future multi-language support
+- Updated `adapters/ast/models.py` with improved code element types
+
+### Claude/Anthropic Provider Support
+
+- Added Claude Haiku model support in `adapters/llm/providers.py`
+- Updated `adapters/llm/models.py` with Anthropic model configurations
+
+### Test Suite Expansion
+
+Comprehensive test coverage across the codebase:
+
+- **Adapters:** AST manager, repository manager, LLM cache/models/providers, ArchiMate validation, graph models
+- **Common:** Chunking, exceptions, file utils, logging, OCEL, schema utils, time utils
+- **Extraction:** Directory, file, input sources, LLM extractors, repository
+- **Derivation:** Element generation, PageRank preparation
+- **Services:** Benchmarking, config, derivation, extraction, pipeline, session
+- **CLI:** Integration tests
+
+### Code Quality
+
+- Enforced 70% minimum code coverage in CI
+- Fixed type warnings across codebase
+- Consolidated `benchmark_analysis.py` into `benchmarking.py`
+- Added `types-lxml>=2025.3.30` for lxml type stubs
+- Created `@runtime_checkable` `HasToDict` Protocol
+- Reduced `# type: ignore` from 8 to 2 (neo4j stubs limitations)
+
+---
+
+## v0.6.0 - Rename to Deriva (January 1, 2026)
 
 **AutoMate is now Deriva.**
 
@@ -85,11 +126,11 @@ Phase 9: Unified API & Multi-Model Benchmarking
 
 New unified API that serves both CLI and Marimo:
 
-- **Context manager support**: `with PipelineSession() as session: ...`
-- **Lifecycle management**: `connect()`, `disconnect()`, manager initialization
-- **Query methods**: `get_graph_stats()`, `get_archimate_elements()` for reactive UI
-- **Orchestration methods**: `run_extraction()`, `run_derivation()`, `export_model()`
-- **Infrastructure control**: Neo4j container management, data clearing
+- **Context manager support**, `with PipelineSession() as session: ...`
+- **Lifecycle management**, `connect()`, `disconnect()`, manager initialization
+- **Query methods**, `get_graph_stats()`, `get_archimate_elements()` for reactive UI
+- **Orchestration methods**, `run_extraction()`, `run_derivation()`, `export_model()`
+- **Infrastructure control**, Neo4j container management, data clearing
 
 ```python
 # CLI usage
@@ -106,56 +147,56 @@ stats = session.get_graph_stats()
 
 Complete multi-model, multi-repository benchmarking framework:
 
-- **Test matrix**: repos × models × runs (e.g., 3×3×3 = 27 executions)
-- **`BenchmarkConfig`**: repositories, models, runs_per_combination, stages
-- **`BenchmarkOrchestrator`**: Runs the test matrix with progress callbacks
-- **OCEL integration**: All events logged for process mining analysis
-- **Configurable stages**: classification, extraction, derivation, validation
+- **Test matrix**, repos × models × runs (e.g., 3×3×3 = 27 executions)
+- **`BenchmarkConfig`**, repositories, models, runs_per_combination, stages
+- **`BenchmarkOrchestrator`**, runs the test matrix with progress callbacks
+- **OCEL integration**, all events logged for process mining analysis
+- **Configurable stages**, classification, extraction, derivation, validation
 
 ### Benchmark Analysis (`services/benchmark_analysis.py`)
 
 Post-run analysis of benchmark results:
 
-- **`IntraModelMetrics`**: Model stability across runs (count variance, name consistency)
-- **`InterModelMetrics`**: Model comparison (Jaccard similarity, unique elements)
-- **`compute_intra_model_consistency()`**: Measure how stable each model is
-- **`compute_inter_model_consistency()`**: Compare different models
-- **`localize_inconsistencies()`**: Identify WHERE outputs diverge
+- **`IntraModelMetrics`**, model stability across runs (count variance, name consistency)
+- **`InterModelMetrics`**, model comparison (Jaccard similarity, unique elements)
+- **`compute_intra_model_consistency()`**, measure how stable each model is
+- **`compute_inter_model_consistency()`**, compare different models
+- **`localize_inconsistencies()`**, identify WHERE outputs diverge
 
 ### OCEL 2.0 Module (`common/ocel.py`)
 
 Object-Centric Event Logging for process mining traceability:
 
-- **OCEL 2.0 compliant**: [ocel-standard.org](https://www.ocel-standard.org/)
-- **Object types**: BenchmarkSession, BenchmarkRun, Repository, Model, File, GraphNode, Element
-- **Event types**: StartBenchmark, CompleteBenchmark, StartRun, CompleteRun, ClassifyFile, ExtractNode, DeriveElement, ValidateElement
-- **`OCELLog`**: Log management with JSON export
-- **`OCELEvent`**: Event creation with object correlation
+- **OCEL 2.0 compliant**, [ocel-standard.org](https://www.ocel-standard.org/)
+- **Object types**, BenchmarkSession, BenchmarkRun, Repository, Model, File, GraphNode, Element
+- **Event types**, StartBenchmark, CompleteBenchmark, StartRun, CompleteRun, ClassifyFile, ExtractNode, DeriveElement, ValidateElement
+- **`OCELLog`**, log management with JSON export
+- **`OCELEvent`**, event creation with object correlation
 
 ### LLM Manager Refactor (`managers/llm/`)
 
 Complete restructure of LLM handling:
 
-- **New `providers.py`**: Protocol-based provider abstraction
+- **New `providers.py`**, protocol-based provider abstraction
   - `LLMProvider` protocol defining the interface
   - `ProviderConfig`, `CompletionResult` dataclasses
   - Implementations: `AzureOpenAIProvider`, `OpenAIProvider`, `AnthropicProvider`, `OllamaProvider`
-- **Updated `models.py`**: `BenchmarkModelConfig` for multi-model benchmarking
-- **Refactored `service.py`**: `load_benchmark_models()` for loading multiple configs
+- **Updated `models.py`**, `BenchmarkModelConfig` for multi-model benchmarking
+- **Refactored `service.py`**, `load_benchmark_models()` for loading multiple configs
 
 ### ArchiMate Operations (`managers/archimate/operations/`)
 
 New operations directory following the graph manager pattern:
 
-- **`element_ops.py`**: Element CRUD with semantic helpers
-- **`relationship_ops.py`**: Relationship operations
-- **`model_ops.py`**: Model-level operations (validate, export, clear)
-- **`query_ops.py`**: Model traversal and analysis
+- **`element_ops.py`**, element CRUD with semantic helpers
+- **`relationship_ops.py`**, relationship operations
+- **`model_ops.py`**, model-level operations (validate, export, clear)
+- **`query_ops.py`**, model traversal and analysis
 
 ### App Refactor
 
-- **Significant reduction**: `app.py` moved from ~4000 lines to using PipelineSession
-- **Cleaner architecture**: UI code now delegates to services layer
+- **Significant reduction**, `app.py` now uses PipelineSession
+- **Cleaner architecture**, UI code now delegates to services layer
 
 ### Architectural Boundaries (Ruff TID251)
 
@@ -171,7 +212,7 @@ Common   → stdlib and third-party only
 
 ### Bug Fixes
 
-- **Node creation fix**: Nodes don't need to be created before referencing in relationships
+- **Node creation fix**, nodes don't need to be created before referencing in relationships
 
 ### Replaced Consistency with Benchmarking
 
@@ -206,22 +247,22 @@ Phase 8: LLM Output Consistency & Reproducibility
 
 Complete consistency checking framework for measuring LLM output stability:
 
-- **Stage-specific checks**: Support for `extraction`, `derivation`, `validation`, or `all` stages
-- **`run_consistency_check()`** - Main entry point with configurable runs, element types, stage
-- **`_run_extraction_consistency()`** - Extraction-specific checking with proper name property mapping
-- **`_run_derivation_consistency()`** - Derivation checking with graph input
-- **`_run_single_extraction()`** / **`_run_single_derivation()`** - Per-config execution
-- **Deduplication** - Case-insensitive deduplication within each run to prevent counting duplicates
-- **`_get_node_name()`** - Maps node types to their correct property names (`conceptName`, `typeName`, `methodName`, `techName`, `dependencyName`, `testName`)
-- **`print_report()`** - Formatted console output with stable/unstable element breakdown
+- **Stage-specific checks**, support for `extraction`, `derivation`, `validation`, or `all` stages
+- **`run_consistency_check()`**, main entry point with configurable runs, element types, stage
+- **`_run_extraction_consistency()`**, extraction-specific checking with proper name property mapping
+- **`_run_derivation_consistency()`**, derivation checking with graph input
+- **`_run_single_extraction()`** / **`_run_single_derivation()`**, per-config execution
+- **Deduplication**, case-insensitive deduplication within each run to prevent counting duplicates
+- **`_get_node_name()`**, maps node types to their correct property names
+- **`print_report()`**, formatted console output with stable/unstable element breakdown
 
 ### Config Versioning System (`services/config.py`)
 
 New versioned configuration updates preserving history:
 
-- **`create_derivation_config_version()`** - Create new version, deactivate old
-- **`create_extraction_config_version()`** - Same for extraction configs
-- **`get_active_config_versions()`** - Get current versions for all config types
+- **`create_derivation_config_version()`**, create new version, deactivate old
+- **`create_extraction_config_version()`**, same for extraction configs
+- **`get_active_config_versions()`**, get current versions for all config types
 - **Consistency run logging**:
   - `log_consistency_run()` - Record results with config versions used
   - `get_consistency_history()` - Query past runs with filtering
@@ -244,30 +285,30 @@ automate consistency history      # View past consistency runs
 
 **New CLI arguments:**
 
-- `--stage`: Pipeline stage to check (`extraction`, `derivation`, `validation`, `all`)
-- `--instruction-file`: Read instruction from file
-- `--example-file`: Read example from file
-- `--runs`: Number of consistency runs (default: 3)
+- `--stage`, pipeline stage to check (`extraction`, `derivation`, `validation`, `all`)
+- `--instruction-file`, read instruction from file
+- `--example-file`, read example from file
+- `--runs`, number of consistency runs (default: 3)
 
 ### Validation Module Expansion (`modules/validation/`)
 
 Comprehensive ArchiMate metamodel validation:
 
-- **`ARCHIMATE_RELATIONSHIP_RULES`** - Defines valid (source_type, target_type) tuples per relationship
-- **`DEFAULT_NAMING_RULES`** - Naming convention patterns per element type
-- **`validate_relationship()`** - Check relationship validity against metamodel
-- **`validate_element_naming()`** - Regex-based naming convention validation
-- **`validate_orphan_elements()`** - Find elements with no relationships
-- **`validate_coverage()`** - Check extraction-to-derivation coverage
+- **`ARCHIMATE_RELATIONSHIP_RULES`**, defines valid (source_type, target_type) tuples per relationship
+- **`DEFAULT_NAMING_RULES`**, naming convention patterns per element type
+- **`validate_relationship()`**, check relationship validity against metamodel
+- **`validate_element_naming()`**, regex-based naming convention validation
+- **`validate_orphan_elements()`**, find elements with no relationships
+- **`validate_coverage()`**, check extraction-to-derivation coverage
 - **Quality metrics expansion** in `quality_metrics.py`
 
 ### Consistency Improvements (52% -> 100%)
 
 Achieved 100% extraction and derivation consistency through:
 
-1. **Empty name fix**: Added `_get_node_name()` mapping each node type to correct property
-2. **Casing fix**: Updated ExternalDependency config with explicit casing rules (Flask not flask, Bootstrap not bootstrap)
-3. **Deduplication**: Added per-run deduplication to prevent counting same entity from multiple files
+1. **Empty name fix**, added `_get_node_name()` mapping each node type to correct property
+2. **Casing fix**, updated ExternalDependency config with explicit casing rules (Flask not flask, Bootstrap not bootstrap)
+3. **Deduplication**, added per-run deduplication to prevent counting same entity from multiple files
 
 ### Database Schema Changes
 
@@ -301,43 +342,43 @@ Phase 7: Manager Architecture Refinement
 
 Complete rewrite of `managers/graph/operations/` from legacy DuckDB PGQ to Neo4j Cypher:
 
-- **`node_ops.py`** - Node CRUD delegating to GraphManager
-- **`edge_ops.py`** - Edge operations with Cypher queries for `get_edges_from_node()`, `get_edges_to_node()`
-- **`query_ops.py`** - Graph traversal using Cypher patterns:
-  - `find_files_in_repository()` - Variable-length CONTAINS traversal
-  - `find_dependencies()` / `find_dependents()` - DEPENDS_ON/USES relationship traversal
-  - `traverse_path()` - allShortestPaths for path finding
-  - `find_by_property()` - Property-based node filtering
-  - `get_subgraph()` - Subgraph extraction with depth limit
+- **`node_ops.py`**, node CRUD delegating to GraphManager
+- **`edge_ops.py`**, edge operations with Cypher queries for `get_edges_from_node()`, `get_edges_to_node()`
+- **`query_ops.py`**, graph traversal using Cypher patterns:
+  - `find_files_in_repository()`, variable-length CONTAINS traversal
+  - `find_dependencies()` / `find_dependents()`, DEPENDS_ON/USES relationship traversal
+  - `traverse_path()`, allShortestPaths for path finding
+  - `find_by_property()`, property-based node filtering
+  - `get_subgraph()`, subgraph extraction with depth limit
 
 ### ArchiMate Operations Directory
 
 New `managers/archimate/operations/` following the same pattern:
 
-- **`element_ops.py`** - Element CRUD with semantic helpers (`add_application_component()`, etc.)
-- **`relationship_ops.py`** - Relationship operations (`add_composition_relationship()`, `add_serving_relationship()`, etc.)
-- **`model_ops.py`** - Model-level operations:
-  - `validate_model()` - Full model validation against metamodel
-  - `export_to_xml()` / `export_to_xml_string()` - ArchiMate Exchange Format export
-  - `clear_model()` - Model cleanup
-  - `get_model_summary()` - Statistics by element/relationship type
-- **`query_ops.py`** - Model traversal and analysis:
-  - `find_connected_elements()` - Element relationship traversal
-  - `get_subgraph()` - ArchiMate subgraph extraction
-  - `get_model_statistics()` - Model metrics including orphan detection
+- **`element_ops.py`**, element CRUD with semantic helpers (`add_application_component()`, etc.)
+- **`relationship_ops.py`**, relationship operations (`add_composition_relationship()`, `add_serving_relationship()`, etc.)
+- **`model_ops.py`**, model-level operations:
+  - `validate_model()`, full model validation against metamodel
+  - `export_to_xml()` / `export_to_xml_string()`, ArchiMate Exchange Format export
+  - `clear_model()`, model cleanup
+  - `get_model_summary()`, statistics by element/relationship type
+- **`query_ops.py`**, model traversal and analysis:
+  - `find_connected_elements()`, element relationship traversal
+  - `get_subgraph()`, ArchiMate subgraph extraction
+  - `get_model_statistics()`, model metrics including orphan detection
 
 ### Linter & Type Fixes
 
 Comprehensive cleanup of ruff and type checker issues:
 
-- **E501 line too long (60)** - Line length increased to 180, per-file-ignores for LLM prompts
-- **E722 bare except (10)** - Changed to specific exceptions (OSError, subprocess.CalledProcessError)
-- **F401 unused imports (6)** - Removed deprecated typing imports (Dict, List, Optional → native)
-- **Type annotations** - Updated return types to use `PipelineResult`, fixed `Callable` imports
+- **E501 line too long (60)**, line length increased to 180, per-file-ignores for LLM prompts
+- **E722 bare except (10)**, changed to specific exceptions (OSError, subprocess.CalledProcessError)
+- **F401 unused imports (6)**, removed deprecated typing imports (Dict, List, Optional → native)
+- **Type annotations**, updated return types to use `PipelineResult`, fixed `Callable` imports
 
 ### Documentation
 
-- **CONTRIBUTING.md** - Added "Operations Pattern" section documenting the `operations/` subdirectory structure
+- **CONTRIBUTING.md**, added "Operations Pattern" section documenting the `operations/` subdirectory structure
 
 > **This changed because:** The graph operations were using legacy DuckDB PGQ SQL syntax that didn't work with the Neo4j backend. The ArchiMate manager needed the same clean operations abstraction that the graph manager has.
 
@@ -368,14 +409,14 @@ class PipelineResult(TypedDict, total=False):
 
 **Updated base modules:**
 
-- `modules/extraction/extraction_base.py` - `create_extraction_result()` now returns `PipelineResult`
-- `modules/derivation/derivation_base.py` - `create_derivation_result()` now returns `PipelineResult`
-- `modules/validation/validation_base.py` - `create_validation_result()` and `aggregate_validation_results()` updated
+- `modules/extraction/extraction_base.py`, `create_extraction_result()` now returns `PipelineResult`
+- `modules/derivation/derivation_base.py`, `create_derivation_result()` now returns `PipelineResult`
+- `modules/validation/validation_base.py`, `create_validation_result()` and `aggregate_validation_results()` updated
 
 **New helper in `common/utils.py`:**
 
-- `create_pipeline_result()` - Generic factory function for all stages
-- `create_empty_llm_details()` - LLM details initialization
+- `create_pipeline_result()`, generic factory function for all stages
+- `create_empty_llm_details()`, LLM details initialization
 
 ### Comprehensive datetime.utcnow() Fixes
 
@@ -404,9 +445,9 @@ New test file `tests/test_managers/llm/test_cache.py` with 15 tests:
 
 ### Code Organization
 
-- **Moved test file:** `src/managers/archimate/test_archimate_manager.py` → `tests/test_managers/archimate/`
-- **Import organization:** Moved import from inside function to module level in `managers/llm/service.py`
-- **Test updates:** Updated all tests to match new `PipelineResult` structure
+- **Moved test file**, `src/managers/archimate/test_archimate_manager.py` → `tests/test_managers/archimate/`
+- **Import organization**, moved import from inside function to module level in `managers/llm/service.py`
+- **Test updates**, updated all tests to match new `PipelineResult` structure
 
 ### Test Status
 
@@ -426,12 +467,12 @@ Phase 5: End-to-End ArchiMate Generation
 
 Complete rewrite of `services/derivation.py` with two-phase approach:
 
-1. **Phase 1: Element Derivation** - Processes all enabled derivation configs sequentially
+1. **Phase 1: Element Derivation**, processes all enabled derivation configs sequentially
    - Config-driven via DuckDB (element_type, input_graph_query, instruction, example)
    - LLM-based derivation using `DERIVATION_SCHEMA`
    - Tracks created elements for relationship phase
 
-2. **Phase 2: Relationship Derivation** - LLM derives relationships between all created elements
+2. **Phase 2: Relationship Derivation**, LLM derives relationships between all created elements
    - Uses `RELATIONSHIP_SCHEMA` for structured output
    - ArchiMate relationship types: Composition, Aggregation, Serving, Realization, Assignment, Access
    - Validates source/target identifiers exist before creating
@@ -486,18 +527,18 @@ automate export --output model.archimate --name "My Project Model" -v
 
 ### Validation Module Fixes (`modules/validation/validation_base.py`)
 
-- **Added `VALIDATION_SCHEMA`** for LLM-based validation
-- **Added severity aliases**: `SEVERITY_ERROR` (alias for critical), `SEVERITY_WARNING` (alias for major)
-- **Fixed `create_issue()` API**: Reordered parameters to match service usage (`element_id`, `issue_type`, `message`, `severity`, `rule`, `suggestion`)
-- **Fixed `build_validation_prompt()`**: Made `instruction` parameter optional
+- **Added `VALIDATION_SCHEMA`**, for LLM-based validation
+- **Added severity aliases**, `SEVERITY_ERROR` (alias for critical), `SEVERITY_WARNING` (alias for major)
+- **Fixed `create_issue()` API**, reordered parameters to match service usage
+- **Fixed `build_validation_prompt()`**, made `instruction` parameter optional
 
 ### Deprecated datetime.utcnow() Fixes
 
 Fixed Python deprecation warnings across all modules:
 
-- `modules/derivation/derivation_base.py`: `datetime.now(timezone.utc)`
-- `modules/validation/validation_base.py`: `datetime.now(timezone.utc)`
-- `modules/extraction/extraction_base.py`: `datetime.now(timezone.utc)`
+- `modules/derivation/derivation_base.py`, `datetime.now(timezone.utc)`
+- `modules/validation/validation_base.py`, `datetime.now(timezone.utc)`
+- `modules/extraction/extraction_base.py`, `datetime.now(timezone.utc)`
 
 ### Test Updates
 
@@ -535,32 +576,32 @@ automate export -o workspace/output/model.archimate
 
 New `services/` layer providing shared orchestration between Marimo (visual) and CLI (headless):
 
-- **`services/config.py`** (~600 lines) - Config CRUD operations for DuckDB
+- **`services/config.py`**, config CRUD operations for DuckDB
   - `ExtractionConfig`, `DerivationConfig`, `ValidationConfig`, `FileType` dataclasses
   - Full CRUD: `get_*_configs()`, `get_*_config()`, `update_*_config()`
   - Convenience: `enable_step()`, `disable_step()`, `list_steps()`
 
-- **`services/extraction.py`** (~460 lines) - Extraction pipeline orchestration
+- **`services/extraction.py`**, extraction pipeline orchestration
   - `run_extraction()` - Main entry point for extraction
   - Handles structural (Repository, Directory, File) and LLM-based extraction
   - Separates warnings from errors for skipped LLM steps
 
-- **`services/derivation.py`** (~200 lines) - Derivation pipeline orchestration
+- **`services/derivation.py`**, derivation pipeline orchestration
   - `run_derivation()` - Graph→ArchiMate transformation
   - Processes enabled derivation configs in sequence
 
-- **`services/validation.py`** (~250 lines) - Validation pipeline orchestration
+- **`services/validation.py`**, validation pipeline orchestration
   - `run_validation()` - Algorithmic and LLM-based validation
   - Aggregates issues by severity
 
-- **`services/pipeline.py`** (~240 lines) - Full pipeline orchestration
+- **`services/pipeline.py`**, full pipeline orchestration
   - `run_full_pipeline()` - Classification→Extraction→Derivation→Validation
   - `run_classification()` - Standalone classification stage
   - `get_pipeline_status()` - Current config status
 
 ### CLI Entry Point
 
-New `cli/cli.py` (~500 lines) - Fully functional headless interface:
+New `cli/cli.py`, fully functional headless interface:
 
 ```bash
 # Configuration commands
@@ -578,10 +619,10 @@ automate run all --repo flask_invoice_generator
 
 **CLI Options:**
 
-- `--repo NAME` - Process specific repository (default: all)
-- `-v, --verbose` - Print detailed progress
-- `--no-llm` - Skip LLM-based steps (structural extraction only)
-- `--db PATH` - Custom DuckDB path
+- `--repo NAME`, process specific repository (default: all)
+- `-v, --verbose`, print detailed progress
+- `--no-llm`, skip LLM-based steps (structural extraction only)
+- `--db PATH`, custom DuckDB path
 
 ### Workspace Consolidation
 
@@ -605,22 +646,22 @@ workspace/
 
 ### Services/CLI Bug Fixes
 
-- **Unicode encoding (Windows):** Replaced box-drawing characters (`─`) with ASCII dashes in CLI output for cp1252 compatibility
-- **Extraction module calls:** Fixed `extract_directories()` and `extract_files()` to receive `repo_path` string instead of pre-processed lists
-- **GraphManager edge parameters:** Fixed `add_edge()` calls to use correct parameter names (`src_id`, `dst_id`, `relationship`)
-- **Node ID consistency:** Pass `node_id` from extraction module to `add_node()` for proper ID matching in edges
-- **Warnings vs Errors:** "LLM required" messages now classified as warnings, not errors (exit code 0 for structural-only extraction)
+- **Unicode encoding (Windows)**, replaced box-drawing characters (`─`) with ASCII dashes in CLI output for cp1252 compatibility
+- **Extraction module calls**, fixed `extract_directories()` and `extract_files()` to receive `repo_path` string instead of pre-processed lists
+- **GraphManager edge parameters**, fixed `add_edge()` calls to use correct parameter names (`src_id`, `dst_id`, `relationship`)
+- **Node ID consistency**, pass `node_id` from extraction module to `add_node()` for proper ID matching in edges
+- **Warnings vs Errors**, "LLM required" messages now classified as warnings, not errors (exit code 0 for structural-only extraction)
 
 ### Test Infrastructure
 
-- **`conftest.py`** - Root-level pytest config ensuring `src/` is on path
-- **`.github/workflows/ci.yml`** - GitHub Actions with lint, typecheck, test jobs
+- **`conftest.py`**, root-level pytest config ensuring `src/` is on path
+- **`.github/workflows/ci.yml`**, GitHub Actions with lint, typecheck, test jobs
 - **69 tests passing** across modules (classification, extraction, derivation, validation)
 
 ### Documentation Updates
 
-- **`CONTRIBUTING.md`** - Updated with services layer architecture, component hierarchy, data flow diagrams
-- **`.claude/active_context.md`** - Rewritten with CLI + services plan
+- **`CONTRIBUTING.md`**, updated with services layer architecture, component hierarchy, data flow diagrams
+- **`.claude/active_context.md`**, rewritten with CLI + services plan
 
 > **This changed because:** Both visual (Marimo) and headless (CLI) interfaces needed shared orchestration. Services layer enforces separation and enables scripting/automation use cases.
 
@@ -633,46 +674,46 @@ workspace/
 
 **Structural extraction (no LLM):**
 
-- `modules/extraction/repository.py` - Repository node extraction
-- `modules/extraction/directory.py` - Directory node extraction
-- `modules/extraction/file.py` - File node extraction with CONTAINS edges
+- `modules/extraction/repository.py`, repository node extraction
+- `modules/extraction/directory.py`, directory node extraction
+- `modules/extraction/file.py`, file node extraction with CONTAINS edges
 
 **LLM-based extraction modules:**
 
-- `modules/extraction/business_concept.py` - From docs files (.md, .txt, .rst, .adoc)
+- `modules/extraction/business_concept.py`, from docs files (.md, .txt, .rst, .adoc)
   - JSON schema for structured output (BUSINESS_CONCEPT_SCHEMA)
   - `build_extraction_prompt()`, `parse_llm_response()`, `extract_business_concepts_batch()`
 
-- `modules/extraction/type_definition.py` - Classes, interfaces, functions from source
+- `modules/extraction/type_definition.py`, classes, interfaces, functions from source
   - Includes `startLine`, `endLine`, `codeSnippet` for Method extraction
   - Line-numbered file content for accurate LLM line references
 
-- `modules/extraction/method.py` - Methods from TypeDefinition.codeSnippet
-  - **Key design:** Uses codeSnippet from graph - no file I/O needed
-  - Fields: methodName, returnType, visibility, parameters, isStatic, isAsync
+- `modules/extraction/method.py`, methods from TypeDefinition.codeSnippet
+  - **Key design**, uses codeSnippet from graph, no file I/O needed
+  - Fields, methodName, returnType, visibility, parameters, isStatic, isAsync
 
-- `modules/extraction/technology.py` - Infrastructure components (ArchiMate Technology Layer)
-  - Categories: service, system_software, infrastructure, platform, network, security
+- `modules/extraction/technology.py`, infrastructure components (ArchiMate Technology Layer)
+  - Categories, service, system_software, infrastructure, platform, network, security
   - NOT for libraries (those go in ExternalDependency)
 
-- `modules/extraction/external_dependency.py` - External dependencies
-  - Categories: library, external_api, external_service, external_database
-  - Captures: pypi/npm/maven packages, third-party APIs, external integrations
+- `modules/extraction/external_dependency.py`, external dependencies
+  - Categories, library, external_api, external_service, external_database
+  - Captures, pypi/npm/maven packages, third-party APIs, external integrations
 
-- `modules/extraction/test.py` - Test definitions
-  - Types: unit, integration, e2e, performance, smoke, regression
-  - Includes: framework, testedElement, line numbers
+- `modules/extraction/test.py`, test definitions
+  - Types, unit, integration, e2e, performance, smoke, regression
+  - Includes, framework, testedElement, line numbers
 
 ### Process Changes
 
-- **Config-driven extraction:** `input_sources` JSON column replaces `input_file_types` + `input_graph_elements`
+- **Config-driven extraction**, `input_sources` JSON column replaces `input_file_types` + `input_graph_elements`
 
   ```json
   {"files": [{"type": "source", "subtype": "*"}], "nodes": [{"label": "TypeDefinition", "property": "codeSnippet"}]}
   ```
 
-- **Relationship chain:** File → CONTAINS → TypeDefinition → CONTAINS → Method
-- **Config panel:** UI saves ALL fields (enabled, sequence, input_sources, instruction, example)
+- **Relationship chain**, File → CONTAINS → TypeDefinition → CONTAINS → Method
+- **Config panel**, UI saves ALL fields (enabled, sequence, input_sources, instruction, example)
 
 ### Bug Fixes
 
@@ -697,16 +738,16 @@ Introduced consistent patterns across all pipeline modules:
 
 ### 3-Level JSONL Logging System
 
-- **L1 (Phase):** Neo4j start/stop, clear graph/ArchiMate, toggle cache, clone/delete repo, classify files, config saves
-- **L2 (Step):** Each config change in extraction/derivation/validation saves
-- **L3 (Detail):** `detail_file_classified()`, `detail_file_unclassified()`, `detail_extraction()` with full LLM details
-  - Tracks: prompt, response, tokens_in, tokens_out, cache_used, retries, concepts_extracted
+- **L1 (Phase)**, Neo4j start/stop, clear graph/ArchiMate, toggle cache, clone/delete repo, classify files, config saves
+- **L2 (Step)**, each config change in extraction/derivation/validation saves
+- **L3 (Detail)**, `detail_file_classified()`, `detail_file_unclassified()`, `detail_extraction()` with full LLM details
+  - Tracks, prompt, response, tokens_in, tokens_out, cache_used, retries, concepts_extracted
 
 ### Pipeline Orchestration
 
-- **5 pipeline control buttons:** Classification, Extraction, Derivation, Validation + Full Pipeline
-- **Step status tracking:** Ready → Running → Completed/Error states
-- **Execution order fix:** Classification cell returns `classification_done` flag
+- **5 pipeline control buttons**, Classification, Extraction, Derivation, Validation + Full Pipeline
+- **Step status tracking**, Ready → Running → Completed/Error states
+- **Execution order fix**, Classification cell returns `classification_done` flag
 - All extraction cells depend on `classification_done` for proper ordering
 
 ### LLM Manager Updates
@@ -733,26 +774,26 @@ Introduced consistent patterns across all pipeline modules:
 
 ### Manager Implementations
 
-- **ArchimateManager:** XML export, validation, element/relationship CRUD
-- **DatabaseManager:** DuckDB schema, config tables, run tracking
-- **GraphManager:** Neo4j operations, node/edge persistence
-- **LLMManager:** Multi-provider support (Azure, OpenAI, Anthropic), response caching
-- **SourceManager:** Repository analysis, file discovery
-- **DerivationManager:** Graph-to-ArchiMate mapping (placeholder)
+- **ArchimateManager**, XML export, validation, element/relationship CRUD
+- **DatabaseManager**, DuckDB schema, config tables, run tracking
+- **GraphManager**, Neo4j operations, node/edge persistence
+- **LLMManager**, multi-provider support (Azure, OpenAI, Anthropic), response caching
+- **SourceManager**, repository analysis, file discovery
+- **DerivationManager**, graph-to-ArchiMate mapping (placeholder)
 
 ### UI Framework (Marimo Notebook)
 
 - 4-column layout in `app.py`
-- Column 1: Configuration UI (runs, repo, graph, archimate, database status)
-- Column 2: Extraction Settings UI (file types, steps, prompts, sequence)
-- Column 3: Derivation Settings UI (metamodel, steps, prompts, validation config)
+- Column 1, Configuration UI (runs, repo, graph, archimate, database status)
+- Column 2, Extraction Settings UI (file types, steps, prompts, sequence)
+- Column 3, Derivation Settings UI (metamodel, steps, prompts, validation config)
 - Status bar with progress indicator (HTML-based, reactive)
 
 ### Modules Foundation
 
-- `modules/classification.py` - classify_files, get_undefined_extensions, build_registry_update_list
-- `modules/extraction/` - Repository, Directory, File extraction functions
-- `modules/logging.py` - RunLogger class with JSONL output
+- `modules/classification.py`, classify_files, get_undefined_extensions, build_registry_update_list
+- `modules/extraction/`, Repository, Directory, File extraction functions
+- `modules/logging.py`, RunLogger class with JSONL output
 
 > **This changed because:** ...
 
@@ -770,7 +811,7 @@ Introduced consistent patterns across all pipeline modules:
   - `managers/` - Domain-specific managers (archimate, database, derivation, graph, llm, source)
   - `modules/` - Reusable modules (connectors, llm, neo4j, extraction, classification, logging)
   - `layouts/` - Marimo notebook layouts
-- **Single-file app:** `app.py` (3,923 lines) - Marimo notebook with 4-column layout
+- **Single-file app**, `app.py`, Marimo notebook with 4-column layout
 - **Config storage:** DuckDB replaces JSON config files
 
 ### Process Model
@@ -784,18 +825,18 @@ Classification → Extraction → Derivation → Validation → Export
 
 ### Key Design Decisions
 
-- **Single app.py:** All UI and orchestration in one Marimo notebook for easy debugging
-- **Managers for I/O:** All external operations (DB, Neo4j, LLM, files) via manager classes
-- **Modules for logic:** Pure functions for extraction, classification, derivation
-- **Config in DB:** DuckDB tables for extraction/derivation/validation config (editable from UI)
+- **Single app.py**, all UI and orchestration in one Marimo notebook for easy debugging
+- **Managers for I/O**, all external operations (DB, Neo4j, LLM, files) via manager classes
+- **Modules for logic**, pure functions for extraction, classification, derivation
+- **Config in DB**, DuckDB tables for extraction/derivation/validation config (editable from UI)
 
 ### Behind the Scenes
 
-- **UI pivot:** Original plan was Gradio, switched to Marimo for better notebook experience
-- **Cache system:** SHA256 hashing of prompt+model+schema for cache keys, both memory and disk persistence
+- **UI pivot**, original plan was Gradio, switched to Marimo for better notebook experience
+- **Cache system**, SHA256 hashing of prompt+model+schema for cache keys, both memory and disk persistence
 - **This merged 4 months of parallel V2 development** done outside this repo
-- **Accidentally committed:** 2,185 lines of Neo4j debug logs (`managers/neo4j/logs/debug.log`), oops
-- **Description simplified:** "AI-Assisted ArchiMate Model Generation" → "Derive Archimate models from unstructured data using LLMs"
+- **Accidentally committed**, Neo4j debug logs (`managers/neo4j/logs/debug.log`), oops
+- **Description simplified**, "AI-Assisted ArchiMate Model Generation" → "Derive Archimate models from unstructured data using LLMs"
 
 > **This changed because:** The previous extraction-focused architecture couldn't support the full pipeline (derivation, validation, export). Needed proper separation of concerns and a more interactive UI for configuration.
 
@@ -922,15 +963,15 @@ Central concept linking all artifacts:
 *Commits: a0fd55f, b7200bb*
 
 ### Architecture Changes
-- **Neo4j fully integrated:** Graph manager with connection pooling
-- **Graph operations layer:** Node/edge CRUD, exclude file support
-- **Cross-platform deployment:** Scripts for bash, PowerShell, batch
-- **Docker compose:** `compose.yaml` for containerized Neo4j
+- **Neo4j fully integrated**, graph manager with connection pooling
+- **Graph operations layer**, node/edge CRUD, exclude file support
+- **Cross-platform deployment**, scripts for bash, PowerShell, batch
+- **Docker compose**, `compose.yaml` for containerized Neo4j
 
 ### Extraction Method Changes
-- **Graph-based storage:** All extracted nodes stored in Neo4j
-- **Relationship edges:** CONTAINS, DEPENDS_ON, etc.
-- **Exclude patterns:** Skip node_modules, .git, etc.
+- **Graph-based storage**, all extracted nodes stored in Neo4j
+- **Relationship edges**, CONTAINS, DEPENDS_ON, etc.
+- **Exclude patterns**, skip node_modules, .git, etc.
 
 > **This changed because:** Needed persistent graph storage to build relationships between extracted elements and query the model.
 
@@ -941,22 +982,22 @@ Central concept linking all artifacts:
 
 ### The Second Purge
 *Commit: 5fbca7a - "refactor for mvp on development"*
-- **Deleted 9,243 lines**, complete reset for MVP focus
+- **Deleted**, complete reset for MVP focus
 - Removed: LICENSE, README, Docker configs, all extraction strategies, tests, UI components, API routes
 
 ### Architecture Changes (Post-Purge)
-- **UV package manager:** Replaced pip/requirements.txt with `uv.lock`
-- **Layered extraction:** `step_1.py`, `step_2.py` approach
-- **LLM model interfaces:** `model_interfaces/base.py`, `gpt_4_mini.py`
-- **YAML prompt templates:** `module_discovery.yaml`, `custom.yaml`
+- **UV package manager**, replaced pip/requirements.txt with `uv.lock`
+- **Layered extraction**, `step_1.py`, `step_2.py` approach
+- **LLM model interfaces**, `model_interfaces/base.py`, `gpt_4_mini.py`
+- **YAML prompt templates**, `module_discovery.yaml`, `custom.yaml`
 
 ### Extraction Method Changes
-- **Function-based extraction:**
-  - `get_repo_files.py` - File discovery with type detection
-  - `get_repo_metadata.py` - Repository metadata extraction
-  - `get_repo_modules.py` - Module/package discovery
-  - `get_repo_structure.py` - Directory structure analysis
-- **File type detection system:** Separate detector per type
+- **Function-based extraction**
+  - `get_repo_files.py`, file discovery with type detection
+  - `get_repo_metadata.py`, repository metadata extraction
+  - `get_repo_modules.py`, module/package discovery
+  - `get_repo_structure.py`, directory structure analysis
+- **File type detection system**, separate detector per type
   - `source.py`, `test.py`, `config.py`, `build.py`
   - `docs.py`, `data.py`, `asset.py`, `exclude.py`
 
@@ -969,8 +1010,8 @@ Central concept linking all artifacts:
      - Extraction control panel
      - Status feedback
   ```
-- **"asef" commit:** Test LLM scripts added (`scripts/testllm.py`, `scripts/llm_output.json`)
-- **"intermed" commit:** Checkpoint naming for work-in-progress
+- **"asef" commit**, test LLM scripts added (`scripts/testllm.py`, `scripts/llm_output.json`)
+- **"intermed" commit**, checkpoint naming for work-in-progress
 
 > **This changed because:** The strategy-based extraction was too complex. Needed simpler, testable functions. Also wanted to try UV for faster dependency management.
 
@@ -991,9 +1032,9 @@ Central concept linking all artifacts:
 ## v0.2.5 - Windows Support
 *Commit: 5272d70*
 
-- **PowerShell scripts:** `start_local.ps1` for Windows users
-- **Docker compose updates:** Windows path compatibility
-- **Cross-platform shell scripts:** Improved portability
+- **PowerShell scripts**, `start_local.ps1` for Windows users
+- **Docker compose updates**, Windows path compatibility
+- **Cross-platform shell scripts**, improved portability
 
 ---
 
@@ -1011,18 +1052,18 @@ Central concept linking all artifacts:
 *Commits: 96755b5, 468aaaf (Feb 28, 2025)*
 
 ### Architecture Changes
-- **Layered extraction strategy:** 642 lines implementing 7-step extraction flow
-- **ArchiMate metamodel:** 332 lines of mermaid - all ArchiMate layers (Business, Application, Technology, Physical, Strategy, Motivation, Implementation)
-- **ArchiMate Pydantic models:** 1,055 lines of type definitions (auto-generated!)
-  - Header comment: `"This file is auto-generated by parse_metamodel.py, do not edit directly"`
+- **Layered extraction strategy**, implementing 7-step extraction flow
+- **ArchiMate metamodel**, mermaid, all ArchiMate layers (Business, Application, Technology, Physical, Strategy, Motivation, Implementation)
+- **ArchiMate Pydantic models**, type definitions (auto-generated!)
+  - Header comment, `"This file is auto-generated by parse_metamodel.py, do not edit directly"`
   - Generated classes for all 50+ ArchiMate element types
 
 ### Extraction Method Changes
-- **Utility modules (294+ lines each):**
-  - `code_analyzer.py` - Python AST-based analysis with `CodeElement` class and `PythonVisitor`
-  - `config_analyzer.py` - Configuration file parsing (JSON, YAML, TOML, INI)
-  - `module_discovery.py` - Project structure detection via file patterns
-  - `test_analyzer.py` - Test file identification and coverage analysis
+- **Utility modules**
+  - `code_analyzer.py`, Python AST-based analysis with `CodeElement` class and `PythonVisitor`
+  - `config_analyzer.py`, configuration file parsing (JSON, YAML, TOML, INI)
+  - `module_discovery.py`, project structure detection via file patterns
+  - `test_analyzer.py`, test file identification and coverage analysis
 
 ### Layered Extraction Flow (from `layered.mmd`)
 
@@ -1057,15 +1098,15 @@ Relationship Mapping → Test Case Discovery → Final Confidence Scoring
 *Commit: d9a7f10 - "YOU GET A TEMPLATE, YOU GET A TEMPLATE!" (Feb 26, 2025)*
 
 ### Architecture Changes
-- **5 extraction strategy templates:** Mermaid flowcharts for different approaches
+- **5 extraction strategy templates**, Mermaid flowcharts for different approaches
   - `simple.mmd`, `layered.mmd`, `bottom_up.mmd`, `top_down.mmd`, `noredraw.mmd`
-- **Tree-sitter submodules:** 10 language parsers (C, C++, C#, Go, Java, JavaScript, Python, Ruby, Rust, TypeScript)
-- **Strategy pattern:** `strategies/base.py`, `simple.py`, `layered.py`, `bottom_up.py`, `top_down.py`
-- **Tree-sitter installer script:** `scripts/install_tree_sitter_parsers.py` (61 lines), cloned repos, built `languages.so`
+- **Tree-sitter submodules**, 10 language parsers (C, C++, C#, Go, Java, JavaScript, Python, Ruby, Rust, TypeScript)
+- **Strategy pattern**, `strategies/base.py`, `simple.py`, `layered.py`, `bottom_up.py`, `top_down.py`
+- **Tree-sitter installer script**, `scripts/install_tree_sitter_parsers.py`, cloned repos, built `languages.so`
 
 ### Process Changes
-- **Neo4j interface:** Graph storage backend
-- **Graph service:** Abstraction layer for graph operations
+- **Neo4j interface**, graph storage backend
+- **Graph service**, abstraction layer for graph operations
 
 ### The Tree-Sitter Experiment
 
@@ -1079,7 +1120,7 @@ language_repos = {
 # Built into: build/languages.so
 ```
 
-*Note: Empty strategy files added, `bottom_up.py`, `layered.py`, `top_down.py` (0 lines each), optimistic placeholders that never got filled*
+*Note: Empty strategy files added, `bottom_up.py`, `layered.py`, `top_down.py`, optimistic placeholders that never got filled*
 
 ### Sample Test Repository
 
@@ -1111,19 +1152,19 @@ This provided expected extraction targets: BusinessConcept (Order Processing), S
 
 ### The First Purge
 *Commit: 32723c5 - "refactor"*
-- **Deleted 5,488 lines**, complete architectural reset
+- **Deleted**, complete architectural reset
 - Removed entire `src/` directory, all tests, scripts
 - Added `buttom-up.md`, `top-down.md` (typo preserved: "buttom")
 
 ### Architecture Changes (Post-Purge)
-- **FastAPI backend:** `src/api/` with routes and schemas
-- **Streamlit UI:** `src/ui/` with component-based design
-- **Service layer:** `src/services/repository/`, `src/services/extraction/`
-- **Logging system:** Color-coded output with configurable levels
+- **FastAPI backend**, `src/api/` with routes and schemas
+- **Streamlit UI**, `src/ui/` with component-based design
+- **Service layer**, `src/services/repository/`, `src/services/extraction/`
+- **Logging system**, color-coded output with configurable levels
 
 ### Process Changes
-- **Mermaid metamodel parsing:** Define graph structure in `.mmd` files
-- **Repository service:** Clone, analyze, track repositories
+- **Mermaid metamodel parsing**, define graph structure in `.mmd` files
+- **Repository service**, clone, analyze, track repositories
 
 > **This changed because:** The original monolithic pipeline was hard to test and extend. Wanted proper separation: API, UI, Services.
 
@@ -1162,10 +1203,10 @@ This provided expected extraction targets: BusinessConcept (Order Processing), S
 ## v0.1.7 - Memory & Metamodel
 *Commits: 21a36c2, 352aef0, 5ff481d, 599d8d9, 4144f95*
 
-- **Persistent context:** Storage for run state
-- **Full metamodel:** Code-to-graph transformation rules
-- **Mermaid definitions:** Graph structure in `.mmd` format
-- **Docs refresh:** README updates across multiple commits
+- **Persistent context**, storage for run state
+- **Full metamodel**, code-to-graph transformation rules
+- **Mermaid definitions**, graph structure in `.mmd` format
+- **Docs refresh**, README updates across multiple commits
 
 ---
 
@@ -1173,13 +1214,13 @@ This provided expected extraction targets: BusinessConcept (Order Processing), S
 *Commit: e692ef7*
 
 ### Architecture Changes
-- **Config restructure:** `templates/prompts/` → `config/analyze/`
-- **Chunking config:** `config/chunk/file_chunking.json`
-- **Extraction config:** `config/extract/element_extraction.json`
+- **Config restructure**, `templates/prompts/` → `config/analyze/`
+- **Chunking config**, `config/chunk/file_chunking.json`
+- **Extraction config**, `config/extract/element_extraction.json`
 
 ### Process Changes
-- **Chunk → Extract → Analyze:** Three-stage pipeline
-- **LLM chunking:** Handle large files by splitting
+- **Chunk → Extract → Analyze**, three-stage pipeline
+- **LLM chunking**, handle large files by splitting
 
 > **This changed because:** ...
 
@@ -1189,10 +1230,10 @@ This provided expected extraction targets: BusinessConcept (Order Processing), S
 *Commits: 7bcf66c, 25a1f3f (Feb 22-23, 2025)*
 
 ### Process Changes
-- **LLM retry mechanism:** `retry.py` (199 lines) with schema validation
-- **Response caching:** `cache.py` (118 lines) for LLM response reuse
-- **Schema validation:** `graph_schema.py` (331 lines) of validation logic
-- **ArchiMate validator:** `archimate_schema.py` (28 lines)
+- **LLM retry mechanism**, `retry.py` with schema validation
+- **Response caching**, `cache.py` for LLM response reuse
+- **Schema validation**, `graph_schema.py` of validation logic
+- **ArchiMate validator**, `archimate_schema.py`
 
 ### Retry Mechanism Details
 
@@ -1211,9 +1252,9 @@ def _update_prompt_with_errors(original_prompt, error_context):
 
 ### LLM Prompt Templates (from initial commit)
 
-- **Chunk config:** `max_chunk_size: 1500`, `min_chunk_size: 500`, `overlap_size: 200`
-- **Three prompt types:** `code_analysis.json`, `text_analysis.json`, `generic_analysis.json`
-- **Output schema enforced:** nodes + relationships with strict types
+- **Chunk config**, `max_chunk_size: 1500`, `min_chunk_size: 500`, `overlap_size: 200`
+- **Three prompt types**, `code_analysis.json`, `text_analysis.json`, `generic_analysis.json`
+- **Output schema enforced**, nodes + relationships with strict types
 
 > **This changed because:** LLM responses were inconsistent. Needed validation and retry to ensure usable output.
 
@@ -1222,18 +1263,18 @@ def _update_prompt_with_errors(original_prompt, error_context):
 ## v0.1.4 - Local Development
 *Commit: 5f11272*
 
-- **Docker compose local:** `docker-compose.local.yml`
-- **Dev script:** `run_local.sh` for local workflow
-- **Model improvements:** Better Pydantic serialization
+- **Docker compose local**, `docker-compose.local.yml`
+- **Dev script**, `run_local.sh` for local workflow
+- **Model improvements**, better Pydantic serialization
 
 ---
 
 ## v0.1.3 - Type System
 *Commits: 5d05d65, 5f24e67*
 
-- **Pydantic models:** Analysis, base, repository types
-- **Test suite:** Model validation tests
-- **Cleanup:** Removed accidentally committed `.DS_Store`
+- **Pydantic models**, analysis, base, repository types
+- **Test suite**, model validation tests
+- **Cleanup**, removed accidentally committed `.DS_Store`
 - *Same commit message twice: "fixes and new types"*
 
 ---
@@ -1261,14 +1302,14 @@ def _update_prompt_with_errors(original_prompt, error_context):
 *Lines: +36,986 (65 files)*
 
 ### Architecture
-- **Pipeline:** `connect_repo` → `process_repo` → `graph_operations`
-- **LLM client:** OpenAI integration (`src/common/llm/client.py` - 172 lines)
-- **Storage:** Neo4j backend (`src/common/storage/neo4j.py` - 151 lines)
-- **UI:** Streamlit app (`src/ui/app.py` - 167 lines)
-- **Schemas:** ArchiMate XSD validation (3 schema files)
-- **Deployment:** Docker (app + Neo4j containers)
+- **Pipeline**, `connect_repo` → `process_repo` → `graph_operations`
+- **LLM client**, OpenAI integration (`src/common/llm/client.py`)
+- **Storage**, Neo4j backend (`src/common/storage/neo4j.py`)
+- **UI**, Streamlit app (`src/ui/app.py`)
+- **Schemas**, ArchiMate XSD validation (3 schema files)
+- **Deployment**, Docker (app + Neo4j containers)
 
-### Original Graph Metamodel (106 lines of mermaid)
+### Original Graph Metamodel
 
 ```
 Repository → Module → File → TypeDefinition → Method
@@ -1308,7 +1349,7 @@ class CodeElement:
 ### Strange Choices
 - Committed `.DS_Store` files (Mac user on Windows project)
 - Included `__pycache__/` and `.pyc` files (both Python 3.9 AND 3.13)
-- Shipped 15,980 lines of ArchiMate HTML documentation
+- Shipped ArchiMate HTML documentation
 - 9 "Interoperability testing snippet" XML files (snippet-6.xml excluded, it's a transition view, not in scope)
 - Committed with compiled bytecode from two different Python versions
 
@@ -1321,27 +1362,27 @@ class CodeElement:
 | Era | Dates | Key Event | Architecture |
 |-----|-------|-----------|--------------|
 | **0.1.x** | Feb 22-25 | Initial development | Monolithic pipeline + JSON configs |
-| **0.2.x** | Feb 26-Apr 15 | First Purge (-5,488 lines) | FastAPI/Streamlit/Services/Strategies |
-| **0.3.x** | Apr 15-25 | Second Purge (-9,243 lines) | UV/Extraction functions/File types |
+| **0.2.x** | Feb 26-Apr 15 | First Purge | FastAPI/Streamlit/Services/Strategies |
+| **0.3.x** | Apr 15-25 | Second Purge | UV/Extraction functions/File types |
 | **0.4.x** | Jun-Jul | Web UI prototype | FastAPI/Jinja2 |
-| **0.5.x** | Aug-Nov | Final development (+25,657 lines) | Managers/Modules/Marimo/DuckDB |
+| **0.5.x** | Aug-Nov | Final development | Managers/Modules/Marimo/DuckDB |
 
 ---
 
 # Interesting Patterns
 
-- **Rapid iteration:** v0.1.0 to v0.2.0 (First Purge) took only 4 days (Feb 22-26)
-- **The long gap:** 4 months between v0.3.x (Apr) and v0.5.x (Aug), with v0.4.x prototype in between
-- **UI evolution:** Streamlit → FastAPI+Jinja2 (v0.4.x) → Gradio (planned) → Marimo (final)
-- **Graph DB constant:** Neo4j was the only technology that survived all purges
-- **Config evolution:** JSON files → YAML templates → DuckDB tables
-- **Dependency evolution:**
+- **Rapid iteration**, v0.1.0 to v0.2.0 (First Purge) took only 4 days (Feb 22-26)
+- **The long gap**, 4 months between v0.3.x (Apr) and v0.5.x (Aug), with v0.4.x prototype in between
+- **UI evolution**, Streamlit → FastAPI+Jinja2 (v0.4.x) → Gradio (planned) → Marimo (final)
+- **Graph DB constant**, Neo4j was the only technology that survived all purges
+- **Config evolution**, JSON files → YAML templates → DuckDB tables
+- **Dependency evolution**
   - v0.1.0: 9 dependencies (gradio, openai, neo4j...)
   - v0.5.x: 22 dependencies (marimo, duckdb, polars, networkx, altair...)
-- **Python version ambition:** Started targeting Python 3.8, now requires Python 3.14
-- **Solo developer:** All 51 commits by a single author across 10 months
-- **Confidence scoring:** Present from day 1, default 0.8 confidence on all extracted elements
-- **Test target consistency:** Flask Invoice Generator used from v0.4.x through v0.5.x
+- **Python version ambition**, started targeting Python 3.8, now requires Python 3.14
+- **Solo developer**, all 51 commits by a single author across 10 months
+- **Confidence scoring**, present from day 1, default 0.8 confidence on all extracted elements
+- **Test target consistency**, Flask Invoice Generator used from v0.4.x through v0.5.x
 
 ---
 

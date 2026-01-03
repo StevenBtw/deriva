@@ -31,6 +31,7 @@ class ExtractionConfig:
         input_sources: str | None,
         instruction: str | None,
         example: str | None,
+        extraction_method: str = "llm",
     ):
         self.node_type = node_type
         self.sequence = sequence
@@ -38,6 +39,7 @@ class ExtractionConfig:
         self.input_sources = input_sources
         self.instruction = instruction
         self.example = example
+        self.extraction_method = extraction_method  # 'llm', 'ast', or 'structural'
 
 
 class DerivationConfig:
@@ -75,12 +77,24 @@ class DerivationConfig:
 
 
 class FileType:
-    """File type registry entry."""
+    """File type registry entry with optional chunking configuration."""
 
-    def __init__(self, extension: str, file_type: str, subtype: str):
+    def __init__(
+        self,
+        extension: str,
+        file_type: str,
+        subtype: str,
+        chunk_delimiter: str | None = None,
+        chunk_max_tokens: int | None = None,
+        chunk_overlap: int = 0,
+    ):
         self.extension = extension
         self.file_type = file_type
         self.subtype = subtype
+        # Chunking configuration
+        self.chunk_delimiter = chunk_delimiter
+        self.chunk_max_tokens = chunk_max_tokens
+        self.chunk_overlap = chunk_overlap
 
 
 # =============================================================================
@@ -100,7 +114,7 @@ def get_extraction_configs(engine: Any, enabled_only: bool = False) -> list[Extr
         List of ExtractionConfig objects ordered by sequence
     """
     query = """
-        SELECT node_type, sequence, enabled, input_sources, instruction, example
+        SELECT node_type, sequence, enabled, input_sources, instruction, example, extraction_method
         FROM extraction_config
         WHERE is_active = TRUE
     """
@@ -117,6 +131,7 @@ def get_extraction_configs(engine: Any, enabled_only: bool = False) -> list[Extr
             input_sources=row[3],
             instruction=row[4],
             example=row[5],
+            extraction_method=row[6] or "llm",
         )
         for row in rows
     ]
@@ -135,7 +150,7 @@ def get_extraction_config(engine: Any, node_type: str) -> ExtractionConfig | Non
     """
     row = engine.execute(
         """
-        SELECT node_type, sequence, enabled, input_sources, instruction, example
+        SELECT node_type, sequence, enabled, input_sources, instruction, example, extraction_method
         FROM extraction_config
         WHERE node_type = ? AND is_active = TRUE
         """,
@@ -152,6 +167,7 @@ def get_extraction_config(engine: Any, node_type: str) -> ExtractionConfig | Non
         input_sources=row[3],
         instruction=row[4],
         example=row[5],
+        extraction_method=row[6] or "llm",
     )
 
 
@@ -358,21 +374,38 @@ def update_derivation_config(
 
 def get_file_types(engine: Any) -> list[FileType]:
     """Get all file type registry entries."""
-    rows = engine.execute("SELECT extension, file_type, subtype FROM file_type_registry ORDER BY file_type, extension").fetchall()
-    return [FileType(extension=row[0], file_type=row[1], subtype=row[2]) for row in rows]
+    rows = engine.execute("SELECT extension, file_type, subtype, chunk_delimiter, chunk_max_tokens, chunk_overlap FROM file_type_registry ORDER BY file_type, extension").fetchall()
+    return [
+        FileType(
+            extension=row[0],
+            file_type=row[1],
+            subtype=row[2],
+            chunk_delimiter=row[3],
+            chunk_max_tokens=row[4],
+            chunk_overlap=row[5] or 0,
+        )
+        for row in rows
+    ]
 
 
 def get_file_type(engine: Any, extension: str) -> FileType | None:
     """Get a specific file type by extension."""
     row = engine.execute(
-        "SELECT extension, file_type, subtype FROM file_type_registry WHERE extension = ?",
+        "SELECT extension, file_type, subtype, chunk_delimiter, chunk_max_tokens, chunk_overlap FROM file_type_registry WHERE extension = ?",
         [extension],
     ).fetchone()
 
     if not row:
         return None
 
-    return FileType(extension=row[0], file_type=row[1], subtype=row[2])
+    return FileType(
+        extension=row[0],
+        file_type=row[1],
+        subtype=row[2],
+        chunk_delimiter=row[3],
+        chunk_max_tokens=row[4],
+        chunk_overlap=row[5] or 0,
+    )
 
 
 def add_file_type(engine: Any, extension: str, file_type: str, subtype: str) -> bool:

@@ -148,9 +148,7 @@ class TestPipelineSessionQueries:
 
     def test_get_graph_stats(self, connected_session):
         """Should aggregate node counts by type."""
-        connected_session._mock_graph.get_nodes_by_type.side_effect = lambda t: (
-            [{"id": "1"}] if t == "Repository" else []
-        )
+        connected_session._mock_graph.get_nodes_by_type.side_effect = lambda t: ([{"id": "1"}] if t == "Repository" else [])
 
         stats = connected_session.get_graph_stats()
 
@@ -160,9 +158,7 @@ class TestPipelineSessionQueries:
 
     def test_get_graph_nodes(self, connected_session):
         """Should return nodes of specific type."""
-        connected_session._mock_graph.get_nodes_by_type.return_value = [
-            {"id": "1", "name": "test"}
-        ]
+        connected_session._mock_graph.get_nodes_by_type.return_value = [{"id": "1", "name": "test"}]
 
         nodes = connected_session.get_graph_nodes("File")
 
@@ -370,9 +366,7 @@ class TestPipelineSessionLLM:
             session = PipelineSession(auto_connect=True)
 
             # Mock llm_info property
-            with patch.object(
-                PipelineSession, "llm_info", new_callable=lambda: property(lambda self: {"provider": "openai", "model": "gpt-4"})
-            ):
+            with patch.object(PipelineSession, "llm_info", new_callable=lambda: property(lambda self: {"provider": "openai", "model": "gpt-4"})):
                 status = session.get_llm_status()
 
             assert status["configured"] is True
@@ -389,9 +383,7 @@ class TestPipelineSessionLLM:
         ):
             session = PipelineSession(auto_connect=True)
 
-            with patch.object(
-                PipelineSession, "llm_info", new_callable=lambda: property(lambda self: None)
-            ):
+            with patch.object(PipelineSession, "llm_info", new_callable=lambda: property(lambda self: None)):
                 status = session.get_llm_status()
 
             assert status["configured"] is False

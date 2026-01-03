@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from lxml import etree  # type: ignore[import-untyped]
+from lxml import etree
 
 from .models import Element, Relationship
 

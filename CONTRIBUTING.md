@@ -74,8 +74,7 @@ src/
 │   ├── extraction.py        - Run extraction step
 │   ├── derivation.py        - Run derivation step
 │   ├── pipeline.py          - Orchestrate full pipeline
-│   ├── benchmarking.py      - Multi-model benchmark orchestration
-│   └── benchmark_analysis.py - Consistency metrics and analysis
+│   └── benchmarking.py      - Multi-model benchmarking and analysis
 │
 ├── common/ (Shared utilities)
 │   ├── types.py     - Shared TypedDicts and Protocols
@@ -90,12 +89,22 @@ src/
 │   ├── archimate/   - ArchiMate CRUD (namespace: Model)
 │   └── llm/         - LLM provider abstraction (Azure, OpenAI, Anthropic, Ollama)
 │
+├── common/ (Shared utilities)
+│   ├── types.py     - Shared TypedDicts and Protocols
+│   ├── logging.py   - Pipeline logging (JSON Lines)
+│   ├── chunking.py  - File chunking with overlap support
+│   └── utils.py     - File encoding, helpers
+│
 └── modules/ (Pure business logic)
     └── extraction/
         ├── classification.py - File type classification
-        ├── structural/       - File system extraction (no LLM)
-        ├── llm/              - LLM-based extraction
-        └── ast/              - AST-based extraction (future)
+        ├── base.py           - Shared extraction utilities (ID generation, deduplication)
+        ├── repository.py     - Repository node extraction
+        ├── directory.py      - Directory node extraction
+        ├── file.py           - File node extraction
+        ├── type_definition.py - Classes/functions (LLM)
+        ├── business_concept.py - Domain concepts (LLM)
+        └── ...               - Other extraction modules
     └── derivation/
         ├── graph/            - Graph algorithms for refinement phase
         └── llm/              - LLM-based derivation
@@ -1175,8 +1184,7 @@ class SomeManager:
 The benchmarking system enables multi-model comparison for evaluating LLM performance on the ArchiMate derivation pipeline.
 
 **Key Components:**
-- `services/benchmarking.py` - `BenchmarkOrchestrator` for running matrix benchmarks
-- `services/benchmark_analysis.py` - `BenchmarkAnalyzer` for computing consistency metrics
+- `services/benchmarking.py` - `BenchmarkOrchestrator` for running benchmarks, `BenchmarkAnalyzer` for analysis
 - OCEL 2.0 event logging for process mining analysis
 
 ### Architecture
@@ -1226,7 +1234,7 @@ Benchmark runs are logged in **OCEL 2.0** (Object-Centric Event Log) format:
 
 To add a new consistency metric:
 
-1. Add method to `BenchmarkAnalyzer` in `services/benchmark_analysis.py`
+1. Add method to `BenchmarkAnalyzer` in `services/benchmarking.py`
 2. Define result dataclass in the module
 3. Integrate into `compute_full_analysis()`
 4. Add database table in schema if persisting

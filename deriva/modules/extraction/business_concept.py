@@ -11,7 +11,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from ..base import current_timestamp
+from .base import current_timestamp
 
 # JSON schema for LLM structured output
 BUSINESS_CONCEPT_SCHEMA = {

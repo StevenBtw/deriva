@@ -1,6 +1,5 @@
 """Tests for modules.derivation.base module."""
 
-
 from deriva.adapters.llm.models import ResponseType
 from deriva.common import current_timestamp, extract_llm_details
 from deriva.modules.derivation.base import (
@@ -21,35 +20,20 @@ class TestBuildDerivationPrompt:
     def test_includes_graph_results(self):
         """Should include graph results in prompt."""
         graph_data = [{"name": "auth", "path": "src/auth"}]
-        prompt = build_derivation_prompt(
-            graph_data=graph_data,
-            instruction="Group directories",
-            example='{"identifier": "app:auth"}',
-            element_type="ApplicationComponent"
-        )
+        prompt = build_derivation_prompt(graph_data=graph_data, instruction="Group directories", example='{"identifier": "app:auth"}', element_type="ApplicationComponent")
 
         assert "auth" in prompt
         assert "src/auth" in prompt
 
     def test_includes_instruction(self):
         """Should include instruction in prompt."""
-        prompt = build_derivation_prompt(
-            graph_data=[],
-            instruction="Group top-level directories into components",
-            example="{}",
-            element_type="ApplicationComponent"
-        )
+        prompt = build_derivation_prompt(graph_data=[], instruction="Group top-level directories into components", example="{}", element_type="ApplicationComponent")
 
         assert "Group top-level directories" in prompt
 
     def test_includes_element_type(self):
         """Should reference element type in prompt."""
-        prompt = build_derivation_prompt(
-            graph_data=[],
-            instruction="Test",
-            example="{}",
-            element_type="ApplicationService"
-        )
+        prompt = build_derivation_prompt(graph_data=[], instruction="Test", example="{}", element_type="ApplicationService")
 
         assert "ApplicationService" in prompt
 
@@ -96,12 +80,7 @@ class TestBuildElement:
 
     def test_valid_element(self):
         """Should build element from valid data."""
-        derived = {
-            "identifier": "app:auth",
-            "name": "Auth Component",
-            "confidence": 0.9,
-            "source": "Directory:src/auth"
-        }
+        derived = {"identifier": "app:auth", "name": "Auth Component", "confidence": 0.9, "source": "Directory:src/auth"}
         result = build_element(derived, "ApplicationComponent")
 
         assert result["success"] is True
@@ -127,11 +106,7 @@ class TestBuildElement:
 
     def test_uses_documentation(self):
         """Should use documentation field."""
-        derived = {
-            "identifier": "app:auth",
-            "name": "Auth",
-            "documentation": "Auth docs"
-        }
+        derived = {"identifier": "app:auth", "name": "Auth", "documentation": "Auth docs"}
         result = build_element(derived, "ApplicationComponent")
         assert result["data"]["documentation"] == "Auth docs"
 
@@ -141,11 +116,7 @@ class TestCreateResult:
 
     def test_success_result(self):
         """Should create success result structure."""
-        result = create_result(
-            success=True,
-            errors=[],
-            stats={"count": 1}
-        )
+        result = create_result(success=True, errors=[], stats={"count": 1})
 
         assert result["success"] is True
         assert result["errors"] == []
@@ -154,11 +125,7 @@ class TestCreateResult:
 
     def test_failure_result_with_errors(self):
         """Should include errors when provided."""
-        result = create_result(
-            success=False,
-            errors=["Something went wrong"],
-            stats={}
-        )
+        result = create_result(success=False, errors=["Something went wrong"], stats={})
 
         assert result["success"] is False
         assert "Something went wrong" in result["errors"]
@@ -226,7 +193,7 @@ class TestBuildRelationshipPrompt:
         """Should include elements in prompt."""
         elements = [
             {"identifier": "app:auth", "name": "Auth", "element_type": "ApplicationComponent"},
-            {"identifier": "app:api", "name": "API", "element_type": "ApplicationComponent"}
+            {"identifier": "app:api", "name": "API", "element_type": "ApplicationComponent"},
         ]
         prompt = build_relationship_prompt(elements)
 
@@ -294,6 +261,7 @@ class TestExtractLlmDetails:
 
     def test_live_response_cache_used_false(self):
         """Should set cache_used=False for live responses."""
+
         class MockLiveResponse:
             response_type = ResponseType.LIVE
             content = "test content"
@@ -308,6 +276,7 @@ class TestExtractLlmDetails:
 
     def test_cached_response_cache_used_true(self):
         """Should set cache_used=True for cached responses."""
+
         class MockCachedResponse:
             response_type = ResponseType.CACHED
             content = "cached content"
@@ -322,6 +291,7 @@ class TestExtractLlmDetails:
 
     def test_response_without_usage(self):
         """Should handle response without usage data."""
+
         class MockResponse:
             response_type = ResponseType.LIVE
             content = "no usage"
@@ -334,6 +304,7 @@ class TestExtractLlmDetails:
 
     def test_response_without_response_type(self):
         """Should default cache_used to False when response_type missing."""
+
         class MockResponse:
             content = "plain response"
 
@@ -344,6 +315,7 @@ class TestExtractLlmDetails:
 
     def test_response_without_content(self):
         """Should handle response without content attribute."""
+
         class MockResponse:
             response_type = ResponseType.LIVE
 

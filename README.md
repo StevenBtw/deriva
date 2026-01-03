@@ -446,6 +446,7 @@ See [LICENSE](LICENSE) for the full license text.
 - [Neo4j](https://neo4j.com) - Graph database
 - [ArchiMate](https://www.opengroup.org/archimate-forum) - Enterprise architecture standard
 - [Archi](https://www.archimatetool.com) - Open source ArchiMate modeling tool
+- [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) - Multi-language AST parsing
 
 ---
 

@@ -6,11 +6,14 @@ Defines a Protocol for LLM providers and implementations for:
 - OpenAI
 - Anthropic
 - Ollama
+- Claude Code (via Agent SDK CLI)
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -19,7 +22,11 @@ import requests
 
 from deriva.common.exceptions import ProviderError as ProviderError
 
+# Valid provider names - shared between providers and benchmark models
+VALID_PROVIDERS = frozenset({"azure", "openai", "anthropic", "ollama", "claudecode"})
+
 __all__ = [
+    "VALID_PROVIDERS",
     "ProviderConfig",
     "CompletionResult",
     "ProviderError",
@@ -29,6 +36,7 @@ __all__ = [
     "OpenAIProvider",
     "AnthropicProvider",
     "OllamaProvider",
+    "ClaudeCodeProvider",
     "create_provider",
 ]
 
@@ -352,6 +360,207 @@ class OllamaProvider(BaseProvider):
             raise ProviderError(f"Unexpected Ollama response format: {e}") from e
 
 
+class ClaudeCodeProvider(BaseProvider):
+    """
+    Claude Code provider using the Agent SDK CLI.
+
+    This provider uses the `claude` CLI command to send requests,
+    leveraging the user's authenticated Claude Code session.
+    No API key required - uses OAuth authentication from Claude Code.
+    """
+
+    # Model aliases: CLI accepts short names (opus, sonnet, haiku)
+    MODEL_ALIASES = {
+        "opus": "opus",
+        "sonnet": "sonnet",
+        "haiku": "haiku",
+        "claude-opus-4-5-20251101": "opus",
+        "claude-sonnet-4-5-20250929": "sonnet",
+        "claude-haiku-4-5-20251001": "haiku",
+        "claude-sonnet-4-20250514": "sonnet",
+        "claude-3-5-sonnet-20241022": "sonnet",
+        "claude-3-5-haiku-20241022": "haiku",
+    }
+
+    def __init__(self, config: ProviderConfig):
+        super().__init__(config)
+        self._cli_verified = False
+
+    def _verify_cli(self) -> None:
+        """Verify that the claude CLI is available (once per instance)."""
+        if self._cli_verified:
+            return
+        try:
+            # shell=True needed on Windows where claude is a .cmd script
+            result = subprocess.run(
+                ["claude", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+                shell=(sys.platform == "win32"),
+            )
+            if result.returncode != 0:
+                raise ProviderError(
+                    "Claude CLI error. Is Claude Code installed and authenticated?"
+                )
+            self._cli_verified = True
+        except FileNotFoundError as exc:
+            raise ProviderError(
+                "Claude CLI not found. Install Claude Code: https://claude.ai/claude-code"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ProviderError("Claude CLI version check timed out") from exc
+
+    def _resolve_model(self, model: str) -> str:
+        """Resolve model name to Claude Code CLI model flag."""
+        return self.MODEL_ALIASES.get(model.lower(), model)
+
+    def _format_prompt(self, messages: list[dict[str, str]]) -> str:
+        """Convert chat messages to a single prompt string for the CLI."""
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "system":
+                parts.append(f"<system>\n{content}\n</system>\n")
+            elif role == "assistant":
+                parts.append(f"<assistant>\n{content}\n</assistant>\n")
+            else:
+                parts.append(content)
+        return "\n".join(parts)
+
+    def _strip_markdown_code_block(self, content: str) -> str:
+        """Strip markdown code block wrappers from content.
+
+        Claude often returns JSON wrapped in ```json ... ``` blocks.
+        This strips those wrappers to return clean content.
+        """
+        import re
+
+        content = content.strip()
+        # Match ```json, ```JSON, or just ``` at start, and ``` at end
+        pattern = r"^```(?:json|JSON)?\s*\n?(.*?)\n?```$"
+        match = re.match(pattern, content, re.DOTALL)
+        if match:
+            content = match.group(1).strip()
+
+        # Claude sometimes returns Python dict syntax with single quotes
+        # Try to fix simple cases for JSON parsing
+        if content.startswith("{") and "'" in content:
+            try:
+                # Try parsing as-is first
+                json.loads(content)
+            except json.JSONDecodeError:
+                # Convert Python dict syntax to JSON (single → double quotes)
+                # This handles simple cases like {'key': 'value'}
+                import ast
+
+                try:
+                    # ast.literal_eval safely parses Python literals
+                    parsed = ast.literal_eval(content)
+                    if isinstance(parsed, dict):
+                        content = json.dumps(parsed)
+                except (ValueError, SyntaxError):
+                    pass  # Keep original if parsing fails
+
+        return content
+
+    @property
+    def name(self) -> str:
+        return "claudecode"
+
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        self._verify_cli()
+
+        prompt = self._format_prompt(messages)
+        if json_mode:
+            prompt += "\n\nRespond with valid JSON only."
+
+        resolved_model = self._resolve_model(self.config.model)
+
+        cmd = [
+            "claude",
+            "-p",
+            prompt,
+            "--model",
+            resolved_model,
+            "--output-format",
+            "json",
+        ]
+        if max_tokens:
+            cmd.extend(["--max-tokens", str(max_tokens)])
+
+        try:
+            # shell=True needed on Windows where claude is a .cmd script
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.config.timeout,
+                check=False,
+                shell=(sys.platform == "win32"),
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() or result.stdout.strip()
+                raise ProviderError(f"Claude CLI error: {error_msg}")
+
+            # Parse JSON output
+            try:
+                output = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                return CompletionResult(
+                    content=result.stdout.strip(),
+                    finish_reason="stop",
+                )
+
+            # Extract content from JSON output
+            content = ""
+            if isinstance(output, dict):
+                content = output.get("result", output.get("content", str(output)))
+                if isinstance(content, dict):
+                    content = content.get("text", json.dumps(content))
+            elif isinstance(output, str):
+                content = output
+            else:
+                content = json.dumps(output)
+
+            # Strip markdown code blocks if present (Claude often wraps JSON in ```json ... ```)
+            content = self._strip_markdown_code_block(content)
+
+            usage = None
+            if isinstance(output, dict) and (
+                output.get("cost_usd") or output.get("duration_ms")
+            ):
+                usage = {
+                    "cost_usd": output.get("cost_usd"),
+                    "duration_ms": output.get("duration_ms"),
+                }
+
+            return CompletionResult(
+                content=content,
+                usage=usage,
+                finish_reason="stop",
+                raw_response=output if isinstance(output, dict) else None,
+            )
+
+        except subprocess.TimeoutExpired as exc:
+            raise ProviderError(
+                f"Claude CLI timed out after {self.config.timeout}s"
+            ) from exc
+        except ProviderError:
+            raise
+        except Exception as e:
+            raise ProviderError(f"Claude Code request failed: {e}") from e
+
+
 def create_provider(provider_name: str, config: ProviderConfig) -> LLMProvider:
     """
     Factory function to create a provider instance.
@@ -371,6 +580,7 @@ def create_provider(provider_name: str, config: ProviderConfig) -> LLMProvider:
         "openai": OpenAIProvider,
         "anthropic": AnthropicProvider,
         "ollama": OllamaProvider,
+        "claudecode": ClaudeCodeProvider,
     }
 
     provider_class = providers.get(provider_name.lower())

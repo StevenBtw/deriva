@@ -322,8 +322,8 @@ class LLMManager:
         Raises:
             ConfigurationError: If required fields are missing
         """
-        # Ollama doesn't require api_key
-        if self.config["provider"] == "ollama":
+        # Ollama and ClaudeCode don't require api_key
+        if self.config["provider"] in ("ollama", "claudecode"):
             required_fields = ["provider", "api_url", "model"]
         else:
             required_fields = ["provider", "api_url", "api_key", "model"]
