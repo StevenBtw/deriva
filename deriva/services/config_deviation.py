@@ -221,14 +221,16 @@ class ConfigDeviationAnalyzer:
             present_parsed = [parse_run_id(r) for r in present_in]
             missing_parsed = [parse_run_id(r) for r in missing_from]
 
-            object_details.append({
-                "object_id": obj_id,
-                "present_in_count": len(present_in),
-                "missing_from_count": len(missing_from),
-                "consistency": len(present_in) / len(all_runs) if all_runs else 0,
-                "present_in_runs": present_parsed,
-                "missing_from_runs": missing_parsed,
-            })
+            object_details.append(
+                {
+                    "object_id": obj_id,
+                    "present_in_count": len(present_in),
+                    "missing_from_count": len(missing_from),
+                    "consistency": len(present_in) / len(all_runs) if all_runs else 0,
+                    "present_in_runs": present_parsed,
+                    "missing_from_runs": missing_parsed,
+                }
+            )
 
         object_details.sort(key=lambda x: float(x["consistency"]))
 
@@ -243,19 +245,11 @@ class ConfigDeviationAnalyzer:
         """Compare all configs to identify most/least stable."""
         report = self.analyze()
 
-        extraction_configs = [
-            c for c in report.config_deviations if c.config_type == "extraction"
-        ]
-        derivation_configs = [
-            c for c in report.config_deviations if c.config_type == "derivation"
-        ]
+        extraction_configs = [c for c in report.config_deviations if c.config_type == "extraction"]
+        derivation_configs = [c for c in report.config_deviations if c.config_type == "derivation"]
 
-        most_stable = sorted(
-            report.config_deviations, key=lambda x: x.consistency_score, reverse=True
-        )
-        least_stable = sorted(
-            report.config_deviations, key=lambda x: x.consistency_score
-        )
+        most_stable = sorted(report.config_deviations, key=lambda x: x.consistency_score, reverse=True)
+        least_stable = sorted(report.config_deviations, key=lambda x: x.consistency_score)
 
         return {
             "session_id": self.session_id,
@@ -312,9 +306,7 @@ class ConfigDeviationAnalyzer:
 
         return str(path)
 
-    def export_sorted_json(
-        self, path: str | Path | None = None, sort_by: str = "deviation_count"
-    ) -> str:
+    def export_sorted_json(self, path: str | Path | None = None, sort_by: str = "deviation_count") -> str:
         """
         Export deviation report sorted by specified metric.
 
@@ -356,9 +348,7 @@ def analyze_config_deviations(session_id: str, engine: Any) -> DeviationReport:
     return analyzer.analyze()
 
 
-def export_config_deviations(
-    session_id: str, engine: Any, path: str | None = None
-) -> str:
+def export_config_deviations(session_id: str, engine: Any, path: str | None = None) -> str:
     """Analyze and export config deviations to JSON."""
     analyzer = ConfigDeviationAnalyzer(session_id, engine)
     return analyzer.export_json(path)

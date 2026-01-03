@@ -122,6 +122,7 @@ Return a JSON object with an "elements" array. Each element needs: identifier, n
 If no elements can be derived, return {{"elements": []}}.
 """
 
+
 # Hardcoded critical rules are a fallback, default is element config from database
 def build_relationship_prompt(elements: list[dict[str, Any]]) -> str:
     """Build LLM prompt for relationship derivation."""
@@ -186,15 +187,23 @@ def build_element_relationship_prompt(
     targets_json = json.dumps(target_elements, indent=2, default=str)
 
     # Extract valid identifiers for strict validation
-    source_ids = [e.get("identifier", "") for e in source_elements if e.get("identifier")]
-    target_ids = [e.get("identifier", "") for e in target_elements if e.get("identifier")]
+    source_ids = [
+        e.get("identifier", "") for e in source_elements if e.get("identifier")
+    ]
+    target_ids = [
+        e.get("identifier", "") for e in target_elements if e.get("identifier")
+    ]
 
     # Build relationship rules from metamodel constraints
     rel_rules = []
     for rel in valid_relationships:
         targets = ", ".join(rel["allowed_targets"])
-        rel_rules.append(f"- {rel['relationship_type']}: {rel['description']} → can target: [{targets}]")
-    rel_rules_text = "\n".join(rel_rules) if rel_rules else "No valid relationship types available."
+        rel_rules.append(
+            f"- {rel['relationship_type']}: {rel['description']} → can target: [{targets}]"
+        )
+    rel_rules_text = (
+        "\n".join(rel_rules) if rel_rules else "No valid relationship types available."
+    )
 
     # Use default instruction if not provided
     default_instruction = f"""Derive relationships FROM the {source_element_type} elements to other elements.

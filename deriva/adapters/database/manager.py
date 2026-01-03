@@ -141,7 +141,8 @@ def run_migrations() -> int:
         [
             f
             for f in SCRIPTS_DIR.glob("*.sql")
-            if f.stem[0].isdigit() and int(f.stem.split("_")[0]) >= 7  # Migrations start at 7
+            if f.stem[0].isdigit()
+            and int(f.stem.split("_")[0]) >= 7  # Migrations start at 7
         ]
     )
 
@@ -177,7 +178,11 @@ def run_migrations() -> int:
                     ).fetchone()
 
                     if result and result[0] > 0:
-                        logger.debug("Column %s.%s already exists, skipping", table_name, col_name)
+                        logger.debug(
+                            "Column %s.%s already exists, skipping",
+                            table_name,
+                            col_name,
+                        )
                         continue
 
                     # Column doesn't exist, add it
@@ -186,7 +191,9 @@ def run_migrations() -> int:
                     logger.info("Added column %s.%s", table_name, col_name)
 
                 except Exception as e:
-                    logger.warning("Migration statement failed: %s - %s", statement[:50], e)
+                    logger.warning(
+                        "Migration statement failed: %s - %s", statement[:50], e
+                    )
             else:
                 # Non-ALTER statements, just run them
                 try:

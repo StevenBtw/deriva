@@ -96,9 +96,7 @@ class OCELRunLogger:
         """Log start of a phase."""
         self._current_phase = phase
 
-    def phase_complete(
-        self, phase: str, message: str = "", stats: dict | None = None
-    ) -> None:
+    def phase_complete(self, phase: str, message: str = "", stats: dict | None = None) -> None:
         """Log completion of a phase."""
         self._current_phase = None
         self._current_config = None
@@ -682,9 +680,7 @@ class BenchmarkOrchestrator:
             llm = nocache_llm if skip_cache else cached_llm
 
             # Call the actual LLM with optional parameters
-            response = llm.query(
-                prompt, schema=schema, temperature=temperature, max_tokens=max_tokens
-            )
+            response = llm.query(prompt, schema=schema, temperature=temperature, max_tokens=max_tokens)
 
             # Log the query as an OCEL event (metadata only)
             usage = getattr(response, "usage", None) or {}

@@ -657,11 +657,7 @@ def create_derivation_config_version(
     if not current:
         return {"success": False, "error": f"Config not found for {step_name}"}
 
-    (
-        old_id, old_version, phase, sequence, cur_enabled, llm,
-        cur_graph_query, cur_model_query, cur_instruction, cur_example, cur_params,
-        cur_temperature, cur_max_tokens
-    ) = current
+    (old_id, old_version, phase, sequence, cur_enabled, llm, cur_graph_query, cur_model_query, cur_instruction, cur_example, cur_params, cur_temperature, cur_max_tokens) = current
     new_version = old_version + 1
 
     # Use current values if not provided
@@ -694,9 +690,20 @@ def create_derivation_config_version(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
         """,
         [
-            next_id, step_name, phase, new_version, sequence, new_enabled, llm,
-            new_graph_query, new_model_query, new_instruction, new_example, new_params,
-            new_temperature, new_max_tokens
+            next_id,
+            step_name,
+            phase,
+            new_version,
+            sequence,
+            new_enabled,
+            llm,
+            new_graph_query,
+            new_model_query,
+            new_instruction,
+            new_example,
+            new_params,
+            new_temperature,
+            new_max_tokens,
         ],
     )
 
@@ -733,10 +740,7 @@ def create_extraction_config_version(
     if not current:
         return {"success": False, "error": f"Config not found for {node_type}"}
 
-    (
-        old_id, old_version, sequence, cur_enabled, cur_sources,
-        cur_instruction, cur_example, cur_temperature, cur_max_tokens
-    ) = current
+    (old_id, old_version, sequence, cur_enabled, cur_sources, cur_instruction, cur_example, cur_temperature, cur_max_tokens) = current
     new_version = old_version + 1
 
     new_instruction = instruction if instruction is not None else cur_instruction
@@ -752,9 +756,7 @@ def create_extraction_config_version(
     )
 
     # Get next ID
-    next_id_result = engine.execute(
-        "SELECT COALESCE(MAX(id), 0) + 1 FROM extraction_config"
-    ).fetchone()
+    next_id_result = engine.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM extraction_config").fetchone()
     next_id = next_id_result[0]
 
     engine.execute(
@@ -764,10 +766,7 @@ def create_extraction_config_version(
          temperature, max_tokens, is_active, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
         """,
-        [
-            next_id, node_type, new_version, sequence, new_enabled, new_sources,
-            new_instruction, new_example, new_temperature, new_max_tokens
-        ],
+        [next_id, node_type, new_version, sequence, new_enabled, new_sources, new_instruction, new_example, new_temperature, new_max_tokens],
     )
 
     return {

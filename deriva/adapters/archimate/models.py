@@ -215,8 +215,10 @@ RELATIONSHIP_TYPES: dict[str, RelationshipType] = {
     "Serving": RelationshipType(
         name="Serving",
         description="Element provides services to another element",
-        allowed_sources=BEHAVIOR_ELEMENTS | STRUCTURE_ELEMENTS,  # Services/components serve
-        allowed_targets=STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS,  # Other elements are served
+        allowed_sources=BEHAVIOR_ELEMENTS
+        | STRUCTURE_ELEMENTS,  # Services/components serve
+        allowed_targets=STRUCTURE_ELEMENTS
+        | BEHAVIOR_ELEMENTS,  # Other elements are served
     ),
     "Access": RelationshipType(
         name="Access",
@@ -337,7 +339,10 @@ class ArchiMateMetamodel:
 
         for rel_name, rel_type in self.relationship_types.items():
             # Check if source is allowed (empty set means any source is allowed)
-            if rel_type.allowed_sources and source_element_type not in rel_type.allowed_sources:
+            if (
+                rel_type.allowed_sources
+                and source_element_type not in rel_type.allowed_sources
+            ):
                 continue
 
             # Determine allowed targets
@@ -351,11 +356,13 @@ class ArchiMateMetamodel:
                 allowed_targets = list(self.element_types.keys())
 
             if allowed_targets:  # Only include if there are valid targets
-                valid_relationships.append({
-                    "relationship_type": rel_name,
-                    "description": rel_type.description,
-                    "allowed_targets": allowed_targets,
-                })
+                valid_relationships.append(
+                    {
+                        "relationship_type": rel_name,
+                        "description": rel_type.description,
+                        "allowed_targets": allowed_targets,
+                    }
+                )
 
         return valid_relationships
 

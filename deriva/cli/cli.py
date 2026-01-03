@@ -587,7 +587,11 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     verbose = getattr(args, "verbose", False)
     use_cache = not getattr(args, "no_cache", False)
     nocache_configs_str = getattr(args, "nocache_configs", None)
-    nocache_configs = [c.strip() for c in nocache_configs_str.split(",")] if nocache_configs_str else None
+    nocache_configs = (
+        [c.strip() for c in nocache_configs_str.split(",")]
+        if nocache_configs_str
+        else None
+    )
 
     print(f"\n{'=' * 60}")
     print("DERIVA - Multi-Model Benchmark")
@@ -790,7 +794,13 @@ def cmd_benchmark_deviations(args: argparse.Namespace) -> int:
             print("-" * 60)
 
             for cd in report.config_deviations:
-                status = "LOW" if cd.consistency_score >= 0.8 else "MEDIUM" if cd.consistency_score >= 0.5 else "HIGH"
+                status = (
+                    "LOW"
+                    if cd.consistency_score >= 0.8
+                    else "MEDIUM"
+                    if cd.consistency_score >= 0.5
+                    else "HIGH"
+                )
                 print(f"  [{status}] {cd.config_type}: {cd.config_id}")
                 print(f"        Consistency: {cd.consistency_score:.1%}")
                 print(f"        Deviations: {cd.deviation_count}/{cd.total_objects}")
@@ -800,6 +810,7 @@ def cmd_benchmark_deviations(args: argparse.Namespace) -> int:
 
             # Get recommendations
             from deriva.modules.analysis import generate_recommendations
+
             recommendations = generate_recommendations(report.config_deviations)
             if recommendations:
                 print("RECOMMENDATIONS")

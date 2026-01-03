@@ -268,9 +268,7 @@ def build_deviation_report(
     total_deviations = sum(cd.deviation_count for cd in config_deviations)
     total_objects = sum(cd.total_objects for cd in config_deviations)
     overall_consistency = (
-        (total_objects - total_deviations) / total_objects
-        if total_objects > 0
-        else 1.0
+        (total_objects - total_deviations) / total_objects if total_objects > 0 else 1.0
     )
 
     return DeviationReport(

@@ -469,9 +469,7 @@ Return only the JSON object, no additional text."""
         effective_temperature = (
             temperature if temperature is not None else self.temperature
         )
-        effective_max_tokens = (
-            max_tokens if max_tokens is not None else self.max_tokens
-        )
+        effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
 
         # Determine if we need JSON mode
         json_mode = schema is not None or response_model is not None
