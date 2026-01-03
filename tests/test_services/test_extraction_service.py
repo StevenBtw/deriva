@@ -245,9 +245,7 @@ class TestExtractLLMBased:
         mock_cfg = MagicMock()
         mock_cfg.node_type = "BusinessConcept"
         # Use proper JSON format for input_sources
-        mock_cfg.input_sources = json_module.dumps({
-            "files": [{"type": "source", "subtype": "python"}]
-        })
+        mock_cfg.input_sources = json_module.dumps({"files": [{"type": "source", "subtype": "python"}]})
         mock_cfg.instruction = None
         mock_cfg.example = None
 
@@ -284,9 +282,7 @@ class TestExtractLLMBased:
             mock_cfg = MagicMock()
             mock_cfg.node_type = "BusinessConcept"
             # Use proper JSON format for input_sources
-            mock_cfg.input_sources = json_module.dumps({
-                "files": [{"type": "source", "subtype": "python"}]
-            })
+            mock_cfg.input_sources = json_module.dumps({"files": [{"type": "source", "subtype": "python"}]})
             mock_cfg.instruction = "Extract business concepts"
             mock_cfg.example = None
 

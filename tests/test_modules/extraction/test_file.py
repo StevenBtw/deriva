@@ -234,10 +234,7 @@ class TestExtractFiles:
             result = extract_files(tmpdir, "myrepo")
 
             assert result["success"] is True
-            extensions = {
-                n["properties"]["name"]: n["properties"]["extension"]
-                for n in result["data"]["nodes"]
-            }
+            extensions = {n["properties"]["name"]: n["properties"]["extension"] for n in result["data"]["nodes"]}
             assert extensions["script.py"] == ".py"
             assert extensions["config.yaml"] == ".yaml"
             assert extensions["README.md"] == ".md"

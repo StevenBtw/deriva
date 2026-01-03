@@ -349,6 +349,7 @@ class TestRepoManagerClone:
         manager = RepoManager(workspace_dir=tmp_path)
 
         with patch("deriva.adapters.repository.manager.subprocess.run") as mock_run:
+
             def handle_subprocess(*args, **kwargs):
                 cmd = args[0]
                 result = MagicMock()
@@ -385,6 +386,7 @@ class TestRepoManagerClone:
         clone_cmd_args = []
 
         with patch("deriva.adapters.repository.manager.subprocess.run") as mock_run:
+
             def handle_subprocess(*args, **kwargs):
                 cmd = args[0]
                 result = MagicMock()
@@ -401,10 +403,7 @@ class TestRepoManagerClone:
                 return result
 
             mock_run.side_effect = handle_subprocess
-            manager.clone_repository(
-                "https://github.com/user/repo.git",
-                branch="develop"
-            )
+            manager.clone_repository("https://github.com/user/repo.git", branch="develop")
 
             assert "--branch" in clone_cmd_args
             assert "develop" in clone_cmd_args
@@ -423,9 +422,7 @@ class TestRepoManagerList:
         """Should return RepositoryInfo objects when detailed=True."""
         manager = RepoManager(workspace_dir=tmp_path)
         # Add a repo to state
-        manager._state_manager.add_repository(
-            RepositoryInfo(name="repo1", path=str(tmp_path / "repo1"), url="https://github.com/u/repo1.git")
-        )
+        manager._state_manager.add_repository(RepositoryInfo(name="repo1", path=str(tmp_path / "repo1"), url="https://github.com/u/repo1.git"))
 
         repos = manager.list_repositories(detailed=True)
         assert len(repos) == 1
@@ -435,9 +432,7 @@ class TestRepoManagerList:
     def test_list_names_only(self, tmp_path):
         """Should return names only when detailed=False."""
         manager = RepoManager(workspace_dir=tmp_path)
-        manager._state_manager.add_repository(
-            RepositoryInfo(name="repo1", path=str(tmp_path / "repo1"))
-        )
+        manager._state_manager.add_repository(RepositoryInfo(name="repo1", path=str(tmp_path / "repo1")))
 
         repos = manager.list_repositories(detailed=False)
         assert repos == ["repo1"]
@@ -468,9 +463,7 @@ class TestRepoManagerDelete:
         repo_path = tmp_path / "test-repo"
         repo_path.mkdir()
         (repo_path / ".git").mkdir()
-        manager._state_manager.add_repository(
-            RepositoryInfo(name="test-repo", path=str(repo_path))
-        )
+        manager._state_manager.add_repository(RepositoryInfo(name="test-repo", path=str(repo_path)))
 
         with patch("subprocess.run") as mock_run:
             mock_result = MagicMock()

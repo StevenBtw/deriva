@@ -206,9 +206,7 @@ class TestGetExtractionConfig:
         engine = MagicMock()
         # Columns: node_type, sequence, enabled, input_sources, instruction, example,
         #          extraction_method, temperature, max_tokens
-        engine.execute.return_value.fetchone.return_value = (
-            "BusinessConcept", 1, True, '{"files": []}', "instruction", "example", "llm", 0.7, 4096
-        )
+        engine.execute.return_value.fetchone.return_value = ("BusinessConcept", 1, True, '{"files": []}', "instruction", "example", "llm", 0.7, 4096)
 
         config = get_extraction_config(engine, "BusinessConcept")
 
@@ -341,9 +339,7 @@ class TestGetDerivationConfig:
         engine = MagicMock()
         # Columns: step_name, phase, sequence, enabled, llm, input_graph_query, input_model_query,
         #          instruction, example, params, temperature, max_tokens
-        engine.execute.return_value.fetchone.return_value = (
-            "ApplicationComponent", "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None, 0.8, 3000
-        )
+        engine.execute.return_value.fetchone.return_value = ("ApplicationComponent", "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None, 0.8, 3000)
 
         config = get_derivation_config(engine, "ApplicationComponent")
 
@@ -426,9 +422,7 @@ class TestGetFileType:
     def test_returns_file_type_when_found(self):
         """Should return file type when found."""
         engine = MagicMock()
-        engine.execute.return_value.fetchone.return_value = (
-            ".py", "source", "python", None, None, 0
-        )
+        engine.execute.return_value.fetchone.return_value = (".py", "source", "python", None, None, 0)
 
         file_type = get_file_type(engine, ".py")
 
@@ -449,9 +443,7 @@ class TestGetFileType:
     def test_handles_chunking_config(self):
         """Should include chunking configuration."""
         engine = MagicMock()
-        engine.execute.return_value.fetchone.return_value = (
-            ".md", "documentation", "markdown", "\n\n", 1000, 100
-        )
+        engine.execute.return_value.fetchone.return_value = (".md", "documentation", "markdown", "\n\n", 1000, 100)
 
         file_type = get_file_type(engine, ".md")
 
@@ -479,9 +471,7 @@ class TestAddFileType:
     def test_returns_false_when_exists(self):
         """Should return False when file type already exists."""
         engine = MagicMock()
-        engine.execute.return_value.fetchone.return_value = (
-            ".py", "source", "python", None, None, 0
-        )
+        engine.execute.return_value.fetchone.return_value = (".py", "source", "python", None, None, 0)
 
         result = add_file_type(engine, ".py", "source", "python")
 

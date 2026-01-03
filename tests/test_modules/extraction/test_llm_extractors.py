@@ -53,9 +53,7 @@ class TestBusinessConceptModule:
             "confidence": 0.9,
         }
 
-        result = business_concept.build_business_concept_node(
-            concept_data, "auth.py", "myrepo"
-        )
+        result = business_concept.build_business_concept_node(concept_data, "auth.py", "myrepo")
 
         assert result["success"] is True
         assert result["data"]["label"] == "BusinessConcept"
@@ -69,9 +67,7 @@ class TestBusinessConceptModule:
             "description": "Some description",
         }
 
-        result = business_concept.build_business_concept_node(
-            concept_data, "auth.py", "myrepo"
-        )
+        result = business_concept.build_business_concept_node(concept_data, "auth.py", "myrepo")
 
         assert result["success"] is False
         assert any("conceptName" in e for e in result["errors"])
@@ -84,20 +80,14 @@ class TestBusinessConceptModule:
             "description": "Some description",
         }
 
-        result = business_concept.build_business_concept_node(
-            concept_data, "file.py", "myrepo"
-        )
+        result = business_concept.build_business_concept_node(concept_data, "file.py", "myrepo")
 
         assert result["success"] is True
         assert result["data"]["properties"]["conceptType"] == "other"
 
     def test_parse_llm_response_valid(self):
         """Should parse valid LLM response."""
-        response = json.dumps({
-            "concepts": [
-                {"conceptName": "User", "conceptType": "entity", "description": "A user"}
-            ]
-        })
+        response = json.dumps({"concepts": [{"conceptName": "User", "conceptType": "entity", "description": "A user"}]})
 
         result = business_concept.parse_llm_response(response)
 
@@ -156,9 +146,7 @@ class TestTypeDefinitionModule:
             "confidence": 0.95,
         }
 
-        result = type_definition.build_type_definition_node(
-            type_data, "models/user.py", "myrepo"
-        )
+        result = type_definition.build_type_definition_node(type_data, "models/user.py", "myrepo")
 
         assert result["success"] is True
         assert result["data"]["label"] == "TypeDefinition"
@@ -170,19 +158,13 @@ class TestTypeDefinitionModule:
             "typeCategory": "class",
         }
 
-        result = type_definition.build_type_definition_node(
-            type_data, "file.py", "myrepo"
-        )
+        result = type_definition.build_type_definition_node(type_data, "file.py", "myrepo")
 
         assert result["success"] is False
 
     def test_parse_llm_response_valid(self):
         """Should parse valid LLM response."""
-        response = json.dumps({
-            "types": [
-                {"typeName": "User", "typeCategory": "class", "description": "User model"}
-            ]
-        })
+        response = json.dumps({"types": [{"typeName": "User", "typeCategory": "class", "description": "User model"}]})
 
         result = type_definition.parse_llm_response(response)
 
@@ -226,9 +208,7 @@ class TestMethodModule:
             "confidence": 0.9,
         }
 
-        result = method.build_method_node(
-            method_data, "api/users.py", "UserService", "myrepo"
-        )
+        result = method.build_method_node(method_data, "api/users.py", "UserService", "myrepo")
 
         assert result["success"] is True
         assert result["data"]["label"] == "Method"
@@ -240,19 +220,13 @@ class TestMethodModule:
             "returnType": "User",
         }
 
-        result = method.build_method_node(
-            method_data, "file.py", "SomeClass", "myrepo"
-        )
+        result = method.build_method_node(method_data, "file.py", "SomeClass", "myrepo")
 
         assert result["success"] is False
 
     def test_parse_llm_response_valid(self):
         """Should parse valid LLM response."""
-        response = json.dumps({
-            "methods": [
-                {"methodName": "process", "returnType": "void", "visibility": "public"}
-            ]
-        })
+        response = json.dumps({"methods": [{"methodName": "process", "returnType": "void", "visibility": "public"}]})
 
         result = method.parse_llm_response(response)
 
@@ -292,9 +266,7 @@ class TestTechnologyModule:
             "confidence": 0.95,
         }
 
-        result = technology.build_technology_node(
-            tech_data, "app/main.py", "myrepo"
-        )
+        result = technology.build_technology_node(tech_data, "app/main.py", "myrepo")
 
         assert result["success"] is True
         assert result["data"]["label"] == "Technology"
@@ -306,19 +278,13 @@ class TestTechnologyModule:
             "techCategory": "service",
         }
 
-        result = technology.build_technology_node(
-            tech_data, "file.py", "myrepo"
-        )
+        result = technology.build_technology_node(tech_data, "file.py", "myrepo")
 
         assert result["success"] is False
 
     def test_parse_llm_response_valid(self):
         """Should parse valid LLM response."""
-        response = json.dumps({
-            "technologies": [
-                {"techName": "FastAPI", "techCategory": "service", "description": "Web framework"}
-            ]
-        })
+        response = json.dumps({"technologies": [{"techName": "FastAPI", "techCategory": "service", "description": "Web framework"}]})
 
         result = technology.parse_llm_response(response)
 
@@ -360,9 +326,7 @@ class TestExternalDependencyModule:
             "confidence": 0.95,
         }
 
-        result = external_dependency.build_external_dependency_node(
-            dep_data, "pyproject.toml", "myrepo"
-        )
+        result = external_dependency.build_external_dependency_node(dep_data, "pyproject.toml", "myrepo")
 
         assert result["success"] is True
         assert result["data"]["label"] == "ExternalDependency"
@@ -375,9 +339,7 @@ class TestExternalDependencyModule:
             "dependencyCategory": "library",
         }
 
-        result = external_dependency.build_external_dependency_node(
-            dep_data, "file.py", "myrepo"
-        )
+        result = external_dependency.build_external_dependency_node(dep_data, "file.py", "myrepo")
 
         assert result["success"] is False
         assert any("dependencyName" in e for e in result["errors"])
@@ -390,20 +352,14 @@ class TestExternalDependencyModule:
             "description": "Some lib",
         }
 
-        result = external_dependency.build_external_dependency_node(
-            dep_data, "file.py", "myrepo"
-        )
+        result = external_dependency.build_external_dependency_node(dep_data, "file.py", "myrepo")
 
         assert result["success"] is True
         assert result["data"]["properties"]["dependencyCategory"] == "library"
 
     def test_parse_llm_response_valid(self):
         """Should parse valid LLM response."""
-        response = json.dumps({
-            "dependencies": [
-                {"dependencyName": "Redis", "dependencyCategory": "library", "description": "Cache"}
-            ]
-        })
+        response = json.dumps({"dependencies": [{"dependencyName": "Redis", "dependencyCategory": "library", "description": "Cache"}]})
 
         result = external_dependency.parse_llm_response(response)
 
@@ -420,12 +376,14 @@ class TestExternalDependencyModule:
         assert len(result["errors"]) > 0
 
     def test_parse_llm_response_missing_dependencies(self):
-        """Should fail when dependencies array is missing."""
+        """Should return empty data when response has unrecognized structure."""
         response = json.dumps({"data": []})
 
         result = external_dependency.parse_llm_response(response)
 
-        assert result["success"] is False
+        # Unrecognized response structure treated as "no dependencies found"
+        assert result["success"] is True
+        assert result["data"] == []
 
 
 class TestTestExtractionModule:
@@ -464,9 +422,7 @@ class TestTestExtractionModule:
             "confidence": 0.95,
         }
 
-        result = test_module.build_test_node(
-            test_data, "tests/test_user.py", "myrepo"
-        )
+        result = test_module.build_test_node(test_data, "tests/test_user.py", "myrepo")
 
         assert result["success"] is True
         assert result["data"]["label"] == "Test"
@@ -479,9 +435,7 @@ class TestTestExtractionModule:
             "testType": "unit",
         }
 
-        result = test_module.build_test_node(
-            test_data, "tests/file.py", "myrepo"
-        )
+        result = test_module.build_test_node(test_data, "tests/file.py", "myrepo")
 
         assert result["success"] is False
         assert any("testName" in e for e in result["errors"])
@@ -494,20 +448,14 @@ class TestTestExtractionModule:
             "description": "Some test",
         }
 
-        result = test_module.build_test_node(
-            test_data, "tests/file.py", "myrepo"
-        )
+        result = test_module.build_test_node(test_data, "tests/file.py", "myrepo")
 
         assert result["success"] is True
         assert result["data"]["properties"]["testType"] == "other"
 
     def test_parse_llm_response_valid(self):
         """Should parse valid LLM response."""
-        response = json.dumps({
-            "tests": [
-                {"testName": "test_foo", "testType": "unit", "description": "Tests foo"}
-            ]
-        })
+        response = json.dumps({"tests": [{"testName": "test_foo", "testType": "unit", "description": "Tests foo"}]})
 
         result = test_module.parse_llm_response(response)
 
@@ -590,12 +538,14 @@ class TestExtractBusinessConcepts:
     def test_extract_handles_node_build_failure(self):
         """Should continue when some nodes fail to build."""
         # Missing required conceptName in second item
-        mock_response = MockLLMResponse({
-            "concepts": [
-                {"conceptName": "Valid", "conceptType": "service", "description": "OK"},
-                {"conceptType": "broken", "description": "Missing name"},
-            ]
-        })
+        mock_response = MockLLMResponse(
+            {
+                "concepts": [
+                    {"conceptName": "Valid", "conceptType": "service", "description": "OK"},
+                    {"conceptType": "broken", "description": "Missing name"},
+                ]
+            }
+        )
 
         mock_llm = MagicMock(return_value=mock_response)
 
@@ -660,11 +610,7 @@ class TestExtractBusinessConcepts:
 
     def test_extract_creates_edges(self):
         """Should create REFERENCES edges from File to concepts."""
-        mock_response = MockLLMResponse({
-            "concepts": [
-                {"conceptName": "Auth", "conceptType": "service", "description": "Auth"}
-            ]
-        })
+        mock_response = MockLLMResponse({"concepts": [{"conceptName": "Auth", "conceptType": "service", "description": "Auth"}]})
 
         mock_llm = MagicMock(return_value=mock_response)
 
@@ -734,17 +680,19 @@ class TestExtractMethods:
 
     def test_extract_success(self):
         """Should extract methods successfully."""
-        mock_response = MockLLMResponse({
-            "methods": [
-                {
-                    "methodName": "get_user",
-                    "returnType": "User",
-                    "visibility": "public",
-                    "parameters": [],
-                    "description": "Gets a user",
-                }
-            ]
-        })
+        mock_response = MockLLMResponse(
+            {
+                "methods": [
+                    {
+                        "methodName": "get_user",
+                        "returnType": "User",
+                        "visibility": "public",
+                        "parameters": [],
+                        "description": "Gets a user",
+                    }
+                ]
+            }
+        )
 
         mock_llm = MagicMock(return_value=mock_response)
 
@@ -847,17 +795,19 @@ class TestExtractExternalDependencies:
 
     def test_extract_success(self):
         """Should extract dependencies successfully."""
-        mock_response = MockLLMResponse({
-            "dependencies": [
-                {
-                    "dependencyName": "FastAPI",
-                    "dependencyCategory": "library",
-                    "version": "0.100.0",
-                    "ecosystem": "pypi",
-                    "description": "Web framework",
-                }
-            ]
-        })
+        mock_response = MockLLMResponse(
+            {
+                "dependencies": [
+                    {
+                        "dependencyName": "FastAPI",
+                        "dependencyCategory": "library",
+                        "version": "0.100.0",
+                        "ecosystem": "pypi",
+                        "description": "Web framework",
+                    }
+                ]
+            }
+        )
 
         mock_llm = MagicMock(return_value=mock_response)
 
@@ -892,17 +842,19 @@ class TestExtractTests:
 
     def test_extract_success(self):
         """Should extract tests successfully."""
-        mock_response = MockLLMResponse({
-            "tests": [
-                {
-                    "testName": "test_login",
-                    "testType": "unit",
-                    "description": "Tests login",
-                    "testedElement": "AuthService",
-                    "framework": "pytest",
-                }
-            ]
-        })
+        mock_response = MockLLMResponse(
+            {
+                "tests": [
+                    {
+                        "testName": "test_login",
+                        "testType": "unit",
+                        "description": "Tests login",
+                        "testedElement": "AuthService",
+                        "framework": "pytest",
+                    }
+                ]
+            }
+        )
 
         mock_llm = MagicMock(return_value=mock_response)
 

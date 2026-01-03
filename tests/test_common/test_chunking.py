@@ -20,9 +20,7 @@ class TestChunk:
 
     def test_chunk_properties(self):
         """Should create chunk with correct properties."""
-        chunk = Chunk(
-            content="some content", index=0, total=3, start_line=1, end_line=10
-        )
+        chunk = Chunk(content="some content", index=0, total=3, start_line=1, end_line=10)
 
         assert chunk.content == "some content"
         assert chunk.index == 0

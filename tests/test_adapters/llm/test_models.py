@@ -1,6 +1,5 @@
 """Tests for managers.llm.models module."""
 
-
 import pytest
 from pydantic import BaseModel, Field
 

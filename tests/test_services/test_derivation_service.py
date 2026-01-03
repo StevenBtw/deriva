@@ -307,11 +307,7 @@ class TestDeriveRelationships:
         archimate_manager = MagicMock()
 
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "relationships": [
-                {"source": "comp1", "target": "comp2", "relationship_type": "Composition"}
-            ]
-        })
+        mock_response.content = json.dumps({"relationships": [{"source": "comp1", "target": "comp2", "relationship_type": "Composition"}]})
         llm_query_fn = MagicMock(return_value=mock_response)
 
         result = derivation._derive_relationships(elements, archimate_manager, llm_query_fn)
@@ -325,11 +321,7 @@ class TestDeriveRelationships:
         archimate_manager = MagicMock()
 
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "relationships": [
-                {"source": "unknown", "target": "comp2", "relationship_type": "Composition"}
-            ]
-        })
+        mock_response.content = json.dumps({"relationships": [{"source": "unknown", "target": "comp2", "relationship_type": "Composition"}]})
         llm_query_fn = MagicMock(return_value=mock_response)
 
         result = derivation._derive_relationships(elements, archimate_manager, llm_query_fn)
@@ -343,11 +335,7 @@ class TestDeriveRelationships:
         archimate_manager = MagicMock()
 
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "relationships": [
-                {"source": "comp1", "target": "unknown", "relationship_type": "Composition"}
-            ]
-        })
+        mock_response.content = json.dumps({"relationships": [{"source": "comp1", "target": "unknown", "relationship_type": "Composition"}]})
         llm_query_fn = MagicMock(return_value=mock_response)
 
         result = derivation._derive_relationships(elements, archimate_manager, llm_query_fn)
@@ -364,11 +352,7 @@ class TestDeriveRelationships:
         archimate_manager = MagicMock()
 
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "relationships": [
-                {"source": "my_component", "target": "other_component", "relationship_type": "Composition"}
-            ]
-        })
+        mock_response.content = json.dumps({"relationships": [{"source": "my_component", "target": "other_component", "relationship_type": "Composition"}]})
         llm_query_fn = MagicMock(return_value=mock_response)
 
         result = derivation._derive_relationships(elements, archimate_manager, llm_query_fn)
@@ -382,11 +366,7 @@ class TestDeriveRelationships:
         archimate_manager.add_relationship.side_effect = Exception("DB error")
 
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "relationships": [
-                {"source": "comp1", "target": "comp2", "relationship_type": "Composition"}
-            ]
-        })
+        mock_response.content = json.dumps({"relationships": [{"source": "comp1", "target": "comp2", "relationship_type": "Composition"}]})
         llm_query_fn = MagicMock(return_value=mock_response)
 
         result = derivation._derive_relationships(elements, archimate_manager, llm_query_fn)
@@ -460,11 +440,7 @@ class TestDeriveElementRelationships:
         archimate_manager = MagicMock()
 
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "relationships": [
-                {"source": "ac:comp1", "target": "as:svc1", "relationship_type": "Assignment", "confidence": 0.9}
-            ]
-        })
+        mock_response.content = json.dumps({"relationships": [{"source": "ac:comp1", "target": "as:svc1", "relationship_type": "Assignment", "confidence": 0.9}]})
         llm_query_fn = MagicMock(return_value=mock_response)
 
         result = derivation._derive_element_relationships(
@@ -493,11 +469,7 @@ class TestDeriveElementRelationships:
         # Composition is valid for ApplicationComponent but only to other structure elements
         # BusinessProcess is a behavior element, so Composition to it should be rejected
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "relationships": [
-                {"source": "ac:comp1", "target": "bp:proc1", "relationship_type": "Composition"}
-            ]
-        })
+        mock_response.content = json.dumps({"relationships": [{"source": "ac:comp1", "target": "bp:proc1", "relationship_type": "Composition"}]})
         llm_query_fn = MagicMock(return_value=mock_response)
 
         result = derivation._derive_element_relationships(
@@ -523,12 +495,14 @@ class TestDeriveElementRelationships:
         archimate_manager = MagicMock()
 
         mock_response = MagicMock()
-        mock_response.content = json.dumps({
-            "relationships": [
-                # Source is comp2, but source_elements only contains comp1
-                {"source": "ac:comp2", "target": "ac:comp1", "relationship_type": "Composition"}
-            ]
-        })
+        mock_response.content = json.dumps(
+            {
+                "relationships": [
+                    # Source is comp2, but source_elements only contains comp1
+                    {"source": "ac:comp2", "target": "ac:comp1", "relationship_type": "Composition"}
+                ]
+            }
+        )
         llm_query_fn = MagicMock(return_value=mock_response)
 
         result = derivation._derive_element_relationships(
@@ -600,12 +574,7 @@ class TestPerElementRelationshipInRunDerivation:
             # Returns: relationship configs, prep configs, generate configs
             mock_get.side_effect = [[rel_cfg], [], [gen_cfg]]
             with patch.object(derivation, "generate_element") as mock_gen:
-                mock_gen.return_value = {
-                    "elements_created": 1,
-                    "created_elements": [
-                        {"identifier": "ac:comp1", "element_type": "ApplicationComponent"}
-                    ]
-                }
+                mock_gen.return_value = {"elements_created": 1, "created_elements": [{"identifier": "ac:comp1", "element_type": "ApplicationComponent"}]}
                 with patch.object(derivation, "_derive_element_relationships") as mock_derive:
                     mock_derive.return_value = {"relationships_created": 2, "errors": []}
                     result = derivation.run_derivation(
@@ -644,7 +613,7 @@ class TestPerElementRelationshipInRunDerivation:
                     "created_elements": [
                         {"identifier": "ac:comp1", "element_type": "ApplicationComponent"},
                         {"identifier": "ac:comp2", "element_type": "ApplicationComponent"},
-                    ]
+                    ],
                 }
                 with patch.object(derivation, "_derive_relationships") as mock_derive:
                     mock_derive.return_value = {"relationships_created": 1, "errors": []}

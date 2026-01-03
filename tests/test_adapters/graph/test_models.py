@@ -94,9 +94,7 @@ class TestDirectoryNode:
 
     def test_generate_id(self):
         """Should generate unique ID from path."""
-        node = DirectoryNode(
-            name="helpers", path="src/utils/helpers", repository_name="myrepo"
-        )
+        node = DirectoryNode(name="helpers", path="src/utils/helpers", repository_name="myrepo")
         assert node.generate_id() == "Directory_myrepo_src_utils_helpers"
 
     def test_to_dict(self):
@@ -153,9 +151,7 @@ class TestModuleNode:
 
     def test_basic_creation(self):
         """Should create module node."""
-        node = ModuleNode(
-            name="utils", paths=["src/utils"], repository_name="myrepo"
-        )
+        node = ModuleNode(name="utils", paths=["src/utils"], repository_name="myrepo")
         assert node.name == "utils"
 
     def test_generate_id(self):
@@ -231,9 +227,7 @@ class TestTechnologyNode:
 
     def test_generate_id(self):
         """Should generate unique ID."""
-        node = TechnologyNode(
-            name="FastAPI", tech_category="service", repository_name="myrepo"
-        )
+        node = TechnologyNode(name="FastAPI", tech_category="service", repository_name="myrepo")
         node_id = node.generate_id()
         assert "FastAPI" in node_id
 

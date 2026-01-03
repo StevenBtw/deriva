@@ -58,8 +58,7 @@ class TestRelationshipTypes:
         serving = RELATIONSHIP_TYPES.get("Serving")
         assert serving is not None
         # Serving typically from behavior elements
-        assert any(elem in BEHAVIOR_ELEMENTS for elem in serving.allowed_sources) or \
-               any(elem in STRUCTURE_ELEMENTS for elem in serving.allowed_sources)
+        assert any(elem in BEHAVIOR_ELEMENTS for elem in serving.allowed_sources) or any(elem in STRUCTURE_ELEMENTS for elem in serving.allowed_sources)
 
     def test_access_has_constraints(self):
         """Access should allow passive elements as targets."""
@@ -170,8 +169,7 @@ class TestGetValidRelationshipsFrom:
             for target in targets:
                 assert isinstance(target, str)
                 # Target should be a known element type
-                assert target in STRUCTURE_ELEMENTS or target in BEHAVIOR_ELEMENTS or target in PASSIVE_ELEMENTS, \
-                    f"Unknown target type: {target}"
+                assert target in STRUCTURE_ELEMENTS or target in BEHAVIOR_ELEMENTS or target in PASSIVE_ELEMENTS, f"Unknown target type: {target}"
 
     def test_data_object_can_access(self, metamodel):
         """DataObject should not typically be source of many relationships."""
@@ -227,10 +225,5 @@ class TestRelationship:
 
     def test_relationship_with_properties(self):
         """Should store custom properties."""
-        rel = Relationship(
-            source="src",
-            target="tgt",
-            relationship_type="Serving",
-            properties={"confidence": 0.9}
-        )
+        rel = Relationship(source="src", target="tgt", relationship_type="Serving", properties={"confidence": 0.9})
         assert rel.properties["confidence"] == 0.9

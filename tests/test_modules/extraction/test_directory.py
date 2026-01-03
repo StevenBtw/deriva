@@ -218,9 +218,7 @@ class TestExtractDirectories:
             result = extract_directories(tmpdir, "myrepo")
 
             # Find the src node
-            src_nodes = [
-                n for n in result["data"]["nodes"] if n["properties"]["name"] == "src"
-            ]
+            src_nodes = [n for n in result["data"]["nodes"] if n["properties"]["name"] == "src"]
             assert len(src_nodes) == 1
             assert src_nodes[0]["properties"]["subdirectory_count"] == 2
 
@@ -250,11 +248,7 @@ class TestExtractDirectories:
             result = extract_directories(tmpdir, "myrepo")
 
             # Find the edge from src to utils
-            edges_to_utils = [
-                e
-                for e in result["data"]["edges"]
-                if e["to_node_id"] == "dir_myrepo_src_utils"
-            ]
+            edges_to_utils = [e for e in result["data"]["edges"] if e["to_node_id"] == "dir_myrepo_src_utils"]
             assert len(edges_to_utils) == 1
             assert edges_to_utils[0]["from_node_id"] == "dir_myrepo_src"
 
@@ -272,7 +266,5 @@ class TestExtractDirectories:
             assert result["stats"]["total_nodes"] == 3
 
             # All should have repo as parent
-            repo_edges = [
-                e for e in result["data"]["edges"] if e["from_node_id"] == "repo_myrepo"
-            ]
+            repo_edges = [e for e in result["data"]["edges"] if e["from_node_id"] == "repo_myrepo"]
             assert len(repo_edges) == 3
