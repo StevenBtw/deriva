@@ -213,6 +213,8 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
             data = parsed["dependencies"]
             if isinstance(data, list):
                 return {"success": True, "data": data, "errors": []}
+            # Handle {"dependencies": null} or {"dependencies": "none"} - treat as empty
+            return {"success": True, "data": [], "errors": []}
 
         # Try alternate key names that LLM might use (not "data" - too generic)
         alternate_keys = ["result", "results", "items", "externalDependencies"]
@@ -220,16 +222,9 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
             if key in parsed and isinstance(parsed[key], list):
                 return {"success": True, "data": parsed[key], "errors": []}
 
-        # If response is empty object, return empty (no dependencies found)
-        if parsed == {}:
-            return {"success": True, "data": [], "errors": []}
-
-        # Could not find dependency data
-        return {
-            "success": False,
-            "data": [],
-            "errors": ['Response missing "dependencies" array'],
-        }
+        # If dict has no recognized keys, treat as empty (no dependencies found)
+        # This handles edge cases like {"status": "empty"} or {"message": "no deps"}
+        return {"success": True, "data": [], "errors": []}
 
     except json.JSONDecodeError as e:
         return {
