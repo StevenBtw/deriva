@@ -178,77 +178,125 @@ uv run python -m deriva.cli.cli benchmark analyze bench_20260103_130000
 
 1. **Identify the Problem Config**
    ```bash
-   deriva benchmark deviations <session_id>
-   # Look for configs with < 80% consistency
+   uv run python -m deriva.cli.cli benchmark analyze <session_id>
+   # Look for configs with < 95% consistency in the analysis/summary.json
    ```
 
 2. **Examine Current Config**
    ```bash
-   deriva config show derivation ApplicationComponent
+   uv run python -m deriva.cli.cli config show derivation ApplicationComponent
    ```
 
 3. **Analyze Deviating Objects**
 
-   Check `workspace/benchmarks/<session>/config_deviations.json` to see which specific objects vary between runs.
+   Check `workspace/benchmarks/<session>/analysis/summary.json` for:
+   - `unstable_elements`: Which specific elements vary between runs
+   - Look for patterns like naming inconsistencies or synonym usage
 
 4. **Improve the Prompt**
 
    Common improvements:
-   - Be more specific about what to include/exclude
-   - Add concrete examples matching your codebase
-   - Constrain output format more strictly
-   - Add domain-specific terminology
+
+   - **Enforce naming conventions** (singular vs plural, snake_case vs camelCase)
+   - **Ban synonyms explicitly** ("Customer" not "Client", "User", or "Buyer")
+   - **Provide exact identifier format** (`bus_obj_customer`, not `BusinessObject_Customer`)
+   - Add "Output stable, deterministic results" instruction
 
 5. **Test with Minimal Cost**
    ```bash
    # Single run first to verify no errors
-   deriva benchmark run \
+   uv run python -m deriva.cli.cli benchmark run \
      --repos flask_invoice_generator \
      --models azure-gpt4mini \
      --runs 1 \
      --nocache-configs ApplicationComponent
 
-   # If successful, run 3x for consistency measurement
-   deriva benchmark run \
+   # If successful, run 5x for consistency measurement
+   uv run python -m deriva.cli.cli benchmark run \
      --repos flask_invoice_generator \
      --models azure-gpt4mini \
-     --runs 3 \
+     --runs 5 \
      --nocache-configs ApplicationComponent
    ```
 
 6. **Evaluate Improvement**
    ```bash
-   deriva benchmark deviations <new_session_id>
+   uv run python -m deriva.cli.cli benchmark analyze <new_session_id>
    ```
 
 7. **Iterate or Move On**
    - If consistency >= 80%: Move to next problematic config
    - If consistency < 80%: Try a different prompt approach
 
-### Example: Optimizing ApplicationComponent
+## Case Study: Improving Derivation Consistency
 
-Before:
+### Problem
+
+Initial benchmark with 5 runs showed **28% consistency** with 18 unstable elements:
+
 ```
-Instruction: "Derive ApplicationComponent elements from the graph."
+unstable_elements:
+  bus_obj_positions: 3/5 runs      # plural vs singular
+  bus_obj_invoicedetails: 4/5      # camelCase vs snake_case
+  bus_obj_customer: 4/5            # vs "client" synonym
+  app_comp_static: 2/5             # inconsistent naming
+  app_comp_flask_invoice_generator_static: 3/5  # repo prefix included
 ```
 
-After:
+### Root Cause Analysis
+
+The original prompts were too vague:
+
+- **BusinessObject**: "Derive BusinessObject elements from business concepts"
+- **ApplicationComponent**: "Use directory name as component name, include repo for context"
+- **TechnologyService**: "Group related dependencies into logical services"
+
+### Solution: Explicit Naming Rules
+
+Updated prompts with strict naming conventions:
+
+**BusinessObject** (improved):
 ```
-Instruction: "Derive ArchiMate ApplicationComponent elements. An ApplicationComponent
-represents a modular, deployable, and replaceable part of a software system that
-encapsulates behavior and data.
+NAMING RULES (CRITICAL FOR CONSISTENCY):
+1. Use SINGULAR form always (Invoice not Invoices)
+2. Use lowercase snake_case for identifier (bus_obj_invoice)
+3. Use Title Case for display name (Invoice)
 
-Include:
-- Classes that implement business logic (services, managers, handlers)
-- Standalone modules with clear responsibilities
+MANDATORY SYNONYM RULES - ALWAYS use these canonical names:
+- Customer (NEVER: Client, User, Buyer, Account)
+- Order (NEVER: Purchase, Transaction, Sale)
+- Position (NEVER: Line Item, Order Line, Item)
 
-Exclude:
-- Data transfer objects (DTOs)
-- Configuration classes
-- Test utilities
-
-Name format: Use the class name directly (e.g., 'InvoiceService' not 'Invoice Service Component')"
+Output stable, deterministic results.
 ```
+
+**ApplicationComponent** (improved):
+```
+NAMING RULES (CRITICAL FOR CONSISTENCY):
+1. Use ONLY the directory name, NEVER include repository name prefix
+   - Correct: app_comp_static
+   - Wrong: app_comp_flask_invoice_generator_static
+2. Use lowercase snake_case for identifier
+
+Output stable, deterministic results.
+```
+
+### Results
+
+After optimization: **78.6% consistency** with only 3 unstable elements:
+
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| Consistency | 28% | 78.6% | +50.6% |
+| Unstable elements | 18 | 3 | -83% |
+| Count variance | 1.84 | 0.24 | -87% |
+
+### Key Takeaways
+
+1. **Explicit naming rules are critical** - LLMs will vary naming unless constrained
+2. **Ban synonyms explicitly** - "Customer not Client" is more effective than "use consistent names"
+3. **Provide exact format examples** - Show the exact identifier format you expect
+4. **Add determinism instruction** - "Output stable, deterministic results" helps
 
 ## CLI Reference
 
