@@ -1,30 +1,24 @@
 # Deriva
+[![Research Project](https://img.shields.io/badge/Research-Project-blueviolet.svg)](#)
 [![Build Status](https://github.com/StevenBtw/Deriva/actions/workflows/ci.yml/badge.svg)](https://github.com/StevenBtw/Deriva/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/StevenBtw/Deriva/graph/badge.svg?token=A3H2COO119)](https://codecov.io/gh/StevenBtw/Deriva)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/Docker-required-2496ED.svg?logo=docker)](https://www.docker.com/)
 [![Neo4j](https://img.shields.io/badge/Neo4j-5.x-008CC1.svg?logo=neo4j)](https://neo4j.com/)
 [![Marimo](https://img.shields.io/badge/Marimo-notebook-orange.svg)](https://marimo.io/)
-[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://docs.astral.sh/uv/)
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://docs.astral.sh/ruff/)
-[![Typing: ty](https://img.shields.io/badge/typing-ty-EFC621.svg)](https://docs.astral.sh/ty/)
-
-
-
 
 **Automatically generate ArchiMate enterprise architecture models from software repositories.**
 
-Deriva analyzes your code repositories and transforms them into ArchiMate models that can be opened in the [Archi modeling tool](https://www.archimatetool.com/). It uses a two-stage pipeline: Extraction → Derivation (with prep/generate/refine phases), with an intermediate graph representation stored in Neo4j.
+Deriva analyzes code repositories and transforms them into [ArchiMate](https://www.opengroup.org/archimate-forum) models that can be opened in the [Archi modeling tool](https://www.archimatetool.com/).
 
-## What Does Deriva Do?
+## How It Works
 
 1. **Clone** a Git repository
-2. **Extract** a graph representation:
-   - Classify files using heuristics and file type registry
-   - Extract structural nodes (directories, files) and semantic nodes (TypeDefinitions, BusinessConcepts)
+2. **Extract** a graph representation into Neo4j:
+   - Structural nodes: directories, files (classified by type)
+   - Semantic nodes: TypeDefinitions, BusinessConcepts (via LLM)
 3. **Derive** ArchiMate elements (prep → generate → refine phases)
-4. **Export** to `.archimate` XML file for use in Archi
+4. **Export** to `.archimate` XML file
 
 ## Quick Setup
 
