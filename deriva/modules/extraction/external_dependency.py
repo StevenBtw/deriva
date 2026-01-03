@@ -197,18 +197,25 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
         extracted = extract_json_from_response(response_content)
         parsed = json.loads(extracted)
 
+        # Handle null/None response (LLM returning "null")
+        if parsed is None:
+            return {"success": True, "data": [], "errors": []}
+
         # Handle case where response is a list directly
         if isinstance(parsed, list):
             return {"success": True, "data": parsed, "errors": []}
 
-        # Check for expected key first
+        # Check for expected key first (must be a dict at this point)
+        if not isinstance(parsed, dict):
+            return {"success": True, "data": [], "errors": []}
+
         if "dependencies" in parsed:
             data = parsed["dependencies"]
             if isinstance(data, list):
                 return {"success": True, "data": data, "errors": []}
 
-        # Try alternate key names that LLM might use
-        alternate_keys = ["result", "results", "data", "items", "externalDependencies"]
+        # Try alternate key names that LLM might use (not "data" - too generic)
+        alternate_keys = ["result", "results", "items", "externalDependencies"]
         for key in alternate_keys:
             if key in parsed and isinstance(parsed[key], list):
                 return {"success": True, "data": parsed[key], "errors": []}
