@@ -2,14 +2,52 @@
 Classification Module - Pure Functions for File Type Classification
 
 This module provides simple, lightweight functions for classifying files
-in repositories based on file extensions and updating undefined types.
+in repositories based on file extensions, patterns, and paths.
+
+Classification priority order:
+1. Path patterns (e.g., 'path:**/tests/**' matches any file in tests directory)
+2. Full filename match (e.g., 'requirements.txt', 'Makefile')
+3. Wildcard pattern match (e.g., 'test_*.py', '*.config.js')
+4. Extension match (e.g., '.py', '.md')
+
+Path patterns use 'path:' prefix and support glob syntax:
+- 'path:**/tests/**' - matches any file in any 'tests' directory
+- 'path:docs/*' - matches files directly in 'docs' directory
+- 'path:**/static/**' - matches any file in any 'static' directory
 """
 
 from __future__ import annotations
 
 import fnmatch
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+
+def _match_path_pattern(file_path: str, pattern: str) -> bool:
+    """Match a file path against a glob pattern.
+
+    Args:
+        file_path: File path to match (can use any separator)
+        pattern: Glob pattern (uses forward slashes)
+
+    Returns:
+        True if path matches pattern
+    """
+    # Normalize path to forward slashes for consistent matching
+    normalized_path = file_path.replace("\\", "/").lower()
+    pattern = pattern.lower()
+
+    # Handle ** patterns by checking if any part matches
+    if "**" in pattern:
+        # For patterns like **/tests/**, check if 'tests' is in the path
+        parts = pattern.split("**")
+        for part in parts:
+            part = part.strip("/")
+            if part and part not in normalized_path:
+                return False
+        return True
+    else:
+        return fnmatch.fnmatch(normalized_path, pattern)
 
 
 def classify_files(
@@ -21,9 +59,10 @@ def classify_files(
     Pure function that takes file paths and a registry, returns classification results.
 
     Classification priority order:
-    1. Full filename match (e.g., 'requirements.txt', 'Makefile')
-    2. Wildcard pattern match (e.g., 'test_*.py', '*.config.js')
-    3. Extension match (e.g., '.py', '.md')
+    1. Path patterns (prefix 'path:') - based on file location
+    2. Full filename match (e.g., 'requirements.txt', 'Makefile')
+    3. Wildcard pattern match (e.g., 'test_*.py', '*.config.js')
+    4. Extension match (e.g., '.py', '.md')
 
     Args:
         file_paths: List of file path strings (relative or absolute)
@@ -31,6 +70,7 @@ def classify_files(
             Example: [{'extension': '.py', 'file_type': 'source', 'subtype': 'python'}, ...]
             Example: [{'extension': 'requirements.txt', 'file_type': 'dependency', 'subtype': 'python'}, ...]
             Example: [{'extension': 'test_*.py', 'file_type': 'test', 'subtype': 'python'}, ...]
+            Example: [{'extension': 'path:**/tests/**', 'file_type': 'test', 'subtype': ''}, ...]
 
     Returns:
         Dict with:
@@ -43,13 +83,15 @@ def classify_files(
     undefined = []
     errors = []
 
-    # Build three lookup structures:
-    # 1. Full filename map (for entries like 'requirements.txt', 'Makefile')
-    # 2. Wildcard patterns list (for entries like 'test_*.py', '*.config.js')
-    # 3. Extension map (for entries like '.py', '.md')
-    filename_map = {}
-    wildcard_patterns = []
-    extension_map = {}
+    # Build four lookup structures:
+    # 1. Path patterns (for entries like 'path:**/tests/**')
+    # 2. Full filename map (for entries like 'requirements.txt', 'Makefile')
+    # 3. Wildcard patterns list (for entries like 'test_*.py', '*.config.js')
+    # 4. Extension map (for entries like '.py', '.md')
+    path_patterns: list[tuple[str, dict[str, str]]] = []
+    filename_map: dict[str, dict[str, str]] = {}
+    wildcard_patterns: list[tuple[str, dict[str, str]]] = []
+    extension_map: dict[str, dict[str, str]] = {}
 
     for entry in file_type_registry:
         if "extension" not in entry or "file_type" not in entry:
@@ -62,12 +104,18 @@ def classify_files(
         }
 
         # Categorize by pattern type
-        if key.startswith(".") and "*" not in key and "?" not in key:
-            # Simple extension (e.g., '.py', '.md')
-            extension_map[key] = type_info
+        if key.startswith("path:"):
+            # Path pattern (e.g., 'path:**/tests/**')
+            path_patterns.append((key[5:], type_info))  # Strip 'path:' prefix
         elif "*" in key or "?" in key:
             # Wildcard pattern (e.g., 'test_*.py', '*.config.js')
             wildcard_patterns.append((key, type_info))
+        elif key.startswith(".") and len(key) <= 5 and key[1:].isalpha():
+            # Short alphabetic extension (e.g., '.py', '.md', '.html')
+            extension_map[key] = type_info
+        elif key.startswith("."):
+            # Dotfile (e.g., '.flaskenv', '.gitignore', '.env')
+            filename_map[key] = type_info
         else:
             # Full filename (e.g., 'requirements.txt', 'Makefile')
             filename_map[key] = type_info
@@ -78,7 +126,24 @@ def classify_files(
             filename = path.name.lower()
             extension = path.suffix.lower()
 
-            # Priority 1: Check full filename match (e.g., requirements.txt, Makefile)
+            # Priority 1: Check path patterns (e.g., **/tests/**)
+            matched_path = None
+            for pattern, type_info in path_patterns:
+                if _match_path_pattern(file_path, pattern):
+                    matched_path = (pattern, type_info)
+                    break
+
+            if matched_path:
+                pattern, type_info = matched_path
+                classified.append({
+                    "path": file_path,
+                    "extension": f"path:{pattern}",
+                    "file_type": type_info["file_type"],
+                    "subtype": type_info["subtype"],
+                })
+                continue
+
+            # Priority 2: Check full filename match (e.g., requirements.txt, Makefile)
             if filename in filename_map:
                 type_info = filename_map[filename]
                 classified.append(
@@ -91,7 +156,7 @@ def classify_files(
                 )
                 continue
 
-            # Priority 2: Check wildcard pattern match (e.g., test_*.py)
+            # Priority 3: Check wildcard pattern match (e.g., test_*.py)
             matched_pattern = None
             for pattern, type_info in wildcard_patterns:
                 if fnmatch.fnmatch(filename, pattern):
@@ -110,7 +175,7 @@ def classify_files(
                 )
                 continue
 
-            # Priority 3: Check extension match
+            # Priority 4: Check extension match
             if not extension:
                 # Files without extension (but not matched by filename or pattern)
                 undefined.append(
