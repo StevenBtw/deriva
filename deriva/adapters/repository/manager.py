@@ -30,7 +30,6 @@ import shutil
 import stat
 import subprocess
 import time
-from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -124,6 +123,27 @@ class _StateManager:
         state = self._read_state()
         return list(state["repositories"].values())
 
+    def sync_state(self) -> list[str]:
+        """Verify repositories exist on filesystem and remove stale entries.
+
+        Returns:
+            List of repository names that were removed from state.
+        """
+        state = self._read_state()
+        removed = []
+
+        for repo_name, repo_data in list(state["repositories"].items()):
+            repo_path = Path(repo_data.get("path", ""))
+            if not repo_path.exists() or not (repo_path / ".git").exists():
+                del state["repositories"][repo_name]
+                removed.append(repo_name)
+                logger.info("Removed stale repository from state: %s", repo_name)
+
+        if removed:
+            self._write_state(state)
+
+        return removed
+
 
 # =============================================================================
 # Helper Functions
@@ -198,15 +218,27 @@ def _force_remove_directory(path: Path, max_retries: int = 3) -> None:
             raise DeleteError(f"Failed to delete directory: {e}")
 
 
-def _get_directory_size(path: Path) -> float:
-    """Calculate total size of directory in MB."""
+def _get_directory_size(path: Path, exclude_git: bool = False) -> float:
+    """Calculate total size of directory in MB.
+
+    Args:
+        path: Directory path to calculate size for.
+        exclude_git: If True, excludes .git directory from calculation.
+
+    Returns:
+        Total size in megabytes.
+    """
     total_size = 0
     try:
         for dirpath, dirnames, filenames in os.walk(path):
+            if exclude_git and ".git" in dirnames:
+                dirnames.remove(".git")
             for filename in filenames:
                 filepath = os.path.join(dirpath, filename)
-                if os.path.exists(filepath):
+                try:
                     total_size += os.path.getsize(filepath)
+                except OSError:
+                    pass
     except Exception as e:
         logger.debug("Error calculating directory size for %s: %s", path, e)
     return total_size / (1024 * 1024)
@@ -312,24 +344,6 @@ def _get_repository_description(repo_path: Path) -> str | None:
     return None
 
 
-def _calculate_directory_size(path: Path) -> float:
-    """Calculate total size of directory in MB (excluding .git)."""
-    total_size = 0
-    try:
-        for dirpath, dirnames, filenames in os.walk(path):
-            if ".git" in dirnames:
-                dirnames.remove(".git")
-            for filename in filenames:
-                filepath = os.path.join(dirpath, filename)
-                try:
-                    total_size += os.path.getsize(filepath)
-                except OSError:
-                    pass
-    except OSError:
-        pass
-    return total_size / (1024 * 1024)
-
-
 def _count_files_and_dirs(path: Path) -> tuple[int, int]:
     """Count total files and directories."""
     file_count = 0
@@ -343,60 +357,6 @@ def _count_files_and_dirs(path: Path) -> tuple[int, int]:
     except OSError:
         pass
     return file_count, dir_count
-
-
-def _detect_languages(path: Path) -> dict[str, int]:
-    """Detect programming languages by file extensions."""
-    extension_map = {
-        ".py": "Python",
-        ".js": "JavaScript",
-        ".ts": "TypeScript",
-        ".jsx": "React",
-        ".tsx": "React TypeScript",
-        ".java": "Java",
-        ".cpp": "C++",
-        ".c": "C",
-        ".h": "C/C++ Header",
-        ".cs": "C#",
-        ".go": "Go",
-        ".rs": "Rust",
-        ".rb": "Ruby",
-        ".php": "PHP",
-        ".swift": "Swift",
-        ".kt": "Kotlin",
-        ".scala": "Scala",
-        ".r": "R",
-        ".m": "Objective-C",
-        ".sh": "Shell",
-        ".bash": "Bash",
-        ".ps1": "PowerShell",
-        ".html": "HTML",
-        ".css": "CSS",
-        ".scss": "SCSS",
-        ".sass": "Sass",
-        ".less": "Less",
-        ".vue": "Vue",
-        ".sql": "SQL",
-        ".md": "Markdown",
-        ".json": "JSON",
-        ".xml": "XML",
-        ".yaml": "YAML",
-        ".yml": "YAML",
-        ".toml": "TOML",
-    }
-
-    language_counts: Counter[str] = Counter()
-    try:
-        for dirpath, dirnames, filenames in os.walk(path):
-            if ".git" in dirnames:
-                dirnames.remove(".git")
-            for filename in filenames:
-                ext = Path(filename).suffix.lower()
-                if ext in extension_map:
-                    language_counts[extension_map[ext]] += 1
-    except OSError:
-        pass
-    return dict(language_counts)
 
 
 def _get_repository_times(repo_path: Path) -> tuple[str, str]:
@@ -456,9 +416,10 @@ def _extract_general_metadata(repo_path: Path) -> RepositoryMetadata:
     """Extract general metadata about the repository."""
     url = _get_git_remote_url(repo_path)
     description = _get_repository_description(repo_path)
-    total_size_mb = _calculate_directory_size(repo_path)
+    total_size_mb = _get_directory_size(repo_path, exclude_git=True)
     total_files, total_directories = _count_files_and_dirs(repo_path)
-    languages = _detect_languages(repo_path)
+    # Language detection delegated to Classification module
+    languages: dict[str, int] = {}
     created_at, last_updated = _get_repository_times(repo_path)
     default_branch = _get_default_branch(repo_path)
 
@@ -772,6 +733,17 @@ class RepoManager:
             cloned_at=repo_data.get("cloned_at"),
         )
 
+    def sync_repositories(self) -> list[str]:
+        """Synchronize state with filesystem.
+
+        Verifies that all repositories in the state file actually exist
+        on disk. Removes entries for repositories that no longer exist.
+
+        Returns:
+            List of repository names that were removed from state.
+        """
+        return self._state_manager.sync_state()
+
     def extract_metadata(
         self, repo_name: str, output_dir: Path | None = None
     ) -> tuple[Path, Path]:
@@ -857,3 +829,9 @@ def extract_repo_metadata(repo_name: str) -> tuple[Path, Path]:
     """Quick metadata extraction from a repository."""
     manager = RepoManager()
     return manager.extract_metadata(repo_name)
+
+
+def sync_repos() -> list[str]:
+    """Quick sync of repository state with filesystem."""
+    manager = RepoManager()
+    return manager.sync_repositories()

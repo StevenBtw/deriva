@@ -12,6 +12,7 @@ from .manager import (
     delete_repo,
     extract_repo_metadata,
     list_repos,
+    sync_repos,
     validate_repo,
 )
 from .models import (
@@ -34,6 +35,7 @@ __all__ = [
     "list_repos",
     "delete_repo",
     "extract_repo_metadata",
+    "sync_repos",
     # Models
     "RepositoryInfo",
     "RepositoryMetadata",
