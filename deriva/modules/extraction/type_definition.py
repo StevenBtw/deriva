@@ -7,11 +7,15 @@ It identifies classes, interfaces, structs, enums, functions, and other type def
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 
-from .base import current_timestamp, strip_chunk_suffix
+from .base import (
+    create_empty_llm_details,
+    current_timestamp,
+    parse_json_response,
+    strip_chunk_suffix,
+)
 
 # JSON schema for LLM structured output
 TYPE_DEFINITION_SCHEMA = {
@@ -241,43 +245,8 @@ def build_type_definition_node(
 
 
 def parse_llm_response(response_content: str) -> dict[str, Any]:
-    """
-    Parse and validate LLM response content.
-
-    Args:
-        response_content: Raw JSON string from LLM
-
-    Returns:
-        Dictionary with:
-            - success: bool
-            - data: Parsed types list
-            - errors: List of parsing errors
-    """
-    try:
-        parsed = json.loads(response_content)
-
-        if "types" not in parsed:
-            return {
-                "success": False,
-                "data": [],
-                "errors": ['Response missing "types" array'],
-            }
-
-        if not isinstance(parsed["types"], list):
-            return {
-                "success": False,
-                "data": [],
-                "errors": ['"types" must be an array'],
-            }
-
-        return {"success": True, "data": parsed["types"], "errors": []}
-
-    except json.JSONDecodeError as e:
-        return {
-            "success": False,
-            "data": [],
-            "errors": [f"JSON parsing error: {str(e)}"],
-        }
+    """Parse LLM response for type definitions. Delegates to base parser."""
+    return parse_json_response(response_content, "types")
 
 
 def extract_type_definitions(
@@ -316,13 +285,7 @@ def extract_type_definitions(
     edges: list[dict[str, Any]] = []
 
     # Initialize LLM details for logging
-    llm_details = {
-        "prompt": "",
-        "response": "",
-        "tokens_in": 0,
-        "tokens_out": 0,
-        "cache_used": False,
-    }
+    llm_details = create_empty_llm_details()
 
     try:
         # Build the prompt

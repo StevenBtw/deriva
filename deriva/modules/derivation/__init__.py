@@ -3,8 +3,8 @@ Derivation module - Transform Graph nodes into ArchiMate elements.
 
 Modules:
 - base: Shared utilities (prompts, parsing, result creation)
-- prep_pagerank: PageRank preparation step
-- generate: Generic element generation from graph data
+- application_component: ApplicationComponent derivation
+- technology_service: TechnologyService derivation
 """
 
 from __future__ import annotations
@@ -22,12 +22,6 @@ from .base import (
     parse_relationship_response,
 )
 
-# Prep steps
-from .prep_pagerank import run_pagerank
-
-# Generate
-from .generate import generate_element
-
 __all__ = [
     # Base
     "DERIVATION_SCHEMA",
@@ -39,8 +33,4 @@ __all__ = [
     "parse_derivation_response",
     "parse_relationship_response",
     "build_element",
-    # Prep
-    "run_pagerank",
-    # Generate
-    "generate_element",
 ]

@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .base import current_timestamp
+from .base import current_timestamp, generate_edge_id, validate_required_fields
 
 
 def build_directory_node(
@@ -30,13 +30,7 @@ def build_directory_node(
             - errors: List[str] - Any validation or transformation errors
             - stats: Dict - Statistics about the extraction
     """
-    errors = []
-
-    # Validate required fields
-    required_fields = ["path", "name"]
-    for field in required_fields:
-        if field not in dir_metadata or not dir_metadata[field]:
-            errors.append(f"Missing required field: {field}")
+    errors = validate_required_fields(dir_metadata, ["path", "name"])
 
     if errors:
         return {
@@ -49,8 +43,10 @@ def build_directory_node(
     # Build the node structure
     path_value = str(dir_metadata["path"])
     safe_path = path_value.replace("/", "_").replace("\\", "_")
+    node_id = f"dir_{repo_name}_{safe_path}"
+
     node_data = {
-        "node_id": f"dir_{repo_name}_{safe_path}",
+        "node_id": node_id,
         "label": "Directory",
         "properties": {
             "path": dir_metadata["path"],
@@ -154,7 +150,9 @@ def extract_directories(repo_path: str, repo_name: str) -> dict[str, Any]:
                         )
 
                     edge = {
-                        "edge_id": f"contains_{from_node_id}_to_{node_data['node_id']}",
+                        "edge_id": generate_edge_id(
+                            from_node_id, node_data["node_id"], "CONTAINS"
+                        ),
                         "from_node_id": from_node_id,
                         "to_node_id": node_data["node_id"],
                         "relationship_type": "CONTAINS",

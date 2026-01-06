@@ -13,7 +13,12 @@ from typing import Any
 
 from deriva.common.json_utils import extract_json_from_response
 
-from .base import current_timestamp
+from .base import (
+    create_empty_llm_details,
+    current_timestamp,
+    generate_edge_id,
+    strip_chunk_suffix,
+)
 
 # JSON schema for LLM structured output
 EXTERNAL_DEPENDENCY_SCHEMA = {
@@ -256,15 +261,10 @@ def extract_external_dependencies(
     """
     errors: list[str] = []
     nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
 
     # Initialize LLM details for logging
-    llm_details = {
-        "prompt": "",
-        "response": "",
-        "tokens_in": 0,
-        "tokens_out": 0,
-        "cache_used": False,
-    }
+    llm_details = create_empty_llm_details()
 
     try:
         # Build the prompt
@@ -297,9 +297,9 @@ def extract_external_dependencies(
         if hasattr(response, "error"):
             return {
                 "success": False,
-                "data": {"nodes": []},
+                "data": {"nodes": [], "edges": []},
                 "errors": [f"LLM error: {response.error}"],
-                "stats": {"total_nodes": 0, "llm_error": True},
+                "stats": {"total_nodes": 0, "total_edges": 0, "llm_error": True},
                 "llm_details": llm_details,
             }
 
@@ -310,11 +310,16 @@ def extract_external_dependencies(
             errors.extend(parse_result["errors"])
             return {
                 "success": False,
-                "data": {"nodes": []},
+                "data": {"nodes": [], "edges": []},
                 "errors": errors,
-                "stats": {"total_nodes": 0, "parse_error": True},
+                "stats": {"total_nodes": 0, "total_edges": 0, "parse_error": True},
                 "llm_details": llm_details,
             }
+
+        # Build file node ID for USES edges
+        original_path = strip_chunk_suffix(file_path)
+        safe_path = original_path.replace("/", "_").replace("\\", "_")
+        file_node_id = f"file_{repo_name}_{safe_path}"
 
         # Build nodes for each dependency
         for dep_data in parse_result["data"]:
@@ -323,16 +328,30 @@ def extract_external_dependencies(
             )
 
             if node_result["success"]:
-                nodes.append(node_result["data"])
+                node_data = node_result["data"]
+                nodes.append(node_data)
+
+                # Create USES edge: File -> ExternalDependency
+                edge = {
+                    "edge_id": generate_edge_id(
+                        file_node_id, node_data["node_id"], "USES"
+                    ),
+                    "from_node_id": file_node_id,
+                    "to_node_id": node_data["node_id"],
+                    "relationship_type": "USES",
+                    "properties": {"created_at": current_timestamp()},
+                }
+                edges.append(edge)
             else:
                 errors.extend(node_result["errors"])
 
         return {
             "success": len(nodes) > 0 or len(errors) == 0,
-            "data": {"nodes": nodes},
+            "data": {"nodes": nodes, "edges": edges},
             "errors": errors,
             "stats": {
                 "total_nodes": len(nodes),
+                "total_edges": len(edges),
                 "node_types": {"ExternalDependency": len(nodes)},
                 "dependencies_found": len(nodes),
                 "dependencies_from_llm": len(parse_result["data"]),
@@ -343,9 +362,9 @@ def extract_external_dependencies(
     except Exception as e:
         return {
             "success": False,
-            "data": {"nodes": []},
+            "data": {"nodes": [], "edges": []},
             "errors": [f"Fatal error during dependency extraction: {str(e)}"],
-            "stats": {"total_nodes": 0},
+            "stats": {"total_nodes": 0, "total_edges": 0},
             "llm_details": llm_details,
         }
 
@@ -371,13 +390,14 @@ def extract_external_dependencies_batch(
         Aggregated results from all file extractions
     """
     all_nodes: list[dict[str, Any]] = []
+    all_edges: list[dict[str, Any]] = []
     all_errors: list[str] = []
     all_file_results: list[dict[str, Any]] = []
     files_processed = 0
     files_with_deps = 0
 
     # Track unique dependencies by name to avoid duplicates
-    seen_dependencies: set = set()
+    seen_dependencies: set[str] = set()
 
     total_files = len(files)
 
@@ -411,22 +431,27 @@ def extract_external_dependencies_batch(
 
         if result["success"] and result["data"]["nodes"]:
             files_with_deps += 1
-            # Deduplicate dependencies by name
-            for node in result["data"]["nodes"]:
+            # Deduplicate dependencies by name, but keep all edges
+            result_edges = result["data"].get("edges", [])
+            for idx, node in enumerate(result["data"]["nodes"]):
                 dep_name = node["properties"]["dependencyName"].lower()
                 if dep_name not in seen_dependencies:
                     seen_dependencies.add(dep_name)
                     all_nodes.append(node)
+                # Always add the edge (multiple files can USES same dependency)
+                if idx < len(result_edges):
+                    all_edges.append(result_edges[idx])
 
         if result["errors"]:
             all_errors.extend([f"{file_path}: {e}" for e in result["errors"]])
 
     return {
         "success": len(all_nodes) > 0 or len(all_errors) == 0,
-        "data": {"nodes": all_nodes},
+        "data": {"nodes": all_nodes, "edges": all_edges},
         "errors": all_errors,
         "stats": {
             "total_nodes": len(all_nodes),
+            "total_edges": len(all_edges),
             "node_types": {"ExternalDependency": len(all_nodes)},
             "files_processed": files_processed,
             "files_with_dependencies": files_with_deps,

@@ -105,6 +105,13 @@ from .test import (
     parse_llm_response as parse_test_response,
 )
 
+# AST-based extraction (Python only - deterministic, precise)
+from .ast_extraction import (
+    extract_methods_from_python,
+    extract_types_from_python,
+    is_python_file,
+)
+
 __all__ = [
     # Base utilities
     "generate_node_id",
@@ -174,4 +181,8 @@ __all__ = [
     "get_node_sources",
     "has_file_sources",
     "has_node_sources",
+    # AST-based extraction (Python)
+    "extract_types_from_python",
+    "extract_methods_from_python",
+    "is_python_file",
 ]

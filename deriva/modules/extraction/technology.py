@@ -8,11 +8,16 @@ infrastructure, platforms, networks, and security components.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 
-from .base import current_timestamp
+from .base import (
+    create_empty_llm_details,
+    current_timestamp,
+    generate_edge_id,
+    parse_json_response,
+    strip_chunk_suffix,
+)
 
 # JSON schema for LLM structured output
 TECHNOLOGY_SCHEMA = {
@@ -179,40 +184,8 @@ def build_technology_node(
 
 
 def parse_llm_response(response_content: str) -> dict[str, Any]:
-    """
-    Parse and validate LLM response content.
-
-    Args:
-        response_content: Raw JSON string from LLM
-
-    Returns:
-        Dictionary with success, data, and errors
-    """
-    try:
-        parsed = json.loads(response_content)
-
-        if "technologies" not in parsed:
-            return {
-                "success": False,
-                "data": [],
-                "errors": ['Response missing "technologies" array'],
-            }
-
-        if not isinstance(parsed["technologies"], list):
-            return {
-                "success": False,
-                "data": [],
-                "errors": ['"technologies" must be an array'],
-            }
-
-        return {"success": True, "data": parsed["technologies"], "errors": []}
-
-    except json.JSONDecodeError as e:
-        return {
-            "success": False,
-            "data": [],
-            "errors": [f"JSON parsing error: {str(e)}"],
-        }
+    """Parse LLM response for technologies. Delegates to base parser."""
+    return parse_json_response(response_content, "technologies")
 
 
 def extract_technologies(
@@ -237,15 +210,10 @@ def extract_technologies(
     """
     errors: list[str] = []
     nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
 
     # Initialize LLM details for logging
-    llm_details = {
-        "prompt": "",
-        "response": "",
-        "tokens_in": 0,
-        "tokens_out": 0,
-        "cache_used": False,
-    }
+    llm_details = create_empty_llm_details()
 
     try:
         # Build the prompt
@@ -278,9 +246,9 @@ def extract_technologies(
         if hasattr(response, "error"):
             return {
                 "success": False,
-                "data": {"nodes": []},
+                "data": {"nodes": [], "edges": []},
                 "errors": [f"LLM error: {response.error}"],
-                "stats": {"total_nodes": 0, "llm_error": True},
+                "stats": {"total_nodes": 0, "total_edges": 0, "llm_error": True},
                 "llm_details": llm_details,
             }
 
@@ -291,11 +259,16 @@ def extract_technologies(
             errors.extend(parse_result["errors"])
             return {
                 "success": False,
-                "data": {"nodes": []},
+                "data": {"nodes": [], "edges": []},
                 "errors": errors,
-                "stats": {"total_nodes": 0, "parse_error": True},
+                "stats": {"total_nodes": 0, "total_edges": 0, "parse_error": True},
                 "llm_details": llm_details,
             }
+
+        # Build file node ID for IMPLEMENTS edges
+        original_path = strip_chunk_suffix(file_path)
+        safe_path = original_path.replace("/", "_").replace("\\", "_")
+        file_node_id = f"file_{repo_name}_{safe_path}"
 
         # Build nodes for each technology
         for tech_data in parse_result["data"]:
@@ -304,16 +277,30 @@ def extract_technologies(
             )
 
             if node_result["success"]:
-                nodes.append(node_result["data"])
+                node_data = node_result["data"]
+                nodes.append(node_data)
+
+                # Create IMPLEMENTS edge: File -> Technology
+                edge = {
+                    "edge_id": generate_edge_id(
+                        file_node_id, node_data["node_id"], "IMPLEMENTS"
+                    ),
+                    "from_node_id": file_node_id,
+                    "to_node_id": node_data["node_id"],
+                    "relationship_type": "IMPLEMENTS",
+                    "properties": {"created_at": current_timestamp()},
+                }
+                edges.append(edge)
             else:
                 errors.extend(node_result["errors"])
 
         return {
             "success": len(nodes) > 0 or len(errors) == 0,
-            "data": {"nodes": nodes},
+            "data": {"nodes": nodes, "edges": edges},
             "errors": errors,
             "stats": {
                 "total_nodes": len(nodes),
+                "total_edges": len(edges),
                 "node_types": {"Technology": len(nodes)},
                 "technologies_found": len(nodes),
                 "technologies_from_llm": len(parse_result["data"]),
@@ -324,9 +311,9 @@ def extract_technologies(
     except Exception as e:
         return {
             "success": False,
-            "data": {"nodes": []},
+            "data": {"nodes": [], "edges": []},
             "errors": [f"Fatal error during technology extraction: {str(e)}"],
-            "stats": {"total_nodes": 0},
+            "stats": {"total_nodes": 0, "total_edges": 0},
             "llm_details": llm_details,
         }
 
@@ -352,13 +339,14 @@ def extract_technologies_batch(
         Aggregated results from all file extractions
     """
     all_nodes: list[dict[str, Any]] = []
+    all_edges: list[dict[str, Any]] = []
     all_errors: list[str] = []
     all_file_results: list[dict[str, Any]] = []
     files_processed = 0
     files_with_tech = 0
 
     # Track unique technologies by name to avoid duplicates
-    seen_technologies: set = set()
+    seen_technologies: set[str] = set()
 
     total_files = len(files)
 
@@ -392,22 +380,27 @@ def extract_technologies_batch(
 
         if result["success"] and result["data"]["nodes"]:
             files_with_tech += 1
-            # Deduplicate technologies by name
-            for node in result["data"]["nodes"]:
+            # Deduplicate technologies by name, but keep all edges
+            result_edges = result["data"].get("edges", [])
+            for idx, node in enumerate(result["data"]["nodes"]):
                 tech_name = node["properties"]["techName"].lower()
                 if tech_name not in seen_technologies:
                     seen_technologies.add(tech_name)
                     all_nodes.append(node)
+                # Always add the edge (multiple files can IMPLEMENTS same technology)
+                if idx < len(result_edges):
+                    all_edges.append(result_edges[idx])
 
         if result["errors"]:
             all_errors.extend([f"{file_path}: {e}" for e in result["errors"]])
 
     return {
         "success": len(all_nodes) > 0 or len(all_errors) == 0,
-        "data": {"nodes": all_nodes},
+        "data": {"nodes": all_nodes, "edges": all_edges},
         "errors": all_errors,
         "stats": {
             "total_nodes": len(all_nodes),
+            "total_edges": len(all_edges),
             "node_types": {"Technology": len(all_nodes)},
             "files_processed": files_processed,
             "files_with_technologies": files_with_tech,

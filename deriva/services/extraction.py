@@ -361,6 +361,9 @@ def _extract_llm_based(
             max_tokens=cfg.max_tokens,
         )
 
+    # Check if we can use AST extraction for Python files
+    use_ast_for_python = node_type in ["TypeDefinition", "Method"]
+
     # Process each matching file
     for file_info in matching_files:
         file_path = repo_path / file_info["path"]
@@ -374,15 +377,32 @@ def _extract_llm_based(
             errors.append(f"Could not read {file_path}: {e}")
             continue
 
-        # Extract from file, with chunking if needed
-        file_nodes, file_edges, file_errors = _extract_file_content(
-            file_path=file_info["path"],
-            content=content,
-            repo_name=repo.name,
-            extract_fn=extract_fn,
-            extraction_config=extraction_config,
-            llm_query_fn=step_llm_query_fn,
-        )
+        # Check if this is a Python file and we can use AST
+        is_python = extraction.is_python_file(file_info.get("subtype"))
+
+        if use_ast_for_python and is_python:
+            # Use AST extraction for Python - faster and more precise
+            if node_type == "TypeDefinition":
+                result = extraction.extract_types_from_python(
+                    file_info["path"], content, repo.name
+                )
+            else:  # Method
+                result = extraction.extract_methods_from_python(
+                    file_info["path"], content, repo.name
+                )
+            file_nodes = result["data"]["nodes"] if result["success"] else []
+            file_edges = result["data"].get("edges", []) if result["success"] else []
+            file_errors = result.get("errors", [])
+        else:
+            # Use LLM extraction for non-Python files or other node types
+            file_nodes, file_edges, file_errors = _extract_file_content(
+                file_path=file_info["path"],
+                content=content,
+                repo_name=repo.name,
+                extract_fn=extract_fn,
+                extraction_config=extraction_config,
+                llm_query_fn=step_llm_query_fn,
+            )
 
         errors.extend(file_errors)
 

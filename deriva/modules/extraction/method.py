@@ -7,11 +7,10 @@ It identifies methods, functions, and their signatures within type definitions.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 
-from .base import current_timestamp
+from .base import create_empty_llm_details, current_timestamp, parse_json_response
 
 # JSON schema for LLM structured output
 METHOD_SCHEMA = {
@@ -224,43 +223,8 @@ def build_method_node(
 
 
 def parse_llm_response(response_content: str) -> dict[str, Any]:
-    """
-    Parse and validate LLM response content.
-
-    Args:
-        response_content: Raw JSON string from LLM
-
-    Returns:
-        Dictionary with:
-            - success: bool
-            - data: Parsed methods list
-            - errors: List of parsing errors
-    """
-    try:
-        parsed = json.loads(response_content)
-
-        if "methods" not in parsed:
-            return {
-                "success": False,
-                "data": [],
-                "errors": ['Response missing "methods" array'],
-            }
-
-        if not isinstance(parsed["methods"], list):
-            return {
-                "success": False,
-                "data": [],
-                "errors": ['"methods" must be an array'],
-            }
-
-        return {"success": True, "data": parsed["methods"], "errors": []}
-
-    except json.JSONDecodeError as e:
-        return {
-            "success": False,
-            "data": [],
-            "errors": [f"JSON parsing error: {str(e)}"],
-        }
+    """Parse LLM response for methods. Delegates to base parser."""
+    return parse_json_response(response_content, "methods")
 
 
 def extract_methods(
@@ -295,13 +259,7 @@ def extract_methods(
     edges: list[dict[str, Any]] = []
 
     # Initialize LLM details for logging
-    llm_details = {
-        "prompt": "",
-        "response": "",
-        "tokens_in": 0,
-        "tokens_out": 0,
-        "cache_used": False,
-    }
+    llm_details = create_empty_llm_details()
 
     # Extract type information
     type_props = type_node.get("properties", type_node)

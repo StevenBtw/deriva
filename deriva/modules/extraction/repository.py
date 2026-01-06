@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import current_timestamp
+from .base import current_timestamp, validate_required_fields
 
 
 def build_repository_node(repo_metadata: dict[str, Any]) -> dict[str, Any]:
@@ -29,13 +29,7 @@ def build_repository_node(repo_metadata: dict[str, Any]) -> dict[str, Any]:
             - errors: List[str] - Any validation or transformation errors
             - stats: Dict - Statistics about the extraction
     """
-    errors = []
-
-    # Validate required fields
-    required_fields = ["name", "url"]
-    for field in required_fields:
-        if field not in repo_metadata or not repo_metadata[field]:
-            errors.append(f"Missing required field: {field}")
+    errors = validate_required_fields(repo_metadata, ["name", "url"])
 
     if errors:
         return {

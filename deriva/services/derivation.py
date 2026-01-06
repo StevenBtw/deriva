@@ -32,9 +32,21 @@ from deriva.modules.derivation import (
     build_relationship_prompt,
     parse_relationship_response,
 )
-from deriva.modules.derivation.generate import generate_element
-from deriva.modules.derivation.prep_pagerank import run_pagerank
 from deriva.services import config
+
+# TODO: Re-enable when derivation modules are complete
+# from deriva.modules.derivation.generate import generate_element
+# from deriva.modules.derivation.prep_pagerank import run_pagerank
+
+
+def run_pagerank(*args, **kwargs):
+    """Stub - derivation modules being refactored."""
+    raise NotImplementedError("Derivation modules are being refactored")
+
+
+def generate_element(*args, **kwargs):
+    """Stub - derivation modules being refactored."""
+    raise NotImplementedError("Derivation modules are being refactored")
 
 logger = logging.getLogger(__name__)
 
