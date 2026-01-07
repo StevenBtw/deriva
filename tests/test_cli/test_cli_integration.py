@@ -636,6 +636,502 @@ class TestMain:
         assert result == 0
 
 
+class TestCmdRepoClone:
+    """Tests for repo clone command."""
+
+    def test_clones_repository_success(self):
+        """Should clone repository successfully."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.clone_repository.return_value = {
+            "success": True,
+            "name": "myrepo",
+            "path": "/workspace/myrepo",
+            "url": "https://github.com/user/myrepo.git",
+        }
+
+        from deriva.cli.cli import cmd_repo_clone
+
+        args = argparse.Namespace(url="https://github.com/user/myrepo.git", name=None, branch=None, overwrite=False)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_clone(args)
+
+        assert result == 0
+        mock_session.clone_repository.assert_called_once()
+
+    def test_clone_with_name_and_branch(self):
+        """Should clone with custom name and branch."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.clone_repository.return_value = {"success": True, "name": "custom"}
+
+        from deriva.cli.cli import cmd_repo_clone
+
+        args = argparse.Namespace(url="https://github.com/user/repo.git", name="custom", branch="develop", overwrite=True)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_clone(args)
+
+        assert result == 0
+
+    def test_clone_failure(self):
+        """Should return error on clone failure."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.clone_repository.return_value = {"success": False, "error": "Repository already exists"}
+
+        from deriva.cli.cli import cmd_repo_clone
+
+        args = argparse.Namespace(url="https://github.com/user/repo.git", name=None, branch=None, overwrite=False)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_clone(args)
+
+        assert result == 1
+
+
+class TestCmdRepoDelete:
+    """Tests for repo delete command."""
+
+    def test_deletes_repository_success(self):
+        """Should delete repository successfully."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.delete_repository.return_value = {"success": True}
+
+        from deriva.cli.cli import cmd_repo_delete
+
+        args = argparse.Namespace(name="myrepo", force=False)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_delete(args)
+
+        assert result == 0
+
+    def test_delete_with_force(self):
+        """Should delete with force flag."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.delete_repository.return_value = {"success": True}
+
+        from deriva.cli.cli import cmd_repo_delete
+
+        args = argparse.Namespace(name="myrepo", force=True)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_delete(args)
+
+        assert result == 0
+        mock_session.delete_repository.assert_called_once_with(name="myrepo", force=True)
+
+    def test_delete_failure(self):
+        """Should return error on delete failure."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.delete_repository.return_value = {"success": False, "error": "Not found"}
+
+        from deriva.cli.cli import cmd_repo_delete
+
+        args = argparse.Namespace(name="nonexistent", force=False)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_delete(args)
+
+        assert result == 1
+
+    def test_delete_handles_exception(self):
+        """Should handle exceptions during delete."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.delete_repository.side_effect = Exception("uncommitted changes detected")
+
+        from deriva.cli.cli import cmd_repo_delete
+
+        args = argparse.Namespace(name="dirty_repo", force=False)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_delete(args)
+
+        assert result == 1
+
+
+class TestCmdRepoInfo:
+    """Tests for repo info command."""
+
+    def test_shows_repository_info(self):
+        """Should show repository information."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.get_repository_info.return_value = {
+            "name": "myrepo",
+            "path": "/workspace/myrepo",
+            "url": "https://github.com/user/myrepo.git",
+            "branch": "main",
+            "last_commit": "abc123",
+            "is_dirty": False,
+            "size_mb": 5.5,
+            "cloned_at": "2024-01-01T10:00:00",
+        }
+
+        from deriva.cli.cli import cmd_repo_info
+
+        args = argparse.Namespace(name="myrepo")
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_info(args)
+
+        assert result == 0
+
+    def test_info_not_found(self):
+        """Should return error when repository not found."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.get_repository_info.return_value = None
+
+        from deriva.cli.cli import cmd_repo_info
+
+        args = argparse.Namespace(name="nonexistent")
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_info(args)
+
+        assert result == 1
+
+
+class TestCmdRepoListDetailed:
+    """Additional tests for repo list command."""
+
+    def test_lists_repos_detailed(self):
+        """Should list repositories with details."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.get_repositories.return_value = [
+            {
+                "name": "repo1",
+                "url": "https://github.com/user/repo1.git",
+                "branch": "main",
+                "size_mb": 10.5,
+                "cloned_at": "2024-01-01",
+                "is_dirty": True,
+            },
+        ]
+
+        args = argparse.Namespace(detailed=True)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_list(args)
+
+        assert result == 0
+        mock_session.get_repositories.assert_called_once_with(detailed=True)
+
+
+class TestCmdConfigUpdate:
+    """Tests for config update command."""
+
+    def test_updates_derivation_config(self, tmp_path):
+        """Should update derivation configuration."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+
+        from deriva.cli.cli import cmd_config_update
+
+        args = argparse.Namespace(
+            step_type="derivation",
+            name="ApplicationComponent",
+            instruction="Test instruction",
+            example="Test example",
+            instruction_file=None,
+            example_file=None,
+            query=None,
+        )
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            with patch(
+                "deriva.cli.cli.config.create_derivation_config_version",
+                return_value={"success": True, "old_version": 1, "new_version": 2},
+            ):
+                result = cmd_config_update(args)
+
+        assert result == 0
+
+    def test_updates_from_file(self, tmp_path):
+        """Should read instruction from file."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+
+        instruction_file = tmp_path / "instruction.txt"
+        instruction_file.write_text("Instruction from file")
+
+        from deriva.cli.cli import cmd_config_update
+
+        args = argparse.Namespace(
+            step_type="derivation",
+            name="ApplicationComponent",
+            instruction=None,
+            example="Example",
+            instruction_file=str(instruction_file),
+            example_file=None,
+            query=None,
+        )
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            with patch(
+                "deriva.cli.cli.config.create_derivation_config_version",
+                return_value={"success": True, "old_version": 1, "new_version": 2},
+            ):
+                result = cmd_config_update(args)
+
+        assert result == 0
+
+    def test_handles_file_read_error(self):
+        """Should handle file read errors."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+
+        from deriva.cli.cli import cmd_config_update
+
+        args = argparse.Namespace(
+            step_type="derivation",
+            name="ApplicationComponent",
+            instruction=None,
+            example=None,
+            instruction_file="/nonexistent/file.txt",
+            example_file=None,
+            query=None,
+        )
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_config_update(args)
+
+        assert result == 1
+
+
+class TestCmdRunFailure:
+    """Tests for run command failure scenarios."""
+
+    def test_run_extraction_failure(self):
+        """Should return error on extraction failure."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.llm_info = {"provider": "anthropic", "model": "claude-3"}
+        mock_session.run_extraction.return_value = {
+            "success": False,
+            "errors": ["Failed to extract"],
+        }
+
+        args = argparse.Namespace(stage="extraction", repo=None, verbose=False, no_llm=False)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_run(args)
+
+        assert result == 1
+
+
+class TestCmdConfigShowDerivationNotFound:
+    """Test config show for nonexistent derivation config."""
+
+    def test_returns_error_for_nonexistent_derivation(self):
+        """Should return error for nonexistent derivation config."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+
+        args = argparse.Namespace(step_type="derivation", name="Unknown")
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            with patch("deriva.cli.cli.config.get_derivation_config", return_value=None):
+                result = cmd_config_show(args)
+
+        assert result == 1
+
+
+class TestCmdBenchmarkList:
+    """Tests for benchmark list command."""
+
+    def test_lists_benchmarks(self):
+        """Should list benchmark sessions."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.list_benchmarks.return_value = [
+            {
+                "session_id": "bench_123",
+                "status": "completed",
+                "started_at": "2024-01-01T10:00:00",
+                "description": "Test benchmark",
+            },
+        ]
+
+        from deriva.cli.cli import cmd_benchmark_list
+
+        args = argparse.Namespace(limit=10)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_benchmark_list(args)
+
+        assert result == 0
+
+    def test_handles_empty_list(self):
+        """Should handle no benchmark sessions."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.list_benchmarks.return_value = []
+
+        from deriva.cli.cli import cmd_benchmark_list
+
+        args = argparse.Namespace(limit=10)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_benchmark_list(args)
+
+        assert result == 0
+
+
+class TestCmdRunWithNoLlm:
+    """Tests for run command with --no-llm flag."""
+
+    def test_run_extraction_with_no_llm(self):
+        """Should run extraction with LLM disabled."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.llm_info = {"provider": "anthropic", "model": "claude-3"}
+        mock_session.run_extraction.return_value = {"success": True, "stats": {}}
+
+        args = argparse.Namespace(stage="extraction", repo=None, verbose=False, no_llm=True)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_run(args)
+
+        assert result == 0
+
+
+class TestCmdRunUnknownStage:
+    """Tests for run command with unknown stage."""
+
+    def test_unknown_stage_returns_error(self):
+        """Should return error for unknown stage."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.llm_info = {"provider": "anthropic", "model": "claude-3"}
+
+        args = argparse.Namespace(stage="unknown", repo=None, verbose=False, no_llm=False)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_run(args)
+
+        assert result == 1
+
+
+class TestCmdRunVerbose:
+    """Tests for run command with verbose output."""
+
+    def test_run_extraction_verbose(self):
+        """Should run extraction with verbose output."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
+        mock_session.run_extraction.return_value = {
+            "success": True,
+            "stats": {"nodes_created": 5},
+            "warnings": ["Warning 1"],
+            "errors": [],
+        }
+
+        args = argparse.Namespace(stage="extraction", repo="myrepo", verbose=True, no_llm=False)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_run(args)
+
+        assert result == 0
+
+
+class TestCmdRunDerivationWithPhase:
+    """Tests for derivation with specific phase."""
+
+    def test_run_derivation_with_phase(self):
+        """Should run derivation with specific phase."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.llm_info = {"provider": "anthropic", "model": "claude-3"}
+        mock_session.run_derivation.return_value = {
+            "success": True,
+            "stats": {"elements_created": 3},
+        }
+
+        args = argparse.Namespace(
+            stage="derivation", repo=None, verbose=False, no_llm=False, phase="generate"
+        )
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_run(args)
+
+        assert result == 0
+        mock_session.run_derivation.assert_called_once_with(verbose=False, phases=["generate"])
+
+
+class TestCmdExportWithName:
+    """Tests for export command with model name."""
+
+    def test_exports_with_model_name(self):
+        """Should export with custom model name."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.export_model.return_value = {
+            "success": True,
+            "output_path": "output.archimate",
+            "elements_exported": 10,
+            "relationships_exported": 5,
+        }
+
+        args = argparse.Namespace(output="output.archimate", name="My Model", verbose=True)
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_export(args)
+
+        assert result == 0
+
+
+class TestCmdRepoInfoException:
+    """Tests for repo info command exception handling."""
+
+    def test_handles_exception(self):
+        """Should handle exceptions during info retrieval."""
+        mock_session = MagicMock()
+        mock_session.__enter__ = Mock(return_value=mock_session)
+        mock_session.__exit__ = Mock(return_value=None)
+        mock_session.get_repository_info.side_effect = Exception("Database error")
+
+        from deriva.cli.cli import cmd_repo_info
+
+        args = argparse.Namespace(name="myrepo")
+
+        with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
+            result = cmd_repo_info(args)
+
+        assert result == 1
+
+
 class TestMockRepositoryStructure:
     """Tests using the mock repository structure."""
 
