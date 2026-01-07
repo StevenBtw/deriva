@@ -152,6 +152,7 @@ def generate_element(
             "errors": [f"Generation failed for {element_type}: {e}"],
         }
 
+
 logger = logging.getLogger(__name__)
 
 # Valid relationship types in PascalCase for normalization

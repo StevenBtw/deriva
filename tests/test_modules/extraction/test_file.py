@@ -21,7 +21,7 @@ class TestBuildFileNode:
             "name": "main.py",
             "extension": ".py",
             "size_bytes": 1024,
-            "language": "python",
+            "file_type": "source",
             "last_modified": "2024-01-15T10:30:00Z",
         }
 
@@ -39,7 +39,7 @@ class TestBuildFileNode:
         assert data["properties"]["name"] == "main.py"
         assert data["properties"]["extension"] == ".py"
         assert data["properties"]["size_bytes"] == 1024
-        assert data["properties"]["language"] == "python"
+        assert data["properties"]["file_type"] == "source"
         assert data["properties"]["last_modified"] == "2024-01-15T10:30:00Z"
         assert "extracted_at" in data["properties"]
 
@@ -82,7 +82,7 @@ class TestBuildFileNode:
         props = result["data"]["properties"]
         assert props["extension"] == ""
         assert props["size_bytes"] == 0
-        assert props["language"] == ""
+        assert props["file_type"] == ""
         assert props["last_modified"] == ""
 
     def test_path_with_backslashes_normalized(self):

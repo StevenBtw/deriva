@@ -20,21 +20,21 @@ class TestBuildDerivationPrompt:
 
     def test_includes_graph_results(self):
         """Should include graph results in prompt."""
-        graph_data = [{"name": "auth", "path": "src/auth"}]
-        prompt = build_derivation_prompt(graph_data=graph_data, instruction="Group directories", example='{"identifier": "app:auth"}', element_type="ApplicationComponent")
+        candidates = [{"name": "auth", "path": "src/auth"}]
+        prompt = build_derivation_prompt(candidates=candidates, instruction="Group directories", example='{"identifier": "app:auth"}', element_type="ApplicationComponent")
 
         assert "auth" in prompt
         assert "src/auth" in prompt
 
     def test_includes_instruction(self):
         """Should include instruction in prompt."""
-        prompt = build_derivation_prompt(graph_data=[], instruction="Group top-level directories into components", example="{}", element_type="ApplicationComponent")
+        prompt = build_derivation_prompt(candidates=[], instruction="Group top-level directories into components", example="{}", element_type="ApplicationComponent")
 
         assert "Group top-level directories" in prompt
 
     def test_includes_element_type(self):
         """Should reference element type in prompt."""
-        prompt = build_derivation_prompt(graph_data=[], instruction="Test", example="{}", element_type="ApplicationService")
+        prompt = build_derivation_prompt(candidates=[], instruction="Test", example="{}", element_type="ApplicationService")
 
         assert "ApplicationService" in prompt
 

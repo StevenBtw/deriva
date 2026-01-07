@@ -52,7 +52,9 @@ logger = logging.getLogger(__name__)
 ELEMENT_TYPE = "ApplicationInterface"
 
 
-def _is_likely_interface(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
+def _is_likely_interface(
+    name: str, include_patterns: set[str], exclude_patterns: set[str]
+) -> bool:
     """Check if a method name suggests an application interface."""
     if not name:
         return False
@@ -93,8 +95,16 @@ def filter_candidates(
 
     filtered = [c for c in candidates if c.name and not c.name.startswith("_")]
 
-    likely_interfaces = [c for c in filtered if _is_likely_interface(c.name, include_patterns, exclude_patterns)]
-    others = [c for c in filtered if not _is_likely_interface(c.name, include_patterns, exclude_patterns)]
+    likely_interfaces = [
+        c
+        for c in filtered
+        if _is_likely_interface(c.name, include_patterns, exclude_patterns)
+    ]
+    others = [
+        c
+        for c in filtered
+        if not _is_likely_interface(c.name, include_patterns, exclude_patterns)
+    ]
 
     likely_interfaces = filter_by_pagerank(likely_interfaces, top_n=max_candidates // 2)
 
@@ -144,7 +154,9 @@ def generate(
 
     logger.info(f"Found {len(candidates)} interface candidates")
 
-    filtered = filter_candidates(candidates, enrichments, include_patterns, exclude_patterns, max_candidates)
+    filtered = filter_candidates(
+        candidates, enrichments, include_patterns, exclude_patterns, max_candidates
+    )
 
     if not filtered:
         logger.info("No candidates passed filtering")
@@ -170,7 +182,9 @@ def generate(
 
         try:
             response = llm_query_fn(prompt, DERIVATION_SCHEMA, **llm_kwargs)
-            response_content = response.content if hasattr(response, "content") else str(response)
+            response_content = (
+                response.content if hasattr(response, "content") else str(response)
+            )
         except Exception as e:
             result.errors.append(f"LLM error in batch {batch_num}: {e}")
             continue
@@ -202,7 +216,9 @@ def generate(
                 result.elements_created += 1
                 result.created_elements.append(element_data)
             except Exception as e:
-                result.errors.append(f"Failed to create element {element_data['identifier']}: {e}")
+                result.errors.append(
+                    f"Failed to create element {element_data['identifier']}: {e}"
+                )
 
     logger.info(f"Created {result.elements_created} {ELEMENT_TYPE} elements")
     return result

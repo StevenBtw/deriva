@@ -23,7 +23,9 @@ import requests
 from deriva.common.exceptions import ProviderError as ProviderError
 
 # Valid provider names - shared between providers and benchmark models
-VALID_PROVIDERS = frozenset({"azure", "openai", "anthropic", "ollama", "claudecode", "mistral", "lmstudio"})
+VALID_PROVIDERS = frozenset(
+    {"azure", "openai", "anthropic", "ollama", "claudecode", "mistral", "lmstudio"}
+)
 
 __all__ = [
     "VALID_PROVIDERS",
@@ -400,8 +402,8 @@ class LMStudioProvider(BaseProvider):
                 "json_schema": {
                     "name": "response",
                     "strict": False,
-                    "schema": {"type": "object"}
-                }
+                    "schema": {"type": "object"},
+                },
             }
 
         response = self._make_request(headers, body)

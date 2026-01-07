@@ -392,13 +392,9 @@ def _extract_llm_based(
         if use_ast_for_python and is_python:
             # Use AST extraction for Python - faster and more precise
             if node_type == "TypeDefinition":
-                result = extraction.extract_types_from_python(
-                    file_info["path"], content, repo.name
-                )
+                result = extraction.extract_types_from_python(file_info["path"], content, repo.name)
             else:  # Method
-                result = extraction.extract_methods_from_python(
-                    file_info["path"], content, repo.name
-                )
+                result = extraction.extract_methods_from_python(file_info["path"], content, repo.name)
             file_nodes = result["data"]["nodes"] if result["success"] else []
             file_edges = result["data"].get("edges", []) if result["success"] else []
             file_errors = result.get("errors", [])

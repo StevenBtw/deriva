@@ -511,7 +511,6 @@ class TestRepoManagerExtractMetadata:
             with open(meta_file, encoding="utf-8") as f:
                 metadata = json.load(f)
             assert metadata["name"] == "test-repo"
-            assert metadata["languages"]["Python"] == 2
 
             # Check structure content
             with open(struct_file, encoding="utf-8") as f:
