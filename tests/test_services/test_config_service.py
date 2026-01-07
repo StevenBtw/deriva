@@ -343,7 +343,22 @@ class TestGetDerivationConfig:
         engine = MagicMock()
         # Columns: step_name, phase, sequence, enabled, llm, input_graph_query, input_model_query,
         #          instruction, example, params, temperature, max_tokens, max_candidates, batch_size
-        engine.execute.return_value.fetchone.return_value = ("ApplicationComponent", "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None, 0.8, 3000, 30, 10)
+        engine.execute.return_value.fetchone.return_value = (
+            "ApplicationComponent",
+            "generate",
+            1,
+            True,
+            True,
+            "MATCH (n)",
+            None,
+            "instruction",
+            "example",
+            None,
+            0.8,
+            3000,
+            30,
+            10,
+        )
 
         config = get_derivation_config(engine, "ApplicationComponent")
 

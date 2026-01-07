@@ -1078,9 +1078,7 @@ class TestCmdRunDerivationWithPhase:
             "stats": {"elements_created": 3},
         }
 
-        args = argparse.Namespace(
-            stage="derivation", repo=None, verbose=False, no_llm=False, phase="generate"
-        )
+        args = argparse.Namespace(stage="derivation", repo=None, verbose=False, no_llm=False, phase="generate")
 
         with patch("deriva.cli.cli.PipelineSession", return_value=mock_session):
             result = cmd_run(args)
