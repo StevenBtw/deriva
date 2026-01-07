@@ -592,10 +592,9 @@ class ClaudeCodeProvider(BaseProvider):
 
         resolved_model = self._resolve_model(self.config.model)
 
+        # Use stdin for prompt to avoid Windows command line length limit
         cmd = [
             "claude",
-            "-p",
-            prompt,
             "--model",
             resolved_model,
             "--output-format",
@@ -606,8 +605,10 @@ class ClaudeCodeProvider(BaseProvider):
 
         try:
             # shell=True needed on Windows where claude is a .cmd script
+            # Pass prompt via stdin to avoid command line length limits
             result = subprocess.run(
                 cmd,
+                input=prompt,
                 capture_output=True,
                 text=True,
                 timeout=self.config.timeout,
