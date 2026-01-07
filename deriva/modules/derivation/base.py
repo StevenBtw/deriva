@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from deriva.common import current_timestamp, parse_json_array
 from deriva.common.types import PipelineResult
@@ -352,7 +352,8 @@ def build_derivation_prompt(
     """
     # Convert Candidate objects to dicts if needed
     if candidates and isinstance(candidates[0], Candidate):
-        data = [c.to_dict() for c in candidates]
+        candidate_list = cast(list[Candidate], candidates)
+        data = [c.to_dict() for c in candidate_list]
     else:
         data = candidates
 

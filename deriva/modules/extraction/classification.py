@@ -19,7 +19,7 @@ Path patterns use 'path:' prefix and support glob syntax:
 from __future__ import annotations
 
 import fnmatch
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 
