@@ -4,7 +4,7 @@ Multi-provider LLM abstraction with caching and structured output support.
 
 ## Purpose
 
-The LLM adapter provides a unified interface for querying multiple LLM providers (Azure OpenAI, OpenAI, Anthropic, Ollama) with automatic caching and Pydantic-based structured output parsing.
+The LLM adapter provides a unified interface for querying multiple LLM providers (Azure OpenAI, OpenAI, Anthropic, Ollama, LM Studio) with automatic caching and Pydantic-based structured output parsing.
 
 ## Key Exports
 
@@ -17,6 +17,7 @@ from deriva.adapters.llm import (
     OpenAIProvider,
     AnthropicProvider,
     OllamaProvider,
+    LMStudioProvider,
     ProviderConfig,
     # Response types
     LLMResponse,
@@ -69,7 +70,7 @@ Set provider via environment variables in `.env`:
 
 ```bash
 # Primary provider
-LLM_PROVIDER=azure          # azure, openai, anthropic, ollama
+LLM_PROVIDER=azure          # azure, openai, anthropic, ollama, lmstudio
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=your-key
 LLM_API_URL=https://...     # Optional custom endpoint
@@ -78,6 +79,11 @@ LLM_API_URL=https://...     # Optional custom endpoint
 LLM_OLLAMA_LLAMA_PROVIDER=ollama
 LLM_OLLAMA_LLAMA_MODEL=llama3.2
 LLM_OLLAMA_LLAMA_URL=http://localhost:11434/api/chat
+
+# LM Studio (local, OpenAI-compatible)
+LLM_LMSTUDIO_LOCAL_PROVIDER=lmstudio
+LLM_LMSTUDIO_LOCAL_MODEL=local-model
+LLM_LMSTUDIO_LOCAL_URL=http://localhost:1234/v1/chat/completions
 ```
 
 ## Response Types

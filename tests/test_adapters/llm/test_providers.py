@@ -10,6 +10,7 @@ from deriva.adapters.llm.providers import (
     AzureOpenAIProvider,
     ClaudeCodeProvider,
     CompletionResult,
+    LMStudioProvider,
     OllamaProvider,
     OpenAIProvider,
     ProviderConfig,
@@ -75,6 +76,12 @@ class TestCreateProvider:
         provider = create_provider("ollama", config)
         assert isinstance(provider, OllamaProvider)
         assert provider.name == "ollama"
+
+    def test_create_lmstudio_provider(self, config):
+        """Should create LM Studio provider."""
+        provider = create_provider("lmstudio", config)
+        assert isinstance(provider, LMStudioProvider)
+        assert provider.name == "lmstudio"
 
     @patch("deriva.adapters.llm.providers.subprocess.run")
     def test_create_claudecode_provider(self, mock_run, config):
@@ -346,6 +353,119 @@ class TestOllamaProvider:
         call_args = mock_post.call_args
         body = call_args.kwargs["json"]
         assert body["format"] == "json"
+
+
+class TestLMStudioProvider:
+    """Tests for LMStudioProvider."""
+
+    @pytest.fixture
+    def provider(self):
+        config = ProviderConfig(
+            api_url="http://localhost:1234/v1/chat/completions",
+            api_key=None,
+            model="local-model",
+        )
+        return LMStudioProvider(config)
+
+    def test_name(self, provider):
+        """Should return 'lmstudio' as name."""
+        assert provider.name == "lmstudio"
+
+    @patch("deriva.adapters.llm.providers.requests.post")
+    def test_complete_success(self, mock_post, provider):
+        """Should parse OpenAI-compatible response correctly."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {"content": "Hello from LM Studio!"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        result = provider.complete(
+            messages=[{"role": "user", "content": "Hi"}],
+            temperature=0.5,
+        )
+
+        assert isinstance(result, CompletionResult)
+        assert result.content == "Hello from LM Studio!"
+        assert result.finish_reason == "stop"
+        assert result.usage == {"prompt_tokens": 10, "completion_tokens": 5}
+
+    @patch("deriva.adapters.llm.providers.requests.post")
+    def test_complete_includes_model_in_body(self, mock_post, provider):
+        """Should include model in request body."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Hi"}, "finish_reason": "stop"}],
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        provider.complete(messages=[{"role": "user", "content": "Hi"}])
+
+        call_args = mock_post.call_args
+        body = call_args.kwargs["json"]
+        assert body["model"] == "local-model"
+
+    @patch("deriva.adapters.llm.providers.requests.post")
+    def test_no_auth_header(self, mock_post, provider):
+        """Should not include Authorization header (local provider)."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Hi"}, "finish_reason": "stop"}],
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        provider.complete(messages=[{"role": "user", "content": "Hi"}])
+
+        call_args = mock_post.call_args
+        headers = call_args.kwargs["headers"]
+        assert "Authorization" not in headers
+
+    @patch("deriva.adapters.llm.providers.requests.post")
+    def test_complete_with_json_mode(self, mock_post, provider):
+        """Should include response_format when json_mode is True."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        provider.complete(
+            messages=[{"role": "user", "content": "Hi"}],
+            json_mode=True,
+        )
+
+        call_args = mock_post.call_args
+        body = call_args.kwargs["json"]
+        assert body["response_format"] == {"type": "json_object"}
+
+    @patch("deriva.adapters.llm.providers.requests.post")
+    def test_complete_with_max_tokens(self, mock_post, provider):
+        """Should include max_tokens when specified."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Hi"}, "finish_reason": "stop"}],
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        provider.complete(
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=100,
+        )
+
+        call_args = mock_post.call_args
+        body = call_args.kwargs["json"]
+        assert body["max_tokens"] == 100
 
 
 class TestClaudeCodeProvider:

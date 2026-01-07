@@ -92,6 +92,7 @@ class BenchmarkModelConfig:
             "openai": "https://api.openai.com/v1/chat/completions",
             "anthropic": "https://api.anthropic.com/v1/messages",
             "ollama": "http://localhost:11434/api/chat",
+            "lmstudio": "http://localhost:1234/v1/chat/completions",
         }
         return defaults.get(self.provider, "")
 

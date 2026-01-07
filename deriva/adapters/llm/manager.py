@@ -301,6 +301,12 @@ class LLMManager:
                 )
                 api_key = None  # Ollama doesn't require an API key
                 model = os.getenv("LLM_OLLAMA_MODEL", "llama3.2")
+            elif provider == "lmstudio":
+                api_url = os.getenv(
+                    "LLM_LMSTUDIO_API_URL", "http://localhost:1234/v1/chat/completions"
+                )
+                api_key = None  # LM Studio doesn't require an API key (local)
+                model = os.getenv("LLM_LMSTUDIO_MODEL", "local-model")
             else:
                 raise ConfigurationError(f"Unknown LLM provider: {provider}")
 
@@ -329,8 +335,8 @@ class LLMManager:
         Raises:
             ConfigurationError: If required fields are missing
         """
-        # Ollama and ClaudeCode don't require api_key
-        if self.config["provider"] in ("ollama", "claudecode"):
+        # Ollama, LM Studio, and ClaudeCode don't require api_key
+        if self.config["provider"] in ("ollama", "lmstudio", "claudecode"):
             required_fields = ["provider", "api_url", "model"]
         else:
             required_fields = ["provider", "api_url", "api_key", "model"]

@@ -23,7 +23,7 @@ import requests
 from deriva.common.exceptions import ProviderError as ProviderError
 
 # Valid provider names - shared between providers and benchmark models
-VALID_PROVIDERS = frozenset({"azure", "openai", "anthropic", "ollama", "claudecode", "mistral"})
+VALID_PROVIDERS = frozenset({"azure", "openai", "anthropic", "ollama", "claudecode", "mistral", "lmstudio"})
 
 __all__ = [
     "VALID_PROVIDERS",
@@ -38,6 +38,7 @@ __all__ = [
     "OllamaProvider",
     "ClaudeCodeProvider",
     "MistralProvider",
+    "LMStudioProvider",
     "create_provider",
 ]
 
@@ -361,6 +362,64 @@ class OllamaProvider(BaseProvider):
             raise ProviderError(f"Unexpected Ollama response format: {e}") from e
 
 
+class LMStudioProvider(BaseProvider):
+    """LM Studio local LLM provider implementation (OpenAI-compatible API).
+
+    LM Studio provides an OpenAI-compatible REST API at localhost:1234.
+    No API key required - runs locally.
+    """
+
+    @property
+    def name(self) -> str:
+        return "lmstudio"
+
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        headers = {
+            "Content-Type": "application/json",
+        }
+
+        body: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+
+        if max_tokens:
+            body["max_tokens"] = max_tokens
+
+        if json_mode:
+            # LM Studio uses json_schema format (not json_object like OpenAI)
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "strict": False,
+                    "schema": {"type": "object"}
+                }
+            }
+
+        response = self._make_request(headers, body)
+
+        try:
+            content = response["choices"][0]["message"]["content"]
+            usage = response.get("usage")
+            finish_reason = response["choices"][0].get("finish_reason")
+            return CompletionResult(
+                content=content,
+                usage=usage,
+                finish_reason=finish_reason,
+                raw_response=response,
+            )
+        except (KeyError, IndexError) as e:
+            raise ProviderError(f"Unexpected LM Studio response format: {e}") from e
+
+
 class MistralProvider(BaseProvider):
     """Mistral AI provider implementation (OpenAI-compatible API)."""
 
@@ -628,6 +687,7 @@ def create_provider(provider_name: str, config: ProviderConfig) -> LLMProvider:
         "openai": OpenAIProvider,
         "anthropic": AnthropicProvider,
         "ollama": OllamaProvider,
+        "lmstudio": LMStudioProvider,
         "claudecode": ClaudeCodeProvider,
         "mistral": MistralProvider,
     }
