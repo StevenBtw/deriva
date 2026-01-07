@@ -113,8 +113,11 @@ def run_extraction(
         # Get all files for classification
         file_paths = []
         for f in repo_path.rglob("*"):
-            if f.is_file() and not any(x in str(f) for x in [".git", "__pycache__", ".pyc"]):
-                file_paths.append(str(f.relative_to(repo_path)))
+            # Exclude .git directory contents, __pycache__, and .pyc files
+            # Use f.parts to check for exact directory names (avoids matching .gitignore)
+            if f.is_file() and not any(x in f.parts for x in [".git", "__pycache__"]) and not str(f).endswith(".pyc"):
+                # Normalize to forward slashes for consistent path handling
+                file_paths.append(str(f.relative_to(repo_path)).replace("\\", "/"))
 
         # Classify files
         classification_result = classification.classify_files(file_paths, registry_list)
@@ -281,8 +284,8 @@ def _extract_files(repo: Any, repo_path: Path, classified_files: list[dict], gra
     # Use the module to scan all files from repo path
     result = extraction.extract_files(str(repo_path), repo.name)
 
-    # Build a lookup for classification info
-    classification_lookup = {f["path"]: f for f in classified_files}
+    # Build a lookup for classification info (normalize paths to forward slashes)
+    classification_lookup = {f["path"].replace("\\", "/"): f for f in classified_files}
 
     if result["success"]:
         for node_data in result["data"]["nodes"]:
@@ -335,6 +338,12 @@ def _extract_llm_based(
 
     # Get files matching the input sources
     matching_files = extraction.filter_files_by_input_sources(classified_files, input_sources)
+
+    # Special case: Method extraction with node-based sources (TypeDefinition.codeSnippet)
+    # For Python files, we can use AST to extract methods directly from source files
+    if not matching_files and node_type == "Method" and extraction.has_node_sources(input_sources):
+        # Get all Python source files for AST-based method extraction
+        matching_files = [f for f in classified_files if extraction.is_python_file(f.get("subtype"))]
 
     if not matching_files:
         return {"nodes_created": 0, "edges_created": 0, "errors": []}
@@ -560,50 +569,50 @@ def _create_node_from_data(node_type: str, node_data: dict, repo_name: str) -> A
 
     if node_type == "BusinessConcept":
         return BusinessConceptNode(
-            name=props.get("name", ""),
-            concept_type=props.get("concept_type", props.get("type", "other")),
+            name=props.get("conceptName", props.get("name", "")),
+            concept_type=props.get("conceptType", props.get("concept_type", props.get("type", "other"))),
             description=props.get("description", ""),
-            origin_source=props.get("origin_source", props.get("source_file", props.get("file_path", ""))),
+            origin_source=props.get("originSource", props.get("origin_source", props.get("source_file", props.get("file_path", "")))),
             repository_name=repo_name,
             confidence=props.get("confidence", 0.8),
         )
     elif node_type == "TypeDefinition":
         return TypeDefinitionNode(
-            name=props.get("name", ""),
-            type_category=props.get("type_category", props.get("definition_type", props.get("category", "class"))),
-            file_path=props.get("file_path", props.get("source_file", "")),
+            name=props.get("typeName", props.get("name", "")),
+            type_category=props.get("category", props.get("type_category", props.get("definition_type", "class"))),
+            file_path=props.get("filePath", props.get("file_path", props.get("source_file", ""))),
             repository_name=repo_name,
             description=props.get("description"),
-            interface_type=props.get("interface_type"),
-            start_line=props.get("start_line", 0),
-            end_line=props.get("end_line", 0),
-            code_snippet=props.get("code_snippet"),
+            interface_type=props.get("interfaceType", props.get("interface_type")),
+            start_line=props.get("startLine", props.get("start_line", 0)),
+            end_line=props.get("endLine", props.get("end_line", 0)),
+            code_snippet=props.get("codeSnippet", props.get("code_snippet")),
             confidence=props.get("confidence", 0.8),
         )
     elif node_type == "Method":
         return MethodNode(
-            name=props.get("name", ""),
-            return_type=props.get("return_type", "void"),
+            name=props.get("methodName", props.get("name", "")),
+            return_type=props.get("returnType", props.get("return_type", "void")),
             visibility=props.get("visibility", "public"),
-            file_path=props.get("file_path", props.get("source_file", "")),
-            type_name=props.get("type_name", props.get("class_name", "")),
+            file_path=props.get("filePath", props.get("file_path", props.get("source_file", ""))),
+            type_name=props.get("typeName", props.get("type_name", props.get("class_name", ""))),
             repository_name=repo_name,
             description=props.get("description"),
             parameters=props.get("parameters"),
-            is_static=props.get("is_static", False),
-            is_async=props.get("is_async", False),
-            start_line=props.get("start_line", 0),
-            end_line=props.get("end_line", 0),
+            is_static=props.get("isStatic", props.get("is_static", False)),
+            is_async=props.get("isAsync", props.get("is_async", False)),
+            start_line=props.get("startLine", props.get("start_line", 0)),
+            end_line=props.get("endLine", props.get("end_line", 0)),
             confidence=props.get("confidence", 0.8),
         )
     elif node_type == "Technology":
         return TechnologyNode(
-            name=props.get("name", ""),
-            tech_category=props.get("tech_category", props.get("category", "service")),
+            name=props.get("techName", props.get("name", "")),
+            tech_category=props.get("techCategory", props.get("tech_category", props.get("category", "service"))),
             repository_name=repo_name,
             description=props.get("description"),
             version=props.get("version"),
-            origin_source=props.get("origin_source", props.get("source_file")),
+            origin_source=props.get("originSource", props.get("origin_source", props.get("source_file"))),
             confidence=props.get("confidence", 0.8),
         )
     elif node_type == "ExternalDependency":

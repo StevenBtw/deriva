@@ -16,8 +16,9 @@ Deriva analyzes code repositories and transforms them into [ArchiMate](https://w
 1. **Clone** a Git repository
 2. **Extract** a graph representation into Neo4j:
    - Structural nodes: directories, files (classified by type)
-   - Semantic nodes: TypeDefinitions, BusinessConcepts (via LLM)
-3. **Derive** ArchiMate elements (prep → generate → refine phases)
+   - Semantic nodes: TypeDefinitions, Methods, BusinessConcepts, Technologies, etc.
+   - Python files use fast AST extraction; other languages use LLM
+3. **Derive** ArchiMate elements (prep → generate → relationship phases)
 4. **Export** to `.archimate` XML file
 
 ## Quick Setup
@@ -126,9 +127,11 @@ Enable the extraction steps you need:
 | Repository | Creates root node for the repo | Always |
 | Directory | Creates directory structure nodes | Always |
 | File | Creates file nodes with classification | Always |
-| TypeDefinition | Extracts classes, functions, etc. | Yes |
+| TypeDefinition | Extracts classes, functions (AST for Python) | Yes |
+| Method | Extracts methods from type definitions | Optional |
 | Technology | Detects frameworks and libraries | Optional |
 | ExternalDependency | Maps external dependencies | Optional |
+| Test | Extracts test definitions | Optional |
 
 ### 3. Configure LLM (Optional)
 
@@ -241,7 +244,7 @@ Deriva uses a multi-column marimo notebook layout:
 | **0** | **Run Deriva**: Pipeline execution buttons, status display |
 | **1** | **Configuration**: Runs, repositories, Neo4j, graph stats, ArchiMate, LLM |
 | **2** | **Extraction Settings**: File type registry, extraction step configuration |
-| **3** | **Derivation Settings**: Derivation step configuration (prep/generate/refine phases) |
+| **3** | **Derivation Settings**: Derivation step configuration (prep/generate/relationship phases) |
 
 The UI is powered by `PipelineSession` from the services layer, providing a clean separation between presentation and business logic.
 
@@ -298,7 +301,7 @@ uv run python -m deriva.cli.cli status
 # Run pipeline stages
 uv run python -m deriva.cli.cli run extraction --repo flask_invoice_generator -v
 uv run python -m deriva.cli.cli run derivation -v
-uv run python -m deriva.cli.cli run derivation --phase generate -v  # Run specific phase
+uv run python -m deriva.cli.cli run derivation --phase generate -v  # Run specific phase (prep, generate, relationship)
 uv run python -m deriva.cli.cli run all --repo myrepo
 
 # Export ArchiMate model
@@ -310,7 +313,7 @@ uv run python -m deriva.cli.cli export -o workspace/output/model.archimate
 | Option | Description |
 |--------|-------------|
 | `--repo NAME` | Process specific repository (default: all) |
-| `--phase PHASE` | Run specific derivation phase: prep, generate, or refine |
+| `--phase PHASE` | Run specific derivation phase: prep, generate, or relationship |
 | `-v, --verbose` | Print detailed progress |
 | `--no-llm` | Skip LLM-based steps (structural extraction only) |
 | `-o, --output PATH` | Output file path for export |

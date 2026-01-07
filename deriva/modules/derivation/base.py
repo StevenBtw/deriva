@@ -14,13 +14,12 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from deriva.common import current_timestamp, parse_json_array
 from deriva.common.types import PipelineResult
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
     from deriva.adapters.graph import GraphManager
 
 logger = logging.getLogger(__name__)

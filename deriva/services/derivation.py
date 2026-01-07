@@ -34,19 +34,87 @@ from deriva.modules.derivation import (
 )
 from deriva.services import config
 
-# TODO: Re-enable when derivation modules are complete
-# from deriva.modules.derivation.generate import generate_element
-# from deriva.modules.derivation.prep_pagerank import run_pagerank
+# Element generation module registry
+# Maps element_type to module with generate() function
+_ELEMENT_MODULES: dict[str, Any] = {}
 
 
-def run_pagerank(*args, **kwargs):
-    """Stub - derivation modules being refactored."""
-    raise NotImplementedError("Derivation modules are being refactored")
+def _load_element_module(element_type: str) -> Any:
+    """Lazily load element generation module."""
+    if element_type in _ELEMENT_MODULES:
+        return _ELEMENT_MODULES[element_type]
+
+    module = None
+    # Business Layer
+    if element_type == "BusinessObject":
+        from deriva.modules.derivation import business_object as module
+    elif element_type == "BusinessProcess":
+        from deriva.modules.derivation import business_process as module
+    elif element_type == "BusinessActor":
+        from deriva.modules.derivation import business_actor as module
+    # Application Layer
+    elif element_type == "ApplicationComponent":
+        from deriva.modules.derivation import application_component as module
+    elif element_type == "ApplicationService":
+        from deriva.modules.derivation import application_service as module
+    elif element_type == "DataObject":
+        from deriva.modules.derivation import data_object as module
+    # Technology Layer
+    elif element_type == "TechnologyService":
+        from deriva.modules.derivation import technology_service as module
+
+    _ELEMENT_MODULES[element_type] = module
+    return module
 
 
-def generate_element(*args, **kwargs):
-    """Stub - derivation modules being refactored."""
-    raise NotImplementedError("Derivation modules are being refactored")
+def generate_element(
+    graph_manager: GraphManager,
+    archimate_manager: ArchimateManager,
+    llm_query_fn: Callable[..., Any],
+    element_type: str,
+    engine: Any = None,
+    query: str = "",
+    instruction: str = "",
+    example: str = "",
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    """
+    Generate ArchiMate elements of a specific type.
+
+    Routes to the appropriate module based on element_type.
+    Modules use their own queries/instructions/examples by default.
+    """
+    module = _load_element_module(element_type)
+
+    if module is None:
+        return {
+            "success": False,
+            "elements_created": 0,
+            "errors": [f"No generation module for element type: {element_type}"],
+        }
+
+    try:
+        result = module.generate(
+            graph_manager=graph_manager,
+            archimate_manager=archimate_manager,
+            engine=engine,
+            llm_query_fn=llm_query_fn,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return {
+            "success": result.success,
+            "elements_created": result.elements_created,
+            "created_elements": result.created_elements,
+            "errors": result.errors,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "elements_created": 0,
+            "errors": [f"Generation failed for {element_type}: {e}"],
+        }
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +142,9 @@ def _normalize_relationship_type(rel_type: str) -> str:
 # PREP STEP REGISTRY
 # =============================================================================
 
-PREP_FUNCTIONS = {
-    "pagerank": run_pagerank,
+# Prep functions are disabled for now - modules being refactored
+PREP_FUNCTIONS: dict[str, Callable[..., Any]] = {
+    # "pagerank": run_pagerank,  # TODO: implement
 }
 
 
@@ -218,6 +287,7 @@ def run_derivation(
                     archimate_manager=archimate_manager,
                     llm_query_fn=step_llm_query_fn,
                     element_type=cfg.element_type,
+                    engine=engine,
                     query=cfg.input_graph_query or "",
                     instruction=cfg.instruction or "",
                     example=cfg.example or "",
