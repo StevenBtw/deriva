@@ -1,25 +1,27 @@
 """
-TechnologyService Derivation.
+BusinessFunction Derivation.
 
-A TechnologyService represents an externally visible unit of functionality,
-offered by a technology node (e.g., database, message queue, external API).
+A BusinessFunction represents a collection of business behavior based on a
+chosen set of criteria (typically required business resources and/or competencies),
+closely aligned to an organization, but not necessarily explicitly governed by
+the organization.
 
 Graph signals:
-- External dependency nodes (imported packages/libraries)
-- Nodes with labels like ExternalDependency, Database, API
-- High out-degree from application code (many things depend on it)
-- Configuration files referencing external services
+- Module/package structures representing business capabilities
+- Groups of related methods/classes
+- Service layers and domain modules
+- High-level organizational code structures
 
 Filtering strategy:
-- Start with ExternalDependency and similar labeled nodes
-- Filter to high-importance dependencies (PageRank)
-- Exclude standard library and utility packages
-- Focus on infrastructure services (databases, queues, APIs)
+1. Query Module and Package nodes
+2. Filter for business-relevant modules
+3. Exclude utility/infrastructure modules
+4. Focus on domain-specific capabilities
 
 LLM role:
-- Classify which dependencies are technology services vs utilities
-- Generate meaningful service names
-- Write documentation describing the service's role
+- Identify which modules represent business functions
+- Generate meaningful function names
+- Write documentation describing the business capability
 """
 
 from __future__ import annotations
@@ -49,11 +51,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ELEMENT_TYPE = "TechnologyService"
+ELEMENT_TYPE = "BusinessFunction"
 
 
-def _is_likely_tech_service(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
-    """Check if a dependency suggests a technology service."""
+def _is_likely_function(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
+    """Check if a module name suggests a business function."""
     if not name:
         return False
 
@@ -64,7 +66,7 @@ def _is_likely_tech_service(name: str, include_patterns: set[str], exclude_patte
         if pattern in name_lower:
             return False
 
-    # Check for tech service patterns
+    # Check for function patterns
     for pattern in include_patterns:
         if pattern in name_lower:
             return True
@@ -80,35 +82,35 @@ def filter_candidates(
     max_candidates: int,
 ) -> list[Candidate]:
     """
-    Filter candidates for TechnologyService derivation.
+    Filter candidates for BusinessFunction derivation.
 
     Strategy:
     1. Enrich with graph metrics
-    2. Exclude standard library and utility packages
-    3. Prioritize infrastructure dependencies (databases, APIs, etc.)
-    4. Use PageRank to find most important dependencies
+    2. Filter by function/capability patterns
+    3. Exclude utility/infrastructure modules
+    4. Use PageRank to find most important functions
     """
     for c in candidates:
         enrich_candidate(c, enrichments)
 
     filtered = [c for c in candidates if c.name]
 
-    likely_tech = [c for c in filtered if _is_likely_tech_service(c.name, include_patterns, exclude_patterns)]
-    others = [c for c in filtered if not _is_likely_tech_service(c.name, include_patterns, exclude_patterns)]
+    likely_functions = [c for c in filtered if _is_likely_function(c.name, include_patterns, exclude_patterns)]
+    others = [c for c in filtered if not _is_likely_function(c.name, include_patterns, exclude_patterns)]
 
-    likely_tech = filter_by_pagerank(likely_tech, top_n=max_candidates // 2)
+    likely_functions = filter_by_pagerank(likely_functions, top_n=max_candidates // 2)
 
-    remaining_slots = max_candidates - len(likely_tech)
+    remaining_slots = max_candidates - len(likely_functions)
     if remaining_slots > 0 and others:
         others = filter_by_pagerank(others, top_n=remaining_slots)
-        likely_tech.extend(others)
+        likely_functions.extend(others)
 
     logger.debug(
-        f"TechnologyService filter: {len(candidates)} total -> {len(filtered)} after null -> "
-        f"{len(likely_tech)} final candidates"
+        f"BusinessFunction filter: {len(candidates)} total -> {len(filtered)} after null -> "
+        f"{len(likely_functions)} final candidates"
     )
 
-    return likely_tech[:max_candidates]
+    return likely_functions[:max_candidates]
 
 
 def generate(
@@ -125,7 +127,7 @@ def generate(
     max_tokens: int | None = None,
 ) -> GenerationResult:
     """
-    Generate TechnologyService elements from external dependencies.
+    Generate BusinessFunction elements from modules and packages.
 
     All configuration parameters are required - no defaults, no fallbacks.
     """
@@ -139,10 +141,10 @@ def generate(
     candidates = query_candidates(graph_manager, query, enrichments)
 
     if not candidates:
-        logger.info("No ExternalDependency candidates found")
+        logger.info("No function candidates found")
         return result
 
-    logger.info(f"Found {len(candidates)} dependency candidates")
+    logger.info(f"Found {len(candidates)} function candidates")
 
     filtered = filter_candidates(candidates, enrichments, include_patterns, exclude_patterns, max_candidates)
 

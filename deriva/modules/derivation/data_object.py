@@ -40,6 +40,7 @@ from deriva.modules.derivation.base import (
     parse_derivation_response,
     query_candidates,
 )
+from deriva.services import config
 
 if TYPE_CHECKING:
     from deriva.adapters.archimate import ArchimateManager
@@ -49,114 +50,22 @@ logger = logging.getLogger(__name__)
 
 ELEMENT_TYPE = "DataObject"
 
-# Candidate query: Get File nodes with data-related types
-CANDIDATE_QUERY = """
-MATCH (n:`Graph:File`)
-WHERE n.active = true
-RETURN n.id as id,
-       COALESCE(n.fileName, n.name) as name,
-       labels(n) as labels,
-       properties(n) as properties
-"""
 
-# File types that are data objects
-DATA_FILE_TYPES = {
-    # Data storage
-    "database", "db", "sqlite", "sql",
-    # Configuration
-    "config", "json", "yaml", "yml", "toml", "ini", "env",
-    # Schemas
-    "schema", "xsd", "dtd",
-    # Data files
-    "csv", "xml", "data",
-}
-
-# File types to exclude
-EXCLUDED_FILE_TYPES = {
-    "source", "python", "javascript", "typescript",
-    "template", "html", "css",
-    "test", "spec",
-    "docs", "markdown", "readme",
-    "asset", "image", "font",
-}
-
-INSTRUCTION = """
-You are identifying DataObject elements from files in a codebase.
-
-A DataObject represents data structured for automated processing:
-- Database files (SQLite, SQL scripts)
-- Configuration files (JSON, YAML, ENV)
-- Schema definitions
-- Data exchange formats
-
-Each candidate includes file information and graph metrics.
-
-Review each candidate and decide which should become DataObject elements.
-
-INCLUDE files that:
-- Store application data (databases, data files)
-- Define configuration (settings, environment)
-- Define data schemas or structures
-- Are used for data exchange
-
-EXCLUDE files that:
-- Are source code (Python, JavaScript, etc.)
-- Are templates (HTML, Jinja)
-- Are documentation (README, docs)
-- Are static assets (images, CSS)
-
-When naming:
-- Use descriptive names (e.g., "Application Database" not "database.db")
-- Indicate the data's purpose
-"""
-
-EXAMPLE = """{
-  "elements": [
-    {
-      "identifier": "do_application_database",
-      "name": "Application Database",
-      "documentation": "SQLite database storing invoices, customers, and line items",
-      "source": "file_database.db",
-      "confidence": 0.95
-    },
-    {
-      "identifier": "do_app_configuration",
-      "name": "Application Configuration",
-      "documentation": "Environment configuration for Flask application settings",
-      "source": "file_.flaskenv",
-      "confidence": 0.85
-    }
-  ]
-}"""
-
-MAX_CANDIDATES = 30
-BATCH_SIZE = 10
-
-
-def _is_likely_data_object(candidate: Candidate) -> bool:
-    """Check if a file is likely a data object."""
-    name = candidate.name
+def _is_likely_data_object(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
+    """Check if a file name suggests a data object."""
     if not name:
         return False
 
     name_lower = name.lower()
-    props = candidate.properties
 
-    # Check file_type from properties
-    file_type = props.get("fileType", "").lower() if isinstance(props, dict) else ""
-    subtype = props.get("subtype", "").lower() if isinstance(props, dict) else ""
+    # Check exclusion patterns first
+    for pattern in exclude_patterns:
+        if pattern in name_lower:
+            return False
 
-    # Exclude based on file type
-    if file_type in EXCLUDED_FILE_TYPES or subtype in EXCLUDED_FILE_TYPES:
-        return False
-
-    # Include based on file type
-    if file_type in DATA_FILE_TYPES or subtype in DATA_FILE_TYPES:
-        return True
-
-    # Check extension patterns
-    for pattern in DATA_FILE_TYPES:
-        if name_lower.endswith(f".{pattern}") or pattern in name_lower:
+    # Check for data file patterns
+    for pattern in include_patterns:
+        if pattern in name_lower:
             return True
 
     return False
@@ -165,22 +74,40 @@ def _is_likely_data_object(candidate: Candidate) -> bool:
 def filter_candidates(
     candidates: list[Candidate],
     enrichments: dict[str, dict[str, Any]],
+    include_patterns: set[str],
+    exclude_patterns: set[str],
+    max_candidates: int,
 ) -> list[Candidate]:
-    """Filter candidates for DataObject derivation."""
+    """
+    Filter candidates for DataObject derivation.
+
+    Strategy:
+    1. Enrich with graph metrics
+    2. Filter by data file patterns
+    3. Exclude source code and templates
+    4. Use PageRank to find most important data files
+    """
     for c in candidates:
         enrich_candidate(c, enrichments)
 
-    # Filter to data files
-    filtered = [c for c in candidates if c.name and _is_likely_data_object(c)]
+    filtered = [c for c in candidates if c.name]
 
-    # Sort by PageRank
-    filtered = filter_by_pagerank(filtered, top_n=MAX_CANDIDATES)
+    likely_data = [c for c in filtered if _is_likely_data_object(c.name, include_patterns, exclude_patterns)]
+    others = [c for c in filtered if not _is_likely_data_object(c.name, include_patterns, exclude_patterns)]
+
+    likely_data = filter_by_pagerank(likely_data, top_n=max_candidates // 2)
+
+    remaining_slots = max_candidates - len(likely_data)
+    if remaining_slots > 0 and others:
+        others = filter_by_pagerank(others, top_n=remaining_slots)
+        likely_data.extend(others)
 
     logger.debug(
-        f"DataObject filter: {len(candidates)} total -> {len(filtered)} final"
+        f"DataObject filter: {len(candidates)} total -> {len(filtered)} after null -> "
+        f"{len(likely_data)} final candidates"
     )
 
-    return filtered
+    return likely_data[:max_candidates]
 
 
 def generate(
@@ -188,14 +115,27 @@ def generate(
     archimate_manager: "ArchimateManager",
     engine: Any,
     llm_query_fn: Callable[..., Any],
+    query: str,
+    instruction: str,
+    example: str,
+    max_candidates: int,
+    batch_size: int,
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> GenerationResult:
-    """Generate DataObject elements from File nodes."""
+    """
+    Generate DataObject elements from File nodes.
+
+    All configuration parameters are required - no defaults, no fallbacks.
+    """
     result = GenerationResult(success=True)
 
+    patterns = config.get_derivation_patterns(engine, ELEMENT_TYPE)
+    include_patterns = patterns.get("include", set())
+    exclude_patterns = patterns.get("exclude", set())
+
     enrichments = get_enrichments(engine)
-    candidates = query_candidates(graph_manager, CANDIDATE_QUERY, enrichments)
+    candidates = query_candidates(graph_manager, query, enrichments)
 
     if not candidates:
         logger.info("No File candidates found")
@@ -203,7 +143,7 @@ def generate(
 
     logger.info(f"Found {len(candidates)} file candidates")
 
-    filtered = filter_candidates(candidates, enrichments)
+    filtered = filter_candidates(candidates, enrichments, include_patterns, exclude_patterns, max_candidates)
 
     if not filtered:
         logger.info("No candidates passed filtering")
@@ -211,7 +151,7 @@ def generate(
 
     logger.info("Filtered to %d candidates for LLM", len(filtered))
 
-    batches = batch_candidates(filtered, BATCH_SIZE)
+    batches = batch_candidates(filtered, batch_size)
 
     llm_kwargs = {}
     if temperature is not None:
@@ -222,8 +162,8 @@ def generate(
     for batch_num, batch in enumerate(batches, 1):
         prompt = build_derivation_prompt(
             candidates=batch,
-            instruction=INSTRUCTION,
-            example=EXAMPLE,
+            instruction=instruction,
+            example=example,
             element_type=ELEMENT_TYPE,
         )
 
@@ -269,9 +209,6 @@ def generate(
 
 __all__ = [
     "ELEMENT_TYPE",
-    "CANDIDATE_QUERY",
-    "INSTRUCTION",
-    "EXAMPLE",
     "filter_candidates",
     "generate",
 ]

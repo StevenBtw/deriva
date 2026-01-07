@@ -41,6 +41,7 @@ from deriva.modules.derivation.base import (
     parse_derivation_response,
     query_candidates,
 )
+from deriva.services import config
 
 if TYPE_CHECKING:
     from deriva.adapters.archimate import ArchimateManager
@@ -50,103 +51,8 @@ logger = logging.getLogger(__name__)
 
 ELEMENT_TYPE = "BusinessProcess"
 
-# Candidate query: Get Method nodes
-CANDIDATE_QUERY = """
-MATCH (n:`Graph:Method`)
-WHERE n.active = true
-RETURN n.id as id,
-       COALESCE(n.name, n.methodName) as name,
-       labels(n) as labels,
-       properties(n) as properties
-"""
 
-# Patterns that suggest non-process utility methods
-EXCLUDED_PATTERNS = {
-    # Lifecycle methods
-    "__init__", "__del__", "__enter__", "__exit__",
-    "__str__", "__repr__", "__eq__", "__hash__",
-    # Utility patterns
-    "helper", "util", "validate", "parse", "format",
-    "convert", "transform", "serialize", "deserialize",
-    # Accessors
-    "get_", "set_", "is_", "has_", "_get", "_set",
-    # Framework internals
-    "setup", "teardown", "configure", "initialize",
-}
-
-# Patterns that strongly suggest business processes
-PROCESS_PATTERNS = {
-    # CRUD operations
-    "create", "add", "insert", "new",
-    "update", "modify", "edit", "change",
-    "delete", "remove", "cancel",
-    "submit", "approve", "reject", "review",
-    # Business actions
-    "process", "handle", "execute", "run",
-    "generate", "calculate", "compute",
-    "send", "notify", "email", "alert",
-    "export", "import", "sync",
-    "register", "login", "logout", "authenticate",
-    # Workflow
-    "checkout", "payment", "order", "invoice",
-    "ship", "deliver", "fulfill",
-}
-
-INSTRUCTION = """
-You are identifying BusinessProcess elements from source code methods.
-
-A BusinessProcess represents a sequence of business behaviors that achieves
-a specific outcome. It is NOT just any function - it represents a complete
-business activity that delivers value.
-
-Each candidate includes graph metrics to help assess importance:
-- pagerank: How central/important the method is
-- in_degree/out_degree: How connected it is
-
-Review each candidate and decide which should become BusinessProcess elements.
-
-INCLUDE methods that:
-- Represent complete business activities (Create Invoice, Process Payment)
-- Coordinate multiple steps to achieve a business outcome
-- Would be meaningful to a business analyst
-- Are named with verbs indicating business actions
-
-EXCLUDE methods that:
-- Are purely technical (validation, parsing, formatting)
-- Are framework lifecycle methods (__init__, setup, etc.)
-- Are simple getters/setters
-- Are utility/helper functions
-- Only do one small technical step
-
-When naming:
-- Use business-friendly verb phrases (e.g., "Create Invoice" not "create_invoice")
-- Focus on the business outcome, not technical implementation
-"""
-
-EXAMPLE = """{
-  "elements": [
-    {
-      "identifier": "bp_create_invoice",
-      "name": "Create Invoice",
-      "documentation": "Process of generating a new invoice with line items and customer details",
-      "source": "method_invoice_form",
-      "confidence": 0.9
-    },
-    {
-      "identifier": "bp_process_payment",
-      "name": "Process Payment",
-      "documentation": "Handles payment submission and validation for customer orders",
-      "source": "method_handle_payment",
-      "confidence": 0.85
-    }
-  ]
-}"""
-
-MAX_CANDIDATES = 30
-BATCH_SIZE = 10
-
-
-def _is_likely_process(name: str) -> bool:
+def _is_likely_process(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
     """Check if a method name suggests a business process."""
     if not name:
         return False
@@ -154,12 +60,12 @@ def _is_likely_process(name: str) -> bool:
     name_lower = name.lower()
 
     # Check exclusion patterns first
-    for pattern in EXCLUDED_PATTERNS:
+    for pattern in exclude_patterns:
         if pattern in name_lower:
             return False
 
     # Check for process patterns
-    for pattern in PROCESS_PATTERNS:
+    for pattern in include_patterns:
         if pattern in name_lower:
             return True
 
@@ -169,6 +75,9 @@ def _is_likely_process(name: str) -> bool:
 def filter_candidates(
     candidates: list[Candidate],
     enrichments: dict[str, dict[str, Any]],
+    include_patterns: set[str],
+    exclude_patterns: set[str],
+    max_candidates: int,
 ) -> list[Candidate]:
     """
     Filter candidates for BusinessProcess derivation.
@@ -179,22 +88,17 @@ def filter_candidates(
     3. Prioritize likely processes
     4. Use PageRank to find most important methods
     """
-    # Enrich all candidates first
     for c in candidates:
         enrich_candidate(c, enrichments)
 
-    # Pre-filter: exclude None names and dunder methods
     filtered = [c for c in candidates if c.name and not c.name.startswith("__")]
 
-    # Separate likely processes from others
-    likely_processes = [c for c in filtered if _is_likely_process(c.name)]
-    others = [c for c in filtered if not _is_likely_process(c.name)]
+    likely_processes = [c for c in filtered if _is_likely_process(c.name, include_patterns, exclude_patterns)]
+    others = [c for c in filtered if not _is_likely_process(c.name, include_patterns, exclude_patterns)]
 
-    # Sort likely processes by PageRank
-    likely_processes = filter_by_pagerank(likely_processes, top_n=MAX_CANDIDATES // 2)
+    likely_processes = filter_by_pagerank(likely_processes, top_n=max_candidates // 2)
 
-    # Fill remaining slots with highest PageRank others
-    remaining_slots = MAX_CANDIDATES - len(likely_processes)
+    remaining_slots = max_candidates - len(likely_processes)
     if remaining_slots > 0 and others:
         others = filter_by_pagerank(others, top_n=remaining_slots)
         likely_processes.extend(others)
@@ -204,7 +108,7 @@ def filter_candidates(
         f"{len(likely_processes)} final candidates"
     )
 
-    return likely_processes[:MAX_CANDIDATES]
+    return likely_processes[:max_candidates]
 
 
 def generate(
@@ -212,14 +116,27 @@ def generate(
     archimate_manager: "ArchimateManager",
     engine: Any,
     llm_query_fn: Callable[..., Any],
+    query: str,
+    instruction: str,
+    example: str,
+    max_candidates: int,
+    batch_size: int,
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> GenerationResult:
-    """Generate BusinessProcess elements from Method nodes."""
+    """
+    Generate BusinessProcess elements from Method nodes.
+
+    All configuration parameters are required - no defaults, no fallbacks.
+    """
     result = GenerationResult(success=True)
 
+    patterns = config.get_derivation_patterns(engine, ELEMENT_TYPE)
+    include_patterns = patterns.get("include", set())
+    exclude_patterns = patterns.get("exclude", set())
+
     enrichments = get_enrichments(engine)
-    candidates = query_candidates(graph_manager, CANDIDATE_QUERY, enrichments)
+    candidates = query_candidates(graph_manager, query, enrichments)
 
     if not candidates:
         logger.info("No Method candidates found")
@@ -227,7 +144,7 @@ def generate(
 
     logger.info(f"Found {len(candidates)} method candidates")
 
-    filtered = filter_candidates(candidates, enrichments)
+    filtered = filter_candidates(candidates, enrichments, include_patterns, exclude_patterns, max_candidates)
 
     if not filtered:
         logger.info("No candidates passed filtering")
@@ -235,7 +152,7 @@ def generate(
 
     logger.info("Filtered to %d candidates for LLM", len(filtered))
 
-    batches = batch_candidates(filtered, BATCH_SIZE)
+    batches = batch_candidates(filtered, batch_size)
 
     llm_kwargs = {}
     if temperature is not None:
@@ -246,8 +163,8 @@ def generate(
     for batch_num, batch in enumerate(batches, 1):
         prompt = build_derivation_prompt(
             candidates=batch,
-            instruction=INSTRUCTION,
-            example=EXAMPLE,
+            instruction=instruction,
+            example=example,
             element_type=ELEMENT_TYPE,
         )
 
@@ -293,9 +210,6 @@ def generate(
 
 __all__ = [
     "ELEMENT_TYPE",
-    "CANDIDATE_QUERY",
-    "INSTRUCTION",
-    "EXAMPLE",
     "filter_candidates",
     "generate",
 ]

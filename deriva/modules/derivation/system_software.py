@@ -1,25 +1,26 @@
 """
-TechnologyService Derivation.
+SystemSoftware Derivation.
 
-A TechnologyService represents an externally visible unit of functionality,
-offered by a technology node (e.g., database, message queue, external API).
+A SystemSoftware represents software that provides or contributes to an
+environment for storing, executing, and using software or data deployed
+within it.
 
 Graph signals:
-- External dependency nodes (imported packages/libraries)
-- Nodes with labels like ExternalDependency, Database, API
-- High out-degree from application code (many things depend on it)
-- Configuration files referencing external services
+- Operating system references
+- Runtime/platform dependencies
+- Container base images
+- Middleware and platform services
 
 Filtering strategy:
-- Start with ExternalDependency and similar labeled nodes
-- Filter to high-importance dependencies (PageRank)
-- Exclude standard library and utility packages
-- Focus on infrastructure services (databases, queues, APIs)
+1. Query ExternalDependency and File nodes
+2. Filter for system/platform patterns
+3. Exclude application-level libraries
+4. Focus on infrastructure software
 
 LLM role:
-- Classify which dependencies are technology services vs utilities
-- Generate meaningful service names
-- Write documentation describing the service's role
+- Identify which dependencies are system software
+- Generate meaningful software names
+- Write documentation describing the software's role
 """
 
 from __future__ import annotations
@@ -49,11 +50,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ELEMENT_TYPE = "TechnologyService"
+ELEMENT_TYPE = "SystemSoftware"
 
 
-def _is_likely_tech_service(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
-    """Check if a dependency suggests a technology service."""
+def _is_likely_system_software(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
+    """Check if a name suggests system software."""
     if not name:
         return False
 
@@ -64,7 +65,7 @@ def _is_likely_tech_service(name: str, include_patterns: set[str], exclude_patte
         if pattern in name_lower:
             return False
 
-    # Check for tech service patterns
+    # Check for system software patterns
     for pattern in include_patterns:
         if pattern in name_lower:
             return True
@@ -80,35 +81,35 @@ def filter_candidates(
     max_candidates: int,
 ) -> list[Candidate]:
     """
-    Filter candidates for TechnologyService derivation.
+    Filter candidates for SystemSoftware derivation.
 
     Strategy:
     1. Enrich with graph metrics
-    2. Exclude standard library and utility packages
-    3. Prioritize infrastructure dependencies (databases, APIs, etc.)
-    4. Use PageRank to find most important dependencies
+    2. Filter by system/platform patterns
+    3. Exclude application-level libraries
+    4. Use PageRank to find most important system software
     """
     for c in candidates:
         enrich_candidate(c, enrichments)
 
     filtered = [c for c in candidates if c.name]
 
-    likely_tech = [c for c in filtered if _is_likely_tech_service(c.name, include_patterns, exclude_patterns)]
-    others = [c for c in filtered if not _is_likely_tech_service(c.name, include_patterns, exclude_patterns)]
+    likely_system = [c for c in filtered if _is_likely_system_software(c.name, include_patterns, exclude_patterns)]
+    others = [c for c in filtered if not _is_likely_system_software(c.name, include_patterns, exclude_patterns)]
 
-    likely_tech = filter_by_pagerank(likely_tech, top_n=max_candidates // 2)
+    likely_system = filter_by_pagerank(likely_system, top_n=max_candidates // 2)
 
-    remaining_slots = max_candidates - len(likely_tech)
+    remaining_slots = max_candidates - len(likely_system)
     if remaining_slots > 0 and others:
         others = filter_by_pagerank(others, top_n=remaining_slots)
-        likely_tech.extend(others)
+        likely_system.extend(others)
 
     logger.debug(
-        f"TechnologyService filter: {len(candidates)} total -> {len(filtered)} after null -> "
-        f"{len(likely_tech)} final candidates"
+        f"SystemSoftware filter: {len(candidates)} total -> {len(filtered)} after null -> "
+        f"{len(likely_system)} final candidates"
     )
 
-    return likely_tech[:max_candidates]
+    return likely_system[:max_candidates]
 
 
 def generate(
@@ -125,7 +126,7 @@ def generate(
     max_tokens: int | None = None,
 ) -> GenerationResult:
     """
-    Generate TechnologyService elements from external dependencies.
+    Generate SystemSoftware elements from dependencies and configurations.
 
     All configuration parameters are required - no defaults, no fallbacks.
     """
@@ -139,10 +140,10 @@ def generate(
     candidates = query_candidates(graph_manager, query, enrichments)
 
     if not candidates:
-        logger.info("No ExternalDependency candidates found")
+        logger.info("No system software candidates found")
         return result
 
-    logger.info(f"Found {len(candidates)} dependency candidates")
+    logger.info(f"Found {len(candidates)} system software candidates")
 
     filtered = filter_candidates(candidates, enrichments, include_patterns, exclude_patterns, max_candidates)
 

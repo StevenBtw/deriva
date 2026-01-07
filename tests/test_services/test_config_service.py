@@ -275,10 +275,10 @@ class TestGetDerivationConfigs:
         """Should return all active derivation configs."""
         engine = MagicMock()
         # Columns: step_name, phase, sequence, enabled, llm, input_graph_query, input_model_query,
-        #          instruction, example, params, temperature, max_tokens
+        #          instruction, example, params, temperature, max_tokens, max_candidates, batch_size
         engine.execute.return_value.fetchall.return_value = [
-            ("PageRank", "prep", 1, True, False, "MATCH (n) RETURN n", None, None, None, '{"damping": 0.85}', None, None),
-            ("ApplicationComponent", "generate", 1, True, True, None, None, "instruction", "example", None, 0.5, 2000),
+            ("PageRank", "prep", 1, True, False, "MATCH (n) RETURN n", None, None, None, '{"damping": 0.85}', None, None, None, None),
+            ("ApplicationComponent", "generate", 1, True, True, None, None, "instruction", "example", None, 0.5, 2000, 30, 10),
         ]
 
         configs = get_derivation_configs(engine)
@@ -289,18 +289,22 @@ class TestGetDerivationConfigs:
         assert configs[0].llm is False
         assert configs[0].temperature is None
         assert configs[0].max_tokens is None
+        assert configs[0].max_candidates is None
+        assert configs[0].batch_size is None
         assert configs[1].step_name == "ApplicationComponent"
         assert configs[1].llm is True
         assert configs[1].temperature == 0.5
         assert configs[1].max_tokens == 2000
+        assert configs[1].max_candidates == 30
+        assert configs[1].batch_size == 10
 
     def test_filters_by_phase(self):
         """Should filter by phase when specified."""
         engine = MagicMock()
         # Columns: step_name, phase, sequence, enabled, llm, input_graph_query, input_model_query,
-        #          instruction, example, params, temperature, max_tokens
+        #          instruction, example, params, temperature, max_tokens, max_candidates, batch_size
         engine.execute.return_value.fetchall.return_value = [
-            ("ApplicationComponent", "generate", 1, True, True, None, None, None, None, None, None, None),
+            ("ApplicationComponent", "generate", 1, True, True, None, None, None, None, None, None, None, 30, 10),
         ]
 
         configs = get_derivation_configs(engine, phase="generate")
@@ -338,8 +342,8 @@ class TestGetDerivationConfig:
         """Should return config when found."""
         engine = MagicMock()
         # Columns: step_name, phase, sequence, enabled, llm, input_graph_query, input_model_query,
-        #          instruction, example, params, temperature, max_tokens
-        engine.execute.return_value.fetchone.return_value = ("ApplicationComponent", "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None, 0.8, 3000)
+        #          instruction, example, params, temperature, max_tokens, max_candidates, batch_size
+        engine.execute.return_value.fetchone.return_value = ("ApplicationComponent", "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None, 0.8, 3000, 30, 10)
 
         config = get_derivation_config(engine, "ApplicationComponent")
 
@@ -348,6 +352,8 @@ class TestGetDerivationConfig:
         assert config.phase == "generate"
         assert config.temperature == 0.8
         assert config.max_tokens == 3000
+        assert config.max_candidates == 30
+        assert config.batch_size == 10
 
     def test_returns_none_when_not_found(self):
         """Should return None when config not found."""

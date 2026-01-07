@@ -20,6 +20,7 @@ Filtering strategy:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from deriva.adapters.archimate.models import Element
@@ -42,87 +43,15 @@ if TYPE_CHECKING:
     from deriva.adapters.archimate import ArchimateManager
     from deriva.adapters.graph import GraphManager
 
-
-# =============================================================================
-# Configuration
-# =============================================================================
+logger = logging.getLogger(__name__)
 
 ELEMENT_TYPE = "ApplicationComponent"
-
-# Cypher query to get candidate nodes
-# Excludes: build artifacts, dependencies, tests, AND static asset directories
-CANDIDATE_QUERY = """
-MATCH (n:`Graph:Directory`)
-WHERE n.active = true
-  AND NOT n.name IN ['__pycache__', 'node_modules', '.git', '.venv', 'venv', 'dist', 'build',
-                     'static', 'assets', 'public', 'images', 'img', 'css', 'js', 'fonts',
-                     'templates', 'views', 'layouts', 'partials']
-  AND NOT n.path =~ '.*(test|spec|__pycache__|node_modules|\\.git|\\.venv|venv|dist|build).*'
-RETURN n.id as id, n.name as name, labels(n) as labels, properties(n) as properties
-"""
-
-# LLM instruction for this element type
-INSTRUCTION = """
-You are identifying ApplicationComponent elements from source code directories.
-
-An ApplicationComponent is a modular, deployable part of a system that:
-- Encapsulates related functionality (not just a folder)
-- Has clear boundaries and responsibilities
-- Contains code that works together as a unit
-- Could potentially be a separate module or package
-
-Each candidate includes graph metrics to help assess importance:
-- pagerank: How central/important the directory is
-- community: Which cluster of related code it belongs to
-- kcore: How connected it is to the core codebase
-- is_bridge: Whether it connects different parts of the codebase
-
-Review each candidate and decide which should become ApplicationComponent elements.
-
-INCLUDE directories that:
-- Represent cohesive functional units (services, modules, packages)
-- Have meaningful names indicating purpose
-- Are structural roots of related code
-
-EXCLUDE directories that:
-- Are just organizational containers with no cohesive purpose
-- Contain only configuration or static assets
-- Are too granular (single-file directories)
-"""
-
-# Example output format
-EXAMPLE = """{
-  "elements": [
-    {
-      "identifier": "appcomp_user_service",
-      "name": "User Service",
-      "documentation": "Handles user authentication, registration, and profile management",
-      "source": "dir_myproject_src_services_user",
-      "confidence": 0.9
-    },
-    {
-      "identifier": "appcomp_frontend",
-      "name": "Frontend Application",
-      "documentation": "React-based web interface for the application",
-      "source": "dir_myproject_frontend",
-      "confidence": 0.85
-    }
-  ]
-}"""
-
-# Maximum candidates to send to LLM
-MAX_CANDIDATES = 30
-BATCH_SIZE = 10  # Process in batches to avoid overwhelming LLM
-
-
-# =============================================================================
-# Filtering
-# =============================================================================
 
 
 def filter_candidates(
     candidates: list[Candidate],
     enrichments: dict[str, dict[str, Any]],
+    max_candidates: int,
 ) -> list[Candidate]:
     """
     Apply graph-based filtering to reduce candidates for LLM.
@@ -131,6 +60,11 @@ def filter_candidates(
     1. Prioritize community roots (natural component boundaries)
     2. Include high-pagerank non-roots (important directories)
     3. Sort by pagerank and limit
+
+    Args:
+        candidates: List of candidates to filter
+        enrichments: Graph enrichment data (pagerank, community, etc.)
+        max_candidates: Maximum number of candidates to return
     """
     if not candidates:
         return []
@@ -150,14 +84,9 @@ def filter_candidates(
             combined.append(c)
 
     # Sort by pagerank (most important first) and limit
-    combined = filter_by_pagerank(combined, top_n=MAX_CANDIDATES)
+    combined = filter_by_pagerank(combined, top_n=max_candidates)
 
     return combined
-
-
-# =============================================================================
-# Generation
-# =============================================================================
 
 
 def generate(
@@ -165,17 +94,29 @@ def generate(
     archimate_manager: "ArchimateManager",
     engine: Any,
     llm_query_fn: Callable[..., Any],
+    query: str,
+    instruction: str,
+    example: str,
+    max_candidates: int,
+    batch_size: int,
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> GenerationResult:
     """
     Generate ApplicationComponent elements.
 
+    All configuration parameters are required - no defaults, no fallbacks.
+
     Args:
         graph_manager: Neo4j connection
         archimate_manager: ArchiMate persistence
         engine: DuckDB connection for enrichments
         llm_query_fn: LLM query function (prompt, schema, **kwargs) -> response
+        query: Cypher query to get candidate nodes
+        instruction: LLM instruction prompt
+        example: Example output for LLM
+        max_candidates: Maximum candidates to send to LLM
+        batch_size: Batch size for LLM processing
         temperature: Optional LLM temperature override
         max_tokens: Optional LLM max_tokens override
 
@@ -190,7 +131,7 @@ def generate(
 
     # 2. Query candidates from graph
     try:
-        candidates = query_candidates(graph_manager, CANDIDATE_QUERY, enrichments)
+        candidates = query_candidates(graph_manager, query, enrichments)
     except Exception as e:
         return GenerationResult(
             success=False,
@@ -200,14 +141,18 @@ def generate(
     if not candidates:
         return GenerationResult(success=True, elements_created=0)
 
+    logger.info(f"Found {len(candidates)} directory candidates")
+
     # 3. Apply filtering
-    filtered = filter_candidates(candidates, enrichments)
+    filtered = filter_candidates(candidates, enrichments, max_candidates)
 
     if not filtered:
         return GenerationResult(success=True, elements_created=0)
 
+    logger.info(f"Filtered to {len(filtered)} candidates for LLM")
+
     # 4. Batch candidates and process each batch
-    batches = batch_candidates(filtered, BATCH_SIZE)
+    batches = batch_candidates(filtered, batch_size)
 
     kwargs = {}
     if temperature is not None:
@@ -216,11 +161,13 @@ def generate(
         kwargs["max_tokens"] = max_tokens
 
     for batch_num, batch in enumerate(batches, 1):
+        logger.debug(f"Processing batch {batch_num}/{len(batches)} with {len(batch)} candidates")
+
         # Build prompt for this batch
         prompt = build_derivation_prompt(
             candidates=batch,
-            instruction=INSTRUCTION,
-            example=EXAMPLE,
+            instruction=instruction,
+            example=example,
             element_type=ELEMENT_TYPE,
         )
 
@@ -267,6 +214,8 @@ def generate(
             except Exception as e:
                 errors.append(f"Failed to create element {data.get('name')}: {e}")
 
+    logger.info(f"Created {len(created_elements)} {ELEMENT_TYPE} elements")
+
     return GenerationResult(
         success=len(errors) == 0,
         elements_created=len(created_elements),
@@ -277,9 +226,6 @@ def generate(
 
 __all__ = [
     "ELEMENT_TYPE",
-    "CANDIDATE_QUERY",
-    "INSTRUCTION",
-    "EXAMPLE",
     "filter_candidates",
     "generate",
 ]

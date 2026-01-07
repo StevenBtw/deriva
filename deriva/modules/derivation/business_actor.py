@@ -41,6 +41,7 @@ from deriva.modules.derivation.base import (
     parse_derivation_response,
     query_candidates,
 )
+from deriva.services import config
 
 if TYPE_CHECKING:
     from deriva.adapters.archimate import ArchimateManager
@@ -50,113 +51,21 @@ logger = logging.getLogger(__name__)
 
 ELEMENT_TYPE = "BusinessActor"
 
-# Candidate query: Get TypeDefinition and BusinessConcept nodes
-CANDIDATE_QUERY = """
-MATCH (n)
-WHERE (n:`Graph:TypeDefinition` OR n:`Graph:BusinessConcept`)
-  AND n.active = true
-RETURN n.id as id,
-       COALESCE(n.name, n.typeName, n.conceptName) as name,
-       labels(n) as labels,
-       properties(n) as properties
-"""
 
-# Patterns that strongly suggest actors
-ACTOR_PATTERNS = {
-    # People/roles
-    "user", "admin", "administrator", "manager", "operator",
-    "customer", "client", "buyer", "seller", "vendor",
-    "employee", "staff", "worker", "agent", "representative",
-    "member", "subscriber", "owner", "author", "creator",
-    # Organizational
-    "department", "team", "group", "organization", "company",
-    "partner", "supplier", "provider",
-    # System actors
-    "system", "service", "bot", "scheduler", "daemon",
-    # Authentication
-    "principal", "identity", "account", "role", "permission",
-}
-
-# Patterns to exclude (not actors)
-EXCLUDED_PATTERNS = {
-    # Data objects
-    "data", "model", "entity", "record", "item", "entry",
-    "request", "response", "message", "event", "log",
-    # Technical
-    "handler", "controller", "service", "repository", "factory",
-    "helper", "util", "config", "settings", "option",
-    "exception", "error", "validator", "parser",
-    # Base classes
-    "base", "abstract", "interface", "mixin",
-}
-
-INSTRUCTION = """
-You are identifying BusinessActor elements from source code types and concepts.
-
-A BusinessActor represents a business entity capable of performing behavior:
-- Users and roles (Customer, Administrator, Operator)
-- Organizational units (Department, Team)
-- External parties (Supplier, Partner)
-- System actors when they represent a logical role
-
-Each candidate includes graph metrics to help assess importance.
-
-Review each candidate and decide which should become BusinessActor elements.
-
-INCLUDE types that:
-- Represent people, roles, or organizational entities
-- Can initiate or perform business activities
-- Would appear in a business context diagram
-- Have names indicating actors (User, Customer, Manager, etc.)
-
-EXCLUDE types that:
-- Represent data/information (Invoice, Order, Report)
-- Are technical components (Controller, Handler, Service)
-- Are utility/framework classes
-- Are abstract base classes
-
-When naming:
-- Use role names (e.g., "Customer" not "CustomerModel")
-- Be specific about the actor's function
-"""
-
-EXAMPLE = """{
-  "elements": [
-    {
-      "identifier": "ba_customer",
-      "name": "Customer",
-      "documentation": "External party who purchases products or services and receives invoices",
-      "source": "type_Customer",
-      "confidence": 0.95
-    },
-    {
-      "identifier": "ba_administrator",
-      "name": "Administrator",
-      "documentation": "Internal user with elevated privileges for system management",
-      "source": "type_Admin",
-      "confidence": 0.9
-    }
-  ]
-}"""
-
-MAX_CANDIDATES = 20
-BATCH_SIZE = 10
-
-
-def _is_likely_actor(name: str) -> bool:
-    """Check if a type name suggests an actor."""
+def _is_likely_actor(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
+    """Check if a type name suggests a business actor."""
     if not name:
         return False
 
     name_lower = name.lower()
 
     # Check exclusion patterns first
-    for pattern in EXCLUDED_PATTERNS:
+    for pattern in exclude_patterns:
         if pattern in name_lower:
             return False
 
     # Check for actor patterns
-    for pattern in ACTOR_PATTERNS:
+    for pattern in include_patterns:
         if pattern in name_lower:
             return True
 
@@ -166,31 +75,40 @@ def _is_likely_actor(name: str) -> bool:
 def filter_candidates(
     candidates: list[Candidate],
     enrichments: dict[str, dict[str, Any]],
+    include_patterns: set[str],
+    exclude_patterns: set[str],
+    max_candidates: int,
 ) -> list[Candidate]:
-    """Filter candidates for BusinessActor derivation."""
+    """
+    Filter candidates for BusinessActor derivation.
+
+    Strategy:
+    1. Enrich with graph metrics
+    2. Filter by actor patterns
+    3. Exclude technical/utility types
+    4. Use PageRank to find most important actors
+    """
     for c in candidates:
         enrich_candidate(c, enrichments)
 
-    # Pre-filter
     filtered = [c for c in candidates if c.name]
 
-    # Separate likely actors from others
-    likely_actors = [c for c in filtered if _is_likely_actor(c.name)]
-    others = [c for c in filtered if not _is_likely_actor(c.name)]
+    likely_actors = [c for c in filtered if _is_likely_actor(c.name, include_patterns, exclude_patterns)]
+    others = [c for c in filtered if not _is_likely_actor(c.name, include_patterns, exclude_patterns)]
 
-    # Sort by PageRank
-    likely_actors = filter_by_pagerank(likely_actors, top_n=MAX_CANDIDATES // 2)
+    likely_actors = filter_by_pagerank(likely_actors, top_n=max_candidates // 2)
 
-    remaining_slots = MAX_CANDIDATES - len(likely_actors)
+    remaining_slots = max_candidates - len(likely_actors)
     if remaining_slots > 0 and others:
         others = filter_by_pagerank(others, top_n=remaining_slots)
         likely_actors.extend(others)
 
     logger.debug(
-        f"BusinessActor filter: {len(candidates)} total -> {len(likely_actors)} final"
+        f"BusinessActor filter: {len(candidates)} total -> {len(filtered)} after null -> "
+        f"{len(likely_actors)} final candidates"
     )
 
-    return likely_actors[:MAX_CANDIDATES]
+    return likely_actors[:max_candidates]
 
 
 def generate(
@@ -198,22 +116,35 @@ def generate(
     archimate_manager: "ArchimateManager",
     engine: Any,
     llm_query_fn: Callable[..., Any],
+    query: str,
+    instruction: str,
+    example: str,
+    max_candidates: int,
+    batch_size: int,
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> GenerationResult:
-    """Generate BusinessActor elements."""
+    """
+    Generate BusinessActor elements from type definitions and business concepts.
+
+    All configuration parameters are required - no defaults, no fallbacks.
+    """
     result = GenerationResult(success=True)
 
+    patterns = config.get_derivation_patterns(engine, ELEMENT_TYPE)
+    include_patterns = patterns.get("include", set())
+    exclude_patterns = patterns.get("exclude", set())
+
     enrichments = get_enrichments(engine)
-    candidates = query_candidates(graph_manager, CANDIDATE_QUERY, enrichments)
+    candidates = query_candidates(graph_manager, query, enrichments)
 
     if not candidates:
-        logger.info("No candidates found for BusinessActor")
+        logger.info("No TypeDefinition or BusinessConcept candidates found")
         return result
 
-    logger.info(f"Found {len(candidates)} candidates")
+    logger.info(f"Found {len(candidates)} type/concept candidates")
 
-    filtered = filter_candidates(candidates, enrichments)
+    filtered = filter_candidates(candidates, enrichments, include_patterns, exclude_patterns, max_candidates)
 
     if not filtered:
         logger.info("No candidates passed filtering")
@@ -221,7 +152,7 @@ def generate(
 
     logger.info("Filtered to %d candidates for LLM", len(filtered))
 
-    batches = batch_candidates(filtered, BATCH_SIZE)
+    batches = batch_candidates(filtered, batch_size)
 
     llm_kwargs = {}
     if temperature is not None:
@@ -232,8 +163,8 @@ def generate(
     for batch_num, batch in enumerate(batches, 1):
         prompt = build_derivation_prompt(
             candidates=batch,
-            instruction=INSTRUCTION,
-            example=EXAMPLE,
+            instruction=instruction,
+            example=example,
             element_type=ELEMENT_TYPE,
         )
 
@@ -279,9 +210,6 @@ def generate(
 
 __all__ = [
     "ELEMENT_TYPE",
-    "CANDIDATE_QUERY",
-    "INSTRUCTION",
-    "EXAMPLE",
     "filter_candidates",
     "generate",
 ]

@@ -1,25 +1,25 @@
 """
-TechnologyService Derivation.
+ApplicationInterface Derivation.
 
-A TechnologyService represents an externally visible unit of functionality,
-offered by a technology node (e.g., database, message queue, external API).
+An ApplicationInterface represents a point of access where application services
+are made available to a user, another application component, or a node.
 
 Graph signals:
-- External dependency nodes (imported packages/libraries)
-- Nodes with labels like ExternalDependency, Database, API
-- High out-degree from application code (many things depend on it)
-- Configuration files referencing external services
+- API endpoint definitions (REST, GraphQL, gRPC)
+- Public methods/functions exposed to external callers
+- Route handlers in web frameworks
+- Interface/protocol definitions
 
 Filtering strategy:
-- Start with ExternalDependency and similar labeled nodes
-- Filter to high-importance dependencies (PageRank)
-- Exclude standard library and utility packages
-- Focus on infrastructure services (databases, queues, APIs)
+1. Query Method nodes that represent endpoints/handlers
+2. Filter for API/interface patterns
+3. Exclude internal/private methods
+4. Focus on externally accessible entry points
 
 LLM role:
-- Classify which dependencies are technology services vs utilities
-- Generate meaningful service names
-- Write documentation describing the service's role
+- Identify which methods represent interfaces
+- Generate meaningful interface names
+- Write documentation describing the interface purpose
 """
 
 from __future__ import annotations
@@ -49,11 +49,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ELEMENT_TYPE = "TechnologyService"
+ELEMENT_TYPE = "ApplicationInterface"
 
 
-def _is_likely_tech_service(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
-    """Check if a dependency suggests a technology service."""
+def _is_likely_interface(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
+    """Check if a method name suggests an application interface."""
     if not name:
         return False
 
@@ -64,7 +64,7 @@ def _is_likely_tech_service(name: str, include_patterns: set[str], exclude_patte
         if pattern in name_lower:
             return False
 
-    # Check for tech service patterns
+    # Check for interface patterns
     for pattern in include_patterns:
         if pattern in name_lower:
             return True
@@ -80,35 +80,35 @@ def filter_candidates(
     max_candidates: int,
 ) -> list[Candidate]:
     """
-    Filter candidates for TechnologyService derivation.
+    Filter candidates for ApplicationInterface derivation.
 
     Strategy:
     1. Enrich with graph metrics
-    2. Exclude standard library and utility packages
-    3. Prioritize infrastructure dependencies (databases, APIs, etc.)
-    4. Use PageRank to find most important dependencies
+    2. Filter by interface patterns (API, endpoint, handler)
+    3. Exclude internal/private methods
+    4. Use PageRank to find most important interfaces
     """
     for c in candidates:
         enrich_candidate(c, enrichments)
 
-    filtered = [c for c in candidates if c.name]
+    filtered = [c for c in candidates if c.name and not c.name.startswith("_")]
 
-    likely_tech = [c for c in filtered if _is_likely_tech_service(c.name, include_patterns, exclude_patterns)]
-    others = [c for c in filtered if not _is_likely_tech_service(c.name, include_patterns, exclude_patterns)]
+    likely_interfaces = [c for c in filtered if _is_likely_interface(c.name, include_patterns, exclude_patterns)]
+    others = [c for c in filtered if not _is_likely_interface(c.name, include_patterns, exclude_patterns)]
 
-    likely_tech = filter_by_pagerank(likely_tech, top_n=max_candidates // 2)
+    likely_interfaces = filter_by_pagerank(likely_interfaces, top_n=max_candidates // 2)
 
-    remaining_slots = max_candidates - len(likely_tech)
+    remaining_slots = max_candidates - len(likely_interfaces)
     if remaining_slots > 0 and others:
         others = filter_by_pagerank(others, top_n=remaining_slots)
-        likely_tech.extend(others)
+        likely_interfaces.extend(others)
 
     logger.debug(
-        f"TechnologyService filter: {len(candidates)} total -> {len(filtered)} after null -> "
-        f"{len(likely_tech)} final candidates"
+        f"ApplicationInterface filter: {len(candidates)} total -> {len(filtered)} after exclude -> "
+        f"{len(likely_interfaces)} final candidates"
     )
 
-    return likely_tech[:max_candidates]
+    return likely_interfaces[:max_candidates]
 
 
 def generate(
@@ -125,7 +125,7 @@ def generate(
     max_tokens: int | None = None,
 ) -> GenerationResult:
     """
-    Generate TechnologyService elements from external dependencies.
+    Generate ApplicationInterface elements from API/endpoint definitions.
 
     All configuration parameters are required - no defaults, no fallbacks.
     """
@@ -139,10 +139,10 @@ def generate(
     candidates = query_candidates(graph_manager, query, enrichments)
 
     if not candidates:
-        logger.info("No ExternalDependency candidates found")
+        logger.info("No interface candidates found")
         return result
 
-    logger.info(f"Found {len(candidates)} dependency candidates")
+    logger.info(f"Found {len(candidates)} interface candidates")
 
     filtered = filter_candidates(candidates, enrichments, include_patterns, exclude_patterns, max_candidates)
 

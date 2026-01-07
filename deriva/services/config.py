@@ -63,9 +63,11 @@ class DerivationConfig:
         params: str | None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        max_candidates: int | None = None,
+        batch_size: int | None = None,
     ):
         self.step_name = step_name
-        self.phase = phase  # "prep" | "generate" | "refine"
+        self.phase = phase  # "prep" | "generate" | "refine" | "relationship"
         self.sequence = sequence
         self.enabled = enabled
         self.llm = llm  # True = uses LLM, False = pure graph algorithm
@@ -76,6 +78,8 @@ class DerivationConfig:
         self.params = params  # JSON parameters for graph algorithms
         self.temperature = temperature  # None = use env default (LLM_TEMPERATURE)
         self.max_tokens = max_tokens  # None = use env default (LLM_MAX_TOKENS)
+        self.max_candidates = max_candidates  # Max candidates to send to LLM
+        self.batch_size = batch_size  # Batch size for LLM processing
 
     # Backward compatibility alias
     @property
@@ -266,7 +270,7 @@ def get_derivation_configs(
     Args:
         engine: DuckDB connection
         enabled_only: If True, only return enabled configs
-        phase: Filter by phase ("prep", "generate", "refine")
+        phase: Filter by phase ("prep", "generate", "refine", "relationship")
         llm_only: If True, only LLM steps; if False, only graph algorithm steps
 
     Returns:
@@ -274,7 +278,8 @@ def get_derivation_configs(
     """
     query = """
         SELECT step_name, phase, sequence, enabled, llm, input_graph_query,
-               input_model_query, instruction, example, params, temperature, max_tokens
+               input_model_query, instruction, example, params, temperature, max_tokens,
+               max_candidates, batch_size
         FROM derivation_config
         WHERE is_active = TRUE
     """
@@ -289,10 +294,10 @@ def get_derivation_configs(
         query += " AND llm = ?"
         params.append(llm_only)
 
-    # Order by phase priority (prep=1, generate=2, refine=3) then sequence
+    # Order by phase priority (prep=1, generate=2, refine=3, relationship=4) then sequence
     query += """
         ORDER BY
-            CASE phase WHEN 'prep' THEN 1 WHEN 'generate' THEN 2 WHEN 'refine' THEN 3 END,
+            CASE phase WHEN 'prep' THEN 1 WHEN 'generate' THEN 2 WHEN 'refine' THEN 3 WHEN 'relationship' THEN 4 END,
             sequence
     """
 
@@ -311,6 +316,8 @@ def get_derivation_configs(
             params=row[9],
             temperature=row[10],
             max_tokens=row[11],
+            max_candidates=row[12],
+            batch_size=row[13],
         )
         for row in rows
     ]
@@ -321,7 +328,8 @@ def get_derivation_config(engine: Any, step_name: str) -> DerivationConfig | Non
     row = engine.execute(
         """
         SELECT step_name, phase, sequence, enabled, llm, input_graph_query,
-               input_model_query, instruction, example, params, temperature, max_tokens
+               input_model_query, instruction, example, params, temperature, max_tokens,
+               max_candidates, batch_size
         FROM derivation_config
         WHERE step_name = ? AND is_active = TRUE
         """,
@@ -344,6 +352,8 @@ def get_derivation_config(engine: Any, step_name: str) -> DerivationConfig | Non
         params=row[9],
         temperature=row[10],
         max_tokens=row[11],
+        max_candidates=row[12],
+        batch_size=row[13],
     )
 
 
@@ -921,3 +931,146 @@ def get_consistency_history(engine: Any, repo_name: str | None = None, limit: in
         }
         for r in rows
     ]
+
+
+# =============================================================================
+# Derivation Patterns Operations
+# =============================================================================
+
+
+def get_derivation_patterns(
+    engine: Any,
+    step_name: str,
+    pattern_type: str | None = None,
+) -> dict[str, set[str]]:
+    """
+    Get derivation patterns for a step.
+
+    Args:
+        engine: DuckDB connection
+        step_name: The derivation step name (e.g., 'ApplicationService')
+        pattern_type: Filter by type ('include' or 'exclude'), or None for all
+
+    Returns:
+        Dict mapping pattern_type to set of patterns.
+        E.g., {'include': {'get', 'post', ...}, 'exclude': {'_', 'private', ...}}
+
+    Raises:
+        ValueError: If no patterns found for the step
+    """
+    import json
+
+    query = """
+        SELECT pattern_type, patterns
+        FROM derivation_patterns
+        WHERE step_name = ? AND is_active = TRUE
+    """
+    params = [step_name]
+
+    if pattern_type is not None:
+        query += " AND pattern_type = ?"
+        params.append(pattern_type)
+
+    rows = engine.execute(query, params).fetchall()
+
+    if not rows:
+        raise ValueError(f"No patterns found for derivation step '{step_name}'")
+
+    result: dict[str, set[str]] = {"include": set(), "exclude": set()}
+
+    for row in rows:
+        ptype = row[0]
+        patterns_json = row[1]
+        patterns_list = json.loads(patterns_json) if patterns_json else []
+
+        if ptype in result:
+            result[ptype].update(patterns_list)
+
+    return result
+
+
+def get_include_patterns(engine: Any, step_name: str) -> set[str]:
+    """
+    Get include patterns for a derivation step.
+
+    Args:
+        engine: DuckDB connection
+        step_name: The derivation step name
+
+    Returns:
+        Set of include patterns
+
+    Raises:
+        ValueError: If no patterns found for the step
+    """
+    patterns = get_derivation_patterns(engine, step_name, pattern_type="include")
+    return patterns.get("include", set())
+
+
+def get_exclude_patterns(engine: Any, step_name: str) -> set[str]:
+    """
+    Get exclude patterns for a derivation step.
+
+    Args:
+        engine: DuckDB connection
+        step_name: The derivation step name
+
+    Returns:
+        Set of exclude patterns
+
+    Raises:
+        ValueError: If no patterns found for the step
+    """
+    patterns = get_derivation_patterns(engine, step_name, pattern_type="exclude")
+    return patterns.get("exclude", set())
+
+
+def update_derivation_patterns(
+    engine: Any,
+    step_name: str,
+    pattern_type: str,
+    pattern_category: str,
+    patterns: list[str],
+) -> bool:
+    """
+    Update derivation patterns for a step.
+
+    Args:
+        engine: DuckDB connection
+        step_name: The derivation step name
+        pattern_type: 'include' or 'exclude'
+        pattern_category: Category for the patterns (e.g., 'http_methods')
+        patterns: List of pattern strings
+
+    Returns:
+        True if updated/inserted successfully
+    """
+    import json
+
+    patterns_json = json.dumps(patterns)
+
+    # Try update first
+    result = engine.execute(
+        """
+        UPDATE derivation_patterns
+        SET patterns = ?, is_active = TRUE
+        WHERE step_name = ? AND pattern_type = ? AND pattern_category = ?
+        """,
+        [patterns_json, step_name, pattern_type, pattern_category],
+    )
+
+    if hasattr(result, "rowcount") and result.rowcount > 0:
+        return True
+
+    # Insert if not exists
+    max_id = engine.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM derivation_patterns").fetchone()
+    next_id = max_id[0]
+
+    engine.execute(
+        """
+        INSERT INTO derivation_patterns (id, step_name, pattern_type, pattern_category, patterns, is_active)
+        VALUES (?, ?, ?, ?, ?, TRUE)
+        """,
+        [next_id, step_name, pattern_type, pattern_category, patterns_json],
+    )
+    return True
