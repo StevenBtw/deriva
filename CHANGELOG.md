@@ -6,12 +6,34 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics and LLM's
 
 # v0.6.x - Deriva (December 2025 - January 2026)
 
-## v0.6.2 - (Unreleased)
+## v0.6.3 - (Unreleased)
 
-### Bug Fixes
+---
 
-- Fixed LLM handling when response is `null`/`None`
-- Fixed failing tests, type errors, and linting issues
+## v0.6.2 - New Derivation Modules & LLM Provider Expansion (January 7, 2026)
+
+### New Derivation Modules
+
+Major expansion of derivation capabilities with 6 new ArchiMate element modules:
+
+- Added `ApplicationInterface`, `BusinessEvent`, `BusinessFunction` modules
+- Added `Device`, `Node`, `SystemSoftware` technology layer modules
+- Refactored existing derivation modules to new consistent style with improved prompts and schemas
+- New database scripts: `8_derivation_config_extension.sql`, `9_new_derivation_modules.sql`
+
+### LLM Provider Expansion
+
+- Added Mistral AI provider in `adapters/llm/providers.py`
+- Added LM Studio provider for local LLM models like Nemotron A3B
+- Fixed Claude response truncation bug in Anthropic provider
+- Fixed LLM null/None response handling
+- Fixed non-dict responses in external dependency extractor (strings, numbers)
+
+### Extraction Improvements
+
+- Added `type` and `subtype` properties to File nodes for richer classification
+- Improved file classification logic with better pattern matching
+- Added repository sync method, removed redundant code
 
 ### Relationship Derivation
 
@@ -22,12 +44,18 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics and LLM's
 - Updated `BENCHMARKING.md` documentation
 - Improved benchmark workflow and usability
 
+### Bug Fixes
+
+- Fixed failing tests, type errors, and linting issues
+- Fixed derivation config issues
+- Fixed extraction pipeline bugs
+
 ### CI & Code Quality
 
 - Aligned CI test coverage with `pyproject.toml` at 70%
 - Ruff formatting and style fixes
 - Improved README badges
-- Added version placeholder to template
+- Updated `CONTRIBUTING.md` documentation
 
 ---
 

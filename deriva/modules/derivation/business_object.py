@@ -53,7 +53,9 @@ logger = logging.getLogger(__name__)
 ELEMENT_TYPE = "BusinessObject"
 
 
-def _is_likely_business_object(name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
+def _is_likely_business_object(
+    name: str, include_patterns: set[str], exclude_patterns: set[str]
+) -> bool:
     """Check if a type name suggests a business object."""
     if not name:
         return False
@@ -96,8 +98,16 @@ def filter_candidates(
 
     filtered = [c for c in candidates if c.name]
 
-    likely_business = [c for c in filtered if _is_likely_business_object(c.name, include_patterns, exclude_patterns)]
-    others = [c for c in filtered if not _is_likely_business_object(c.name, include_patterns, exclude_patterns)]
+    likely_business = [
+        c
+        for c in filtered
+        if _is_likely_business_object(c.name, include_patterns, exclude_patterns)
+    ]
+    others = [
+        c
+        for c in filtered
+        if not _is_likely_business_object(c.name, include_patterns, exclude_patterns)
+    ]
 
     likely_business = filter_by_pagerank(likely_business, top_n=max_candidates // 2)
 
@@ -147,7 +157,9 @@ def generate(
 
     logger.info(f"Found {len(candidates)} type/concept candidates")
 
-    filtered = filter_candidates(candidates, enrichments, include_patterns, exclude_patterns, max_candidates)
+    filtered = filter_candidates(
+        candidates, enrichments, include_patterns, exclude_patterns, max_candidates
+    )
 
     if not filtered:
         logger.info("No candidates passed filtering")
@@ -156,7 +168,9 @@ def generate(
     logger.info("Filtered to %d candidates for LLM", len(filtered))
 
     batches = batch_candidates(filtered, batch_size)
-    logger.info("Processing %d batches of up to %d candidates each", len(batches), batch_size)
+    logger.info(
+        "Processing %d batches of up to %d candidates each", len(batches), batch_size
+    )
 
     llm_kwargs = {}
     if temperature is not None:
@@ -165,7 +179,12 @@ def generate(
         llm_kwargs["max_tokens"] = max_tokens
 
     for batch_num, batch in enumerate(batches, 1):
-        logger.debug("Processing batch %d/%d with %d candidates", batch_num, len(batches), len(batch))
+        logger.debug(
+            "Processing batch %d/%d with %d candidates",
+            batch_num,
+            len(batches),
+            len(batch),
+        )
 
         prompt = build_derivation_prompt(
             candidates=batch,
@@ -176,7 +195,9 @@ def generate(
 
         try:
             response = llm_query_fn(prompt, DERIVATION_SCHEMA, **llm_kwargs)
-            response_content = response.content if hasattr(response, "content") else str(response)
+            response_content = (
+                response.content if hasattr(response, "content") else str(response)
+            )
         except Exception as e:
             result.errors.append(f"LLM error in batch {batch_num}: {e}")
             continue
@@ -208,7 +229,9 @@ def generate(
                 result.elements_created += 1
                 result.created_elements.append(element_data)
             except Exception as e:
-                result.errors.append(f"Failed to create element {element_data['identifier']}: {e}")
+                result.errors.append(
+                    f"Failed to create element {element_data['identifier']}: {e}"
+                )
 
     logger.info(f"Created {result.elements_created} {ELEMENT_TYPE} elements")
     return result

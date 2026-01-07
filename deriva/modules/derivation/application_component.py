@@ -161,7 +161,9 @@ def generate(
         kwargs["max_tokens"] = max_tokens
 
     for batch_num, batch in enumerate(batches, 1):
-        logger.debug(f"Processing batch {batch_num}/{len(batches)} with {len(batch)} candidates")
+        logger.debug(
+            f"Processing batch {batch_num}/{len(batches)} with {len(batch)} candidates"
+        )
 
         # Build prompt for this batch
         prompt = build_derivation_prompt(
@@ -174,7 +176,9 @@ def generate(
         # Call LLM
         try:
             response = llm_query_fn(prompt, DERIVATION_SCHEMA, **kwargs)
-            response_content = response.content if hasattr(response, "content") else str(response)
+            response_content = (
+                response.content if hasattr(response, "content") else str(response)
+            )
         except Exception as e:
             errors.append(f"LLM error in batch {batch_num}: {e}")
             continue
@@ -204,13 +208,15 @@ def generate(
                     properties=data.get("properties", {}),
                 )
                 archimate_manager.add_element(element)
-                created_elements.append({
-                    "identifier": data["identifier"],
-                    "name": data["name"],
-                    "element_type": ELEMENT_TYPE,
-                    "documentation": data.get("documentation", ""),
-                    "source": data.get("properties", {}).get("source"),
-                })
+                created_elements.append(
+                    {
+                        "identifier": data["identifier"],
+                        "name": data["name"],
+                        "element_type": ELEMENT_TYPE,
+                        "documentation": data.get("documentation", ""),
+                        "source": data.get("properties", {}).get("source"),
+                    }
+                )
             except Exception as e:
                 errors.append(f"Failed to create element {data.get('name')}: {e}")
 

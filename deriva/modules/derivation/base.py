@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from deriva.common import current_timestamp, parse_json_array
 from deriva.common.types import PipelineResult
@@ -108,7 +108,9 @@ def get_enrichments(engine: Any) -> dict[str, dict[str, Any]]:
         return {}
 
 
-def enrich_candidate(candidate: Candidate, enrichments: dict[str, dict[str, Any]]) -> None:
+def enrich_candidate(
+    candidate: Candidate, enrichments: dict[str, dict[str, Any]]
+) -> None:
     """Add enrichment data to a candidate in-place."""
     data = enrichments.get(candidate.node_id, {})
     candidate.pagerank = data.get("pagerank", 0.0)
@@ -171,7 +173,9 @@ def filter_by_labels(
         result = [c for c in result if any(lbl in c.labels for lbl in include_labels)]
 
     if exclude_labels:
-        result = [c for c in result if not any(lbl in c.labels for lbl in exclude_labels)]
+        result = [
+            c for c in result if not any(lbl in c.labels for lbl in exclude_labels)
+        ]
 
     return result
 
@@ -352,7 +356,8 @@ def build_derivation_prompt(
     """
     # Convert Candidate objects to dicts if needed
     if candidates and isinstance(candidates[0], Candidate):
-        data = [c.to_dict() for c in candidates]
+        candidate_list = cast(list[Candidate], candidates)
+        data = [c.to_dict() for c in candidate_list]
     else:
         data = candidates
 
@@ -439,8 +444,12 @@ def build_element_relationship_prompt(
     sources_json = json.dumps(source_elements, indent=2, default=str)
     targets_json = json.dumps(target_elements, indent=2, default=str)
 
-    source_ids = [e.get("identifier", "") for e in source_elements if e.get("identifier")]
-    target_ids = [e.get("identifier", "") for e in target_elements if e.get("identifier")]
+    source_ids = [
+        e.get("identifier", "") for e in source_elements if e.get("identifier")
+    ]
+    target_ids = [
+        e.get("identifier", "") for e in target_elements if e.get("identifier")
+    ]
 
     rel_rules = []
     for rel in valid_relationships:
@@ -448,7 +457,9 @@ def build_element_relationship_prompt(
         rel_rules.append(
             f"- {rel['relationship_type']}: {rel['description']} → can target: [{targets}]"
         )
-    rel_rules_text = "\n".join(rel_rules) if rel_rules else "No valid relationship types."
+    rel_rules_text = (
+        "\n".join(rel_rules) if rel_rules else "No valid relationship types."
+    )
 
     default_instruction = f"""Derive relationships FROM the {source_element_type} elements.
 Only create relationships where the source is from the Source Elements list.

@@ -1,6 +1,5 @@
 """Tests for consistency analysis functions."""
 
-
 from deriva.modules.analysis.consistency import (
     compare_object_sets,
     compute_consistency_score,

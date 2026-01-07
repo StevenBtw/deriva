@@ -19,7 +19,7 @@ Path patterns use 'path:' prefix and support glob syntax:
 from __future__ import annotations
 
 import fnmatch
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 
@@ -135,12 +135,14 @@ def classify_files(
 
             if matched_path:
                 pattern, type_info = matched_path
-                classified.append({
-                    "path": file_path,
-                    "extension": f"path:{pattern}",
-                    "file_type": type_info["file_type"],
-                    "subtype": type_info["subtype"],
-                })
+                classified.append(
+                    {
+                        "path": file_path,
+                        "extension": f"path:{pattern}",
+                        "file_type": type_info["file_type"],
+                        "subtype": type_info["subtype"],
+                    }
+                )
                 continue
 
             # Priority 2: Check full filename match (e.g., requirements.txt, Makefile)

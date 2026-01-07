@@ -10,7 +10,6 @@ import pytest
 
 from deriva.adapters.repository.manager import (
     RepoManager,
-    _detect_languages,
     _extract_repo_name,
     _get_directory_size,
     _is_valid_git_url,
@@ -115,44 +114,6 @@ class TestGetDirectorySize:
         size_mb = _get_directory_size(tmp_path)
         expected_mb = 512 / (1024 * 1024)
         assert abs(size_mb - expected_mb) < 0.001
-
-
-class TestDetectLanguages:
-    """Tests for _detect_languages helper."""
-
-    def test_detects_python_files(self, tmp_path):
-        """Should detect Python files."""
-        (tmp_path / "main.py").write_text("print('hello')")
-        (tmp_path / "utils.py").write_text("def foo(): pass")
-
-        languages = _detect_languages(tmp_path)
-        assert languages.get("Python") == 2
-
-    def test_detects_multiple_languages(self, tmp_path):
-        """Should detect multiple languages."""
-        (tmp_path / "main.py").write_text("print('hello')")
-        (tmp_path / "app.js").write_text("console.log('hi')")
-        (tmp_path / "styles.css").write_text("body { }")
-
-        languages = _detect_languages(tmp_path)
-        assert languages.get("Python") == 1
-        assert languages.get("JavaScript") == 1
-        assert languages.get("CSS") == 1
-
-    def test_ignores_git_directory(self, tmp_path):
-        """Should skip .git directory."""
-        git_dir = tmp_path / ".git"
-        git_dir.mkdir()
-        (git_dir / "config.py").write_text("# git internal")
-        (tmp_path / "main.py").write_text("print('hello')")
-
-        languages = _detect_languages(tmp_path)
-        assert languages.get("Python") == 1
-
-    def test_handles_empty_directory(self, tmp_path):
-        """Should return empty dict for empty directory."""
-        languages = _detect_languages(tmp_path)
-        assert not languages
 
 
 class TestStateManager:
@@ -550,7 +511,6 @@ class TestRepoManagerExtractMetadata:
             with open(meta_file, encoding="utf-8") as f:
                 metadata = json.load(f)
             assert metadata["name"] == "test-repo"
-            assert metadata["languages"]["Python"] == 2
 
             # Check structure content
             with open(struct_file, encoding="utf-8") as f:

@@ -446,7 +446,9 @@ class TestLMStudioProvider:
 
         call_args = mock_post.call_args
         body = call_args.kwargs["json"]
-        assert body["response_format"] == {"type": "json_object"}
+        # LM Studio uses json_schema format (not json_object like OpenAI)
+        assert body["response_format"]["type"] == "json_schema"
+        assert body["response_format"]["json_schema"]["name"] == "response"
 
     @patch("deriva.adapters.llm.providers.requests.post")
     def test_complete_with_max_tokens(self, mock_post, provider):

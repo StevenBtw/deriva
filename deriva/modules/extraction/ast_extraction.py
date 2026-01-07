@@ -53,12 +53,16 @@ def extract_types_from_python(
         file_node_id = f"file_{repo_name}_{safe_path}"
 
         for ext_type in extracted_types:
-            node_data = _build_type_node_from_ast(ext_type, file_path, file_content, repo_name)
+            node_data = _build_type_node_from_ast(
+                ext_type, file_path, file_content, repo_name
+            )
             nodes.append(node_data)
 
             # Create CONTAINS edge: File -> TypeDefinition
             edge = {
-                "edge_id": generate_edge_id(file_node_id, node_data["node_id"], "CONTAINS"),
+                "edge_id": generate_edge_id(
+                    file_node_id, node_data["node_id"], "CONTAINS"
+                ),
                 "from_node_id": file_node_id,
                 "to_node_id": node_data["node_id"],
                 "relationship_type": "CONTAINS",
@@ -132,10 +136,14 @@ def extract_methods_from_python(
             # Create edge based on whether method belongs to a class or is top-level
             if ext_method.class_name:
                 # Method belongs to class - edge from TypeDefinition to Method
-                type_name_slug = ext_method.class_name.replace(" ", "_").replace("-", "_")
+                type_name_slug = ext_method.class_name.replace(" ", "_").replace(
+                    "-", "_"
+                )
                 type_node_id = f"typedef_{repo_name}_{safe_path}_{type_name_slug}"
                 edge = {
-                    "edge_id": generate_edge_id(type_node_id, node_data["node_id"], "CONTAINS"),
+                    "edge_id": generate_edge_id(
+                        type_node_id, node_data["node_id"], "CONTAINS"
+                    ),
                     "from_node_id": type_node_id,
                     "to_node_id": node_data["node_id"],
                     "relationship_type": "CONTAINS",
@@ -144,7 +152,9 @@ def extract_methods_from_python(
             else:
                 # Top-level function - edge from File to Method
                 edge = {
-                    "edge_id": generate_edge_id(file_node_id, node_data["node_id"], "CONTAINS"),
+                    "edge_id": generate_edge_id(
+                        file_node_id, node_data["node_id"], "CONTAINS"
+                    ),
                     "from_node_id": file_node_id,
                     "to_node_id": node_data["node_id"],
                     "relationship_type": "CONTAINS",
@@ -254,7 +264,9 @@ def _build_method_node_from_ast(
 
     # Generate node ID
     method_name_slug = ext_method.name.replace(" ", "_").replace("-", "_")
-    type_name_slug = (ext_method.class_name or "module").replace(" ", "_").replace("-", "_")
+    type_name_slug = (
+        (ext_method.class_name or "module").replace(" ", "_").replace("-", "_")
+    )
     file_path_slug = file_path.replace("/", "_").replace("\\", "_")
     node_id = f"method_{repo_name}_{file_path_slug}_{type_name_slug}_{method_name_slug}"
 

@@ -152,6 +152,7 @@ def generate_element(
             "errors": [f"Generation failed for {element_type}: {e}"],
         }
 
+
 logger = logging.getLogger(__name__)
 
 # Valid relationship types in PascalCase for normalization
@@ -337,6 +338,13 @@ def run_derivation(
                 if step_ctx:
                     step_ctx.error(error_msg)
                 continue
+
+            # Type assertions for validated config (helps type checker)
+            assert cfg.input_graph_query is not None
+            assert cfg.instruction is not None
+            assert cfg.example is not None
+            assert cfg.max_candidates is not None
+            assert cfg.batch_size is not None
 
             try:
                 step_result = generate_element(

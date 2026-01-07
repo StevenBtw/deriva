@@ -360,6 +360,8 @@ class TestNode:
     - regression: Tests for previously fixed bugs
     """
 
+    __test__ = False  # Prevent pytest from collecting this as a test class
+
     name: str
     test_type: str  # unit, integration, e2e, performance, smoke, regression, other
     file_path: str

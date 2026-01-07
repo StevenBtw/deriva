@@ -20,21 +20,21 @@ class TestBuildDerivationPrompt:
 
     def test_includes_graph_results(self):
         """Should include graph results in prompt."""
-        graph_data = [{"name": "auth", "path": "src/auth"}]
-        prompt = build_derivation_prompt(graph_data=graph_data, instruction="Group directories", example='{"identifier": "app:auth"}', element_type="ApplicationComponent")
+        candidates = [{"name": "auth", "path": "src/auth"}]
+        prompt = build_derivation_prompt(candidates=candidates, instruction="Group directories", example='{"identifier": "app:auth"}', element_type="ApplicationComponent")
 
         assert "auth" in prompt
         assert "src/auth" in prompt
 
     def test_includes_instruction(self):
         """Should include instruction in prompt."""
-        prompt = build_derivation_prompt(graph_data=[], instruction="Group top-level directories into components", example="{}", element_type="ApplicationComponent")
+        prompt = build_derivation_prompt(candidates=[], instruction="Group top-level directories into components", example="{}", element_type="ApplicationComponent")
 
         assert "Group top-level directories" in prompt
 
     def test_includes_element_type(self):
         """Should reference element type in prompt."""
-        prompt = build_derivation_prompt(graph_data=[], instruction="Test", example="{}", element_type="ApplicationService")
+        prompt = build_derivation_prompt(candidates=[], instruction="Test", example="{}", element_type="ApplicationService")
 
         assert "ApplicationService" in prompt
 
@@ -480,3 +480,434 @@ class TestBuildElementRelationshipPrompt:
 
         # Element type should appear multiple times in context
         assert prompt.count("ApplicationService") >= 2
+
+
+class TestCandidate:
+    """Tests for Candidate dataclass."""
+
+    def test_to_dict_conversion(self):
+        """Should convert Candidate to dict for LLM prompts."""
+        from deriva.modules.derivation.base import Candidate
+
+        candidate = Candidate(
+            node_id="test_123",
+            name="TestMethod",
+            labels=["Method"],
+            properties={"module": "auth"},
+            pagerank=0.12345,
+            louvain_community="comm_1",
+            kcore_level=3,
+            is_articulation_point=True,
+            in_degree=5,
+            out_degree=10,
+        )
+
+        result = candidate.to_dict()
+
+        assert result["id"] == "test_123"
+        assert result["name"] == "TestMethod"
+        assert result["labels"] == ["Method"]
+        assert result["properties"] == {"module": "auth"}
+        assert result["pagerank"] == 0.1235  # Rounded to 4 decimals
+        assert result["community"] == "comm_1"
+        assert result["kcore"] == 3
+        assert result["is_bridge"] is True
+        assert result["in_degree"] == 5
+        assert result["out_degree"] == 10
+
+
+class TestGetEnrichments:
+    """Tests for get_enrichments function."""
+
+    def test_returns_enrichments_from_engine(self):
+        """Should fetch enrichments from DuckDB engine."""
+        from unittest.mock import MagicMock
+
+        from deriva.modules.derivation.base import get_enrichments
+
+        mock_engine = MagicMock()
+        mock_engine.execute.return_value.fetchall.return_value = [
+            ("node_1", 0.5, "comm_1", 2, True, 3, 4),
+            ("node_2", 0.3, "comm_2", 1, False, 1, 2),
+        ]
+
+        result = get_enrichments(mock_engine)
+
+        assert "node_1" in result
+        assert result["node_1"]["pagerank"] == 0.5
+        assert result["node_1"]["louvain_community"] == "comm_1"
+        assert result["node_1"]["kcore_level"] == 2
+        assert result["node_1"]["is_articulation_point"] is True
+        assert result["node_1"]["in_degree"] == 3
+        assert result["node_1"]["out_degree"] == 4
+
+        assert "node_2" in result
+        assert result["node_2"]["pagerank"] == 0.3
+
+    def test_handles_null_values(self):
+        """Should handle NULL values in enrichment data."""
+        from unittest.mock import MagicMock
+
+        from deriva.modules.derivation.base import get_enrichments
+
+        mock_engine = MagicMock()
+        mock_engine.execute.return_value.fetchall.return_value = [
+            ("node_1", None, None, None, None, None, None),
+        ]
+
+        result = get_enrichments(mock_engine)
+
+        assert result["node_1"]["pagerank"] == 0.0
+        assert result["node_1"]["louvain_community"] is None
+        assert result["node_1"]["kcore_level"] == 0
+        assert result["node_1"]["is_articulation_point"] is False
+        assert result["node_1"]["in_degree"] == 0
+        assert result["node_1"]["out_degree"] == 0
+
+    def test_returns_empty_on_error(self):
+        """Should return empty dict on database error."""
+        from unittest.mock import MagicMock
+
+        from deriva.modules.derivation.base import get_enrichments
+
+        mock_engine = MagicMock()
+        mock_engine.execute.side_effect = Exception("DB error")
+
+        result = get_enrichments(mock_engine)
+
+        assert result == {}
+
+
+class TestEnrichCandidate:
+    """Tests for enrich_candidate function."""
+
+    def test_enriches_candidate_with_data(self):
+        """Should add enrichment data to candidate."""
+        from deriva.modules.derivation.base import Candidate, enrich_candidate
+
+        candidate = Candidate(node_id="test_id", name="Test")
+        enrichments = {
+            "test_id": {
+                "pagerank": 0.75,
+                "louvain_community": "comm_1",
+                "kcore_level": 5,
+                "is_articulation_point": True,
+                "in_degree": 10,
+                "out_degree": 20,
+            }
+        }
+
+        enrich_candidate(candidate, enrichments)
+
+        assert candidate.pagerank == 0.75
+        assert candidate.louvain_community == "comm_1"
+        assert candidate.kcore_level == 5
+        assert candidate.is_articulation_point is True
+        assert candidate.in_degree == 10
+        assert candidate.out_degree == 20
+
+    def test_uses_defaults_for_missing_candidate(self):
+        """Should use defaults when candidate not in enrichments."""
+        from deriva.modules.derivation.base import Candidate, enrich_candidate
+
+        candidate = Candidate(node_id="unknown_id", name="Test")
+        enrichments = {}
+
+        enrich_candidate(candidate, enrichments)
+
+        assert candidate.pagerank == 0.0
+        assert candidate.louvain_community is None
+        assert candidate.kcore_level == 0
+        assert candidate.is_articulation_point is False
+
+
+class TestFilterByPagerank:
+    """Tests for filter_by_pagerank function."""
+
+    def test_returns_top_n_candidates(self):
+        """Should return top N candidates by pagerank."""
+        from deriva.modules.derivation.base import Candidate, filter_by_pagerank
+
+        candidates = [
+            Candidate(node_id="1", name="Low", pagerank=0.1),
+            Candidate(node_id="2", name="High", pagerank=0.9),
+            Candidate(node_id="3", name="Medium", pagerank=0.5),
+        ]
+
+        result = filter_by_pagerank(candidates, top_n=2)
+
+        assert len(result) == 2
+        assert result[0].name == "High"
+        assert result[1].name == "Medium"
+
+    def test_returns_by_percentile(self):
+        """Should return top percentile of candidates."""
+        from deriva.modules.derivation.base import Candidate, filter_by_pagerank
+
+        candidates = [Candidate(node_id=str(i), name=f"C{i}", pagerank=i / 10) for i in range(10)]
+
+        result = filter_by_pagerank(candidates, percentile=50)
+
+        # Top 50% should return top half
+        assert len(result) >= 5
+
+    def test_returns_all_without_filters(self):
+        """Should return all candidates sorted by pagerank."""
+        from deriva.modules.derivation.base import Candidate, filter_by_pagerank
+
+        candidates = [
+            Candidate(node_id="1", name="Low", pagerank=0.1),
+            Candidate(node_id="2", name="High", pagerank=0.9),
+        ]
+
+        result = filter_by_pagerank(candidates)
+
+        assert len(result) == 2
+        assert result[0].name == "High"
+
+
+class TestFilterByLabels:
+    """Tests for filter_by_labels function."""
+
+    def test_includes_matching_labels(self):
+        """Should include candidates with matching labels."""
+        from deriva.modules.derivation.base import Candidate, filter_by_labels
+
+        candidates = [
+            Candidate(node_id="1", name="Method1", labels=["Method"]),
+            Candidate(node_id="2", name="Class1", labels=["Class"]),
+            Candidate(node_id="3", name="Method2", labels=["Method", "Public"]),
+        ]
+
+        result = filter_by_labels(candidates, include_labels=["Method"])
+
+        assert len(result) == 2
+        assert all("Method" in c.labels for c in result)
+
+    def test_excludes_matching_labels(self):
+        """Should exclude candidates with matching labels."""
+        from deriva.modules.derivation.base import Candidate, filter_by_labels
+
+        candidates = [
+            Candidate(node_id="1", name="Method1", labels=["Method"]),
+            Candidate(node_id="2", name="Test1", labels=["Test"]),
+            Candidate(node_id="3", name="Method2", labels=["Method", "Test"]),
+        ]
+
+        result = filter_by_labels(candidates, exclude_labels=["Test"])
+
+        assert len(result) == 1
+        assert result[0].name == "Method1"
+
+    def test_combined_include_exclude(self):
+        """Should apply both include and exclude filters."""
+        from deriva.modules.derivation.base import Candidate, filter_by_labels
+
+        candidates = [
+            Candidate(node_id="1", name="Api1", labels=["Method", "Api"]),
+            Candidate(node_id="2", name="TestApi", labels=["Method", "Api", "Test"]),
+            Candidate(node_id="3", name="Internal", labels=["Method"]),
+        ]
+
+        result = filter_by_labels(
+            candidates,
+            include_labels=["Api"],
+            exclude_labels=["Test"],
+        )
+
+        assert len(result) == 1
+        assert result[0].name == "Api1"
+
+
+class TestFilterByCommunity:
+    """Tests for filter_by_community function."""
+
+    def test_filters_by_community_ids(self):
+        """Should filter by specific community IDs."""
+        from deriva.modules.derivation.base import Candidate, filter_by_community
+
+        candidates = [
+            Candidate(node_id="1", name="C1", louvain_community="comm_a"),
+            Candidate(node_id="2", name="C2", louvain_community="comm_b"),
+            Candidate(node_id="3", name="C3", louvain_community="comm_a"),
+        ]
+
+        result = filter_by_community(candidates, community_ids={"comm_a"})
+
+        assert len(result) == 2
+        assert all(c.louvain_community == "comm_a" for c in result)
+
+    def test_filters_for_only_roots(self):
+        """Should filter for community root nodes only."""
+        from deriva.modules.derivation.base import Candidate, filter_by_community
+
+        candidates = [
+            Candidate(node_id="comm_a", name="Root", louvain_community="comm_a"),
+            Candidate(node_id="other_1", name="Member", louvain_community="comm_a"),
+            Candidate(node_id="comm_b", name="Root2", louvain_community="comm_b"),
+        ]
+
+        result = filter_by_community(candidates, only_roots=True)
+
+        assert len(result) == 2
+        assert all(c.node_id == c.louvain_community for c in result)
+
+
+class TestGetCommunityRoots:
+    """Tests for get_community_roots function."""
+
+    def test_returns_root_nodes(self):
+        """Should return nodes that are community roots."""
+        from deriva.modules.derivation.base import Candidate, get_community_roots
+
+        candidates = [
+            Candidate(node_id="comm_a", name="Root", louvain_community="comm_a"),
+            Candidate(node_id="member_1", name="Member", louvain_community="comm_a"),
+        ]
+
+        result = get_community_roots(candidates)
+
+        assert len(result) == 1
+        assert result[0].name == "Root"
+
+
+class TestGetArticulationPoints:
+    """Tests for get_articulation_points function."""
+
+    def test_returns_articulation_points(self):
+        """Should return nodes marked as articulation points."""
+        from deriva.modules.derivation.base import Candidate, get_articulation_points
+
+        candidates = [
+            Candidate(node_id="1", name="Bridge", is_articulation_point=True),
+            Candidate(node_id="2", name="Normal", is_articulation_point=False),
+            Candidate(node_id="3", name="Bridge2", is_articulation_point=True),
+        ]
+
+        result = get_articulation_points(candidates)
+
+        assert len(result) == 2
+        assert all(c.is_articulation_point for c in result)
+
+
+class TestBatchCandidates:
+    """Tests for batch_candidates function."""
+
+    def test_splits_into_batches(self):
+        """Should split candidates into batches of specified size."""
+        from deriva.modules.derivation.base import Candidate, batch_candidates
+
+        candidates = [Candidate(node_id=str(i), name=f"C{i}") for i in range(10)]
+
+        result = batch_candidates(candidates, batch_size=3)
+
+        assert len(result) == 4  # 3, 3, 3, 1
+        assert len(result[0]) == 3
+        assert len(result[-1]) == 1
+
+    def test_returns_empty_for_empty_input(self):
+        """Should return empty list for empty input."""
+        from deriva.modules.derivation.base import batch_candidates
+
+        result = batch_candidates([])
+
+        assert result == []
+
+    def test_single_batch_for_small_list(self):
+        """Should return single batch if candidates fit."""
+        from deriva.modules.derivation.base import Candidate, batch_candidates
+
+        candidates = [Candidate(node_id="1", name="C1")]
+
+        result = batch_candidates(candidates, batch_size=10)
+
+        assert len(result) == 1
+        assert len(result[0]) == 1
+
+
+class TestQueryCandidates:
+    """Tests for query_candidates function."""
+
+    def test_queries_and_creates_candidates(self):
+        """Should query graph and create Candidate objects."""
+        from unittest.mock import MagicMock
+
+        from deriva.modules.derivation.base import query_candidates
+
+        mock_graph = MagicMock()
+        mock_graph.query.return_value = [
+            {"id": "node_1", "name": "Method1", "labels": ["Method"], "properties": {"module": "auth"}},
+            {"id": "node_2", "name": "Method2", "labels": ["Method"], "properties": {}},
+        ]
+
+        result = query_candidates(mock_graph, "MATCH (n) RETURN n")
+
+        assert len(result) == 2
+        assert result[0].node_id == "node_1"
+        assert result[0].name == "Method1"
+        assert result[0].labels == ["Method"]
+        assert result[0].properties == {"module": "auth"}
+
+    def test_enriches_candidates_when_enrichments_provided(self):
+        """Should enrich candidates with provided enrichment data."""
+        from unittest.mock import MagicMock
+
+        from deriva.modules.derivation.base import query_candidates
+
+        mock_graph = MagicMock()
+        mock_graph.query.return_value = [
+            {"id": "node_1", "name": "Method1", "labels": [], "properties": {}},
+        ]
+        enrichments = {"node_1": {"pagerank": 0.9, "kcore_level": 5, "in_degree": 10, "out_degree": 5}}
+
+        result = query_candidates(mock_graph, "MATCH (n) RETURN n", enrichments)
+
+        assert result[0].pagerank == 0.9
+        assert result[0].kcore_level == 5
+
+
+class TestSanitizeIdentifier:
+    """Tests for sanitize_identifier function."""
+
+    def test_lowercases_and_replaces_special_chars(self):
+        """Should lowercase and replace special characters."""
+        from deriva.modules.derivation.base import sanitize_identifier
+
+        assert sanitize_identifier("Auth-Service") == "auth_service"
+        assert sanitize_identifier("User:Login") == "user_login"
+        assert sanitize_identifier("My Component") == "my_component"
+
+    def test_removes_non_alphanumeric(self):
+        """Should remove non-alphanumeric characters."""
+        from deriva.modules.derivation.base import sanitize_identifier
+
+        assert sanitize_identifier("auth@service!") == "authservice"
+
+    def test_prefixes_if_starts_with_number(self):
+        """Should prefix with id_ if starts with number."""
+        from deriva.modules.derivation.base import sanitize_identifier
+
+        assert sanitize_identifier("123_service") == "id_123_service"
+
+
+class TestBuildDerivationPromptWithCandidates:
+    """Tests for build_derivation_prompt with Candidate objects."""
+
+    def test_converts_candidates_to_dicts(self):
+        """Should convert Candidate objects to dicts for prompt."""
+        from deriva.modules.derivation.base import Candidate, build_derivation_prompt
+
+        candidates = [
+            Candidate(node_id="test_1", name="TestMethod", pagerank=0.5),
+        ]
+
+        prompt = build_derivation_prompt(
+            candidates=candidates,
+            instruction="Test instruction",
+            example="{}",
+            element_type="ApplicationInterface",
+        )
+
+        assert "test_1" in prompt
+        assert "TestMethod" in prompt
+        assert "0.5" in prompt
