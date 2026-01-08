@@ -95,46 +95,218 @@ EXTERNAL_DEPENDENCY_SCHEMA = {
 # =============================================================================
 
 PYTHON_STDLIB_MODULES = {
-    "abc", "aifc", "argparse", "array", "ast", "asynchat", "asyncio",
-    "asyncore", "atexit", "audioop", "base64", "bdb", "binascii",
-    "binhex", "bisect", "builtins", "bz2", "calendar", "cgi", "cgitb",
-    "chunk", "cmath", "cmd", "code", "codecs", "codeop", "collections",
-    "colorsys", "compileall", "concurrent", "configparser", "contextlib",
-    "contextvars", "copy", "copyreg", "cprofile", "crypt", "csv",
-    "ctypes", "curses", "dataclasses", "datetime", "dbm", "decimal",
-    "difflib", "dis", "distutils", "doctest", "email", "encodings",
-    "enum", "errno", "faulthandler", "fcntl", "filecmp", "fileinput",
-    "fnmatch", "fractions", "ftplib", "functools", "gc", "getopt",
-    "getpass", "gettext", "glob", "graphlib", "grp", "gzip", "hashlib",
-    "heapq", "hmac", "html", "http", "idlelib", "imaplib", "imghdr",
-    "imp", "importlib", "inspect", "io", "ipaddress", "itertools",
-    "json", "keyword", "lib2to3", "linecache", "locale", "logging",
-    "lzma", "mailbox", "mailcap", "marshal", "math", "mimetypes",
-    "mmap", "modulefinder", "multiprocessing", "netrc", "nis",
-    "nntplib", "numbers", "operator", "optparse", "os", "ossaudiodev",
-    "pathlib", "pdb", "pickle", "pickletools", "pipes", "pkgutil",
-    "platform", "plistlib", "poplib", "posix", "posixpath", "pprint",
-    "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr",
-    "pydoc", "queue", "quopri", "random", "re", "readline", "reprlib",
-    "resource", "rlcompleter", "runpy", "sched", "secrets", "select",
-    "selectors", "shelve", "shlex", "shutil", "signal", "site",
-    "smtpd", "smtplib", "sndhdr", "socket", "socketserver", "spwd",
-    "sqlite3", "ssl", "stat", "statistics", "string", "stringprep",
-    "struct", "subprocess", "sunau", "symtable", "sys", "sysconfig",
-    "syslog", "tabnanny", "tarfile", "telnetlib", "tempfile", "termios",
-    "test", "textwrap", "threading", "time", "timeit", "tkinter",
-    "token", "tokenize", "tomllib", "trace", "traceback", "tracemalloc",
-    "tty", "turtle", "turtledemo", "types", "typing", "unicodedata",
-    "unittest", "urllib", "uu", "uuid", "venv", "warnings", "wave",
-    "weakref", "webbrowser", "winreg", "winsound", "wsgiref", "xdrlib",
-    "xml", "xmlrpc", "zipapp", "zipfile", "zipimport", "zlib",
-    "__future__", "typing_extensions",
+    "abc",
+    "aifc",
+    "argparse",
+    "array",
+    "ast",
+    "asynchat",
+    "asyncio",
+    "asyncore",
+    "atexit",
+    "audioop",
+    "base64",
+    "bdb",
+    "binascii",
+    "binhex",
+    "bisect",
+    "builtins",
+    "bz2",
+    "calendar",
+    "cgi",
+    "cgitb",
+    "chunk",
+    "cmath",
+    "cmd",
+    "code",
+    "codecs",
+    "codeop",
+    "collections",
+    "colorsys",
+    "compileall",
+    "concurrent",
+    "configparser",
+    "contextlib",
+    "contextvars",
+    "copy",
+    "copyreg",
+    "cprofile",
+    "crypt",
+    "csv",
+    "ctypes",
+    "curses",
+    "dataclasses",
+    "datetime",
+    "dbm",
+    "decimal",
+    "difflib",
+    "dis",
+    "distutils",
+    "doctest",
+    "email",
+    "encodings",
+    "enum",
+    "errno",
+    "faulthandler",
+    "fcntl",
+    "filecmp",
+    "fileinput",
+    "fnmatch",
+    "fractions",
+    "ftplib",
+    "functools",
+    "gc",
+    "getopt",
+    "getpass",
+    "gettext",
+    "glob",
+    "graphlib",
+    "grp",
+    "gzip",
+    "hashlib",
+    "heapq",
+    "hmac",
+    "html",
+    "http",
+    "idlelib",
+    "imaplib",
+    "imghdr",
+    "imp",
+    "importlib",
+    "inspect",
+    "io",
+    "ipaddress",
+    "itertools",
+    "json",
+    "keyword",
+    "lib2to3",
+    "linecache",
+    "locale",
+    "logging",
+    "lzma",
+    "mailbox",
+    "mailcap",
+    "marshal",
+    "math",
+    "mimetypes",
+    "mmap",
+    "modulefinder",
+    "multiprocessing",
+    "netrc",
+    "nis",
+    "nntplib",
+    "numbers",
+    "operator",
+    "optparse",
+    "os",
+    "ossaudiodev",
+    "pathlib",
+    "pdb",
+    "pickle",
+    "pickletools",
+    "pipes",
+    "pkgutil",
+    "platform",
+    "plistlib",
+    "poplib",
+    "posix",
+    "posixpath",
+    "pprint",
+    "profile",
+    "pstats",
+    "pty",
+    "pwd",
+    "py_compile",
+    "pyclbr",
+    "pydoc",
+    "queue",
+    "quopri",
+    "random",
+    "re",
+    "readline",
+    "reprlib",
+    "resource",
+    "rlcompleter",
+    "runpy",
+    "sched",
+    "secrets",
+    "select",
+    "selectors",
+    "shelve",
+    "shlex",
+    "shutil",
+    "signal",
+    "site",
+    "smtpd",
+    "smtplib",
+    "sndhdr",
+    "socket",
+    "socketserver",
+    "spwd",
+    "sqlite3",
+    "ssl",
+    "stat",
+    "statistics",
+    "string",
+    "stringprep",
+    "struct",
+    "subprocess",
+    "sunau",
+    "symtable",
+    "sys",
+    "sysconfig",
+    "syslog",
+    "tabnanny",
+    "tarfile",
+    "telnetlib",
+    "tempfile",
+    "termios",
+    "test",
+    "textwrap",
+    "threading",
+    "time",
+    "timeit",
+    "tkinter",
+    "token",
+    "tokenize",
+    "tomllib",
+    "trace",
+    "traceback",
+    "tracemalloc",
+    "tty",
+    "turtle",
+    "turtledemo",
+    "types",
+    "typing",
+    "unicodedata",
+    "unittest",
+    "urllib",
+    "uu",
+    "uuid",
+    "venv",
+    "warnings",
+    "wave",
+    "weakref",
+    "webbrowser",
+    "winreg",
+    "winsound",
+    "wsgiref",
+    "xdrlib",
+    "xml",
+    "xmlrpc",
+    "zipapp",
+    "zipfile",
+    "zipimport",
+    "zlib",
+    "__future__",
+    "typing_extensions",
 }
 
 
 # =============================================================================
 # Extraction Method Selection
 # =============================================================================
+
 
 def get_extraction_method(file_path: str, subtype: str | None) -> str:
     """
@@ -169,6 +341,7 @@ def get_extraction_method(file_path: str, subtype: str | None) -> str:
 # =============================================================================
 # Deterministic Extraction: requirements.txt
 # =============================================================================
+
 
 def _extract_from_requirements_txt(
     file_path: str,
@@ -232,7 +405,7 @@ def _parse_requirement_line(line: str) -> dict[str, Any] | None:
         line = line.split(";")[0].strip()
 
     # Extract package name
-    match = re.match(r'^([a-zA-Z0-9][-a-zA-Z0-9._]*)(\[[^\]]+\])?(.*)', line)
+    match = re.match(r"^([a-zA-Z0-9][-a-zA-Z0-9._]*)(\[[^\]]+\])?(.*)", line)
     if not match:
         return None
 
@@ -241,7 +414,7 @@ def _parse_requirement_line(line: str) -> dict[str, Any] | None:
 
     version = None
     if version_spec:
-        version_match = re.search(r'[0-9].*', version_spec)
+        version_match = re.search(r"[0-9].*", version_spec)
         version = version_match.group(0) if version_match else version_spec
 
     return {"name": name, "version": version}
@@ -250,6 +423,7 @@ def _parse_requirement_line(line: str) -> dict[str, Any] | None:
 # =============================================================================
 # Deterministic Extraction: pyproject.toml
 # =============================================================================
+
 
 def _extract_from_pyproject_toml(
     file_path: str,
@@ -267,7 +441,7 @@ def _extract_from_pyproject_toml(
     seen: set[str] = set()
 
     # Simple TOML parsing for dependencies
-    deps_pattern = r'dependencies\s*=\s*\[(.*?)\]'
+    deps_pattern = r"dependencies\s*=\s*\[(.*?)\]"
     matches = re.findall(deps_pattern, file_content, re.DOTALL)
 
     for match in matches:
@@ -301,6 +475,7 @@ def _extract_from_pyproject_toml(
 # =============================================================================
 # Deterministic Extraction: package.json
 # =============================================================================
+
 
 def _extract_from_package_json(
     file_path: str,
@@ -352,6 +527,7 @@ def _extract_from_package_json(
 # =============================================================================
 # AST-based Extraction: Python imports
 # =============================================================================
+
 
 def _extract_from_python_ast(
     file_path: str,
@@ -416,6 +592,7 @@ def _extract_from_python_ast(
 # =============================================================================
 # LLM-based Extraction (fallback)
 # =============================================================================
+
 
 def build_extraction_prompt(
     file_content: str, file_path: str, instruction: str, example: str
@@ -570,7 +747,12 @@ def build_external_dependency_node(
     if errors:
         return {"success": False, "data": {}, "errors": errors, "stats": {}}
 
-    valid_categories = ["library", "external_api", "external_service", "external_database"]
+    valid_categories = [
+        "library",
+        "external_api",
+        "external_service",
+        "external_database",
+    ]
     category = dep_data["dependencyCategory"].lower()
     if category not in valid_categories:
         category = "library"
@@ -600,6 +782,7 @@ def build_external_dependency_node(
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
 
 def _build_dependency_node_and_edge(
     name: str,
@@ -661,6 +844,7 @@ def _build_result(
 # =============================================================================
 # Main Entry Points
 # =============================================================================
+
 
 def extract_external_dependencies(
     file_path: str,
@@ -756,14 +940,18 @@ def extract_external_dependencies_batch(
 
         files_processed += 1
 
-        all_file_results.append({
-            "file_path": file_path,
-            "success": result["success"],
-            "dependencies_extracted": len(result["data"]["nodes"]),
-            "extraction_method": result["stats"].get("extraction_method", "unknown"),
-            "llm_details": result.get("llm_details", {}),
-            "errors": result["errors"],
-        })
+        all_file_results.append(
+            {
+                "file_path": file_path,
+                "success": result["success"],
+                "dependencies_extracted": len(result["data"]["nodes"]),
+                "extraction_method": result["stats"].get(
+                    "extraction_method", "unknown"
+                ),
+                "llm_details": result.get("llm_details", {}),
+                "errors": result["errors"],
+            }
+        )
 
         if result["success"] and result["data"]["nodes"]:
             files_with_deps += 1

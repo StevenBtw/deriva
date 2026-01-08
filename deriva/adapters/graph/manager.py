@@ -325,9 +325,7 @@ class GraphManager:
             logger.error(f"Failed to bulk update property: {e}")
             raise
 
-    def batch_update_properties(
-        self, updates: dict[str, dict[str, Any]]
-    ) -> int:
+    def batch_update_properties(self, updates: dict[str, dict[str, Any]]) -> int:
         """Batch update multiple properties on multiple nodes.
 
         Used by enrichment to write algorithm results (pagerank, community, etc.)

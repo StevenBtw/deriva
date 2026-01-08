@@ -729,7 +729,9 @@ def cmd_benchmark_analyze(args: argparse.Namespace) -> int:
             print("INTRA-MODEL CONSISTENCY (stability across runs)")
             print("-" * 75)
             print(f"  {'Model':<22} {'Nodes':<25} {'Edges':<25}")
-            print(f"  {'':<22} {'Min-Max (Stable/Var)':<25} {'Min-Max (Stable/Var)':<25}")
+            print(
+                f"  {'':<22} {'Min-Max (Stable/Var)':<25} {'Min-Max (Stable/Var)':<25}"
+            )
             print("-" * 75)
             for model, runs in sorted(run_stats.items()):
                 node_vals = [n for n, e in runs]
@@ -754,8 +756,12 @@ def cmd_benchmark_analyze(args: argparse.Namespace) -> int:
                 stable_edges = len(m.stable_edges)
                 unstable_edges = len(m.unstable_edges)
                 total_edges = stable_edges + unstable_edges
-                edge_pct = (stable_edges / total_edges * 100) if total_edges > 0 else 100
-                print(f"  {m.model:<22} {stable_edges:<10} {unstable_edges:<10} {edge_pct:.0f}%")
+                edge_pct = (
+                    (stable_edges / total_edges * 100) if total_edges > 0 else 100
+                )
+                print(
+                    f"  {m.model:<22} {stable_edges:<10} {unstable_edges:<10} {edge_pct:.0f}%"
+                )
             print()
 
         # Inter-model consistency
@@ -768,7 +774,9 @@ def cmd_benchmark_analyze(args: argparse.Namespace) -> int:
                 overlap_edges = len(im.edge_overlap)
                 pct = im.edge_jaccard * 100
                 print(f"  {im.repository}:")
-                print(f"    Structural edges: {overlap_edges}/{total_edges} stable ({pct:.0f}%)")
+                print(
+                    f"    Structural edges: {overlap_edges}/{total_edges} stable ({pct:.0f}%)"
+                )
             print()
 
         # Hotspots

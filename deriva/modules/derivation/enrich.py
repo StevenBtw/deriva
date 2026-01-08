@@ -143,7 +143,9 @@ def compute_pagerank(
         tol=tol,
     )
 
-    logger.debug(f"PageRank computed for {len(nodes)} nodes in {result.iterations} iterations")
+    logger.debug(
+        f"PageRank computed for {len(nodes)} nodes in {result.iterations} iterations"
+    )
     return result.solution
 
 
@@ -248,7 +250,9 @@ def compute_articulation_points(
         neighbors_fn(adj),
     )
 
-    logger.debug(f"Found {len(result.solution)} articulation points in {len(nodes)} nodes")
+    logger.debug(
+        f"Found {len(result.solution)} articulation points in {len(nodes)} nodes"
+    )
     return result.solution
 
 

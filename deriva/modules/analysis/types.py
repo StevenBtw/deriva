@@ -100,7 +100,9 @@ class IntraModelMetrics:
     edge_consistency: float = 100.0  # % of edges in ALL runs
     stable_edges: list[str] = field(default_factory=list)
     unstable_edges: dict[str, int] = field(default_factory=dict)
-    edge_type_breakdown: dict[str, float] = field(default_factory=dict)  # CONTAINS: 95%, etc.
+    edge_type_breakdown: dict[str, float] = field(
+        default_factory=dict
+    )  # CONTAINS: 95%, etc.
 
     # Relationship consistency (derivation phase)
     relationship_counts: list[int] = field(default_factory=list)
@@ -108,7 +110,9 @@ class IntraModelMetrics:
     relationship_consistency: float = 100.0  # % of relationships in ALL runs
     stable_relationships: list[str] = field(default_factory=list)
     unstable_relationships: dict[str, int] = field(default_factory=dict)
-    relationship_type_breakdown: dict[str, float] = field(default_factory=dict)  # Serving: 90%, etc.
+    relationship_type_breakdown: dict[str, float] = field(
+        default_factory=dict
+    )  # Serving: 90%, etc.
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -134,7 +138,9 @@ class InterModelMetrics:
 
     # Relationship comparison (derivation phase)
     relationships_by_model: dict[str, list[str]] = field(default_factory=dict)
-    relationship_overlap: list[str] = field(default_factory=list)  # Relationships in ALL models
+    relationship_overlap: list[str] = field(
+        default_factory=list
+    )  # Relationships in ALL models
     relationship_unique_by_model: dict[str, list[str]] = field(default_factory=dict)
     relationship_jaccard: float = 1.0
 

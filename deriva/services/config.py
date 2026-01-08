@@ -448,9 +448,7 @@ def get_relationship_configs(
     return configs
 
 
-def get_relationship_config(
-    engine: Any, element_type: str
-) -> RelationshipConfig | None:
+def get_relationship_config(engine: Any, element_type: str) -> RelationshipConfig | None:
     """Get relationship config for a specific element type."""
     import json
 

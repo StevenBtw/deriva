@@ -605,8 +605,12 @@ def build_per_element_relationship_prompt(
     source_json = json.dumps(source_elements, indent=2, default=str)
     target_json = json.dumps(target_elements, indent=2, default=str)
 
-    source_ids = [e.get("identifier", "") for e in source_elements if e.get("identifier")]
-    target_ids = [e.get("identifier", "") for e in target_elements if e.get("identifier")]
+    source_ids = [
+        e.get("identifier", "") for e in source_elements if e.get("identifier")
+    ]
+    target_ids = [
+        e.get("identifier", "") for e in target_elements if e.get("identifier")
+    ]
 
     prompt = f"""You are deriving ArchiMate relationships FROM {source_element_type} elements.
 
@@ -700,7 +704,9 @@ def derive_element_relationships(
 
     try:
         response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA, **llm_kwargs)
-        response_content = response.content if hasattr(response, "content") else str(response)
+        response_content = (
+            response.content if hasattr(response, "content") else str(response)
+        )
     except Exception as e:
         logger.error(f"LLM error deriving {source_element_type} relationships: {e}")
         return []
@@ -708,7 +714,9 @@ def derive_element_relationships(
     parse_result = parse_relationship_response(response_content)
 
     if not parse_result["success"]:
-        logger.warning(f"Failed to parse {source_element_type} relationships: {parse_result.get('errors')}")
+        logger.warning(
+            f"Failed to parse {source_element_type} relationships: {parse_result.get('errors')}"
+        )
         return []
 
     # Validate and filter relationships
@@ -724,7 +732,9 @@ def derive_element_relationships(
 
         # Validate source is from this element type
         if source not in source_ids:
-            logger.debug(f"Skipping relationship: source {source} not in {source_element_type}")
+            logger.debug(
+                f"Skipping relationship: source {source} not in {source_element_type}"
+            )
             continue
 
         # Validate target exists
@@ -734,17 +744,23 @@ def derive_element_relationships(
 
         # Validate relationship type
         if valid_types and rel_type not in valid_types:
-            logger.debug(f"Skipping relationship: type {rel_type} not allowed for {source_element_type}")
+            logger.debug(
+                f"Skipping relationship: type {rel_type} not allowed for {source_element_type}"
+            )
             continue
 
-        relationships.append({
-            "source": source,
-            "target": target,
-            "relationship_type": rel_type,
-            "confidence": rel_data.get("confidence", 0.5),
-        })
+        relationships.append(
+            {
+                "source": source,
+                "target": target,
+                "relationship_type": rel_type,
+                "confidence": rel_data.get("confidence", 0.5),
+            }
+        )
 
-    logger.info(f"Derived {len(relationships)} relationships FROM {source_element_type}")
+    logger.info(
+        f"Derived {len(relationships)} relationships FROM {source_element_type}"
+    )
     return relationships
 
 

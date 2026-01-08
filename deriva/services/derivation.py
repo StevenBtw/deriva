@@ -511,10 +511,7 @@ def run_derivation(
 
             # Filter target elements by configured types
             if rel_cfg.target_element_types:
-                target_elements = [
-                    e for e in all_created_elements
-                    if e.get("element_type") in rel_cfg.target_element_types
-                ]
+                target_elements = [e for e in all_created_elements if e.get("element_type") in rel_cfg.target_element_types]
             else:
                 target_elements = all_created_elements
 
@@ -527,10 +524,7 @@ def run_derivation(
             # Create step context for relationship derivation
             rel_step_ctx = None
             if run_logger:
-                rel_step_ctx = run_logger.step_start(
-                    f"relationships_{source_type}",
-                    f"Deriving relationships FROM {source_type}"
-                )
+                rel_step_ctx = run_logger.step_start(f"relationships_{source_type}", f"Deriving relationships FROM {source_type}")
 
             rel_result = _derive_element_relationships(
                 source_element_type=source_type,

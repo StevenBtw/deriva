@@ -1423,11 +1423,7 @@ class BenchmarkAnalyzer:
 
         for rel_type, objects in type_objects.items():
             # Count objects that appear in ALL runs
-            stable_count = sum(
-                1
-                for obj in objects
-                if all(obj in run_objs for run_objs in objects_by_run.values())
-            )
+            stable_count = sum(1 for obj in objects if all(obj in run_objs for run_objs in objects_by_run.values()))
             breakdown[rel_type] = (stable_count / len(objects) * 100) if objects else 100.0
 
         return breakdown
