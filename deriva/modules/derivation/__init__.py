@@ -3,6 +3,7 @@ Derivation module - Transform Graph nodes into ArchiMate elements.
 
 Modules:
 - base: Shared utilities (prompts, parsing, result creation)
+- enrich: Graph enrichment algorithms (PageRank, Louvain, k-core, etc.)
 
 Business Layer:
 - business_object: BusinessObject derivation (data entities)
@@ -29,12 +30,17 @@ from .base import (
     build_derivation_prompt,
     build_element,
     build_element_relationship_prompt,
+    build_per_element_relationship_prompt,
     build_relationship_prompt,
     create_result,
+    derive_element_relationships,
     parse_derivation_response,
     parse_relationship_response,
     query_candidates,
 )
+
+# Enrichment module (submodule, not re-exported at top level)
+from . import enrich
 
 __all__ = [
     # Base
@@ -47,7 +53,11 @@ __all__ = [
     "build_derivation_prompt",
     "build_relationship_prompt",
     "build_element_relationship_prompt",
+    "build_per_element_relationship_prompt",
+    "derive_element_relationships",
     "parse_derivation_response",
     "parse_relationship_response",
     "build_element",
+    # Submodules
+    "enrich",
 ]

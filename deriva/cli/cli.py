@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import Any
 
 from deriva.services import config
 from deriva.services.session import PipelineSession
@@ -676,6 +677,30 @@ def cmd_benchmark_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _get_run_stats_from_ocel(analyzer: Any) -> dict[str, list[tuple[int, int]]]:
+    """Extract node/edge counts per run from OCEL CompleteRun events."""
+    result: dict[str, list[tuple[int, int]]] = {}
+
+    for event in analyzer.ocel_log.events:
+        if event.activity != "CompleteRun":
+            continue
+
+        model = event.objects.get("Model", [None])[0]
+        if not model:
+            continue
+
+        stats = event.attributes.get("stats", {})
+        extraction = stats.get("extraction", {})
+        nodes = extraction.get("nodes_created", 0)
+        edges = extraction.get("edges_created", 0)
+
+        if model not in result:
+            result[model] = []
+        result[model].append((nodes, edges))
+
+    return result
+
+
 def cmd_benchmark_analyze(args: argparse.Namespace) -> int:
     """Analyze benchmark results."""
     session_id = args.session_id
@@ -696,22 +721,54 @@ def cmd_benchmark_analyze(args: argparse.Namespace) -> int:
         # Compute and display summary
         summary = analyzer.compute_full_analysis()
 
-        print(f"Overall Consistency: {summary.overall_consistency:.1f}%\n")
+        # Get raw node/edge counts per run from OCEL
+        run_stats = _get_run_stats_from_ocel(analyzer)
 
-        # Intra-model consistency
-        if summary.intra_model:
+        # Show extraction stats per model (from run stats)
+        if run_stats:
             print("INTRA-MODEL CONSISTENCY (stability across runs)")
-            print("-" * 50)
+            print("-" * 75)
+            print(f"  {'Model':<22} {'Nodes':<25} {'Edges':<25}")
+            print(f"  {'':<22} {'Min-Max (Stable/Var)':<25} {'Min-Max (Stable/Var)':<25}")
+            print("-" * 75)
+            for model, runs in sorted(run_stats.items()):
+                node_vals = [n for n, e in runs]
+                edge_vals = [e for n, e in runs]
+                node_min, node_max = min(node_vals), max(node_vals)
+                edge_min, edge_max = min(edge_vals), max(edge_vals)
+                node_var = node_max - node_min
+                edge_var = edge_max - edge_min
+                # Stable = minimum (guaranteed in all runs), Unstable = variance
+                node_str = f"{node_min}-{node_max} ({node_min}/{node_var})"
+                edge_str = f"{edge_min}-{edge_max} ({edge_min}/{edge_var})"
+                print(f"  {model:<22} {node_str:<25} {edge_str:<25}")
+            print()
+
+        # Intra-model consistency (structural edges from OCEL)
+        if summary.intra_model:
+            print("STRUCTURAL EDGE CONSISTENCY (OCEL tracked)")
+            print("-" * 70)
+            print(f"  {'Model':<22} {'Stable':<10} {'Unstable':<10} {'%':<8}")
+            print("-" * 70)
             for m in summary.intra_model:
-                print(f"  {m.model} @ {m.repository}: {m.name_consistency:.1f}%")
+                stable_edges = len(m.stable_edges)
+                unstable_edges = len(m.unstable_edges)
+                total_edges = stable_edges + unstable_edges
+                edge_pct = (stable_edges / total_edges * 100) if total_edges > 0 else 100
+                print(f"  {m.model:<22} {stable_edges:<10} {unstable_edges:<10} {edge_pct:.0f}%")
             print()
 
         # Inter-model consistency
         if summary.inter_model:
             print("INTER-MODEL CONSISTENCY (agreement across models)")
-            print("-" * 50)
-            for m in summary.inter_model:
-                print(f"  {m.repository}: {m.jaccard_similarity * 100:.1f}% overlap")
+            print("-" * 70)
+            for im in summary.inter_model:
+                edges_sets = [set(e) for e in im.edges_by_model.values()]
+                total_edges = len(set().union(*edges_sets)) if edges_sets else 0
+                overlap_edges = len(im.edge_overlap)
+                pct = im.edge_jaccard * 100
+                print(f"  {im.repository}:")
+                print(f"    Structural edges: {overlap_edges}/{total_edges} stable ({pct:.0f}%)")
             print()
 
         # Hotspots

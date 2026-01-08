@@ -12,9 +12,10 @@ The Database adapter manages DuckDB for storing configuration data: file type re
 from deriva.adapters.database import (
     get_connection,     # Get DuckDB connection
     init_database,      # Initialize schema
-    seed_database,      # Seed with default data
+    seed_database,      # Seed from JSON files
     reset_database,     # Clear and reinitialize
-    run_sql_file,       # Execute SQL script
+    export_database,    # Export tables to JSON
+    import_database,    # Import tables from JSON
     DB_PATH,            # Database file path
 )
 ```
@@ -27,7 +28,7 @@ from deriva.adapters.database import get_connection, init_database, seed_databas
 # Initialize database (creates tables if needed)
 init_database()
 
-# Seed with default data
+# Seed with default data from JSON files
 seed_database()  # Skips if already seeded
 seed_database(force=True)  # Force re-seed
 
@@ -40,24 +41,32 @@ conn.close()
 ## Database Schema
 
 **file_type_registry**:
-
 - `extension` (PK): File extension or pattern (`.py`, `Dockerfile`)
 - `file_type`: Category (source, config, docs, test, build, asset, data, exclude)
 - `subtype`: Specific type (python, javascript, docker, etc.)
+- `chunk_delimiter`, `chunk_max_tokens`, `chunk_overlap`: Optional chunking config
 
-**extraction_config_versions**:
-
+**extraction_config**:
 - `node_type`: Graph node type (Repository, File, TypeDefinition, etc.)
-- `version`, `enabled`, `is_active`
-- `input_file_types`, `input_graph_elements`: JSON arrays
+- `version`, `sequence`, `enabled`, `is_active`
+- `input_sources`: JSON with file types and graph elements
 - `instruction`, `example`: LLM prompt configuration
+- `extraction_method`: 'llm', 'ast', or 'structural'
 
-**derivation_config_versions**:
+**derivation_config**:
+- `step_name`: Element or algorithm name
+- `phase`: prep, generate, refine, or relationship
+- `llm`: Whether step uses LLM
+- `input_graph_query`, `input_model_query`: Cypher queries
+- `instruction`, `example`: LLM prompts
+- `params`: JSON for graph algorithms
 
-- Similar structure for ArchiMate derivation prompts
+**derivation_patterns**:
+- `step_name`: Element type
+- `pattern_type`: include or exclude
+- `patterns`: JSON array of pattern strings
 
 **system_settings**:
-
 - Key-value store for runtime configuration
 
 ## File Structure
@@ -65,12 +74,38 @@ conn.close()
 ```text
 deriva/adapters/database/
 ├── __init__.py           # Package exports
-├── manager.py            # Database functions
+├── manager.py            # Database lifecycle functions
+├── db_tool.py            # Export/import CLI tool
 ├── sql.db                # DuckDB database file
-└── scripts/              # SQL initialization scripts
-    ├── 1_schema.sql      # Table definitions
-    ├── 2_file_types.sql  # File type registry seed
-    └── 3_extraction.sql  # Extraction config seed
+├── scripts/
+│   └── schema.sql        # Table definitions
+└── data/                 # JSON seed data
+    ├── file_types.json
+    ├── extraction_config.json
+    ├── derivation_config.json
+    └── derivation_patterns.json
+```
+
+## CLI Tool
+
+The `db_tool.py` provides a command-line interface for database operations:
+
+```bash
+# Export all tables to JSON
+python -m deriva.adapters.database.db_tool export
+
+# Export specific table
+python -m deriva.adapters.database.db_tool export --table file_type_registry
+
+# Import all JSON files
+python -m deriva.adapters.database.db_tool import
+
+# Import specific table
+python -m deriva.adapters.database.db_tool import --table extraction_config
+
+# Seed database (import if empty)
+python -m deriva.adapters.database.db_tool seed
+python -m deriva.adapters.database.db_tool seed --force
 ```
 
 ## Functions
@@ -79,9 +114,11 @@ deriva/adapters/database/
 |----------|-------------|
 | `get_connection()` | Returns DuckDB connection |
 | `init_database()` | Execute schema SQL, create tables |
-| `seed_database(force=False)` | Seed default data (skip if exists) |
+| `seed_database(force=False)` | Seed from JSON files (skip if exists) |
 | `reset_database()` | Drop all tables and reinitialize |
-| `run_sql_file(filepath)` | Execute arbitrary SQL script |
+| `export_database()` | Export all tables to JSON |
+| `import_database()` | Import all tables from JSON |
+| `run_migrations()` | Apply ALTER TABLE scripts |
 
 ## See Also
 

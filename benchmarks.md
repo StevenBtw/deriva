@@ -530,3 +530,276 @@ INVALID TYPES (NEVER use these):
 1. Fix extraction infrastructure bugs (missing schema arrays, edge failures)
 2. Re-run medium repo benchmark once extraction is stable
 3. Continue monitoring consistency across additional test repositories
+
+### 2026-01-08: Efficient Targeted Optimization Workflow
+
+**Model:** mistral-devstral2
+**Repository:** flask_invoice_generator
+
+#### New Methodology: One Config at a Time
+
+Instead of testing all configs together (expensive, noisy), we now use **targeted optimization**:
+
+1. **Identify worst-performing element type** by analyzing summary.json
+2. **Run 10+ iterations with only that config uncached** using `--nocache-configs`
+3. **Iterate on prompt until 100% consistency** for that element type
+4. **Move to next worst element type**
+
+This approach is:
+- **Cost-efficient**: Only LLM calls for the config being tested
+- **Fast iteration**: 10 runs in ~4 minutes vs 3 full runs in ~6 minutes
+- **Clear signal**: Isolates the effect of prompt changes
+
+#### Command Pattern
+
+```bash
+# Step 1: Run baseline to identify worst element type
+uv run python -m deriva.cli.cli benchmark run \
+  --repos flask_invoice_generator \
+  --models mistral-devstral2 \
+  --runs 3 \
+  --no-cache
+
+# Step 2: Analyze by element type prefix
+uv run python -c "
+import json
+with open('workspace/benchmarks/<session>/analysis/summary.json') as f:
+    data = json.load(f)
+intra = data['intra_model'][0]
+from collections import defaultdict
+element_types = defaultdict(lambda: {'stable': 0, 'unstable': 0})
+for e in intra['stable_elements']:
+    prefix = e.split('_')[0]
+    element_types[prefix]['stable'] += 1
+for e in intra['unstable_elements'].items():
+    prefix = e[0].split('_')[0]
+    element_types[prefix]['unstable'] += 1
+for prefix, counts in sorted(element_types.items()):
+    total = counts['stable'] + counts['unstable']
+    pct = (counts['stable'] / total * 100) if total > 0 else 0
+    print(f'{prefix}: {counts[\"stable\"]}/{total} ({pct:.0f}%)')
+"
+
+# Step 3: Run targeted test for worst element type
+uv run python -m deriva.cli.cli benchmark run \
+  --repos flask_invoice_generator \
+  --models mistral-devstral2 \
+  --runs 10 \
+  --nocache-configs TechnologyService
+
+# Step 4: Update config and repeat until 100%
+```
+
+#### Results: TechnologyService Optimization
+
+| Version | Stable | Unstable | Consistency | Key Change |
+|---------|--------|----------|-------------|------------|
+| v1 | 0/5 | 5 | 0% | Original vague prompt |
+| v2 | 1/3 | 2 | 33% | Added canonical names |
+| v3 | 3/8 | 5 | 38% | Added determinism instruction |
+| v4 | 3/4 | 1 | 75% | Excluded transitive deps (cairo, pillow) |
+
+**Key fix**: Using category-based and graph-based exclusions:
+```
+DO NOT create TechnologyService for:
+- Transitive dependencies (dependencies of dependencies)
+- Development-only tools (testing, linting, formatting)
+- Low-level utility libraries (filter by dependency category, not specific names)
+- Nodes with low structural importance (pagerank < threshold)
+```
+
+#### Overall Progress: Element Consistency
+
+| Element Type | Baseline | After Targeted Optimization |
+|--------------|----------|----------------------------|
+| ApplicationService | 0% | **100%** |
+| BusinessActor | 0% | **100%** |
+| DataObject | 50% | **100%** |
+| BusinessProcess | 0% | **50%** |
+| BusinessObject | 25% | **50%** |
+| TechnologyService | 0% | **75%** |
+
+**Overall element consistency: 28% → ~75%**
+
+#### Key Learnings: Prompt Engineering for Consistency
+
+1. **Explicit element limits**: "Max 3-4 elements" reduces over-generation variance
+2. **Category-based filtering**: Filter by dependency category (e.g., "ONLY include runtime libraries, EXCLUDE dev tools")
+3. **Graph-based exclusions**: Use structural properties like "EXCLUDE nodes with out_degree=0 AND pagerank<0.01"
+4. **Singular form enforcement**: "Use SINGULAR form ALWAYS"
+5. **Synonym banning with generic terms**: "Use canonical business terms: Customer (not Client), Position (not LineItem)"
+6. **Format examples**: Show exact identifier format in example JSON (use generic examples, not repo-specific)
+
+#### Final Results After Full Optimization
+
+| Element Type | Baseline | Final | Status |
+|--------------|----------|-------|--------|
+| ApplicationService | 0% | 100%* | OK (with cached extraction) |
+| BusinessActor | 0% | **100%** | OK |
+| BusinessObject | 25% | **100%** | OK |
+| BusinessProcess | 0% | **100%** | OK |
+| DataObject | 50% | **100%** | OK |
+| TechnologyService | 0% | **75%** | 1 unstable (techsvc_click) |
+
+**Overall element consistency: 28% → 81%** (+53pp)
+
+*ApplicationService drops to 33% when extraction is uncached due to BusinessConcept/Technology variance.
+
+#### Extraction Consistency Analysis
+
+Tested each extraction config with `--stages extraction --nocache-configs <config>`:
+
+| Config | Method | Variance | Status |
+|--------|--------|----------|--------|
+| Repository | Deterministic | 0 | 100% |
+| Directory | Deterministic | 0 | 100% |
+| File | Deterministic | 0 | 100% |
+| Method | AST (Python) | 0 | 100% |
+| TypeDefinition | AST (Python) | 0 | 100% |
+| ExternalDependency | Parser | 0 | 100% |
+| Test | Cache | 0 | 100% |
+| **BusinessConcept** | **LLM** | **84-86** | **1-2 unstable** |
+| **Technology** | **LLM** | **86-87** | **1 unstable** |
+
+**Key finding:** Only LLM-based extraction configs (BusinessConcept, Technology) have variance. AST-based and deterministic parsers are 100% consistent.
+
+#### Remaining Work
+
+1. **Relationships** (15-20%): Very unstable, needs per-element relationship configs
+2. **BusinessConcept extraction**: Minor LLM variance (1-2 nodes)
+3. **Technology extraction**: Minor LLM variance (1 node)
+
+### 2026-01-08: Graph Property-Based Optimization
+
+**Objective:** Use graph algorithm metrics to identify and filter out source nodes that produce unstable derivations.
+
+#### The Hypothesis
+
+Unstable elements may correlate with graph properties of their source nodes. By analyzing stable vs unstable elements' sources, we can identify patterns and apply graph-based filters to improve consistency.
+
+#### Methodology
+
+##### Step 1: Run enrichment algorithms on the graph
+
+The enrich module (`deriva/modules/derivation/enrich.py`) computes:
+
+- PageRank (node importance)
+- Louvain communities (clustering)
+- K-core decomposition (core vs periphery)
+- Articulation points (bridge nodes)
+- Degree centrality (in/out connections)
+
+```python
+from deriva.modules.derivation import enrich
+
+enrichments = enrich.enrich_graph(
+    edges=edges,
+    algorithms=['pagerank', 'louvain', 'kcore', 'articulation_points', 'degree']
+)
+# Write to Neo4j: graph_manager.batch_update_properties(enrichments)
+```
+
+##### Step 2: Correlate stability with graph properties
+
+After a benchmark run, query source nodes for stable vs unstable elements:
+
+```cypher
+// Get graph properties for element sources
+MATCH (e) WHERE e.identifier IN $element_ids
+WITH e.properties_json as props
+// Extract source from properties_json and query its graph metrics
+MATCH (n {id: source_id})
+RETURN n.pagerank, n.kcore_level, n.out_degree, n.in_degree
+```
+
+##### Step 3: Analyze the correlation
+
+```text
+STABLE vs UNSTABLE Source Nodes:
+┌─────────────┬─────────┬──────────┬────────────┐
+│ Metric      │ Stable  │ Unstable │ Difference │
+├─────────────┼─────────┼──────────┼────────────┤
+│ PageRank    │ 0.0188  │ 0.0071   │ +164%      │
+│ K-core      │ 1.15    │ 1.00     │ +15%       │
+│ Out-degree  │ 2.31    │ 0.00     │ +∞         │
+└─────────────┴─────────┴──────────┴────────────┘
+```
+
+##### Step 4: Apply graph-based filters in derivation queries
+
+Update `input_graph_query` to filter on graph properties:
+
+```cypher
+MATCH (n)
+WHERE (n:`Graph:TypeDefinition` OR n:`Graph:BusinessConcept`)
+  AND n.active = true
+  AND (n.out_degree > 0 OR n.pagerank > 0.01)  -- Filter floating nodes
+RETURN n.id, n.name, n.pagerank, n.kcore_level
+```
+
+#### Optimization Results
+
+| Metric              | Baseline | After Filter | Change     |
+|---------------------|----------|--------------|------------|
+| Element Consistency | 81.25%   | 80.0%        | -1.25%     |
+| Unstable Elements   | 3        | 3            | Same count |
+
+**Key outcome:** The specific unstable elements changed completely:
+
+- **BEFORE**: `ba_client`, `ba_invoice_creator`, `be_invoice_generated` (from BusinessConcept nodes with zero out-degree)
+- **AFTER**: `as_invoice_form`, `as_invoice_management`, `techsvc_click` (naming variants)
+
+The graph filter successfully eliminated instability from "floating" semantic nodes (BusinessConcept) that had no structural connections to the codebase.
+
+#### Key Insight: Structural vs Semantic Sources
+
+| Source Type                              | Graph Properties             | Stability   |
+|------------------------------------------|------------------------------|-------------|
+| Structural (TypeDefinition, Method, File)| High out-degree, connected   | More stable |
+| Semantic (BusinessConcept)               | Zero out-degree, floating    | Less stable |
+
+Semantic nodes extracted by LLM have no structural relationships in the code graph. When derivation uses these as sources, the LLM has less context, leading to inconsistent outputs.
+
+**Recommendation:** For element types that can use either structural or semantic sources, prefer structural sources or require minimum graph connectivity.
+
+#### Important: Never Use Repository-Specific Rules
+
+When optimizing configs, **never add rules specific to a particular repository**. All optimizations must be generic:
+
+**BAD - Repository-specific:**
+
+```text
+# Don't do this!
+Do not create BusinessActor for "flask_invoice_generator" concepts
+Exclude "client" from this repository
+```
+
+**GOOD - Generic graph-based:**
+
+```text
+# Use graph properties that apply to any repository
+Filter source nodes where out_degree = 0 AND pagerank < 0.01
+Prefer sources from nodes in k-core >= 2
+```
+
+Repository-specific rules:
+
+- Overfit to test data
+- Break when applied to other repositories
+- Don't generalize to production use
+
+Graph-based rules:
+
+- Apply universally based on structural properties
+- Work across any repository
+- Capture genuine signal about node importance
+
+#### Workflow Summary
+
+1. Run benchmark → identify unstable elements
+2. Run enrichment → compute graph metrics on all nodes
+3. Query sources → get graph properties for stable vs unstable element sources
+4. Find correlation → which metrics differ significantly?
+5. Apply filter → update `input_graph_query` with generic graph-based conditions
+6. Re-benchmark → verify improvement without regression
+7. Iterate → continue until consistency targets met

@@ -1,16 +1,18 @@
-"""Tests for modules.extraction.ast_extraction module."""
+"""Tests for AST-based extraction (type_definition and method modules)."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
 from deriva.adapters.ast.models import ExtractedMethod, ExtractedType
-from deriva.modules.extraction.ast_extraction import (
-    _build_method_node_from_ast,
+from deriva.modules.extraction.base import is_python_file
+from deriva.modules.extraction.type_definition import (
     _build_type_node_from_ast,
-    extract_methods_from_python,
     extract_types_from_python,
-    is_python_file,
+)
+from deriva.modules.extraction.method import (
+    _build_method_node_from_ast,
+    extract_methods_from_python,
 )
 
 
@@ -37,7 +39,7 @@ class TestIsPythonFile:
 class TestExtractTypesFromPython:
     """Tests for extract_types_from_python function."""
 
-    @patch("deriva.modules.extraction.ast_extraction.ASTManager")
+    @patch("deriva.modules.extraction.type_definition.ASTManager")
     def test_extracts_class_successfully(self, mock_ast_manager_class):
         """Should extract class as TypeDefinition node."""
         mock_manager = MagicMock()
@@ -70,7 +72,7 @@ class TestExtractTypesFromPython:
         assert node["properties"]["category"] == "class"
         assert node["properties"]["confidence"] == 1.0
 
-    @patch("deriva.modules.extraction.ast_extraction.ASTManager")
+    @patch("deriva.modules.extraction.type_definition.ASTManager")
     def test_handles_syntax_error(self, mock_ast_manager_class):
         """Should return error result for syntax errors."""
         mock_manager = MagicMock()
@@ -83,7 +85,7 @@ class TestExtractTypesFromPython:
         assert "syntax error" in result["errors"][0].lower()
         assert result["stats"]["total_nodes"] == 0
 
-    @patch("deriva.modules.extraction.ast_extraction.ASTManager")
+    @patch("deriva.modules.extraction.type_definition.ASTManager")
     def test_handles_general_exception(self, mock_ast_manager_class):
         """Should return error result for general exceptions."""
         mock_manager = MagicMock()
@@ -96,7 +98,7 @@ class TestExtractTypesFromPython:
         assert "AST extraction error" in result["errors"][0]
         assert result["stats"]["extraction_method"] == "ast"
 
-    @patch("deriva.modules.extraction.ast_extraction.ASTManager")
+    @patch("deriva.modules.extraction.type_definition.ASTManager")
     def test_empty_file_returns_empty_nodes(self, mock_ast_manager_class):
         """Should return empty nodes for file with no types."""
         mock_manager = MagicMock()
@@ -114,7 +116,7 @@ class TestExtractTypesFromPython:
 class TestExtractMethodsFromPython:
     """Tests for extract_methods_from_python function."""
 
-    @patch("deriva.modules.extraction.ast_extraction.ASTManager")
+    @patch("deriva.modules.extraction.method.ASTManager")
     def test_extracts_class_method(self, mock_ast_manager_class):
         """Should extract class method with CONTAINS edge to class."""
         mock_manager = MagicMock()
@@ -146,7 +148,7 @@ class TestExtractMethodsFromPython:
         assert edge["relationship_type"] == "CONTAINS"
         assert "UserService" in edge["from_node_id"]
 
-    @patch("deriva.modules.extraction.ast_extraction.ASTManager")
+    @patch("deriva.modules.extraction.method.ASTManager")
     def test_extracts_top_level_function(self, mock_ast_manager_class):
         """Should extract top-level function with CONTAINS edge to file."""
         mock_manager = MagicMock()
@@ -167,7 +169,7 @@ class TestExtractMethodsFromPython:
         assert edge["relationship_type"] == "CONTAINS"
         assert "file_" in edge["from_node_id"]
 
-    @patch("deriva.modules.extraction.ast_extraction.ASTManager")
+    @patch("deriva.modules.extraction.method.ASTManager")
     def test_handles_syntax_error(self, mock_ast_manager_class):
         """Should return error result for syntax errors."""
         mock_manager = MagicMock()
@@ -179,7 +181,7 @@ class TestExtractMethodsFromPython:
         assert result["success"] is False
         assert "syntax error" in result["errors"][0].lower()
 
-    @patch("deriva.modules.extraction.ast_extraction.ASTManager")
+    @patch("deriva.modules.extraction.method.ASTManager")
     def test_handles_general_exception(self, mock_ast_manager_class):
         """Should return error result for general exceptions."""
         mock_manager = MagicMock()

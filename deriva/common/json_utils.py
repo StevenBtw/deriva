@@ -103,24 +103,35 @@ def parse_json_array(content: str, array_key: str) -> ParseResult:
         extracted = extract_json_from_response(content)
         parsed = json.loads(extracted)
 
-        if array_key not in parsed:
+        # Primary: check for direct array key
+        if array_key in parsed:
+            if not isinstance(parsed[array_key], list):
+                return ParseResult(
+                    success=False,
+                    data=[],
+                    errors=[f'"{array_key}" must be an array'],
+                )
             return ParseResult(
-                success=False,
-                data=[],
-                errors=[f'Response missing "{array_key}" array'],
+                success=True,
+                data=parsed[array_key],
+                errors=[],
             )
 
-        if not isinstance(parsed[array_key], list):
-            return ParseResult(
-                success=False,
-                data=[],
-                errors=[f'"{array_key}" must be an array'],
-            )
+        # Fallback: some models (GPT-4.1-mini) return schema wrapper format
+        # e.g., {"schema": {"concepts": [...]}} instead of {"concepts": [...]}
+        if "schema" in parsed and isinstance(parsed["schema"], dict):
+            if array_key in parsed["schema"]:
+                if isinstance(parsed["schema"][array_key], list):
+                    return ParseResult(
+                        success=True,
+                        data=parsed["schema"][array_key],
+                        errors=[],
+                    )
 
         return ParseResult(
-            success=True,
-            data=parsed[array_key],
-            errors=[],
+            success=False,
+            data=[],
+            errors=[f'Response missing "{array_key}" array'],
         )
 
     except json.JSONDecodeError as e:

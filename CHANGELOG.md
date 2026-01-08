@@ -1,12 +1,24 @@
 # Deriva Changelog
 
-Deriving ArchiMate models from code using knowledge graphs, heuristics and LLM's, a journey through architectural decisions, strategic purges and lot's and lot's of trial and error.
+Deriving ArchiMate models from code using knowledge graphs, heuristics and LLM's, a journey through architectural decisions, strategic purges and lot's (and lot's) of trial and error.
 
 ---
 
 # v0.6.x - Deriva (December 2025 - January 2026)
 
 ## v0.6.3 - (Unreleased)
+
+### Database Adapter Refactor
+
+- Replaced SQL seed files with JSON data files for better portability and cleaner diffs
+- New `db_tool.py` CLI for database export/import operations
+- Renamed `1_schema.sql` to `schema.sql` (schema-only, no seed data)
+- Added `data/` folder with per-table JSON files: `file_types.json`, `extraction_config.json`, `derivation_config.json`, `derivation_patterns.json`
+- Updated `manager.py` to seed from JSON instead of SQL scripts
+- New exports: `export_database()`, `import_database()` in package API
+- Removed deprecated `export_current_db.py` and numbered SQL seed scripts
+- Fixed DB path inconsistency between manager and export tool
+- Updated README and CONTRIBUTING documentation
 
 ---
 
@@ -16,10 +28,10 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics and LLM's
 
 Major expansion of derivation capabilities with 6 new ArchiMate element modules:
 
-- Added `ApplicationInterface`, `BusinessEvent`, `BusinessFunction` modules
-- Added `Device`, `Node`, `SystemSoftware` technology layer modules
+- Added new `ApplicationInterface`, `BusinessEvent`, `BusinessFunction` modules
+- Added new `Device`, `Node`, `SystemSoftware` technology layer modules
 - Refactored existing derivation modules to new consistent style with improved prompts and schemas
-- New database scripts: `8_derivation_config_extension.sql`, `9_new_derivation_modules.sql`
+- New database scripts, consolidated in the current ones
 
 ### LLM Provider Expansion
 
@@ -1376,7 +1388,7 @@ Repository → Module → File → TypeDefinition → Method
 
 ```toml
 dependencies = [
-    "gradio>=4.0.0",        # Gradio was the FIRST UI choice!
+    "gradio>=4.0.0",        # Gradio was the FIRST UI choice
     "gitpython>=3.1.0",
     "pydantic>=2.0.0",
     "neo4j>=5.13.0",
@@ -1399,7 +1411,7 @@ class CodeElement:
         self.relationships: List[Tuple[str, str, float]]  # (target, type, confidence)
 ```
 
-### Strange Choices
+### Looking back
 - Committed `.DS_Store` files (Mac user on Windows project)
 - Included `__pycache__/` and `.pyc` files (both Python 3.9 AND 3.13)
 - Shipped ArchiMate HTML documentation
@@ -1419,10 +1431,11 @@ class CodeElement:
 | **0.3.x** | Apr 15-25 | Second Purge | UV/Extraction functions/File types |
 | **0.4.x** | Jun-Jul | Web UI prototype | FastAPI/Jinja2 |
 | **0.5.x** | Aug-Nov | Final development | Managers/Modules/Marimo/DuckDB |
+| **0.6.x** | Dec-Jan | AutoMate renamed to Deriva | Focus on benchmark and optimization |
 
 ---
 
-# Interesting Patterns
+# Some highlights:
 
 - **Rapid iteration**, v0.1.0 to v0.2.0 (First Purge) took only 4 days (Feb 22-26)
 - **The long gap**, 4 months between v0.3.x (Apr) and v0.5.x (Aug), with v0.4.x prototype in between
@@ -1436,6 +1449,7 @@ class CodeElement:
 - **Solo developer**, all 51 commits by a single author across 10 months
 - **Confidence scoring**, present from day 1, default 0.8 confidence on all extracted elements
 - **Test target consistency**, Flask Invoice Generator used from v0.4.x through v0.5.x
+- **Deriva**, new and more generic name to underscore the generalizability of the solution, not limited to ArchiMate
 
 ---
 

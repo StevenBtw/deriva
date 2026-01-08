@@ -1,7 +1,10 @@
 """
-TypeDefinition extraction - LLM-based extraction of type definitions from source files.
+TypeDefinition extraction - extract type definitions from source files.
 
-This module extracts TypeDefinition nodes from source code files using LLM analysis.
+This module extracts TypeDefinition nodes from source code files using:
+- AST analysis for Python files (deterministic, accurate line numbers)
+- LLM analysis for other languages or when AST fails
+
 It identifies classes, interfaces, structs, enums, functions, and other type definitions.
 """
 
@@ -10,9 +13,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from deriva.adapters.ast import ASTManager, ExtractedType
+
 from .base import (
     create_empty_llm_details,
     current_timestamp,
+    generate_edge_id,
+    is_python_file,
     parse_json_response,
     strip_chunk_suffix,
 )
@@ -469,3 +476,149 @@ def extract_type_definitions_batch(
         },
         "file_results": all_file_results,  # Per-file details for L3 logging
     }
+
+
+# =============================================================================
+# AST-based extraction for Python files
+# =============================================================================
+
+
+def extract_types_from_python(
+    file_path: str,
+    file_content: str,
+    repo_name: str,
+) -> dict[str, Any]:
+    """
+    Extract TypeDefinition nodes from Python source using AST.
+
+    This is deterministic and produces accurate line numbers.
+    Use this for Python files instead of LLM extraction.
+
+    Args:
+        file_path: Path to the file being analyzed (relative to repo)
+        file_content: Python source code
+        repo_name: Repository name
+
+    Returns:
+        Dictionary with success, data, errors, stats (same format as LLM extraction)
+    """
+    errors: list[str] = []
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+
+    try:
+        ast_manager = ASTManager()
+        extracted_types = ast_manager.extract_types(file_content, file_path)
+
+        # Build file node ID for CONTAINS edges
+        original_path = strip_chunk_suffix(file_path)
+        safe_path = original_path.replace("/", "_").replace("\\", "_")
+        file_node_id = f"file_{repo_name}_{safe_path}"
+
+        for ext_type in extracted_types:
+            node_data = _build_type_node_from_ast(
+                ext_type, file_path, file_content, repo_name
+            )
+            nodes.append(node_data)
+
+            # Create CONTAINS edge: File -> TypeDefinition
+            edge = {
+                "edge_id": generate_edge_id(
+                    file_node_id, node_data["node_id"], "CONTAINS"
+                ),
+                "from_node_id": file_node_id,
+                "to_node_id": node_data["node_id"],
+                "relationship_type": "CONTAINS",
+                "properties": {"created_at": current_timestamp()},
+            }
+            edges.append(edge)
+
+        return {
+            "success": True,
+            "data": {"nodes": nodes, "edges": edges},
+            "errors": [],
+            "stats": {
+                "total_nodes": len(nodes),
+                "total_edges": len(edges),
+                "node_types": {"TypeDefinition": len(nodes)},
+                "extraction_method": "ast",
+            },
+        }
+
+    except SyntaxError as e:
+        errors.append(f"Python syntax error in {file_path}: {e}")
+        return {
+            "success": False,
+            "data": {"nodes": [], "edges": []},
+            "errors": errors,
+            "stats": {"total_nodes": 0, "total_edges": 0, "extraction_method": "ast"},
+        }
+    except Exception as e:
+        errors.append(f"AST extraction error in {file_path}: {e}")
+        return {
+            "success": False,
+            "data": {"nodes": [], "edges": []},
+            "errors": errors,
+            "stats": {"total_nodes": 0, "total_edges": 0, "extraction_method": "ast"},
+        }
+
+
+def _build_type_node_from_ast(
+    ext_type: ExtractedType,
+    file_path: str,
+    file_content: str,
+    repo_name: str,
+) -> dict[str, Any]:
+    """Build a TypeDefinition node from AST extracted type."""
+    # Map AST kind to extraction category
+    category_map = {
+        "class": "class",
+        "function": "function",
+        "type_alias": "alias",
+    }
+    category = category_map.get(ext_type.kind, "other")
+
+    # Extract code snippet
+    lines = file_content.split("\n")
+    code_snippet = "\n".join(lines[ext_type.line_start - 1 : ext_type.line_end])
+
+    # Generate node ID
+    type_name_slug = ext_type.name.replace(" ", "_").replace("-", "_")
+    file_path_slug = file_path.replace("/", "_").replace("\\", "_")
+    node_id = f"typedef_{repo_name}_{file_path_slug}_{type_name_slug}"
+
+    return {
+        "node_id": node_id,
+        "label": "TypeDefinition",
+        "properties": {
+            "typeName": ext_type.name,
+            "category": category,
+            "description": ext_type.docstring or f"{category.title()} {ext_type.name}",
+            "interfaceType": None,  # AST can't determine this semantically
+            "filePath": file_path,
+            "startLine": ext_type.line_start,
+            "endLine": ext_type.line_end,
+            "codeSnippet": code_snippet,
+            "confidence": 1.0,  # AST is deterministic
+            "extracted_at": current_timestamp(),
+            "extraction_method": "ast",
+            # AST-specific properties
+            "bases": ext_type.bases,
+            "decorators": ext_type.decorators,
+            "is_async": ext_type.is_async,
+        },
+    }
+
+
+__all__ = [
+    # Schema
+    "TYPE_DEFINITION_SCHEMA",
+    # LLM extraction
+    "build_extraction_prompt",
+    "build_type_definition_node",
+    "parse_llm_response",
+    "extract_type_definitions",
+    "extract_type_definitions_batch",
+    # AST extraction
+    "extract_types_from_python",
+]

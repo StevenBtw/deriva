@@ -2,8 +2,9 @@
 
 This package manages the DuckDB database that stores:
 - File type registry
-- Extraction configuration versions
-- Derivation configuration versions
+- Extraction configuration
+- Derivation configuration
+- Derivation patterns
 - System settings
 
 Usage:
@@ -12,8 +13,11 @@ Usage:
     # Initialize schema
     init_database()
 
-    # Seed with default data
+    # Seed with default data from JSON files
     seed_database()
+
+    # Export database to JSON files
+    export_database()
 
     # Get connection for queries
     conn = get_connection()
@@ -21,6 +25,8 @@ Usage:
 
 from __future__ import annotations
 
+from .db_tool import export_all as export_database
+from .db_tool import import_all as import_database
 from .manager import (
     DB_PATH,
     get_connection,
@@ -36,7 +42,9 @@ __all__ = [
     "seed_database",
     "reset_database",
     "run_migrations",
+    "export_database",
+    "import_database",
     "DB_PATH",
 ]
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"

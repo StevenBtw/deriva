@@ -978,7 +978,7 @@ To add a new derivation element type (e.g., `Contract`):
        from deriva.modules.derivation import contract as module
    ```
 
-3. Add derivation config in DuckDB via SQL script in `adapters/database/scripts/`
+3. Add derivation config in `adapters/database/data/derivation_config.json`
 
 </details>
 

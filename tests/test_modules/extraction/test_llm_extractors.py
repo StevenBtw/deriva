@@ -793,8 +793,8 @@ class TestExtractTechnologies:
 class TestExtractExternalDependencies:
     """Tests for extract_external_dependencies function."""
 
-    def test_extract_success(self):
-        """Should extract dependencies successfully."""
+    def test_extract_llm_success(self):
+        """Should extract dependencies via LLM for non-deterministic files."""
         mock_response = MockLLMResponse(
             {
                 "dependencies": [
@@ -804,6 +804,7 @@ class TestExtractExternalDependencies:
                         "version": "0.100.0",
                         "ecosystem": "pypi",
                         "description": "Web framework",
+                        "confidence": 0.9,
                     }
                 ]
             }
@@ -811,9 +812,10 @@ class TestExtractExternalDependencies:
 
         mock_llm = MagicMock(return_value=mock_response)
 
+        # Use a generic .toml file (not pyproject.toml) to trigger LLM extraction
         result = external_dependency.extract_external_dependencies(
-            file_path="pyproject.toml",
-            file_content='fastapi = "^0.100.0"',
+            file_path="config.toml",
+            file_content='some_config = "value"',
             repo_name="repo",
             llm_query_fn=mock_llm,
             config={},
@@ -821,13 +823,30 @@ class TestExtractExternalDependencies:
 
         assert result["success"] is True
         assert len(result["data"]["nodes"]) == 1
+        assert mock_llm.called
+
+    def test_extract_deterministic_requirements_txt(self):
+        """Should extract dependencies deterministically from requirements.txt."""
+        result = external_dependency.extract_external_dependencies(
+            file_path="requirements.txt",
+            file_content="flask==2.0.0\nrequests>=2.25.0\n",
+            repo_name="repo",
+            llm_query_fn=None,  # No LLM needed
+            config={},
+        )
+
+        assert result["success"] is True
+        assert len(result["data"]["nodes"]) == 2
+        names = [n["properties"]["dependencyName"] for n in result["data"]["nodes"]]
+        assert "flask" in names
+        assert "requests" in names
 
     def test_extract_handles_error(self):
         """Should handle extraction errors."""
         mock_llm = MagicMock(side_effect=Exception("Timeout"))
 
         result = external_dependency.extract_external_dependencies(
-            file_path="file.toml",
+            file_path="config.toml",  # Generic file triggers LLM
             file_content="content",
             repo_name="repo",
             llm_query_fn=mock_llm,

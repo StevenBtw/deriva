@@ -35,6 +35,7 @@ from deriva.adapters.graph.models import (
 )
 from deriva.adapters.repository import RepoManager
 from deriva.common.file_utils import read_file_with_encoding
+from deriva.common.ocel import create_edge_id
 from deriva.modules import extraction
 from deriva.modules.extraction import classification
 from deriva.modules.extraction.base import deduplicate_nodes
@@ -148,6 +149,7 @@ def run_extraction(
 
                 nodes_created = result.get("nodes_created", 0)
                 edges_created = result.get("edges_created", 0)
+                edge_ids = result.get("edge_ids", [])
                 stats["nodes_created"] += nodes_created
                 stats["edges_created"] += edges_created
                 stats["steps_completed"] += 1
@@ -155,6 +157,9 @@ def run_extraction(
                 # Complete step logging
                 if step_ctx:
                     step_ctx.items_created = nodes_created + edges_created
+                    # Add edge IDs for OCEL logging
+                    for edge_id in edge_ids:
+                        step_ctx.add_edge(edge_id)
                     step_ctx.complete()
 
                 # Separate warnings (skipped steps) from real errors
@@ -255,6 +260,7 @@ def _extract_repository(repo: Any, graph_manager: GraphManager) -> dict[str, Any
 def _extract_directories(repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
     """Extract directory nodes."""
     result = extraction.extract_directories(str(repo_path), repo.name)
+    edge_ids: list[str] = []
 
     if result["success"]:
         for node_data in result["data"]["nodes"]:
@@ -266,6 +272,12 @@ def _extract_directories(repo: Any, repo_path: Path, graph_manager: GraphManager
             graph_manager.add_node(dir_node, node_id=node_data["node_id"])
 
         for edge_data in result["data"]["edges"]:
+            edge_id = create_edge_id(
+                edge_data["from_node_id"],
+                edge_data["relationship_type"],
+                edge_data["to_node_id"],
+            )
+            edge_ids.append(edge_id)
             graph_manager.add_edge(
                 src_id=edge_data["from_node_id"],
                 dst_id=edge_data["to_node_id"],
@@ -275,6 +287,7 @@ def _extract_directories(repo: Any, repo_path: Path, graph_manager: GraphManager
     return {
         "nodes_created": result["stats"].get("total_nodes", 0),
         "edges_created": result["stats"].get("total_edges", 0),
+        "edge_ids": edge_ids,
         "errors": result.get("errors", []),
     }
 
@@ -283,6 +296,7 @@ def _extract_files(repo: Any, repo_path: Path, classified_files: list[dict], gra
     """Extract file nodes."""
     # Use the module to scan all files from repo path
     result = extraction.extract_files(str(repo_path), repo.name)
+    edge_ids: list[str] = []
 
     # Build a lookup for classification info (normalize paths to forward slashes)
     classification_lookup = {f["path"].replace("\\", "/"): f for f in classified_files}
@@ -302,6 +316,12 @@ def _extract_files(repo: Any, repo_path: Path, classified_files: list[dict], gra
             graph_manager.add_node(file_node, node_id=node_data["node_id"])
 
         for edge_data in result["data"]["edges"]:
+            edge_id = create_edge_id(
+                edge_data["from_node_id"],
+                edge_data["relationship_type"],
+                edge_data["to_node_id"],
+            )
+            edge_ids.append(edge_id)
             graph_manager.add_edge(
                 src_id=edge_data["from_node_id"],
                 dst_id=edge_data["to_node_id"],
@@ -311,6 +331,7 @@ def _extract_files(repo: Any, repo_path: Path, classified_files: list[dict], gra
     return {
         "nodes_created": result["stats"].get("total_nodes", 0),
         "edges_created": result["stats"].get("total_edges", 0),
+        "edge_ids": edge_ids,
         "errors": result.get("errors", []),
     }
 
@@ -389,12 +410,29 @@ def _extract_llm_based(
         # Check if this is a Python file and we can use AST
         is_python = extraction.is_python_file(file_info.get("subtype"))
 
-        if use_ast_for_python and is_python:
+        # ExternalDependency: use unified function (handles deterministic/AST/LLM)
+        if node_type == "ExternalDependency":
+            result = extraction.extract_external_dependencies(
+                file_path=file_info["path"],
+                file_content=content,
+                repo_name=repo.name,
+                llm_query_fn=step_llm_query_fn,
+                config=extraction_config,
+                subtype=file_info.get("subtype"),
+            )
+            file_nodes = result["data"]["nodes"] if result["success"] else []
+            file_edges = result["data"].get("edges", []) if result["success"] else []
+            file_errors = result.get("errors", [])
+        elif use_ast_for_python and is_python:
             # Use AST extraction for Python - faster and more precise
             if node_type == "TypeDefinition":
-                result = extraction.extract_types_from_python(file_info["path"], content, repo.name)
+                result = extraction.extract_types_from_python(
+                    file_info["path"], content, repo.name
+                )
             else:  # Method
-                result = extraction.extract_methods_from_python(file_info["path"], content, repo.name)
+                result = extraction.extract_methods_from_python(
+                    file_info["path"], content, repo.name
+                )
             file_nodes = result["data"]["nodes"] if result["success"] else []
             file_edges = result["data"].get("edges", []) if result["success"] else []
             file_errors = result.get("errors", [])
@@ -410,6 +448,10 @@ def _extract_llm_based(
             )
 
         errors.extend(file_errors)
+
+        # Normalize node names for consistency
+        if node_type in ["ExternalDependency", "BusinessConcept", "Technology"]:
+            file_nodes = extraction.normalize_nodes(file_nodes, node_type, repo.name)
 
         # Persist extracted nodes
         for node_data in file_nodes:

@@ -122,6 +122,8 @@ class OCELRunLogger:
         config_type: str,  # "extraction" or "derivation"
         config_id: str,  # node_type or step_name
         objects_created: list[str],
+        edges_created: list[str] | None = None,
+        relationships_created: list[str] | None = None,
         stats: dict | None = None,
         errors: list[str] | None = None,
     ) -> None:
@@ -129,23 +131,44 @@ class OCELRunLogger:
         Log per-config OCEL event with created objects.
 
         This enables config-deviation correlation in analysis.
+
+        Args:
+            config_type: "extraction" or "derivation"
+            config_id: node_type or step_name
+            objects_created: List of created node/element IDs
+            edges_created: List of created edge IDs (extraction only)
+            relationships_created: List of created relationship IDs (derivation only)
+            stats: Additional statistics
+            errors: List of error messages
         """
         activity = "ExtractConfig" if config_type == "extraction" else "DeriveConfig"
         object_type = "GraphNode" if config_type == "extraction" else "Element"
 
+        objects_dict = {
+            "BenchmarkSession": [self.session_id],
+            "BenchmarkRun": [self.run_id],
+            "Repository": [self.repo],
+            "Model": [self.model],
+            "Config": [config_id],
+            object_type: objects_created,
+        }
+
+        # Add edges for extraction
+        if edges_created:
+            objects_dict["Edge"] = edges_created
+
+        # Add relationships for derivation
+        if relationships_created:
+            objects_dict["Relationship"] = relationships_created
+
         self.ocel_log.create_event(
             activity=activity,
-            objects={
-                "BenchmarkSession": [self.session_id],
-                "BenchmarkRun": [self.run_id],
-                "Repository": [self.repo],
-                "Model": [self.model],
-                "Config": [config_id],
-                object_type: objects_created,
-            },
+            objects=objects_dict,
             config_type=config_type,
             config_id=config_id,
             objects_created=len(objects_created),
+            edges_created=len(edges_created) if edges_created else 0,
+            relationships_created=len(relationships_created) if relationships_created else 0,
             stats=stats or {},
             errors=errors or [],
         )
@@ -164,6 +187,8 @@ class OCELStepContext:
         self.stats: dict | None = None
         self._completed = False
         self._created_objects: list[str] = []
+        self._created_edges: list[str] = []  # Edge IDs for extraction
+        self._created_relationships: list[str] = []  # Relationship IDs for derivation
 
     def __enter__(self) -> OCELStepContext:
         return self
@@ -178,6 +203,14 @@ class OCELStepContext:
         """Track a created object ID for OCEL logging."""
         self._created_objects.append(object_id)
 
+    def add_edge(self, edge_id: str) -> None:
+        """Track a created edge ID for OCEL logging (extraction)."""
+        self._created_edges.append(edge_id)
+
+    def add_relationship(self, relationship_id: str) -> None:
+        """Track a created relationship ID for OCEL logging (derivation)."""
+        self._created_relationships.append(relationship_id)
+
     def complete(self, message: str = "") -> None:
         """Mark step as completed and log to OCEL."""
         self._completed = True
@@ -186,6 +219,8 @@ class OCELStepContext:
             config_type=config_type,
             config_id=self.step,
             objects_created=self._created_objects,
+            edges_created=self._created_edges if self._created_edges else None,
+            relationships_created=self._created_relationships if self._created_relationships else None,
             stats={"items_created": self.items_created, "items_processed": self.items_processed},
             errors=[],
         )
@@ -198,6 +233,8 @@ class OCELStepContext:
             config_type=config_type,
             config_id=self.step,
             objects_created=self._created_objects,
+            edges_created=self._created_edges if self._created_edges else None,
+            relationships_created=self._created_relationships if self._created_relationships else None,
             stats={"items_created": self.items_created, "items_failed": self.items_failed},
             errors=[error],
         )
@@ -975,8 +1012,24 @@ class IntraModelMetrics:
     element_counts: list[int]
     count_variance: float
     name_consistency: float  # % of element names in ALL runs
-    stable_elements: list[str]  # Names in all runs
-    unstable_elements: dict[str, int]  # Name -> count of runs appeared
+    stable_elements: list[str] = field(default_factory=list)  # Names in all runs
+    unstable_elements: dict[str, int] = field(default_factory=dict)  # Name -> count of runs appeared
+
+    # Edge consistency (extraction phase)
+    edge_counts: list[int] = field(default_factory=list)
+    edge_count_variance: float = 0.0
+    edge_consistency: float = 100.0  # % of edges in ALL runs
+    stable_edges: list[str] = field(default_factory=list)
+    unstable_edges: dict[str, int] = field(default_factory=dict)
+    edge_type_breakdown: dict[str, float] = field(default_factory=dict)  # CONTAINS: 95%, etc.
+
+    # Relationship consistency (derivation phase)
+    relationship_counts: list[int] = field(default_factory=list)
+    relationship_count_variance: float = 0.0
+    relationship_consistency: float = 100.0  # % of relationships in ALL runs
+    stable_relationships: list[str] = field(default_factory=list)
+    unstable_relationships: dict[str, int] = field(default_factory=dict)
+    relationship_type_breakdown: dict[str, float] = field(default_factory=dict)  # Serving: 90%, etc.
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -993,6 +1046,18 @@ class InterModelMetrics:
     overlap: list[str]  # Elements in ALL models
     unique_by_model: dict[str, list[str]]  # Elements unique to each model
     jaccard_similarity: float
+
+    # Edge comparison (extraction phase)
+    edges_by_model: dict[str, list[str]] = field(default_factory=dict)
+    edge_overlap: list[str] = field(default_factory=list)  # Edges in ALL models
+    edge_unique_by_model: dict[str, list[str]] = field(default_factory=dict)
+    edge_jaccard: float = 1.0
+
+    # Relationship comparison (derivation phase)
+    relationships_by_model: dict[str, list[str]] = field(default_factory=dict)
+    relationship_overlap: list[str] = field(default_factory=list)  # Relationships in ALL models
+    relationship_unique_by_model: dict[str, list[str]] = field(default_factory=dict)
+    relationship_jaccard: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -1150,6 +1215,86 @@ class BenchmarkAnalyzer:
 
             consistency = len(stable) / len(all_elements) * 100 if all_elements else 100
 
+            # =====================================================================
+            # Edge consistency (extraction phase)
+            # =====================================================================
+            edges_by_run = self._get_edges_by_run(model, repo)
+
+            # Extract edge counts from stats
+            edge_counts = []
+            for run in runs:
+                stats = run.get("stats", {})
+                extraction_stats = stats.get("extraction", {})
+                edge_count = extraction_stats.get("edges_created", 0)
+                edge_counts.append(edge_count)
+
+            # Compute edge count variance
+            if edge_counts:
+                edge_avg = sum(edge_counts) / len(edge_counts)
+                edge_variance = sum((c - edge_avg) ** 2 for c in edge_counts) / len(edge_counts)
+            else:
+                edge_variance = 0.0
+
+            # Compute edge consistency
+            all_edges = set()
+            for edges in edges_by_run.values():
+                all_edges.update(edges)
+
+            stable_edges = []
+            unstable_edges: dict[str, int] = {}
+
+            for edge in all_edges:
+                count = sum(1 for edges in edges_by_run.values() if edge in edges)
+                if count == len(runs):
+                    stable_edges.append(edge)
+                else:
+                    unstable_edges[edge] = count
+
+            edge_consistency = len(stable_edges) / len(all_edges) * 100 if all_edges else 100.0
+
+            # Compute per-type breakdown for edges
+            edge_type_breakdown = self._compute_type_breakdown(edges_by_run)
+
+            # =====================================================================
+            # Relationship consistency (derivation phase)
+            # =====================================================================
+            relationships_by_run = self._get_relationships_by_run(model, repo)
+
+            # Extract relationship counts from stats
+            relationship_counts = []
+            for run in runs:
+                stats = run.get("stats", {})
+                derivation_stats = stats.get("derivation", {})
+                rel_count = derivation_stats.get("relationships_created", 0)
+                relationship_counts.append(rel_count)
+
+            # Compute relationship count variance
+            if relationship_counts:
+                rel_avg = sum(relationship_counts) / len(relationship_counts)
+                rel_variance = sum((c - rel_avg) ** 2 for c in relationship_counts) / len(relationship_counts)
+            else:
+                rel_variance = 0.0
+
+            # Compute relationship consistency
+            all_relationships = set()
+            for rels in relationships_by_run.values():
+                all_relationships.update(rels)
+
+            stable_relationships = []
+            unstable_relationships: dict[str, int] = {}
+
+            for rel in all_relationships:
+                count = sum(1 for rels in relationships_by_run.values() if rel in rels)
+                if count == len(runs):
+                    stable_relationships.append(rel)
+                else:
+                    unstable_relationships[rel] = count
+
+            rel_consistency = len(stable_relationships) / len(all_relationships) * 100 if all_relationships else 100.0
+
+            # Compute per-type breakdown for relationships
+            relationship_type_breakdown = self._compute_type_breakdown(relationships_by_run)
+
             results.append(
                 IntraModelMetrics(
                     model=model,
@@ -1160,6 +1305,20 @@ class BenchmarkAnalyzer:
                     name_consistency=consistency,
                     stable_elements=sorted(stable),
                     unstable_elements=unstable,
+                    # Edge consistency
+                    edge_counts=edge_counts,
+                    edge_count_variance=edge_variance,
+                    edge_consistency=edge_consistency,
+                    stable_edges=sorted(stable_edges),
+                    unstable_edges=unstable_edges,
+                    edge_type_breakdown=edge_type_breakdown,
+                    # Relationship consistency
+                    relationship_counts=relationship_counts,
+                    relationship_count_variance=rel_variance,
+                    relationship_consistency=rel_consistency,
+                    stable_relationships=sorted(stable_relationships),
+                    unstable_relationships=unstable_relationships,
+                    relationship_type_breakdown=relationship_type_breakdown,
                 )
             )
 
@@ -1186,6 +1345,93 @@ class BenchmarkAnalyzer:
                     result[run_id].update(elements)
 
         return result
+
+    def _get_edges_by_run(self, model: str, repo: str) -> dict[str, set[str]]:
+        """Get extracted edges grouped by run for a model/repo combination."""
+        result: dict[str, set[str]] = {}
+
+        for event in self.ocel_log.events:
+            if event.activity != "ExtractConfig":
+                continue
+
+            event_model = event.objects.get("Model", [None])[0]
+            event_repo = event.objects.get("Repository", [None])[0]
+            runs = event.objects.get("BenchmarkRun", [])
+
+            if event_model == model and event_repo == repo:
+                for run_id in runs:
+                    if run_id not in result:
+                        result[run_id] = set()
+                    edges = event.objects.get("Edge", [])
+                    result[run_id].update(edges)
+
+        return result
+
+    def _get_relationships_by_run(self, model: str, repo: str) -> dict[str, set[str]]:
+        """Get derived relationships grouped by run for a model/repo combination."""
+        result: dict[str, set[str]] = {}
+
+        for event in self.ocel_log.events:
+            if event.activity != "DeriveConfig":
+                continue
+
+            event_model = event.objects.get("Model", [None])[0]
+            event_repo = event.objects.get("Repository", [None])[0]
+            runs = event.objects.get("BenchmarkRun", [])
+
+            if event_model == model and event_repo == repo:
+                for run_id in runs:
+                    if run_id not in result:
+                        result[run_id] = set()
+                    relationships = event.objects.get("Relationship", [])
+                    result[run_id].update(relationships)
+
+        return result
+
+    def _compute_type_breakdown(
+        self,
+        objects_by_run: dict[str, set[str]],
+    ) -> dict[str, float]:
+        """
+        Compute consistency per edge/relationship type.
+
+        Edge/relationship IDs have format: {type}_{source}_{target}
+        This method extracts the type and computes consistency for each.
+
+        Args:
+            objects_by_run: Dict mapping run_id -> set of edge/relationship IDs
+
+        Returns:
+            Dict mapping type -> consistency percentage (0-100)
+        """
+        if not objects_by_run:
+            return {}
+
+        # Group objects by type
+        type_objects: dict[str, set[str]] = {}
+        for run_id, objects in objects_by_run.items():
+            for obj_id in objects:
+                # Extract type from id: "CONTAINS_dir_a_file_b" -> "CONTAINS"
+                parts = obj_id.split("_", 1)
+                rel_type = parts[0] if parts else obj_id
+                if rel_type not in type_objects:
+                    type_objects[rel_type] = set()
+                type_objects[rel_type].add(obj_id)
+
+        # Compute consistency for each type
+        breakdown: dict[str, float] = {}
+        num_runs = len(objects_by_run)
+
+        for rel_type, objects in type_objects.items():
+            # Count objects that appear in ALL runs
+            stable_count = sum(
+                1
+                for obj in objects
+                if all(obj in run_objs for run_objs in objects_by_run.values())
+            )
+            breakdown[rel_type] = (stable_count / len(objects) * 100) if objects else 100.0
+
+        return breakdown
 
     # =========================================================================
     # INTER-MODEL CONSISTENCY
@@ -1240,6 +1486,58 @@ class BenchmarkAnalyzer:
             else:
                 jaccard = 1.0
 
+            # =================================================================
+            # Edge comparison across models (extraction phase)
+            # =================================================================
+            edges_by_model: dict[str, set[str]] = {}
+
+            for model in models_for_repo:
+                edges_by_model[model] = set()
+                for run_id, edges in self._get_edges_by_run(model, repo).items():
+                    edges_by_model[model].update(edges)
+
+            # Compute edge overlap (edges in ALL models)
+            if edges_by_model and all(edges_by_model.values()):
+                edge_overlap = set.intersection(*edges_by_model.values())
+            else:
+                edge_overlap = set()
+
+            # Compute unique edges per model
+            all_edges = set.union(*edges_by_model.values()) if edges_by_model else set()
+            edge_unique_by_model = {}
+            for model, edges in edges_by_model.items():
+                other_edges = set.union(*(e for m, e in edges_by_model.items() if m != model)) if len(edges_by_model) > 1 else set()
+                edge_unique_by_model[model] = sorted(edges - other_edges)
+
+            # Compute edge Jaccard similarity
+            edge_jaccard = len(edge_overlap) / len(all_edges) if all_edges else 1.0
+
+            # =================================================================
+            # Relationship comparison across models (derivation phase)
+            # =================================================================
+            relationships_by_model: dict[str, set[str]] = {}
+
+            for model in models_for_repo:
+                relationships_by_model[model] = set()
+                for run_id, rels in self._get_relationships_by_run(model, repo).items():
+                    relationships_by_model[model].update(rels)
+
+            # Compute relationship overlap (relationships in ALL models)
+            if relationships_by_model and all(relationships_by_model.values()):
+                relationship_overlap = set.intersection(*relationships_by_model.values())
+            else:
+                relationship_overlap = set()
+
+            # Compute unique relationships per model
+            all_relationships = set.union(*relationships_by_model.values()) if relationships_by_model else set()
+            relationship_unique_by_model = {}
+            for model, rels in relationships_by_model.items():
+                other_rels = set.union(*(r for m, r in relationships_by_model.items() if m != model)) if len(relationships_by_model) > 1 else set()
+                relationship_unique_by_model[model] = sorted(rels - other_rels)
+
+            # Compute relationship Jaccard similarity
+            relationship_jaccard = len(relationship_overlap) / len(all_relationships) if all_relationships else 1.0
+
             results.append(
                 InterModelMetrics(
                     repository=repo,
@@ -1248,6 +1546,16 @@ class BenchmarkAnalyzer:
                     overlap=sorted(overlap),
                     unique_by_model=unique_by_model,
                     jaccard_similarity=jaccard,
+                    # Edge comparison
+                    edges_by_model={m: sorted(e) for m, e in edges_by_model.items()},
+                    edge_overlap=sorted(edge_overlap),
+                    edge_unique_by_model=edge_unique_by_model,
+                    edge_jaccard=edge_jaccard,
+                    # Relationship comparison
+                    relationships_by_model={m: sorted(r) for m, r in relationships_by_model.items()},
+                    relationship_overlap=sorted(relationship_overlap),
+                    relationship_unique_by_model=relationship_unique_by_model,
+                    relationship_jaccard=relationship_jaccard,
                 )
             )
 
@@ -1282,6 +1590,13 @@ class BenchmarkAnalyzer:
 
         node_consistency = self.ocel_log.compute_consistency_score("GraphNode")
         by_element_type["GraphNode"] = node_consistency
+
+        # Edge and Relationship consistency from OCEL
+        edge_consistency = self.ocel_log.compute_consistency_score("Edge")
+        by_element_type["Edge"] = edge_consistency
+
+        relationship_consistency = self.ocel_log.compute_consistency_score("Relationship")
+        by_element_type["Relationship"] = relationship_consistency
 
         # Stage consistency from run stats
         stage_counts: dict[str, list[int]] = {
@@ -1347,6 +1662,20 @@ class BenchmarkAnalyzer:
                         "name": stage,
                         "consistency": score,
                         "severity": "high" if score < 50 else "medium",
+                    }
+                )
+
+        # Add hotspots for edge and relationship consistency
+        # Note: compute_consistency_score returns 0-1, convert to percentage for comparison
+        for obj_type, score in sorted(by_element_type.items(), key=lambda x: x[1]):
+            score_pct = score * 100  # Convert to percentage
+            if score_pct < 80 and obj_type in ("Edge", "Relationship"):
+                hotspots.append(
+                    {
+                        "type": "object_type",
+                        "name": obj_type,
+                        "consistency": score_pct,
+                        "severity": "high" if score_pct < 50 else "medium",
                     }
                 )
 

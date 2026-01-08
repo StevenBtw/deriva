@@ -1,0 +1,848 @@
+[
+  {
+    "id": 92,
+    "step_name": "ApplicationInterface",
+    "pattern_type": "exclude",
+    "pattern_category": "internal",
+    "patterns": "[\"_\", \"private\", \"internal\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.448531"
+  },
+  {
+    "id": 93,
+    "step_name": "ApplicationInterface",
+    "pattern_type": "exclude",
+    "pattern_category": "utility",
+    "patterns": "[\"helper\", \"util\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.448531"
+  },
+  {
+    "id": 91,
+    "step_name": "ApplicationInterface",
+    "pattern_type": "include",
+    "pattern_category": "api",
+    "patterns": "[\"api\", \"endpoint\", \"route\", \"handler\", \"controller\", \"rest\", \"graphql\", \"grpc\", \"webhook\", \"websocket\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.448531"
+  },
+  {
+    "id": 7,
+    "step_name": "ApplicationService",
+    "pattern_type": "exclude",
+    "pattern_category": "lifecycle",
+    "patterns": "[\"__init__\", \"__del__\", \"setup\", \"teardown\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.704657"
+  },
+  {
+    "id": 6,
+    "step_name": "ApplicationService",
+    "pattern_type": "exclude",
+    "pattern_category": "private",
+    "patterns": "[\"_\", \"private\", \"internal\", \"helper\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.704657"
+  },
+  {
+    "id": 8,
+    "step_name": "ApplicationService",
+    "pattern_type": "exclude",
+    "pattern_category": "utility",
+    "patterns": "[\"validate\", \"parse\", \"format\", \"convert\", \"serialize\", \"deserialize\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.704657"
+  },
+  {
+    "id": 4,
+    "step_name": "ApplicationService",
+    "pattern_type": "include",
+    "pattern_category": "auth",
+    "patterns": "[\"login\", \"logout\", \"register\", \"authenticate\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.704657"
+  },
+  {
+    "id": 3,
+    "step_name": "ApplicationService",
+    "pattern_type": "include",
+    "pattern_category": "handlers",
+    "patterns": "[\"view\", \"handler\", \"controller\", \"index\", \"list\", \"detail\", \"show\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.704657"
+  },
+  {
+    "id": 1,
+    "step_name": "ApplicationService",
+    "pattern_type": "include",
+    "pattern_category": "http_methods",
+    "patterns": "[\"get\", \"post\", \"put\", \"patch\", \"delete\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.704657"
+  },
+  {
+    "id": 5,
+    "step_name": "ApplicationService",
+    "pattern_type": "include",
+    "pattern_category": "operations",
+    "patterns": "[\"search\", \"filter\", \"export\", \"download\", \"upload\", \"import\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.704657"
+  },
+  {
+    "id": 2,
+    "step_name": "ApplicationService",
+    "pattern_type": "include",
+    "pattern_category": "routing",
+    "patterns": "[\"route\", \"endpoint\", \"api\", \"rest\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.704657"
+  },
+  {
+    "id": 60,
+    "step_name": "BusinessActor",
+    "pattern_type": "exclude",
+    "pattern_category": "base_classes",
+    "patterns": "[\"base\", \"abstract\", \"interface\", \"mixin\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 57,
+    "step_name": "BusinessActor",
+    "pattern_type": "exclude",
+    "pattern_category": "data",
+    "patterns": "[\"data\", \"model\", \"entity\", \"record\", \"item\", \"entry\", \"request\", \"response\", \"message\", \"event\", \"log\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 59,
+    "step_name": "BusinessActor",
+    "pattern_type": "exclude",
+    "pattern_category": "errors",
+    "patterns": "[\"exception\", \"error\", \"validator\", \"parser\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 58,
+    "step_name": "BusinessActor",
+    "pattern_type": "exclude",
+    "pattern_category": "technical",
+    "patterns": "[\"handler\", \"controller\", \"service\", \"repository\", \"factory\", \"helper\", \"util\", \"config\", \"settings\", \"option\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 56,
+    "step_name": "BusinessActor",
+    "pattern_type": "include",
+    "pattern_category": "auth",
+    "patterns": "[\"principal\", \"identity\", \"account\", \"role\", \"permission\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 51,
+    "step_name": "BusinessActor",
+    "pattern_type": "include",
+    "pattern_category": "external",
+    "patterns": "[\"customer\", \"client\", \"buyer\", \"seller\", \"vendor\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 52,
+    "step_name": "BusinessActor",
+    "pattern_type": "include",
+    "pattern_category": "internal",
+    "patterns": "[\"employee\", \"staff\", \"worker\", \"agent\", \"representative\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 53,
+    "step_name": "BusinessActor",
+    "pattern_type": "include",
+    "pattern_category": "members",
+    "patterns": "[\"member\", \"subscriber\", \"owner\", \"author\", \"creator\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 54,
+    "step_name": "BusinessActor",
+    "pattern_type": "include",
+    "pattern_category": "organizational",
+    "patterns": "[\"department\", \"team\", \"group\", \"organization\", \"company\", \"partner\", \"supplier\", \"provider\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 50,
+    "step_name": "BusinessActor",
+    "pattern_type": "include",
+    "pattern_category": "roles",
+    "patterns": "[\"user\", \"admin\", \"administrator\", \"manager\", \"operator\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 55,
+    "step_name": "BusinessActor",
+    "pattern_type": "include",
+    "pattern_category": "system",
+    "patterns": "[\"system\", \"service\", \"bot\", \"scheduler\", \"daemon\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.715839"
+  },
+  {
+    "id": 97,
+    "step_name": "BusinessEvent",
+    "pattern_type": "exclude",
+    "pattern_category": "technical",
+    "patterns": "[\"click\", \"mouse\", \"key\", \"scroll\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.458245"
+  },
+  {
+    "id": 95,
+    "step_name": "BusinessEvent",
+    "pattern_type": "include",
+    "pattern_category": "event",
+    "patterns": "[\"event\", \"signal\", \"message\", \"notification\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.458245"
+  },
+  {
+    "id": 94,
+    "step_name": "BusinessEvent",
+    "pattern_type": "include",
+    "pattern_category": "handler",
+    "patterns": "[\"on_\", \"handle\", \"emit\", \"trigger\", \"dispatch\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.458245"
+  },
+  {
+    "id": 96,
+    "step_name": "BusinessEvent",
+    "pattern_type": "include",
+    "pattern_category": "lifecycle",
+    "patterns": "[\"created\", \"updated\", \"deleted\", \"changed\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.458245"
+  },
+  {
+    "id": 100,
+    "step_name": "BusinessFunction",
+    "pattern_type": "exclude",
+    "pattern_category": "infrastructure",
+    "patterns": "[\"util\", \"helper\", \"common\", \"shared\", \"lib\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.461310"
+  },
+  {
+    "id": 99,
+    "step_name": "BusinessFunction",
+    "pattern_type": "include",
+    "pattern_category": "capability",
+    "patterns": "[\"payment\", \"order\", \"inventory\", \"shipping\", \"billing\", \"auth\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.461310"
+  },
+  {
+    "id": 98,
+    "step_name": "BusinessFunction",
+    "pattern_type": "include",
+    "pattern_category": "domain",
+    "patterns": "[\"service\", \"domain\", \"business\", \"core\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.461310"
+  },
+  {
+    "id": 10,
+    "step_name": "BusinessObject",
+    "pattern_type": "exclude",
+    "pattern_category": "base_classes",
+    "patterns": "[\"base\", \"abstract\", \"mixin\", \"interface\", \"protocol\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 14,
+    "step_name": "BusinessObject",
+    "pattern_type": "exclude",
+    "pattern_category": "config",
+    "patterns": "[\"config\", \"settings\", \"options\", \"params\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 15,
+    "step_name": "BusinessObject",
+    "pattern_type": "exclude",
+    "pattern_category": "errors",
+    "patterns": "[\"error\", \"exception\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 12,
+    "step_name": "BusinessObject",
+    "pattern_type": "exclude",
+    "pattern_category": "framework",
+    "patterns": "[\"handler\", \"middleware\", \"decorator\", \"wrapper\", \"factory\", \"builder\", \"adapter\", \"proxy\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 13,
+    "step_name": "BusinessObject",
+    "pattern_type": "exclude",
+    "pattern_category": "testing",
+    "patterns": "[\"test\", \"mock\", \"stub\", \"fake\", \"fixture\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 11,
+    "step_name": "BusinessObject",
+    "pattern_type": "exclude",
+    "pattern_category": "utility",
+    "patterns": "[\"helper\", \"utils\", \"util\", \"tools\", \"common\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 17,
+    "step_name": "BusinessObject",
+    "pattern_type": "include",
+    "pattern_category": "commerce",
+    "patterns": "[\"order\", \"invoice\", \"payment\", \"transaction\", \"receipt\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 20,
+    "step_name": "BusinessObject",
+    "pattern_type": "include",
+    "pattern_category": "communication",
+    "patterns": "[\"message\", \"notification\", \"email\", \"alert\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 23,
+    "step_name": "BusinessObject",
+    "pattern_type": "include",
+    "pattern_category": "contact",
+    "patterns": "[\"address\", \"contact\", \"profile\", \"preference\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 19,
+    "step_name": "BusinessObject",
+    "pattern_type": "include",
+    "pattern_category": "documents",
+    "patterns": "[\"document\", \"report\", \"contract\", \"agreement\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 18,
+    "step_name": "BusinessObject",
+    "pattern_type": "include",
+    "pattern_category": "inventory",
+    "patterns": "[\"product\", \"item\", \"catalog\", \"inventory\", \"stock\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 22,
+    "step_name": "BusinessObject",
+    "pattern_type": "include",
+    "pattern_category": "organization",
+    "patterns": "[\"employee\", \"department\", \"organization\", \"company\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 16,
+    "step_name": "BusinessObject",
+    "pattern_type": "include",
+    "pattern_category": "people",
+    "patterns": "[\"user\", \"account\", \"customer\", \"client\", \"member\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 25,
+    "step_name": "BusinessObject",
+    "pattern_type": "include",
+    "pattern_category": "records",
+    "patterns": "[\"position\", \"entry\", \"record\", \"detail\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 24,
+    "step_name": "BusinessObject",
+    "pattern_type": "include",
+    "pattern_category": "subscription",
+    "patterns": "[\"subscription\", \"plan\", \"license\", \"quota\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 21,
+    "step_name": "BusinessObject",
+    "pattern_type": "include",
+    "pattern_category": "workflow",
+    "patterns": "[\"project\", \"task\", \"workflow\", \"process\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.709979"
+  },
+  {
+    "id": 32,
+    "step_name": "BusinessProcess",
+    "pattern_type": "exclude",
+    "pattern_category": "accessors",
+    "patterns": "[\"get_\", \"set_\", \"is_\", \"has_\", \"_get\", \"_set\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 33,
+    "step_name": "BusinessProcess",
+    "pattern_type": "exclude",
+    "pattern_category": "framework",
+    "patterns": "[\"setup\", \"teardown\", \"configure\", \"initialize\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 30,
+    "step_name": "BusinessProcess",
+    "pattern_type": "exclude",
+    "pattern_category": "lifecycle",
+    "patterns": "[\"__init__\", \"__del__\", \"__enter__\", \"__exit__\", \"__str__\", \"__repr__\", \"__eq__\", \"__hash__\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 31,
+    "step_name": "BusinessProcess",
+    "pattern_type": "exclude",
+    "pattern_category": "utility",
+    "patterns": "[\"helper\", \"util\", \"validate\", \"parse\", \"format\", \"convert\", \"transform\", \"serialize\", \"deserialize\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 38,
+    "step_name": "BusinessProcess",
+    "pattern_type": "include",
+    "pattern_category": "actions",
+    "patterns": "[\"process\", \"handle\", \"execute\", \"run\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 42,
+    "step_name": "BusinessProcess",
+    "pattern_type": "include",
+    "pattern_category": "auth",
+    "patterns": "[\"register\", \"login\", \"logout\", \"authenticate\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 43,
+    "step_name": "BusinessProcess",
+    "pattern_type": "include",
+    "pattern_category": "commerce",
+    "patterns": "[\"checkout\", \"payment\", \"order\", \"invoice\", \"ship\", \"deliver\", \"fulfill\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 40,
+    "step_name": "BusinessProcess",
+    "pattern_type": "include",
+    "pattern_category": "communication",
+    "patterns": "[\"send\", \"notify\", \"email\", \"alert\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 39,
+    "step_name": "BusinessProcess",
+    "pattern_type": "include",
+    "pattern_category": "compute",
+    "patterns": "[\"generate\", \"calculate\", \"compute\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 34,
+    "step_name": "BusinessProcess",
+    "pattern_type": "include",
+    "pattern_category": "crud_create",
+    "patterns": "[\"create\", \"add\", \"insert\", \"new\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 36,
+    "step_name": "BusinessProcess",
+    "pattern_type": "include",
+    "pattern_category": "crud_delete",
+    "patterns": "[\"delete\", \"remove\", \"cancel\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 35,
+    "step_name": "BusinessProcess",
+    "pattern_type": "include",
+    "pattern_category": "crud_update",
+    "patterns": "[\"update\", \"modify\", \"edit\", \"change\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 41,
+    "step_name": "BusinessProcess",
+    "pattern_type": "include",
+    "pattern_category": "data_transfer",
+    "patterns": "[\"export\", \"import\", \"sync\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 37,
+    "step_name": "BusinessProcess",
+    "pattern_type": "include",
+    "pattern_category": "workflow",
+    "patterns": "[\"submit\", \"approve\", \"reject\", \"review\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.712918"
+  },
+  {
+    "id": 78,
+    "step_name": "DataObject",
+    "pattern_type": "exclude",
+    "pattern_category": "assets",
+    "patterns": "[\"asset\", \"image\", \"font\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.718883"
+  },
+  {
+    "id": 77,
+    "step_name": "DataObject",
+    "pattern_type": "exclude",
+    "pattern_category": "docs",
+    "patterns": "[\"docs\", \"markdown\", \"readme\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.718883"
+  },
+  {
+    "id": 74,
+    "step_name": "DataObject",
+    "pattern_type": "exclude",
+    "pattern_category": "source",
+    "patterns": "[\"source\", \"python\", \"javascript\", \"typescript\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.718883"
+  },
+  {
+    "id": 75,
+    "step_name": "DataObject",
+    "pattern_type": "exclude",
+    "pattern_category": "templates",
+    "patterns": "[\"template\", \"html\", \"css\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.718883"
+  },
+  {
+    "id": 76,
+    "step_name": "DataObject",
+    "pattern_type": "exclude",
+    "pattern_category": "testing",
+    "patterns": "[\"test\", \"spec\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.718883"
+  },
+  {
+    "id": 71,
+    "step_name": "DataObject",
+    "pattern_type": "include",
+    "pattern_category": "config",
+    "patterns": "[\"config\", \"json\", \"yaml\", \"yml\", \"toml\", \"ini\", \"env\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.718883"
+  },
+  {
+    "id": 73,
+    "step_name": "DataObject",
+    "pattern_type": "include",
+    "pattern_category": "data",
+    "patterns": "[\"csv\", \"xml\", \"data\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.718883"
+  },
+  {
+    "id": 70,
+    "step_name": "DataObject",
+    "pattern_type": "include",
+    "pattern_category": "database",
+    "patterns": "[\"database\", \"db\", \"sqlite\", \"sql\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.718883"
+  },
+  {
+    "id": 72,
+    "step_name": "DataObject",
+    "pattern_type": "include",
+    "pattern_category": "schema",
+    "patterns": "[\"schema\", \"xsd\", \"dtd\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.718883"
+  },
+  {
+    "id": 104,
+    "step_name": "Device",
+    "pattern_type": "exclude",
+    "pattern_category": "software",
+    "patterns": "[\".py\", \".js\", \".ts\", \"test\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.464163"
+  },
+  {
+    "id": 101,
+    "step_name": "Device",
+    "pattern_type": "include",
+    "pattern_category": "hardware",
+    "patterns": "[\"server\", \"host\", \"machine\", \"hardware\", \"physical\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.464163"
+  },
+  {
+    "id": 102,
+    "step_name": "Device",
+    "pattern_type": "include",
+    "pattern_category": "infra",
+    "patterns": "[\"terraform\", \"cloudformation\", \"ansible\", \"infrastructure\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.464163"
+  },
+  {
+    "id": 103,
+    "step_name": "Device",
+    "pattern_type": "include",
+    "pattern_category": "storage",
+    "patterns": "[\"storage\", \"disk\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.464163"
+  },
+  {
+    "id": 108,
+    "step_name": "Node",
+    "pattern_type": "exclude",
+    "pattern_category": "config",
+    "patterns": "[\".env\", \"config.\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.466919"
+  },
+  {
+    "id": 109,
+    "step_name": "Node",
+    "pattern_type": "exclude",
+    "pattern_category": "test",
+    "patterns": "[\"test\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.466919"
+  },
+  {
+    "id": 107,
+    "step_name": "Node",
+    "pattern_type": "include",
+    "pattern_category": "cloud",
+    "patterns": "[\"ec2\", \"instance\", \"vm\", \"lambda\", \"function\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.466919"
+  },
+  {
+    "id": 105,
+    "step_name": "Node",
+    "pattern_type": "include",
+    "pattern_category": "container",
+    "patterns": "[\"docker\", \"container\", \"pod\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.466919"
+  },
+  {
+    "id": 106,
+    "step_name": "Node",
+    "pattern_type": "include",
+    "pattern_category": "k8s",
+    "patterns": "[\"kubernetes\", \"deployment\", \"k8s\", \"helm\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.466919"
+  },
+  {
+    "id": 115,
+    "step_name": "SystemSoftware",
+    "pattern_type": "exclude",
+    "pattern_category": "library",
+    "patterns": "[\"utils\", \"helper\", \"typing\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.469853"
+  },
+  {
+    "id": 114,
+    "step_name": "SystemSoftware",
+    "pattern_type": "include",
+    "pattern_category": "container",
+    "patterns": "[\"docker\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.469853"
+  },
+  {
+    "id": 111,
+    "step_name": "SystemSoftware",
+    "pattern_type": "include",
+    "pattern_category": "database",
+    "patterns": "[\"postgres\", \"mysql\", \"mongo\", \"redis\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.469853"
+  },
+  {
+    "id": 112,
+    "step_name": "SystemSoftware",
+    "pattern_type": "include",
+    "pattern_category": "messaging",
+    "patterns": "[\"kafka\", \"rabbitmq\", \"celery\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.469853"
+  },
+  {
+    "id": 110,
+    "step_name": "SystemSoftware",
+    "pattern_type": "include",
+    "pattern_category": "runtime",
+    "patterns": "[\"python\", \"node\", \"java\", \"jvm\", \"runtime\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.469853"
+  },
+  {
+    "id": 113,
+    "step_name": "SystemSoftware",
+    "pattern_type": "include",
+    "pattern_category": "webserver",
+    "patterns": "[\"nginx\", \"apache\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T12:08:31.469853"
+  },
+  {
+    "id": 90,
+    "step_name": "TechnologyService",
+    "pattern_type": "exclude",
+    "pattern_category": "dev_tools",
+    "patterns": "[\"setuptools\", \"pip\", \"wheel\", \"black\", \"ruff\", \"mypy\", \"isort\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  },
+  {
+    "id": 87,
+    "step_name": "TechnologyService",
+    "pattern_type": "exclude",
+    "pattern_category": "stdlib",
+    "patterns": "[\"os\", \"sys\", \"json\", \"re\", \"datetime\", \"time\", \"logging\", \"typing\", \"collections\", \"functools\", \"itertools\", \"pathlib\", \"io\", \"copy\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  },
+  {
+    "id": 88,
+    "step_name": "TechnologyService",
+    "pattern_type": "exclude",
+    "pattern_category": "stdlib_advanced",
+    "patterns": "[\"dataclasses\", \"enum\", \"abc\", \"contextlib\", \"warnings\", \"math\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  },
+  {
+    "id": 89,
+    "step_name": "TechnologyService",
+    "pattern_type": "exclude",
+    "pattern_category": "testing",
+    "patterns": "[\"pytest\", \"unittest\", \"mock\", \"typing_extensions\", \"pydantic\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  },
+  {
+    "id": 84,
+    "step_name": "TechnologyService",
+    "pattern_type": "include",
+    "pattern_category": "auth",
+    "patterns": "[\"oauth\", \"jwt\", \"auth\", \"ldap\", \"saml\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  },
+  {
+    "id": 83,
+    "step_name": "TechnologyService",
+    "pattern_type": "include",
+    "pattern_category": "cloud",
+    "patterns": "[\"aws\", \"azure\", \"gcp\", \"s3\", \"lambda\", \"dynamodb\", \"cloudwatch\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  },
+  {
+    "id": 80,
+    "step_name": "TechnologyService",
+    "pattern_type": "include",
+    "pattern_category": "databases",
+    "patterns": "[\"sql\", \"postgres\", \"mysql\", \"sqlite\", \"mongo\", \"redis\", \"elastic\", \"database\", \"db\", \"orm\", \"sqlalchemy\", \"prisma\", \"duckdb\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  },
+  {
+    "id": 82,
+    "step_name": "TechnologyService",
+    "pattern_type": "include",
+    "pattern_category": "http",
+    "patterns": "[\"http\", \"request\", \"api\", \"rest\", \"graphql\", \"grpc\", \"websocket\", \"flask\", \"fastapi\", \"django\", \"express\", \"axios\", \"fetch\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  },
+  {
+    "id": 86,
+    "step_name": "TechnologyService",
+    "pattern_type": "include",
+    "pattern_category": "infrastructure",
+    "patterns": "[\"docker\", \"kubernetes\", \"nginx\", \"vault\", \"consul\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  },
+  {
+    "id": 81,
+    "step_name": "TechnologyService",
+    "pattern_type": "include",
+    "pattern_category": "messaging",
+    "patterns": "[\"kafka\", \"rabbitmq\", \"celery\", \"amqp\", \"queue\", \"pubsub\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  },
+  {
+    "id": 85,
+    "step_name": "TechnologyService",
+    "pattern_type": "include",
+    "pattern_category": "storage",
+    "patterns": "[\"storage\", \"blob\", \"file\", \"minio\"]",
+    "is_active": true,
+    "created_at": "2026-01-07T11:18:12.721555"
+  }
+]

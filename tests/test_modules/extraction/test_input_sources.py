@@ -1,10 +1,10 @@
-"""Tests for modules.extraction.input_sources module."""
+"""Tests for modules.extraction.base module (input sources functions)."""
 
 from __future__ import annotations
 
 import json
 
-from deriva.modules.extraction.input_sources import (
+from deriva.modules.extraction.base import (
     filter_files_by_input_sources,
     get_node_sources,
     has_file_sources,

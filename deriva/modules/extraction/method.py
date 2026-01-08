@@ -1,7 +1,10 @@
 """
-Method extraction - LLM-based extraction of methods from TypeDefinition code snippets.
+Method extraction - extract methods from TypeDefinition code snippets.
 
-This module extracts Method nodes from TypeDefinition code snippets using LLM analysis.
+This module extracts Method nodes from TypeDefinition code snippets using:
+- AST analysis for Python files (deterministic, accurate line numbers)
+- LLM analysis for other languages or when AST fails
+
 It identifies methods, functions, and their signatures within type definitions.
 """
 
@@ -10,7 +13,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from .base import create_empty_llm_details, current_timestamp, parse_json_response
+from deriva.adapters.ast import ASTManager, ExtractedMethod
+
+from .base import (
+    create_empty_llm_details,
+    current_timestamp,
+    generate_edge_id,
+    parse_json_response,
+    strip_chunk_suffix,
+)
 
 # JSON schema for LLM structured output
 METHOD_SCHEMA = {
@@ -460,3 +471,174 @@ def extract_methods_batch(
         },
         "type_results": all_type_results,  # Per-type details for L3 logging
     }
+
+
+# =============================================================================
+# AST-based extraction for Python files
+# =============================================================================
+
+
+def extract_methods_from_python(
+    file_path: str,
+    file_content: str,
+    repo_name: str,
+) -> dict[str, Any]:
+    """
+    Extract Method nodes from Python source using AST.
+
+    This is deterministic and produces accurate line numbers.
+    Use this for Python files instead of LLM extraction.
+
+    Args:
+        file_path: Path to the file being analyzed (relative to repo)
+        file_content: Python source code
+        repo_name: Repository name
+
+    Returns:
+        Dictionary with success, data, errors, stats (same format as LLM extraction)
+    """
+    errors: list[str] = []
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+
+    try:
+        ast_manager = ASTManager()
+        extracted_methods = ast_manager.extract_methods(file_content, file_path)
+
+        # Build file node ID for CONTAINS edges
+        original_path = strip_chunk_suffix(file_path)
+        safe_path = original_path.replace("/", "_").replace("\\", "_")
+        file_node_id = f"file_{repo_name}_{safe_path}"
+
+        for ext_method in extracted_methods:
+            node_data = _build_method_node_from_ast(ext_method, file_path, repo_name)
+            nodes.append(node_data)
+
+            # Create edge based on whether method belongs to a class or is top-level
+            if ext_method.class_name:
+                # Method belongs to class - edge from TypeDefinition to Method
+                type_name_slug = ext_method.class_name.replace(" ", "_").replace(
+                    "-", "_"
+                )
+                type_node_id = f"typedef_{repo_name}_{safe_path}_{type_name_slug}"
+                edge = {
+                    "edge_id": generate_edge_id(
+                        type_node_id, node_data["node_id"], "CONTAINS"
+                    ),
+                    "from_node_id": type_node_id,
+                    "to_node_id": node_data["node_id"],
+                    "relationship_type": "CONTAINS",
+                    "properties": {"created_at": current_timestamp()},
+                }
+            else:
+                # Top-level function - edge from File to Method
+                edge = {
+                    "edge_id": generate_edge_id(
+                        file_node_id, node_data["node_id"], "CONTAINS"
+                    ),
+                    "from_node_id": file_node_id,
+                    "to_node_id": node_data["node_id"],
+                    "relationship_type": "CONTAINS",
+                    "properties": {"created_at": current_timestamp()},
+                }
+            edges.append(edge)
+
+        return {
+            "success": True,
+            "data": {"nodes": nodes, "edges": edges},
+            "errors": [],
+            "stats": {
+                "total_nodes": len(nodes),
+                "total_edges": len(edges),
+                "node_types": {"Method": len(nodes)},
+                "extraction_method": "ast",
+            },
+        }
+
+    except SyntaxError as e:
+        errors.append(f"Python syntax error in {file_path}: {e}")
+        return {
+            "success": False,
+            "data": {"nodes": [], "edges": []},
+            "errors": errors,
+            "stats": {"total_nodes": 0, "total_edges": 0, "extraction_method": "ast"},
+        }
+    except Exception as e:
+        errors.append(f"AST extraction error in {file_path}: {e}")
+        return {
+            "success": False,
+            "data": {"nodes": [], "edges": []},
+            "errors": errors,
+            "stats": {"total_nodes": 0, "total_edges": 0, "extraction_method": "ast"},
+        }
+
+
+def _build_method_node_from_ast(
+    ext_method: ExtractedMethod,
+    file_path: str,
+    repo_name: str,
+) -> dict[str, Any]:
+    """Build a Method node from AST extracted method."""
+    # Determine visibility from Python conventions
+    if ext_method.name.startswith("__") and not ext_method.name.endswith("__"):
+        visibility = "protected"
+    elif ext_method.name.startswith("_"):
+        visibility = "private"
+    else:
+        visibility = "public"
+
+    # Format parameters as string
+    param_strs = []
+    for param in ext_method.parameters:
+        p_str = param["name"]
+        if param.get("annotation"):
+            p_str += f": {param['annotation']}"
+        param_strs.append(p_str)
+    parameters = ", ".join(param_strs)
+
+    # Generate node ID
+    method_name_slug = ext_method.name.replace(" ", "_").replace("-", "_")
+    type_name_slug = (
+        (ext_method.class_name or "module").replace(" ", "_").replace("-", "_")
+    )
+    file_path_slug = file_path.replace("/", "_").replace("\\", "_")
+    node_id = f"method_{repo_name}_{file_path_slug}_{type_name_slug}_{method_name_slug}"
+
+    return {
+        "node_id": node_id,
+        "label": "Method",
+        "properties": {
+            "methodName": ext_method.name,
+            "returnType": ext_method.return_annotation or "None",
+            "visibility": visibility,
+            "parameters": parameters,
+            "description": ext_method.docstring or f"Method {ext_method.name}",
+            "isStatic": ext_method.is_static,
+            "isAsync": ext_method.is_async,
+            "typeName": ext_method.class_name or "",
+            "filePath": file_path,
+            "startLine": ext_method.line_start,
+            "endLine": ext_method.line_end,
+            "confidence": 1.0,  # AST is deterministic
+            "extracted_at": current_timestamp(),
+            "extraction_method": "ast",
+            # AST-specific properties
+            "decorators": ext_method.decorators,
+            "is_classmethod": ext_method.is_classmethod,
+            "is_property": ext_method.is_property,
+        },
+    }
+
+
+__all__ = [
+    # Schema
+    "METHOD_SCHEMA",
+    # LLM extraction
+    "build_extraction_prompt",
+    "build_method_node",
+    "parse_llm_response",
+    "extract_methods",
+    "extract_methods_batch",
+    # AST extraction
+    "extract_methods_from_python",
+]
