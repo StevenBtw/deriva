@@ -179,6 +179,157 @@ class ValidationConfig(TypedDict, total=False):
 
 
 # =============================================================================
+# Progress Reporting Protocol
+# =============================================================================
+
+
+class ProgressReporter(Protocol):
+    """
+    Protocol for progress reporting during pipeline operations.
+
+    Implementations can use different backends (Rich for CLI, Marimo native, etc.)
+    while services remain UI-agnostic.
+    """
+
+    def start_phase(self, name: str, total_steps: int) -> None:
+        """
+        Start a new phase (e.g., 'extraction', 'derivation').
+
+        Args:
+            name: Phase name
+            total_steps: Total number of steps in this phase
+        """
+        ...
+
+    def start_step(self, name: str, total_items: int | None = None) -> None:
+        """
+        Start a new step within a phase.
+
+        Args:
+            name: Step name (e.g., 'TypeDefinition', 'BusinessObject')
+            total_items: Optional total items to process (for progress bar)
+        """
+        ...
+
+    def update(self, current: int | None = None, message: str = "") -> None:
+        """
+        Update progress within the current step.
+
+        Args:
+            current: Current item number (if known)
+            message: Optional status message (e.g., file being processed)
+        """
+        ...
+
+    def advance(self, amount: int = 1) -> None:
+        """
+        Advance progress by a given amount.
+
+        Args:
+            amount: Number of items to advance
+        """
+        ...
+
+    def complete_step(self, message: str = "") -> None:
+        """
+        Mark the current step as complete.
+
+        Args:
+            message: Optional completion message
+        """
+        ...
+
+    def complete_phase(self, message: str = "") -> None:
+        """
+        Mark the current phase as complete.
+
+        Args:
+            message: Optional completion message
+        """
+        ...
+
+    def log(self, message: str, level: str = "info") -> None:
+        """
+        Log a message during progress.
+
+        Args:
+            message: Message to log
+            level: Log level ('info', 'warning', 'error')
+        """
+        ...
+
+
+class BenchmarkProgressReporter(Protocol):
+    """
+    Extended progress reporter for benchmark operations.
+
+    Provides additional context for multi-run benchmark matrices.
+    """
+
+    def start_benchmark(
+        self,
+        session_id: str,
+        total_runs: int,
+        repositories: list[str],
+        models: list[str],
+    ) -> None:
+        """Start a benchmark session."""
+        ...
+
+    def start_run(
+        self,
+        run_number: int,
+        repository: str,
+        model: str,
+        iteration: int,
+    ) -> None:
+        """Start a benchmark run."""
+        ...
+
+    def complete_run(self, status: str, stats: dict[str, Any] | None = None) -> None:
+        """Complete a benchmark run."""
+        ...
+
+    def complete_benchmark(
+        self,
+        runs_completed: int,
+        runs_failed: int,
+        duration_seconds: float,
+    ) -> None:
+        """Complete the benchmark session."""
+        ...
+
+    # Inherit from ProgressReporter for phase/step tracking
+    def start_phase(self, name: str, total_steps: int) -> None:
+        """Start a new phase within the current run."""
+        ...
+
+    def start_step(self, name: str, total_items: int | None = None) -> None:
+        """Start a new step within a phase."""
+        ...
+
+    def update(self, current: int | None = None, message: str = "") -> None:
+        """Update progress within the current step."""
+        ...
+
+    def advance(self, amount: int = 1) -> None:
+        """Advance progress by a given amount."""
+        ...
+
+    def complete_step(self, message: str = "") -> None:
+        """Mark the current step as complete."""
+        ...
+
+    def complete_phase(self, message: str = "") -> None:
+        """Mark the current phase as complete."""
+        ...
+
+    def log(self, message: str, level: str = "info") -> None:
+        """Log a message during progress."""
+        ...
+
+
+# =============================================================================
 # Utility Protocols
 # =============================================================================
 
@@ -374,7 +525,10 @@ __all__ = [
     "ValidationData",
     "ValidationResult",
     "ValidationConfig",
-    # Protocols
+    # Progress protocols
+    "ProgressReporter",
+    "BenchmarkProgressReporter",
+    # Utility protocols
     "HasToDict",
     "StepContextProtocol",
     "RunLoggerProtocol",

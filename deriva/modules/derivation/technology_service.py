@@ -20,6 +20,11 @@ LLM role:
 - Classify which dependencies are technology services vs utilities
 - Generate meaningful service names
 - Write documentation describing the service's role
+
+Relationships:
+- OUTBOUND: TechnologyService -> DataObject (Access) - access databases/files
+- OUTBOUND: TechnologyService -> ApplicationService (Serving) - serve app services
+- INBOUND: DataObject -> TechnologyService (Realization) - config realizes tech
 """
 
 from __future__ import annotations
@@ -27,17 +32,19 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-from deriva.adapters.archimate.models import Element
+from deriva.adapters.archimate.models import Element, Relationship
 from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
     Candidate,
     GenerationResult,
+    RelationshipRule,
     batch_candidates,
     build_derivation_prompt,
     build_element,
+    derive_batch_relationships,
     enrich_candidate,
     filter_by_pagerank,
-    get_enrichments,
+    get_enrichments_from_neo4j,
     parse_derivation_response,
     query_candidates,
 )
@@ -51,6 +58,36 @@ logger = logging.getLogger(__name__)
 
 ELEMENT_TYPE = "TechnologyService"
 
+# =============================================================================
+# RELATIONSHIP RULES
+# =============================================================================
+
+OUTBOUND_RULES = [
+    RelationshipRule(
+        target_type="DataObject",
+        rel_type="Access",
+        description="Technology services access data objects (databases, files)",
+    ),
+    RelationshipRule(
+        target_type="ApplicationService",
+        rel_type="Serving",
+        description="Technology services serve application services",
+    ),
+]
+
+INBOUND_RULES = [
+    RelationshipRule(
+        target_type="DataObject",
+        rel_type="Realization",
+        description="Data objects (config files) realize technology services",
+    ),
+]
+
+
+# =============================================================================
+# FILTERING
+# =============================================================================
+
 
 def _is_likely_tech_service(
     name: str, include_patterns: set[str], exclude_patterns: set[str]
@@ -61,12 +98,10 @@ def _is_likely_tech_service(
 
     name_lower = name.lower()
 
-    # Check exclusion patterns first
     for pattern in exclude_patterns:
         if pattern in name_lower:
             return False
 
-    # Check for tech service patterns
     for pattern in include_patterns:
         if pattern in name_lower:
             return True
@@ -81,28 +116,18 @@ def filter_candidates(
     exclude_patterns: set[str],
     max_candidates: int,
 ) -> list[Candidate]:
-    """
-    Filter candidates for TechnologyService derivation.
-
-    Strategy:
-    1. Enrich with graph metrics
-    2. Exclude standard library and utility packages
-    3. Prioritize infrastructure dependencies (databases, APIs, etc.)
-    4. Use PageRank to find most important dependencies
-    """
+    """Filter candidates for TechnologyService derivation."""
     for c in candidates:
         enrich_candidate(c, enrichments)
 
     filtered = [c for c in candidates if c.name]
 
     likely_tech = [
-        c
-        for c in filtered
+        c for c in filtered
         if _is_likely_tech_service(c.name, include_patterns, exclude_patterns)
     ]
     others = [
-        c
-        for c in filtered
+        c for c in filtered
         if not _is_likely_tech_service(c.name, include_patterns, exclude_patterns)
     ]
 
@@ -114,11 +139,17 @@ def filter_candidates(
         likely_tech.extend(others)
 
     logger.debug(
-        f"TechnologyService filter: {len(candidates)} total -> {len(filtered)} after null -> "
-        f"{len(likely_tech)} final candidates"
+        "TechnologyService filter: %d total -> %d final",
+        len(candidates),
+        len(likely_tech),
     )
 
     return likely_tech[:max_candidates]
+
+
+# =============================================================================
+# GENERATION
+# =============================================================================
 
 
 def generate(
@@ -131,28 +162,25 @@ def generate(
     example: str,
     max_candidates: int,
     batch_size: int,
+    existing_elements: list[dict[str, Any]],
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> GenerationResult:
-    """
-    Generate TechnologyService elements from external dependencies.
-
-    All configuration parameters are required - no defaults, no fallbacks.
-    """
+    """Generate TechnologyService elements and their relationships."""
     result = GenerationResult(success=True)
 
     patterns = config.get_derivation_patterns(engine, ELEMENT_TYPE)
     include_patterns = patterns.get("include", set())
     exclude_patterns = patterns.get("exclude", set())
 
-    enrichments = get_enrichments(engine)
+    enrichments = get_enrichments_from_neo4j(graph_manager)
     candidates = query_candidates(graph_manager, query, enrichments)
 
     if not candidates:
         logger.info("No ExternalDependency candidates found")
         return result
 
-    logger.info(f"Found {len(candidates)} dependency candidates")
+    logger.info("Found %d dependency candidates", len(candidates))
 
     filtered = filter_candidates(
         candidates, enrichments, include_patterns, exclude_patterns, max_candidates
@@ -195,6 +223,7 @@ def generate(
             result.errors.extend(parse_result.get("errors", []))
             continue
 
+        batch_elements: list[dict[str, Any]] = []
         for derived in parse_result.get("data", []):
             element_result = build_element(derived, ELEMENT_TYPE)
 
@@ -215,17 +244,51 @@ def generate(
                 archimate_manager.add_element(element)
                 result.elements_created += 1
                 result.created_elements.append(element_data)
+                batch_elements.append(element_data)
             except Exception as e:
                 result.errors.append(
                     f"Failed to create element {element_data['identifier']}: {e}"
                 )
 
-    logger.info(f"Created {result.elements_created} {ELEMENT_TYPE} elements")
+        if batch_elements and existing_elements:
+            relationships = derive_batch_relationships(
+                new_elements=batch_elements,
+                existing_elements=existing_elements,
+                element_type=ELEMENT_TYPE,
+                outbound_rules=OUTBOUND_RULES,
+                inbound_rules=INBOUND_RULES,
+                llm_query_fn=llm_query_fn,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+            for rel_data in relationships:
+                try:
+                    relationship = Relationship(
+                        source=rel_data["source"],
+                        target=rel_data["target"],
+                        relationship_type=rel_data["relationship_type"],
+                        properties={"confidence": rel_data.get("confidence", 0.5)},
+                    )
+                    archimate_manager.add_relationship(relationship)
+                    result.relationships_created += 1
+                    result.created_relationships.append(rel_data)
+                except Exception as e:
+                    result.errors.append(f"Failed to create relationship: {e}")
+
+    logger.info(
+        "Created %d %s elements and %d relationships",
+        result.elements_created,
+        ELEMENT_TYPE,
+        result.relationships_created,
+    )
     return result
 
 
 __all__ = [
     "ELEMENT_TYPE",
+    "OUTBOUND_RULES",
+    "INBOUND_RULES",
     "filter_candidates",
     "generate",
 ]

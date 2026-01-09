@@ -298,6 +298,23 @@ After optimization: **78.6% consistency** with only 3 unstable elements:
 3. **Provide exact format examples** - Show the exact identifier format you expect
 4. **Add determinism instruction** - "Output stable, deterministic results" helps
 
+## Progress Tracking
+
+Benchmark and pipeline operations display visual progress bars when the `rich` library is installed:
+
+```bash
+# Install with progress support
+uv sync --extra progress
+```
+
+Progress bars show:
+
+- Overall benchmark progress (runs completed / total)
+- Current run context (repository, model, iteration)
+- Phase progress within each run (extraction → derivation)
+
+Use `-q/--quiet` to disable progress display, or `-v/--verbose` for detailed text output instead of progress bars.
+
 ## CLI Reference
 
 ### Benchmark Commands
@@ -311,7 +328,8 @@ deriva benchmark run --repos <repos> --models <models> [options]
   --stages        Stages to run: extraction,derivation
   --no-cache      Disable all LLM caching
   --nocache-configs  Configs to skip cache for (comma-separated)
-  -v, --verbose   Show detailed progress
+  -v, --verbose   Show detailed text progress (disables progress bar)
+  -q, --quiet     Disable progress bar display
 
 # List benchmark sessions
 deriva benchmark list

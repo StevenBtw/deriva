@@ -11,13 +11,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
 from deriva.modules.extraction import classification
 from deriva.services import config, derivation, extraction
+
+if TYPE_CHECKING:
+    from deriva.common.types import ProgressReporter
 
 
 def run_full_pipeline(
@@ -30,6 +33,7 @@ def run_full_pipeline(
     skip_extraction: bool = False,
     skip_derivation: bool = False,
     verbose: bool = False,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     """
     Run the full Deriva pipeline.
@@ -44,6 +48,7 @@ def run_full_pipeline(
         skip_extraction: Skip extraction step
         skip_derivation: Skip derivation step (includes all phases)
         verbose: Print progress
+        progress: Optional progress reporter for visual feedback
 
     Returns:
         Dict with success, stats, errors for each stage
@@ -77,6 +82,7 @@ def run_full_pipeline(
             llm_query_fn=llm_query_fn,
             repo_name=repo_name,
             verbose=verbose,
+            progress=progress,
         )
         results["extraction"] = extraction_result
 
@@ -94,6 +100,7 @@ def run_full_pipeline(
             archimate_manager=archimate_manager,
             llm_query_fn=llm_query_fn,
             verbose=verbose,
+            progress=progress,
         )
         results["derivation"] = derivation_result
 

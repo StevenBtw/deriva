@@ -26,6 +26,10 @@ import argparse
 import sys
 from typing import Any
 
+from deriva.cli.progress import (
+    create_benchmark_progress_reporter,
+    create_progress_reporter,
+)
 from deriva.services import config
 from deriva.services.session import PipelineSession
 
@@ -206,6 +210,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     verbose = getattr(args, "verbose", False)
     no_llm = getattr(args, "no_llm", False)
     phase = getattr(args, "phase", None)
+    quiet = getattr(args, "quiet", False)
 
     print(f"\n{'=' * 60}")
     print(f"DERIVA - Running {stage.upper()} pipeline")
@@ -228,12 +233,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         else:
             print("Warning: LLM not configured. LLM-based steps will be skipped.")
 
+        # Create progress reporter (Rich-based if available, quiet if --quiet)
+        progress_reporter = create_progress_reporter(quiet=quiet or verbose)
+
         if stage == "extraction":
-            result = session.run_extraction(
-                repo_name=repo_name,
-                verbose=verbose,
-                no_llm=no_llm,
-            )
+            with progress_reporter:
+                result = session.run_extraction(
+                    repo_name=repo_name,
+                    verbose=verbose,
+                    no_llm=no_llm,
+                    progress=progress_reporter,
+                )
             _print_extraction_result(result)
 
         elif stage == "derivation":
@@ -241,11 +251,21 @@ def cmd_run(args: argparse.Namespace) -> int:
                 print("Error: Derivation requires LLM. Configure LLM in .env file.")
                 return 1
             phases = [phase] if phase else None
-            result = session.run_derivation(verbose=verbose, phases=phases)
+            with progress_reporter:
+                result = session.run_derivation(
+                    verbose=verbose,
+                    phases=phases,
+                    progress=progress_reporter,
+                )
             _print_derivation_result(result)
 
         elif stage == "all":
-            result = session.run_pipeline(repo_name=repo_name, verbose=verbose)
+            with progress_reporter:
+                result = session.run_pipeline(
+                    repo_name=repo_name,
+                    verbose=verbose,
+                    progress=progress_reporter,
+                )
             _print_pipeline_result(result)
 
         else:
@@ -586,6 +606,7 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     stages = [s.strip() for s in args.stages.split(",")] if args.stages else None
     description = getattr(args, "description", "")
     verbose = getattr(args, "verbose", False)
+    quiet = getattr(args, "quiet", False)
     use_cache = not getattr(args, "no_cache", False)
     nocache_configs_str = getattr(args, "nocache_configs", None)
     nocache_configs = (
@@ -611,16 +632,21 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     with PipelineSession() as session:
         print("Connected to Neo4j")
 
-        result = session.run_benchmark(
-            repositories=repos,
-            models=models,
-            runs=runs,
-            stages=stages,
-            description=description,
-            verbose=verbose,
-            use_cache=use_cache,
-            nocache_configs=nocache_configs,
-        )
+        # Create benchmark progress reporter (Rich-based if available)
+        progress_reporter = create_benchmark_progress_reporter(quiet=quiet or verbose)
+
+        with progress_reporter:
+            result = session.run_benchmark(
+                repositories=repos,
+                models=models,
+                runs=runs,
+                stages=stages,
+                description=description,
+                verbose=verbose,
+                use_cache=use_cache,
+                nocache_configs=nocache_configs,
+                progress=progress_reporter,
+            )
 
         print(f"\n{'=' * 60}")
         print("BENCHMARK COMPLETE")
@@ -1058,7 +1084,13 @@ def create_parser() -> argparse.ArgumentParser:
         "-v",
         "--verbose",
         action="store_true",
-        help="Print detailed progress",
+        help="Print detailed progress (disables progress bar)",
+    )
+    run_parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Disable progress bar display",
     )
     run_parser.add_argument(
         "--no-llm",
@@ -1218,7 +1250,13 @@ def create_parser() -> argparse.ArgumentParser:
         "-v",
         "--verbose",
         action="store_true",
-        help="Print detailed progress",
+        help="Print detailed progress (disables progress bar)",
+    )
+    benchmark_run.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Disable progress bar display",
     )
     benchmark_run.add_argument(
         "--no-cache",

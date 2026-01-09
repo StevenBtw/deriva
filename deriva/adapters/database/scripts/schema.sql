@@ -58,22 +58,6 @@ CREATE TABLE IF NOT EXISTS derivation_config (
     UNIQUE(step_name, version)
 );
 
--- Derivation relationship config: per-element-type relationship derivation settings
-CREATE TABLE IF NOT EXISTS derivation_relationship_config (
-    id INTEGER PRIMARY KEY,
-    element_type VARCHAR NOT NULL UNIQUE,  -- e.g., "TechnologyService", "BusinessObject"
-    enabled BOOLEAN DEFAULT TRUE,
-    sequence INTEGER NOT NULL DEFAULT 0,   -- Order of relationship derivation (matches element sequence)
-    instruction TEXT,                      -- LLM prompt for deriving relationships FROM this element type
-    example TEXT,                          -- Example output for LLM
-    valid_relationship_types TEXT,         -- JSON array: ["Access", "Serving", "Composition"]
-    target_element_types TEXT,             -- JSON array: ["DataObject", "ApplicationService"] or null for all
-    include_existing_elements BOOLEAN DEFAULT FALSE,  -- Include elements from previous runs
-    temperature FLOAT,
-    max_tokens INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 -- Derivation patterns: configurable pattern matching for element derivation
 CREATE TABLE IF NOT EXISTS derivation_patterns (
     id INTEGER PRIMARY KEY,

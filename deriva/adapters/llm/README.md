@@ -2,6 +2,8 @@
 
 Multi-provider LLM abstraction with caching and structured output support.
 
+**Version:** 1.0.0
+
 ## Purpose
 
 The LLM adapter provides a unified interface for querying multiple LLM providers (Azure OpenAI, OpenAI, Anthropic, Ollama, LM Studio) with automatic caching and Pydantic-based structured output parsing.
@@ -19,14 +21,24 @@ from deriva.adapters.llm import (
     OllamaProvider,
     LMStudioProvider,
     ProviderConfig,
+    CompletionResult,
     # Response types
     LLMResponse,
+    BaseResponse,
     LiveResponse,
     CachedResponse,
     FailedResponse,
     ResponseType,
+    StructuredOutputMixin,
     # Caching
     CacheManager,
+    cached_llm_call,
+    # Exceptions
+    LLMError,
+    ConfigurationError,
+    APIError,
+    CacheError,
+    ValidationError,
 )
 ```
 
@@ -64,6 +76,17 @@ result = llm.query(
 print(result.name)
 ```
 
+## File Structure
+
+```text
+deriva/adapters/llm/
+├── __init__.py           # Package exports
+├── manager.py            # LLMManager class
+├── providers.py          # Provider implementations
+├── models.py             # Response types and exceptions
+└── cache.py              # CacheManager and caching utilities
+```
+
 ## Configuration
 
 Set provider via environment variables in `.env`:
@@ -86,6 +109,16 @@ LLM_LMSTUDIO_LOCAL_MODEL=local-model
 LLM_LMSTUDIO_LOCAL_URL=http://localhost:1234/v1/chat/completions
 ```
 
+## Providers
+
+| Provider | Class | Description |
+|----------|-------|-------------|
+| Azure OpenAI | `AzureOpenAIProvider` | Azure-hosted OpenAI models |
+| OpenAI | `OpenAIProvider` | OpenAI API direct |
+| Anthropic | `AnthropicProvider` | Claude models |
+| Ollama | `OllamaProvider` | Local Ollama models |
+| LM Studio | `LMStudioProvider` | Local LM Studio (OpenAI-compatible) |
+
 ## Response Types
 
 | Type | When | Key Fields |
@@ -106,6 +139,7 @@ LLM_LMSTUDIO_LOCAL_URL=http://localhost:1234/v1/chat/completions
 - Responses cached to `workspace/cache/` by default
 - Cache key = SHA256(prompt + model + schema)
 - Disable with `LLM_NOCACHE=true` in `.env`
+- Use `cached_llm_call` decorator for custom caching
 
 ## See Also
 

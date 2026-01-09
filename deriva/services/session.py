@@ -22,7 +22,10 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from deriva.common.types import BenchmarkProgressReporter, ProgressReporter
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +285,7 @@ class PipelineSession:
         for r in repos:
             if isinstance(r, str):
                 result.append({"name": r})
-            elif isinstance(r, HasToDict):
+            elif hasattr(r, "to_dict"):
                 result.append(r.to_dict())
             else:
                 result.append({"name": str(r)})
@@ -351,6 +354,7 @@ class PipelineSession:
         repo_name: str | None = None,
         verbose: bool = False,
         no_llm: bool = False,
+        progress: ProgressReporter | None = None,
     ) -> dict[str, Any]:
         """Run extraction pipeline."""
         self._ensure_connected()
@@ -367,12 +371,14 @@ class PipelineSession:
             repo_name=repo_name,
             verbose=verbose,
             run_logger=run_logger,
+            progress=progress,
         )
 
     def run_derivation(
         self,
         verbose: bool = False,
         phases: list[str] | None = None,
+        progress: ProgressReporter | None = None,
     ) -> dict[str, Any]:
         """Run derivation pipeline.
 
@@ -380,6 +386,7 @@ class PipelineSession:
             verbose: Print progress to stdout
             phases: List of phases to run ("prep", "generate", "refine").
                     Default: all phases.
+            progress: Optional progress reporter for visual feedback
 
         Returns:
             Dict with success, stats, errors, and phase results
@@ -407,12 +414,14 @@ class PipelineSession:
             verbose=verbose,
             phases=phases,
             run_logger=run_logger,
+            progress=progress,
         )
 
     def run_pipeline(
         self,
         repo_name: str | None = None,
         verbose: bool = False,
+        progress: ProgressReporter | None = None,
     ) -> dict[str, Any]:
         """Run full pipeline (extraction → derivation with all phases)."""
         self._ensure_connected()
@@ -435,6 +444,7 @@ class PipelineSession:
             llm_query_fn=llm_query_fn,
             repo_name=repo_name,
             verbose=verbose,
+            progress=progress,
         )
 
     # =========================================================================
@@ -785,6 +795,7 @@ class PipelineSession:
         verbose: bool = False,
         use_cache: bool = True,
         nocache_configs: list[str] | None = None,
+        progress: BenchmarkProgressReporter | None = None,
     ) -> benchmarking.BenchmarkResult:
         """
         Run a full benchmark matrix.
@@ -798,6 +809,7 @@ class PipelineSession:
             verbose: Print progress
             use_cache: Enable LLM response caching (default: True)
             nocache_configs: List of config names to skip cache for (for A/B testing)
+            progress: Optional progress reporter for visual feedback
 
         Returns:
             BenchmarkResult with session details
@@ -835,7 +847,7 @@ class PipelineSession:
             config=bench_config,
         )
 
-        return orchestrator.run(verbose=verbose)
+        return orchestrator.run(verbose=verbose, progress=progress)
 
     def analyze_benchmark(self, session_id: str) -> benchmarking.BenchmarkAnalyzer:
         """

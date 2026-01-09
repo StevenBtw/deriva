@@ -2,6 +2,8 @@
 
 Git repository operations and metadata extraction.
 
+**Version:** 2.0.0
+
 ## Purpose
 
 The Repository adapter handles cloning Git repositories, listing cloned repos, extracting metadata, and managing repository state. Cloned repositories are stored in `workspace/repositories/`.
@@ -20,10 +22,13 @@ from deriva.adapters.repository import (
     list_repos,
     delete_repo,
     extract_repo_metadata,
+    sync_repos,
     # Exceptions
     RepositoryError,
     ValidationError,
     CloneError,
+    DeleteError,
+    MetadataError,
 )
 ```
 
@@ -62,13 +67,25 @@ repo_manager.delete_repository("project")
 For quick operations without creating a manager:
 
 ```python
-from deriva.adapters.repository import clone_repo, list_repos
+from deriva.adapters.repository import clone_repo, list_repos, sync_repos
 
 # Clone
 clone_repo("https://github.com/user/project.git")
 
 # List all
 repos = list_repos()
+
+# Sync repositories (pull latest changes)
+sync_repos()
+```
+
+## File Structure
+
+```text
+deriva/adapters/repository/
+├── __init__.py           # Package exports
+├── manager.py            # RepoManager class and convenience functions
+└── models.py             # Data classes and exceptions
 ```
 
 ## Data Classes
@@ -83,6 +100,10 @@ repos = list_repos()
 - `total_files`, `total_directories`, `total_size_mb`
 - `languages` - dict of language name to file count
 - `default_branch`, `created_at`, `last_updated`
+
+**FileNode**:
+
+- Tree structure for representing repository file hierarchy
 
 ## RepoManager Methods
 

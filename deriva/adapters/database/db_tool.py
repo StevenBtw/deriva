@@ -59,11 +59,6 @@ TABLES = {
         "pk": "id",
         "order_by": "step_name, pattern_type, pattern_category",
     },
-    "derivation_relationship_config": {
-        "file": "derivation_relationship_config.json",
-        "pk": "id",
-        "order_by": "sequence, element_type",
-    },
 }
 
 

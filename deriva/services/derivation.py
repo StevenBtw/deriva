@@ -16,23 +16,12 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from deriva.adapters.archimate import ArchimateManager
-from deriva.common.ocel import create_edge_id
 from deriva.common.types import PipelineResult
 
 if TYPE_CHECKING:
-    from deriva.common.types import RunLoggerProtocol
-from deriva.adapters.archimate.models import (
-    RELATIONSHIP_TYPES,
-    Relationship,
-)
+    from deriva.common.types import ProgressReporter, RunLoggerProtocol
 from deriva.adapters.graph import GraphManager
-from deriva.modules.derivation import (
-    RELATIONSHIP_SCHEMA,
-    build_per_element_relationship_prompt,
-    build_relationship_prompt,
-    enrich,
-    parse_relationship_response,
-)
+from deriva.modules.derivation import enrich
 from deriva.services import config
 
 # Element generation module registry
@@ -91,31 +80,36 @@ def generate_element(
     example: str,
     max_candidates: int,
     batch_size: int,
+    existing_elements: list[dict[str, Any]] | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """
-    Generate ArchiMate elements of a specific type.
+    Generate ArchiMate elements of a specific type (and their relationships).
 
     Routes to the appropriate module based on element_type.
     All configuration parameters are required - no defaults, no fallbacks.
+
+    Each module now handles both element generation AND relationship derivation
+    in a unified flow, creating relationships to/from existing elements.
 
     Args:
         graph_manager: Connected GraphManager for Cypher queries
         archimate_manager: Connected ArchimateManager for element creation
         llm_query_fn: Function to call LLM (prompt, schema, **kwargs) -> response
         element_type: ArchiMate element type (e.g., 'ApplicationService')
-        engine: DuckDB connection for enrichment data and patterns
+        engine: DuckDB connection for patterns (enrichments read from Neo4j)
         query: Cypher query to get candidate nodes
         instruction: LLM instruction prompt
         example: Example output for LLM
         max_candidates: Maximum candidates to send to LLM
         batch_size: Batch size for LLM processing
+        existing_elements: Elements from previous derivation steps (for relationships)
         temperature: Optional LLM temperature override
         max_tokens: Optional LLM max_tokens override
 
     Returns:
-        Dict with success, elements_created, created_elements, errors
+        Dict with success, elements_created, relationships_created, created_elements, errors
     """
     module = _load_element_module(element_type)
 
@@ -123,6 +117,7 @@ def generate_element(
         return {
             "success": False,
             "elements_created": 0,
+            "relationships_created": 0,
             "errors": [f"No generation module for element type: {element_type}"],
         }
 
@@ -137,79 +132,28 @@ def generate_element(
             example=example,
             max_candidates=max_candidates,
             batch_size=batch_size,
+            existing_elements=existing_elements or [],
             temperature=temperature,
             max_tokens=max_tokens,
         )
         return {
             "success": result.success,
             "elements_created": result.elements_created,
+            "relationships_created": result.relationships_created,
             "created_elements": result.created_elements,
+            "created_relationships": result.created_relationships,
             "errors": result.errors,
         }
     except Exception as e:
         return {
             "success": False,
             "elements_created": 0,
+            "relationships_created": 0,
             "errors": [f"Generation failed for {element_type}: {e}"],
         }
 
 
 logger = logging.getLogger(__name__)
-
-# Valid relationship types in PascalCase for normalization
-_VALID_RELATIONSHIP_TYPES = set(RELATIONSHIP_TYPES.keys())
-
-
-def _build_custom_relationship_prompt(
-    elements: list[dict],
-    instruction: str,
-    example: str | None = None,
-) -> str:
-    """Build relationship prompt using custom instruction from database config."""
-    import json
-
-    elements_json = json.dumps(elements, indent=2, default=str)
-    valid_ids = [e.get("identifier", "") for e in elements if e.get("identifier")]
-
-    prompt = f"""{instruction}
-
-ELEMENTS TO RELATE:
-```json
-{elements_json}
-```
-
-VALID IDENTIFIERS (use EXACTLY as shown):
-{json.dumps(valid_ids)}
-
-"""
-    if example:
-        prompt += f"""
-EXAMPLE OUTPUT FORMAT:
-```json
-{example}
-```
-"""
-
-    prompt += """
-Return {"relationships": []} with source, target, relationship_type for each.
-"""
-    return prompt
-
-
-def _normalize_identifier(identifier: str) -> str:
-    """Normalize identifier for fuzzy matching (lowercase, replace separators)."""
-    return identifier.lower().replace("-", "_").replace(" ", "_")
-
-
-def _normalize_relationship_type(rel_type: str) -> str:
-    """Normalize relationship type to PascalCase."""
-    if rel_type in _VALID_RELATIONSHIP_TYPES:
-        return rel_type
-    rel_lower = rel_type.lower()
-    for valid_type in _VALID_RELATIONSHIP_TYPES:
-        if valid_type.lower() == rel_lower:
-            return valid_type
-    return rel_type
 
 
 # =============================================================================
@@ -328,9 +272,14 @@ def run_derivation(
     verbose: bool = False,
     phases: list[str] | None = None,
     run_logger: RunLoggerProtocol | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     """
     Run the derivation pipeline.
+
+    Each element module now handles both element generation AND relationship
+    derivation in a unified flow. Relationships are created to/from existing
+    elements as each element type is processed in sequence.
 
     Args:
         engine: DuckDB connection for config
@@ -339,14 +288,15 @@ def run_derivation(
         llm_query_fn: Function to call LLM (prompt, schema) -> response
         enabled_only: Only run enabled derivation steps
         verbose: Print progress to stdout
-        phases: List of phases to run ("prep", "generate", "relationship").
+        phases: List of phases to run ("prep", "generate").
         run_logger: Optional RunLogger for structured logging
+        progress: Optional progress reporter for visual feedback
 
     Returns:
         Dict with success, stats, errors
     """
     if phases is None:
-        phases = ["prep", "generate", "relationship"]
+        phases = ["prep", "generate"]
 
     stats = {
         "elements_created": 0,
@@ -357,23 +307,35 @@ def run_derivation(
     errors: list[str] = []
     all_created_elements: list[dict] = []
 
-    # Load per-element relationship configs from dedicated table
-    rel_configs = config.get_relationship_configs(engine, enabled_only=enabled_only)
-    derive_relationships = bool(rel_configs) and "relationship" in phases
-
     # Start phase logging
     if run_logger:
         run_logger.phase_start("derivation", "Starting derivation pipeline")
 
+    # Calculate total steps for progress
+    prep_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="prep")
+    gen_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="generate")
+    total_steps = 0
+    if "prep" in phases:
+        total_steps += len(prep_configs)
+    if "generate" in phases:
+        total_steps += len(gen_configs)
+
+    # Start progress tracking
+    if progress:
+        progress.start_phase("derivation", total_steps)
+
     # Run prep phase
     if "prep" in phases:
-        prep_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="prep")
         if prep_configs and verbose:
             print(f"Running {len(prep_configs)} prep steps...")
 
         for cfg in prep_configs:
             if verbose:
                 print(f"  Prep: {cfg.step_name}")
+
+            # Start progress tracking for this step
+            if progress:
+                progress.start_step(cfg.step_name)
 
             step_ctx = None
             if run_logger:
@@ -386,18 +348,23 @@ def run_derivation(
                 errors.extend(result["errors"])
                 if step_ctx:
                     step_ctx.error("; ".join(result["errors"]))
+                if progress:
+                    progress.log("; ".join(result["errors"]), level="error")
             elif step_ctx:
                 step_ctx.complete()
+
+            # Complete progress tracking for this step
+            if progress:
+                progress.complete_step()
 
             if verbose and result.get("stats"):
                 prep_stats = result["stats"]
                 if "top_nodes" in prep_stats:
-                    print(f"    Top nodes: {[n['id'].split('_')[-1] for n in prep_stats['top_nodes'][:3]]}")
+                    top_names = [n["id"].split("_")[-1] for n in prep_stats["top_nodes"][:3]]
+                    print(f"    Top nodes: {top_names}")
 
     # Run generate phase
     if "generate" in phases:
-        gen_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="generate")
-
         if verbose:
             if gen_configs:
                 print(f"Running {len(gen_configs)} generate steps...")
@@ -407,6 +374,10 @@ def run_derivation(
         for cfg in gen_configs:
             if verbose:
                 print(f"  Generate: {cfg.step_name}")
+
+            # Start progress tracking for this step
+            if progress:
+                progress.start_step(cfg.step_name)
 
             step_ctx = None
             if run_logger:
@@ -463,10 +434,13 @@ def run_derivation(
                     example=cfg.example,
                     max_candidates=cfg.max_candidates,
                     batch_size=cfg.batch_size,
+                    existing_elements=all_created_elements,  # Pass accumulated elements
                 )
 
                 elements_created = step_result.get("elements_created", 0)
+                relationships_created = step_result.get("relationships_created", 0)
                 stats["elements_created"] += elements_created
+                stats["relationships_created"] += relationships_created
                 stats["steps_completed"] += 1
 
                 step_created_elements = step_result.get("created_elements", [])
@@ -479,87 +453,47 @@ def run_derivation(
                     step_ctx.items_created = elements_created
                     step_ctx.complete()
 
+                # Complete progress tracking for this step
+                if progress:
+                    msg = f"{elements_created} elements"
+                    if relationships_created > 0:
+                        msg += f", {relationships_created} relationships"
+                    progress.complete_step(msg)
+
+                if verbose and relationships_created > 0:
+                    print(f"    + {relationships_created} relationships")
+
                 if step_result.get("errors"):
                     errors.extend(step_result["errors"])
 
             except Exception as e:
-                errors.append(f"Error in {cfg.step_name}: {str(e)}")
+                error_msg = f"Error in {cfg.step_name}: {str(e)}"
+                errors.append(error_msg)
                 stats["steps_skipped"] += 1
                 if step_ctx:
                     step_ctx.error(str(e))
-
-    # ==========================================================================
-    # RELATIONSHIP DERIVATION PHASE (after all elements exist)
-    # ==========================================================================
-    if derive_relationships and all_created_elements:
-        if verbose:
-            print(f"\n  Deriving relationships ({len(all_created_elements)} elements available)...")
-
-        # Group elements by type for efficient lookup
-        elements_by_type: dict[str, list[dict]] = {}
-        for elem in all_created_elements:
-            elem_type = elem.get("element_type", "")
-            elements_by_type.setdefault(elem_type, []).append(elem)
-
-        # Process each relationship config in sequence
-        for rel_cfg in sorted(rel_configs, key=lambda c: c.sequence):
-            source_type = rel_cfg.element_type
-            source_elements = elements_by_type.get(source_type, [])
-
-            if not source_elements:
-                continue
-
-            # Filter target elements by configured types
-            if rel_cfg.target_element_types:
-                target_elements = [e for e in all_created_elements if e.get("element_type") in rel_cfg.target_element_types]
-            else:
-                target_elements = all_created_elements
-
-            if not target_elements:
-                continue
-
-            if verbose:
-                print(f"    {source_type} ({len(source_elements)}) -> {len(target_elements)} targets...")
-
-            # Create step context for relationship derivation
-            rel_step_ctx = None
-            if run_logger:
-                rel_step_ctx = run_logger.step_start(f"relationships_{source_type}", f"Deriving relationships FROM {source_type}")
-
-            rel_result = _derive_element_relationships(
-                source_element_type=source_type,
-                source_elements=source_elements,
-                target_elements=target_elements,
-                archimate_manager=archimate_manager,
-                llm_query_fn=llm_query_fn,
-                instruction=rel_cfg.instruction,
-                example=rel_cfg.example,
-                valid_relationship_types=rel_cfg.valid_relationship_types,
-                temperature=rel_cfg.temperature,
-                max_tokens=rel_cfg.max_tokens,
-            )
-
-            rels_created = rel_result.get("relationships_created", 0)
-            stats["relationships_created"] += rels_created
-
-            if rel_step_ctx:
-                rel_step_ctx.items_created = rels_created
-                for rel_id in rel_result.get("relationship_ids", []):
-                    rel_step_ctx.add_relationship(rel_id)
-                if rel_result.get("errors"):
-                    rel_step_ctx.error("; ".join(rel_result["errors"][:2]))
-                else:
-                    rel_step_ctx.complete()
-
-            if rel_result.get("errors"):
-                errors.extend(rel_result["errors"])
+                if progress:
+                    progress.log(error_msg, level="error")
+                    progress.complete_step()
 
     # Complete phase logging
     if run_logger:
         if errors:
-            run_logger.phase_error("derivation", "; ".join(errors[:3]), "Derivation completed with errors")
+            run_logger.phase_error(
+                "derivation", "; ".join(errors[:3]), "Derivation completed with errors"
+            )
         else:
-            run_logger.phase_complete("derivation", "Derivation completed successfully", stats=stats)
+            run_logger.phase_complete(
+                "derivation", "Derivation completed successfully", stats=stats
+            )
+
+    # Complete progress tracking
+    if progress:
+        msg = (
+            f"Derivation complete: {stats['elements_created']} elements, "
+            f"{stats['relationships_created']} relationships"
+        )
+        progress.complete_phase(msg)
 
     return {
         "success": len(errors) == 0,
@@ -569,228 +503,9 @@ def run_derivation(
     }
 
 
-def _derive_relationships(
-    elements: list[dict],
-    archimate_manager: ArchimateManager,
-    llm_query_fn: Callable | None,
-    instruction: str | None = None,
-    example: str | None = None,
-) -> dict[str, Any]:
-    """Derive relationships between elements using LLM.
 
-    Args:
-        elements: List of ArchiMate elements to derive relationships between
-        archimate_manager: Manager for persisting relationships
-        llm_query_fn: Function to call LLM
-        instruction: Optional custom instruction (from database config)
-        example: Optional custom example (from database config)
-    """
-    relationships_created = 0
-    relationship_ids: list[str] = []
-    errors = []
-
-    # Use custom prompt if instruction provided, otherwise default
-    if instruction:
-        prompt = _build_custom_relationship_prompt(elements, instruction, example)
-    else:
-        prompt = build_relationship_prompt(elements)
-
-    if llm_query_fn is None:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": ["LLM not configured"]}
-
-    try:
-        response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA)
-        response_content = response.content if hasattr(response, "content") else str(response)
-    except Exception as e:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": [f"LLM error: {e}"]}
-
-    parse_result = parse_relationship_response(response_content)
-
-    if not parse_result["success"]:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": parse_result.get("errors", [])}
-
-    element_ids = {e["identifier"] for e in elements}
-    # Build normalized lookup for fuzzy matching
-    normalized_lookup = {_normalize_identifier(eid): eid for eid in element_ids}
-
-    def resolve_identifier(ref: str) -> str | None:
-        """Resolve identifier with fuzzy matching fallback."""
-        if ref in element_ids:
-            return ref
-        # Try normalized matching
-        normalized = _normalize_identifier(ref)
-        return normalized_lookup.get(normalized)
-
-    for rel_data in parse_result["data"]:
-        source_ref = rel_data.get("source")
-        target_ref = rel_data.get("target")
-        rel_type = _normalize_relationship_type(rel_data.get("relationship_type", "Association"))
-
-        source = resolve_identifier(source_ref)
-        target = resolve_identifier(target_ref)
-
-        if source is None:
-            errors.append(f"Relationship source not found: {source_ref}")
-            continue
-        if target is None:
-            errors.append(f"Relationship target not found: {target_ref}")
-            continue
-
-        relationship = Relationship(
-            source=source,
-            target=target,
-            relationship_type=rel_type,
-            name=rel_data.get("name"),
-            properties={"confidence": rel_data.get("confidence", 0.5)},
-        )
-
-        try:
-            archimate_manager.add_relationship(relationship)
-            relationships_created += 1
-            # Create relationship ID for OCEL logging
-            rel_id = create_edge_id(source, rel_type, target)
-            relationship_ids.append(rel_id)
-        except Exception as e:
-            errors.append(f"Failed to persist relationship: {e}")
-
-    return {
-        "relationships_created": relationships_created,
-        "relationship_ids": relationship_ids,
-        "errors": errors,
-    }
-
-
-def _derive_element_relationships(
-    source_element_type: str,
-    source_elements: list[dict],
-    target_elements: list[dict],
-    archimate_manager: ArchimateManager,
-    llm_query_fn: Callable | None,
-    instruction: str | None = None,
-    example: str | None = None,
-    valid_relationship_types: list[str] | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> dict[str, Any]:
-    """Derive relationships FROM a specific element type.
-
-    Args:
-        source_element_type: ArchiMate element type of the source elements
-        source_elements: Elements of the current type to derive relationships FROM
-        target_elements: Elements available as potential targets (filtered by config)
-        archimate_manager: ArchimateManager for persistence
-        llm_query_fn: Function to call LLM (prompt, schema) -> response
-        instruction: Custom instruction from database config
-        example: Custom example from database config
-        valid_relationship_types: Allowed relationship types from config
-        temperature: LLM temperature override
-        max_tokens: LLM max_tokens override
-
-    Returns:
-        Dict with relationships_created, relationship_ids, and errors
-    """
-    relationships_created = 0
-    relationship_ids: list[str] = []
-    errors: list[str] = []
-
-    if llm_query_fn is None:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": ["LLM not configured"]}
-
-    if not source_elements:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": []}
-
-    if not target_elements:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": []}
-
-    if not instruction:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": ["No instruction configured"]}
-
-    # Build element-specific prompt using the new per-element function
-    prompt = build_per_element_relationship_prompt(
-        source_elements=source_elements,
-        target_elements=target_elements,
-        source_element_type=source_element_type,
-        instruction=instruction,
-        example=example,
-        valid_relationship_types=valid_relationship_types,
-    )
-
-    # Call LLM with per-step overrides if provided
-    try:
-        if temperature is not None or max_tokens is not None:
-            response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA, temperature=temperature, max_tokens=max_tokens)
-        else:
-            response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA)
-        response_content = response.content if hasattr(response, "content") else str(response)
-    except Exception as e:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": [f"LLM error: {e}"]}
-
-    parse_result = parse_relationship_response(response_content)
-
-    if not parse_result["success"]:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": parse_result.get("errors", [])}
-
-    # Build lookup maps for identifier resolution
-    source_ids = {e["identifier"] for e in source_elements}
-    target_ids = {e["identifier"] for e in target_elements}
-    valid_types_set = set(valid_relationship_types) if valid_relationship_types else None
-
-    # Build normalized lookup for fuzzy matching
-    all_ids = source_ids | target_ids
-    normalized_lookup = {_normalize_identifier(eid): eid for eid in all_ids}
-
-    def resolve_identifier(ref: str, valid_set: set[str]) -> str | None:
-        """Resolve identifier with fuzzy matching fallback."""
-        if ref in valid_set:
-            return ref
-        # Try normalized matching
-        normalized = _normalize_identifier(ref)
-        resolved = normalized_lookup.get(normalized)
-        if resolved and resolved in valid_set:
-            return resolved
-        return None
-
-    for rel_data in parse_result["data"]:
-        source_ref = rel_data.get("source")
-        target_ref = rel_data.get("target")
-        rel_type = _normalize_relationship_type(rel_data.get("relationship_type", "Association"))
-
-        # Resolve identifiers
-        source = resolve_identifier(source_ref, source_ids)
-        target = resolve_identifier(target_ref, target_ids)
-
-        if source is None:
-            errors.append(f"Relationship source not in {source_element_type} elements: {source_ref}")
-            continue
-        if target is None:
-            errors.append(f"Relationship target not found: {target_ref}")
-            continue
-
-        # Validate relationship type against config
-        if valid_types_set and rel_type not in valid_types_set:
-            errors.append(f"Invalid relationship type '{rel_type}' for {source_element_type}")
-            continue
-
-        # Create and persist relationship
-        relationship = Relationship(
-            source=source,
-            target=target,
-            relationship_type=rel_type,
-            name=rel_data.get("name"),
-            properties={"confidence": rel_data.get("confidence", 0.5)},
-        )
-
-        try:
-            archimate_manager.add_relationship(relationship)
-            relationships_created += 1
-            # Create relationship ID for OCEL logging
-            rel_id = create_edge_id(source, rel_type, target)
-            relationship_ids.append(rel_id)
-        except Exception as e:
-            errors.append(f"Failed to persist relationship: {e}")
-
-    return {
-        "relationships_created": relationships_created,
-        "relationship_ids": relationship_ids,
-        "errors": errors,
-    }
+# NOTE: Relationship derivation is now handled within each element module.
+# The old _derive_relationships and _derive_element_relationships functions
+# have been removed. Each element module's generate() function now handles
+# both element creation AND relationship derivation using the unified flow
+# in base.py (derive_batch_relationships).

@@ -21,7 +21,7 @@ from deriva.adapters.graph import GraphManager
 from deriva.common.chunking import chunk_content, should_chunk
 
 if TYPE_CHECKING:
-    from deriva.common.types import RunLoggerProtocol
+    from deriva.common.types import ProgressReporter, RunLoggerProtocol
 from deriva.adapters.graph.models import (
     BusinessConceptNode,
     DirectoryNode,
@@ -50,6 +50,7 @@ def run_extraction(
     enabled_only: bool = True,
     verbose: bool = False,
     run_logger: RunLoggerProtocol | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     """
     Run the extraction pipeline.
@@ -62,6 +63,7 @@ def run_extraction(
         enabled_only: Only run enabled extraction steps
         verbose: Print progress to stdout
         run_logger: Optional RunLogger for structured logging
+        progress: Optional progress reporter for visual feedback
 
     Returns:
         Dict with success, stats, errors
@@ -98,7 +100,15 @@ def run_extraction(
 
     # Get file type registry for classification
     file_types = config.get_file_types(engine)
-    registry_list = [{"extension": ft.extension, "file_type": ft.file_type, "subtype": ft.subtype} for ft in file_types]
+    registry_list = [
+        {"extension": ft.extension, "file_type": ft.file_type, "subtype": ft.subtype}
+        for ft in file_types
+    ]
+
+    # Start progress tracking
+    total_steps = len(configs) * len(repos)
+    if progress:
+        progress.start_phase("extraction", total_steps)
 
     # Process each repository
     for repo in repos:
@@ -131,6 +141,10 @@ def run_extraction(
             if verbose:
                 print(f"  Extracting: {node_type}")
 
+            # Start progress tracking for this step
+            if progress:
+                progress.start_step(node_type)
+
             # Start step logging
             step_ctx = None
             if run_logger:
@@ -162,6 +176,10 @@ def run_extraction(
                         step_ctx.add_edge(edge_id)
                     step_ctx.complete()
 
+                # Complete progress tracking for this step
+                if progress:
+                    progress.complete_step(f"{nodes_created} nodes, {edges_created} edges")
+
                 # Separate warnings (skipped steps) from real errors
                 for err in result.get("errors", []):
                     if "LLM required" in err or "No input sources" in err:
@@ -175,13 +193,25 @@ def run_extraction(
                 stats["steps_skipped"] += 1
                 if step_ctx:
                     step_ctx.error(str(e))
+                if progress:
+                    progress.log(error_msg, level="error")
+                    progress.complete_step()
 
     # Complete phase logging
     if run_logger:
         if errors:
-            run_logger.phase_error("extraction", "; ".join(errors[:3]), "Extraction completed with errors")
+            run_logger.phase_error(
+                "extraction", "; ".join(errors[:3]), "Extraction completed with errors"
+            )
         else:
-            run_logger.phase_complete("extraction", "Extraction completed successfully", stats=stats)
+            run_logger.phase_complete(
+                "extraction", "Extraction completed successfully", stats=stats
+            )
+
+    # Complete progress tracking
+    if progress:
+        msg = f"Extraction complete: {stats['nodes_created']} nodes, {stats['edges_created']} edges"
+        progress.complete_phase(msg)
 
     return {
         "success": len(errors) == 0,

@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any, cast
 from deriva.adapters.archimate import ArchimateManager
 
 if TYPE_CHECKING:
-    from deriva.common.types import RunLoggerProtocol
+    from deriva.common.types import BenchmarkProgressReporter, RunLoggerProtocol
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.llm import LLMManager
 from deriva.adapters.llm.manager import load_benchmark_models
@@ -392,12 +392,17 @@ class BenchmarkOrchestrator:
 
         return errors
 
-    def run(self, verbose: bool = False) -> BenchmarkResult:
+    def run(
+        self,
+        verbose: bool = False,
+        progress: BenchmarkProgressReporter | None = None,
+    ) -> BenchmarkResult:
         """
         Execute the full benchmark matrix.
 
         Args:
             verbose: Print progress to stdout
+            progress: Optional progress reporter for visual feedback
 
         Returns:
             BenchmarkResult with session details and metrics
@@ -444,6 +449,15 @@ class BenchmarkOrchestrator:
             stages=self.config.stages,
         )
 
+        # Start progress tracking
+        if progress:
+            progress.start_benchmark(
+                session_id=self.session_id,
+                total_runs=self.config.total_runs(),
+                repositories=self.config.repositories,
+                models=self.config.models,
+            )
+
         if verbose:
             print(f"\n{'=' * 60}")
             print(f"BENCHMARK SESSION: {self.session_id}")
@@ -469,23 +483,37 @@ class BenchmarkOrchestrator:
                         print(f"Model: {model_name}")
                         print(f"Iteration: {iteration}")
 
+                    # Start progress tracking for this run
+                    if progress:
+                        progress.start_run(
+                            run_number=run_number,
+                            repository=repo_name,
+                            model=model_name,
+                            iteration=iteration,
+                        )
+
                     try:
                         result = self._run_single(
                             repo_name=repo_name,
                             model_name=model_name,
                             iteration=iteration,
                             verbose=verbose,
+                            progress=progress,
                         )
 
                         if result.status == "completed":
                             runs_completed += 1
                             if verbose:
                                 print(f"[OK] Completed: {result.stats}")
+                            if progress:
+                                progress.complete_run("completed", result.stats)
                         else:
                             runs_failed += 1
                             errors.extend(result.errors)
                             if verbose:
                                 print(f"[FAIL] Failed: {result.errors}")
+                            if progress:
+                                progress.complete_run("failed", result.stats)
 
                     except Exception as e:
                         runs_failed += 1
@@ -493,6 +521,8 @@ class BenchmarkOrchestrator:
                         errors.append(error_msg)
                         if verbose:
                             print(f"[FAIL] Exception: {e}")
+                        if progress:
+                            progress.complete_run("failed")
 
         # Calculate duration
         duration = (datetime.now() - self.session_start).total_seconds()
@@ -511,6 +541,14 @@ class BenchmarkOrchestrator:
 
         # Update session in database
         self._complete_session(runs_completed, runs_failed)
+
+        # Complete progress tracking
+        if progress:
+            progress.complete_benchmark(
+                runs_completed=runs_completed,
+                runs_failed=runs_failed,
+                duration_seconds=duration,
+            )
 
         if verbose:
             print(f"\n{'=' * 60}")
@@ -538,6 +576,7 @@ class BenchmarkOrchestrator:
         model_name: str,
         iteration: int,
         verbose: bool = False,
+        progress: BenchmarkProgressReporter | None = None,
     ) -> RunResult:
         """
         Execute a single benchmark run.
@@ -546,6 +585,7 @@ class BenchmarkOrchestrator:
             repo_name: Repository to process
             model_name: Model config name to use
             iteration: Run iteration number
+            progress: Optional progress reporter for visual feedback
 
         Returns:
             RunResult with run details
@@ -627,6 +667,7 @@ class BenchmarkOrchestrator:
                     repo_name=repo_name,
                     verbose=False,
                     run_logger=cast("RunLoggerProtocol", ocel_run_logger),
+                    progress=progress,
                 )
                 stats["extraction"] = result.get("stats", {})
                 self._log_extraction_results(result)
@@ -641,6 +682,7 @@ class BenchmarkOrchestrator:
                     llm_query_fn=llm_query_fn,
                     verbose=False,
                     run_logger=cast("RunLoggerProtocol", ocel_run_logger),
+                    progress=progress,
                 )
                 stats["derivation"] = result.get("stats", {})
                 self._log_derivation_results(result)

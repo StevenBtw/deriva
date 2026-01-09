@@ -31,7 +31,7 @@ classifiers = [
 
 dependencies = [
     # Core framework
-    "marimo>=0.18.4",
+    "marimo>=0.19.0",
     "pydantic>=2.12.5",
     # Databases
     "neo4j>=6.0.3",
@@ -46,16 +46,22 @@ dependencies = [
     "python-dotenv>=1.2.1",
     # Code parsing (multi-language AST)
     "tree-sitter>=0.24.6",
+    # SQL parsing
+    "sqlglot>=28.5.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
-    "ruff>=0.14.10",
+    "ruff>=0.14.11",
     "ty>=0.0.10",
     "types-lxml>=2025.3.30",
     "pre-commit>=4.5.1",
+]
+# Progress tracking with Rich library (for CLI progress bars)
+progress = [
+    "rich>=13.0",
 ]
 
 [project.urls]

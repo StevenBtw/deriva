@@ -82,7 +82,7 @@ src/
 │   └── benchmarking.py      - Multi-model benchmarking and analysis
 │
 ├── common/ (Shared utilities)
-│   ├── types.py     - Shared TypedDicts and Protocols
+│   ├── types.py     - Shared TypedDicts, Protocols, ProgressReporter
 │   ├── logging.py   - Pipeline logging (JSON Lines)
 │   └── utils.py     - File encoding, helpers
 │
@@ -1237,6 +1237,115 @@ class SomeManager:
         self.setting = os.getenv('SOME_SETTING', 'default')
         # Read all config in __init__
         # Cache values as instance variables
+```
+
+</details>
+
+<details>
+<summary><strong>Progress Tracking</strong></summary>
+
+### Overview
+
+The CLI provides visual progress tracking for pipeline and benchmark operations using the [Rich](https://rich.readthedocs.io/) library. This is implemented as an optional dependency with graceful fallback.
+
+### Installation
+
+```bash
+# Install with progress support
+uv sync --extra progress
+```
+
+### Features
+
+- **Progress bars** with ETA, elapsed time, and completion counts
+- **Spinner animations** for indeterminate operations
+- **Phase/step hierarchy** for multi-stage pipelines (extraction → derivation)
+- **Benchmark matrix display** showing current run context (repository, model, iteration)
+
+### CLI Usage
+
+```bash
+# Default: progress bars shown (if Rich installed)
+deriva run -r my-repo
+
+# Quiet mode: disable progress display
+deriva run -r my-repo -q
+
+# Verbose mode: detailed text output (also disables progress bar)
+deriva run -r my-repo -v
+
+# Benchmark with progress
+deriva benchmark run --repos my-repo --models my-model -n 3
+
+# Benchmark quiet mode
+deriva benchmark run --repos my-repo --models my-model -n 3 -q
+```
+
+### Architecture
+
+Progress reporting uses a **callback protocol** defined in `common/types.py`:
+
+```python
+class ProgressReporter(Protocol):
+    """UI-agnostic progress reporting protocol."""
+    def start_phase(self, name: str, total_steps: int) -> None: ...
+    def start_step(self, name: str, total_items: int | None = None) -> None: ...
+    def update(self, current: int | None = None, message: str = "") -> None: ...
+    def advance(self, amount: int = 1) -> None: ...
+    def complete_step(self, message: str = "") -> None: ...
+    def complete_phase(self, message: str = "") -> None: ...
+    def log(self, message: str, level: str = "info") -> None: ...
+
+class BenchmarkProgressReporter(Protocol):
+    """Extended protocol for benchmark operations."""
+    # Includes all ProgressReporter methods plus:
+    def start_benchmark(self, session_id: str, total_runs: int, ...) -> None: ...
+    def start_run(self, run_number: int, repository: str, model: str, ...) -> None: ...
+    def complete_run(self, status: str, stats: dict | None = None) -> None: ...
+    def complete_benchmark(self, runs_completed: int, runs_failed: int, ...) -> None: ...
+```
+
+### Implementation Layers
+
+| Layer | File | Implementation |
+|-------|------|----------------|
+| **CLI** | `cli/progress.py` | Rich-based reporters with fallback to no-op |
+| **Marimo** | `app/progress.py` | State-collecting reporter + `mo.status.spinner()` |
+| **Services** | `extraction.py`, `derivation.py`, `benchmarking.py` | Accept optional `progress` parameter |
+
+The services layer is UI-agnostic—it accepts any object implementing the protocol. This allows:
+
+- CLI to use Rich progress bars with real-time updates
+- Marimo to collect events and display summary after completion with spinner during execution
+- Tests to use no-op reporters
+
+### Adding Progress to New Services
+
+```python
+from deriva.common.types import ProgressReporter
+
+def my_service_function(
+    ...,
+    progress: ProgressReporter | None = None,
+) -> dict:
+    if progress:
+        progress.start_phase("my_operation", total_steps=3)
+
+    # Step 1
+    if progress:
+        progress.start_step("Processing items", total_items=len(items))
+    for item in items:
+        process(item)
+        if progress:
+            progress.advance()
+    if progress:
+        progress.complete_step("Done")
+
+    # ... more steps ...
+
+    if progress:
+        progress.complete_phase("Operation complete")
+    return result
 ```
 
 </details>
