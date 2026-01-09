@@ -684,3 +684,360 @@ class TestRunDerivationWithConfigs:
 
         progress.log.assert_called()
         assert "error" in str(progress.log.call_args)
+
+
+class TestRunPrepStepEdgeCases:
+    """Tests for edge cases in _run_prep_step function."""
+
+    def test_returns_success_when_enrichment_returns_empty(self):
+        """Should return success when enrichment returns empty results."""
+        graph_manager = MagicMock()
+        cfg = MagicMock()
+        cfg.step_name = "pagerank"
+        cfg.params = None
+
+        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
+            with patch.object(derivation.enrich, "enrich_graph", return_value={}):
+                result = derivation._run_prep_step(cfg, graph_manager)
+
+        assert result["success"] is True
+        assert result["stats"]["nodes_updated"] == 0
+
+    def test_handles_json_decode_error_in_params(self):
+        """Should handle invalid JSON in params gracefully."""
+        graph_manager = MagicMock()
+        graph_manager.batch_update_properties.return_value = 3
+        cfg = MagicMock()
+        cfg.step_name = "pagerank"
+        cfg.params = "not valid json {"
+
+        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
+            with patch.object(derivation.enrich, "enrich_graph", return_value={"n1": {"pagerank": 0.5}}):
+                result = derivation._run_prep_step(cfg, graph_manager)
+
+        # Should succeed despite invalid params (uses defaults)
+        assert result["success"] is True
+
+    def test_filters_description_from_params(self):
+        """Should filter out 'description' key from params."""
+        graph_manager = MagicMock()
+        graph_manager.batch_update_properties.return_value = 3
+        cfg = MagicMock()
+        cfg.step_name = "pagerank"
+        cfg.params = '{"damping": 0.85, "description": "PageRank algorithm"}'
+
+        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
+            with patch.object(derivation.enrich, "enrich_graph") as mock_enrich:
+                mock_enrich.return_value = {"n1": {"pagerank": 0.5}}
+                derivation._run_prep_step(cfg, graph_manager)
+
+        # Verify description was filtered out
+        call_kwargs = mock_enrich.call_args.kwargs
+        if "params" in call_kwargs and "pagerank" in call_kwargs["params"]:
+            assert "description" not in call_kwargs["params"]["pagerank"]
+
+    def test_runs_louvain_communities_algorithm(self):
+        """Should run louvain_communities algorithm."""
+        graph_manager = MagicMock()
+        graph_manager.batch_update_properties.return_value = 5
+        cfg = MagicMock()
+        cfg.step_name = "louvain_communities"
+        cfg.params = None
+
+        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
+            with patch.object(derivation.enrich, "enrich_graph", return_value={"n1": {"community": 1}}):
+                result = derivation._run_prep_step(cfg, graph_manager)
+
+        assert result["success"] is True
+        assert result["stats"]["algorithm"] == "louvain"
+
+    def test_runs_degree_centrality_algorithm(self):
+        """Should run degree_centrality algorithm."""
+        graph_manager = MagicMock()
+        graph_manager.batch_update_properties.return_value = 3
+        cfg = MagicMock()
+        cfg.step_name = "degree_centrality"
+        cfg.params = None
+
+        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
+            with patch.object(derivation.enrich, "enrich_graph", return_value={"n1": {"degree": 2}}):
+                result = derivation._run_prep_step(cfg, graph_manager)
+
+        assert result["success"] is True
+        assert result["stats"]["algorithm"] == "degree"
+
+
+class TestRunDerivationIter:
+    """Tests for run_derivation_iter generator function."""
+
+    def test_yields_progress_updates(self):
+        """Should yield ProgressUpdate objects."""
+        from deriva.common.types import ProgressUpdate
+
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        graph_manager.batch_update_properties.return_value = 0
+        archimate_manager = MagicMock()
+
+        prep_cfg = MagicMock()
+        prep_cfg.step_name = "pagerank"
+        prep_cfg.params = None
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: ([prep_cfg] if phase == "prep" else [])
+            with patch.object(derivation, "_get_graph_edges", return_value=[]):
+                updates = list(
+                    derivation.run_derivation_iter(
+                        engine=engine,
+                        graph_manager=graph_manager,
+                        archimate_manager=archimate_manager,
+                        phases=["prep"],
+                    )
+                )
+
+        assert len(updates) >= 1
+        assert all(isinstance(u, ProgressUpdate) for u in updates)
+
+    def test_yields_error_when_no_configs_enabled(self):
+        """Should yield error update when no configs are enabled."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+
+        with patch.object(derivation.config, "get_derivation_configs", return_value=[]):
+            updates = list(
+                derivation.run_derivation_iter(
+                    engine=engine,
+                    graph_manager=graph_manager,
+                    archimate_manager=archimate_manager,
+                )
+            )
+
+        assert len(updates) == 1
+        assert updates[0].status == "error"
+        assert "No derivation configs enabled" in updates[0].message
+
+    def test_yields_step_complete_for_each_prep_step(self):
+        """Should yield step complete for each prep step."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        graph_manager.batch_update_properties.return_value = 0
+        archimate_manager = MagicMock()
+
+        prep_cfg1 = MagicMock()
+        prep_cfg1.step_name = "pagerank"
+        prep_cfg1.params = None
+
+        prep_cfg2 = MagicMock()
+        prep_cfg2.step_name = "louvain_communities"
+        prep_cfg2.params = None
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: ([prep_cfg1, prep_cfg2] if phase == "prep" else [])
+            with patch.object(derivation, "_get_graph_edges", return_value=[]):
+                updates = list(
+                    derivation.run_derivation_iter(
+                        engine=engine,
+                        graph_manager=graph_manager,
+                        archimate_manager=archimate_manager,
+                        phases=["prep"],
+                    )
+                )
+
+        # Should have 2 prep step updates + 1 final completion
+        step_updates = [u for u in updates if u.step]
+        assert len(step_updates) == 2
+        assert step_updates[0].step == "pagerank"
+        assert step_updates[1].step == "louvain_communities"
+
+    def test_yields_generate_step_with_element_counts(self):
+        """Should yield generate step with element counts."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+
+        gen_cfg = MagicMock()
+        gen_cfg.step_name = "gen_app"
+        gen_cfg.element_type = "ApplicationComponent"
+        gen_cfg.input_graph_query = "MATCH (n) RETURN n"
+        gen_cfg.instruction = "Gen"
+        gen_cfg.example = "{}"
+        gen_cfg.max_candidates = 10
+        gen_cfg.batch_size = 5
+        gen_cfg.temperature = None
+        gen_cfg.max_tokens = None
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            with patch.object(derivation, "generate_element") as mock_gen:
+                mock_gen.return_value = {
+                    "success": True,
+                    "elements_created": 5,
+                    "relationships_created": 3,
+                    "created_elements": [],
+                    "errors": [],
+                }
+                updates = list(
+                    derivation.run_derivation_iter(
+                        engine=engine,
+                        graph_manager=graph_manager,
+                        archimate_manager=archimate_manager,
+                        llm_query_fn=MagicMock(),
+                        phases=["generate"],
+                    )
+                )
+
+        step_update = [u for u in updates if u.step == "gen_app"][0]
+        assert "5 elements" in step_update.message
+        assert "3 relationships" in step_update.message
+
+    def test_yields_error_for_missing_config_params(self):
+        """Should yield error when config has missing params."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+
+        gen_cfg = MagicMock()
+        gen_cfg.step_name = "gen_bad"
+        gen_cfg.element_type = "ApplicationComponent"
+        gen_cfg.input_graph_query = None  # Missing
+        gen_cfg.instruction = None  # Missing
+        gen_cfg.example = None
+        gen_cfg.max_candidates = None
+        gen_cfg.batch_size = None
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            updates = list(
+                derivation.run_derivation_iter(
+                    engine=engine,
+                    graph_manager=graph_manager,
+                    archimate_manager=archimate_manager,
+                    llm_query_fn=MagicMock(),
+                    phases=["generate"],
+                )
+            )
+
+        error_updates = [u for u in updates if u.status == "error"]
+        assert len(error_updates) >= 1
+        assert "Missing required config" in error_updates[0].message
+
+    def test_yields_error_on_generate_exception(self):
+        """Should yield error when generate raises exception."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+
+        gen_cfg = MagicMock()
+        gen_cfg.step_name = "gen_fail"
+        gen_cfg.element_type = "ApplicationComponent"
+        gen_cfg.input_graph_query = "MATCH (n) RETURN n"
+        gen_cfg.instruction = "Gen"
+        gen_cfg.example = "{}"
+        gen_cfg.max_candidates = 10
+        gen_cfg.batch_size = 5
+        gen_cfg.temperature = None
+        gen_cfg.max_tokens = None
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            with patch.object(derivation, "generate_element", side_effect=Exception("LLM crashed")):
+                updates = list(
+                    derivation.run_derivation_iter(
+                        engine=engine,
+                        graph_manager=graph_manager,
+                        archimate_manager=archimate_manager,
+                        llm_query_fn=MagicMock(),
+                        phases=["generate"],
+                    )
+                )
+
+        error_updates = [u for u in updates if u.status == "error"]
+        assert len(error_updates) >= 1
+        assert "Error in gen_fail" in error_updates[0].message
+
+    def test_final_update_includes_stats(self):
+        """Should include complete stats in final update."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        graph_manager.batch_update_properties.return_value = 0
+        archimate_manager = MagicMock()
+
+        prep_cfg = MagicMock()
+        prep_cfg.step_name = "pagerank"
+        prep_cfg.params = None
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: ([prep_cfg] if phase == "prep" else [])
+            with patch.object(derivation, "_get_graph_edges", return_value=[]):
+                updates = list(
+                    derivation.run_derivation_iter(
+                        engine=engine,
+                        graph_manager=graph_manager,
+                        archimate_manager=archimate_manager,
+                        phases=["prep"],
+                    )
+                )
+
+        final_update = updates[-1]
+        assert final_update.status == "complete"
+        assert "stats" in final_update.stats
+        assert final_update.stats["stats"]["steps_completed"] == 1
+
+    def test_accumulates_elements_across_generate_steps(self):
+        """Should accumulate elements and pass to subsequent steps."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+
+        gen_cfg1 = MagicMock()
+        gen_cfg1.step_name = "gen1"
+        gen_cfg1.element_type = "ApplicationComponent"
+        gen_cfg1.input_graph_query = "Q"
+        gen_cfg1.instruction = "I"
+        gen_cfg1.example = "{}"
+        gen_cfg1.max_candidates = 10
+        gen_cfg1.batch_size = 5
+        gen_cfg1.temperature = None
+        gen_cfg1.max_tokens = None
+
+        gen_cfg2 = MagicMock()
+        gen_cfg2.step_name = "gen2"
+        gen_cfg2.element_type = "DataObject"
+        gen_cfg2.input_graph_query = "Q"
+        gen_cfg2.instruction = "I"
+        gen_cfg2.example = "{}"
+        gen_cfg2.max_candidates = 10
+        gen_cfg2.batch_size = 5
+        gen_cfg2.temperature = None
+        gen_cfg2.max_tokens = None
+
+        existing_elements_calls = []
+
+        def track_generate(**kwargs):
+            existing_elements_calls.append(kwargs.get("existing_elements", []).copy())
+            created = [{"id": f"e{len(existing_elements_calls)}"}] if len(existing_elements_calls) == 1 else []
+            return {
+                "success": True,
+                "elements_created": 1,
+                "relationships_created": 0,
+                "created_elements": created,
+                "errors": [],
+            }
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg1, gen_cfg2] if phase == "generate" else [])
+            with patch.object(derivation, "generate_element", side_effect=track_generate):
+                list(
+                    derivation.run_derivation_iter(
+                        engine=engine,
+                        graph_manager=graph_manager,
+                        archimate_manager=archimate_manager,
+                        llm_query_fn=MagicMock(),
+                        phases=["generate"],
+                    )
+                )
+
+        # First call gets empty list, second call gets elements from first
+        assert existing_elements_calls[0] == []
+        assert len(existing_elements_calls[1]) == 1

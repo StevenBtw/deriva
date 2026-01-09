@@ -696,6 +696,8 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     verbose = getattr(args, "verbose", False)
     quiet = getattr(args, "quiet", False)
     use_cache = not getattr(args, "no_cache", False)
+    export_models = not getattr(args, "no_export_models", False)
+    clear_between_runs = not getattr(args, "no_clear", False)
     nocache_configs_str = getattr(args, "nocache_configs", None)
     nocache_configs = (
         [c.strip() for c in nocache_configs_str.split(",")]
@@ -713,6 +715,8 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     if stages:
         print(f"Stages: {stages}")
     print(f"Cache: {'enabled' if use_cache else 'disabled'}")
+    print(f"Export models: {'enabled' if export_models else 'disabled'}")
+    print(f"Clear between runs: {'yes' if clear_between_runs else 'no'}")
     if nocache_configs:
         print(f"No-cache configs: {nocache_configs}")
     print(f"{'=' * 60}\n")
@@ -734,6 +738,8 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
                 use_cache=use_cache,
                 nocache_configs=nocache_configs,
                 progress=progress_reporter,
+                export_models=export_models,
+                clear_between_runs=clear_between_runs,
             )
 
         print(f"\n{'=' * 60}")
@@ -744,6 +750,8 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
         print(f"Runs failed: {result.runs_failed}")
         print(f"Duration: {result.duration_seconds:.1f}s")
         print(f"OCEL log: {result.ocel_path}")
+        if export_models:
+            print(f"Model files: workspace/benchmarks/{result.session_id}/models/")
 
         if result.errors:
             print(f"\nErrors ({len(result.errors)}):")
@@ -1395,6 +1403,16 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Comma-separated list of config names to skip cache for (e.g., 'ApplicationComponent,DataObject')",
+    )
+    benchmark_run.add_argument(
+        "--no-export-models",
+        action="store_true",
+        help="Disable exporting ArchiMate model files after each run",
+    )
+    benchmark_run.add_argument(
+        "--no-clear",
+        action="store_true",
+        help="Don't clear graph/model between runs (keep existing data)",
     )
     benchmark_run.set_defaults(func=cmd_benchmark_run)
 

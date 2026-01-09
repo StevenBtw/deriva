@@ -14,6 +14,7 @@ Multiple minor improvements for different parts of the process:
 - **Extraction Method Property**: Added extraction method (structural/ast/llm) property to the graph nodes
 - **LLM Rate Limiting**: Extended the LLM manager (adapter) with rate limiting capabilities to gracefully deal with llm provider introduced rate limits
 - **Status/Progress Bars**: Both the Marimo app and the cli now have visual indicators of progress during pipeline runs and benchmark runs (cli only)
+- **Status/Progress Bars**: Added model output to the benchmark runs, with unique names ({repo}_{model}_{run#}.archimate)
 
 ### Full test pass
 

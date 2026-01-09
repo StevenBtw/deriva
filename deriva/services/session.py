@@ -971,6 +971,8 @@ class PipelineSession:
         use_cache: bool = True,
         nocache_configs: list[str] | None = None,
         progress: BenchmarkProgressReporter | None = None,
+        export_models: bool = True,
+        clear_between_runs: bool = True,
     ) -> benchmarking.BenchmarkResult:
         """
         Run a full benchmark matrix.
@@ -985,6 +987,8 @@ class PipelineSession:
             use_cache: Enable LLM response caching (default: True)
             nocache_configs: List of config names to skip cache for (for A/B testing)
             progress: Optional progress reporter for visual feedback
+            export_models: Export ArchiMate model file after each run (default: True)
+            clear_between_runs: Clear graph/model between runs (default: True)
 
         Returns:
             BenchmarkResult with session details
@@ -1013,6 +1017,8 @@ class PipelineSession:
             description=description,
             use_cache=use_cache,
             nocache_configs=nocache_configs or [],
+            export_models=export_models,
+            clear_between_runs=clear_between_runs,
         )
 
         orchestrator = benchmarking.BenchmarkOrchestrator(

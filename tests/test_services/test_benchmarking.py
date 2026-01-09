@@ -57,6 +57,23 @@ class TestBenchmarkConfig:
         )
         assert config.clear_between_runs is True
 
+    def test_default_export_models(self):
+        """Should default to exporting models after each run."""
+        config = BenchmarkConfig(
+            repositories=["repo1"],
+            models=["gpt-4"],
+        )
+        assert config.export_models is True
+
+    def test_export_models_can_be_disabled(self):
+        """Should allow disabling model export."""
+        config = BenchmarkConfig(
+            repositories=["repo1"],
+            models=["gpt-4"],
+            export_models=False,
+        )
+        assert config.export_models is False
+
     def test_total_runs_calculation(self):
         """Should calculate total runs correctly."""
         config = BenchmarkConfig(
@@ -94,6 +111,7 @@ class TestBenchmarkConfig:
             stages=["extraction"],
             description="Test benchmark",
             clear_between_runs=False,
+            export_models=False,
         )
         d = config.to_dict()
 
@@ -103,6 +121,7 @@ class TestBenchmarkConfig:
         assert d["stages"] == ["extraction"]
         assert d["description"] == "Test benchmark"
         assert d["clear_between_runs"] is False
+        assert d["export_models"] is False
 
     def test_to_dict_is_serializable(self):
         """Should produce JSON-serializable dict."""
@@ -918,6 +937,117 @@ class TestBenchmarkOrchestrator:
         assert len(result.errors) > 0
         assert "Missing model configs" in result.errors[0]
         assert result.runs_completed == 0
+
+    def test_export_run_model_returns_none_when_no_elements(self):
+        """Should return None when no elements to export."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = []
+
+        config = BenchmarkConfig(
+            repositories=["repo1"],
+            models=["gpt-4"],
+            export_models=True,
+        )
+        orchestrator = BenchmarkOrchestrator(
+            engine=engine,
+            graph_manager=graph_manager,
+            archimate_manager=archimate_manager,
+            config=config,
+        )
+        orchestrator.session_id = "test_session"
+
+        result = orchestrator._export_run_model("repo1", "gpt-4", 1)
+        assert result is None
+
+    def test_export_run_model_generates_correct_filename(self):
+        """Should generate correct filename for model export."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [{"type": "ApplicationComponent", "name": "Test"}]
+        archimate_manager.get_relationships.return_value = []
+
+        config = BenchmarkConfig(
+            repositories=["my-repo"],
+            models=["azure-gpt4"],
+            export_models=True,
+        )
+        orchestrator = BenchmarkOrchestrator(
+            engine=engine,
+            graph_manager=graph_manager,
+            archimate_manager=archimate_manager,
+            config=config,
+        )
+        orchestrator.session_id = "test_session"
+
+        with patch("deriva.services.benchmarking.ArchiMateXMLExporter") as mock_exporter:
+            mock_exporter_instance = MagicMock()
+            mock_exporter.return_value = mock_exporter_instance
+
+            result = orchestrator._export_run_model("my-repo", "azure-gpt4", 3)
+
+            # Check export was called with correct path pattern
+            assert result is not None
+            assert "my-repo_azure-gpt4_3.archimate" in result
+            assert "test_session" in result
+            assert "models" in result
+
+    def test_export_run_model_sanitizes_special_characters(self):
+        """Should sanitize special characters in filenames."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [{"type": "ApplicationComponent", "name": "Test"}]
+        archimate_manager.get_relationships.return_value = []
+
+        config = BenchmarkConfig(
+            repositories=["org/repo"],
+            models=["model/variant"],
+            export_models=True,
+        )
+        orchestrator = BenchmarkOrchestrator(
+            engine=engine,
+            graph_manager=graph_manager,
+            archimate_manager=archimate_manager,
+            config=config,
+        )
+        orchestrator.session_id = "test_session"
+
+        with patch("deriva.services.benchmarking.ArchiMateXMLExporter") as mock_exporter:
+            mock_exporter_instance = MagicMock()
+            mock_exporter.return_value = mock_exporter_instance
+
+            result = orchestrator._export_run_model("org/repo", "model/variant", 1)
+
+            # Should sanitize / to _
+            assert result is not None
+            assert "org_repo_model_variant_1.archimate" in result
+
+    def test_export_run_model_handles_export_error(self):
+        """Should return None when export fails."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [{"type": "ApplicationComponent", "name": "Test"}]
+        archimate_manager.get_relationships.side_effect = Exception("Export failed")
+
+        config = BenchmarkConfig(
+            repositories=["repo1"],
+            models=["gpt-4"],
+            export_models=True,
+        )
+        orchestrator = BenchmarkOrchestrator(
+            engine=engine,
+            graph_manager=graph_manager,
+            archimate_manager=archimate_manager,
+            config=config,
+        )
+        orchestrator.session_id = "test_session"
+
+        result = orchestrator._export_run_model("repo1", "gpt-4", 1)
+        assert result is None
 
 
 # =============================================================================

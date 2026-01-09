@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from deriva.adapters.archimate import ArchimateManager
+from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 
 if TYPE_CHECKING:
     from deriva.common.types import BenchmarkProgressReporter, RunLoggerProtocol
@@ -252,6 +253,7 @@ class BenchmarkConfig:
     clear_between_runs: bool = True
     use_cache: bool = True  # Global cache setting (True = cache enabled)
     nocache_configs: list[str] = field(default_factory=list)  # Configs to always skip cache
+    export_models: bool = True  # Export ArchiMate model file after each run
 
     def total_runs(self) -> int:
         """Calculate total number of runs in the matrix."""
@@ -689,6 +691,12 @@ class BenchmarkOrchestrator:
                 if not result.get("success"):
                     errors.extend(result.get("errors", []))
 
+            # Export model file after each run if configured
+            if self.config.export_models and "derivation" in stages:
+                model_path = self._export_run_model(repo_name, model_name, iteration)
+                if model_path:
+                    stats["model_file"] = model_path
+
             status = "completed" if not errors else "failed"
 
         except Exception as e:
@@ -826,6 +834,61 @@ class BenchmarkOrchestrator:
             relationships_created=stats.get("relationships_created", 0),
             steps_completed=stats.get("steps_completed", 0),
         )
+
+    def _export_run_model(
+        self,
+        repo_name: str,
+        model_name: str,
+        iteration: int,
+    ) -> str | None:
+        """
+        Export ArchiMate model to file after a benchmark run.
+
+        Creates a uniquely named model file: {repo}_{model}_{iteration}.archimate
+
+        Args:
+            repo_name: Repository name
+            model_name: Model config name
+            iteration: Run iteration number (1-based)
+
+        Returns:
+            Path to exported file, or None if export failed
+        """
+        try:
+            # Get elements and relationships from ArchiMate manager
+            elements = self.archimate_manager.get_elements()
+            relationships = self.archimate_manager.get_relationships()
+
+            if not elements:
+                return None
+
+            # Create models directory within benchmark session folder
+            session_id = self.session_id or "unknown"
+            models_dir = Path("workspace/benchmarks") / session_id / "models"
+            models_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate unique filename: {repo}_{model}_{iteration}.archimate
+            # Sanitize names to be filesystem-safe
+            safe_repo = repo_name.replace("/", "_").replace("\\", "_")
+            safe_model = model_name.replace("/", "_").replace("\\", "_")
+            filename = f"{safe_repo}_{safe_model}_{iteration}.archimate"
+            output_path = models_dir / filename
+
+            # Export using ArchiMateXMLExporter
+            exporter = ArchiMateXMLExporter()
+            model_display_name = f"{repo_name} - {model_name} - Run {iteration}"
+            exporter.export(
+                elements=elements,
+                relationships=relationships,
+                output_path=str(output_path),
+                model_name=model_display_name,
+            )
+
+            return str(output_path)
+
+        except Exception:
+            # Don't fail the run if model export fails
+            return None
 
     # =========================================================================
     # DATABASE OPERATIONS
