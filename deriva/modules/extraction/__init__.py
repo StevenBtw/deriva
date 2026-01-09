@@ -3,12 +3,12 @@ Extraction module - Pure functions for building graph nodes from repository data
 
 This package provides extraction functions for different node types:
 - Structural: repository, directory, file (filesystem-based, no LLM)
-- Semantic: business_concept, type_definition, method, technology, etc. (LLM-based)
+- Semantic: business_concept, type_definition, method, technology, etc. (LLM/AST)
 
-Also includes:
-- base: Shared utilities for all extraction modules
-- classification: File classification by type
-- input_sources: Input source parsing utilities
+Architecture:
+- base.py: Shared utilities for all extraction modules
+- classification.py: File classification by type
+- One .py file per node type (repository, directory, file, business_concept, etc.)
 
 All functions follow the module pattern:
 - Pure functions only (no I/O, no state)
@@ -18,30 +18,41 @@ All functions follow the module pattern:
 
 from __future__ import annotations
 
-# Base utilities
+# Base utilities (includes input_sources, normalization, and common helpers)
 from .base import (
-    create_empty_llm_details,
-    create_extraction_result,
-    current_timestamp,
-    deduplicate_nodes,
-    extract_llm_details_from_response,
-    generate_edge_id,
+    # Node/Edge ID generation
     generate_node_id,
+    generate_edge_id,
+    strip_chunk_suffix,
+    # JSON parsing
+    current_timestamp,
     parse_json_response,
     validate_required_fields,
-)
-
-# Input sources parsing utilities
-from .input_sources import (
+    deduplicate_nodes,
+    create_extraction_result,
+    create_empty_llm_details,
+    extract_llm_details_from_response,
+    # Input sources
+    parse_input_sources,
+    matches_file_spec,
     filter_files_by_input_sources,
     get_node_sources,
     has_file_sources,
     has_node_sources,
-    matches_file_spec,
-    parse_input_sources,
+    # Normalization
+    normalize_package_name,
+    normalize_concept_name,
+    normalize_technology_name,
+    normalize_node,
+    normalize_nodes,
+    deduplicate_by_normalized_name,
+    singularize,
+    PACKAGE_CANONICAL_NAMES,
+    # File type utilities
+    is_python_file,
 )
 
-# Structural extractors (flat imports)
+# Structural extractors
 from .repository import (
     build_repository_node,
     extract_repository,
@@ -55,7 +66,7 @@ from .file import (
     extract_files,
 )
 
-# LLM-based extractors (flat imports)
+# LLM/AST-based extractors
 from .business_concept import (
     BUSINESS_CONCEPT_SCHEMA,
     build_business_concept_node,
@@ -71,6 +82,8 @@ from .type_definition import (
     extract_type_definitions,
     extract_type_definitions_batch,
     parse_llm_response as parse_type_definition_response,
+    # AST extraction
+    extract_types_from_python,
 )
 from .method import (
     METHOD_SCHEMA,
@@ -79,6 +92,8 @@ from .method import (
     extract_methods,
     extract_methods_batch,
     parse_llm_response as parse_method_response,
+    # AST extraction
+    extract_methods_from_python,
 )
 from .technology import (
     TECHNOLOGY_SCHEMA,
@@ -95,6 +110,7 @@ from .external_dependency import (
     extract_external_dependencies,
     extract_external_dependencies_batch,
     parse_llm_response as parse_external_dependency_response,
+    get_extraction_method,
 )
 from .test import (
     TEST_SCHEMA,
@@ -105,17 +121,11 @@ from .test import (
     parse_llm_response as parse_test_response,
 )
 
-# AST-based extraction (Python only - deterministic, precise)
-from .ast_extraction import (
-    extract_methods_from_python,
-    extract_types_from_python,
-    is_python_file,
-)
-
 __all__ = [
     # Base utilities
     "generate_node_id",
     "generate_edge_id",
+    "strip_chunk_suffix",
     "current_timestamp",
     "parse_json_response",
     "validate_required_fields",
@@ -123,6 +133,24 @@ __all__ = [
     "create_extraction_result",
     "create_empty_llm_details",
     "extract_llm_details_from_response",
+    # Input Sources
+    "parse_input_sources",
+    "matches_file_spec",
+    "filter_files_by_input_sources",
+    "get_node_sources",
+    "has_file_sources",
+    "has_node_sources",
+    # Normalization
+    "normalize_package_name",
+    "normalize_concept_name",
+    "normalize_technology_name",
+    "normalize_node",
+    "normalize_nodes",
+    "deduplicate_by_normalized_name",
+    "singularize",
+    "PACKAGE_CANONICAL_NAMES",
+    # File type utilities
+    "is_python_file",
     # Repository
     "build_repository_node",
     "extract_repository",
@@ -139,20 +167,22 @@ __all__ = [
     "build_business_concept_prompt",
     "parse_business_concept_response",
     "BUSINESS_CONCEPT_SCHEMA",
-    # Type Definition
+    # Type Definition (LLM + AST)
     "build_type_definition_node",
     "extract_type_definitions",
     "extract_type_definitions_batch",
     "build_type_definition_prompt",
     "parse_type_definition_response",
     "TYPE_DEFINITION_SCHEMA",
-    # Method
+    "extract_types_from_python",
+    # Method (LLM + AST)
     "build_method_node",
     "extract_methods",
     "extract_methods_batch",
     "build_method_prompt",
     "parse_method_response",
     "METHOD_SCHEMA",
+    "extract_methods_from_python",
     # Technology
     "build_technology_node",
     "extract_technologies",
@@ -167,6 +197,7 @@ __all__ = [
     "build_external_dependency_prompt",
     "parse_external_dependency_response",
     "EXTERNAL_DEPENDENCY_SCHEMA",
+    "get_extraction_method",
     # Test
     "build_test_node",
     "extract_tests",
@@ -174,15 +205,4 @@ __all__ = [
     "build_test_prompt",
     "parse_test_response",
     "TEST_SCHEMA",
-    # Input Sources
-    "parse_input_sources",
-    "matches_file_spec",
-    "filter_files_by_input_sources",
-    "get_node_sources",
-    "has_file_sources",
-    "has_node_sources",
-    # AST-based extraction (Python)
-    "extract_types_from_python",
-    "extract_methods_from_python",
-    "is_python_file",
 ]

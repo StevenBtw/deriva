@@ -14,6 +14,8 @@ Object Types used in Deriva:
 - File: Source file being processed
 - GraphNode: Extracted node (BusinessConcept, etc.)
 - Element: Derived ArchiMate element
+- Edge: Extracted graph edge (CONTAINS, DEPENDS_ON, etc.)
+- Relationship: Derived ArchiMate relationship (Serving, Aggregation, etc.)
 
 Event Types:
 - StartBenchmark, CompleteBenchmark: Session lifecycle
@@ -40,6 +42,7 @@ __all__ = [
     "OCELLog",
     "hash_content",
     "create_run_id",
+    "create_edge_id",
     "parse_run_id",
 ]
 
@@ -435,6 +438,26 @@ def hash_content(content: str) -> str:
 def create_run_id(session_id: str, repo: str, model: str, iteration: int) -> str:
     """Create a standardized run ID."""
     return f"{session_id}:{repo}:{model}:{iteration}"
+
+
+def create_edge_id(source_id: str, relationship_type: str, target_id: str) -> str:
+    """
+    Create a unique edge/relationship identifier using triple hash.
+
+    Format: {relationship_type}_{source_id}_{target_id}
+
+    Used for comparing edges (extraction) and relationships (derivation)
+    across benchmark runs.
+
+    Args:
+        source_id: Source node/element identifier
+        relationship_type: Edge type (CONTAINS, DEPENDS_ON) or relationship type (Serving, Aggregation)
+        target_id: Target node/element identifier
+
+    Returns:
+        Unique identifier string for the edge/relationship
+    """
+    return f"{relationship_type}_{source_id}_{target_id}"
 
 
 def parse_run_id(run_id: str) -> dict[str, str | int]:

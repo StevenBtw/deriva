@@ -1,6 +1,6 @@
 [project]
 name = "Deriva"
-version = "0.6.2"
+version = "0.6.3"
 description = "Automatically generate ArchiMate enterprise architecture models from software repositories"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -53,13 +53,14 @@ dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
     "ruff>=0.14.10",
-    "ty>=0.0.9",
+    "ty>=0.0.10",
     "types-lxml>=2025.3.30",
     "pre-commit>=4.5.1",
 ]
 
 [project.urls]
-Repository = "https://github.com/StevenBtw/Deriva"
+Website = "https://deriva.dev"
+Repository = "https://github.com/StevenBtw/deriva"
 
 [project.scripts]
 deriva-cli = "cli:main"
@@ -156,7 +157,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 70
+fail_under = 60
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

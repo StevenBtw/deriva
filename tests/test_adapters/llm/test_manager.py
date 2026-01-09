@@ -552,7 +552,7 @@ class TestValidatePrompt:
                 manager = LLMManager()
 
         with pytest.raises(ValidationError):
-            manager._validate_prompt(None)
+            manager._validate_prompt(None)  # type: ignore[arg-type]
 
     def test_passes_for_valid_prompt(self, tmp_path, monkeypatch):
         """Should not raise for valid prompt."""
@@ -708,7 +708,7 @@ class TestQuery:
         with patch("deriva.adapters.llm.manager.load_dotenv"):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
-                manager.provider.complete = MagicMock(return_value=mock_result)
+                manager.provider.complete = MagicMock(return_value=mock_result)  # type: ignore[method-assign]
 
                 response = manager.query("Hello")
 
@@ -734,7 +734,7 @@ class TestQuery:
         with patch("deriva.adapters.llm.manager.load_dotenv"):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
-                manager.cache.get = MagicMock(return_value=cached_data)
+                manager.cache.get = MagicMock(return_value=cached_data)  # type: ignore[method-assign]
 
                 response = manager.query("Hello")
 
@@ -779,7 +779,7 @@ class TestQuery:
         with patch("deriva.adapters.llm.manager.load_dotenv"):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
-                manager.provider.complete = MagicMock(return_value=mock_result)
+                manager.provider.complete = MagicMock(return_value=mock_result)  # type: ignore[method-assign]
 
                 response = manager.query("Hello", response_model=ResponseModel)
 
@@ -809,7 +809,7 @@ class TestQuery:
         with patch("deriva.adapters.llm.manager.load_dotenv"):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
-                manager.provider.complete = MagicMock(side_effect=[mock_result_bad, mock_result_good])
+                manager.provider.complete = MagicMock(side_effect=[mock_result_bad, mock_result_good])  # type: ignore[method-assign]
 
                 response = manager.query("Hello", schema={"type": "object"})
 
@@ -833,7 +833,7 @@ class TestQuery:
         with patch("deriva.adapters.llm.manager.load_dotenv"):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
-                manager.provider.complete = MagicMock(return_value=mock_result)
+                manager.provider.complete = MagicMock(return_value=mock_result)  # type: ignore[method-assign]
 
                 manager.query("Hello", temperature=0.1)
 
@@ -856,9 +856,9 @@ class TestQuery:
         with patch("deriva.adapters.llm.manager.load_dotenv"):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
-                manager.cache.get = MagicMock(return_value=None)
-                manager.cache.set = MagicMock()
-                manager.provider.complete = MagicMock(return_value=mock_result)
+                manager.cache.get = MagicMock(return_value=None)  # type: ignore[method-assign]
+                manager.cache.set = MagicMock()  # type: ignore[method-assign]
+                manager.provider.complete = MagicMock(return_value=mock_result)  # type: ignore[method-assign]
 
                 manager.query("Hello")
 
@@ -883,7 +883,7 @@ class TestQuery:
         with patch("deriva.adapters.llm.manager.load_dotenv"):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
-                manager.cache.get = MagicMock(return_value=cached_error)
+                manager.cache.get = MagicMock(return_value=cached_error)  # type: ignore[method-assign]
 
                 response = manager.query("Hello")
 
@@ -924,7 +924,7 @@ class TestUtilityMethods:
         with patch("deriva.adapters.llm.manager.load_dotenv"):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
-                manager.cache.clear_all = MagicMock()
+                manager.cache.clear_all = MagicMock()  # type: ignore[method-assign]
 
                 manager.clear_cache()
 
@@ -943,7 +943,7 @@ class TestUtilityMethods:
         with patch("deriva.adapters.llm.manager.load_dotenv"):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
-                manager.cache.get_cache_stats = MagicMock(return_value=mock_stats)
+                manager.cache.get_cache_stats = MagicMock(return_value=mock_stats)  # type: ignore[method-assign]
 
                 stats = manager.get_cache_stats()
 

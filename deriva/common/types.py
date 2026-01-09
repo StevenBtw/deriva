@@ -196,6 +196,14 @@ class StepContextProtocol(Protocol):
         """Mark the step as failed with an error message."""
         ...
 
+    def add_edge(self, edge_id: str) -> None:
+        """Track a created edge ID for OCEL logging (extraction)."""
+        ...
+
+    def add_relationship(self, relationship_id: str) -> None:
+        """Track a created relationship ID for OCEL logging (derivation)."""
+        ...
+
 
 class RunLoggerProtocol(Protocol):
     """Protocol for run loggers (supports both RunLogger and OCELRunLogger)."""

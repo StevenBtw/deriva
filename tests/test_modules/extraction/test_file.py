@@ -290,3 +290,119 @@ class TestExtractFiles:
             edge = result["data"]["edges"][0]
             assert "created_at" in edge["properties"]
             assert edge["properties"]["created_at"].endswith("Z")
+
+    def test_classification_lookup_applied(self):
+        """Should apply classification data to file nodes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "main.py").write_text("code")
+
+            classification = {"main.py": {"file_type": "source", "subtype": "python"}}
+            result = extract_files(tmpdir, "myrepo", classification_lookup=classification)
+
+            assert result["success"] is True
+            node = result["data"]["nodes"][0]
+            assert node["properties"]["file_type"] == "source"
+            assert node["properties"]["subtype"] == "python"
+
+    def test_test_file_creates_tests_edge(self):
+        """Should create TESTS edge for test files targeting source files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "main.py").write_text("source code")
+            (root / "test_main.py").write_text("test code")
+
+            classification = {
+                "main.py": {"file_type": "source", "subtype": "python"},
+                "test_main.py": {"file_type": "test", "subtype": "pytest"},
+            }
+            result = extract_files(tmpdir, "myrepo", classification_lookup=classification)
+
+            assert result["success"] is True
+            # Should have 2 CONTAINS edges and 1 TESTS edge
+            test_edges = [e for e in result["data"]["edges"] if e["relationship_type"] == "TESTS"]
+            assert len(test_edges) == 1
+            assert test_edges[0]["from_node_id"] == "file_myrepo_test_main.py"
+            assert test_edges[0]["to_node_id"] == "file_myrepo_main.py"
+            assert test_edges[0]["properties"]["inferred"] is True
+
+    def test_test_file_suffix_creates_tests_edge(self):
+        """Should create TESTS edge for _test suffix pattern."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "utils.py").write_text("source")
+            (root / "utils_test.py").write_text("test")
+
+            classification = {
+                "utils.py": {"file_type": "source"},
+                "utils_test.py": {"file_type": "test"},
+            }
+            result = extract_files(tmpdir, "myrepo", classification_lookup=classification)
+
+            test_edges = [e for e in result["data"]["edges"] if e["relationship_type"] == "TESTS"]
+            assert len(test_edges) == 1
+            assert test_edges[0]["to_node_id"] == "file_myrepo_utils.py"
+
+    def test_spec_file_creates_tests_edge(self):
+        """Should create TESTS edge for .spec.js pattern."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "component.js").write_text("source")
+            (root / "component.spec.js").write_text("test")
+
+            classification = {
+                "component.js": {"file_type": "source"},
+                "component.spec.js": {"file_type": "test"},
+            }
+            result = extract_files(tmpdir, "myrepo", classification_lookup=classification)
+
+            test_edges = [e for e in result["data"]["edges"] if e["relationship_type"] == "TESTS"]
+            assert len(test_edges) == 1
+
+    def test_test_in_tests_dir_finds_source_in_src(self):
+        """Should find source file in src/ when test is in tests/."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create src/main.py and tests/test_main.py
+            src = Path(tmpdir) / "src"
+            tests = Path(tmpdir) / "tests"
+            src.mkdir()
+            tests.mkdir()
+            (src / "main.py").write_text("source")
+            (tests / "test_main.py").write_text("test")
+
+            classification = {
+                "src/main.py": {"file_type": "source"},
+                "tests/test_main.py": {"file_type": "test"},
+            }
+            result = extract_files(tmpdir, "myrepo", classification_lookup=classification)
+
+            test_edges = [e for e in result["data"]["edges"] if e["relationship_type"] == "TESTS"]
+            assert len(test_edges) == 1
+            assert test_edges[0]["to_node_id"] == "file_myrepo_src_main.py"
+
+    def test_no_tests_edge_when_source_not_found(self):
+        """Should not create TESTS edge when source file not found."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "test_unknown.py").write_text("test")
+
+            classification = {"test_unknown.py": {"file_type": "test"}}
+            result = extract_files(tmpdir, "myrepo", classification_lookup=classification)
+
+            test_edges = [e for e in result["data"]["edges"] if e["relationship_type"] == "TESTS"]
+            assert len(test_edges) == 0
+
+    def test_stats_include_edge_type_counts(self):
+        """Should include TESTS edge count in stats."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "main.py").write_text("source")
+            (root / "test_main.py").write_text("test")
+
+            classification = {
+                "main.py": {"file_type": "source"},
+                "test_main.py": {"file_type": "test"},
+            }
+            result = extract_files(tmpdir, "myrepo", classification_lookup=classification)
+
+            assert result["stats"]["edge_types"]["TESTS"] == 1
+            assert result["stats"]["edge_types"]["CONTAINS"] == 2

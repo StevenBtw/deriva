@@ -73,6 +73,17 @@ class GenerationResult:
     errors: list[str] = field(default_factory=list)
 
 
+@dataclass
+class DerivationResult:
+    """Result from element + relationship derivation (mirrors extraction pattern)."""
+
+    success: bool
+    elements: list[dict[str, Any]] = field(default_factory=list)
+    relationships: list[dict[str, Any]] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    stats: dict[str, int] = field(default_factory=dict)
+
+
 # =============================================================================
 # Graph Enrichment Access
 # =============================================================================
@@ -565,6 +576,195 @@ def build_element(derived: dict[str, Any], element_type: str) -> dict[str, Any]:
 
 
 # =============================================================================
+# Per-Element Relationship Derivation
+# =============================================================================
+
+
+def build_per_element_relationship_prompt(
+    source_elements: list[dict[str, Any]],
+    target_elements: list[dict[str, Any]],
+    source_element_type: str,
+    instruction: str,
+    example: str | None = None,
+    valid_relationship_types: list[str] | None = None,
+) -> str:
+    """
+    Build LLM prompt for per-element relationship derivation.
+
+    This is used when each element module derives its own relationships,
+    providing focused context and better consistency.
+
+    Args:
+        source_elements: Elements of the current type (relationships FROM these)
+        target_elements: All available target elements
+        source_element_type: The ArchiMate element type being processed
+        instruction: Custom instruction from database config
+        example: Example output from database config
+        valid_relationship_types: Allowed relationship types (from config)
+    """
+    source_json = json.dumps(source_elements, indent=2, default=str)
+    target_json = json.dumps(target_elements, indent=2, default=str)
+
+    source_ids = [
+        e.get("identifier", "") for e in source_elements if e.get("identifier")
+    ]
+    target_ids = [
+        e.get("identifier", "") for e in target_elements if e.get("identifier")
+    ]
+
+    prompt = f"""You are deriving ArchiMate relationships FROM {source_element_type} elements.
+
+{instruction}
+
+SOURCE ELEMENTS (derive relationships FROM these):
+```json
+{source_json}
+```
+
+TARGET ELEMENTS (derive relationships TO these):
+```json
+{target_json}
+```
+
+VALID SOURCE IDENTIFIERS (use EXACTLY as shown):
+{json.dumps(source_ids)}
+
+VALID TARGET IDENTIFIERS (use EXACTLY as shown):
+{json.dumps(target_ids)}
+"""
+
+    if valid_relationship_types:
+        prompt += f"""
+ALLOWED RELATIONSHIP TYPES (use ONLY these):
+{json.dumps(valid_relationship_types)}
+"""
+
+    if example:
+        prompt += f"""
+EXAMPLE OUTPUT:
+```json
+{example}
+```
+"""
+
+    prompt += """
+Return {"relationships": []} with source, target, relationship_type, confidence for each.
+"""
+    return prompt
+
+
+def derive_element_relationships(
+    source_elements: list[dict[str, Any]],
+    target_elements: list[dict[str, Any]],
+    source_element_type: str,
+    llm_query_fn: Any,
+    instruction: str,
+    example: str | None = None,
+    valid_relationship_types: list[str] | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Derive relationships FROM a specific element type.
+
+    This is called by each element module after generating its elements,
+    to derive relationships to all available target elements.
+
+    Args:
+        source_elements: Elements just created by this module
+        target_elements: All elements available as targets (from previous modules)
+        source_element_type: The element type being processed
+        llm_query_fn: Function to call LLM
+        instruction: Prompt instruction from database config
+        example: Example output from database config
+        valid_relationship_types: Allowed relationship types
+        temperature: LLM temperature override
+        max_tokens: LLM max_tokens override
+
+    Returns:
+        List of relationship dicts ready for persistence
+    """
+    if not source_elements or not target_elements:
+        return []
+
+    prompt = build_per_element_relationship_prompt(
+        source_elements=source_elements,
+        target_elements=target_elements,
+        source_element_type=source_element_type,
+        instruction=instruction,
+        example=example,
+        valid_relationship_types=valid_relationship_types,
+    )
+
+    llm_kwargs = {}
+    if temperature is not None:
+        llm_kwargs["temperature"] = temperature
+    if max_tokens is not None:
+        llm_kwargs["max_tokens"] = max_tokens
+
+    try:
+        response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA, **llm_kwargs)
+        response_content = (
+            response.content if hasattr(response, "content") else str(response)
+        )
+    except Exception as e:
+        logger.error(f"LLM error deriving {source_element_type} relationships: {e}")
+        return []
+
+    parse_result = parse_relationship_response(response_content)
+
+    if not parse_result["success"]:
+        logger.warning(
+            f"Failed to parse {source_element_type} relationships: {parse_result.get('errors')}"
+        )
+        return []
+
+    # Validate and filter relationships
+    source_ids = {e.get("identifier", "") for e in source_elements}
+    target_ids = {e.get("identifier", "") for e in target_elements}
+    valid_types = set(valid_relationship_types) if valid_relationship_types else None
+
+    relationships = []
+    for rel_data in parse_result.get("data", []):
+        source = rel_data.get("source")
+        target = rel_data.get("target")
+        rel_type = rel_data.get("relationship_type")
+
+        # Validate source is from this element type
+        if source not in source_ids:
+            logger.debug(
+                f"Skipping relationship: source {source} not in {source_element_type}"
+            )
+            continue
+
+        # Validate target exists
+        if target not in target_ids:
+            logger.debug(f"Skipping relationship: target {target} not found")
+            continue
+
+        # Validate relationship type
+        if valid_types and rel_type not in valid_types:
+            logger.debug(
+                f"Skipping relationship: type {rel_type} not allowed for {source_element_type}"
+            )
+            continue
+
+        relationships.append(
+            {
+                "source": source,
+                "target": target,
+                "relationship_type": rel_type,
+                "confidence": rel_data.get("confidence", 0.5),
+            }
+        )
+
+    logger.info(
+        f"Derived {len(relationships)} relationships FROM {source_element_type}"
+    )
+    return relationships
+
+
+# =============================================================================
 # Result Creation
 # =============================================================================
 
@@ -591,6 +791,7 @@ __all__ = [
     # Data structures
     "Candidate",
     "GenerationResult",
+    "DerivationResult",
     # Enrichment
     "get_enrichments",
     "enrich_candidate",
@@ -611,12 +812,15 @@ __all__ = [
     "build_derivation_prompt",
     "build_relationship_prompt",
     "build_element_relationship_prompt",
+    "build_per_element_relationship_prompt",
     # Parsing
     "parse_derivation_response",
     "parse_relationship_response",
     # Element building
     "sanitize_identifier",
     "build_element",
+    # Per-element relationship derivation
+    "derive_element_relationships",
     # Results
     "create_result",
 ]

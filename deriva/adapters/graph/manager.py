@@ -325,6 +325,55 @@ class GraphManager:
             logger.error(f"Failed to bulk update property: {e}")
             raise
 
+    def batch_update_properties(self, updates: dict[str, dict[str, Any]]) -> int:
+        """Batch update multiple properties on multiple nodes.
+
+        Used by enrichment to write algorithm results (pagerank, community, etc.)
+        to graph nodes efficiently in a single transaction.
+
+        Args:
+            updates: Dict mapping node_id to property dict
+                {
+                    "node_123": {"pagerank": 0.05, "kcore_level": 3},
+                    "node_456": {"pagerank": 0.02, "kcore_level": 2},
+                }
+
+        Returns:
+            Number of nodes updated
+        """
+        if self.neo4j is None:
+            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+
+        if not updates:
+            return 0
+
+        try:
+            # Use UNWIND for efficient batch update
+            query = """
+                UNWIND $updates AS update
+                MATCH (n {id: update.node_id})
+                SET n += update.properties
+                RETURN count(n) as updated
+            """
+
+            # Convert to list format for UNWIND
+            update_list = [
+                {"node_id": node_id, "properties": props}
+                for node_id, props in updates.items()
+            ]
+
+            result = self.neo4j.execute_write(query, {"updates": update_list})
+
+            if result:
+                count = result[0]["updated"]
+                logger.debug(f"Batch updated properties on {count} nodes")
+                return count
+            return 0
+
+        except Exception as e:
+            logger.error(f"Failed to batch update properties: {e}")
+            raise
+
     def get_node(self, node_id: str) -> dict[str, Any] | None:
         """Retrieve a node by ID.
 
