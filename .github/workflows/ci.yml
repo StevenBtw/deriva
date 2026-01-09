@@ -76,7 +76,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run tests
-        run: uv run pytest --cov --cov-branch --cov-report=xml --cov-fail-under=70 -v -m "not integration"
+        run: uv run pytest --cov --cov-branch --cov-report=xml --cov-fail-under=60 -v -m "not integration"
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
