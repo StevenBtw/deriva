@@ -31,13 +31,24 @@ MODEL_TOKEN_LIMITS: dict[str, int] = {
     "gpt-4-turbo": 128_000,
     "gpt-4": 8_192,
     "gpt-3.5-turbo": 16_385,
+    "gpt-4.1-mini": 1_000_000,  # GPT-4.1 mini has 1M context
+    "gpt-4.1-nano": 1_000_000,  # GPT-4.1 nano has 1M context
+    "gpt-5-mini": 1_000_000,  # GPT-5 mini has 1M context
     # Anthropic models
     "claude-3-opus": 200_000,
     "claude-3-sonnet": 200_000,
     "claude-3-haiku": 200_000,
     "claude-3.5-sonnet": 200_000,
+    "claude-4-opus": 200_000,
+    "claude-4-sonnet": 200_000,
+    "claude-4-haiku": 200_000,
+    "haiku": 200_000,  # Short alias for claudecode provider
+    "sonnet": 200_000,
+    "opus": 200_000,
     # Azure OpenAI (same as OpenAI)
     "gpt-4o-mini-azure": 128_000,
+    # Mistral AI models 
+    "devstral-2512": 32_000,  # Mistral Devstral
     # Ollama / local models (conservative estimates)
     "llama3": 8_192,
     "llama3.2": 8_192,

@@ -249,7 +249,7 @@ class TestGetPipelineStatus:
 
         mock_derive_cfg1 = MagicMock()
         mock_derive_cfg1.step_name = "PageRank"
-        mock_derive_cfg1.phase = "prep"
+        mock_derive_cfg1.phase = "enrich"
         mock_derive_cfg1.enabled = True
 
         mock_derive_cfg2 = MagicMock()
@@ -267,7 +267,7 @@ class TestGetPipelineStatus:
 
         assert status["derivation"]["total"] == 2
         assert status["derivation"]["enabled"] == 2
-        assert status["derivation"]["by_phase"]["prep"] == 1
+        assert status["derivation"]["by_phase"]["enrich"] == 1
         assert status["derivation"]["by_phase"]["generate"] == 1
 
     def test_returns_empty_when_no_configs(self):

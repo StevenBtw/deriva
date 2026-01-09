@@ -431,7 +431,7 @@ class PipelineSession:
 
         Args:
             verbose: Print progress to stdout
-            phases: List of phases to run ("prep", "generate", "refine").
+            phases: List of phases to run ("enrich", "generate", "refine").
                     Default: all phases.
             progress: Optional progress reporter for visual feedback
 
@@ -477,7 +477,7 @@ class PipelineSession:
 
         Args:
             verbose: Print progress to stdout
-            phases: List of phases to run ("prep", "generate")
+            phases: List of phases to run ("enrich", "generate", "refine")
 
         Yields:
             ProgressUpdate objects for each step in the pipeline
@@ -512,14 +512,14 @@ class PipelineSession:
             enabled_only: Only count enabled derivation steps
 
         Returns:
-            Total number of steps (prep + generate phases)
+            Total number of steps (enrich + generate phases)
         """
         self._ensure_connected()
         assert self._engine is not None
 
-        prep_configs = config.get_derivation_configs(self._engine, enabled_only=enabled_only, phase="prep")
+        enrich_configs = config.get_derivation_configs(self._engine, enabled_only=enabled_only, phase="enrich")
         gen_configs = config.get_derivation_configs(self._engine, enabled_only=enabled_only, phase="generate")
-        return len(prep_configs) + len(gen_configs)
+        return len(enrich_configs) + len(gen_configs)
 
     def run_pipeline(
         self,
@@ -560,19 +560,32 @@ class PipelineSession:
         output_path: str = "workspace/output/model.archimate",
         model_name: str = "Deriva Model",
     ) -> dict[str, Any]:
-        """Export ArchiMate model to XML file."""
+        """Export ArchiMate model to XML file.
+
+        Only exports enabled elements and their relationships.
+        Disabled elements (from refine phase) are excluded.
+        """
         self._ensure_connected()
         assert self._archimate_manager is not None
 
         try:
-            elements = self._archimate_manager.get_elements()
-            relationships = self._archimate_manager.get_relationships()
+            # Only export enabled elements
+            elements = self._archimate_manager.get_elements(enabled_only=True)
+            all_relationships = self._archimate_manager.get_relationships()
 
             if not elements:
                 return {
                     "success": False,
                     "error": "No ArchiMate elements found. Run derivation first.",
                 }
+
+            # Filter relationships to only include those between enabled elements
+            enabled_ids = {e.identifier for e in elements}
+            relationships = [
+                r
+                for r in all_relationships
+                if r.source in enabled_ids and r.target in enabled_ids
+            ]
 
             exporter = ArchiMateXMLExporter()
             exporter.export(

@@ -194,8 +194,8 @@ User clicks "Run Pipeline" in app/app.py  OR  runs `deriva run` in CLI
 ┌─────────────────────────────────────────────────────────────┐
 │ DERIVATION (inside services.derivation)                     │
 ├─────────────────────────────────────────────────────────────┤
-│ Phases: prep → generate → relationship                      │
-│ 1. Prep: Graph enrichment (PageRank, communities, k-core)   │
+│ Phases: enrich → generate → refine                          │
+│ 1. Enrich: Graph enrichment (PageRank, communities, k-core) │
 │ 2. Generate: Query candidates with enrichment data [I/O]    │
 │ 3. Generate: Call modules.derivation.{element}.generate()   │
 │ 4. Generate: Persist via ArchimateManager.add_element()     │
@@ -1130,9 +1130,9 @@ def has_node_sources(config: Dict) -> bool
 
 Derivation uses a hybrid approach combining graph algorithms with LLM:
 
-- **prep phase** - Graph enrichment (PageRank, Louvain communities, k-core analysis)
+- **enrich phase** - Graph enrichment (PageRank, Louvain communities, k-core analysis)
 - **generate phase** - LLM-based element derivation using graph metrics for filtering
-- **relationship phase** - Per-element or single-pass relationship derivation
+- **refine phase** - Cross-graph validation (duplicates, orphans, structural consistency)
 
 **Goal:** Transform Graph nodes into ArchiMate elements across Business, Application, and Technology layers.
 

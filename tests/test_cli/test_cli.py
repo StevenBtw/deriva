@@ -45,9 +45,9 @@ class TestCreateParser:
     def test_run_command_with_options(self):
         """Should parse run command with options."""
         parser = create_parser()
-        args = parser.parse_args(["run", "derivation", "--phase", "prep", "-v"])
+        args = parser.parse_args(["run", "derivation", "--phase", "enrich", "-v"])
         assert args.stage == "derivation"
-        assert args.phase == "prep"
+        assert args.phase == "enrich"
         assert args.verbose is True
 
     def test_config_list_command(self):
@@ -1284,7 +1284,7 @@ class TestCmdRun:
             repo=None,
             verbose=False,
             no_llm=False,
-            phase="prep",
+            phase="enrich",
             quiet=False,
         )
         result = cmd_run(args)

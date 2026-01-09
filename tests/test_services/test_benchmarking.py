@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from deriva.adapters.archimate import Element
 from deriva.services.benchmarking import (
     AnalysisSummary,
     BenchmarkConfig,
@@ -966,7 +967,8 @@ class TestBenchmarkOrchestrator:
         engine = MagicMock()
         graph_manager = MagicMock()
         archimate_manager = MagicMock()
-        archimate_manager.get_elements.return_value = [{"type": "ApplicationComponent", "name": "Test"}]
+        mock_element = Element(name="Test", element_type="ApplicationComponent", identifier="test-id")
+        archimate_manager.get_elements.return_value = [mock_element]
         archimate_manager.get_relationships.return_value = []
 
         config = BenchmarkConfig(
@@ -999,7 +1001,8 @@ class TestBenchmarkOrchestrator:
         engine = MagicMock()
         graph_manager = MagicMock()
         archimate_manager = MagicMock()
-        archimate_manager.get_elements.return_value = [{"type": "ApplicationComponent", "name": "Test"}]
+        mock_element = Element(name="Test", element_type="ApplicationComponent", identifier="test-id")
+        archimate_manager.get_elements.return_value = [mock_element]
         archimate_manager.get_relationships.return_value = []
 
         config = BenchmarkConfig(

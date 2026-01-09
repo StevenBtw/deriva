@@ -670,6 +670,7 @@ class BenchmarkOrchestrator:
                     verbose=False,
                     run_logger=cast("RunLoggerProtocol", ocel_run_logger),
                     progress=progress,
+                    model=model_config.model,
                 )
                 stats["extraction"] = result.get("stats", {})
                 self._log_extraction_results(result)
@@ -855,12 +856,20 @@ class BenchmarkOrchestrator:
             Path to exported file, or None if export failed
         """
         try:
-            # Get elements and relationships from ArchiMate manager
-            elements = self.archimate_manager.get_elements()
-            relationships = self.archimate_manager.get_relationships()
+            # Get only enabled elements and filter relationships accordingly
+            elements = self.archimate_manager.get_elements(enabled_only=True)
+            all_relationships = self.archimate_manager.get_relationships()
 
             if not elements:
                 return None
+
+            # Filter relationships to only include those between enabled elements
+            enabled_ids = {e.identifier for e in elements}
+            relationships = [
+                r
+                for r in all_relationships
+                if r.source in enabled_ids and r.target in enabled_ids
+            ]
 
             # Create models directory within benchmark session folder
             session_id = self.session_id or "unknown"

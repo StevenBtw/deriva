@@ -52,6 +52,7 @@ def run_extraction(
     verbose: bool = False,
     run_logger: RunLoggerProtocol | None = None,
     progress: ProgressReporter | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """
     Run the extraction pipeline.
@@ -65,6 +66,7 @@ def run_extraction(
         verbose: Print progress to stdout
         run_logger: Optional RunLogger for structured logging
         progress: Optional progress reporter for visual feedback
+        model: LLM model name for token limit lookup (chunking)
 
     Returns:
         Dict with success, stats, errors
@@ -159,6 +161,7 @@ def run_extraction(
                     graph_manager=graph_manager,
                     llm_query_fn=llm_query_fn,
                     engine=engine,
+                    model=model,
                 )
 
                 nodes_created = result.get("nodes_created", 0)
@@ -226,6 +229,7 @@ def _run_extraction_step(
     graph_manager: GraphManager,
     llm_query_fn: Callable | None,
     engine: Any,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Run a single extraction step based on node type."""
     node_type = cfg.node_type
@@ -248,6 +252,7 @@ def _run_extraction_step(
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
             engine=engine,
+            model=model,
         )
     else:
         return {"nodes_created": 0, "edges_created": 0, "errors": [f"Unknown node type: {node_type}"]}
@@ -405,6 +410,7 @@ def _extract_llm_based(
     graph_manager: GraphManager,
     llm_query_fn: Callable,
     engine: Any,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Extract LLM-based nodes (BusinessConcept, TypeDefinition, etc.)."""
     nodes_created = 0
@@ -507,6 +513,7 @@ def _extract_llm_based(
                 extract_fn=extract_fn,
                 extraction_config=extraction_config,
                 llm_query_fn=step_llm_query_fn,
+                model=model,
             )
             extraction_method = "llm"
 
@@ -554,6 +561,7 @@ def _extract_file_content(
     extract_fn: Callable,
     extraction_config: dict[str, Any],
     llm_query_fn: Callable,
+    model: str | None = None,
 ) -> tuple[list[dict], list[dict], list[str]]:
     """
     Extract from file content, with automatic chunking for large files.
@@ -565,12 +573,13 @@ def _extract_file_content(
         extract_fn: Extraction function to call
         extraction_config: Config with instruction/example
         llm_query_fn: LLM query function
+        model: Model name for token limit lookup (optional)
 
     Returns:
         Tuple of (nodes, edges, errors)
     """
     # Check if chunking is needed
-    if not should_chunk(content):
+    if not should_chunk(content, model=model):
         # Extract from entire file
         result = extract_fn(
             file_path,
@@ -584,7 +593,7 @@ def _extract_file_content(
         return [], [], result.get("errors", [])
 
     # Chunk the content and extract from each chunk
-    chunks = chunk_content(content)
+    chunks = chunk_content(content, model=model)
     all_nodes: list[dict] = []
     all_edges: list[dict] = []
     all_errors: list[str] = []

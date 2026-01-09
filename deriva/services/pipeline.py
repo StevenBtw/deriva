@@ -2,7 +2,7 @@
 Pipeline service for Deriva.
 
 Orchestrates the full pipeline:
-Classification → Extraction → Derivation (prep/generate/refine) → Export
+Classification → Extraction → Derivation (enrich/generate/refine) → Export
 
 Used by both Marimo (visual) and CLI (headless).
 """
@@ -212,7 +212,7 @@ def get_pipeline_status(engine: Any) -> dict[str, Any]:
     derivation_enabled = [c for c in derivation_configs if c.enabled]
 
     # Group derivation by phase
-    prep_enabled = [c for c in derivation_enabled if c.phase == "prep"]
+    enrich_enabled = [c for c in derivation_enabled if c.phase == "enrich"]
     generate_enabled = [c for c in derivation_enabled if c.phase == "generate"]
     refine_enabled = [c for c in derivation_enabled if c.phase == "refine"]
 
@@ -227,7 +227,7 @@ def get_pipeline_status(engine: Any) -> dict[str, Any]:
             "enabled": len(derivation_enabled),
             "steps": [c.step_name for c in derivation_enabled],
             "by_phase": {
-                "prep": len(prep_enabled),
+                "enrich": len(enrich_enabled),
                 "generate": len(generate_enabled),
                 "refine": len(refine_enabled),
             },

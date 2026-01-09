@@ -6,7 +6,7 @@ Used by both Marimo (visual UI) and CLI (headless) for consistent config managem
 
 Tables managed:
     - extraction_config: LLM extraction step configurations
-    - derivation_config: ArchiMate derivation configurations (prep/generate/refine phases)
+    - derivation_config: ArchiMate derivation configurations (enrich/generate/refine phases)
     - file_type_registry: File extension to type mappings
     - system_settings: Key-value system settings
 """
@@ -47,7 +47,7 @@ class ExtractionConfig:
 
 
 class DerivationConfig:
-    """Unified derivation step configuration for prep/generate/refine phases."""
+    """Unified derivation step configuration for enrich/generate/refine phases."""
 
     def __init__(
         self,
@@ -67,7 +67,7 @@ class DerivationConfig:
         batch_size: int | None = None,
     ):
         self.step_name = step_name
-        self.phase = phase  # "prep" | "generate" | "refine" | "relationship"
+        self.phase = phase  # "enrich" | "generate" | "refine" | "relationship"
         self.sequence = sequence
         self.enabled = enabled
         self.llm = llm  # True = uses LLM, False = pure graph algorithm
@@ -270,7 +270,7 @@ def get_derivation_configs(
     Args:
         engine: DuckDB connection
         enabled_only: If True, only return enabled configs
-        phase: Filter by phase ("prep", "generate", "refine", "relationship")
+        phase: Filter by phase ("enrich", "generate", "refine", "relationship")
         llm_only: If True, only LLM steps; if False, only graph algorithm steps
 
     Returns:
@@ -294,10 +294,10 @@ def get_derivation_configs(
         query += " AND llm = ?"
         params.append(llm_only)
 
-    # Order by phase priority (prep=1, generate=2, refine=3, relationship=4) then sequence
+    # Order by phase priority (enrich=1, generate=2, refine=3, relationship=4) then sequence
     query += """
         ORDER BY
-            CASE phase WHEN 'prep' THEN 1 WHEN 'generate' THEN 2 WHEN 'refine' THEN 3 WHEN 'relationship' THEN 4 END,
+            CASE phase WHEN 'enrich' THEN 1 WHEN 'generate' THEN 2 WHEN 'refine' THEN 3 WHEN 'relationship' THEN 4 END,
             sequence
     """
 
@@ -581,7 +581,7 @@ def list_steps(
         engine: DuckDB connection
         step_type: 'extraction' or 'derivation'
         enabled_only: If True, only return enabled steps
-        phase: For derivation, filter by phase ("prep", "generate", "refine")
+        phase: For derivation, filter by phase ("enrich", "generate", "refine")
 
     Returns:
         List of dicts with step info
@@ -792,7 +792,7 @@ def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
     Get current active versions for all configs.
 
     Returns:
-        Dict with extraction and derivation (prep/generate/refine) versions
+        Dict with extraction and derivation (enrich/generate/refine) versions
     """
     versions = {"extraction": {}, "derivation": {}}
 
@@ -801,7 +801,7 @@ def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
     for r in rows:
         versions["extraction"][r[0]] = r[1]
 
-    # Derivation (includes all phases: prep, generate, refine)
+    # Derivation (includes all phases: enrich, generate, refine)
     rows = engine.execute("SELECT step_name, version FROM derivation_config WHERE is_active = TRUE").fetchall()
     for r in rows:
         versions["derivation"][r[0]] = r[1]

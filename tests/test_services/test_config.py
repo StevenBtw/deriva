@@ -277,7 +277,7 @@ class TestGetDerivationConfigs:
         # Columns: step_name, phase, sequence, enabled, llm, input_graph_query, input_model_query,
         #          instruction, example, params, temperature, max_tokens, max_candidates, batch_size
         engine.execute.return_value.fetchall.return_value = [
-            ("PageRank", "prep", 1, True, False, "MATCH (n) RETURN n", None, None, None, '{"damping": 0.85}', None, None, None, None),
+            ("PageRank", "enrich", 1, True, False, "MATCH (n) RETURN n", None, None, None, '{"damping": 0.85}', None, None, None, None),
             ("ApplicationComponent", "generate", 1, True, True, None, None, "instruction", "example", None, 0.5, 2000, 30, 10),
         ]
 
@@ -285,7 +285,7 @@ class TestGetDerivationConfigs:
 
         assert len(configs) == 2
         assert configs[0].step_name == "PageRank"
-        assert configs[0].phase == "prep"
+        assert configs[0].phase == "enrich"
         assert configs[0].llm is False
         assert configs[0].temperature is None
         assert configs[0].max_tokens is None

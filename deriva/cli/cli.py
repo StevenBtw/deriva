@@ -1055,7 +1055,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     config_list.add_argument(
         "--phase",
-        choices=["prep", "generate", "refine"],
+        choices=["enrich", "generate", "refine"],
         help="Filter derivation by phase",
     )
     config_list.set_defaults(func=cmd_config_list)
@@ -1212,7 +1212,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--phase",
-        choices=["prep", "generate", "refine"],
+        choices=["enrich", "generate", "refine"],
         help="Run specific derivation phase only (default: all phases)",
     )
     run_parser.add_argument(

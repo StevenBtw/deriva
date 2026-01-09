@@ -524,10 +524,10 @@ class TestPipelineSessionIterators:
             list(session.run_derivation_iter())
 
     def test_get_derivation_step_count_returns_count(self, connected_session):
-        """Should return sum of prep and generate config counts."""
-        # Mock configs: 2 prep steps + 3 generate steps = 5 total
+        """Should return sum of enrich and generate config counts."""
+        # Mock configs: 2 enrich steps + 3 generate steps = 5 total
         connected_session._mock_config.get_derivation_configs.side_effect = lambda engine, enabled_only, phase: (
-            [MagicMock(), MagicMock()] if phase == "prep" else [MagicMock(), MagicMock(), MagicMock()]
+            [MagicMock(), MagicMock()] if phase == "enrich" else [MagicMock(), MagicMock(), MagicMock()]
         )
 
         count = connected_session.get_derivation_step_count()

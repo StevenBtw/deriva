@@ -2,8 +2,9 @@
 Derivation service for Deriva.
 
 Orchestrates the derivation pipeline with phases:
-1. prep: Pre-derivation graph analysis (pagerank, etc.)
+1. enrich: Pre-derivation graph analysis (pagerank, etc.)
 2. generate: LLM-based element and relationship derivation
+3. refine: Post-generation model refinement (dedup, orphans, etc.)
 
 Used by both Marimo (visual) and CLI (headless).
 """
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from deriva.common.types import ProgressReporter, RunLoggerProtocol
 from deriva.adapters.graph import GraphManager
 from deriva.modules.derivation import enrich
+from deriva.modules.derivation.refine import run_refine_step
 from deriva.services import config
 
 # Element generation module registry
@@ -190,13 +192,13 @@ def _get_graph_edges(graph_manager: GraphManager) -> list[dict[str, str]]:
     return [{"source": row["source"], "target": row["target"]} for row in result]
 
 
-def _run_prep_step(
+def _run_enrich_step(
     cfg: config.DerivationConfig,
     graph_manager: GraphManager,
 ) -> PipelineResult:
-    """Run a single prep step (graph enrichment algorithm).
+    """Run a single enrich step (graph enrichment algorithm).
 
-    Prep steps compute graph metrics (PageRank, Louvain, k-core, etc.)
+    Enrich steps compute graph metrics (PageRank, Louvain, k-core, etc.)
     and store them as properties on Neo4j nodes.
     """
     step_name = cfg.step_name
@@ -204,7 +206,7 @@ def _run_prep_step(
 
     # Check if this is a known enrichment algorithm
     if step_name not in ENRICHMENT_ALGORITHMS:
-        return {"success": False, "errors": [f"Unknown prep step: {step_name}"]}
+        return {"success": False, "errors": [f"Unknown enrich step: {step_name}"]}
 
     algorithm = ENRICHMENT_ALGORITHMS[step_name]
 
@@ -288,7 +290,7 @@ def run_derivation(
         llm_query_fn: Function to call LLM (prompt, schema) -> response
         enabled_only: Only run enabled derivation steps
         verbose: Print progress to stdout
-        phases: List of phases to run ("prep", "generate").
+        phases: List of phases to run ("enrich", "generate", "refine").
         run_logger: Optional RunLogger for structured logging
         progress: Optional progress reporter for visual feedback
 
@@ -296,7 +298,7 @@ def run_derivation(
         Dict with success, stats, errors
     """
     if phases is None:
-        phases = ["prep", "generate"]
+        phases = ["enrich", "generate"]
 
     stats = {
         "elements_created": 0,
@@ -312,11 +314,11 @@ def run_derivation(
         run_logger.phase_start("derivation", "Starting derivation pipeline")
 
     # Calculate total steps for progress
-    prep_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="prep")
+    enrich_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="enrich")
     gen_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="generate")
     total_steps = 0
-    if "prep" in phases:
-        total_steps += len(prep_configs)
+    if "enrich" in phases:
+        total_steps += len(enrich_configs)
     if "generate" in phases:
         total_steps += len(gen_configs)
 
@@ -324,14 +326,14 @@ def run_derivation(
     if progress:
         progress.start_phase("derivation", total_steps)
 
-    # Run prep phase
-    if "prep" in phases:
-        if prep_configs and verbose:
-            print(f"Running {len(prep_configs)} prep steps...")
+    # Run enrich phase
+    if "enrich" in phases:
+        if enrich_configs and verbose:
+            print(f"Running {len(enrich_configs)} enrich steps...")
 
-        for cfg in prep_configs:
+        for cfg in enrich_configs:
             if verbose:
-                print(f"  Prep: {cfg.step_name}")
+                print(f"  Enrich: {cfg.step_name}")
 
             # Start progress tracking for this step
             if progress:
@@ -339,9 +341,9 @@ def run_derivation(
 
             step_ctx = None
             if run_logger:
-                step_ctx = run_logger.step_start(cfg.step_name, f"Running prep step: {cfg.step_name}")
+                step_ctx = run_logger.step_start(cfg.step_name, f"Running enrich step: {cfg.step_name}")
 
-            result = _run_prep_step(cfg, graph_manager)
+            result = _run_enrich_step(cfg, graph_manager)
             stats["steps_completed"] += 1
 
             if result.get("errors"):
@@ -358,9 +360,9 @@ def run_derivation(
                 progress.complete_step()
 
             if verbose and result.get("stats"):
-                prep_stats = result["stats"]
-                if "top_nodes" in prep_stats:
-                    top_names = [n["id"].split("_")[-1] for n in prep_stats["top_nodes"][:3]]
+                enrich_stats = result["stats"]
+                if "top_nodes" in enrich_stats:
+                    top_names = [n["id"].split("_")[-1] for n in enrich_stats["top_nodes"][:3]]
                     print(f"    Top nodes: {top_names}")
 
     # Run generate phase
@@ -476,6 +478,85 @@ def run_derivation(
                     progress.log(error_msg, level="error")
                     progress.complete_step()
 
+    # Run refine phase
+    if "refine" in phases:
+        refine_configs = config.get_derivation_configs(
+            engine, enabled_only=enabled_only, phase="refine"
+        )
+
+        if refine_configs and verbose:
+            print(f"Running {len(refine_configs)} refine steps...")
+
+        for cfg in refine_configs:
+            if verbose:
+                print(f"  Refine: {cfg.step_name}")
+
+            # Start progress tracking for this step
+            if progress:
+                progress.start_step(cfg.step_name)
+
+            step_ctx = None
+            if run_logger:
+                step_ctx = run_logger.step_start(
+                    cfg.step_name, f"Running refine step: {cfg.step_name}"
+                )
+
+            try:
+                # Parse params from config
+                refine_params = None
+                if cfg.params:
+                    try:
+                        import json
+
+                        refine_params = json.loads(cfg.params)
+                    except json.JSONDecodeError:
+                        pass
+
+                # Run the refine step
+                refine_result = run_refine_step(
+                    step_name=cfg.step_name,
+                    archimate_manager=archimate_manager,
+                    graph_manager=graph_manager,
+                    llm_query_fn=llm_query_fn if cfg.llm else None,
+                    params=refine_params,
+                )
+
+                stats["steps_completed"] += 1
+
+                # Track refine-specific stats
+                if "elements_disabled" not in stats:
+                    stats["elements_disabled"] = 0
+                if "relationships_deleted" not in stats:
+                    stats["relationships_deleted"] = 0
+                if "refine_issues_found" not in stats:
+                    stats["refine_issues_found"] = 0
+
+                stats["elements_disabled"] += refine_result.elements_disabled
+                stats["relationships_deleted"] += refine_result.relationships_deleted
+                stats["refine_issues_found"] += refine_result.issues_found
+
+                if step_ctx:
+                    step_ctx.complete()
+
+                if progress:
+                    msg = f"Refine: {refine_result.issues_found} issues"
+                    if refine_result.elements_disabled > 0:
+                        msg += f", {refine_result.elements_disabled} disabled"
+                    progress.complete_step(msg)
+
+                if refine_result.errors:
+                    errors.extend(refine_result.errors)
+
+            except Exception as e:
+                error_msg = f"Error in refine step {cfg.step_name}: {str(e)}"
+                errors.append(error_msg)
+                stats["steps_skipped"] += 1
+                if step_ctx:
+                    step_ctx.error(str(e))
+                if progress:
+                    progress.log(error_msg, level="error")
+                    progress.complete_step()
+
     # Complete phase logging
     if run_logger:
         if errors:
@@ -486,6 +567,8 @@ def run_derivation(
     # Complete progress tracking
     if progress:
         msg = f"Derivation complete: {stats['elements_created']} elements, {stats['relationships_created']} relationships"
+        if stats.get("elements_disabled", 0) > 0:
+            msg += f", {stats['elements_disabled']} disabled"
         progress.complete_phase(msg)
 
     return {
@@ -525,13 +608,13 @@ def run_derivation_iter(
         llm_query_fn: Function to call LLM (prompt, schema) -> response
         enabled_only: Only run enabled derivation steps
         verbose: Print progress to stdout
-        phases: List of phases to run ("prep", "generate")
+        phases: List of phases to run ("enrich", "generate", "refine")
 
     Yields:
         ProgressUpdate objects for each step in the pipeline
     """
     if phases is None:
-        phases = ["prep", "generate"]
+        phases = ["enrich", "generate"]
 
     stats = {
         "elements_created": 0,
@@ -543,13 +626,16 @@ def run_derivation_iter(
     all_created_elements: list[dict] = []
 
     # Calculate total steps for progress
-    prep_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="prep")
+    enrich_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="enrich")
     gen_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="generate")
+    refine_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="refine")
     total_steps = 0
-    if "prep" in phases:
-        total_steps += len(prep_configs)
+    if "enrich" in phases:
+        total_steps += len(enrich_configs)
     if "generate" in phases:
         total_steps += len(gen_configs)
+    if "refine" in phases:
+        total_steps += len(refine_configs)
 
     if total_steps == 0:
         yield ProgressUpdate(
@@ -562,15 +648,15 @@ def run_derivation_iter(
 
     current_step = 0
 
-    # Run prep phase
-    if "prep" in phases:
-        for cfg in prep_configs:
+    # Run enrich phase
+    if "enrich" in phases:
+        for cfg in enrich_configs:
             current_step += 1
 
             if verbose:
-                print(f"  Prep: {cfg.step_name}")
+                print(f"  Enrich: {cfg.step_name}")
 
-            result = _run_prep_step(cfg, graph_manager)
+            result = _run_enrich_step(cfg, graph_manager)
             stats["steps_completed"] += 1
 
             if result.get("errors"):
@@ -583,8 +669,8 @@ def run_derivation_iter(
                 status="complete",
                 current=current_step,
                 total=total_steps,
-                message="prep complete",
-                stats={"prep": True},
+                message="enrich complete",
+                stats={"enrich": True},
             )
 
     # Run generate phase
@@ -697,8 +783,83 @@ def run_derivation_iter(
                     message=error_msg,
                 )
 
+    # Run refine phase
+    if "refine" in phases:
+        for cfg in refine_configs:
+            current_step += 1
+
+            if verbose:
+                print(f"  Refine: {cfg.step_name}")
+
+            try:
+                # Parse params from config
+                refine_params = None
+                if cfg.params:
+                    try:
+                        import json
+
+                        refine_params = json.loads(cfg.params)
+                    except json.JSONDecodeError:
+                        pass
+
+                # Run the refine step
+                refine_result = run_refine_step(
+                    step_name=cfg.step_name,
+                    archimate_manager=archimate_manager,
+                    graph_manager=graph_manager,
+                    llm_query_fn=llm_query_fn if cfg.llm else None,
+                    params=refine_params,
+                )
+
+                stats["steps_completed"] += 1
+
+                # Track refine-specific stats
+                if "elements_disabled" not in stats:
+                    stats["elements_disabled"] = 0
+                if "relationships_deleted" not in stats:
+                    stats["relationships_deleted"] = 0
+                if "refine_issues_found" not in stats:
+                    stats["refine_issues_found"] = 0
+
+                stats["elements_disabled"] += refine_result.elements_disabled
+                stats["relationships_deleted"] += refine_result.relationships_deleted
+                stats["refine_issues_found"] += refine_result.issues_found
+
+                msg = f"Refine: {refine_result.issues_found} issues"
+                if refine_result.elements_disabled > 0:
+                    msg += f", {refine_result.elements_disabled} disabled"
+
+                yield ProgressUpdate(
+                    phase="derivation",
+                    step=cfg.step_name,
+                    status="complete",
+                    current=current_step,
+                    total=total_steps,
+                    message=msg,
+                    stats={"refine": True, "issues_found": refine_result.issues_found},
+                )
+
+                if refine_result.errors:
+                    errors.extend(refine_result.errors)
+
+            except Exception as e:
+                error_msg = f"Error in refine step {cfg.step_name}: {str(e)}"
+                errors.append(error_msg)
+                stats["steps_skipped"] += 1
+
+                yield ProgressUpdate(
+                    phase="derivation",
+                    step=cfg.step_name,
+                    status="error",
+                    current=current_step,
+                    total=total_steps,
+                    message=error_msg,
+                )
+
     # Yield final completion
     final_message = f"{stats['elements_created']} elements, {stats['relationships_created']} relationships"
+    if stats.get("elements_disabled", 0) > 0:
+        final_message += f", {stats['elements_disabled']} disabled"
     if errors:
         final_message += f" ({len(errors)} errors)"
 
