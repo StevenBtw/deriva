@@ -57,14 +57,24 @@ class DuplicateElementsStep:
                 - fuzzy_threshold: Similarity threshold for Tier 2 (default: 0.85)
                 - semantic_threshold: Confidence threshold for Tier 3 (default: 0.95)
                 - auto_merge_tier2: Whether to auto-merge Tier 2 matches (default: False)
+                - extra_synonyms: Dict of additional synonym mappings {"from": "to"}
+                - use_lemmatization: Apply lemmatization before matching (default: False)
 
         Returns:
             RefineResult with details of duplicates found and handled
         """
         params = params or {}
         fuzzy_threshold = params.get("fuzzy_threshold", FUZZY_MATCH_THRESHOLD)
-        semantic_threshold = params.get("semantic_threshold", SEMANTIC_CONFIDENCE_THRESHOLD)
+        semantic_threshold = params.get(
+            "semantic_threshold", SEMANTIC_CONFIDENCE_THRESHOLD
+        )
         auto_merge_tier2 = params.get("auto_merge_tier2", False)
+        extra_synonyms = params.get(
+            "extra_synonyms", None
+        )  # Additional synonym mappings
+        use_lemmatization = params.get(
+            "use_lemmatization", False
+        )  # Apply lemmatization
 
         result = RefineResult(
             success=True,
@@ -107,8 +117,12 @@ class DuplicateElementsStep:
                             continue
 
                         # Tier 2: Fuzzy match on normalized names
-                        norm_a = normalize_name(elem_a.name)
-                        norm_b = normalize_name(elem_b.name)
+                        norm_a = normalize_name(
+                            elem_a.name, extra_synonyms, use_lemmatization
+                        )
+                        norm_b = normalize_name(
+                            elem_b.name, extra_synonyms, use_lemmatization
+                        )
                         similarity = similarity_ratio(norm_a, norm_b)
 
                         if similarity >= fuzzy_threshold:
@@ -141,7 +155,10 @@ class DuplicateElementsStep:
                 if auto_merge_tier2:
                     survivor, duplicate = self._select_survivor(elem_a, elem_b)
                     self._merge_elements(
-                        archimate_manager, survivor, duplicate, f"fuzzy_match_{similarity:.2f}"
+                        archimate_manager,
+                        survivor,
+                        duplicate,
+                        f"fuzzy_match_{similarity:.2f}",
                     )
                     result.elements_merged += 1
                     result.elements_disabled += 1
@@ -298,12 +315,12 @@ class DuplicateElementsStep:
 Element A:
 - Name: {elem_a.name}
 - Type: {elem_a.element_type}
-- Documentation: {elem_a.documentation or 'N/A'}
+- Documentation: {elem_a.documentation or "N/A"}
 
 Element B:
 - Name: {elem_b.name}
 - Type: {elem_b.element_type}
-- Documentation: {elem_b.documentation or 'N/A'}
+- Documentation: {elem_b.documentation or "N/A"}
 
 Consider if they represent the same concept, entity, or component in the architecture.
 """

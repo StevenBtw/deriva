@@ -150,11 +150,13 @@ def filter_candidates(
         if not _is_likely_data_object(c.name, include_patterns, exclude_patterns)
     ]
 
-    likely_data = filter_by_pagerank(likely_data, top_n=max_candidates // 2)
+    likely_data = filter_by_pagerank(
+        likely_data, top_n=max_candidates // 2, min_pagerank=0.001
+    )
 
     remaining_slots = max_candidates - len(likely_data)
     if remaining_slots > 0 and others:
-        others = filter_by_pagerank(others, top_n=remaining_slots)
+        others = filter_by_pagerank(others, top_n=remaining_slots, min_pagerank=0.001)
         likely_data.extend(others)
 
     logger.debug(

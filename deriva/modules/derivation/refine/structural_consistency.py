@@ -68,7 +68,9 @@ class StructuralConsistencyStep:
         )
 
         if graph_manager is None:
-            logger.warning("Graph manager not provided, skipping structural consistency check")
+            logger.warning(
+                "Graph manager not provided, skipping structural consistency check"
+            )
             result.details.append(
                 {
                     "action": "skipped",

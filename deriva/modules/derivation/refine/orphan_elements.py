@@ -172,7 +172,9 @@ class OrphanElementsStep:
                 WHERE any(lbl IN labels(e) WHERE lbl STARTS WITH '{ns}:')
                 RETURN e.properties_json as properties_json
             """
-            result = archimate_manager.query(source_query, {"identifier": element_identifier})
+            result = archimate_manager.query(
+                source_query, {"identifier": element_identifier}
+            )
 
             if not result:
                 return proposals

@@ -183,7 +183,9 @@ class CrossLayerCoherenceStep:
             )
 
             for elem in disconnected:
-                element_type = elem["label"].split(":")[-1] if elem["label"] else "Unknown"
+                element_type = (
+                    elem["label"].split(":")[-1] if elem["label"] else "Unknown"
+                )
                 result.issues_found += 1
                 result.details.append(
                     {
@@ -237,7 +239,9 @@ class CrossLayerCoherenceStep:
             )
 
             for elem in floating:
-                element_type = elem["label"].split(":")[-1] if elem["label"] else "Unknown"
+                element_type = (
+                    elem["label"].split(":")[-1] if elem["label"] else "Unknown"
+                )
                 result.issues_found += 1
                 result.details.append(
                     {

@@ -84,6 +84,27 @@ When you see issues in your ArchiMate model:
 
 Use `benchmark deviations` to identify which configs produce inconsistent results.
 
+## Default Benchmark Models
+
+For multi-model benchmarking, Deriva uses the following 3 models by default:
+
+| Model Name           | Provider      | Description                              |
+| -------------------- | ------------- | ---------------------------------------- |
+| `anthropic-haiku`    | Anthropic API | Claude Haiku 4.5 - fast, cost-effective  |
+| `openai-gpt41mini`   | OpenAI API    | GPT-4.1-mini - balanced performance      |
+| `mistral-devstral2`  | Mistral API   | Devstral-2512 - code-focused             |
+
+These models are configured in the `.env` file under the **BENCHMARK MODELS** section. Other models are available but not included in standard benchmark runs.
+
+```bash
+# Run benchmark with all 3 default models
+uv run python -m deriva.cli.cli benchmark run \
+  --repos flask_invoice_generator \
+  --models anthropic-haiku,openai-gpt41mini,mistral-devstral2 \
+  --runs 5 \
+  --no-cache
+```
+
 ## Benchmarking Workflow
 
 ### 1. Run a Baseline Benchmark
@@ -944,3 +965,149 @@ This follows the pattern established in CONTRIBUTING.md: **never update configs 
 1. **Always provide defaults**: Extraction should never produce null values for classification fields
 2. **CLI-first configuration**: Following CONTRIBUTING.md, all config changes should go through CLI or UI
 3. **Infer when possible**: When explicit classification is missing, infer from file properties (extension)
+
+### 2026-01-10: A/B Testing Framework and Derivation Optimization
+
+**Objective:** Create fast A/B testing workflow and improve derivation consistency to ≥80%
+
+#### A/B Testing Script
+
+Created `scripts/ab_test.py` for rapid config iteration:
+
+```bash
+# Test a single config
+python scripts/ab_test.py DataObject --runs 5
+
+# Compare against baseline
+python scripts/ab_test.py ApplicationService --runs 5 --baseline bench_20260110_074211
+
+# Analyze existing session
+python scripts/ab_test.py DataObject -a bench_20260110_074602
+```
+
+Key features:
+- Focuses on single config (others use cache)
+- Auto-compares consistency before/after
+- Shows stable/unstable elements by prefix
+
+#### Prompt Engineering Findings
+
+Based on research from:
+- [ArchiMate Best Practices](https://github.com/AlbertoDMendoza/ArchiMateBestPractices)
+- [ArchiMate 3.1 Application Layer](https://pubs.opengroup.org/architecture/archimate31-doc/chap09.html)
+- [QualiWare ApplicationService Guide](https://coe.qualiware.com/templates/applicationservice-archimate/)
+- [Claude 4 Prompting Best Practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-4-best-practices)
+
+**Key principle: ABSTRACTION LEVEL determines consistency**
+
+| Approach | Example | Consistency |
+|----------|---------|-------------|
+| Too specific | as_validate_invoice_input | Low (varies by domain) |
+| Correct level | as_validate_data | High (generalizes) |
+
+#### DataObject Optimization
+
+**Problem:** 41.7% consistency with naming variants like:
+- `do_flask_environment_config` vs `do_flask_environment_configuration`
+- `do_git_configuration` vs `do_git_ignore_configuration`
+
+**Solution:** Canonical identifier table in prompt:
+
+```
+| File Pattern | Identifier |
+|--------------|------------|
+| .env, .flaskenv | do_environment_configuration |
+| requirements.txt | do_dependency_manifest |
+| *.db | do_application_database |
+| .gitignore | do_version_control_configuration |
+```
+
+**Result:** 41.7% → 100% consistency
+
+#### ApplicationService Optimization
+
+**Problem:** 28.6% consistency with variants:
+- `as_validate_data` vs `as_validate_input` vs `as_validate_invoice_data`
+- `as_format_currency` vs `as_format_output`
+
+**Solution:** Abstraction principle + example-driven:
+
+```
+<derivation_approach>
+Key question for each method: "What TYPE of operation is this?"
+- CRUD operations → group under entity management
+- Input checking → group under validation
+- Report/PDF generation → group under document generation
+</derivation_approach>
+```
+
+Combined with a well-structured example JSON showing desired output format.
+
+**Result:** 28.6% → 100% consistency
+
+#### Critical Rule: NO REPOSITORY-SPECIFIC OVERFITTING
+
+**This is the most important rule for config optimization.**
+
+When writing prompts, NEVER include:
+
+- Specific entity names from test repositories (invoice, customer, position)
+- Specific file names (app.py, models.py)
+- Specific technology stacks (Flask, SQLAlchemy)
+- Specific project structures
+
+**BAD - Overfitting:**
+
+```text
+# DON'T DO THIS
+Create services for: invoice management, customer handling, position tracking
+Exclude files like: app.py, __init__.py
+```
+
+**GOOD - Generalizable:**
+
+```text
+# DO THIS INSTEAD
+Create services for: entity management, data validation, document generation
+Exclude: framework initialization methods, internal utilities
+```
+
+**Test for overfitting:** Ask yourself: "Would this prompt work identically on a completely different repository (e.g., an e-commerce app, a healthcare system, a gaming backend)?"
+
+If the answer is "no" or "it depends on the domain", the prompt is overfitting.
+
+#### Key Learnings
+
+1. **Examples drive consistency**: Claude follows example patterns closely. A good example JSON is more effective than verbose rules.
+
+2. **Abstraction level is key**: Guide the LLM to use GENERIC category names (data, entity, document) rather than domain-specific names.
+
+3. **Avoid rigid constraints**: "Use ONLY these identifiers" achieves 100% but limits quality. Better: explain WHY generalization matters and provide examples.
+
+4. **ArchiMate naming conventions**:
+   - ApplicationService: verb phrases ("Invoice Processing" or "Payment Service")
+   - DataObject: singular noun phrases ("Environment Configuration")
+
+5. **XML tags help structure**: Using `<definition>`, `<naming>`, `<constraints>` tags aligns with Claude's prompt engineering best practices.
+
+6. **Graph-based selection over name-based**: Filter source nodes by structural properties (in_degree, pagerank) rather than naming patterns. Graph properties generalize; names don't.
+
+#### Updated Configs (via CLI)
+
+```bash
+# DataObject - canonical identifier table
+uv run python -m deriva.cli.cli config update derivation DataObject \
+  --instruction-file workspace/prompts/data_object_v2.txt
+
+# ApplicationService - abstraction principle + example
+uv run python -m deriva.cli.cli config update derivation ApplicationService \
+  --instruction-file workspace/prompts/application_service_v8.txt \
+  --example-file workspace/prompts/application_service_example.json
+```
+
+#### Final Results
+
+| Element Type | Before | After | Change |
+|--------------|--------|-------|--------|
+| DataObject | 41.7% | 100% | +58.3% |
+| ApplicationService | 28.6% | 100% | +71.4% |

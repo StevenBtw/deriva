@@ -3,696 +3,696 @@
     "extension": ".jpg",
     "file_type": "asset",
     "subtype": "image",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".png",
     "file_type": "asset",
     "subtype": "image",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".svg",
     "file_type": "asset",
     "subtype": "image",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".ttf",
     "file_type": "asset",
     "subtype": "font",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".woff",
     "file_type": "asset",
     "subtype": "font",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "path:**/static/**",
     "file_type": "asset",
     "subtype": "static",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "dockerfile",
     "file_type": "build",
     "subtype": "docker",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "makefile",
     "file_type": "build",
     "subtype": "make",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "pom.xml",
     "file_type": "build",
     "subtype": "maven",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".babelrc",
     "file_type": "config",
     "subtype": "babel",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".dockerignore",
     "file_type": "config",
     "subtype": "docker",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".editorconfig",
     "file_type": "config",
     "subtype": "editor",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".env",
     "file_type": "config",
     "subtype": "env",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".env.example",
     "file_type": "config",
     "subtype": "env",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".env.local",
     "file_type": "config",
     "subtype": "env",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".eslintrc",
     "file_type": "config",
     "subtype": "eslint",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".flaskenv",
     "file_type": "config",
     "subtype": "flask",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".gitattributes",
     "file_type": "config",
     "subtype": "git",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".gitignore",
     "file_type": "config",
     "subtype": "git",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".ini",
     "file_type": "config",
     "subtype": "ini",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".json",
     "file_type": "config",
     "subtype": "json",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".node-version",
     "file_type": "config",
     "subtype": "node",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".npmrc",
     "file_type": "config",
     "subtype": "npm",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".nvmrc",
     "file_type": "config",
     "subtype": "nvm",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".prettierrc",
     "file_type": "config",
     "subtype": "prettier",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".python-version",
     "file_type": "config",
     "subtype": "python",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".ruby-version",
     "file_type": "config",
     "subtype": "ruby",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".toml",
     "file_type": "config",
     "subtype": "toml",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".xml",
     "file_type": "config",
     "subtype": "xml",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".yaml",
     "file_type": "config",
     "subtype": "yaml",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".yml",
     "file_type": "config",
     "subtype": "yaml",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "path:**/config/**",
     "file_type": "config",
     "subtype": "directory",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".csv",
     "file_type": "data",
     "subtype": "csv",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".parquet",
     "file_type": "data",
     "subtype": "parquet",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "Cargo.lock",
     "file_type": "dependency",
     "subtype": "rust",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "Cargo.toml",
     "file_type": "dependency",
     "subtype": "rust",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "Gemfile",
     "file_type": "dependency",
     "subtype": "ruby",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "Gemfile.lock",
     "file_type": "dependency",
     "subtype": "ruby",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "composer.json",
     "file_type": "dependency",
     "subtype": "php",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "composer.lock",
     "file_type": "dependency",
     "subtype": "php",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "go.mod",
     "file_type": "dependency",
     "subtype": "golang",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "go.sum",
     "file_type": "dependency",
     "subtype": "golang",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "package-lock.json",
     "file_type": "dependency",
     "subtype": "javascript",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "package.json",
     "file_type": "dependency",
     "subtype": "javascript",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "pyproject.toml",
     "file_type": "dependency",
     "subtype": "python",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "requirements.txt",
     "file_type": "dependency",
     "subtype": "python",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "setup.cfg",
     "file_type": "dependency",
     "subtype": "python",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "setup.py",
     "file_type": "dependency",
     "subtype": "python",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "yarn.lock",
     "file_type": "dependency",
     "subtype": "javascript",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".md",
     "file_type": "docs",
     "subtype": "markdown",
+    "chunk_delimiter": "\n## ",
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": "\n## "
+    "chunk_overlap": 0
   },
   {
     "extension": ".rst",
     "file_type": "docs",
     "subtype": "restructuredtext",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".txt",
     "file_type": "docs",
     "subtype": "text",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "path:**/docs/**",
     "file_type": "docs",
     "subtype": "directory",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".db",
     "file_type": "exclude",
     "subtype": "database",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".git",
     "file_type": "exclude",
     "subtype": "vcs",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".venv",
     "file_type": "exclude",
     "subtype": "virtualenv",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "__pycache__",
     "file_type": "exclude",
     "subtype": "cache",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "build",
     "file_type": "exclude",
     "subtype": "build",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "dist",
     "file_type": "exclude",
     "subtype": "build",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "node_modules",
     "file_type": "exclude",
     "subtype": "dependencies",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".c",
     "file_type": "source",
     "subtype": "c",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".cpp",
     "file_type": "source",
     "subtype": "cpp",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".cs",
     "file_type": "source",
     "subtype": "csharp",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".css",
     "file_type": "source",
     "subtype": "stylesheet",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".go",
     "file_type": "source",
     "subtype": "golang",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".html",
     "file_type": "source",
     "subtype": "html",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".java",
     "file_type": "source",
     "subtype": "java",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".js",
     "file_type": "source",
     "subtype": "javascript",
+    "chunk_delimiter": "\nfunction ",
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": "\nfunction "
+    "chunk_overlap": 0
   },
   {
     "extension": ".php",
     "file_type": "source",
     "subtype": "php",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".py",
     "file_type": "source",
     "subtype": "python",
+    "chunk_delimiter": "\nclass ",
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": "\nclass "
+    "chunk_overlap": 0
   },
   {
     "extension": ".rb",
     "file_type": "source",
     "subtype": "ruby",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".rs",
     "file_type": "source",
     "subtype": "rust",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".scss",
     "file_type": "source",
     "subtype": "stylesheet",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".sh",
     "file_type": "source",
     "subtype": "shell",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".sql",
     "file_type": "source",
     "subtype": "sql",
+    "chunk_delimiter": ";\n",
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": ";\n"
+    "chunk_overlap": 0
   },
   {
     "extension": ".ts",
     "file_type": "source",
     "subtype": "typescript",
+    "chunk_delimiter": "\nfunction ",
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": "\nfunction "
+    "chunk_overlap": 0
   },
   {
     "extension": "path:**/templates/**",
     "file_type": "template",
     "subtype": "html",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "*.spec.js",
     "file_type": "test",
     "subtype": "javascript",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "*.test.js",
     "file_type": "test",
     "subtype": "javascript",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "*_test.py",
     "file_type": "test",
     "subtype": "python",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".spec.js",
     "file_type": "test",
     "subtype": "javascript",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": ".test.js",
     "file_type": "test",
     "subtype": "javascript",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "_test.py",
     "file_type": "test",
     "subtype": "python",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "path:**/test/**",
     "file_type": "test",
     "subtype": "directory",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "path:**/tests/**",
     "file_type": "test",
     "subtype": "directory",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "test_",
     "file_type": "test",
     "subtype": "python",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   },
   {
     "extension": "test_*.py",
     "file_type": "test",
     "subtype": "python",
+    "chunk_delimiter": null,
     "chunk_max_tokens": null,
-    "chunk_overlap": 0,
-    "chunk_delimiter": null
+    "chunk_overlap": 0
   }
 ]

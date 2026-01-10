@@ -116,11 +116,13 @@ def filter_candidates(
         if not _is_likely_actor(c.name, include_patterns, exclude_patterns)
     ]
 
-    likely_actors = filter_by_pagerank(likely_actors, top_n=max_candidates // 2)
+    likely_actors = filter_by_pagerank(
+        likely_actors, top_n=max_candidates // 2, min_pagerank=0.001
+    )
 
     remaining_slots = max_candidates - len(likely_actors)
     if remaining_slots > 0 and others:
-        others = filter_by_pagerank(others, top_n=remaining_slots)
+        others = filter_by_pagerank(others, top_n=remaining_slots, min_pagerank=0.001)
         likely_actors.extend(others)
 
     logger.debug(

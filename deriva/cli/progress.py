@@ -257,9 +257,13 @@ if RICH_AVAILABLE:
                 return
 
             if self._phase_task is not None:
-                task = self._progress.tasks[self._phase_task]
-                if task.total is not None:
-                    self._progress.update(self._phase_task, completed=task.total)
+                try:
+                    # Use _tasks dict for safe access by TaskID
+                    task = self._progress._tasks.get(self._phase_task)
+                    if task and task.total is not None:
+                        self._progress.update(self._phase_task, completed=task.total)
+                except (IndexError, KeyError):
+                    pass  # Task may have been removed
 
             if message:
                 self.console.print(f"[green]{message}[/green]")
@@ -531,9 +535,13 @@ if RICH_AVAILABLE:
                 return
 
             if self._phase_task is not None:
-                task = self._progress.tasks[self._phase_task]
-                if task.total is not None:
-                    self._progress.update(self._phase_task, completed=task.total)
+                try:
+                    # Use _tasks dict for safe access by TaskID
+                    task = self._progress._tasks.get(self._phase_task)
+                    if task and task.total is not None:
+                        self._progress.update(self._phase_task, completed=task.total)
+                except (IndexError, KeyError):
+                    pass  # Task may have been removed
 
             self._refresh_display()
 

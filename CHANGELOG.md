@@ -8,17 +8,45 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics and LLM's
 
 ## v0.6.4 - (Unreleased)
 
+### Refine Module (NEW)
+
+New post-derivation refinement phase with 5 quality assurance steps in `modules/derivation/refine/`:
+
+- **Duplicate Elements**: Multi-tier detection (exact match → fuzzy match → LLM semantic check) with configurable auto-merge and survivor selection based on PageRank
+- **Duplicate Relationships**: Exact duplicate removal and redundant relationship pair detection
+- **Orphan Elements**: Identifies unconnected elements, proposes relationships from source graph patterns, optionally disables low-importance orphans
+- **Structural Consistency**: Validates graph-to-model containment preservation (files in directories → components in systems)
+- **Cross-Layer Coherence**: Checks ArchiMate layer connections (Business↔Application↔Technology) and flags floating elements
+
+The refine phase runs after generation with config-driven step enablement. Each step returns detailed `RefineResult` with issues found/fixed counts.
+
+### Graph Enrichment Stability Improvements
+
+Major improvements for consistent results across different graph sizes and multi-repo setups:
+
+- **Percentile Normalization**: New `normalize_to_percentiles()` functions convert absolute metrics (PageRank, k-core, degree) to 0-100 percentile ranks. A node at 90th percentile means "more important than 90% of nodes" regardless of graph size (50 or 5000 nodes)
+- **Deterministic Louvain**: Fixed non-deterministic community detection by sorting nodes before algorithm execution. Same graph now produces identical community assignments every run
+- **Graph Metadata**: New `GraphMetadata` dataclass captures graph statistics (total_nodes, density, max_kcore, num_communities). Returned with `EnrichmentResult` and propagated to refine steps via params
+- **Per-Repository Isolation**: Added `repository_name` property extraction from node IDs and repo-aware edge filtering in `_get_graph_edges()`. Enables isolated enrichment per repo in multi-repo setups
+
+New enrichment properties per node: `pagerank_percentile`, `kcore_percentile`, `in_degree_percentile`, `out_degree_percentile`
+
 ### General Improvements
 
 Multiple minor improvements for different parts of the process:
 - **Extraction Method Property**: Added extraction method (structural/ast/llm) property to the graph nodes
 - **LLM Rate Limiting**: Extended the LLM manager (adapter) with rate limiting capabilities to gracefully deal with llm provider introduced rate limits
 - **Status/Progress Bars**: Both the Marimo app and the cli now have visual indicators of progress during pipeline runs and benchmark runs (cli only)
-- **Status/Progress Bars**: Added model output to the benchmark runs, with unique names ({repo}_{model}_{run#}.archimate)
+- **Benchmark Output**: Added model output to the benchmark runs, with unique names ({repo}_{model}_{run#}.archimate)
 
-### Full test pass
+### Full Test Pass
 
-Removed and added a lot of tests, now fully caught up with all the changes, test coverage didn't jump because I deleted a lot of weak tests. Marimo (app) tests are still excluded, not sure how to deal with that yet.
+Removed and added a lot of tests, now fully caught up with all the changes. New test classes:
+
+- `TestPercentileNormalization`, `TestGraphMetadata`, `TestPercentileEnrichments` for enrich module
+- Comprehensive refine step tests for all 5 steps
+
+Test coverage didn't jump because I deleted a lot of weak tests. Marimo (app) tests are still excluded.
 
 ### Graph Enrichment Module
 

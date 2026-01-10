@@ -581,11 +581,7 @@ class PipelineSession:
 
             # Filter relationships to only include those between enabled elements
             enabled_ids = {e.identifier for e in elements}
-            relationships = [
-                r
-                for r in all_relationships
-                if r.source in enabled_ids and r.target in enabled_ids
-            ]
+            relationships = [r for r in all_relationships if r.source in enabled_ids and r.target in enabled_ids]
 
             exporter = ArchiMateXMLExporter()
             exporter.export(
@@ -984,6 +980,7 @@ class PipelineSession:
         progress: BenchmarkProgressReporter | None = None,
         export_models: bool = True,
         clear_between_runs: bool = True,
+        bench_hash: bool = False,
     ) -> benchmarking.BenchmarkResult:
         """
         Run a full benchmark matrix.
@@ -1000,6 +997,7 @@ class PipelineSession:
             progress: Optional progress reporter for visual feedback
             export_models: Export ArchiMate model file after each run (default: True)
             clear_between_runs: Clear graph/model between runs (default: True)
+            bench_hash: Include repo/model/run in cache key for per-run isolation (default: False)
 
         Returns:
             BenchmarkResult with session details
@@ -1030,6 +1028,7 @@ class PipelineSession:
             nocache_configs=nocache_configs or [],
             export_models=export_models,
             clear_between_runs=clear_between_runs,
+            bench_hash=bench_hash,
         )
 
         orchestrator = benchmarking.BenchmarkOrchestrator(

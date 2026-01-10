@@ -133,11 +133,13 @@ def filter_candidates(
         if not _is_likely_tech_service(c.name, include_patterns, exclude_patterns)
     ]
 
-    likely_tech = filter_by_pagerank(likely_tech, top_n=max_candidates // 2)
+    likely_tech = filter_by_pagerank(
+        likely_tech, top_n=max_candidates // 2, min_pagerank=0.001
+    )
 
     remaining_slots = max_candidates - len(likely_tech)
     if remaining_slots > 0 and others:
-        others = filter_by_pagerank(others, top_n=remaining_slots)
+        others = filter_by_pagerank(others, top_n=remaining_slots, min_pagerank=0.001)
         likely_tech.extend(others)
 
     logger.debug(

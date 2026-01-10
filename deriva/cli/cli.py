@@ -127,11 +127,14 @@ def cmd_config_disable(args: argparse.Namespace) -> int:
 
 def cmd_config_update(args: argparse.Namespace) -> int:
     """Update a configuration with versioning."""
+    import json
+
     with PipelineSession() as session:
         step_type = args.step_type
         name = args.name
         instruction = args.instruction
         example = args.example
+        params = getattr(args, "params", None)
 
         # Read instruction from file if provided
         if args.instruction_file:
@@ -151,6 +154,24 @@ def cmd_config_update(args: argparse.Namespace) -> int:
                 print(f"Error reading example file: {e}")
                 return 1
 
+        # Read params from file if provided
+        params_file = getattr(args, "params_file", None)
+        if params_file:
+            try:
+                with open(params_file, encoding="utf-8") as f:
+                    params = f.read()
+            except Exception as e:
+                print(f"Error reading params file: {e}")
+                return 1
+
+        # Validate params is valid JSON if provided
+        if params:
+            try:
+                json.loads(params)
+            except json.JSONDecodeError as e:
+                print(f"Error: params must be valid JSON: {e}")
+                return 1
+
         if step_type == "derivation":
             result = config.create_derivation_config_version(
                 session._engine,
@@ -158,6 +179,7 @@ def cmd_config_update(args: argparse.Namespace) -> int:
                 instruction=instruction,
                 example=example,
                 input_graph_query=args.query,
+                params=params,
             )
         elif step_type == "extraction":
             result = config.create_extraction_config_version(
@@ -174,6 +196,8 @@ def cmd_config_update(args: argparse.Namespace) -> int:
         if result.get("success"):
             print(f"Updated {step_type} config: {name}")
             print(f"  Version: {result['old_version']} -> {result['new_version']}")
+            if params:
+                print("  Params: updated")
             return 0
         else:
             print(f"Error: {result.get('error', 'Unknown error')}")
@@ -698,6 +722,7 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     use_cache = not getattr(args, "no_cache", False)
     export_models = not getattr(args, "no_export_models", False)
     clear_between_runs = not getattr(args, "no_clear", False)
+    bench_hash = getattr(args, "bench_hash", False)
     nocache_configs_str = getattr(args, "nocache_configs", None)
     nocache_configs = (
         [c.strip() for c in nocache_configs_str.split(",")]
@@ -717,6 +742,8 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     print(f"Cache: {'enabled' if use_cache else 'disabled'}")
     print(f"Export models: {'enabled' if export_models else 'disabled'}")
     print(f"Clear between runs: {'yes' if clear_between_runs else 'no'}")
+    if bench_hash:
+        print("Bench hash: enabled (per-run cache isolation)")
     if nocache_configs:
         print(f"No-cache configs: {nocache_configs}")
     print(f"{'=' * 60}\n")
@@ -740,6 +767,7 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
                 progress=progress_reporter,
                 export_models=export_models,
                 clear_between_runs=clear_between_runs,
+                bench_hash=bench_hash,
             )
 
         print(f"\n{'=' * 60}")
@@ -1148,6 +1176,19 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="New input_sources (extraction only)",
     )
+    config_update.add_argument(
+        "-p",
+        "--params",
+        type=str,
+        default=None,
+        help="New params JSON (derivation only)",
+    )
+    config_update.add_argument(
+        "--params-file",
+        type=str,
+        default=None,
+        help="Read params JSON from file (derivation only)",
+    )
     config_update.set_defaults(func=cmd_config_update)
 
     # config versions
@@ -1413,6 +1454,11 @@ def create_parser() -> argparse.ArgumentParser:
         "--no-clear",
         action="store_true",
         help="Don't clear graph/model between runs (keep existing data)",
+    )
+    benchmark_run.add_argument(
+        "--bench-hash",
+        action="store_true",
+        help="Include repo/model/run in cache key for per-run isolation. Allows resuming failed runs with cache on.",
     )
     benchmark_run.set_defaults(func=cmd_benchmark_run)
 

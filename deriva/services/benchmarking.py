@@ -254,6 +254,7 @@ class BenchmarkConfig:
     use_cache: bool = True  # Global cache setting (True = cache enabled)
     nocache_configs: list[str] = field(default_factory=list)  # Configs to always skip cache
     export_models: bool = True  # Export ArchiMate model file after each run
+    bench_hash: bool = False  # Include repo/model/run in cache key for per-run isolation
 
     def total_runs(self) -> int:
         """Calculate total number of runs in the matrix."""
@@ -651,10 +652,14 @@ class BenchmarkOrchestrator:
                 nocache_llm_manager = LLMManager.from_config(model_config, nocache=True)
 
             # Create wrapped query function with per-config cache control
+            # Build bench_hash if enabled (for per-run cache isolation)
+            bench_hash_str = f"{repo_name}:{model_name}:{iteration}" if self.config.bench_hash else None
+
             llm_query_fn = self._create_logging_query_fn(
                 cached_llm=llm_manager,
                 nocache_llm=nocache_llm_manager,
                 run_logger=ocel_run_logger,
+                bench_hash=bench_hash_str,
             )
 
             # Determine which stages to run
@@ -701,8 +706,11 @@ class BenchmarkOrchestrator:
             status = "completed" if not errors else "failed"
 
         except Exception as e:
+            import traceback
+
             status = "failed"
-            errors.append(str(e))
+            tb_str = traceback.format_exc()
+            errors.append(f"{e}\n{tb_str}")
 
         # Calculate duration
         duration = (datetime.now() - run_start).total_seconds()
@@ -740,6 +748,7 @@ class BenchmarkOrchestrator:
         cached_llm: LLMManager,
         nocache_llm: LLMManager,
         run_logger: OCELRunLogger,
+        bench_hash: str | None = None,
     ) -> Callable[..., Any]:
         """
         Create an LLM query function with per-config cache control.
@@ -748,6 +757,7 @@ class BenchmarkOrchestrator:
             cached_llm: LLM manager with cache enabled
             nocache_llm: LLM manager with cache disabled
             run_logger: OCEL run logger tracking current config
+            bench_hash: Optional benchmark hash (repo:model:run) for per-run cache isolation
 
         Returns:
             Wrapped query function that selects appropriate LLM based on config
@@ -768,7 +778,14 @@ class BenchmarkOrchestrator:
             llm = nocache_llm if skip_cache else cached_llm
 
             # Call the actual LLM with optional parameters
-            response = llm.query(prompt, schema=schema, temperature=temperature, max_tokens=max_tokens)
+            # Pass bench_hash for per-run cache isolation if enabled
+            response = llm.query(
+                prompt,
+                schema=schema,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                bench_hash=bench_hash,
+            )
 
             # Log the query as an OCEL event (metadata only)
             usage = getattr(response, "usage", None) or {}
@@ -865,11 +882,7 @@ class BenchmarkOrchestrator:
 
             # Filter relationships to only include those between enabled elements
             enabled_ids = {e.identifier for e in elements}
-            relationships = [
-                r
-                for r in all_relationships
-                if r.source in enabled_ids and r.target in enabled_ids
-            ]
+            relationships = [r for r in all_relationships if r.source in enabled_ids and r.target in enabled_ids]
 
             # Create models directory within benchmark session folder
             session_id = self.session_id or "unknown"

@@ -30,6 +30,29 @@ from .providers import ProviderConfig, ProviderError, create_provider
 logger = logging.getLogger(__name__)
 
 
+def _strip_markdown_json(content: str) -> str:
+    """Strip markdown code blocks from JSON content.
+
+    Some providers (e.g., Anthropic) return JSON wrapped in markdown:
+    ```json
+    {"key": "value"}
+    ```
+
+    This function extracts the JSON content.
+    """
+    import re
+
+    content = content.strip()
+
+    # Pattern to match ```json ... ``` or ``` ... ```
+    pattern = r"^```(?:json|JSON)?\s*\n?(.*?)\n?```$"
+    match = re.match(pattern, content, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    return content
+
+
 def load_benchmark_models() -> dict[str, BenchmarkModelConfig]:
     """
     Load model configurations from environment variables.
@@ -439,6 +462,7 @@ Return only the JSON object, no additional text."""
         max_tokens: int | None = None,
         use_cache: bool = True,
         system_prompt: str | None = None,
+        bench_hash: str | None = None,
     ) -> T | FailedResponse: ...
 
     @overload
@@ -452,6 +476,7 @@ Return only the JSON object, no additional text."""
         max_tokens: int | None = None,
         use_cache: bool = True,
         system_prompt: str | None = None,
+        bench_hash: str | None = None,
     ) -> LLMResponse: ...
 
     def query(
@@ -464,6 +489,7 @@ Return only the JSON object, no additional text."""
         max_tokens: int | None = None,
         use_cache: bool = True,
         system_prompt: str | None = None,
+        bench_hash: str | None = None,
     ) -> T | LLMResponse:
         """
         Query the LLM with automatic caching and optional structured output.
@@ -476,6 +502,9 @@ Return only the JSON object, no additional text."""
             max_tokens: Maximum tokens in response
             use_cache: Whether to use caching (default: True)
             system_prompt: Optional system prompt
+            bench_hash: Optional benchmark hash (e.g., "repo:model:run") for per-run
+                       cache isolation. Off by default. When set, allows resuming
+                       failed benchmark runs with cache enabled.
 
         Returns:
             If response_model is provided: Validated Pydantic model instance or FailedResponse
@@ -500,6 +529,7 @@ Return only the JSON object, no additional text."""
             effective_prompt,
             self.model,
             response_model.model_json_schema() if response_model else schema,
+            bench_hash=bench_hash,
         )
 
         # Determine cache behavior:
@@ -560,6 +590,9 @@ Return only the JSON object, no additional text."""
 
                     # Validate JSON if schema provided
                     if json_mode:
+                        # Strip markdown code blocks (some providers wrap JSON in ```json...```)
+                        content = _strip_markdown_json(content)
+
                         try:
                             parsed = json.loads(content)
 

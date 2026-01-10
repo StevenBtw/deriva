@@ -129,11 +129,94 @@ def run_refine_step(
         )
 
 
-def normalize_name(name: str) -> str:
+def lemmatize_word(word: str) -> str:
+    """Simple rule-based lemmatizer for English words.
+
+    Reduces words to base form without heavy NLP dependencies.
+    Handles common verb and noun suffixes used in software/architecture terms.
+    """
+    if len(word) <= 3:
+        return word
+
+    # Verb suffixes (order matters - check longer suffixes first)
+    verb_rules = [
+        ("ating", "ate"),  # generating → generate
+        ("iting", "it"),  # editing → edit
+        ("eting", "ete"),  # deleting → delete
+        ("izing", "ize"),  # initializing → initialize
+        ("ying", "y"),  # modifying → modify
+        ("ting", "t"),  # getting → get (but not "ting" words)
+        ("ning", "n"),  # running → run
+        ("ming", "m"),  # programming → program
+        ("ping", "p"),  # mapping → map
+        ("ding", "d"),  # loading → load
+        ("bing", "b"),  # grabbing → grab
+        ("ging", "g"),  # logging → log
+        ("sing", "se"),  # parsing → parse
+        ("ing", ""),  # processing → process (fallback)
+        ("ation", "ate"),  # generation → generate
+        ("ition", "it"),  # addition → add (approximate)
+        ("tion", "t"),  # creation → create
+        ("sion", "de"),  # decision → decide (approximate)
+        ("ment", ""),  # management → manage
+        ("ence", ""),  # preference → prefer
+        ("ance", ""),  # performance → perform
+        ("ness", ""),  # completeness → complete
+        ("able", ""),  # readable → read
+        ("ible", ""),  # visible → vis (approximate)
+        ("ful", ""),  # successful → success
+        ("less", ""),  # stateless → state
+        ("ive", ""),  # active → act
+        ("ous", ""),  # continuous → continu
+        ("ical", ""),  # technical → techn
+        ("al", ""),  # original → origin
+        ("ed", ""),  # created → create
+        ("er", ""),  # handler → handle
+        ("or", ""),  # processor → process
+        ("ly", ""),  # quickly → quick
+    ]
+
+    # Noun plural rules
+    noun_rules = [
+        ("ies", "y"),  # entries → entry, categories → category
+        ("ves", "f"),  # leaves → leaf
+        ("es", ""),  # processes → process, classes → class
+        ("s", ""),  # items → item (fallback)
+    ]
+
+    original = word
+
+    # Try verb rules first (for action words)
+    for suffix, replacement in verb_rules:
+        if word.endswith(suffix) and len(word) > len(suffix) + 2:
+            candidate = word[: -len(suffix)] + replacement
+            if len(candidate) >= 3:
+                return candidate
+
+    # Try noun plural rules
+    for suffix, replacement in noun_rules:
+        if word.endswith(suffix) and len(word) > len(suffix) + 2:
+            candidate = word[: -len(suffix)] + replacement
+            if len(candidate) >= 3:
+                return candidate
+
+    return original
+
+
+def normalize_name(
+    name: str,
+    extra_synonyms: dict[str, str] | None = None,
+    use_lemmatization: bool = False,
+) -> str:
     """Normalize element name for comparison.
 
     Converts to lowercase, removes common prefixes/suffixes,
     normalizes whitespace, and applies synonym mappings.
+
+    Args:
+        name: The element name to normalize
+        extra_synonyms: Optional additional synonyms to apply (merged with defaults)
+        use_lemmatization: If True, apply rule-based lemmatization before synonyms
     """
     if not name:
         return ""
@@ -147,10 +230,12 @@ def normalize_name(name: str) -> str:
     normalized = normalized.replace("_", " ").replace("-", " ")
     normalized = " ".join(normalized.split())
 
-    # Apply generic synonym normalization (not repo-specific!)
-    # These are common semantic equivalents in software architecture
+    # Default synonyms - generic ArchiMate/software architecture equivalents
+    # Based on ArchiMate naming conventions and iSAQB glossary
+    # See: https://github.com/AlbertoDMendoza/ArchiMateBestPractices
+    # See: https://leanpub.com/isaqbglossary/read
     synonyms = {
-        # Action verbs
+        # === ACTION VERBS (behavioral elements use verb phrases) ===
         "insert": "create",
         "add": "create",
         "new": "create",
@@ -159,24 +244,131 @@ def normalize_name(name: str) -> str:
         "modify": "update",
         "edit": "update",
         "change": "update",
-        # Document/rendering concepts
-        "generation": "rendering",
-        "generator": "renderer",
-        "generate": "render",
-        # Database concepts
-        "database": "db",
-        "datastore": "db",
-        "storage": "db",
-        # Process/handling concepts
+        "fetch": "get",
+        "retrieve": "get",
+        "obtain": "get",
+        "send": "transmit",
+        "submit": "transmit",
+        "receive": "accept",
+        "validate": "verify",
+        "check": "verify",
+        # === PLURALS TO SINGULAR (structural elements use singular nouns) ===
+        "details": "detail",
+        "items": "item",
+        "services": "service",
+        "components": "component",
+        "objects": "object",
+        "processes": "process",
+        "functions": "function",
+        "events": "event",
+        "actors": "actor",
+        "interfaces": "interface",
+        "nodes": "node",
+        "devices": "device",
+        "artifacts": "artifact",
+        "elements": "element",
+        "assets": "asset",
+        "resources": "resource",
+        "positions": "position",
+        "invoices": "invoice",
+        "orders": "order",
+        "customers": "customer",
+        "users": "user",
+        "products": "product",
+        "payments": "payment",
+        "transactions": "transaction",
+        "records": "record",
+        "entries": "entry",
+        "messages": "message",
+        "requests": "request",
+        "responses": "response",
+        "templates": "template",
+        "configurations": "configuration",
+        "settings": "setting",
+        "properties": "property",
+        "attributes": "attribute",
+        "parameters": "parameter",
+        "values": "value",
+        "types": "type",
+        "categories": "category",
+        "classes": "class",
+        "modules": "module",
+        "packages": "package",
+        "files": "file",
+        "documents": "document",
+        "reports": "report",
+        "logs": "log",
+        # === ABBREVIATION NORMALIZATION ===
+        "config": "configuration",
+        "configs": "configuration",
+        "cfg": "configuration",
+        "app": "application",
+        "apps": "application",
+        "db": "database",
+        "dbs": "database",
+        "datastore": "database",
+        "repo": "repository",
+        "repos": "repository",
+        "auth": "authentication",
+        "authz": "authorization",
+        "authn": "authentication",
+        "msg": "message",
+        "msgs": "message",
+        "req": "request",
+        "res": "response",
+        "resp": "response",
+        "doc": "document",
+        "docs": "document",
+        "info": "information",
+        "mgmt": "management",
+        "mgr": "manager",
+        "svc": "service",
+        "svcs": "service",
+        "util": "utility",
+        "utils": "utility",
+        "lib": "library",
+        "libs": "library",
+        "api": "interface",
+        "apis": "interface",
+        # === COMPONENT/STRUCTURE SYNONYMS ===
+        "subsystem": "component",
+        "building block": "component",
+        "block": "component",
+        # === PROCESS/HANDLING SYNONYMS ===
         "handling": "processing",
         "handler": "processor",
         "handle": "process",
-        # Common suffixes
-        "details": "detail",
-        "items": "item",
+        "workflow": "process",
+        "procedure": "process",
+        "routine": "process",
+        # === DOCUMENT/RENDERING SYNONYMS ===
+        "generation": "rendering",
+        "generator": "renderer",
+        "generate": "render",
+        # === BUSINESS TERM CANONICALIZATION ===
+        "client": "customer",
+        "buyer": "customer",
+        "account": "customer",
+        "purchaser": "customer",
+        "purchase": "order",
+        "sale": "order",
+        "lineitem": "position",
+        "line item": "position",
+        "orderline": "position",
+        "order line": "position",
     }
 
+    # Merge with extra synonyms (extra takes precedence)
+    if extra_synonyms:
+        synonyms = {**synonyms, **extra_synonyms}
+
     words = normalized.split()
+
+    # Apply lemmatization if enabled (before synonym lookup)
+    if use_lemmatization:
+        words = [lemmatize_word(word) for word in words]
+
+    # Apply synonym mapping
     normalized_words = [synonyms.get(word, word) for word in words]
     return " ".join(normalized_words)
 

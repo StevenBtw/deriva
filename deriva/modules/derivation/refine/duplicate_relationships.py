@@ -148,7 +148,9 @@ class DuplicateRelationshipsStep:
         if not multi_rels:
             return
 
-        logger.info(f"Found {len(multi_rels)} element pairs with multiple relationships")
+        logger.info(
+            f"Found {len(multi_rels)} element pairs with multiple relationships"
+        )
 
         # Redundancy rules: which relationship types are redundant together
         redundant_pairs = {

@@ -35,4 +35,10 @@ __all__ = [
     "RefineResult",
     "RefineStep",
     "run_refine_step",
+    # Modules imported for side-effect registration
+    "cross_layer",
+    "duplicate_elements",
+    "duplicate_relationships",
+    "orphan_elements",
+    "structural_consistency",
 ]

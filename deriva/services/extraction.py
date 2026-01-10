@@ -12,10 +12,13 @@ Used by both Marimo (visual) and CLI (headless).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 from deriva.adapters.graph import GraphManager
 from deriva.common.chunking import chunk_content, should_chunk
@@ -537,6 +540,12 @@ def _extract_llm_based(
             src_id = edge_data.get("from_node_id", edge_data.get("from_id"))
             dst_id = edge_data.get("to_node_id", edge_data.get("to_id"))
             relationship = edge_data.get("relationship_type", edge_data.get("relationship"))
+
+            # Skip edges where target node doesn't exist (may have been filtered/failed)
+            if not graph_manager.node_exists(dst_id):
+                logger.debug(f"Skipping edge to non-existent node: {dst_id}")
+                continue
+
             try:
                 graph_manager.add_edge(
                     src_id=src_id,

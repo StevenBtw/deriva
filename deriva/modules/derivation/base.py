@@ -24,6 +24,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Essential properties to include in LLM prompts (reduces token usage)
+# These are the most useful properties for element derivation
+ESSENTIAL_PROPS: set[str] = {
+    "name",
+    "description",
+    "typeName",
+    "filePath",
+    "conceptType",
+    "conceptName",
+    "techName",
+    "dependencyName",
+    "methodName",
+    "className",
+    "docstring",
+}
+
 
 # =============================================================================
 # Data Structures
@@ -47,17 +63,25 @@ class Candidate:
     in_degree: int = 0
     out_degree: int = 0
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dict for JSON serialization in LLM prompts."""
+    def to_dict(self, include_props: set[str] | None = None) -> dict[str, Any]:
+        """Convert to dict for JSON serialization in LLM prompts.
+
+        Args:
+            include_props: Optional set of property keys to include.
+                          If None, includes all properties.
+                          Use ESSENTIAL_PROPS for minimal token usage.
+        """
+        # Filter properties if whitelist provided
+        props = self.properties
+        if include_props is not None:
+            props = {k: v for k, v in self.properties.items() if k in include_props}
+
         return {
             "id": self.node_id,
             "name": self.name,
             "labels": self.labels,
-            "properties": self.properties,
+            "properties": props,
             "pagerank": round(self.pagerank, 4),
-            "community": self.louvain_community,
-            "kcore": self.kcore_level,
-            "is_bridge": self.is_articulation_point,
             "in_degree": self.in_degree,
             "out_degree": self.out_degree,
         }
@@ -179,6 +203,7 @@ def filter_by_pagerank(
     candidates: list[Candidate],
     top_n: int | None = None,
     percentile: float | None = None,
+    min_pagerank: float | None = None,
 ) -> list[Candidate]:
     """
     Filter candidates by PageRank score.
@@ -187,10 +212,15 @@ def filter_by_pagerank(
         candidates: List of candidates with pagerank populated
         top_n: Keep top N candidates
         percentile: Keep top X percentile (0-100)
+        min_pagerank: Minimum absolute PageRank score to include (applied first)
 
     Returns:
         Filtered and sorted candidates (highest pagerank first)
     """
+    # Apply minimum threshold first (removes low-importance nodes)
+    if min_pagerank is not None:
+        candidates = [c for c in candidates if c.pagerank >= min_pagerank]
+
     sorted_candidates = sorted(candidates, key=lambda c: -c.pagerank)
 
     if top_n is not None:
@@ -403,10 +433,10 @@ def build_derivation_prompt(
         example: Example output format
         element_type: ArchiMate element type
     """
-    # Convert Candidate objects to dicts if needed
+    # Convert Candidate objects to dicts with minimal properties (reduces tokens)
     if candidates and isinstance(candidates[0], Candidate):
         candidate_list = cast(list[Candidate], candidates)
-        data = [c.to_dict() for c in candidate_list]
+        data = [c.to_dict(include_props=ESSENTIAL_PROPS) for c in candidate_list]
     else:
         data = candidates
 
@@ -419,7 +449,7 @@ def build_derivation_prompt(
 
 ## Candidate Nodes
 These nodes have been pre-filtered as potential {element_type} candidates.
-Each includes graph metrics (pagerank, community, kcore) to help assess importance.
+Each includes graph metrics (pagerank, degree) to help assess importance.
 
 ```json
 {data_json}
@@ -1076,6 +1106,8 @@ def create_result(
 # =============================================================================
 
 __all__ = [
+    # Constants
+    "ESSENTIAL_PROPS",
     # Data structures
     "Candidate",
     "RelationshipRule",

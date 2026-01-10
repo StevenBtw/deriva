@@ -467,9 +467,9 @@ class TestPipelineSessionIterators:
             patch("deriva.services.session.config") as mock_config,
         ):
             session = PipelineSession(auto_connect=True)
-            session._mock_extraction = mock_extraction
-            session._mock_derivation = mock_derivation
-            session._mock_config = mock_config
+            session._mock_extraction = mock_extraction  # type: ignore[attr-defined]
+            session._mock_derivation = mock_derivation  # type: ignore[attr-defined]
+            session._mock_config = mock_config  # type: ignore[attr-defined]
             yield session
 
     def test_run_extraction_iter_yields_progress_updates(self, connected_session):

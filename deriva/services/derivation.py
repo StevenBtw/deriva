@@ -172,23 +172,46 @@ ENRICHMENT_ALGORITHMS: dict[str, str] = {
 }
 
 
-def _get_graph_edges(graph_manager: GraphManager) -> list[dict[str, str]]:
-    """Get all edges from the graph for enrichment algorithms.
+def _get_graph_edges(
+    graph_manager: GraphManager,
+    repository_name: str | None = None,
+) -> list[dict[str, str]]:
+    """Get edges from the graph for enrichment algorithms.
 
     Returns edges in the format expected by enrich module:
     [{"source": "node_id_1", "target": "node_id_2"}, ...]
 
+    Args:
+        graph_manager: Connected GraphManager
+        repository_name: Optional repo name to filter edges.
+            If provided, only returns edges where both nodes belong to this repo.
+            This enables per-repository enrichment isolation in multi-repo setups.
+
     Note: Labels in Neo4j are namespaced (e.g., "Graph:Directory", "Graph:File").
     We match any node with a label starting with "Graph:" to get all graph nodes.
     """
-    query = """
-        MATCH (a)-[r]->(b)
-        WHERE any(label IN labels(a) WHERE label STARTS WITH 'Graph:')
-          AND any(label IN labels(b) WHERE label STARTS WITH 'Graph:')
-          AND a.active = true AND b.active = true
-        RETURN a.id as source, b.id as target
-    """
-    result = graph_manager.query(query)
+    if repository_name:
+        # Filter to edges within a single repository
+        query = """
+            MATCH (a)-[r]->(b)
+            WHERE any(label IN labels(a) WHERE label STARTS WITH 'Graph:')
+              AND any(label IN labels(b) WHERE label STARTS WITH 'Graph:')
+              AND a.active = true AND b.active = true
+              AND a.repository_name = $repo_name
+              AND b.repository_name = $repo_name
+            RETURN a.id as source, b.id as target
+        """
+        result = graph_manager.query(query, {"repo_name": repository_name})
+    else:
+        # Default: get all edges
+        query = """
+            MATCH (a)-[r]->(b)
+            WHERE any(label IN labels(a) WHERE label STARTS WITH 'Graph:')
+              AND any(label IN labels(b) WHERE label STARTS WITH 'Graph:')
+              AND a.active = true AND b.active = true
+            RETURN a.id as source, b.id as target
+        """
+        result = graph_manager.query(query)
     return [{"source": row["source"], "target": row["target"]} for row in result]
 
 
@@ -233,25 +256,33 @@ def _run_enrich_step(
             return {"success": True, "stats": {"nodes_updated": 0}}
 
         # Run the enrichment algorithm
-        enrichments = enrich.enrich_graph(
+        result = enrich.enrich_graph(
             edges=edges,
             algorithms=[algorithm],
             params=params,
+            include_percentiles=True,
         )
 
-        if not enrichments:
+        if not result.enrichments:
             return {"success": True, "stats": {"nodes_updated": 0}}
 
         # Write enrichments to Neo4j
-        nodes_updated = graph_manager.batch_update_properties(enrichments)
+        nodes_updated = graph_manager.batch_update_properties(result.enrichments)
 
-        logger.info(f"Enrichment {step_name} complete: {nodes_updated} nodes updated")
+        logger.info(
+            "Enrichment %s complete: %d nodes updated (graph: %d nodes, %d edges)",
+            step_name,
+            nodes_updated,
+            result.metadata.total_nodes,
+            result.metadata.total_edges,
+        )
 
         return {
             "success": True,
             "stats": {
                 "nodes_updated": nodes_updated,
                 "algorithm": algorithm,
+                "graph_metadata": result.metadata.to_dict(),
             },
         }
 
@@ -309,6 +340,9 @@ def run_derivation(
     errors: list[str] = []
     all_created_elements: list[dict] = []
 
+    # Accumulate graph metadata from enrich phase for use in refine steps
+    graph_metadata: dict[str, Any] = {}
+
     # Start phase logging
     if run_logger:
         run_logger.phase_start("derivation", "Starting derivation pipeline")
@@ -345,6 +379,10 @@ def run_derivation(
 
             result = _run_enrich_step(cfg, graph_manager)
             stats["steps_completed"] += 1
+
+            # Capture graph metadata for refine steps
+            if result.get("stats", {}).get("graph_metadata"):
+                graph_metadata.update(result["stats"]["graph_metadata"])
 
             if result.get("errors"):
                 errors.extend(result["errors"])
@@ -480,9 +518,7 @@ def run_derivation(
 
     # Run refine phase
     if "refine" in phases:
-        refine_configs = config.get_derivation_configs(
-            engine, enabled_only=enabled_only, phase="refine"
-        )
+        refine_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="refine")
 
         if refine_configs and verbose:
             print(f"Running {len(refine_configs)} refine steps...")
@@ -497,13 +533,11 @@ def run_derivation(
 
             step_ctx = None
             if run_logger:
-                step_ctx = run_logger.step_start(
-                    cfg.step_name, f"Running refine step: {cfg.step_name}"
-                )
+                step_ctx = run_logger.step_start(cfg.step_name, f"Running refine step: {cfg.step_name}")
 
             try:
                 # Parse params from config
-                refine_params = None
+                refine_params: dict[str, Any] = {}
                 if cfg.params:
                     try:
                         import json
@@ -511,6 +545,10 @@ def run_derivation(
                         refine_params = json.loads(cfg.params)
                     except json.JSONDecodeError:
                         pass
+
+                # Inject graph metadata for adaptive thresholds
+                if graph_metadata:
+                    refine_params["graph_metadata"] = graph_metadata
 
                 # Run the refine step
                 refine_result = run_refine_step(

@@ -17,6 +17,7 @@ __all__ = [
     "chunk_content",
     "get_model_token_limit",
     "MODEL_TOKEN_LIMITS",
+    "truncate_content",
 ]
 
 
@@ -47,7 +48,7 @@ MODEL_TOKEN_LIMITS: dict[str, int] = {
     "opus": 200_000,
     # Azure OpenAI (same as OpenAI)
     "gpt-4o-mini-azure": 128_000,
-    # Mistral AI models 
+    # Mistral AI models
     "devstral-2512": 32_000,  # Mistral Devstral
     # Ollama / local models (conservative estimates)
     "llama3": 8_192,
@@ -162,6 +163,56 @@ def should_chunk(
         max_tokens = get_model_token_limit(model)
 
     return estimate_tokens(content) > max_tokens
+
+
+def truncate_content(
+    content: str,
+    max_tokens: int = 2000,
+    head_ratio: float = 0.6,
+) -> tuple[str, bool]:
+    """Truncate content to fit within token limit using head+tail strategy.
+
+    Keeps the beginning (60% by default) and end (40%) of the content,
+    removing the middle. This preserves imports/headers at the start
+    and typically important code/conclusions at the end.
+
+    Args:
+        content: Text content to truncate.
+        max_tokens: Maximum tokens to allow (default: 2000).
+        head_ratio: Ratio of content to keep from head (default: 0.6).
+
+    Returns:
+        Tuple of (truncated_content, was_truncated).
+        If content fits within max_tokens, returns original unchanged.
+    """
+    current_tokens = estimate_tokens(content)
+    if current_tokens <= max_tokens:
+        return content, False
+
+    lines = content.split("\n")
+    total_lines = len(lines)
+
+    # Calculate target lines (roughly max_tokens * 4 chars / avg_line_length)
+    # Use simple approximation: max_tokens tokens * 4 chars / 40 chars per line
+    target_lines = max(10, (max_tokens * 4) // 40)
+
+    # Split between head and tail
+    head_lines = int(target_lines * head_ratio)
+    tail_lines = target_lines - head_lines
+
+    if total_lines <= target_lines:
+        return content, False
+
+    # Calculate how many lines we're removing
+    removed_lines = total_lines - head_lines - tail_lines
+
+    # Build truncated content
+    head = "\n".join(lines[:head_lines])
+    tail = "\n".join(lines[-tail_lines:]) if tail_lines > 0 else ""
+
+    truncated = f"{head}\n\n... [{removed_lines} lines truncated] ...\n\n{tail}"
+
+    return truncated, True
 
 
 # =============================================================================
