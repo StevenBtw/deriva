@@ -45,9 +45,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from deriva.adapters.archimate import ArchimateManager
+from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 
 if TYPE_CHECKING:
-    from deriva.common.types import RunLoggerProtocol
+    from deriva.common.types import BenchmarkProgressReporter, RunLoggerProtocol
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.llm import LLMManager
 from deriva.adapters.llm.manager import load_benchmark_models
@@ -252,6 +253,8 @@ class BenchmarkConfig:
     clear_between_runs: bool = True
     use_cache: bool = True  # Global cache setting (True = cache enabled)
     nocache_configs: list[str] = field(default_factory=list)  # Configs to always skip cache
+    export_models: bool = True  # Export ArchiMate model file after each run
+    bench_hash: bool = False  # Include repo/model/run in cache key for per-run isolation
 
     def total_runs(self) -> int:
         """Calculate total number of runs in the matrix."""
@@ -392,12 +395,17 @@ class BenchmarkOrchestrator:
 
         return errors
 
-    def run(self, verbose: bool = False) -> BenchmarkResult:
+    def run(
+        self,
+        verbose: bool = False,
+        progress: BenchmarkProgressReporter | None = None,
+    ) -> BenchmarkResult:
         """
         Execute the full benchmark matrix.
 
         Args:
             verbose: Print progress to stdout
+            progress: Optional progress reporter for visual feedback
 
         Returns:
             BenchmarkResult with session details and metrics
@@ -444,6 +452,15 @@ class BenchmarkOrchestrator:
             stages=self.config.stages,
         )
 
+        # Start progress tracking
+        if progress:
+            progress.start_benchmark(
+                session_id=self.session_id,
+                total_runs=self.config.total_runs(),
+                repositories=self.config.repositories,
+                models=self.config.models,
+            )
+
         if verbose:
             print(f"\n{'=' * 60}")
             print(f"BENCHMARK SESSION: {self.session_id}")
@@ -469,23 +486,37 @@ class BenchmarkOrchestrator:
                         print(f"Model: {model_name}")
                         print(f"Iteration: {iteration}")
 
+                    # Start progress tracking for this run
+                    if progress:
+                        progress.start_run(
+                            run_number=run_number,
+                            repository=repo_name,
+                            model=model_name,
+                            iteration=iteration,
+                        )
+
                     try:
                         result = self._run_single(
                             repo_name=repo_name,
                             model_name=model_name,
                             iteration=iteration,
                             verbose=verbose,
+                            progress=progress,
                         )
 
                         if result.status == "completed":
                             runs_completed += 1
                             if verbose:
                                 print(f"[OK] Completed: {result.stats}")
+                            if progress:
+                                progress.complete_run("completed", result.stats)
                         else:
                             runs_failed += 1
                             errors.extend(result.errors)
                             if verbose:
                                 print(f"[FAIL] Failed: {result.errors}")
+                            if progress:
+                                progress.complete_run("failed", result.stats)
 
                     except Exception as e:
                         runs_failed += 1
@@ -493,6 +524,8 @@ class BenchmarkOrchestrator:
                         errors.append(error_msg)
                         if verbose:
                             print(f"[FAIL] Exception: {e}")
+                        if progress:
+                            progress.complete_run("failed")
 
         # Calculate duration
         duration = (datetime.now() - self.session_start).total_seconds()
@@ -511,6 +544,14 @@ class BenchmarkOrchestrator:
 
         # Update session in database
         self._complete_session(runs_completed, runs_failed)
+
+        # Complete progress tracking
+        if progress:
+            progress.complete_benchmark(
+                runs_completed=runs_completed,
+                runs_failed=runs_failed,
+                duration_seconds=duration,
+            )
 
         if verbose:
             print(f"\n{'=' * 60}")
@@ -538,6 +579,7 @@ class BenchmarkOrchestrator:
         model_name: str,
         iteration: int,
         verbose: bool = False,
+        progress: BenchmarkProgressReporter | None = None,
     ) -> RunResult:
         """
         Execute a single benchmark run.
@@ -546,6 +588,7 @@ class BenchmarkOrchestrator:
             repo_name: Repository to process
             model_name: Model config name to use
             iteration: Run iteration number
+            progress: Optional progress reporter for visual feedback
 
         Returns:
             RunResult with run details
@@ -609,10 +652,14 @@ class BenchmarkOrchestrator:
                 nocache_llm_manager = LLMManager.from_config(model_config, nocache=True)
 
             # Create wrapped query function with per-config cache control
+            # Build bench_hash if enabled (for per-run cache isolation)
+            bench_hash_str = f"{repo_name}:{model_name}:{iteration}" if self.config.bench_hash else None
+
             llm_query_fn = self._create_logging_query_fn(
                 cached_llm=llm_manager,
                 nocache_llm=nocache_llm_manager,
                 run_logger=ocel_run_logger,
+                bench_hash=bench_hash_str,
             )
 
             # Determine which stages to run
@@ -627,6 +674,8 @@ class BenchmarkOrchestrator:
                     repo_name=repo_name,
                     verbose=False,
                     run_logger=cast("RunLoggerProtocol", ocel_run_logger),
+                    progress=progress,
+                    model=model_config.model,
                 )
                 stats["extraction"] = result.get("stats", {})
                 self._log_extraction_results(result)
@@ -641,17 +690,27 @@ class BenchmarkOrchestrator:
                     llm_query_fn=llm_query_fn,
                     verbose=False,
                     run_logger=cast("RunLoggerProtocol", ocel_run_logger),
+                    progress=progress,
                 )
                 stats["derivation"] = result.get("stats", {})
                 self._log_derivation_results(result)
                 if not result.get("success"):
                     errors.extend(result.get("errors", []))
 
+            # Export model file after each run if configured
+            if self.config.export_models and "derivation" in stages:
+                model_path = self._export_run_model(repo_name, model_name, iteration)
+                if model_path:
+                    stats["model_file"] = model_path
+
             status = "completed" if not errors else "failed"
 
         except Exception as e:
+            import traceback
+
             status = "failed"
-            errors.append(str(e))
+            tb_str = traceback.format_exc()
+            errors.append(f"{e}\n{tb_str}")
 
         # Calculate duration
         duration = (datetime.now() - run_start).total_seconds()
@@ -689,6 +748,7 @@ class BenchmarkOrchestrator:
         cached_llm: LLMManager,
         nocache_llm: LLMManager,
         run_logger: OCELRunLogger,
+        bench_hash: str | None = None,
     ) -> Callable[..., Any]:
         """
         Create an LLM query function with per-config cache control.
@@ -697,6 +757,7 @@ class BenchmarkOrchestrator:
             cached_llm: LLM manager with cache enabled
             nocache_llm: LLM manager with cache disabled
             run_logger: OCEL run logger tracking current config
+            bench_hash: Optional benchmark hash (repo:model:run) for per-run cache isolation
 
         Returns:
             Wrapped query function that selects appropriate LLM based on config
@@ -717,7 +778,14 @@ class BenchmarkOrchestrator:
             llm = nocache_llm if skip_cache else cached_llm
 
             # Call the actual LLM with optional parameters
-            response = llm.query(prompt, schema=schema, temperature=temperature, max_tokens=max_tokens)
+            # Pass bench_hash for per-run cache isolation if enabled
+            response = llm.query(
+                prompt,
+                schema=schema,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                bench_hash=bench_hash,
+            )
 
             # Log the query as an OCEL event (metadata only)
             usage = getattr(response, "usage", None) or {}
@@ -784,6 +852,65 @@ class BenchmarkOrchestrator:
             relationships_created=stats.get("relationships_created", 0),
             steps_completed=stats.get("steps_completed", 0),
         )
+
+    def _export_run_model(
+        self,
+        repo_name: str,
+        model_name: str,
+        iteration: int,
+    ) -> str | None:
+        """
+        Export ArchiMate model to file after a benchmark run.
+
+        Creates a uniquely named model file: {repo}_{model}_{iteration}.archimate
+
+        Args:
+            repo_name: Repository name
+            model_name: Model config name
+            iteration: Run iteration number (1-based)
+
+        Returns:
+            Path to exported file, or None if export failed
+        """
+        try:
+            # Get only enabled elements and filter relationships accordingly
+            elements = self.archimate_manager.get_elements(enabled_only=True)
+            all_relationships = self.archimate_manager.get_relationships()
+
+            if not elements:
+                return None
+
+            # Filter relationships to only include those between enabled elements
+            enabled_ids = {e.identifier for e in elements}
+            relationships = [r for r in all_relationships if r.source in enabled_ids and r.target in enabled_ids]
+
+            # Create models directory within benchmark session folder
+            session_id = self.session_id or "unknown"
+            models_dir = Path("workspace/benchmarks") / session_id / "models"
+            models_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate unique filename: {repo}_{model}_{iteration}.archimate
+            # Sanitize names to be filesystem-safe
+            safe_repo = repo_name.replace("/", "_").replace("\\", "_")
+            safe_model = model_name.replace("/", "_").replace("\\", "_")
+            filename = f"{safe_repo}_{safe_model}_{iteration}.archimate"
+            output_path = models_dir / filename
+
+            # Export using ArchiMateXMLExporter
+            exporter = ArchiMateXMLExporter()
+            model_display_name = f"{repo_name} - {model_name} - Run {iteration}"
+            exporter.export(
+                elements=elements,
+                relationships=relationships,
+                output_path=str(output_path),
+                model_name=model_display_name,
+            )
+
+            return str(output_path)
+
+        except Exception:
+            # Don't fail the run if model export fails
+            return None
 
     # =========================================================================
     # DATABASE OPERATIONS

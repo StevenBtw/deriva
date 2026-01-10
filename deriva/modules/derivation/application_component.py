@@ -23,18 +23,20 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-from deriva.adapters.archimate.models import Element
+from deriva.adapters.archimate.models import Element, Relationship
 
 from .base import (
     DERIVATION_SCHEMA,
     Candidate,
     GenerationResult,
+    RelationshipRule,
     batch_candidates,
     build_derivation_prompt,
     build_element,
+    derive_batch_relationships,
     filter_by_pagerank,
     get_community_roots,
-    get_enrichments,
+    get_enrichments_from_neo4j,
     parse_derivation_response,
     query_candidates,
 )
@@ -46,6 +48,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ELEMENT_TYPE = "ApplicationComponent"
+
+
+# =============================================================================
+# RELATIONSHIP RULES
+# =============================================================================
+
+OUTBOUND_RULES: list[RelationshipRule] = []
+INBOUND_RULES: list[RelationshipRule] = []
 
 
 def filter_candidates(
@@ -99,6 +109,7 @@ def generate(
     example: str,
     max_candidates: int,
     batch_size: int,
+    existing_elements: list[dict[str, Any]],
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> GenerationResult:
@@ -127,7 +138,7 @@ def generate(
     created_elements: list[dict[str, Any]] = []
 
     # 1. Get enrichment data
-    enrichments = get_enrichments(engine)
+    enrichments = get_enrichments_from_neo4j(graph_manager)
 
     # 2. Query candidates from graph
     try:
@@ -190,6 +201,7 @@ def generate(
             continue
 
         # Create elements from this batch
+        batch_elements: list[dict[str, Any]] = []
         for derived in parse_result.get("data", []):
             element_result = build_element(derived, ELEMENT_TYPE)
 
@@ -208,6 +220,7 @@ def generate(
                     properties=data.get("properties", {}),
                 )
                 archimate_manager.add_element(element)
+                batch_elements.append(data)
                 created_elements.append(
                     {
                         "identifier": data["identifier"],
@@ -219,6 +232,29 @@ def generate(
                 )
             except Exception as e:
                 errors.append(f"Failed to create element {data.get('name')}: {e}")
+        # Derive relationships for this batch
+        if batch_elements and existing_elements:
+            relationships = derive_batch_relationships(
+                new_elements=batch_elements,
+                existing_elements=existing_elements,
+                element_type=ELEMENT_TYPE,
+                outbound_rules=OUTBOUND_RULES,
+                inbound_rules=INBOUND_RULES,
+                llm_query_fn=llm_query_fn,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            for rel_data in relationships:
+                try:
+                    relationship = Relationship(
+                        source=rel_data["source"],
+                        target=rel_data["target"],
+                        relationship_type=rel_data["relationship_type"],
+                        properties={"confidence": rel_data.get("confidence", 0.5)},
+                    )
+                    archimate_manager.add_relationship(relationship)
+                except Exception as e:
+                    errors.append(f"Failed to create relationship: {e}")
 
     logger.info(f"Created {len(created_elements)} {ELEMENT_TYPE} elements")
 
@@ -232,6 +268,8 @@ def generate(
 
 __all__ = [
     "ELEMENT_TYPE",
+    "OUTBOUND_RULES",
+    "INBOUND_RULES",
     "filter_candidates",
     "generate",
 ]

@@ -20,6 +20,10 @@ LLM role:
 - Identify which methods are application services
 - Generate meaningful service names
 - Write documentation describing the service's purpose
+
+Relationships:
+- OUTBOUND: ApplicationService -> BusinessObject (Flow) - services transfer data
+- INBOUND: TechnologyService -> ApplicationService (Serving) - tech serves app services
 """
 
 from __future__ import annotations
@@ -27,17 +31,19 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-from deriva.adapters.archimate.models import Element
+from deriva.adapters.archimate.models import Element, Relationship
 from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
     Candidate,
     GenerationResult,
+    RelationshipRule,
     batch_candidates,
     build_derivation_prompt,
     build_element,
+    derive_batch_relationships,
     enrich_candidate,
     filter_by_pagerank,
-    get_enrichments,
+    get_enrichments_from_neo4j,
     parse_derivation_response,
     query_candidates,
 )
@@ -50,6 +56,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ELEMENT_TYPE = "ApplicationService"
+
+# =============================================================================
+# RELATIONSHIP RULES
+# =============================================================================
+
+# Relationships FROM ApplicationService TO other element types
+OUTBOUND_RULES = [
+    RelationshipRule(
+        target_type="BusinessObject",
+        rel_type="Flow",
+        description="Application services transfer/process business data",
+    ),
+]
+
+# Relationships FROM other element types TO ApplicationService
+INBOUND_RULES = [
+    RelationshipRule(
+        target_type="TechnologyService",  # source type for inbound
+        rel_type="Serving",
+        description="Technology services serve application services",
+    ),
+]
+
+
+# =============================================================================
+# FILTERING
+# =============================================================================
 
 
 def _is_likely_service(
@@ -118,10 +151,17 @@ def filter_candidates(
         likely_services.extend(others)
 
     logger.debug(
-        f"ApplicationService filter: {len(candidates)} total -> {len(likely_services)} final"
+        "ApplicationService filter: %d total -> %d final",
+        len(candidates),
+        len(likely_services),
     )
 
     return likely_services[:max_candidates]
+
+
+# =============================================================================
+# GENERATION
+# =============================================================================
 
 
 def generate(
@@ -134,29 +174,33 @@ def generate(
     example: str,
     max_candidates: int,
     batch_size: int,
+    existing_elements: list[dict[str, Any]],
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> GenerationResult:
     """
-    Generate ApplicationService elements from Method nodes.
+    Generate ApplicationService elements and their relationships.
 
-    All configuration parameters are required - no defaults, no fallbacks.
+    This function handles both element creation AND relationship derivation
+    in a unified flow. After each batch of elements is created, relationships
+    are derived to/from existing elements.
 
     Args:
         graph_manager: Neo4j connection
         archimate_manager: ArchiMate persistence
-        engine: DuckDB connection for enrichments and patterns
+        engine: DuckDB connection for patterns
         llm_query_fn: LLM query function (prompt, schema, **kwargs) -> response
         query: Cypher query to get candidate nodes
         instruction: LLM instruction prompt
         example: Example output for LLM
         max_candidates: Maximum candidates to send to LLM
         batch_size: Batch size for LLM processing
+        existing_elements: Elements from previous derivation steps (for relationships)
         temperature: Optional LLM temperature override
         max_tokens: Optional LLM max_tokens override
 
     Returns:
-        GenerationResult with created elements
+        GenerationResult with created elements and relationships
     """
     result = GenerationResult(success=True)
 
@@ -165,14 +209,15 @@ def generate(
     include_patterns = patterns.get("include", set())
     exclude_patterns = patterns.get("exclude", set())
 
-    enrichments = get_enrichments(engine)
+    # Get enrichments from Neo4j (not DuckDB)
+    enrichments = get_enrichments_from_neo4j(graph_manager)
     candidates = query_candidates(graph_manager, query, enrichments)
 
     if not candidates:
         logger.info("No Method candidates found")
         return result
 
-    logger.info(f"Found {len(candidates)} method candidates")
+    logger.info("Found %d method candidates", len(candidates))
 
     filtered = filter_candidates(
         candidates, enrichments, include_patterns, exclude_patterns, max_candidates
@@ -194,9 +239,15 @@ def generate(
 
     for batch_num, batch in enumerate(batches, 1):
         logger.debug(
-            f"Processing batch {batch_num}/{len(batches)} with {len(batch)} candidates"
+            "Processing batch %d/%d with %d candidates",
+            batch_num,
+            len(batches),
+            len(batch),
         )
 
+        # -----------------------------------------------------------------
+        # STEP 1: Generate elements
+        # -----------------------------------------------------------------
         prompt = build_derivation_prompt(
             candidates=batch,
             instruction=instruction,
@@ -219,6 +270,8 @@ def generate(
             result.errors.extend(parse_result.get("errors", []))
             continue
 
+        # Create elements from this batch
+        batch_elements: list[dict[str, Any]] = []
         for derived in parse_result.get("data", []):
             element_result = build_element(derived, ELEMENT_TYPE)
 
@@ -239,17 +292,55 @@ def generate(
                 archimate_manager.add_element(element)
                 result.elements_created += 1
                 result.created_elements.append(element_data)
+                batch_elements.append(element_data)
             except Exception as e:
                 result.errors.append(
                     f"Failed to create element {element_data['identifier']}: {e}"
                 )
 
-    logger.info(f"Created {result.elements_created} {ELEMENT_TYPE} elements")
+        # -----------------------------------------------------------------
+        # STEP 2: Derive relationships for this batch
+        # -----------------------------------------------------------------
+        if batch_elements and existing_elements:
+            relationships = derive_batch_relationships(
+                new_elements=batch_elements,
+                existing_elements=existing_elements,
+                element_type=ELEMENT_TYPE,
+                outbound_rules=OUTBOUND_RULES,
+                inbound_rules=INBOUND_RULES,
+                llm_query_fn=llm_query_fn,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+            # Persist relationships
+            for rel_data in relationships:
+                try:
+                    relationship = Relationship(
+                        source=rel_data["source"],
+                        target=rel_data["target"],
+                        relationship_type=rel_data["relationship_type"],
+                        properties={"confidence": rel_data.get("confidence", 0.5)},
+                    )
+                    archimate_manager.add_relationship(relationship)
+                    result.relationships_created += 1
+                    result.created_relationships.append(rel_data)
+                except Exception as e:
+                    result.errors.append(f"Failed to create relationship: {e}")
+
+    logger.info(
+        "Created %d %s elements and %d relationships",
+        result.elements_created,
+        ELEMENT_TYPE,
+        result.relationships_created,
+    )
     return result
 
 
 __all__ = [
     "ELEMENT_TYPE",
+    "OUTBOUND_RULES",
+    "INBOUND_RULES",
     "filter_candidates",
     "generate",
 ]

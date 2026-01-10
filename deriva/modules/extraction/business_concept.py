@@ -90,11 +90,21 @@ def build_extraction_prompt(
     Returns:
         Formatted prompt string
     """
+    from deriva.common.chunking import truncate_content
+
+    # Truncate large files to reduce token usage
+    content, was_truncated = truncate_content(file_content, max_tokens=2000)
+    truncation_note = ""
+    if was_truncated:
+        truncation_note = (
+            "\n**Note:** File content has been truncated. Focus on visible content.\n"
+        )
+
     prompt = f"""You are analyzing a documentation file to extract business domain concepts.
 
 ## File Information
 - **File Path:** {file_path}
-
+{truncation_note}
 ## Instructions
 {instruction}
 
@@ -103,7 +113,7 @@ def build_extraction_prompt(
 
 ## File Content
 ```
-{file_content}
+{content}
 ```
 
 Apply the instructions above to extract business concepts. Return ONLY a JSON object with a "concepts" array. If no business concepts are found, return {{"concepts": []}}.

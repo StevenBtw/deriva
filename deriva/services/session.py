@@ -21,8 +21,13 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
-from typing import Any, cast
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Any, cast
+
+from deriva.common.types import ProgressUpdate
+
+if TYPE_CHECKING:
+    from deriva.common.types import BenchmarkProgressReporter, ProgressReporter
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +63,7 @@ class PipelineSession:
         """Initialize session.
 
         Args:
-            db_path: Path to DuckDB database (default: from env or data/deriva.duckdb)
+            db_path: Path to DuckDB database (default: deriva/adapters/database/sql.db)
             auto_connect: If True, connect immediately (useful for Marimo)
             workspace_dir: Repository workspace directory (default: from env)
         """
@@ -282,7 +287,7 @@ class PipelineSession:
         for r in repos:
             if isinstance(r, str):
                 result.append({"name": r})
-            elif isinstance(r, HasToDict):
+            elif hasattr(r, "to_dict"):
                 result.append(r.to_dict())
             else:
                 result.append({"name": str(r)})
@@ -351,6 +356,7 @@ class PipelineSession:
         repo_name: str | None = None,
         verbose: bool = False,
         no_llm: bool = False,
+        progress: ProgressReporter | None = None,
     ) -> dict[str, Any]:
         """Run extraction pipeline."""
         self._ensure_connected()
@@ -367,19 +373,67 @@ class PipelineSession:
             repo_name=repo_name,
             verbose=verbose,
             run_logger=run_logger,
+            progress=progress,
+        )
+
+    def run_extraction_iter(
+        self,
+        repo_name: str | None = None,
+        verbose: bool = False,
+        no_llm: bool = False,
+    ) -> Iterator[ProgressUpdate]:
+        """
+        Run extraction pipeline as a generator, yielding progress updates.
+
+        Designed for use with Marimo's mo.status.progress_bar iterator pattern
+        to provide real-time visual feedback during extraction.
+
+        Args:
+            repo_name: Specific repo to extract, or None for all
+            verbose: Print progress to stdout
+            no_llm: Skip LLM-based extraction steps
+
+        Yields:
+            ProgressUpdate objects for each step in the pipeline
+
+        Example (Marimo):
+            for update in mo.status.progress_bar(
+                session.run_extraction_iter(),
+                title="Extraction",
+                subtitle="Starting...",
+            ):
+                pass  # Marimo renders between yields
+
+            # Get final result from last update
+            final_stats = update.stats
+        """
+        self._ensure_connected()
+        assert self._engine is not None
+        assert self._graph_manager is not None
+
+        llm_query_fn = None if no_llm else self._get_llm_query_fn()
+
+        yield from extraction.run_extraction_iter(
+            engine=self._engine,
+            graph_manager=self._graph_manager,
+            llm_query_fn=llm_query_fn,
+            repo_name=repo_name,
+            verbose=verbose,
         )
 
     def run_derivation(
         self,
         verbose: bool = False,
         phases: list[str] | None = None,
+        progress: ProgressReporter | None = None,
     ) -> dict[str, Any]:
         """Run derivation pipeline.
 
         Args:
             verbose: Print progress to stdout
-            phases: List of phases to run ("prep", "generate", "refine").
+            phases: List of phases to run ("enrich", "generate", "refine").
                     Default: all phases.
+            progress: Optional progress reporter for visual feedback
 
         Returns:
             Dict with success, stats, errors, and phase results
@@ -407,12 +461,71 @@ class PipelineSession:
             verbose=verbose,
             phases=phases,
             run_logger=run_logger,
+            progress=progress,
         )
+
+    def run_derivation_iter(
+        self,
+        verbose: bool = False,
+        phases: list[str] | None = None,
+    ) -> Iterator[ProgressUpdate]:
+        """
+        Run derivation pipeline as a generator, yielding progress updates.
+
+        Designed for use with Marimo's mo.status.progress_bar iterator pattern
+        to provide real-time visual feedback during derivation.
+
+        Args:
+            verbose: Print progress to stdout
+            phases: List of phases to run ("enrich", "generate", "refine")
+
+        Yields:
+            ProgressUpdate objects for each step in the pipeline
+        """
+        self._ensure_connected()
+        assert self._engine is not None
+        assert self._graph_manager is not None
+        assert self._archimate_manager is not None
+
+        llm_query_fn = self._get_llm_query_fn()
+        if llm_query_fn is None:
+            yield ProgressUpdate(
+                phase="derivation",
+                status="error",
+                message="LLM not configured. Derivation requires LLM.",
+            )
+            return
+
+        yield from derivation.run_derivation_iter(
+            engine=self._engine,
+            graph_manager=self._graph_manager,
+            archimate_manager=self._archimate_manager,
+            llm_query_fn=llm_query_fn,
+            verbose=verbose,
+            phases=phases,
+        )
+
+    def get_derivation_step_count(self, enabled_only: bool = True) -> int:
+        """Get total number of derivation steps for progress tracking.
+
+        Args:
+            enabled_only: Only count enabled derivation steps
+
+        Returns:
+            Total number of steps (enrich + generate phases)
+        """
+        self._ensure_connected()
+        assert self._engine is not None
+
+        enrich_configs = config.get_derivation_configs(self._engine, enabled_only=enabled_only, phase="enrich")
+        gen_configs = config.get_derivation_configs(self._engine, enabled_only=enabled_only, phase="generate")
+        return len(enrich_configs) + len(gen_configs)
 
     def run_pipeline(
         self,
         repo_name: str | None = None,
         verbose: bool = False,
+        progress: ProgressReporter | None = None,
     ) -> dict[str, Any]:
         """Run full pipeline (extraction → derivation with all phases)."""
         self._ensure_connected()
@@ -435,6 +548,7 @@ class PipelineSession:
             llm_query_fn=llm_query_fn,
             repo_name=repo_name,
             verbose=verbose,
+            progress=progress,
         )
 
     # =========================================================================
@@ -446,19 +560,28 @@ class PipelineSession:
         output_path: str = "workspace/output/model.archimate",
         model_name: str = "Deriva Model",
     ) -> dict[str, Any]:
-        """Export ArchiMate model to XML file."""
+        """Export ArchiMate model to XML file.
+
+        Only exports enabled elements and their relationships.
+        Disabled elements (from refine phase) are excluded.
+        """
         self._ensure_connected()
         assert self._archimate_manager is not None
 
         try:
-            elements = self._archimate_manager.get_elements()
-            relationships = self._archimate_manager.get_relationships()
+            # Only export enabled elements
+            elements = self._archimate_manager.get_elements(enabled_only=True)
+            all_relationships = self._archimate_manager.get_relationships()
 
             if not elements:
                 return {
                     "success": False,
                     "error": "No ArchiMate elements found. Run derivation first.",
                 }
+
+            # Filter relationships to only include those between enabled elements
+            enabled_ids = {e.identifier for e in elements}
+            relationships = [r for r in all_relationships if r.source in enabled_ids and r.target in enabled_ids]
 
             exporter = ArchiMateXMLExporter()
             exporter.export(
@@ -628,6 +751,31 @@ class PipelineSession:
             for c in configs
         ]
 
+    def get_extraction_step_count(self, repo_name: str | None = None, enabled_only: bool = True) -> int:
+        """Get total number of extraction steps for progress tracking.
+
+        Args:
+            repo_name: Specific repo to count, or None for all repos
+            enabled_only: Only count enabled extraction steps
+
+        Returns:
+            Total number of steps (configs * repos)
+        """
+        self._ensure_connected()
+        assert self._engine is not None
+
+        # Count configs
+        configs = config.get_extraction_configs(self._engine, enabled_only=enabled_only)
+
+        # Count repos
+        if self._repo_manager is None:
+            self._repo_manager = RepoManager()
+        repos = self._repo_manager.list_repositories(detailed=True)
+        if repo_name:
+            repos = [r for r in repos if hasattr(r, "name") and r.name == repo_name]
+
+        return len(configs) * len(repos)
+
     def update_extraction_config(
         self,
         node_type: str,
@@ -646,6 +794,25 @@ class PipelineSession:
             enabled=enabled,
             instruction=instruction,
             example=example,
+            input_sources=input_sources,
+        )
+
+    def save_extraction_config(
+        self,
+        node_type: str,
+        *,
+        enabled: bool | None = None,
+        instruction: str | None = None,
+        input_sources: str | None = None,
+    ) -> dict[str, Any]:
+        """Save extraction config with version tracking."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.create_extraction_config_version(
+            self._engine,
+            node_type,
+            enabled=enabled,
+            instruction=instruction,
             input_sources=input_sources,
         )
 
@@ -686,6 +853,31 @@ class PipelineSession:
             instruction=instruction,
             example=example,
         )
+
+    def save_derivation_config(
+        self,
+        element_type: str,
+        *,
+        enabled: bool | None = None,
+        input_graph_query: str | None = None,
+        instruction: str | None = None,
+    ) -> dict[str, Any]:
+        """Save derivation config with version tracking."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.create_derivation_config_version(
+            self._engine,
+            element_type,
+            enabled=enabled,
+            input_graph_query=input_graph_query,
+            instruction=instruction,
+        )
+
+    def get_config_versions(self) -> dict[str, dict[str, int]]:
+        """Get current active versions for all configs."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.get_active_config_versions(self._engine)
 
     def add_file_type(self, extension: str, file_type: str, subtype: str) -> bool:
         """Add a file type to the registry."""
@@ -761,7 +953,9 @@ class PipelineSession:
 
     def get_database_path(self) -> str:
         """Get the database path."""
-        return os.getenv("DATABASE_PATH", "data/deriva.duckdb")
+        from deriva.adapters.database import DB_PATH
+
+        return str(DB_PATH)
 
     def execute_sql(self, query: str, params: list | None = None) -> list[tuple]:
         """Execute a SQL query (for config UI)."""
@@ -785,6 +979,10 @@ class PipelineSession:
         verbose: bool = False,
         use_cache: bool = True,
         nocache_configs: list[str] | None = None,
+        progress: BenchmarkProgressReporter | None = None,
+        export_models: bool = True,
+        clear_between_runs: bool = True,
+        bench_hash: bool = False,
     ) -> benchmarking.BenchmarkResult:
         """
         Run a full benchmark matrix.
@@ -798,6 +996,10 @@ class PipelineSession:
             verbose: Print progress
             use_cache: Enable LLM response caching (default: True)
             nocache_configs: List of config names to skip cache for (for A/B testing)
+            progress: Optional progress reporter for visual feedback
+            export_models: Export ArchiMate model file after each run (default: True)
+            clear_between_runs: Clear graph/model between runs (default: True)
+            bench_hash: Include repo/model/run in cache key for per-run isolation (default: False)
 
         Returns:
             BenchmarkResult with session details
@@ -826,6 +1028,9 @@ class PipelineSession:
             description=description,
             use_cache=use_cache,
             nocache_configs=nocache_configs or [],
+            export_models=export_models,
+            clear_between_runs=clear_between_runs,
+            bench_hash=bench_hash,
         )
 
         orchestrator = benchmarking.BenchmarkOrchestrator(
@@ -835,7 +1040,7 @@ class PipelineSession:
             config=bench_config,
         )
 
-        return orchestrator.run(verbose=verbose)
+        return orchestrator.run(verbose=verbose, progress=progress)
 
     def analyze_benchmark(self, session_id: str) -> benchmarking.BenchmarkAnalyzer:
         """

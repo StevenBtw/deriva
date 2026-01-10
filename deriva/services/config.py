@@ -6,7 +6,7 @@ Used by both Marimo (visual UI) and CLI (headless) for consistent config managem
 
 Tables managed:
     - extraction_config: LLM extraction step configurations
-    - derivation_config: ArchiMate derivation configurations (prep/generate/refine phases)
+    - derivation_config: ArchiMate derivation configurations (enrich/generate/refine phases)
     - file_type_registry: File extension to type mappings
     - system_settings: Key-value system settings
 """
@@ -47,7 +47,7 @@ class ExtractionConfig:
 
 
 class DerivationConfig:
-    """Unified derivation step configuration for prep/generate/refine phases."""
+    """Unified derivation step configuration for enrich/generate/refine phases."""
 
     def __init__(
         self,
@@ -67,7 +67,7 @@ class DerivationConfig:
         batch_size: int | None = None,
     ):
         self.step_name = step_name
-        self.phase = phase  # "prep" | "generate" | "refine" | "relationship"
+        self.phase = phase  # "enrich" | "generate" | "refine" | "relationship"
         self.sequence = sequence
         self.enabled = enabled
         self.llm = llm  # True = uses LLM, False = pure graph algorithm
@@ -86,34 +86,6 @@ class DerivationConfig:
     def element_type(self) -> str:
         """Backward compatibility: element_type maps to step_name."""
         return self.step_name
-
-
-class RelationshipConfig:
-    """Configuration for per-element-type relationship derivation."""
-
-    def __init__(
-        self,
-        element_type: str,
-        enabled: bool,
-        sequence: int,
-        instruction: str | None,
-        example: str | None,
-        valid_relationship_types: list[str] | None,
-        target_element_types: list[str] | None,
-        include_existing_elements: bool,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-    ):
-        self.element_type = element_type
-        self.enabled = enabled
-        self.sequence = sequence
-        self.instruction = instruction
-        self.example = example
-        self.valid_relationship_types = valid_relationship_types or []
-        self.target_element_types = target_element_types  # None means all types
-        self.include_existing_elements = include_existing_elements
-        self.temperature = temperature
-        self.max_tokens = max_tokens
 
 
 class FileType:
@@ -298,7 +270,7 @@ def get_derivation_configs(
     Args:
         engine: DuckDB connection
         enabled_only: If True, only return enabled configs
-        phase: Filter by phase ("prep", "generate", "refine", "relationship")
+        phase: Filter by phase ("enrich", "generate", "refine", "relationship")
         llm_only: If True, only LLM steps; if False, only graph algorithm steps
 
     Returns:
@@ -322,10 +294,10 @@ def get_derivation_configs(
         query += " AND llm = ?"
         params.append(llm_only)
 
-    # Order by phase priority (prep=1, generate=2, refine=3, relationship=4) then sequence
+    # Order by phase priority (enrich=1, generate=2, refine=3, relationship=4) then sequence
     query += """
         ORDER BY
-            CASE phase WHEN 'prep' THEN 1 WHEN 'generate' THEN 2 WHEN 'refine' THEN 3 WHEN 'relationship' THEN 4 END,
+            CASE phase WHEN 'enrich' THEN 1 WHEN 'generate' THEN 2 WHEN 'refine' THEN 3 WHEN 'relationship' THEN 4 END,
             sequence
     """
 
@@ -382,107 +354,6 @@ def get_derivation_config(engine: Any, step_name: str) -> DerivationConfig | Non
         max_tokens=row[11],
         max_candidates=row[12],
         batch_size=row[13],
-    )
-
-
-# =============================================================================
-# Relationship Config Operations
-# =============================================================================
-
-
-def get_relationship_configs(
-    engine: Any,
-    enabled_only: bool = True,
-) -> list[RelationshipConfig]:
-    """
-    Get all relationship derivation configurations.
-
-    Args:
-        engine: DuckDB connection
-        enabled_only: If True, only return enabled configs
-
-    Returns:
-        List of RelationshipConfig objects ordered by sequence
-    """
-    import json
-
-    query = """
-        SELECT element_type, enabled, sequence, instruction, example,
-               valid_relationship_types, target_element_types,
-               include_existing_elements, temperature, max_tokens
-        FROM derivation_relationship_config
-    """
-    params = []
-
-    if enabled_only:
-        query += " WHERE enabled = TRUE"
-
-    query += " ORDER BY sequence"
-
-    try:
-        rows = engine.execute(query, params).fetchall()
-    except Exception:
-        # Table may not exist yet
-        return []
-
-    configs = []
-    for row in rows:
-        # Parse JSON arrays
-        valid_types = json.loads(row[5]) if row[5] else None
-        target_types = json.loads(row[6]) if row[6] else None
-
-        configs.append(
-            RelationshipConfig(
-                element_type=row[0],
-                enabled=row[1],
-                sequence=row[2],
-                instruction=row[3],
-                example=row[4],
-                valid_relationship_types=valid_types,
-                target_element_types=target_types,
-                include_existing_elements=row[7] or False,
-                temperature=row[8],
-                max_tokens=row[9],
-            )
-        )
-    return configs
-
-
-def get_relationship_config(engine: Any, element_type: str) -> RelationshipConfig | None:
-    """Get relationship config for a specific element type."""
-    import json
-
-    try:
-        row = engine.execute(
-            """
-            SELECT element_type, enabled, sequence, instruction, example,
-                   valid_relationship_types, target_element_types,
-                   include_existing_elements, temperature, max_tokens
-            FROM derivation_relationship_config
-            WHERE element_type = ? AND enabled = TRUE
-            """,
-            [element_type],
-        ).fetchone()
-    except Exception:
-        return None
-
-    if not row:
-        return None
-
-    valid_types = json.loads(row[5]) if row[5] else None
-    target_types = json.loads(row[6]) if row[6] else None
-
-    return RelationshipConfig(
-        element_type=row[0],
-        enabled=row[1],
-        sequence=row[2],
-        instruction=row[3],
-        example=row[4],
-        valid_relationship_types=valid_types,
-        target_element_types=target_types,
-        include_existing_elements=row[7] or False,
-        temperature=row[8],
-        max_tokens=row[9],
     )
 
 
@@ -710,7 +581,7 @@ def list_steps(
         engine: DuckDB connection
         step_type: 'extraction' or 'derivation'
         enabled_only: If True, only return enabled steps
-        phase: For derivation, filter by phase ("prep", "generate", "refine")
+        phase: For derivation, filter by phase ("enrich", "generate", "refine")
 
     Returns:
         List of dicts with step info
@@ -921,7 +792,7 @@ def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
     Get current active versions for all configs.
 
     Returns:
-        Dict with extraction and derivation (prep/generate/refine) versions
+        Dict with extraction and derivation (enrich/generate/refine) versions
     """
     versions = {"extraction": {}, "derivation": {}}
 
@@ -930,7 +801,7 @@ def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
     for r in rows:
         versions["extraction"][r[0]] = r[1]
 
-    # Derivation (includes all phases: prep, generate, refine)
+    # Derivation (includes all phases: enrich, generate, refine)
     rows = engine.execute("SELECT step_name, version FROM derivation_config WHERE is_active = TRUE").fetchall()
     for r in rows:
         versions["derivation"][r[0]] = r[1]

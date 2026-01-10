@@ -12,6 +12,7 @@ from deriva.common.chunking import (
     estimate_tokens,
     get_model_token_limit,
     should_chunk,
+    truncate_content,
 )
 
 
@@ -323,3 +324,40 @@ class TestModelTokenLimits:
         """All token limits should be positive."""
         for model, limit in MODEL_TOKEN_LIMITS.items():
             assert limit > 0, f"{model} has non-positive limit"
+
+
+class TestTruncateContent:
+    """Tests for truncate_content function."""
+
+    def test_returns_unchanged_for_small_content(self):
+        """Should return content unchanged if under token limit."""
+        content = "small content"
+
+        result, was_truncated = truncate_content(content, max_tokens=1000)
+
+        assert result == content
+        assert was_truncated is False
+
+    def test_truncates_large_content(self):
+        """Should truncate content exceeding token limit."""
+        # Create content with many lines
+        lines = [f"line {i}" for i in range(500)]
+        content = "\n".join(lines)
+
+        result, was_truncated = truncate_content(content, max_tokens=100)
+
+        assert was_truncated is True
+        assert "[" in result  # Contains truncation marker
+        assert "truncated" in result.lower()
+        assert len(result) < len(content)
+
+    def test_preserves_head_and_tail(self):
+        """Should keep content from head and tail."""
+        lines = [f"line_{i}" for i in range(100)]
+        content = "\n".join(lines)
+
+        result, was_truncated = truncate_content(content, max_tokens=50)
+
+        assert was_truncated is True
+        assert "line_0" in result  # Head preserved
+        assert "line_99" in result  # Tail preserved

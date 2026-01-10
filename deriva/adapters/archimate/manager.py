@@ -128,7 +128,8 @@ class ArchimateManager:
                 MERGE (e:`{label}` {{identifier: $identifier}})
                 SET e.name = $name,
                     e.documentation = $documentation,
-                    e.properties_json = $properties_json
+                    e.properties_json = $properties_json,
+                    e.enabled = $enabled
                 RETURN e.identifier as identifier
             """
 
@@ -139,6 +140,7 @@ class ArchimateManager:
                     "name": element.name,
                     "documentation": element.documentation,
                     "properties_json": properties_json,
+                    "enabled": element.enabled,
                 },
             )
 
@@ -250,7 +252,8 @@ class ArchimateManager:
                        e.name as name,
                        [lbl IN labels(e) WHERE lbl STARTS WITH '{self.namespace}:'][0] as label,
                        e.documentation as documentation,
-                       e.properties_json as properties_json
+                       e.properties_json as properties_json,
+                       e.enabled as enabled
             """
 
             result = self.neo4j.execute_read(query, {"identifier": identifier})
@@ -272,6 +275,7 @@ class ArchimateManager:
                     identifier=data["identifier"],
                     documentation=data.get("documentation"),
                     properties=properties,
+                    enabled=data.get("enabled", True),
                 )
             return None
 
@@ -279,11 +283,14 @@ class ArchimateManager:
             logger.error(f"Failed to get element {identifier}: {e}")
             raise
 
-    def get_elements(self, element_type: str | None = None) -> list[Element]:
-        """Get all elements, optionally filtered by type.
+    def get_elements(
+        self, element_type: str | None = None, enabled_only: bool = False
+    ) -> list[Element]:
+        """Get all elements, optionally filtered by type and enabled status.
 
         Args:
             element_type: Optional element type filter
+            enabled_only: If True, only return enabled elements (for export)
 
         Returns:
             List of elements
@@ -292,15 +299,19 @@ class ArchimateManager:
             raise RuntimeError("Not connected to Neo4j. Call connect() first.")
 
         try:
+            enabled_filter = "AND e.enabled = true" if enabled_only else ""
+
             if element_type:
                 # Get elements by specific type label
                 label = self.neo4j.get_label(element_type)
                 query = f"""
                     MATCH (e:`{label}`)
+                    WHERE true {enabled_filter}
                     RETURN e.identifier as identifier,
                            e.name as name,
                            e.documentation as documentation,
-                           e.properties_json as properties_json
+                           e.properties_json as properties_json,
+                           e.enabled as enabled
                 """
                 result = self.neo4j.execute_read(query)
                 # All elements have same type
@@ -318,6 +329,7 @@ class ArchimateManager:
                             identifier=data["identifier"],
                             documentation=data.get("documentation"),
                             properties=properties,
+                            enabled=data.get("enabled", True),
                         )
                     )
             else:
@@ -325,11 +337,13 @@ class ArchimateManager:
                 query = f"""
                     MATCH (e)
                     WHERE any(lbl IN labels(e) WHERE lbl STARTS WITH '{self.namespace}:' AND lbl <> '{self.namespace}:Relationship')
+                    {enabled_filter}
                     RETURN e.identifier as identifier,
                            e.name as name,
                            [lbl IN labels(e) WHERE lbl STARTS WITH '{self.namespace}:'][0] as label,
                            e.documentation as documentation,
-                           e.properties_json as properties_json
+                           e.properties_json as properties_json,
+                           e.enabled as enabled
                 """
                 result = self.neo4j.execute_read(query)
                 elements = []
@@ -349,6 +363,7 @@ class ArchimateManager:
                             identifier=data["identifier"],
                             documentation=data.get("documentation"),
                             properties=properties,
+                            enabled=data.get("enabled", True),
                         )
                     )
 
@@ -506,4 +521,145 @@ class ArchimateManager:
 
         except Exception as e:
             logger.error(f"Query failed: {e}")
+            raise
+
+    def disable_element(self, identifier: str, reason: str | None = None) -> bool:
+        """Disable an element (soft delete for refine phase).
+
+        Args:
+            identifier: Element identifier to disable
+            reason: Optional reason for disabling (stored in properties)
+
+        Returns:
+            True if element was disabled, False if not found
+        """
+        if self.neo4j is None:
+            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+
+        try:
+            ns = self.namespace
+            query = f"""
+                MATCH (e {{identifier: $identifier}})
+                WHERE any(lbl IN labels(e) WHERE lbl STARTS WITH '{ns}:')
+                SET e.enabled = false,
+                    e.disabled_reason = $reason
+                RETURN e.identifier as identifier
+            """
+            result = self.neo4j.execute_write(
+                query, {"identifier": identifier, "reason": reason}
+            )
+
+            if result:
+                logger.debug(f"Disabled element: {identifier} (reason: {reason})")
+                return True
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to disable element {identifier}: {e}")
+            raise
+
+    def disable_elements(
+        self, identifiers: list[str], reason: str | None = None
+    ) -> int:
+        """Disable multiple elements (batch soft delete for refine phase).
+
+        Args:
+            identifiers: List of element identifiers to disable
+            reason: Optional reason for disabling
+
+        Returns:
+            Number of elements disabled
+        """
+        if self.neo4j is None:
+            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+
+        if not identifiers:
+            return 0
+
+        try:
+            ns = self.namespace
+            query = f"""
+                MATCH (e)
+                WHERE e.identifier IN $identifiers
+                AND any(lbl IN labels(e) WHERE lbl STARTS WITH '{ns}:')
+                SET e.enabled = false,
+                    e.disabled_reason = $reason
+                RETURN count(e) as count
+            """
+            result = self.neo4j.execute_write(
+                query, {"identifiers": identifiers, "reason": reason}
+            )
+
+            count = result[0]["count"] if result else 0
+            logger.info(f"Disabled {count} elements (reason: {reason})")
+            return count
+
+        except Exception as e:
+            logger.error(f"Failed to disable elements: {e}")
+            raise
+
+    def delete_relationship(self, identifier: str) -> bool:
+        """Delete a relationship by identifier.
+
+        Args:
+            identifier: Relationship identifier to delete
+
+        Returns:
+            True if relationship was deleted, False if not found
+        """
+        if self.neo4j is None:
+            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+
+        try:
+            ns = self.namespace
+            query = f"""
+                MATCH ()-[r]->()
+                WHERE r.identifier = $identifier
+                AND type(r) STARTS WITH '{ns}:'
+                DELETE r
+                RETURN count(r) as count
+            """
+            result = self.neo4j.execute_write(query, {"identifier": identifier})
+
+            if result and result[0]["count"] > 0:
+                logger.debug(f"Deleted relationship: {identifier}")
+                return True
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to delete relationship {identifier}: {e}")
+            raise
+
+    def delete_relationships(self, identifiers: list[str]) -> int:
+        """Delete multiple relationships by identifier.
+
+        Args:
+            identifiers: List of relationship identifiers to delete
+
+        Returns:
+            Number of relationships deleted
+        """
+        if self.neo4j is None:
+            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+
+        if not identifiers:
+            return 0
+
+        try:
+            ns = self.namespace
+            query = f"""
+                MATCH ()-[r]->()
+                WHERE r.identifier IN $identifiers
+                AND type(r) STARTS WITH '{ns}:'
+                DELETE r
+                RETURN count(r) as count
+            """
+            result = self.neo4j.execute_write(query, {"identifiers": identifiers})
+
+            count = result[0]["count"] if result else 0
+            logger.info(f"Deleted {count} relationships")
+            return count
+
+        except Exception as e:
+            logger.error(f"Failed to delete relationships: {e}")
             raise

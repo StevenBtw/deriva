@@ -82,6 +82,27 @@ class TestRepositoryNode:
         d = node.to_dict()
         assert d["repoName"] == "myproject"
         assert d["type"] == "Repository"
+        assert d["extractionMethod"] == "structural"
+
+    def test_extraction_method_default(self):
+        """Should have structural as default extraction method."""
+        node = RepositoryNode(
+            name="test",
+            url="https://example.com/test.git",
+            created_at=datetime.now(),
+        )
+        assert node.extraction_method == "structural"
+
+    def test_extraction_method_custom(self):
+        """Should allow custom extraction method."""
+        node = RepositoryNode(
+            name="test",
+            url="https://example.com/test.git",
+            created_at=datetime.now(),
+            extraction_method="llm",
+        )
+        assert node.extraction_method == "llm"
+        assert node.to_dict()["extractionMethod"] == "llm"
 
 
 class TestDirectoryNode:
@@ -103,6 +124,12 @@ class TestDirectoryNode:
         d = node.to_dict()
         assert d["name"] == "utils"
         assert d["type"] == "Directory"
+        assert d["extractionMethod"] == "structural"
+
+    def test_extraction_method_default(self):
+        """Should have structural as default extraction method."""
+        node = DirectoryNode(name="src", path="src", repository_name="myrepo")
+        assert node.extraction_method == "structural"
 
 
 class TestFileNode:
@@ -144,6 +171,17 @@ class TestFileNode:
         assert d["fileType"] == "source"
         assert d["size"] == 1024
         assert d["type"] == "File"
+        assert d["extractionMethod"] == "structural"
+
+    def test_extraction_method_default(self):
+        """Should have structural as default extraction method."""
+        node = FileNode(
+            name="main.py",
+            path="src/main.py",
+            repository_name="myrepo",
+            file_type="source",
+        )
+        assert node.extraction_method == "structural"
 
 
 class TestModuleNode:
@@ -158,6 +196,19 @@ class TestModuleNode:
         """Should generate unique ID."""
         node = ModuleNode(name="core", paths=["src/core"], repository_name="myrepo")
         assert node.generate_id() == "Module_myrepo_core"
+
+    def test_to_dict(self):
+        """Should convert to dictionary."""
+        node = ModuleNode(name="utils", paths=["src/utils"], repository_name="myrepo")
+        d = node.to_dict()
+        assert d["name"] == "utils"
+        assert d["type"] == "Module"
+        assert d["extractionMethod"] == "llm"
+
+    def test_extraction_method_default(self):
+        """Should have llm as default extraction method."""
+        node = ModuleNode(name="core", paths=["src/core"], repository_name="myrepo")
+        assert node.extraction_method == "llm"
 
 
 class TestBusinessConceptNode:
@@ -210,6 +261,18 @@ class TestBusinessConceptNode:
         d = node.to_dict()
         assert d["conceptName"] == "Payment Processing"
         assert d["type"] == "BusinessConcept"
+        assert d["extractionMethod"] == "llm"
+
+    def test_extraction_method_default(self):
+        """Should have llm as default extraction method."""
+        node = BusinessConceptNode(
+            name="Test",
+            concept_type="service",
+            description="Test",
+            origin_source="test.py",
+            repository_name="myrepo",
+        )
+        assert node.extraction_method == "llm"
 
 
 class TestTechnologyNode:
@@ -242,6 +305,16 @@ class TestTechnologyNode:
         d = node.to_dict()
         assert d["techName"] == "Redis"
         assert d["type"] == "Technology"
+        assert d["extractionMethod"] == "llm"
+
+    def test_extraction_method_default(self):
+        """Should have llm as default extraction method."""
+        node = TechnologyNode(
+            name="PostgreSQL",
+            tech_category="system_software",
+            repository_name="myrepo",
+        )
+        assert node.extraction_method == "llm"
 
 
 class TestTypeDefinitionNode:
@@ -281,6 +354,17 @@ class TestTypeDefinitionNode:
         d = node.to_dict()
         assert d["typeName"] == "UserModel"
         assert d["type"] == "TypeDefinition"
+        assert d["extractionMethod"] == "ast"
+
+    def test_extraction_method_default(self):
+        """Should have ast as default extraction method."""
+        node = TypeDefinitionNode(
+            name="UserModel",
+            type_category="class",
+            file_path="src/models/user.py",
+            repository_name="myrepo",
+        )
+        assert node.extraction_method == "ast"
 
 
 class TestMethodNode:
@@ -325,6 +409,19 @@ class TestMethodNode:
         d = node.to_dict()
         assert d["methodName"] == "save"
         assert d["type"] == "Method"
+        assert d["extractionMethod"] == "ast"
+
+    def test_extraction_method_default(self):
+        """Should have ast as default extraction method."""
+        node = MethodNode(
+            name="get_user",
+            return_type="User",
+            visibility="public",
+            file_path="src/api.py",
+            type_name="UserService",
+            repository_name="myrepo",
+        )
+        assert node.extraction_method == "ast"
 
 
 class TestTestNode:
@@ -364,6 +461,17 @@ class TestTestNode:
         d = node.to_dict()
         assert d["testName"] == "test_login"
         assert d["type"] == "Test"
+        assert d["extractionMethod"] == "llm"
+
+    def test_extraction_method_default(self):
+        """Should have llm as default extraction method."""
+        node = TestNode(
+            name="test_user_creation",
+            test_type="unit",
+            file_path="tests/test_user.py",
+            repository_name="myrepo",
+        )
+        assert node.extraction_method == "llm"
 
 
 class TestExternalDependencyNode:
@@ -402,6 +510,16 @@ class TestExternalDependencyNode:
         d = node.to_dict()
         assert d["dependencyName"] == "numpy"
         assert d["type"] == "ExternalDependency"
+        assert d["extractionMethod"] == "llm"
+
+    def test_extraction_method_default(self):
+        """Should have llm as default extraction method."""
+        node = ExternalDependencyNode(
+            name="requests",
+            dependency_category="library",
+            repository_name="myrepo",
+        )
+        assert node.extraction_method == "llm"
 
 
 class TestServiceNode:
@@ -440,3 +558,14 @@ class TestServiceNode:
         d = node.to_dict()
         assert d["serviceName"] == "EmailService"
         assert d["type"] == "Service"
+        assert d["extractionMethod"] == "llm"
+
+    def test_extraction_method_default(self):
+        """Should have llm as default extraction method."""
+        node = ServiceNode(
+            name="AuthService",
+            description="Authentication service",
+            exposure_level="internal",
+            repository_name="myrepo",
+        )
+        assert node.extraction_method == "llm"

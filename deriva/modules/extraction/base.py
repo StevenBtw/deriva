@@ -601,7 +601,13 @@ def normalize_node(
 
     # Update node_id if name changed and we have repo_name
     if node_type == "ExternalDependency" and "dependencyName" in props and repo_name:
-        name_slug = props["dependencyName"].lower().replace("-", "_").replace(" ", "_")
+        name_slug = (
+            props["dependencyName"]
+            .lower()
+            .replace("-", "_")
+            .replace(" ", "_")
+            .replace("/", "_")
+        )
         node_copy["node_id"] = f"extdep_{repo_name}_{name_slug}"
 
     return node_copy

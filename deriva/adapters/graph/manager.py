@@ -47,6 +47,48 @@ GraphNode = (
 
 logger = logging.getLogger(__name__)
 
+# Node ID prefixes that embed repository name
+_NODE_ID_PREFIXES = frozenset(
+    {
+        "file",
+        "dir",
+        "method",
+        "typedef",
+        "concept",
+        "tech",
+        "test",
+        "extdep",
+        "service",
+        "module",
+    }
+)
+
+
+def _extract_repo_from_node_id(node_id: str) -> str | None:
+    """Extract repository name from node ID format: prefix_reponame_path.
+
+    Node IDs follow the pattern: prefix_reponame_rest
+    e.g., "file_myapp_src_main_py" -> "myapp"
+
+    Args:
+        node_id: The node ID string
+
+    Returns:
+        Repository name or None if not extractable
+    """
+    if not node_id:
+        return None
+
+    parts = node_id.split("_", 2)
+    if len(parts) >= 2 and parts[0] in _NODE_ID_PREFIXES:
+        return parts[1]
+
+    # Handle repo_ prefix specially
+    if node_id.startswith("repo_"):
+        return node_id[5:]  # Everything after "repo_"
+
+    return None
+
 
 class GraphManager:
     """Manages graph database operations using Neo4j.
@@ -144,6 +186,12 @@ class GraphManager:
 
         # Add active flag for prep phase filtering (default true)
         flat_props["active"] = True
+
+        # Extract and store repository_name for filtering in multi-repo setups
+        if "repository_name" not in flat_props:
+            repo_name = _extract_repo_from_node_id(node_id)
+            if repo_name:
+                flat_props["repository_name"] = repo_name
 
         try:
             # Use namespace-aware label
@@ -415,6 +463,31 @@ class GraphManager:
         except Exception as e:
             logger.error(f"Failed to get node {node_id}: {e}")
             raise
+
+    def node_exists(self, node_id: str) -> bool:
+        """Check if a node exists by ID.
+
+        Args:
+            node_id: Node ID to check
+
+        Returns:
+            True if node exists, False otherwise
+        """
+        if self.neo4j is None:
+            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+
+        try:
+            query = """
+                MATCH (n)
+                WHERE n.id = $node_id
+                RETURN count(n) > 0 as exists
+            """
+            result = self.neo4j.execute_read(query, {"node_id": node_id})
+            return result[0]["exists"] if result else False
+
+        except Exception as e:
+            logger.error(f"Failed to check node existence {node_id}: {e}")
+            return False
 
     def get_nodes_by_type(self, node_type: str) -> list[dict[str, Any]]:
         """Retrieve all nodes of a specific type.

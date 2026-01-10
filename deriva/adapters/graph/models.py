@@ -78,6 +78,7 @@ class RepositoryNode:
     commit: str | None = None
     description: str | None = None
     confidence: float = 1.0
+    extraction_method: str = "structural"  # structural, ast, or llm
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -92,6 +93,7 @@ class RepositoryNode:
             "commit": self.commit,
             "description": self.description,
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "Repository",
         }
 
@@ -104,6 +106,7 @@ class DirectoryNode:
     path: str
     repository_name: str
     confidence: float = 1.0
+    extraction_method: str = "structural"  # structural, ast, or llm
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -116,6 +119,7 @@ class DirectoryNode:
             "name": self.name,
             "path": normalize_path(self.path, self.repository_name),
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "Directory",
         }
 
@@ -129,6 +133,7 @@ class ModuleNode:
     repository_name: str
     description: str | None = None
     confidence: float = 1.0
+    extraction_method: str = "llm"  # structural, ast, or llm
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -141,6 +146,7 @@ class ModuleNode:
             "paths": [normalize_path(p, self.repository_name) for p in self.paths],
             "description": self.description,
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "Module",
         }
 
@@ -157,6 +163,7 @@ class FileNode:
     size: int = 0
     confidence: float = 1.0
     complexity_score: float = 0.0
+    extraction_method: str = "structural"  # structural, ast, or llm
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -175,6 +182,7 @@ class FileNode:
             "size": self.size,
             "complexityScore": self.complexity_score,  # Use metamodel field name
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "File",
         }
 
@@ -189,6 +197,7 @@ class BusinessConceptNode:
     origin_source: str  # Path to the file where the concept was found
     repository_name: str
     confidence: float = 1.0
+    extraction_method: str = "llm"  # structural, ast, or llm
 
     def __post_init__(self):
         """Validate concept_type is one of the allowed values."""
@@ -225,6 +234,7 @@ class BusinessConceptNode:
             "description": self.description,
             "originSource": normalize_path(self.origin_source, self.repository_name),
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "BusinessConcept",
         }
 
@@ -251,6 +261,7 @@ class TechnologyNode:
     version: str | None = None
     origin_source: str | None = None  # File where technology was discovered
     confidence: float = 1.0
+    extraction_method: str = "llm"  # structural, ast, or llm
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -265,6 +276,7 @@ class TechnologyNode:
             "version": self.version,
             "originSource": self.origin_source,
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "Technology",
         }
 
@@ -283,6 +295,7 @@ class TypeDefinitionNode:
     end_line: int = 0  # Line number where type definition ends (1-indexed)
     code_snippet: str | None = None  # The actual code of the type definition
     confidence: float = 1.0
+    extraction_method: str = "ast"  # structural, ast, or llm
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -300,6 +313,7 @@ class TypeDefinitionNode:
             "endLine": self.end_line,
             "codeSnippet": self.code_snippet,
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "TypeDefinition",
         }
 
@@ -323,6 +337,7 @@ class MethodNode:
     start_line: int = 0  # Line number where method starts (relative to type, 1-indexed)
     end_line: int = 0  # Line number where method ends (relative to type, 1-indexed)
     confidence: float = 1.0
+    extraction_method: str = "ast"  # structural, ast, or llm
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -343,6 +358,7 @@ class MethodNode:
             "startLine": self.start_line,
             "endLine": self.end_line,
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "Method",
         }
 
@@ -372,6 +388,7 @@ class TestNode:
     start_line: int = 0
     end_line: int = 0
     confidence: float = 1.0
+    extraction_method: str = "llm"  # structural, ast, or llm
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -389,6 +406,7 @@ class TestNode:
             "startLine": self.start_line,
             "endLine": self.end_line,
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "Test",
         }
 
@@ -403,6 +421,7 @@ class ServiceNode:
     repository_name: str
     file_path: str | None = None  # Path to the file where the service is defined
     confidence: float = 1.0
+    extraction_method: str = "llm"  # structural, ast, or llm
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -418,6 +437,7 @@ class ServiceNode:
             if self.file_path
             else None,
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "Service",
         }
 
@@ -443,6 +463,7 @@ class ExternalDependencyNode:
     description: str | None = None
     origin_source: str | None = None  # File where dependency was discovered
     confidence: float = 1.0
+    extraction_method: str = "llm"  # structural, ast, or llm
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -459,6 +480,7 @@ class ExternalDependencyNode:
             "description": self.description,
             "originSource": self.origin_source,
             "confidence": self.confidence,
+            "extractionMethod": self.extraction_method,
             "type": "ExternalDependency",
         }
 

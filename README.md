@@ -215,15 +215,92 @@ ARCHIMATE_NAMESPACE=Model
 
 See `.env.example` for all available options.
 
+### Rate Limiting
+
+The LLM adapter includes built-in rate limiting to prevent API throttling:
+
+```bash
+# Requests per minute (0 = use provider default: 60 RPM for cloud, unlimited for local)
+LLM_RATE_LIMIT_RPM=0
+
+# Minimum delay between requests in seconds
+LLM_RATE_LIMIT_DELAY=0.0
+
+# Max retries on rate limit (429) errors
+LLM_RATE_LIMIT_RETRIES=3
+```
+
+Default rate limits by provider:
+
+| Provider | Default RPM |
+|----------|-------------|
+| Azure OpenAI | 60 |
+| OpenAI | 60 |
+| Anthropic | 60 |
+| Mistral | 60 |
+| Ollama | Unlimited |
+| LM Studio | Unlimited |
+| Claude Code | 30 |
+
+The rate limiter automatically:
+
+- Throttles requests to stay within limits
+- Applies exponential backoff on rate limit errors (HTTP 429)
+- Handles timeout errors with backoff retries
+
 ### Managing File Types
 
 If you encounter **undefined extensions** during extraction:
+
+**Via UI (Marimo):**
 
 1. Navigate to **Column 2** → **Undefined Extensions**
 2. Add them to the registry:
    - Extension (e.g., `.tsx`, `Dockerfile`)
    - Type (source, config, docs, test, build, asset, data, exclude)
    - Subtype (e.g., `typescript`, `docker`)
+
+**Via CLI:**
+
+```bash
+# List all registered file types
+uv run python -m deriva.cli.cli config filetype list
+
+# Add a new file type
+uv run python -m deriva.cli.cli config filetype add ".tsx" source typescript
+
+# Delete a file type
+uv run python -m deriva.cli.cli config filetype delete ".tsx"
+
+# Show file type statistics by category
+uv run python -m deriva.cli.cli config filetype stats
+```
+
+> **Note:** Files with unrecognized extensions are automatically classified as `file_type="unknown"` with their extension as the subtype. This ensures all files get proper classification even without explicit registry entries.
+
+### Updating Configurations (Versioning)
+
+Deriva uses a **versioning system** for configurations. When you update a config, a new version is created while preserving previous versions for rollback.
+
+**Correct ways to update configs:**
+
+1. **Via UI (Marimo)**: Navigate to the config section, edit, and click **"Save Config"**
+2. **Via CLI**: Use the `config update` command
+
+```bash
+# Update extraction config instruction
+uv run python -m deriva.cli.cli config update extraction BusinessConcept \
+  -i "New instruction text..."
+
+# Update derivation config from file
+uv run python -m deriva.cli.cli config update derivation ApplicationComponent \
+  --instruction-file prompts/app_component.txt
+
+# View all versions
+uv run python -m deriva.cli.cli config versions
+```
+
+**Do NOT use JSON import/export for config updates.** The `db_tool import` command is only for backup restoration or migration - it overwrites version history. See [benchmarks.md](benchmarks.md) for the optimization workflow.
 
 ### Customizing Extraction Prompts
 
@@ -232,7 +309,7 @@ For LLM-assisted extraction steps:
 1. Navigate to **Column 2** → **Extraction Step Configuration**
 2. Expand a node type (e.g., TypeDefinition)
 3. Edit: Input File Types, Input Graph Elements, Instruction, Example
-4. Click **"Save Config"**
+4. Click **"Save Config"** (this creates a new version)
 
 All prompts follow the **Input + Instruction + Example** pattern.
 
@@ -258,7 +335,7 @@ The UI is powered by `PipelineSession` from the services layer, providing a clea
 - **Neo4j Graph Database**:
   - **Graph namespace**: Intermediate representation (Modules, Files, Dependencies)
   - **Model namespace**: ArchiMate elements and relationships
-- **DuckDB** (`deriva.db`): File type registry, extraction configs, settings
+- **DuckDB** (`deriva/adapters/database/sql.db`): File type registry, extraction configs, settings
 
 ### Clearing Data
 
@@ -300,6 +377,11 @@ uv run python -m deriva.cli.cli --help
 uv run python -m deriva.cli.cli config list extraction
 uv run python -m deriva.cli.cli config show extraction BusinessConcept
 uv run python -m deriva.cli.cli status
+
+# Manage file types
+uv run python -m deriva.cli.cli config filetype list
+uv run python -m deriva.cli.cli config filetype add ".lock" dependency lock
+uv run python -m deriva.cli.cli config filetype stats
 
 # Run pipeline stages
 uv run python -m deriva.cli.cli run extraction --repo flask_invoice_generator -v
@@ -421,7 +503,7 @@ python --version  # Should be 3.14+
 uv sync --reinstall
 
 # Run without watch mode
-uv run marimo edit app.py
+uv run marimo edit deriva/app/app.py
 ```
 
 ---

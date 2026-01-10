@@ -54,6 +54,7 @@ from .providers import (
     ProviderError,
     create_provider,
 )
+from .rate_limiter import RateLimitConfig, RateLimiter, get_default_rate_limit
 from .manager import LLMManager
 
 __all__ = [
@@ -83,6 +84,10 @@ __all__ = [
     # Cache
     "CacheManager",
     "cached_llm_call",
+    # Rate limiting
+    "RateLimitConfig",
+    "RateLimiter",
+    "get_default_rate_limit",
     # Exceptions
     "LLMError",
     "ConfigurationError",
@@ -90,3 +95,5 @@ __all__ = [
     "CacheError",
     "ValidationError",
 ]
+
+__version__ = "1.0.0"

@@ -20,6 +20,10 @@ LLM role:
 - Identify which methods represent business processes
 - Generate meaningful process names
 - Write documentation describing the process purpose
+
+Relationships:
+- OUTBOUND: BusinessProcess -> BusinessObject (Access) - processes access business objects
+- INBOUND: None defined
 """
 
 from __future__ import annotations
@@ -27,17 +31,19 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-from deriva.adapters.archimate.models import Element
+from deriva.adapters.archimate.models import Element, Relationship
 from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
     Candidate,
     GenerationResult,
+    RelationshipRule,
     batch_candidates,
     build_derivation_prompt,
     build_element,
+    derive_batch_relationships,
     enrich_candidate,
     filter_by_pagerank,
-    get_enrichments,
+    get_enrichments_from_neo4j,
     parse_derivation_response,
     query_candidates,
 )
@@ -51,6 +57,25 @@ logger = logging.getLogger(__name__)
 
 ELEMENT_TYPE = "BusinessProcess"
 
+# =============================================================================
+# RELATIONSHIP RULES
+# =============================================================================
+
+OUTBOUND_RULES = [
+    RelationshipRule(
+        target_type="BusinessObject",
+        rel_type="Access",
+        description="Business processes access business objects",
+    ),
+]
+
+INBOUND_RULES: list[RelationshipRule] = []
+
+
+# =============================================================================
+# FILTERING
+# =============================================================================
+
 
 def _is_likely_process(
     name: str, include_patterns: set[str], exclude_patterns: set[str]
@@ -61,12 +86,10 @@ def _is_likely_process(
 
     name_lower = name.lower()
 
-    # Check exclusion patterns first
     for pattern in exclude_patterns:
         if pattern in name_lower:
             return False
 
-    # Check for process patterns
     for pattern in include_patterns:
         if pattern in name_lower:
             return True
@@ -81,15 +104,7 @@ def filter_candidates(
     exclude_patterns: set[str],
     max_candidates: int,
 ) -> list[Candidate]:
-    """
-    Filter candidates for BusinessProcess derivation.
-
-    Strategy:
-    1. Enrich with graph metrics
-    2. Pre-filter by name patterns (exclude utilities)
-    3. Prioritize likely processes
-    4. Use PageRank to find most important methods
-    """
+    """Filter candidates for BusinessProcess derivation."""
     for c in candidates:
         enrich_candidate(c, enrichments)
 
@@ -114,11 +129,17 @@ def filter_candidates(
         likely_processes.extend(others)
 
     logger.debug(
-        f"BusinessProcess filter: {len(candidates)} total -> {len(filtered)} after exclude -> "
-        f"{len(likely_processes)} final candidates"
+        "BusinessProcess filter: %d total -> %d final",
+        len(candidates),
+        len(likely_processes),
     )
 
     return likely_processes[:max_candidates]
+
+
+# =============================================================================
+# GENERATION
+# =============================================================================
 
 
 def generate(
@@ -131,28 +152,25 @@ def generate(
     example: str,
     max_candidates: int,
     batch_size: int,
+    existing_elements: list[dict[str, Any]],
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> GenerationResult:
-    """
-    Generate BusinessProcess elements from Method nodes.
-
-    All configuration parameters are required - no defaults, no fallbacks.
-    """
+    """Generate BusinessProcess elements and their relationships."""
     result = GenerationResult(success=True)
 
     patterns = config.get_derivation_patterns(engine, ELEMENT_TYPE)
     include_patterns = patterns.get("include", set())
     exclude_patterns = patterns.get("exclude", set())
 
-    enrichments = get_enrichments(engine)
+    enrichments = get_enrichments_from_neo4j(graph_manager)
     candidates = query_candidates(graph_manager, query, enrichments)
 
     if not candidates:
         logger.info("No Method candidates found")
         return result
 
-    logger.info(f"Found {len(candidates)} method candidates")
+    logger.info("Found %d method candidates", len(candidates))
 
     filtered = filter_candidates(
         candidates, enrichments, include_patterns, exclude_patterns, max_candidates
@@ -195,6 +213,7 @@ def generate(
             result.errors.extend(parse_result.get("errors", []))
             continue
 
+        batch_elements: list[dict[str, Any]] = []
         for derived in parse_result.get("data", []):
             element_result = build_element(derived, ELEMENT_TYPE)
 
@@ -215,17 +234,51 @@ def generate(
                 archimate_manager.add_element(element)
                 result.elements_created += 1
                 result.created_elements.append(element_data)
+                batch_elements.append(element_data)
             except Exception as e:
                 result.errors.append(
                     f"Failed to create element {element_data['identifier']}: {e}"
                 )
 
-    logger.info(f"Created {result.elements_created} {ELEMENT_TYPE} elements")
+        if batch_elements and existing_elements:
+            relationships = derive_batch_relationships(
+                new_elements=batch_elements,
+                existing_elements=existing_elements,
+                element_type=ELEMENT_TYPE,
+                outbound_rules=OUTBOUND_RULES,
+                inbound_rules=INBOUND_RULES,
+                llm_query_fn=llm_query_fn,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+            for rel_data in relationships:
+                try:
+                    relationship = Relationship(
+                        source=rel_data["source"],
+                        target=rel_data["target"],
+                        relationship_type=rel_data["relationship_type"],
+                        properties={"confidence": rel_data.get("confidence", 0.5)},
+                    )
+                    archimate_manager.add_relationship(relationship)
+                    result.relationships_created += 1
+                    result.created_relationships.append(rel_data)
+                except Exception as e:
+                    result.errors.append(f"Failed to create relationship: {e}")
+
+    logger.info(
+        "Created %d %s elements and %d relationships",
+        result.elements_created,
+        ELEMENT_TYPE,
+        result.relationships_created,
+    )
     return result
 
 
 __all__ = [
     "ELEMENT_TYPE",
+    "OUTBOUND_RULES",
+    "INBOUND_RULES",
     "filter_candidates",
     "generate",
 ]

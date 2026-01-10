@@ -2,6 +2,8 @@
 
 Property graph database for storing repository structure, code elements, and their relationships using Neo4j.
 
+**Version:** 1.0.0
+
 ## Purpose
 
 The Graph adapter stores extracted repository information in Neo4j (namespace: `Graph`). It maintains the intermediate representation between raw code and ArchiMate models, including files, directories, type definitions, business concepts, and their relationships.
@@ -32,7 +34,7 @@ from deriva.adapters.graph import (
 ## Basic Usage
 
 ```python
-from deriva.adapters.graph import GraphManager, RepositoryNode, FileNode
+from deriva.adapters.graph import GraphManager, RepositoryNode, FileNode, CONTAINS
 
 with GraphManager() as gm:
     # Add a repository
@@ -56,12 +58,23 @@ with GraphManager() as gm:
     files = gm.get_nodes_by_type("File")
 ```
 
+## File Structure
+
+```text
+deriva/adapters/graph/
+├── __init__.py           # Package exports
+├── manager.py            # GraphManager class
+├── models.py             # Node types and relationship constants
+└── metamodel.py          # Graph metamodel definitions
+```
+
 ## Node Types
 
 | Node | Purpose |
 |------|---------|
 | `RepositoryNode` | Root node for a code repository |
 | `DirectoryNode` | Directory in the file tree |
+| `ModuleNode` | Logical module grouping |
 | `FileNode` | Source file with type classification |
 | `TypeDefinitionNode` | Class, function, interface, enum |
 | `MethodNode` | Method within a type definition |
@@ -80,6 +93,8 @@ with GraphManager() as gm:
 | `REFERENCES` | File references business concept |
 | `IMPLEMENTS` | File implements technology |
 | `DECLARES` | Type declares methods |
+| `PROVIDES` | Provides a service |
+| `EXPOSES` | Exposes an interface |
 | `USES` | Uses external dependency |
 | `TESTS` | Test tests code element |
 

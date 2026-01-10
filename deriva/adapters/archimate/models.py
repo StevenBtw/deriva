@@ -384,6 +384,7 @@ class Element:
         identifier: Unique identifier (auto-generated if not provided)
         documentation: Optional documentation text
         properties: Optional custom properties (key-value pairs)
+        enabled: Whether element is active (disabled elements are excluded from export)
     """
 
     name: str
@@ -391,6 +392,7 @@ class Element:
     identifier: str = ""
     documentation: str | None = None
     properties: dict[str, Any] = field(default_factory=dict)
+    enabled: bool = True
 
     def __post_init__(self):
         """Generate identifier if not provided."""
@@ -405,6 +407,7 @@ class Element:
             "element_type": self.element_type,
             "documentation": self.documentation,
             "properties": self.properties,
+            "enabled": self.enabled,
         }
 
     @classmethod
@@ -416,6 +419,7 @@ class Element:
             identifier=data.get("identifier") or "",
             documentation=data.get("documentation"),
             properties=data.get("properties", {}),
+            enabled=data.get("enabled", True),
         )
 
 

@@ -21,6 +21,7 @@ from typing import Any, Protocol, runtime_checkable
 import requests
 
 from deriva.common.exceptions import ProviderError as ProviderError
+from .rate_limiter import RateLimitConfig, RateLimiter, get_default_rate_limit
 
 # Valid provider names - shared between providers and benchmark models
 VALID_PROVIDERS = frozenset(
@@ -53,6 +54,10 @@ class ProviderConfig:
     api_key: str | None
     model: str
     timeout: int = 60
+    # Rate limiting configuration
+    requests_per_minute: int = 0  # 0 = use provider default
+    min_request_delay: float = 0.0  # Minimum seconds between requests
+    rate_limit_retries: int = 3  # Max retries on rate limit (429) errors
 
 
 @dataclass
@@ -104,6 +109,20 @@ class BaseProvider(ABC):
 
     def __init__(self, config: ProviderConfig):
         self.config = config
+        self._rate_limiter = self._create_rate_limiter()
+
+    def _create_rate_limiter(self) -> RateLimiter:
+        """Create rate limiter with provider-specific defaults."""
+        # Use configured RPM or fall back to provider default
+        rpm = self.config.requests_per_minute
+        if rpm <= 0:
+            rpm = get_default_rate_limit(self.name)
+
+        rate_config = RateLimitConfig(
+            requests_per_minute=rpm,
+            min_request_delay=self.config.min_request_delay,
+        )
+        return RateLimiter(config=rate_config)
 
     @property
     @abstractmethod
@@ -125,22 +144,64 @@ class BaseProvider(ABC):
     def _make_request(
         self, headers: dict[str, str], body: dict[str, Any]
     ) -> dict[str, Any]:
-        """Make HTTP request to provider API."""
-        try:
-            response = requests.post(
-                self.config.api_url,
-                headers=headers,
-                json=body,
-                timeout=self.config.timeout,
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.Timeout as e:
-            raise ProviderError(f"{self.name} API request timed out") from e
-        except requests.exceptions.RequestException as e:
-            raise ProviderError(f"{self.name} API request failed: {e}") from e
-        except json.JSONDecodeError as e:
-            raise ProviderError(f"{self.name} returned invalid JSON") from e
+        """Make HTTP request to provider API with rate limiting."""
+        import time
+
+        last_error = None
+        max_retries = self.config.rate_limit_retries
+
+        for attempt in range(max_retries + 1):
+            # Wait for rate limit if needed
+            self._rate_limiter.wait_if_needed()
+
+            try:
+                response = requests.post(
+                    self.config.api_url,
+                    headers=headers,
+                    json=body,
+                    timeout=self.config.timeout,
+                )
+
+                # Handle rate limit response (429)
+                if response.status_code == 429:
+                    self._rate_limiter.record_rate_limit()
+                    if attempt < max_retries:
+                        backoff = self._rate_limiter.record_rate_limit()
+                        time.sleep(backoff)
+                        continue
+                    raise ProviderError(
+                        f"{self.name} rate limited after {max_retries + 1} attempts"
+                    )
+
+                response.raise_for_status()
+                self._rate_limiter.record_success()
+                return response.json()
+
+            except requests.exceptions.Timeout as e:
+                last_error = e
+                # Timeout might be due to overload - apply backoff
+                if attempt < max_retries:
+                    backoff = self._rate_limiter.record_rate_limit()
+                    time.sleep(backoff)
+                    continue
+                raise ProviderError(f"{self.name} API request timed out") from e
+
+            except requests.exceptions.RequestException as e:
+                # Check if this is a rate limit error from the response
+                if hasattr(e, "response") and e.response is not None:
+                    if e.response.status_code == 429:
+                        if attempt < max_retries:
+                            backoff = self._rate_limiter.record_rate_limit()
+                            time.sleep(backoff)
+                            continue
+                raise ProviderError(f"{self.name} API request failed: {e}") from e
+
+            except json.JSONDecodeError as e:
+                raise ProviderError(f"{self.name} returned invalid JSON") from e
+
+        raise ProviderError(
+            f"{self.name} failed after {max_retries + 1} attempts: {last_error}"
+        )
 
 
 class AzureOpenAIProvider(BaseProvider):
@@ -501,10 +562,12 @@ class ClaudeCodeProvider(BaseProvider):
             return
         try:
             # shell=True needed on Windows where claude is a .cmd script
+            # encoding='utf-8' for consistent output handling
             result = subprocess.run(
                 ["claude", "--version"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=10,
                 check=False,
                 shell=(sys.platform == "win32"),
@@ -608,11 +671,13 @@ class ClaudeCodeProvider(BaseProvider):
         try:
             # shell=True needed on Windows where claude is a .cmd script
             # Pass prompt via stdin to avoid command line length limits
+            # encoding='utf-8' required for Unicode characters on Windows
             result = subprocess.run(
                 cmd,
                 input=prompt,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=self.config.timeout,
                 check=False,
                 shell=(sys.platform == "win32"),

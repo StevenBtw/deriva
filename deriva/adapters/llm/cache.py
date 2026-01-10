@@ -31,7 +31,10 @@ class CacheManager:
 
     @staticmethod
     def generate_cache_key(
-        prompt: str, model: str, schema: dict[str, Any] | None = None
+        prompt: str,
+        model: str,
+        schema: dict[str, Any] | None = None,
+        bench_hash: str | None = None,
     ) -> str:
         """
         Generate a unique cache key based on prompt, model, and optional schema.
@@ -40,6 +43,9 @@ class CacheManager:
             prompt: The prompt text
             model: The model name
             schema: Optional JSON schema for structured output
+            bench_hash: Optional benchmark hash (e.g., "repo:model:run") for
+                       per-run cache isolation. When set, cache entries are
+                       unique per benchmark run, allowing resume after failures.
 
         Returns:
             SHA256 hash as cache key
@@ -50,6 +56,9 @@ class CacheManager:
             # Sort schema keys for consistent hashing
             schema_str = json.dumps(schema, sort_keys=True)
             cache_input += f"|{schema_str}"
+        if bench_hash:
+            # Add benchmark context for per-run cache isolation
+            cache_input += f"|bench:{bench_hash}"
 
         # Generate SHA256 hash
         return hashlib.sha256(cache_input.encode()).hexdigest()

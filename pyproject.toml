@@ -1,7 +1,7 @@
 [project]
 name = "Deriva"
-version = "0.6.3"
-description = "Automatically generate ArchiMate enterprise architecture models from software repositories"
+version = "0.6.4"
+description = "Deriva is a research project aimed at enabling digital architects by automating the derivation of enterprise architecture models. Deriva uses dual knowledge graphs, heuristics and LLM's."
 readme = "README.md"
 requires-python = ">=3.14"
 authors = [
@@ -30,32 +30,29 @@ classifiers = [
 ]
 
 dependencies = [
-    # Core framework
-    "marimo>=0.18.4",
-    "pydantic>=2.12.5",
-    # Databases
-    "neo4j>=6.0.3",
+    "asyncio>=4.0.0",
     "duckdb>=1.4.3",
-    # Graph & visualization
-    "solvor>=0.5.3",
-    # XML & schema
     "lxml>=6.0.2",
-    "pyyaml>=6.0.3",
-    # HTTP & server
-    "requests>=2.32.5",
+    "marimo>=0.19.1",
+    "neo4j>=6.0.3",
+    "pydantic>=2.12.5",
     "python-dotenv>=1.2.1",
-    # Code parsing (multi-language AST)
+    "pyyaml>=6.0.3",
+    "requests>=2.32.5",
+    "rich>=14.2.0",
+    "solvor>=0.5.3",
+    "sqlglot>=28.5.0",
     "tree-sitter>=0.24.6",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "pre-commit>=4.5.1",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
-    "ruff>=0.14.10",
-    "ty>=0.0.10",
+    "ruff>=0.14.11",
+    "ty>=0.0.11",
     "types-lxml>=2025.3.30",
-    "pre-commit>=4.5.1",
 ]
 
 [project.urls]
@@ -63,8 +60,8 @@ Website = "https://deriva.dev"
 Repository = "https://github.com/StevenBtw/deriva"
 
 [project.scripts]
-deriva-cli = "cli:main"
-deriva-app = "app:main"
+deriva-cli = "deriva.cli.cli:main"
+deriva-app = "deriva.app.app:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -125,7 +122,6 @@ docstring-quotes = "double"
 [tool.ruff.lint.per-file-ignores]
 # Tests can import from any layer for testing purposes
 "tests/**/*.py" = ["E402", "TID251"]
-"cli.py" = ["TID251"]
 # Marimo app: allow long lines for UI code
 "deriva/app/app.py" = ["E501"]
 # Files with long strings (SQL, LLM prompts)
@@ -143,7 +139,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["deriva/adapters", "deriva/modules", "deriva/common", "deriva/services"]
+source = ["deriva/adapters", "deriva/modules", "deriva/common", "deriva/services", "deriva/cli"]
 omit = [
     "*/__init__.py",
     "*/tests/*",
@@ -157,7 +153,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 60
+fail_under = 75
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

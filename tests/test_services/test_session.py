@@ -448,3 +448,149 @@ class TestPipelineSessionOrchestration:
 
         connected_session._mock_pipeline.run_full_pipeline.assert_called_once()
         assert result["success"] is True
+
+
+class TestPipelineSessionIterators:
+    """Tests for PipelineSession iterator methods (progress bar support)."""
+
+    @pytest.fixture
+    def connected_session(self):
+        """Create a connected session with mocked services."""
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.Neo4jConnection"),
+            patch("deriva.services.session.extraction") as mock_extraction,
+            patch("deriva.services.session.derivation") as mock_derivation,
+            patch("deriva.services.session.config") as mock_config,
+        ):
+            session = PipelineSession(auto_connect=True)
+            session._mock_extraction = mock_extraction  # type: ignore[attr-defined]
+            session._mock_derivation = mock_derivation  # type: ignore[attr-defined]
+            session._mock_config = mock_config  # type: ignore[attr-defined]
+            yield session
+
+    def test_run_extraction_iter_yields_progress_updates(self, connected_session):
+        """Should yield ProgressUpdate objects from extraction iterator."""
+        from deriva.common.types import ProgressUpdate
+
+        # Mock the extraction iterator to yield some updates
+        mock_updates = [
+            ProgressUpdate(phase="extraction", step="File", status="processing", current=1, total=2),
+            ProgressUpdate(phase="extraction", step="TypeDefinition", status="complete", current=2, total=2),
+        ]
+        connected_session._mock_extraction.run_extraction_iter.return_value = iter(mock_updates)
+
+        updates = list(connected_session.run_extraction_iter())
+
+        assert len(updates) == 2
+        assert all(isinstance(u, ProgressUpdate) for u in updates)
+        assert updates[0].step == "File"
+        assert updates[1].step == "TypeDefinition"
+
+    def test_run_extraction_iter_raises_when_not_connected(self):
+        """Should raise RuntimeError when not connected."""
+        session = PipelineSession()
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            list(session.run_extraction_iter())
+
+    def test_run_derivation_iter_yields_progress_updates(self, connected_session):
+        """Should yield ProgressUpdate objects from derivation iterator."""
+        from deriva.common.types import ProgressUpdate
+
+        # Mock the derivation iterator to yield some updates
+        mock_updates = [
+            ProgressUpdate(phase="derivation", step="PageRank", status="processing", current=1, total=3),
+            ProgressUpdate(phase="derivation", step="ApplicationComponent", status="complete", current=2, total=3),
+        ]
+        connected_session._mock_derivation.run_derivation_iter.return_value = iter(mock_updates)
+
+        with patch.object(connected_session, "_get_llm_query_fn", return_value=lambda p, s: None):
+            updates = list(connected_session.run_derivation_iter())
+
+        assert len(updates) == 2
+        assert all(isinstance(u, ProgressUpdate) for u in updates)
+        assert updates[0].step == "PageRank"
+        assert updates[1].step == "ApplicationComponent"
+
+    def test_run_derivation_iter_raises_when_not_connected(self):
+        """Should raise RuntimeError when not connected."""
+        session = PipelineSession()
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            list(session.run_derivation_iter())
+
+    def test_get_derivation_step_count_returns_count(self, connected_session):
+        """Should return sum of enrich and generate config counts."""
+        # Mock configs: 2 enrich steps + 3 generate steps = 5 total
+        connected_session._mock_config.get_derivation_configs.side_effect = lambda engine, enabled_only, phase: (
+            [MagicMock(), MagicMock()] if phase == "enrich" else [MagicMock(), MagicMock(), MagicMock()]
+        )
+
+        count = connected_session.get_derivation_step_count()
+
+        assert count == 5
+
+    def test_get_derivation_step_count_with_enabled_only_false(self, connected_session):
+        """Should pass enabled_only flag to config query."""
+        connected_session._mock_config.get_derivation_configs.return_value = []
+
+        connected_session.get_derivation_step_count(enabled_only=False)
+
+        # Verify enabled_only=False was passed
+        calls = connected_session._mock_config.get_derivation_configs.call_args_list
+        assert all(call.kwargs.get("enabled_only") is False for call in calls)
+
+
+class TestPipelineSessionGetRunLogger:
+    """Tests for PipelineSession._get_run_logger."""
+
+    def test_returns_none_without_engine(self):
+        """Should return None if no engine."""
+        session = PipelineSession()
+        session._engine = None
+
+        logger = session._get_run_logger()
+
+        assert logger is None
+
+    def test_returns_none_if_no_active_run(self):
+        """Should return None if no active run."""
+        session = PipelineSession()
+        mock_engine = MagicMock()
+        mock_engine.execute.return_value.fetchone.return_value = None
+        session._engine = mock_engine
+
+        logger = session._get_run_logger()
+
+        assert logger is None
+
+    def test_returns_run_logger_for_active_run(self):
+        """Should return RunLogger for active run."""
+        session = PipelineSession()
+        mock_engine = MagicMock()
+        mock_engine.execute.return_value.fetchone.return_value = ("run-123",)
+        session._engine = mock_engine
+
+        with patch("deriva.services.session.RunLogger") as mock_logger_cls:
+            mock_logger = MagicMock()
+            mock_logger_cls.return_value = mock_logger
+
+            logger = session._get_run_logger()
+
+            mock_logger_cls.assert_called_with(run_id="run-123")
+            assert logger is mock_logger
+
+    def test_handles_query_error(self):
+        """Should handle query errors gracefully."""
+        session = PipelineSession()
+        mock_engine = MagicMock()
+        mock_engine.execute.side_effect = Exception("Query failed")
+        session._engine = mock_engine
+
+        logger = session._get_run_logger()
+
+        assert logger is None

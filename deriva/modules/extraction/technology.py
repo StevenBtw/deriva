@@ -92,11 +92,21 @@ def build_extraction_prompt(
     Returns:
         Formatted prompt string
     """
+    from deriva.common.chunking import truncate_content
+
+    # Truncate large files to reduce token usage
+    content, was_truncated = truncate_content(file_content, max_tokens=2000)
+    truncation_note = ""
+    if was_truncated:
+        truncation_note = (
+            "\n**Note:** File content has been truncated. Focus on visible content.\n"
+        )
+
     prompt = f"""You are analyzing a configuration/build file to extract technology infrastructure.
 
 ## Context
 - **File Path:** {file_path}
-
+{truncation_note}
 ## Instructions
 {instruction}
 
@@ -105,7 +115,7 @@ def build_extraction_prompt(
 
 ## File Content
 ```
-{file_content}
+{content}
 ```
 
 Extract technology infrastructure components. Return ONLY a JSON object with a "technologies" array. If no technologies are found, return {{"technologies": []}}.

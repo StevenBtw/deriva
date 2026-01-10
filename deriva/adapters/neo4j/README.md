@@ -2,6 +2,8 @@
 
 Shared Neo4j connection service with namespace isolation for multiple data domains.
 
+**Version:** 1.0.0
+
 ## Purpose
 
 The Neo4j adapter provides a centralized connection pool to Neo4j that multiple adapters (Graph, ArchiMate) share. Namespace prefixes isolate data while allowing cross-namespace queries when needed.
@@ -17,7 +19,7 @@ from deriva.adapters.neo4j import Neo4jConnection
 ```python
 from deriva.adapters.neo4j import Neo4jConnection
 
-# Create connection with namespace
+# Create connection with namespace (context manager)
 with Neo4jConnection(namespace="Graph") as conn:
     # Nodes automatically get "Graph:" prefix in labels
     conn.execute_write(
@@ -29,6 +31,12 @@ with Neo4jConnection(namespace="Graph") as conn:
     results = conn.execute_read(
         "MATCH (n:Repository) RETURN n.name as name"
     )
+
+# Manual connection management
+conn = Neo4jConnection(namespace="Graph")
+conn.connect()
+# ... do work ...
+conn.disconnect()
 ```
 
 ## Multiple Namespaces
@@ -62,19 +70,61 @@ NEO4J_PASSWORD=password
 NEO4J_DATABASE=neo4j
 NEO4J_ENCRYPTED=false
 NEO4J_MAX_CONNECTION_POOL_SIZE=50
+NEO4J_MAX_CONNECTION_LIFETIME=3600
+NEO4J_CONNECTION_ACQUISITION_TIMEOUT=60
+NEO4J_LOG_LEVEL=INFO
 NEO4J_LOG_QUERIES=false
+```
+
+## File Structure
+
+```text
+deriva/adapters/neo4j/
+├── __init__.py           # Package exports
+├── manager.py            # Neo4jConnection class
+└── docker-compose.yml    # Neo4j container configuration
 ```
 
 ## Neo4jConnection Methods
 
+### Connection Lifecycle
+
 | Method | Description |
 |--------|-------------|
-| `connect()` / `disconnect()` | Connection lifecycle |
-| `execute(query, params)` | Execute any Cypher query |
-| `execute_write(query, params)` | Write transaction |
-| `execute_read(query, params)` | Read-only transaction |
-| `get_label(type_name)` | Get namespaced label (e.g., `Graph:Repository`) |
+| `connect()` | Establish connection to Neo4j |
+| `disconnect()` | Close the Neo4j connection |
+| `__enter__` / `__exit__` | Context manager support |
+
+### Query Execution
+
+| Method | Description |
+|--------|-------------|
+| `execute(query, params, database)` | Execute any Cypher query |
+| `execute_write(query, params, database)` | Write transaction (CREATE, UPDATE, DELETE) |
+| `execute_read(query, params, database)` | Read-only transaction (MATCH, RETURN) |
+
+### Namespace Management
+
+| Method | Description |
+|--------|-------------|
+| `get_label(base_label)` | Get namespaced label (e.g., `Graph:Repository`) |
 | `clear_namespace()` | Delete all nodes/edges in namespace |
+
+### Schema Management
+
+| Method | Description |
+|--------|-------------|
+| `create_constraint(label, property_key, name)` | Create uniqueness constraint |
+| `create_index(label, property_key, name)` | Create index on property |
+
+### Docker Container Management
+
+| Method | Description |
+|--------|-------------|
+| `start_container()` | Start Neo4j Docker container |
+| `stop_container()` | Stop Neo4j Docker container |
+| `get_container_status()` | Get container running status |
+| `ensure_container_running()` | Start container if not running |
 
 ## Namespace Convention
 
@@ -85,8 +135,18 @@ NEO4J_LOG_QUERIES=false
 
 ## Starting Neo4j
 
+Using container management methods:
+
+```python
+conn = Neo4jConnection(namespace="Graph")
+conn.ensure_container_running()  # Starts if not running
+conn.connect()
+```
+
+Or manually via Docker:
+
 ```bash
-cd neo4j_manager
+cd deriva/adapters/neo4j
 docker-compose up -d
 ```
 

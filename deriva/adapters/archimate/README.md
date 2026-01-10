@@ -2,6 +2,8 @@
 
 Create, validate, and export ArchiMate enterprise architecture models using Neo4j.
 
+**Version:** 2.0.0
+
 ## Purpose
 
 The ArchiMate adapter stores derived ArchiMate elements and relationships in Neo4j (namespace: `ArchiMate`), validates them against the ArchiMate 3.1 metamodel, and exports to XML format compatible with the [Archi](https://www.archimatetool.com/) modeling tool.
@@ -16,6 +18,7 @@ from deriva.adapters.archimate import (
     ArchiMateMetamodel,    # Metamodel validation rules
     ArchiMateValidator,    # Validation logic
     ArchiMateXMLExporter,  # XML export
+    ValidationError,       # Validation exception
 )
 ```
 
@@ -46,6 +49,17 @@ with ArchimateManager() as am:
 
     # Export to Archi-compatible XML
     am.export_to_xml("model.archimate", model_name="My Model")
+```
+
+## File Structure
+
+```text
+deriva/adapters/archimate/
+├── __init__.py           # Package exports
+├── manager.py            # ArchimateManager class
+├── models.py             # Element, Relationship, ArchiMateMetamodel
+├── validation.py         # ArchiMateValidator, ValidationError
+└── xml_export.py         # ArchiMateXMLExporter
 ```
 
 ## Supported Types

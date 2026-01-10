@@ -26,6 +26,10 @@ import argparse
 import sys
 from typing import Any
 
+from deriva.cli.progress import (
+    create_benchmark_progress_reporter,
+    create_progress_reporter,
+)
 from deriva.services import config
 from deriva.services.session import PipelineSession
 
@@ -123,11 +127,14 @@ def cmd_config_disable(args: argparse.Namespace) -> int:
 
 def cmd_config_update(args: argparse.Namespace) -> int:
     """Update a configuration with versioning."""
+    import json
+
     with PipelineSession() as session:
         step_type = args.step_type
         name = args.name
         instruction = args.instruction
         example = args.example
+        params = getattr(args, "params", None)
 
         # Read instruction from file if provided
         if args.instruction_file:
@@ -147,6 +154,24 @@ def cmd_config_update(args: argparse.Namespace) -> int:
                 print(f"Error reading example file: {e}")
                 return 1
 
+        # Read params from file if provided
+        params_file = getattr(args, "params_file", None)
+        if params_file:
+            try:
+                with open(params_file, encoding="utf-8") as f:
+                    params = f.read()
+            except Exception as e:
+                print(f"Error reading params file: {e}")
+                return 1
+
+        # Validate params is valid JSON if provided
+        if params:
+            try:
+                json.loads(params)
+            except json.JSONDecodeError as e:
+                print(f"Error: params must be valid JSON: {e}")
+                return 1
+
         if step_type == "derivation":
             result = config.create_derivation_config_version(
                 session._engine,
@@ -154,6 +179,7 @@ def cmd_config_update(args: argparse.Namespace) -> int:
                 instruction=instruction,
                 example=example,
                 input_graph_query=args.query,
+                params=params,
             )
         elif step_type == "extraction":
             result = config.create_extraction_config_version(
@@ -170,6 +196,8 @@ def cmd_config_update(args: argparse.Namespace) -> int:
         if result.get("success"):
             print(f"Updated {step_type} config: {name}")
             print(f"  Version: {result['old_version']} -> {result['new_version']}")
+            if params:
+                print("  Params: updated")
             return 0
         else:
             print(f"Error: {result.get('error', 'Unknown error')}")
@@ -195,6 +223,94 @@ def cmd_config_versions(args: argparse.Namespace) -> int:
 
 
 # =============================================================================
+# File Type Commands
+# =============================================================================
+
+
+def cmd_filetype_list(args: argparse.Namespace) -> int:
+    """List all registered file types."""
+    with PipelineSession() as session:
+        file_types = session.get_file_types()
+
+        if not file_types:
+            print("No file types registered.")
+            return 0
+
+        # Group by file_type
+        by_type: dict[str, list] = {}
+        for ft in file_types:
+            ft_type = ft.get("file_type", "unknown")
+            if ft_type not in by_type:
+                by_type[ft_type] = []
+            by_type[ft_type].append(ft)
+
+        print(f"\n{'=' * 60}")
+        print("FILE TYPE REGISTRY")
+        print(f"{'=' * 60}")
+        print(f"Total: {len(file_types)} registered\n")
+
+        for ft_type in sorted(by_type.keys()):
+            entries = by_type[ft_type]
+            print(f"{ft_type.upper()} ({len(entries)}):")
+            for ft in sorted(entries, key=lambda x: x.get("extension", "")):
+                ext = ft.get("extension", "")
+                subtype = ft.get("subtype", "")
+                print(f"  {ext:<25} -> {subtype}")
+            print()
+
+    return 0
+
+
+def cmd_filetype_add(args: argparse.Namespace) -> int:
+    """Add a new file type."""
+    extension = args.extension
+    file_type = args.file_type
+    subtype = args.subtype
+
+    with PipelineSession() as session:
+        success = session.add_file_type(extension, file_type, subtype)
+
+        if success:
+            print(f"Added file type: {extension} -> {file_type}/{subtype}")
+            return 0
+        else:
+            print(f"Failed to add file type (may already exist): {extension}")
+            return 1
+
+
+def cmd_filetype_delete(args: argparse.Namespace) -> int:
+    """Delete a file type."""
+    extension = args.extension
+
+    with PipelineSession() as session:
+        success = session.delete_file_type(extension)
+
+        if success:
+            print(f"Deleted file type: {extension}")
+            return 0
+        else:
+            print(f"File type not found: {extension}")
+            return 1
+
+
+def cmd_filetype_stats(args: argparse.Namespace) -> int:
+    """Show file type statistics."""
+    with PipelineSession() as session:
+        stats = session.get_file_type_stats()
+
+        print(f"\n{'=' * 60}")
+        print("FILE TYPE STATISTICS")
+        print(f"{'=' * 60}\n")
+
+        for ft_type, count in sorted(stats.items(), key=lambda x: -x[1]):
+            print(f"  {ft_type:<20} {count}")
+
+        print(f"\n  {'Total':<20} {sum(stats.values())}")
+
+    return 0
+
+
+# =============================================================================
 # Run Commands
 # =============================================================================
 
@@ -206,6 +322,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     verbose = getattr(args, "verbose", False)
     no_llm = getattr(args, "no_llm", False)
     phase = getattr(args, "phase", None)
+    quiet = getattr(args, "quiet", False)
 
     print(f"\n{'=' * 60}")
     print(f"DERIVA - Running {stage.upper()} pipeline")
@@ -228,12 +345,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         else:
             print("Warning: LLM not configured. LLM-based steps will be skipped.")
 
+        # Create progress reporter (Rich-based if available, quiet if --quiet)
+        progress_reporter = create_progress_reporter(quiet=quiet or verbose)
+
         if stage == "extraction":
-            result = session.run_extraction(
-                repo_name=repo_name,
-                verbose=verbose,
-                no_llm=no_llm,
-            )
+            with progress_reporter:
+                result = session.run_extraction(
+                    repo_name=repo_name,
+                    verbose=verbose,
+                    no_llm=no_llm,
+                    progress=progress_reporter,
+                )
             _print_extraction_result(result)
 
         elif stage == "derivation":
@@ -241,11 +363,21 @@ def cmd_run(args: argparse.Namespace) -> int:
                 print("Error: Derivation requires LLM. Configure LLM in .env file.")
                 return 1
             phases = [phase] if phase else None
-            result = session.run_derivation(verbose=verbose, phases=phases)
+            with progress_reporter:
+                result = session.run_derivation(
+                    verbose=verbose,
+                    phases=phases,
+                    progress=progress_reporter,
+                )
             _print_derivation_result(result)
 
         elif stage == "all":
-            result = session.run_pipeline(repo_name=repo_name, verbose=verbose)
+            with progress_reporter:
+                result = session.run_pipeline(
+                    repo_name=repo_name,
+                    verbose=verbose,
+                    progress=progress_reporter,
+                )
             _print_pipeline_result(result)
 
         else:
@@ -586,7 +718,11 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     stages = [s.strip() for s in args.stages.split(",")] if args.stages else None
     description = getattr(args, "description", "")
     verbose = getattr(args, "verbose", False)
+    quiet = getattr(args, "quiet", False)
     use_cache = not getattr(args, "no_cache", False)
+    export_models = not getattr(args, "no_export_models", False)
+    clear_between_runs = not getattr(args, "no_clear", False)
+    bench_hash = getattr(args, "bench_hash", False)
     nocache_configs_str = getattr(args, "nocache_configs", None)
     nocache_configs = (
         [c.strip() for c in nocache_configs_str.split(",")]
@@ -604,6 +740,10 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     if stages:
         print(f"Stages: {stages}")
     print(f"Cache: {'enabled' if use_cache else 'disabled'}")
+    print(f"Export models: {'enabled' if export_models else 'disabled'}")
+    print(f"Clear between runs: {'yes' if clear_between_runs else 'no'}")
+    if bench_hash:
+        print("Bench hash: enabled (per-run cache isolation)")
     if nocache_configs:
         print(f"No-cache configs: {nocache_configs}")
     print(f"{'=' * 60}\n")
@@ -611,16 +751,24 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
     with PipelineSession() as session:
         print("Connected to Neo4j")
 
-        result = session.run_benchmark(
-            repositories=repos,
-            models=models,
-            runs=runs,
-            stages=stages,
-            description=description,
-            verbose=verbose,
-            use_cache=use_cache,
-            nocache_configs=nocache_configs,
-        )
+        # Create benchmark progress reporter (Rich-based if available)
+        progress_reporter = create_benchmark_progress_reporter(quiet=quiet or verbose)
+
+        with progress_reporter:
+            result = session.run_benchmark(
+                repositories=repos,
+                models=models,
+                runs=runs,
+                stages=stages,
+                description=description,
+                verbose=verbose,
+                use_cache=use_cache,
+                nocache_configs=nocache_configs,
+                progress=progress_reporter,
+                export_models=export_models,
+                clear_between_runs=clear_between_runs,
+                bench_hash=bench_hash,
+            )
 
         print(f"\n{'=' * 60}")
         print("BENCHMARK COMPLETE")
@@ -630,6 +778,8 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
         print(f"Runs failed: {result.runs_failed}")
         print(f"Duration: {result.duration_seconds:.1f}s")
         print(f"OCEL log: {result.ocel_path}")
+        if export_models:
+            print(f"Model files: workspace/benchmarks/{result.session_id}/models/")
 
         if result.errors:
             print(f"\nErrors ({len(result.errors)}):")
@@ -933,7 +1083,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     config_list.add_argument(
         "--phase",
-        choices=["prep", "generate", "refine"],
+        choices=["enrich", "generate", "refine"],
         help="Filter derivation by phase",
     )
     config_list.set_defaults(func=cmd_config_list)
@@ -1026,6 +1176,19 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="New input_sources (extraction only)",
     )
+    config_update.add_argument(
+        "-p",
+        "--params",
+        type=str,
+        default=None,
+        help="New params JSON (derivation only)",
+    )
+    config_update.add_argument(
+        "--params-file",
+        type=str,
+        default=None,
+        help="Read params JSON from file (derivation only)",
+    )
     config_update.set_defaults(func=cmd_config_update)
 
     # config versions
@@ -1033,6 +1196,45 @@ def create_parser() -> argparse.ArgumentParser:
         "versions", help="Show active config versions"
     )
     config_versions.set_defaults(func=cmd_config_versions)
+
+    # config filetype (sub-subparser)
+    config_filetype = config_subparsers.add_parser(
+        "filetype", help="Manage file type registry"
+    )
+    filetype_subparsers = config_filetype.add_subparsers(
+        dest="filetype_action", help="File type actions"
+    )
+
+    # filetype list
+    filetype_list = filetype_subparsers.add_parser(
+        "list", help="List registered file types"
+    )
+    filetype_list.set_defaults(func=cmd_filetype_list)
+
+    # filetype add
+    filetype_add = filetype_subparsers.add_parser("add", help="Add a file type")
+    filetype_add.add_argument(
+        "extension", help="File extension (e.g., '.py', 'Dockerfile', '*.test.js')"
+    )
+    filetype_add.add_argument(
+        "file_type",
+        help="File type category (source, config, docs, data, dependency, test, template, unknown)",
+    )
+    filetype_add.add_argument("subtype", help="Subtype (e.g., 'python', 'javascript')")
+    filetype_add.set_defaults(func=cmd_filetype_add)
+
+    # filetype delete
+    filetype_delete = filetype_subparsers.add_parser(
+        "delete", help="Delete a file type"
+    )
+    filetype_delete.add_argument("extension", help="Extension to delete")
+    filetype_delete.set_defaults(func=cmd_filetype_delete)
+
+    # filetype stats
+    filetype_stats = filetype_subparsers.add_parser(
+        "stats", help="Show file type statistics"
+    )
+    filetype_stats.set_defaults(func=cmd_filetype_stats)
 
     # -------------------------------------------------------------------------
     # run command
@@ -1051,14 +1253,20 @@ def create_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--phase",
-        choices=["prep", "generate", "refine"],
+        choices=["enrich", "generate", "refine"],
         help="Run specific derivation phase only (default: all phases)",
     )
     run_parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
-        help="Print detailed progress",
+        help="Print detailed progress (disables progress bar)",
+    )
+    run_parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Disable progress bar display",
     )
     run_parser.add_argument(
         "--no-llm",
@@ -1218,7 +1426,13 @@ def create_parser() -> argparse.ArgumentParser:
         "-v",
         "--verbose",
         action="store_true",
-        help="Print detailed progress",
+        help="Print detailed progress (disables progress bar)",
+    )
+    benchmark_run.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Disable progress bar display",
     )
     benchmark_run.add_argument(
         "--no-cache",
@@ -1230,6 +1444,21 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Comma-separated list of config names to skip cache for (e.g., 'ApplicationComponent,DataObject')",
+    )
+    benchmark_run.add_argument(
+        "--no-export-models",
+        action="store_true",
+        help="Disable exporting ArchiMate model files after each run",
+    )
+    benchmark_run.add_argument(
+        "--no-clear",
+        action="store_true",
+        help="Don't clear graph/model between runs (keep existing data)",
+    )
+    benchmark_run.add_argument(
+        "--bench-hash",
+        action="store_true",
+        help="Include repo/model/run in cache key for per-run isolation. Allows resuming failed runs with cache on.",
     )
     benchmark_run.set_defaults(func=cmd_benchmark_run)
 
@@ -1314,6 +1543,14 @@ def main() -> int:
 
     if args.command == "config" and not args.config_action:
         parser.parse_args(["config", "--help"])
+        return 0
+
+    if (
+        args.command == "config"
+        and args.config_action == "filetype"
+        and not getattr(args, "filetype_action", None)
+    ):
+        parser.parse_args(["config", "filetype", "--help"])
         return 0
 
     if args.command == "benchmark" and not getattr(args, "benchmark_action", None):

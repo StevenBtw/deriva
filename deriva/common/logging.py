@@ -718,6 +718,7 @@ class StepContext:
         self.items_failed = 0
         self.stats: dict[str, Any] | None = None
         self._completed = False
+        self._edge_ids: list[str] = []
 
     def __enter__(self) -> StepContext:
         return self
@@ -757,6 +758,10 @@ class StepContext:
             message=message,
             duration_ms=self._elapsed_ms(),
         )
+
+    def add_edge(self, edge_id: str) -> None:
+        """Track a created edge ID for OCEL logging (extraction)."""
+        self._edge_ids.append(edge_id)
 
 
 def get_logger_for_active_run(

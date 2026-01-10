@@ -21,6 +21,11 @@ LLM role:
 - Identify which type definitions are business-relevant
 - Generate meaningful business names (not code names)
 - Write documentation describing the business meaning
+
+Relationships:
+- OUTBOUND: BusinessObject -> BusinessObject (Composition/Aggregation)
+- INBOUND: BusinessProcess -> BusinessObject (Access)
+- INBOUND: ApplicationService -> BusinessObject (Flow)
 """
 
 from __future__ import annotations
@@ -28,17 +33,19 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-from deriva.adapters.archimate.models import Element
+from deriva.adapters.archimate.models import Element, Relationship
 from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
     Candidate,
     GenerationResult,
+    RelationshipRule,
     batch_candidates,
     build_derivation_prompt,
     build_element,
+    derive_batch_relationships,
     enrich_candidate,
     filter_by_pagerank,
-    get_enrichments,
+    get_enrichments_from_neo4j,
     parse_derivation_response,
     query_candidates,
 )
@@ -51,6 +58,43 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ELEMENT_TYPE = "BusinessObject"
+
+# =============================================================================
+# RELATIONSHIP RULES
+# =============================================================================
+
+# Relationships FROM BusinessObject TO other element types
+OUTBOUND_RULES = [
+    RelationshipRule(
+        target_type="BusinessObject",
+        rel_type="Composition",
+        description="Business objects contain other business objects",
+    ),
+    RelationshipRule(
+        target_type="BusinessObject",
+        rel_type="Aggregation",
+        description="Business objects reference other business objects",
+    ),
+]
+
+# Relationships FROM other element types TO BusinessObject
+INBOUND_RULES = [
+    RelationshipRule(
+        target_type="BusinessProcess",
+        rel_type="Access",
+        description="Business processes access business objects",
+    ),
+    RelationshipRule(
+        target_type="ApplicationService",
+        rel_type="Flow",
+        description="Application services flow data to business objects",
+    ),
+]
+
+
+# =============================================================================
+# FILTERING
+# =============================================================================
 
 
 def _is_likely_business_object(
@@ -109,19 +153,28 @@ def filter_candidates(
         if not _is_likely_business_object(c.name, include_patterns, exclude_patterns)
     ]
 
-    likely_business = filter_by_pagerank(likely_business, top_n=max_candidates // 2)
+    likely_business = filter_by_pagerank(
+        likely_business, top_n=max_candidates // 2, min_pagerank=0.001
+    )
 
     remaining_slots = max_candidates - len(likely_business)
     if remaining_slots > 0 and others:
-        others = filter_by_pagerank(others, top_n=remaining_slots)
+        others = filter_by_pagerank(others, top_n=remaining_slots, min_pagerank=0.001)
         likely_business.extend(others)
 
     logger.debug(
-        f"BusinessObject filter: {len(candidates)} total -> {len(filtered)} after null check -> "
-        f"{len(likely_business)} final candidates"
+        "BusinessObject filter: %d total -> %d after null check -> %d final candidates",
+        len(candidates),
+        len(filtered),
+        len(likely_business),
     )
 
     return likely_business[:max_candidates]
+
+
+# =============================================================================
+# GENERATION
+# =============================================================================
 
 
 def generate(
@@ -134,11 +187,12 @@ def generate(
     example: str,
     max_candidates: int,
     batch_size: int,
+    existing_elements: list[dict[str, Any]],
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> GenerationResult:
     """
-    Generate BusinessObject elements from type definitions and business concepts.
+    Generate BusinessObject elements and their relationships.
 
     All configuration parameters are required - no defaults, no fallbacks.
     """
@@ -148,14 +202,14 @@ def generate(
     include_patterns = patterns.get("include", set())
     exclude_patterns = patterns.get("exclude", set())
 
-    enrichments = get_enrichments(engine)
+    enrichments = get_enrichments_from_neo4j(graph_manager)
     candidates = query_candidates(graph_manager, query, enrichments)
 
     if not candidates:
         logger.info("No TypeDefinition or BusinessConcept candidates found")
         return result
 
-    logger.info(f"Found {len(candidates)} type/concept candidates")
+    logger.info("Found %d type/concept candidates", len(candidates))
 
     filtered = filter_candidates(
         candidates, enrichments, include_patterns, exclude_patterns, max_candidates
@@ -186,6 +240,9 @@ def generate(
             len(batch),
         )
 
+        # -----------------------------------------------------------------
+        # STEP 1: Generate elements
+        # -----------------------------------------------------------------
         prompt = build_derivation_prompt(
             candidates=batch,
             instruction=instruction,
@@ -208,6 +265,7 @@ def generate(
             result.errors.extend(parse_result.get("errors", []))
             continue
 
+        batch_elements: list[dict[str, Any]] = []
         for derived in parse_result.get("data", []):
             element_result = build_element(derived, ELEMENT_TYPE)
 
@@ -228,17 +286,54 @@ def generate(
                 archimate_manager.add_element(element)
                 result.elements_created += 1
                 result.created_elements.append(element_data)
+                batch_elements.append(element_data)
             except Exception as e:
                 result.errors.append(
                     f"Failed to create element {element_data['identifier']}: {e}"
                 )
 
-    logger.info(f"Created {result.elements_created} {ELEMENT_TYPE} elements")
+        # -----------------------------------------------------------------
+        # STEP 2: Derive relationships for this batch
+        # -----------------------------------------------------------------
+        if batch_elements and existing_elements:
+            relationships = derive_batch_relationships(
+                new_elements=batch_elements,
+                existing_elements=existing_elements,
+                element_type=ELEMENT_TYPE,
+                outbound_rules=OUTBOUND_RULES,
+                inbound_rules=INBOUND_RULES,
+                llm_query_fn=llm_query_fn,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+            for rel_data in relationships:
+                try:
+                    relationship = Relationship(
+                        source=rel_data["source"],
+                        target=rel_data["target"],
+                        relationship_type=rel_data["relationship_type"],
+                        properties={"confidence": rel_data.get("confidence", 0.5)},
+                    )
+                    archimate_manager.add_relationship(relationship)
+                    result.relationships_created += 1
+                    result.created_relationships.append(rel_data)
+                except Exception as e:
+                    result.errors.append(f"Failed to create relationship: {e}")
+
+    logger.info(
+        "Created %d %s elements and %d relationships",
+        result.elements_created,
+        ELEMENT_TYPE,
+        result.relationships_created,
+    )
     return result
 
 
 __all__ = [
     "ELEMENT_TYPE",
+    "OUTBOUND_RULES",
+    "INBOUND_RULES",
     "filter_candidates",
     "generate",
 ]

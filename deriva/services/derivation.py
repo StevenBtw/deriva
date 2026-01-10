@@ -2,8 +2,9 @@
 Derivation service for Deriva.
 
 Orchestrates the derivation pipeline with phases:
-1. prep: Pre-derivation graph analysis (pagerank, etc.)
+1. enrich: Pre-derivation graph analysis (pagerank, etc.)
 2. generate: LLM-based element and relationship derivation
+3. refine: Post-generation model refinement (dedup, orphans, etc.)
 
 Used by both Marimo (visual) and CLI (headless).
 """
@@ -12,27 +13,17 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from deriva.adapters.archimate import ArchimateManager
-from deriva.common.ocel import create_edge_id
-from deriva.common.types import PipelineResult
+from deriva.common.types import PipelineResult, ProgressUpdate
 
 if TYPE_CHECKING:
-    from deriva.common.types import RunLoggerProtocol
-from deriva.adapters.archimate.models import (
-    RELATIONSHIP_TYPES,
-    Relationship,
-)
+    from deriva.common.types import ProgressReporter, RunLoggerProtocol
 from deriva.adapters.graph import GraphManager
-from deriva.modules.derivation import (
-    RELATIONSHIP_SCHEMA,
-    build_per_element_relationship_prompt,
-    build_relationship_prompt,
-    enrich,
-    parse_relationship_response,
-)
+from deriva.modules.derivation import enrich
+from deriva.modules.derivation.refine import run_refine_step
 from deriva.services import config
 
 # Element generation module registry
@@ -91,31 +82,36 @@ def generate_element(
     example: str,
     max_candidates: int,
     batch_size: int,
+    existing_elements: list[dict[str, Any]] | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """
-    Generate ArchiMate elements of a specific type.
+    Generate ArchiMate elements of a specific type (and their relationships).
 
     Routes to the appropriate module based on element_type.
     All configuration parameters are required - no defaults, no fallbacks.
+
+    Each module now handles both element generation AND relationship derivation
+    in a unified flow, creating relationships to/from existing elements.
 
     Args:
         graph_manager: Connected GraphManager for Cypher queries
         archimate_manager: Connected ArchimateManager for element creation
         llm_query_fn: Function to call LLM (prompt, schema, **kwargs) -> response
         element_type: ArchiMate element type (e.g., 'ApplicationService')
-        engine: DuckDB connection for enrichment data and patterns
+        engine: DuckDB connection for patterns (enrichments read from Neo4j)
         query: Cypher query to get candidate nodes
         instruction: LLM instruction prompt
         example: Example output for LLM
         max_candidates: Maximum candidates to send to LLM
         batch_size: Batch size for LLM processing
+        existing_elements: Elements from previous derivation steps (for relationships)
         temperature: Optional LLM temperature override
         max_tokens: Optional LLM max_tokens override
 
     Returns:
-        Dict with success, elements_created, created_elements, errors
+        Dict with success, elements_created, relationships_created, created_elements, errors
     """
     module = _load_element_module(element_type)
 
@@ -123,6 +119,7 @@ def generate_element(
         return {
             "success": False,
             "elements_created": 0,
+            "relationships_created": 0,
             "errors": [f"No generation module for element type: {element_type}"],
         }
 
@@ -137,79 +134,28 @@ def generate_element(
             example=example,
             max_candidates=max_candidates,
             batch_size=batch_size,
+            existing_elements=existing_elements or [],
             temperature=temperature,
             max_tokens=max_tokens,
         )
         return {
             "success": result.success,
             "elements_created": result.elements_created,
+            "relationships_created": result.relationships_created,
             "created_elements": result.created_elements,
+            "created_relationships": result.created_relationships,
             "errors": result.errors,
         }
     except Exception as e:
         return {
             "success": False,
             "elements_created": 0,
+            "relationships_created": 0,
             "errors": [f"Generation failed for {element_type}: {e}"],
         }
 
 
 logger = logging.getLogger(__name__)
-
-# Valid relationship types in PascalCase for normalization
-_VALID_RELATIONSHIP_TYPES = set(RELATIONSHIP_TYPES.keys())
-
-
-def _build_custom_relationship_prompt(
-    elements: list[dict],
-    instruction: str,
-    example: str | None = None,
-) -> str:
-    """Build relationship prompt using custom instruction from database config."""
-    import json
-
-    elements_json = json.dumps(elements, indent=2, default=str)
-    valid_ids = [e.get("identifier", "") for e in elements if e.get("identifier")]
-
-    prompt = f"""{instruction}
-
-ELEMENTS TO RELATE:
-```json
-{elements_json}
-```
-
-VALID IDENTIFIERS (use EXACTLY as shown):
-{json.dumps(valid_ids)}
-
-"""
-    if example:
-        prompt += f"""
-EXAMPLE OUTPUT FORMAT:
-```json
-{example}
-```
-"""
-
-    prompt += """
-Return {"relationships": []} with source, target, relationship_type for each.
-"""
-    return prompt
-
-
-def _normalize_identifier(identifier: str) -> str:
-    """Normalize identifier for fuzzy matching (lowercase, replace separators)."""
-    return identifier.lower().replace("-", "_").replace(" ", "_")
-
-
-def _normalize_relationship_type(rel_type: str) -> str:
-    """Normalize relationship type to PascalCase."""
-    if rel_type in _VALID_RELATIONSHIP_TYPES:
-        return rel_type
-    rel_lower = rel_type.lower()
-    for valid_type in _VALID_RELATIONSHIP_TYPES:
-        if valid_type.lower() == rel_lower:
-            return valid_type
-    return rel_type
 
 
 # =============================================================================
@@ -226,33 +172,56 @@ ENRICHMENT_ALGORITHMS: dict[str, str] = {
 }
 
 
-def _get_graph_edges(graph_manager: GraphManager) -> list[dict[str, str]]:
-    """Get all edges from the graph for enrichment algorithms.
+def _get_graph_edges(
+    graph_manager: GraphManager,
+    repository_name: str | None = None,
+) -> list[dict[str, str]]:
+    """Get edges from the graph for enrichment algorithms.
 
     Returns edges in the format expected by enrich module:
     [{"source": "node_id_1", "target": "node_id_2"}, ...]
 
+    Args:
+        graph_manager: Connected GraphManager
+        repository_name: Optional repo name to filter edges.
+            If provided, only returns edges where both nodes belong to this repo.
+            This enables per-repository enrichment isolation in multi-repo setups.
+
     Note: Labels in Neo4j are namespaced (e.g., "Graph:Directory", "Graph:File").
     We match any node with a label starting with "Graph:" to get all graph nodes.
     """
-    query = """
-        MATCH (a)-[r]->(b)
-        WHERE any(label IN labels(a) WHERE label STARTS WITH 'Graph:')
-          AND any(label IN labels(b) WHERE label STARTS WITH 'Graph:')
-          AND a.active = true AND b.active = true
-        RETURN a.id as source, b.id as target
-    """
-    result = graph_manager.query(query)
+    if repository_name:
+        # Filter to edges within a single repository
+        query = """
+            MATCH (a)-[r]->(b)
+            WHERE any(label IN labels(a) WHERE label STARTS WITH 'Graph:')
+              AND any(label IN labels(b) WHERE label STARTS WITH 'Graph:')
+              AND a.active = true AND b.active = true
+              AND a.repository_name = $repo_name
+              AND b.repository_name = $repo_name
+            RETURN a.id as source, b.id as target
+        """
+        result = graph_manager.query(query, {"repo_name": repository_name})
+    else:
+        # Default: get all edges
+        query = """
+            MATCH (a)-[r]->(b)
+            WHERE any(label IN labels(a) WHERE label STARTS WITH 'Graph:')
+              AND any(label IN labels(b) WHERE label STARTS WITH 'Graph:')
+              AND a.active = true AND b.active = true
+            RETURN a.id as source, b.id as target
+        """
+        result = graph_manager.query(query)
     return [{"source": row["source"], "target": row["target"]} for row in result]
 
 
-def _run_prep_step(
+def _run_enrich_step(
     cfg: config.DerivationConfig,
     graph_manager: GraphManager,
 ) -> PipelineResult:
-    """Run a single prep step (graph enrichment algorithm).
+    """Run a single enrich step (graph enrichment algorithm).
 
-    Prep steps compute graph metrics (PageRank, Louvain, k-core, etc.)
+    Enrich steps compute graph metrics (PageRank, Louvain, k-core, etc.)
     and store them as properties on Neo4j nodes.
     """
     step_name = cfg.step_name
@@ -260,7 +229,7 @@ def _run_prep_step(
 
     # Check if this is a known enrichment algorithm
     if step_name not in ENRICHMENT_ALGORITHMS:
-        return {"success": False, "errors": [f"Unknown prep step: {step_name}"]}
+        return {"success": False, "errors": [f"Unknown enrich step: {step_name}"]}
 
     algorithm = ENRICHMENT_ALGORITHMS[step_name]
 
@@ -287,25 +256,33 @@ def _run_prep_step(
             return {"success": True, "stats": {"nodes_updated": 0}}
 
         # Run the enrichment algorithm
-        enrichments = enrich.enrich_graph(
+        result = enrich.enrich_graph(
             edges=edges,
             algorithms=[algorithm],
             params=params,
+            include_percentiles=True,
         )
 
-        if not enrichments:
+        if not result.enrichments:
             return {"success": True, "stats": {"nodes_updated": 0}}
 
         # Write enrichments to Neo4j
-        nodes_updated = graph_manager.batch_update_properties(enrichments)
+        nodes_updated = graph_manager.batch_update_properties(result.enrichments)
 
-        logger.info(f"Enrichment {step_name} complete: {nodes_updated} nodes updated")
+        logger.info(
+            "Enrichment %s complete: %d nodes updated (graph: %d nodes, %d edges)",
+            step_name,
+            nodes_updated,
+            result.metadata.total_nodes,
+            result.metadata.total_edges,
+        )
 
         return {
             "success": True,
             "stats": {
                 "nodes_updated": nodes_updated,
                 "algorithm": algorithm,
+                "graph_metadata": result.metadata.to_dict(),
             },
         }
 
@@ -328,9 +305,14 @@ def run_derivation(
     verbose: bool = False,
     phases: list[str] | None = None,
     run_logger: RunLoggerProtocol | None = None,
+    progress: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     """
     Run the derivation pipeline.
+
+    Each element module now handles both element generation AND relationship
+    derivation in a unified flow. Relationships are created to/from existing
+    elements as each element type is processed in sequence.
 
     Args:
         engine: DuckDB connection for config
@@ -339,14 +321,15 @@ def run_derivation(
         llm_query_fn: Function to call LLM (prompt, schema) -> response
         enabled_only: Only run enabled derivation steps
         verbose: Print progress to stdout
-        phases: List of phases to run ("prep", "generate", "relationship").
+        phases: List of phases to run ("enrich", "generate", "refine").
         run_logger: Optional RunLogger for structured logging
+        progress: Optional progress reporter for visual feedback
 
     Returns:
         Dict with success, stats, errors
     """
     if phases is None:
-        phases = ["prep", "generate", "relationship"]
+        phases = ["enrich", "generate"]
 
     stats = {
         "elements_created": 0,
@@ -357,47 +340,71 @@ def run_derivation(
     errors: list[str] = []
     all_created_elements: list[dict] = []
 
-    # Load per-element relationship configs from dedicated table
-    rel_configs = config.get_relationship_configs(engine, enabled_only=enabled_only)
-    derive_relationships = bool(rel_configs) and "relationship" in phases
+    # Accumulate graph metadata from enrich phase for use in refine steps
+    graph_metadata: dict[str, Any] = {}
 
     # Start phase logging
     if run_logger:
         run_logger.phase_start("derivation", "Starting derivation pipeline")
 
-    # Run prep phase
-    if "prep" in phases:
-        prep_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="prep")
-        if prep_configs and verbose:
-            print(f"Running {len(prep_configs)} prep steps...")
+    # Calculate total steps for progress
+    enrich_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="enrich")
+    gen_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="generate")
+    total_steps = 0
+    if "enrich" in phases:
+        total_steps += len(enrich_configs)
+    if "generate" in phases:
+        total_steps += len(gen_configs)
 
-        for cfg in prep_configs:
+    # Start progress tracking
+    if progress:
+        progress.start_phase("derivation", total_steps)
+
+    # Run enrich phase
+    if "enrich" in phases:
+        if enrich_configs and verbose:
+            print(f"Running {len(enrich_configs)} enrich steps...")
+
+        for cfg in enrich_configs:
             if verbose:
-                print(f"  Prep: {cfg.step_name}")
+                print(f"  Enrich: {cfg.step_name}")
+
+            # Start progress tracking for this step
+            if progress:
+                progress.start_step(cfg.step_name)
 
             step_ctx = None
             if run_logger:
-                step_ctx = run_logger.step_start(cfg.step_name, f"Running prep step: {cfg.step_name}")
+                step_ctx = run_logger.step_start(cfg.step_name, f"Running enrich step: {cfg.step_name}")
 
-            result = _run_prep_step(cfg, graph_manager)
+            result = _run_enrich_step(cfg, graph_manager)
             stats["steps_completed"] += 1
+
+            # Capture graph metadata for refine steps
+            if result.get("stats", {}).get("graph_metadata"):
+                graph_metadata.update(result["stats"]["graph_metadata"])
 
             if result.get("errors"):
                 errors.extend(result["errors"])
                 if step_ctx:
                     step_ctx.error("; ".join(result["errors"]))
+                if progress:
+                    progress.log("; ".join(result["errors"]), level="error")
             elif step_ctx:
                 step_ctx.complete()
 
+            # Complete progress tracking for this step
+            if progress:
+                progress.complete_step()
+
             if verbose and result.get("stats"):
-                prep_stats = result["stats"]
-                if "top_nodes" in prep_stats:
-                    print(f"    Top nodes: {[n['id'].split('_')[-1] for n in prep_stats['top_nodes'][:3]]}")
+                enrich_stats = result["stats"]
+                if "top_nodes" in enrich_stats:
+                    top_names = [n["id"].split("_")[-1] for n in enrich_stats["top_nodes"][:3]]
+                    print(f"    Top nodes: {top_names}")
 
     # Run generate phase
     if "generate" in phases:
-        gen_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="generate")
-
         if verbose:
             if gen_configs:
                 print(f"Running {len(gen_configs)} generate steps...")
@@ -407,6 +414,10 @@ def run_derivation(
         for cfg in gen_configs:
             if verbose:
                 print(f"  Generate: {cfg.step_name}")
+
+            # Start progress tracking for this step
+            if progress:
+                progress.start_step(cfg.step_name)
 
             step_ctx = None
             if run_logger:
@@ -463,10 +474,13 @@ def run_derivation(
                     example=cfg.example,
                     max_candidates=cfg.max_candidates,
                     batch_size=cfg.batch_size,
+                    existing_elements=all_created_elements,  # Pass accumulated elements
                 )
 
                 elements_created = step_result.get("elements_created", 0)
+                relationships_created = step_result.get("relationships_created", 0)
                 stats["elements_created"] += elements_created
+                stats["relationships_created"] += relationships_created
                 stats["steps_completed"] += 1
 
                 step_created_elements = step_result.get("created_elements", [])
@@ -479,80 +493,107 @@ def run_derivation(
                     step_ctx.items_created = elements_created
                     step_ctx.complete()
 
+                # Complete progress tracking for this step
+                if progress:
+                    msg = f"{elements_created} elements"
+                    if relationships_created > 0:
+                        msg += f", {relationships_created} relationships"
+                    progress.complete_step(msg)
+
+                if verbose and relationships_created > 0:
+                    print(f"    + {relationships_created} relationships")
+
                 if step_result.get("errors"):
                     errors.extend(step_result["errors"])
 
             except Exception as e:
-                errors.append(f"Error in {cfg.step_name}: {str(e)}")
+                error_msg = f"Error in {cfg.step_name}: {str(e)}"
+                errors.append(error_msg)
                 stats["steps_skipped"] += 1
                 if step_ctx:
                     step_ctx.error(str(e))
+                if progress:
+                    progress.log(error_msg, level="error")
+                    progress.complete_step()
 
-    # ==========================================================================
-    # RELATIONSHIP DERIVATION PHASE (after all elements exist)
-    # ==========================================================================
-    if derive_relationships and all_created_elements:
-        if verbose:
-            print(f"\n  Deriving relationships ({len(all_created_elements)} elements available)...")
+    # Run refine phase
+    if "refine" in phases:
+        refine_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="refine")
 
-        # Group elements by type for efficient lookup
-        elements_by_type: dict[str, list[dict]] = {}
-        for elem in all_created_elements:
-            elem_type = elem.get("element_type", "")
-            elements_by_type.setdefault(elem_type, []).append(elem)
+        if refine_configs and verbose:
+            print(f"Running {len(refine_configs)} refine steps...")
 
-        # Process each relationship config in sequence
-        for rel_cfg in sorted(rel_configs, key=lambda c: c.sequence):
-            source_type = rel_cfg.element_type
-            source_elements = elements_by_type.get(source_type, [])
-
-            if not source_elements:
-                continue
-
-            # Filter target elements by configured types
-            if rel_cfg.target_element_types:
-                target_elements = [e for e in all_created_elements if e.get("element_type") in rel_cfg.target_element_types]
-            else:
-                target_elements = all_created_elements
-
-            if not target_elements:
-                continue
-
+        for cfg in refine_configs:
             if verbose:
-                print(f"    {source_type} ({len(source_elements)}) -> {len(target_elements)} targets...")
+                print(f"  Refine: {cfg.step_name}")
 
-            # Create step context for relationship derivation
-            rel_step_ctx = None
+            # Start progress tracking for this step
+            if progress:
+                progress.start_step(cfg.step_name)
+
+            step_ctx = None
             if run_logger:
-                rel_step_ctx = run_logger.step_start(f"relationships_{source_type}", f"Deriving relationships FROM {source_type}")
+                step_ctx = run_logger.step_start(cfg.step_name, f"Running refine step: {cfg.step_name}")
 
-            rel_result = _derive_element_relationships(
-                source_element_type=source_type,
-                source_elements=source_elements,
-                target_elements=target_elements,
-                archimate_manager=archimate_manager,
-                llm_query_fn=llm_query_fn,
-                instruction=rel_cfg.instruction,
-                example=rel_cfg.example,
-                valid_relationship_types=rel_cfg.valid_relationship_types,
-                temperature=rel_cfg.temperature,
-                max_tokens=rel_cfg.max_tokens,
-            )
+            try:
+                # Parse params from config
+                refine_params: dict[str, Any] = {}
+                if cfg.params:
+                    try:
+                        import json
 
-            rels_created = rel_result.get("relationships_created", 0)
-            stats["relationships_created"] += rels_created
+                        refine_params = json.loads(cfg.params)
+                    except json.JSONDecodeError:
+                        pass
 
-            if rel_step_ctx:
-                rel_step_ctx.items_created = rels_created
-                for rel_id in rel_result.get("relationship_ids", []):
-                    rel_step_ctx.add_relationship(rel_id)
-                if rel_result.get("errors"):
-                    rel_step_ctx.error("; ".join(rel_result["errors"][:2]))
-                else:
-                    rel_step_ctx.complete()
+                # Inject graph metadata for adaptive thresholds
+                if graph_metadata:
+                    refine_params["graph_metadata"] = graph_metadata
 
-            if rel_result.get("errors"):
-                errors.extend(rel_result["errors"])
+                # Run the refine step
+                refine_result = run_refine_step(
+                    step_name=cfg.step_name,
+                    archimate_manager=archimate_manager,
+                    graph_manager=graph_manager,
+                    llm_query_fn=llm_query_fn if cfg.llm else None,
+                    params=refine_params,
+                )
+
+                stats["steps_completed"] += 1
+
+                # Track refine-specific stats
+                if "elements_disabled" not in stats:
+                    stats["elements_disabled"] = 0
+                if "relationships_deleted" not in stats:
+                    stats["relationships_deleted"] = 0
+                if "refine_issues_found" not in stats:
+                    stats["refine_issues_found"] = 0
+
+                stats["elements_disabled"] += refine_result.elements_disabled
+                stats["relationships_deleted"] += refine_result.relationships_deleted
+                stats["refine_issues_found"] += refine_result.issues_found
+
+                if step_ctx:
+                    step_ctx.complete()
+
+                if progress:
+                    msg = f"Refine: {refine_result.issues_found} issues"
+                    if refine_result.elements_disabled > 0:
+                        msg += f", {refine_result.elements_disabled} disabled"
+                    progress.complete_step(msg)
+
+                if refine_result.errors:
+                    errors.extend(refine_result.errors)
+
+            except Exception as e:
+                error_msg = f"Error in refine step {cfg.step_name}: {str(e)}"
+                errors.append(error_msg)
+                stats["steps_skipped"] += 1
+                if step_ctx:
+                    step_ctx.error(str(e))
+                if progress:
+                    progress.log(error_msg, level="error")
+                    progress.complete_step()
 
     # Complete phase logging
     if run_logger:
@@ -560,6 +601,13 @@ def run_derivation(
             run_logger.phase_error("derivation", "; ".join(errors[:3]), "Derivation completed with errors")
         else:
             run_logger.phase_complete("derivation", "Derivation completed successfully", stats=stats)
+
+    # Complete progress tracking
+    if progress:
+        msg = f"Derivation complete: {stats['elements_created']} elements, {stats['relationships_created']} relationships"
+        if stats.get("elements_disabled", 0) > 0:
+            msg += f", {stats['elements_disabled']} disabled"
+        progress.complete_phase(msg)
 
     return {
         "success": len(errors) == 0,
@@ -569,228 +617,301 @@ def run_derivation(
     }
 
 
-def _derive_relationships(
-    elements: list[dict],
-    archimate_manager: ArchimateManager,
-    llm_query_fn: Callable | None,
-    instruction: str | None = None,
-    example: str | None = None,
-) -> dict[str, Any]:
-    """Derive relationships between elements using LLM.
+# NOTE: Relationship derivation is now handled within each element module.
+# The old _derive_relationships and _derive_element_relationships functions
+# have been removed. Each element module's generate() function now handles
+# both element creation AND relationship derivation using the unified flow
+# in base.py (derive_batch_relationships).
 
-    Args:
-        elements: List of ArchiMate elements to derive relationships between
-        archimate_manager: Manager for persisting relationships
-        llm_query_fn: Function to call LLM
-        instruction: Optional custom instruction (from database config)
-        example: Optional custom example (from database config)
+
+def run_derivation_iter(
+    engine: Any,
+    graph_manager: GraphManager,
+    archimate_manager: ArchimateManager,
+    llm_query_fn: Callable[..., Any] | None = None,
+    enabled_only: bool = True,
+    verbose: bool = False,
+    phases: list[str] | None = None,
+) -> Iterator[ProgressUpdate]:
     """
-    relationships_created = 0
-    relationship_ids: list[str] = []
-    errors = []
+    Run derivation pipeline as a generator, yielding progress updates.
 
-    # Use custom prompt if instruction provided, otherwise default
-    if instruction:
-        prompt = _build_custom_relationship_prompt(elements, instruction, example)
-    else:
-        prompt = build_relationship_prompt(elements)
-
-    if llm_query_fn is None:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": ["LLM not configured"]}
-
-    try:
-        response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA)
-        response_content = response.content if hasattr(response, "content") else str(response)
-    except Exception as e:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": [f"LLM error: {e}"]}
-
-    parse_result = parse_relationship_response(response_content)
-
-    if not parse_result["success"]:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": parse_result.get("errors", [])}
-
-    element_ids = {e["identifier"] for e in elements}
-    # Build normalized lookup for fuzzy matching
-    normalized_lookup = {_normalize_identifier(eid): eid for eid in element_ids}
-
-    def resolve_identifier(ref: str) -> str | None:
-        """Resolve identifier with fuzzy matching fallback."""
-        if ref in element_ids:
-            return ref
-        # Try normalized matching
-        normalized = _normalize_identifier(ref)
-        return normalized_lookup.get(normalized)
-
-    for rel_data in parse_result["data"]:
-        source_ref = rel_data.get("source")
-        target_ref = rel_data.get("target")
-        rel_type = _normalize_relationship_type(rel_data.get("relationship_type", "Association"))
-
-        source = resolve_identifier(source_ref)
-        target = resolve_identifier(target_ref)
-
-        if source is None:
-            errors.append(f"Relationship source not found: {source_ref}")
-            continue
-        if target is None:
-            errors.append(f"Relationship target not found: {target_ref}")
-            continue
-
-        relationship = Relationship(
-            source=source,
-            target=target,
-            relationship_type=rel_type,
-            name=rel_data.get("name"),
-            properties={"confidence": rel_data.get("confidence", 0.5)},
-        )
-
-        try:
-            archimate_manager.add_relationship(relationship)
-            relationships_created += 1
-            # Create relationship ID for OCEL logging
-            rel_id = create_edge_id(source, rel_type, target)
-            relationship_ids.append(rel_id)
-        except Exception as e:
-            errors.append(f"Failed to persist relationship: {e}")
-
-    return {
-        "relationships_created": relationships_created,
-        "relationship_ids": relationship_ids,
-        "errors": errors,
-    }
-
-
-def _derive_element_relationships(
-    source_element_type: str,
-    source_elements: list[dict],
-    target_elements: list[dict],
-    archimate_manager: ArchimateManager,
-    llm_query_fn: Callable | None,
-    instruction: str | None = None,
-    example: str | None = None,
-    valid_relationship_types: list[str] | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> dict[str, Any]:
-    """Derive relationships FROM a specific element type.
+    This is the generator version of run_derivation() designed for use with
+    Marimo's mo.status.progress_bar iterator pattern.
 
     Args:
-        source_element_type: ArchiMate element type of the source elements
-        source_elements: Elements of the current type to derive relationships FROM
-        target_elements: Elements available as potential targets (filtered by config)
-        archimate_manager: ArchimateManager for persistence
+        engine: DuckDB connection for config
+        graph_manager: Connected GraphManager for querying source nodes
+        archimate_manager: Connected ArchimateManager for persistence
         llm_query_fn: Function to call LLM (prompt, schema) -> response
-        instruction: Custom instruction from database config
-        example: Custom example from database config
-        valid_relationship_types: Allowed relationship types from config
-        temperature: LLM temperature override
-        max_tokens: LLM max_tokens override
+        enabled_only: Only run enabled derivation steps
+        verbose: Print progress to stdout
+        phases: List of phases to run ("enrich", "generate", "refine")
 
-    Returns:
-        Dict with relationships_created, relationship_ids, and errors
+    Yields:
+        ProgressUpdate objects for each step in the pipeline
     """
-    relationships_created = 0
-    relationship_ids: list[str] = []
-    errors: list[str] = []
+    if phases is None:
+        phases = ["enrich", "generate"]
 
-    if llm_query_fn is None:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": ["LLM not configured"]}
-
-    if not source_elements:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": []}
-
-    if not target_elements:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": []}
-
-    if not instruction:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": ["No instruction configured"]}
-
-    # Build element-specific prompt using the new per-element function
-    prompt = build_per_element_relationship_prompt(
-        source_elements=source_elements,
-        target_elements=target_elements,
-        source_element_type=source_element_type,
-        instruction=instruction,
-        example=example,
-        valid_relationship_types=valid_relationship_types,
-    )
-
-    # Call LLM with per-step overrides if provided
-    try:
-        if temperature is not None or max_tokens is not None:
-            response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA, temperature=temperature, max_tokens=max_tokens)
-        else:
-            response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA)
-        response_content = response.content if hasattr(response, "content") else str(response)
-    except Exception as e:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": [f"LLM error: {e}"]}
-
-    parse_result = parse_relationship_response(response_content)
-
-    if not parse_result["success"]:
-        return {"relationships_created": 0, "relationship_ids": [], "errors": parse_result.get("errors", [])}
-
-    # Build lookup maps for identifier resolution
-    source_ids = {e["identifier"] for e in source_elements}
-    target_ids = {e["identifier"] for e in target_elements}
-    valid_types_set = set(valid_relationship_types) if valid_relationship_types else None
-
-    # Build normalized lookup for fuzzy matching
-    all_ids = source_ids | target_ids
-    normalized_lookup = {_normalize_identifier(eid): eid for eid in all_ids}
-
-    def resolve_identifier(ref: str, valid_set: set[str]) -> str | None:
-        """Resolve identifier with fuzzy matching fallback."""
-        if ref in valid_set:
-            return ref
-        # Try normalized matching
-        normalized = _normalize_identifier(ref)
-        resolved = normalized_lookup.get(normalized)
-        if resolved and resolved in valid_set:
-            return resolved
-        return None
-
-    for rel_data in parse_result["data"]:
-        source_ref = rel_data.get("source")
-        target_ref = rel_data.get("target")
-        rel_type = _normalize_relationship_type(rel_data.get("relationship_type", "Association"))
-
-        # Resolve identifiers
-        source = resolve_identifier(source_ref, source_ids)
-        target = resolve_identifier(target_ref, target_ids)
-
-        if source is None:
-            errors.append(f"Relationship source not in {source_element_type} elements: {source_ref}")
-            continue
-        if target is None:
-            errors.append(f"Relationship target not found: {target_ref}")
-            continue
-
-        # Validate relationship type against config
-        if valid_types_set and rel_type not in valid_types_set:
-            errors.append(f"Invalid relationship type '{rel_type}' for {source_element_type}")
-            continue
-
-        # Create and persist relationship
-        relationship = Relationship(
-            source=source,
-            target=target,
-            relationship_type=rel_type,
-            name=rel_data.get("name"),
-            properties={"confidence": rel_data.get("confidence", 0.5)},
-        )
-
-        try:
-            archimate_manager.add_relationship(relationship)
-            relationships_created += 1
-            # Create relationship ID for OCEL logging
-            rel_id = create_edge_id(source, rel_type, target)
-            relationship_ids.append(rel_id)
-        except Exception as e:
-            errors.append(f"Failed to persist relationship: {e}")
-
-    return {
-        "relationships_created": relationships_created,
-        "relationship_ids": relationship_ids,
-        "errors": errors,
+    stats = {
+        "elements_created": 0,
+        "relationships_created": 0,
+        "steps_completed": 0,
+        "steps_skipped": 0,
     }
+    errors: list[str] = []
+    all_created_elements: list[dict] = []
+
+    # Calculate total steps for progress
+    enrich_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="enrich")
+    gen_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="generate")
+    refine_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="refine")
+    total_steps = 0
+    if "enrich" in phases:
+        total_steps += len(enrich_configs)
+    if "generate" in phases:
+        total_steps += len(gen_configs)
+    if "refine" in phases:
+        total_steps += len(refine_configs)
+
+    if total_steps == 0:
+        yield ProgressUpdate(
+            phase="derivation",
+            status="error",
+            message="No derivation configs enabled",
+            stats=stats,
+        )
+        return
+
+    current_step = 0
+
+    # Run enrich phase
+    if "enrich" in phases:
+        for cfg in enrich_configs:
+            current_step += 1
+
+            if verbose:
+                print(f"  Enrich: {cfg.step_name}")
+
+            result = _run_enrich_step(cfg, graph_manager)
+            stats["steps_completed"] += 1
+
+            if result.get("errors"):
+                errors.extend(result["errors"])
+
+            # Yield step complete
+            yield ProgressUpdate(
+                phase="derivation",
+                step=cfg.step_name,
+                status="complete",
+                current=current_step,
+                total=total_steps,
+                message="enrich complete",
+                stats={"enrich": True},
+            )
+
+    # Run generate phase
+    if "generate" in phases:
+        for cfg in gen_configs:
+            current_step += 1
+
+            if verbose:
+                print(f"  Generate: {cfg.step_name}")
+
+            # Wrap llm_query_fn with per-step temperature/max_tokens overrides
+            def step_llm_query_fn(prompt: str, schema: dict) -> Any:
+                if llm_query_fn is None:
+                    raise ValueError("llm_query_fn is required for generate phase")
+                return llm_query_fn(
+                    prompt,
+                    schema,
+                    temperature=cfg.temperature,
+                    max_tokens=cfg.max_tokens,
+                )
+
+            # Validate required config parameters
+            missing_params = []
+            if not cfg.input_graph_query:
+                missing_params.append("input_graph_query")
+            if not cfg.instruction:
+                missing_params.append("instruction")
+            if not cfg.example:
+                missing_params.append("example")
+            if cfg.max_candidates is None:
+                missing_params.append("max_candidates")
+            if cfg.batch_size is None:
+                missing_params.append("batch_size")
+
+            if missing_params:
+                error_msg = f"Missing required config for {cfg.step_name}: {', '.join(missing_params)}"
+                errors.append(error_msg)
+                stats["steps_skipped"] += 1
+
+                yield ProgressUpdate(
+                    phase="derivation",
+                    step=cfg.step_name,
+                    status="error",
+                    current=current_step,
+                    total=total_steps,
+                    message=error_msg,
+                )
+                continue
+
+            # Type assertions for validated config
+            assert cfg.input_graph_query is not None
+            assert cfg.instruction is not None
+            assert cfg.example is not None
+            assert cfg.max_candidates is not None
+            assert cfg.batch_size is not None
+
+            try:
+                step_result = generate_element(
+                    graph_manager=graph_manager,
+                    archimate_manager=archimate_manager,
+                    llm_query_fn=step_llm_query_fn,
+                    element_type=cfg.element_type,
+                    engine=engine,
+                    query=cfg.input_graph_query,
+                    instruction=cfg.instruction,
+                    example=cfg.example,
+                    max_candidates=cfg.max_candidates,
+                    batch_size=cfg.batch_size,
+                    existing_elements=all_created_elements,
+                )
+
+                elements_created = step_result.get("elements_created", 0)
+                relationships_created = step_result.get("relationships_created", 0)
+                stats["elements_created"] += elements_created
+                stats["relationships_created"] += relationships_created
+                stats["steps_completed"] += 1
+
+                step_created_elements = step_result.get("created_elements", [])
+                if step_created_elements:
+                    all_created_elements.extend(step_created_elements)
+
+                msg = f"{elements_created} elements"
+                if relationships_created > 0:
+                    msg += f", {relationships_created} relationships"
+
+                yield ProgressUpdate(
+                    phase="derivation",
+                    step=cfg.step_name,
+                    status="complete",
+                    current=current_step,
+                    total=total_steps,
+                    message=msg,
+                    stats={"elements_created": elements_created, "relationships_created": relationships_created},
+                )
+
+                if step_result.get("errors"):
+                    errors.extend(step_result["errors"])
+
+            except Exception as e:
+                error_msg = f"Error in {cfg.step_name}: {str(e)}"
+                errors.append(error_msg)
+                stats["steps_skipped"] += 1
+
+                yield ProgressUpdate(
+                    phase="derivation",
+                    step=cfg.step_name,
+                    status="error",
+                    current=current_step,
+                    total=total_steps,
+                    message=error_msg,
+                )
+
+    # Run refine phase
+    if "refine" in phases:
+        for cfg in refine_configs:
+            current_step += 1
+
+            if verbose:
+                print(f"  Refine: {cfg.step_name}")
+
+            try:
+                # Parse params from config
+                refine_params = None
+                if cfg.params:
+                    try:
+                        import json
+
+                        refine_params = json.loads(cfg.params)
+                    except json.JSONDecodeError:
+                        pass
+
+                # Run the refine step
+                refine_result = run_refine_step(
+                    step_name=cfg.step_name,
+                    archimate_manager=archimate_manager,
+                    graph_manager=graph_manager,
+                    llm_query_fn=llm_query_fn if cfg.llm else None,
+                    params=refine_params,
+                )
+
+                stats["steps_completed"] += 1
+
+                # Track refine-specific stats
+                if "elements_disabled" not in stats:
+                    stats["elements_disabled"] = 0
+                if "relationships_deleted" not in stats:
+                    stats["relationships_deleted"] = 0
+                if "refine_issues_found" not in stats:
+                    stats["refine_issues_found"] = 0
+
+                stats["elements_disabled"] += refine_result.elements_disabled
+                stats["relationships_deleted"] += refine_result.relationships_deleted
+                stats["refine_issues_found"] += refine_result.issues_found
+
+                msg = f"Refine: {refine_result.issues_found} issues"
+                if refine_result.elements_disabled > 0:
+                    msg += f", {refine_result.elements_disabled} disabled"
+
+                yield ProgressUpdate(
+                    phase="derivation",
+                    step=cfg.step_name,
+                    status="complete",
+                    current=current_step,
+                    total=total_steps,
+                    message=msg,
+                    stats={"refine": True, "issues_found": refine_result.issues_found},
+                )
+
+                if refine_result.errors:
+                    errors.extend(refine_result.errors)
+
+            except Exception as e:
+                error_msg = f"Error in refine step {cfg.step_name}: {str(e)}"
+                errors.append(error_msg)
+                stats["steps_skipped"] += 1
+
+                yield ProgressUpdate(
+                    phase="derivation",
+                    step=cfg.step_name,
+                    status="error",
+                    current=current_step,
+                    total=total_steps,
+                    message=error_msg,
+                )
+
+    # Yield final completion
+    final_message = f"{stats['elements_created']} elements, {stats['relationships_created']} relationships"
+    if stats.get("elements_disabled", 0) > 0:
+        final_message += f", {stats['elements_disabled']} disabled"
+    if errors:
+        final_message += f" ({len(errors)} errors)"
+
+    yield ProgressUpdate(
+        phase="derivation",
+        step="",
+        status="complete",
+        current=total_steps,
+        total=total_steps,
+        message=final_message,
+        stats={
+            "success": len(errors) == 0,
+            "stats": stats,
+            "errors": errors,
+            "created_elements": all_created_elements,
+        },
+    )
