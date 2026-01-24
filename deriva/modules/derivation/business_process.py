@@ -135,8 +135,8 @@ class BusinessProcessDerivation(HybridDerivation):
         BusinessConcepts are already semantically identified as processes,
         so we just filter by confidence and limit count.
         """
-        # Filter by confidence (property or direct attribute)
-        MIN_CONFIDENCE = 0.7
+        # Filter by confidence - ROC analysis found 0.85 optimal
+        MIN_CONFIDENCE = 0.85
 
         filtered = []
         for c in candidates:

@@ -170,7 +170,7 @@ class BusinessActorDerivation(HybridDerivation):
         BusinessConcepts are already semantically identified as actors,
         so we just filter by confidence and limit count.
         """
-        MIN_CONFIDENCE = 0.7
+        MIN_CONFIDENCE = 0.85  # Aligned with ROC analysis findings
 
         filtered = []
         for c in candidates:
