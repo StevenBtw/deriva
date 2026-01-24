@@ -357,6 +357,43 @@ When deriving ArchiMate elements, use these definitions and code signals:
 
 **Invalid types to avoid:** `Association`, `Dependency`, `Uses` - map these to `Serving` or `Flow` instead.
 
+### ArchiMate 3.2 Aspect Classification
+
+ArchiMate 3.2 defines three core aspects that classify all elements. Understanding these aspects improves derivation quality by ensuring correct language and relationships.
+
+| Aspect | Definition | Elements | Language |
+|--------|------------|----------|----------|
+| **Active Structure** | WHO performs (subjects) | BusinessActor, ApplicationComponent, Node, Device, SystemSoftware | Structural nouns: "contains", "comprises", "encapsulates" |
+| **Behavior** | WHAT is performed (verbs) | BusinessProcess, BusinessFunction, BusinessEvent, ApplicationService, ApplicationInterface, TechnologyService | Action verbs: "processes", "validates", "transforms" |
+| **Passive Structure** | WHAT is acted upon (objects) | BusinessObject, DataObject | Passive nouns: "represents", "contains", "is accessed by" |
+
+> **Sources:** [ArchiMate 3.2 Specification](https://pubs.opengroup.org/architecture/archimate32-doc.singlepage/), [ArchiMetric Guide](https://www.archimetric.com/understanding-archimate-active-structure-elements-behavior-elements-and-passive-structure-elements/), [ArchiMate Cheat Sheet](https://gbruneau.github.io/ArchiMate/)
+
+**Derivation Sequence Implication:** Derive elements in aspect order (Active → Behavior → Passive) across all layers. This ensures:
+- Active elements exist before Behavior elements reference "who performs"
+- Behavior elements exist before Passive elements reference "what accesses"
+
+**Recommended sequence:**
+```text
+Phase 1 (Active):   ApplicationComponent, Node, Device, SystemSoftware, BusinessActor
+Phase 2 (Behavior): ApplicationService, ApplicationInterface, TechnologyService, BusinessFunction, BusinessProcess, BusinessEvent
+Phase 3 (Passive):  DataObject, BusinessObject
+```
+
+**Prompt Engineering Implication:** Add `<aspect_classification>` section to instructions to prevent construct mixing:
+
+```xml
+<aspect_classification>
+ASPECT TYPE: Passive Structure
+
+A BusinessObject is a PASSIVE element - it is acted UPON, it does NOT act.
+
+LANGUAGE CONSTRAINTS:
+- NEVER use active verbs: "manages", "handles", "processes"
+- ALWAYS use passive language: "represents", "contains", "is accessed by"
+</aspect_classification>
+```
+
 ### Temperature and Consistency
 
 | Temperature | Use Case | Trade-off |
