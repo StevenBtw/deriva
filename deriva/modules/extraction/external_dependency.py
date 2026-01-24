@@ -854,6 +854,8 @@ def build_external_dependency_node(
             "originSource": origin_source,
             "confidence": dep_data.get("confidence", 0.8),
             "extracted_at": current_timestamp(),
+            "declared": True,  # From manifest/config file
+            "used": False,  # Will be updated by Imports step if imported
         },
     }
 
@@ -892,6 +894,8 @@ def _build_dependency_node_and_edge(
             "confidence": 1.0,
             "extracted_at": current_timestamp(),
             "extraction_method": extraction_method,
+            "declared": True,  # From manifest file
+            "used": False,  # Will be updated by Imports step if imported
         },
     }
 
@@ -967,12 +971,10 @@ def extract_external_dependencies(
         return _extract_from_package_json(file_path, file_content, repo_name)
     elif method == "treesitter":
         return _extract_from_python_ast(file_path, file_content, repo_name)
-    elif method == "llm" and llm_query_fn is not None:
-        return _extract_from_llm(
-            file_path, file_content, repo_name, llm_query_fn, config or {}, model
-        )
     else:
-        return _build_result([], [], ["No extraction method available"], "none")
+        # No LLM fallback - only use deterministic and tree-sitter methods
+        # This keeps extraction fast and consistent
+        return _build_result([], [], [], "skipped")
 
 
 def extract_external_dependencies_batch(

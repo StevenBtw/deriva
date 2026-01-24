@@ -37,10 +37,32 @@ import os
 from pathlib import Path
 from typing import Any, TypeVar, overload
 
+import asyncio
+import concurrent.futures
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
+
+# Thread pool for running LLM calls outside of existing event loops
+_llm_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Get or create the thread pool executor for LLM calls."""
+    global _llm_executor
+    if _llm_executor is None:
+        _llm_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm_")
+    return _llm_executor
+
+
+def _is_event_loop_running() -> bool:
+    """Check if there's currently a running event loop."""
+    try:
+        loop = asyncio.get_running_loop()
+        return loop is not None
+    except RuntimeError:
+        return False
 
 from deriva.common.exceptions import CircuitOpenError
 
@@ -594,10 +616,24 @@ class LLMManager:
             settings: ModelSettings = {"temperature": effective_temperature}
             if effective_max_tokens is not None:
                 settings["max_tokens"] = effective_max_tokens
-            result = agent.run_sync(
-                prompt,
-                model_settings=settings,
-            )
+
+            # Handle event loop conflict (e.g., running inside marimo/Jupyter)
+            # pydantic_ai's run_sync() uses run_until_complete() which fails
+            # if there's already a running event loop. In that case, we run
+            # the LLM call in a separate thread.
+            if _is_event_loop_running():
+                # Running inside an async context (marimo/Jupyter) - use thread pool
+                def _run_in_thread() -> Any:
+                    return agent.run_sync(prompt, model_settings=settings)
+
+                future = _get_executor().submit(_run_in_thread)
+                result = future.result()
+            else:
+                # No event loop conflict - use run_sync directly
+                result = agent.run_sync(
+                    prompt,
+                    model_settings=settings,
+                )
 
             self._rate_limiter.record_success()
 

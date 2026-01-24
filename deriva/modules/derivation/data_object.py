@@ -53,7 +53,7 @@ class DataObjectDerivation(HybridDerivation):
     """
 
     ELEMENT_TYPE = "DataObject"
-    MIN_PAGERANK = 0.001  # Filter very low importance files
+    MIN_PAGERANK = None  # Config files have low pagerank but are important for cross-layer connections
     USE_COMMUNITY_ROOTS = False  # Data files don't form communities
 
     OUTBOUND_RULES = [

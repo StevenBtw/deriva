@@ -763,6 +763,7 @@ class PipelineSession:
                 "input_sources": c.input_sources,
                 "instruction": c.instruction,
                 "example": c.example,
+                "extraction_method": c.extraction_method,
             }
             for c in configs
         ]
@@ -845,6 +846,8 @@ class PipelineSession:
                 "input_graph_query": c.input_graph_query,
                 "instruction": c.instruction,
                 "example": c.example,
+                "phase": c.phase,
+                "llm": c.llm,
             }
             for c in configs
         ]

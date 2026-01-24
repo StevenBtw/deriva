@@ -53,8 +53,9 @@ class TechnologyServiceDerivation(HybridDerivation):
     """
 
     ELEMENT_TYPE = "TechnologyService"
-    MIN_PAGERANK = 0.001  # Higher threshold for tech services
+    MIN_PAGERANK = None  # Technology nodes often have low pagerank (external to codebase)
     USE_COMMUNITY_ROOTS = False  # External deps don't have communities
+    PATTERN_MATCH_DEFAULT = True  # Accept candidates by default (query filters by techCategory)
 
     OUTBOUND_RULES = [
         RelationshipRule(

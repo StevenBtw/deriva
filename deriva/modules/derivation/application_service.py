@@ -57,7 +57,7 @@ class ApplicationServiceDerivation(HybridDerivation):
     """
 
     ELEMENT_TYPE = "ApplicationService"
-    MIN_PAGERANK = 0.001  # Filter very low importance methods
+    MIN_PAGERANK = None  # Query already filters by out_degree, no need for pagerank filter
     USE_COMMUNITY_ROOTS = True  # Prioritize service hubs
 
     OUTBOUND_RULES = [
@@ -65,6 +65,16 @@ class ApplicationServiceDerivation(HybridDerivation):
             target_type="BusinessObject",
             rel_type="Flow",
             description="Application services transfer/process business data",
+        ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Serving",
+            description="Application services serve business processes",
+        ),
+        RelationshipRule(
+            target_type="BusinessFunction",
+            rel_type="Serving",
+            description="Application services serve business functions",
         ),
     ]
 

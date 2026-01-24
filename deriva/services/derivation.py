@@ -200,6 +200,11 @@ def generate_element(
             "created_elements": result.created_elements,
             "created_relationships": result.created_relationships,
             "errors": result.errors,
+            # Candidate tracking for threshold optimization
+            "candidates_queried": result.candidates_queried,
+            "candidates_filtered": result.candidates_filtered,
+            "candidates_to_llm": result.candidates_to_llm,
+            "candidate_decisions": [d.to_dict() for d in result.candidate_decisions],
         }
     except Exception as e:
         return {

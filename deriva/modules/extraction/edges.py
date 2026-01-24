@@ -447,6 +447,8 @@ def extract_edges_from_file(
     external_packages: set[str] | None = None,
     edge_types: set[EdgeType] | None = None,
     ts_manager: TreeSitterManager | None = None,
+    global_method_lookup: dict[tuple[str, str | None], list[dict]] | None = None,
+    global_type_lookup: dict[str, list[dict]] | None = None,
 ) -> dict[str, Any]:
     """
     Extract edges from a single source file using a single AST parse.
@@ -463,11 +465,12 @@ def extract_edges_from_file(
     Returns:
         Dictionary with:
             - success: bool
-            - data: Dict with 'edges' list
+            - data: Dict with 'edges' and 'nodes' lists
             - errors: List[str]
             - stats: Dict with extraction statistics per edge type
     """
     edges: list[dict[str, Any]] = []
+    nodes: list[dict[str, Any]] = []
     errors: list[str] = []
     stats: dict[str, Any] = {
         "imports": {"internal": 0, "external": 0, "unresolved": 0},
@@ -504,9 +507,9 @@ def extract_edges_from_file(
         type_lookup = {t.name: t for t in types}
         method_lookup = _build_method_lookup(methods)
 
-        # Extract IMPORTS and USES edges
+        # Extract IMPORTS and USES edges (also creates ExternalDependency nodes)
         if EdgeType.IMPORTS in edge_types or EdgeType.USES in edge_types:
-            import_edges, import_stats = _extract_import_edges(
+            import_edges, import_nodes, import_stats = _extract_import_edges(
                 imports=imports,
                 file_path=file_path,
                 repo_name=repo_name,
@@ -516,6 +519,7 @@ def extract_edges_from_file(
                 filter_constants=filter_constants,
             )
             edges.extend(import_edges)
+            nodes.extend(import_nodes)
             stats["imports"] = import_stats
 
         # Extract CALLS edges
@@ -526,6 +530,7 @@ def extract_edges_from_file(
                 file_path=file_path,
                 repo_name=repo_name,
                 filter_constants=filter_constants,
+                global_method_lookup=global_method_lookup,
             )
             edges.extend(call_edges)
             stats["calls"] = call_stats
@@ -538,6 +543,7 @@ def extract_edges_from_file(
                 file_path=file_path,
                 repo_name=repo_name,
                 filter_constants=filter_constants,
+                global_method_lookup=global_method_lookup,
             )
             edges.extend(decorator_edges)
             stats["decorators"] = decorator_stats
@@ -550,6 +556,7 @@ def extract_edges_from_file(
                 file_path=file_path,
                 repo_name=repo_name,
                 filter_constants=filter_constants,
+                global_type_lookup=global_type_lookup,
             )
             edges.extend(reference_edges)
             stats["references"] = reference_stats
@@ -559,7 +566,7 @@ def extract_edges_from_file(
 
     return {
         "success": len(errors) == 0,
-        "data": {"edges": edges},
+        "data": {"edges": edges, "nodes": nodes},
         "errors": errors,
         "stats": stats,
     }
@@ -572,6 +579,8 @@ def extract_edges_batch(
     edge_types: set[EdgeType] | None = None,
     external_packages: set[str] | None = None,
     progress_callback: Any | None = None,
+    global_method_lookup: dict[tuple[str, str | None], list[dict]] | None = None,
+    global_type_lookup: dict[str, list[dict]] | None = None,
 ) -> dict[str, Any]:
     """
     Extract edges from multiple source files efficiently.
@@ -588,9 +597,11 @@ def extract_edges_batch(
         progress_callback: Optional callback(current, total, file_path)
 
     Returns:
-        Aggregated results with all edges and statistics
+        Aggregated results with all edges, nodes, and statistics
     """
     all_edges: list[dict[str, Any]] = []
+    all_nodes: list[dict[str, Any]] = []
+    seen_node_ids: set[str] = set()  # For deduplication
     all_errors: list[str] = []
     # Define nested stats dicts explicitly for type checker
     imports_stats: dict[str, int] = {"internal": 0, "external": 0, "unresolved": 0}
@@ -653,11 +664,20 @@ def extract_edges_batch(
             external_packages=external_packages,
             edge_types=edge_types,
             ts_manager=ts_manager,
+            global_method_lookup=global_method_lookup,
+            global_type_lookup=global_type_lookup,
         )
 
         all_edges.extend(result["data"]["edges"])
         all_errors.extend(result["errors"])
         files_processed += 1
+
+        # Collect unique nodes (deduplicate across files)
+        for node in result["data"].get("nodes", []):
+            node_id = node.get("node_id")
+            if node_id and node_id not in seen_node_ids:
+                seen_node_ids.add(node_id)
+                all_nodes.append(node)
 
         # Aggregate stats from result
         result_stats = result["stats"]
@@ -672,11 +692,12 @@ def extract_edges_batch(
 
     return {
         "success": True,
-        "data": {"edges": all_edges},
+        "data": {"edges": all_edges, "nodes": all_nodes},
         "errors": all_errors,
         "stats": {
             "files_processed": files_processed,
             "total_edges": len(all_edges),
+            "total_nodes": len(all_nodes),
             "imports": imports_stats,
             "calls": calls_stats,
             "decorators": decorators_stats,
@@ -698,9 +719,17 @@ def _extract_import_edges(
     external_packages: set[str],
     edge_types: set[EdgeType],
     filter_constants: FilterConstants | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Extract IMPORTS and USES edges from import statements."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+    """Extract IMPORTS and USES edges from import statements.
+
+    Also creates/updates ExternalDependency nodes for external imports.
+
+    Returns:
+        Tuple of (edges, nodes, stats)
+    """
     edges: list[dict[str, Any]] = []
+    nodes: list[dict[str, Any]] = []
+    seen_packages: set[str] = set()  # Track packages to avoid duplicate nodes
     stats = {"internal": 0, "external": 0, "unresolved": 0}
 
     # Use language-specific stdlib or fall back to Python stdlib
@@ -758,10 +787,45 @@ def _extract_import_edges(
             edges.append(edge)
             stats["external"] += 1
 
+            # Create ExternalDependency node if not already seen
+            # Node will be merged with existing node if one was created by ExternalDependency step
+            if package_slug not in seen_packages:
+                seen_packages.add(package_slug)
+                node = {
+                    "node_id": target_id,
+                    "label": "ExternalDependency",
+                    "properties": {
+                        "dependencyName": package_name,
+                        "dependencyCategory": "library",
+                        "ecosystem": _infer_ecosystem(file_path),
+                        "originSource": file_path,
+                        "confidence": 1.0,
+                        "extracted_at": current_timestamp(),
+                        "declared": False,  # Not from manifest (will be merged if manifest node exists)
+                        "used": True,  # Actually imported in code
+                    },
+                }
+                nodes.append(node)
+
         else:
             stats["unresolved"] += 1
 
-    return edges, stats
+    return edges, nodes, stats
+
+
+def _infer_ecosystem(file_path: str) -> str:
+    """Infer package ecosystem from file extension."""
+    ext = Path(file_path).suffix.lower()
+    if ext in (".py", ".pyw", ".pyi"):
+        return "pypi"
+    elif ext in (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"):
+        return "npm"
+    elif ext == ".java":
+        return "maven"
+    elif ext == ".cs":
+        return "nuget"
+    else:
+        return "unknown"
 
 
 def _resolve_import(
@@ -877,10 +941,15 @@ def _extract_call_edges(
     file_path: str,
     repo_name: str,
     filter_constants: FilterConstants | None = None,
+    global_method_lookup: dict[tuple[str, str | None], list[dict]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Extract CALLS edges from function/method calls."""
+    """Extract CALLS edges from function/method calls.
+
+    Uses global_method_lookup for cross-file resolution when available.
+    Falls back to within-file resolution if global lookup is not provided.
+    """
     edges: list[dict[str, Any]] = []
-    stats = {"total": 0, "resolved": 0, "unresolved": 0}
+    stats = {"total": 0, "resolved": 0, "unresolved": 0, "cross_file": 0}
 
     # Use language-specific builtins or fall back to Python builtins
     builtin_functions = (
@@ -890,7 +959,7 @@ def _extract_call_edges(
     for call in calls:
         stats["total"] += 1
 
-        # Try to resolve the caller
+        # Try to resolve the caller (must be in current file)
         caller_id = _resolve_caller(
             call.caller_name,
             call.caller_class,
@@ -902,17 +971,62 @@ def _extract_call_edges(
             stats["unresolved"] += 1
             continue
 
-        # Try to resolve the callee
-        callee_id = _resolve_callee(
-            call.callee_name,
-            call.callee_qualifier,
-            call.is_method_call,
-            call.caller_class,
-            method_lookup,
-            repo_name,
-            file_path,
-            builtin_functions=builtin_functions,
-        )
+        # Skip common builtins
+        if call.callee_name in builtin_functions:
+            stats["unresolved"] += 1
+            continue
+
+        # If there's a qualifier that's not 'self'/'cls', it's likely external
+        if call.callee_qualifier and call.callee_qualifier not in ("self", "cls"):
+            stats["unresolved"] += 1
+            continue
+
+        # Try to resolve callee using global lookup first (cross-file)
+        callee_id = None
+        is_cross_file = False
+
+        if global_method_lookup:
+            # For self.method() calls, look for method in same class across files
+            if call.is_method_call and call.callee_qualifier in ("self", "cls"):
+                key = (call.callee_name, call.caller_class)
+                candidates = global_method_lookup.get(key, [])
+                if candidates:
+                    # Prefer same file, then any file
+                    for c in candidates:
+                        if c["file_path"] == file_path:
+                            callee_id = c["node_id"]
+                            break
+                    if not callee_id and candidates:
+                        callee_id = candidates[0]["node_id"]
+                        is_cross_file = True
+            else:
+                # For regular function calls, look up by name
+                # Try with None class first (module-level function)
+                key = (call.callee_name, None)
+                candidates = global_method_lookup.get(key, [])
+                if candidates:
+                    # Prefer same file
+                    for c in candidates:
+                        if c["file_path"] == file_path:
+                            callee_id = c["node_id"]
+                            break
+                    if not callee_id and candidates:
+                        callee_id = candidates[0]["node_id"]
+                        is_cross_file = True
+
+        # Fall back to within-file resolution
+        if not callee_id:
+            callee_id = _resolve_callee(
+                call.callee_name,
+                call.callee_qualifier,
+                call.is_method_call,
+                call.caller_class,
+                method_lookup,
+                repo_name,
+                file_path,
+                builtin_functions=builtin_functions,
+            )
+
         if not callee_id:
             stats["unresolved"] += 1
             continue
@@ -930,11 +1044,14 @@ def _extract_call_edges(
                 "line": call.line,
                 "is_method_call": call.is_method_call,
                 "qualifier": call.callee_qualifier,
+                "cross_file": is_cross_file,
                 "created_at": current_timestamp(),
             },
         }
         edges.append(edge)
         stats["resolved"] += 1
+        if is_cross_file:
+            stats["cross_file"] += 1
 
     return edges, stats
 
@@ -1045,14 +1162,18 @@ def _resolve_callee(
 
 def _extract_decorator_edges(
     methods: list[ExtractedMethod],
-    method_lookup: dict[str, list[dict[str, Any]]],
+    method_lookup: dict[str, list[dict[str, Any]]],  # noqa: ARG001 - kept for API
     file_path: str,
     repo_name: str,
     filter_constants: FilterConstants | None = None,
+    global_method_lookup: dict[tuple[str, str | None], list[dict]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Extract DECORATED_BY edges from method decorators."""
+    """Extract DECORATED_BY edges from method decorators.
+
+    Uses global_method_lookup for cross-file resolution when available.
+    """
     edges: list[dict[str, Any]] = []
-    stats = {"total": 0, "resolved": 0, "builtin": 0, "unresolved": 0}
+    stats = {"total": 0, "resolved": 0, "builtin": 0, "unresolved": 0, "cross_file": 0}
 
     # Use language-specific builtin decorators or fall back to Python
     builtin_decorators = (
@@ -1061,11 +1182,11 @@ def _extract_decorator_edges(
         else PYTHON_DECORATOR_BUILTINS
     )
 
-    # Build lookup for top-level functions (potential decorators)
-    func_lookup = {m.name: m for m in methods if not m.class_name}
+    # Build local lookup for within-file decorators
+    local_func_lookup = {m.name: m for m in methods if not m.class_name}
     for m in methods:
         if m.class_name:
-            func_lookup[f"{m.class_name}.{m.name}"] = m
+            local_func_lookup[f"{m.class_name}.{m.name}"] = m
 
     for method in methods:
         if not method.decorators:
@@ -1086,15 +1207,35 @@ def _extract_decorator_edges(
                 stats["builtin"] += 1
                 continue
 
-            # Try to resolve decorator to a function in this file
-            decorator_method = func_lookup.get(dec_name)
-            if not decorator_method:
+            decorator_id = None
+            is_cross_file = False
+
+            # Try global lookup first for cross-file resolution
+            if global_method_lookup:
+                # Decorators are usually module-level functions
+                key = (dec_name, None)
+                candidates = global_method_lookup.get(key, [])
+                if candidates:
+                    # Prefer same file
+                    for c in candidates:
+                        if c["file_path"] == file_path:
+                            decorator_id = c["node_id"]
+                            break
+                    if not decorator_id and candidates:
+                        decorator_id = candidates[0]["node_id"]
+                        is_cross_file = True
+
+            # Fall back to within-file resolution
+            if not decorator_id:
+                decorator_method = local_func_lookup.get(dec_name)
+                if decorator_method:
+                    decorator_id = generate_method_node_id(
+                        repo_name, file_path, decorator_method.name, None
+                    )
+
+            if not decorator_id:
                 stats["unresolved"] += 1
                 continue
-
-            decorator_id = generate_method_node_id(
-                repo_name, file_path, decorator_method.name, decorator_method.class_name
-            )
 
             # Don't create self-loops
             if decorated_id == decorator_id:
@@ -1107,11 +1248,14 @@ def _extract_decorator_edges(
                 "relationship_type": "DECORATED_BY",
                 "properties": {
                     "decorator_text": decorator,
+                    "cross_file": is_cross_file,
                     "created_at": current_timestamp(),
                 },
             }
             edges.append(edge)
             stats["resolved"] += 1
+            if is_cross_file:
+                stats["cross_file"] += 1
 
     return edges, stats
 
@@ -1127,10 +1271,20 @@ def _extract_reference_edges(
     file_path: str,
     repo_name: str,
     filter_constants: FilterConstants | None = None,
+    global_type_lookup: dict[str, list[dict]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Extract REFERENCES edges from type annotations."""
+    """Extract REFERENCES edges from type annotations.
+
+    Uses global_type_lookup for cross-file resolution when available.
+    """
     edges: list[dict[str, Any]] = []
-    stats = {"total_annotations": 0, "resolved": 0, "builtin": 0, "unresolved": 0}
+    stats = {
+        "total_annotations": 0,
+        "resolved": 0,
+        "builtin": 0,
+        "unresolved": 0,
+        "cross_file": 0,
+    }
 
     # Use language-specific builtin types or fall back to Python
     builtin_types = (
@@ -1170,32 +1324,51 @@ def _extract_reference_edges(
                 stats["builtin"] += 1
                 continue
 
-            # Try to resolve to a type in this file
-            if type_name in type_lookup:
+            # Don't create self-loops (method referencing its own class)
+            if method.class_name == type_name:
+                continue
+
+            type_id = None
+            is_cross_file = False
+
+            # Try global lookup first for cross-file resolution
+            if global_type_lookup and type_name in global_type_lookup:
+                candidates = global_type_lookup[type_name]
+                # Prefer same file
+                for c in candidates:
+                    if c["file_path"] == file_path:
+                        type_id = c["node_id"]
+                        break
+                if not type_id and candidates:
+                    type_id = candidates[0]["node_id"]
+                    is_cross_file = True
+
+            # Fall back to within-file resolution
+            if not type_id and type_name in type_lookup:
                 type_def = type_lookup[type_name]
-                # Generate type ID matching format from type_definition.py
                 file_path_slug = file_path.replace("/", "_").replace("\\", "_")
                 type_name_slug = type_def.name.replace(" ", "_").replace("-", "_")
                 type_id = f"typedef::{repo_name}::{file_path_slug}::{type_name_slug}"
 
-                # Don't create self-loops (method referencing its own class)
-                if method.class_name == type_name:
-                    continue
-
-                edge = {
-                    "edge_id": generate_edge_id(method_id, type_id, "REFERENCES"),
-                    "from_node_id": method_id,
-                    "to_node_id": type_id,
-                    "relationship_type": "REFERENCES",
-                    "properties": {
-                        "reference_type": "type_annotation",
-                        "created_at": current_timestamp(),
-                    },
-                }
-                edges.append(edge)
-                stats["resolved"] += 1
-            else:
+            if not type_id:
                 stats["unresolved"] += 1
+                continue
+
+            edge = {
+                "edge_id": generate_edge_id(method_id, type_id, "REFERENCES"),
+                "from_node_id": method_id,
+                "to_node_id": type_id,
+                "relationship_type": "REFERENCES",
+                "properties": {
+                    "reference_type": "type_annotation",
+                    "cross_file": is_cross_file,
+                    "created_at": current_timestamp(),
+                },
+            }
+            edges.append(edge)
+            stats["resolved"] += 1
+            if is_cross_file:
+                stats["cross_file"] += 1
 
     return edges, stats
 

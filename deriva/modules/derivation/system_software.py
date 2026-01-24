@@ -49,8 +49,9 @@ class SystemSoftwareDerivation(HybridDerivation):
     """
 
     ELEMENT_TYPE = "SystemSoftware"
-    MIN_PAGERANK = 0.0005  # Lower threshold for external dependencies
+    MIN_PAGERANK = None  # Technology nodes often have low pagerank (external to codebase)
     USE_COMMUNITY_ROOTS = False  # External deps don't have communities
+    PATTERN_MATCH_DEFAULT = True  # Accept candidates by default (query filters by techCategory)
 
     OUTBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(

@@ -329,6 +329,14 @@ def _run_extraction_step(
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
         )
+    elif node_type == "Technology" and cfg.extraction_method == "structural":
+        # Structural Technology extraction - derives from ExternalDependency nodes
+        result = _extract_technology_structural(
+            repo=repo,
+            repo_path=repo_path,
+            classified_files=classified_files,
+            graph_manager=graph_manager,
+        )
     elif node_type in ["BusinessConcept", "TypeDefinition", "Method", "Technology", "ExternalDependency", "Test"]:
         if llm_query_fn is None:
             return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
@@ -490,6 +498,120 @@ def _extract_files(
     }
 
 
+def _extract_technology_structural(
+    repo: Any,
+    repo_path: Path,
+    classified_files: list[dict],
+    graph_manager: GraphManager,
+) -> dict[str, Any]:
+    """Extract Technology nodes structurally from config files.
+
+    Parses docker-compose.yml, Dockerfile, and .env files to extract
+    infrastructure technologies. Uses existing Technology nodes from
+    DirectoryClassification to avoid duplicates.
+
+    Args:
+        repo: Repository object
+        repo_path: Path to repository root
+        classified_files: List of classified files
+        graph_manager: Connected GraphManager
+
+    Returns:
+        Dict with nodes_created, edges_created, errors
+    """
+    from deriva.modules.extraction.technology import extract_technologies_structural
+
+    # 1. Query existing Technology nodes from graph (from DirectoryClassification)
+    existing_technologies: list[dict[str, Any]] = []
+    try:
+        tech_query = """
+        MATCH (t:Technology)
+        WHERE t.repository_name = $repo_name OR t.originSource CONTAINS $repo_name
+        RETURN t.id as id, t.techName as name, t.techCategory as category
+        """
+        results = graph_manager.query(tech_query, {"repo_name": repo.name})
+        for r in results:
+            existing_technologies.append({
+                "id": r.get("id", ""),
+                "name": r.get("name", ""),
+                "category": r.get("category", ""),
+            })
+        logger.debug(f"Found {len(existing_technologies)} existing Technology nodes")
+    except Exception as e:
+        logger.debug(f"Could not query existing Technology nodes: {e}")
+
+    # 2. Get infrastructure config files (docker-compose, Dockerfile, .env)
+    infra_files: list[dict[str, str]] = []
+    infra_file_patterns = {
+        "dockerfile", "docker-compose.yml", "docker-compose.yaml",
+        "compose.yml", "compose.yaml", ".env", ".env.example",
+        ".env.local", ".env.development"
+    }
+
+    for file_info in classified_files:
+        file_path = file_info.get("path", "")
+        file_name = Path(file_path).name.lower()
+
+        # Check if it's an infrastructure file
+        is_infra = (
+            file_name in infra_file_patterns
+            or file_name.startswith("dockerfile.")
+            or "docker-compose" in file_name
+        )
+
+        if is_infra:
+            try:
+                full_path = repo_path / file_path
+                if full_path.exists():
+                    content = full_path.read_text(encoding="utf-8", errors="replace")
+                    infra_files.append({"path": file_path, "content": content})
+            except Exception as e:
+                logger.debug(f"Could not read {file_path}: {e}")
+
+    logger.debug(f"Found {len(infra_files)} infrastructure files to process")
+
+    # 3. Run structural extraction
+    result = extract_technologies_structural(
+        existing_technologies=existing_technologies,
+        files=infra_files,
+        repo_name=repo.name,
+    )
+
+    # 4. Persist new nodes
+    nodes_created = 0
+    for node_data in result["data"]["nodes"]:
+        props = node_data["properties"]
+        tech_node = TechnologyNode(
+            name=props.get("techName", ""),
+            tech_category=props.get("techCategory", "infrastructure"),
+            repository_name=repo.name,
+            description=props.get("description", ""),
+            version=props.get("version"),
+        )
+        graph_manager.add_node(tech_node, node_id=node_data["node_id"])
+        nodes_created += 1
+
+    # 5. Persist edges
+    edges_created = 0
+    for edge_data in result["data"]["edges"]:
+        try:
+            graph_manager.add_edge(
+                src_id=edge_data["from_node_id"],
+                dst_id=edge_data["to_node_id"],
+                relationship=edge_data["relationship_type"],
+                properties=edge_data.get("properties", {}),
+            )
+            edges_created += 1
+        except Exception as e:
+            logger.debug(f"Could not create edge: {e}")
+
+    return {
+        "nodes_created": nodes_created,
+        "edges_created": edges_created,
+        "errors": result.get("errors", []),
+    }
+
+
 def _extract_edges(
     repo: Any,
     repo_path: Path,
@@ -535,6 +657,66 @@ def _extract_edges(
     except Exception:
         pass  # Proceed without external package list
 
+    # Build global method lookup from Neo4j for cross-file CALLS/DECORATED_BY resolution
+    # Key: (method_name, class_name or None) -> list of node_ids with file_paths
+    global_method_lookup: dict[tuple[str, str | None], list[dict]] = {}
+    try:
+        methods = graph_manager.get_nodes_by_type("Method")
+        for m in methods:
+            # Properties may be nested in a "properties" dict or at top level
+            props = m.get("properties", m)
+            method_name = props.get("methodName") or props.get("name", "")
+            class_name = props.get("typeName") or props.get("class_name") or None
+            if class_name == "":
+                class_name = None
+            file_path = props.get("filePath") or props.get("file_path", "")
+            node_id = m.get("id", "")
+
+            # Keep file_path as-is (with repo prefix) to match classified_files format
+            # Both Neo4j filePath and classified_files paths include the full relative path
+            # e.g., "deriva/cli/cli.py" for files inside the deriva/ subdirectory
+
+            key = (method_name, class_name)
+            if key not in global_method_lookup:
+                global_method_lookup[key] = []
+            global_method_lookup[key].append(
+                {
+                    "node_id": node_id,
+                    "file_path": file_path,
+                    "class_name": class_name,
+                }
+            )
+        logger.debug(f"Built global method lookup with {len(global_method_lookup)} unique signatures")
+    except Exception as e:
+        logger.warning(f"Failed to build global method lookup: {e}")
+
+    # Build global type lookup from Neo4j for cross-file REFERENCES resolution
+    # Key: type_name -> list of node_ids with file_paths
+    global_type_lookup: dict[str, list[dict]] = {}
+    try:
+        types = graph_manager.get_nodes_by_type("TypeDefinition")
+        for t in types:
+            # Properties may be nested in a "properties" dict or at top level
+            props = t.get("properties", t)
+            type_name = props.get("typeName") or props.get("name", "")
+            file_path = props.get("filePath") or props.get("file_path", "")
+            node_id = t.get("id", "")
+
+            # Keep file_path as-is (with repo prefix) to match classified_files format
+            # Both Neo4j filePath and classified_files paths include the full relative path
+
+            if type_name not in global_type_lookup:
+                global_type_lookup[type_name] = []
+            global_type_lookup[type_name].append(
+                {
+                    "node_id": node_id,
+                    "file_path": file_path,
+                }
+            )
+        logger.debug(f"Built global type lookup with {len(global_type_lookup)} unique types")
+    except Exception as e:
+        logger.warning(f"Failed to build global type lookup: {e}")
+
     # Run unified batch extraction (one pass over all files)
     result = extract_edges_batch(
         files=classified_files,
@@ -542,33 +724,52 @@ def _extract_edges(
         repo_path=repo_path,
         edge_types=edge_types,
         external_packages=external_packages,
+        global_method_lookup=global_method_lookup,
+        global_type_lookup=global_type_lookup,
     )
+
+    # First, process ExternalDependency nodes from imports
+    # These have declared=False, used=True (discovered via imports, not manifests)
+    for node_data in result["data"].get("nodes", []):
+        node_id = node_data.get("node_id")
+        if not node_id:
+            continue
+
+        # Check if node already exists (e.g., from ExternalDependency manifest parsing)
+        if graph_manager.node_exists(node_id):
+            # Node exists from manifest - update 'used' property to True
+            try:
+                graph_manager.update_node_property(node_id, "used", True)
+                logger.debug("Updated ExternalDependency node used=True: %s", node_id)
+            except Exception as e:
+                logger.debug(f"Failed to update node {node_id}: {e}")
+        else:
+            # Node doesn't exist - create it (import without manifest declaration)
+            try:
+                props = node_data.get("properties", {})
+                stub_node = ExternalDependencyNode(
+                    name=props.get("dependencyName", "unknown"),
+                    dependency_category=props.get("dependencyCategory", "library"),
+                    repository_name=repo.name,
+                    description=f"External package discovered via import",
+                    confidence=props.get("confidence", 1.0),
+                    extraction_method="treesitter",
+                )
+                # Add additional properties
+                stub_node.declared = props.get("declared", False)
+                stub_node.used = props.get("used", True)
+                stub_node.ecosystem = props.get("ecosystem", "unknown")
+
+                graph_manager.add_node(stub_node, node_id=node_id)
+                nodes_created += 1
+                logger.debug("Created ExternalDependency node from import: %s", node_id)
+            except Exception as e:
+                logger.debug(f"Failed to create node {node_id}: {e}")
 
     # Persist edges to graph
     for edge_data in result["data"]["edges"]:
         relationship = edge_data["relationship_type"]
         dst_id = edge_data["to_node_id"]
-
-        # For USES edges, create stub ExternalDependency node if it doesn't exist
-        # USES edges point to extdep::{repo}::{package_slug} IDs
-        if relationship == "USES" and dst_id.startswith("extdep::"):
-            if not graph_manager.node_exists(dst_id):
-                # Parse package name from ID: extdep::repo::package_slug
-                parts = dst_id.split("::")
-                if len(parts) >= 3:
-                    package_slug = parts[2]
-                    # Create stub ExternalDependency node
-                    stub_node = ExternalDependencyNode(
-                        name=package_slug,
-                        dependency_category="library",
-                        repository_name=repo.name,
-                        description="External package discovered via import",
-                        confidence=0.7,
-                        extraction_method="structural",
-                    )
-                    graph_manager.add_node(stub_node, node_id=dst_id)
-                    nodes_created += 1
-                    logger.debug("Created stub ExternalDependency node: %s", dst_id)
 
         try:
             edge_id = graph_manager.add_edge(
@@ -657,6 +858,7 @@ def _extract_directory_classification(
     edge_ids: list[str] = []
 
     # Query Directory nodes from the graph for this repository
+    # Include file stats for better LLM context (now that File extraction runs before this)
     # Exclude node_modules, vendor, and other dependency directories
     query = """
     MATCH (d:Directory)
@@ -668,7 +870,17 @@ def _extract_directory_classification(
       AND NOT d.path CONTAINS '.venv'
       AND NOT d.path CONTAINS 'venv/'
       AND NOT d.path CONTAINS 'site-packages'
-    RETURN d.name AS name, d.path AS path, d.id AS id
+    OPTIONAL MATCH (d)-[:CONTAINS]->(f:File)
+    WITH d,
+         count(f) AS file_count,
+         sum(CASE WHEN f.file_type = 'source' THEN 1 ELSE 0 END) AS source_count,
+         sum(CASE WHEN f.file_type = 'config' THEN 1 ELSE 0 END) AS config_count,
+         sum(CASE WHEN f.file_type = 'documentation' THEN 1 ELSE 0 END) AS docs_count,
+         sum(CASE WHEN f.file_type = 'test' THEN 1 ELSE 0 END) AS test_count,
+         collect(DISTINCT f.subtype) AS subtypes
+    RETURN d.name AS name, d.path AS path, d.id AS id,
+           file_count, source_count, config_count, docs_count, test_count,
+           subtypes
     """
     try:
         directories = graph_manager.query(query, {"repo_name": repo.name})
@@ -850,8 +1062,10 @@ def _extract_llm_based(
         ".mov",  # Media
         ".class",
         ".pyc",
-        ".pyo",
-    }  # Compiled code
+        ".pyo",  # Compiled code
+        ".archimate",
+        ".archimate.bak",
+    }  # ArchiMate model files (already contain architecture)
     matching_files = [f for f in matching_files if not any(f.get("path", "").lower().endswith(ext) for ext in binary_extensions)]
 
     # Special case: Method extraction with node-based sources (TypeDefinition.codeSnippet)
@@ -902,6 +1116,43 @@ def _extract_llm_based(
         if seed_concepts:
             existing_concepts = seed_concepts
             logger.debug(f"Using {len(existing_concepts)} existing concepts for context-aware extraction")
+
+    # For Technology: get ExternalDependency and existing Technology nodes as context
+    # so LLM focuses on infrastructure (databases, caches, queues) and avoids duplicates
+    existing_dependencies: list[dict[str, str]] | None = None
+    existing_technologies: list[dict[str, str]] | None = None
+    if node_type == "Technology":
+        # Get ExternalDependency nodes (to avoid overlap with libraries)
+        try:
+            dep_query = """
+            MATCH (ed:ExternalDependency)
+            WHERE ed.repository_name = $repo_name
+            RETURN ed.dependencyName AS name, ed.ecosystem AS ecosystem
+            ORDER BY ed.confidence DESC
+            LIMIT 50
+            """
+            deps = graph_manager.query(dep_query, {"repo_name": repo.name})
+            if deps:
+                existing_dependencies = [{"name": d["name"], "ecosystem": d.get("ecosystem", "unknown")} for d in deps]
+                logger.debug(f"Using {len(existing_dependencies)} ExternalDependency nodes for Technology context")
+        except Exception as e:
+            logger.debug(f"Could not query ExternalDependency nodes for Technology context: {e}")
+
+        # Get existing Technology nodes (to avoid duplicates)
+        try:
+            tech_query = """
+            MATCH (t:Technology)
+            WHERE t.repository_name = $repo_name
+            RETURN t.techName AS name, t.techCategory AS category
+            ORDER BY t.confidence DESC
+            LIMIT 30
+            """
+            techs = graph_manager.query(tech_query, {"repo_name": repo.name})
+            if techs:
+                existing_technologies = [{"name": t["name"], "category": t.get("category", "")} for t in techs]
+                logger.debug(f"Using {len(existing_technologies)} existing Technology nodes")
+        except Exception as e:
+            logger.debug(f"Could not query existing Technology nodes: {e}")
 
     # Wrap llm_query_fn with per-step temperature/max_tokens overrides
     def step_llm_query_fn(prompt: str, schema: dict, system_prompt: str | None = None) -> Any:
@@ -1063,6 +1314,8 @@ def _extract_llm_based(
                 llm_query_fn=step_llm_query_fn,
                 model=model,
                 existing_concepts=existing_concepts,
+                existing_dependencies=existing_dependencies,
+                existing_technologies=existing_technologies,
             )
             extraction_method = "llm"
 
@@ -1135,6 +1388,8 @@ def _extract_file_content(
     llm_query_fn: Callable,
     model: str | None = None,
     existing_concepts: list[dict[str, str]] | None = None,
+    existing_dependencies: list[dict[str, str]] | None = None,
+    existing_technologies: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict], list[dict], list[str]]:
     """
     Extract from file content, with automatic chunking for large files.
@@ -1148,22 +1403,32 @@ def _extract_file_content(
         llm_query_fn: LLM query function
         model: Model name for token limit lookup (optional)
         existing_concepts: Optional list of existing concepts for context-aware extraction
+        existing_dependencies: Optional list of ExternalDependency nodes for Technology context
+        existing_technologies: Optional list of existing Technology nodes for deduplication
 
     Returns:
         Tuple of (nodes, edges, errors)
     """
+    # Build optional kwargs for extraction function
+    extra_kwargs: dict[str, Any] = {}
+    if existing_concepts is not None:
+        extra_kwargs["existing_concepts"] = existing_concepts
+    if existing_dependencies is not None:
+        extra_kwargs["existing_dependencies"] = existing_dependencies
+    if existing_technologies is not None:
+        extra_kwargs["existing_technologies"] = existing_technologies
+
     # Check if chunking is needed
     if not should_chunk(content, model=model):
         # Extract from entire file
-        # Pass existing_concepts if the extraction function supports it
-        if existing_concepts is not None:
+        if extra_kwargs:
             result = extract_fn(
                 file_path,
                 content,
                 repo_name,
                 llm_query_fn,
                 extraction_config,
-                existing_concepts=existing_concepts,
+                **extra_kwargs,
             )
         else:
             result = extract_fn(
@@ -1187,15 +1452,14 @@ def _extract_file_content(
         # Add chunk context to file path for LLM
         chunk_path = f"{file_path} (lines {chunk.start_line}-{chunk.end_line})"
 
-        # Pass existing_concepts if the extraction function supports it
-        if existing_concepts is not None:
+        if extra_kwargs:
             result = extract_fn(
                 chunk_path,
                 chunk.content,
                 repo_name,
                 llm_query_fn,
                 extraction_config,
-                existing_concepts=existing_concepts,
+                **extra_kwargs,
             )
         else:
             result = extract_fn(

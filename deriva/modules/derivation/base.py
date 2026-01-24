@@ -208,6 +208,45 @@ class RelationshipRule:
 
 
 @dataclass
+class CandidateDecision:
+    """Tracks a candidate's journey through derivation for threshold analysis."""
+
+    node_id: str
+    name: str
+    element_type: str  # e.g., "BusinessProcess", "ApplicationService"
+
+    # Graph metrics at decision time
+    pagerank: float = 0.0
+    kcore_level: int = 0
+    in_degree: int = 0
+    out_degree: int = 0
+    confidence: float | None = None  # From BusinessConcept if applicable
+
+    # Decision outcome
+    stage: str = "queried"  # queried → filtered → sent_to_llm → created | rejected
+    became_element: bool = False
+    element_id: str | None = None  # If became element
+    element_confidence: float | None = None  # LLM confidence if created
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON export."""
+        return {
+            "node_id": self.node_id,
+            "name": self.name,
+            "element_type": self.element_type,
+            "pagerank": round(self.pagerank, 4),
+            "kcore_level": self.kcore_level,
+            "in_degree": self.in_degree,
+            "out_degree": self.out_degree,
+            "confidence": self.confidence,
+            "stage": self.stage,
+            "became_element": self.became_element,
+            "element_id": self.element_id,
+            "element_confidence": self.element_confidence,
+        }
+
+
+@dataclass
 class GenerationResult:
     """Result from element generation (includes relationships)."""
 
@@ -217,6 +256,12 @@ class GenerationResult:
     created_elements: list[dict[str, Any]] = field(default_factory=list)
     created_relationships: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+
+    # Candidate tracking for threshold optimization
+    candidates_queried: int = 0
+    candidates_filtered: int = 0
+    candidates_to_llm: int = 0
+    candidate_decisions: list[CandidateDecision] = field(default_factory=list)
 
 
 @dataclass

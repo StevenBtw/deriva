@@ -153,6 +153,7 @@ from .technology import (
     build_technology_node,
     extract_technologies,
     extract_technologies_batch,
+    extract_technologies_structural,
 )
 from .technology import (
     build_extraction_prompt as build_technology_prompt,

@@ -134,9 +134,9 @@ class ArchimateManager:
 
         try:
             # Create Cypher query to add element node
-            # Use element_type as the label (e.g., Model:ApplicationComponent)
-            # Note: Convert empty dict to null for Neo4j compatibility
-            label = self.neo4j.get_label(element.element_type)
+            # Use two separate labels: namespace (Model) + element_type (TechnologyService)
+            # This allows queries like MATCH (e:TechnologyService) to work
+            # while still having namespace isolation via the Model label
 
             # Convert properties to JSON string (Neo4j can't store empty dicts)
             properties_json = (
@@ -144,7 +144,7 @@ class ArchimateManager:
             )
 
             query = f"""
-                MERGE (e:`{label}` {{identifier: $identifier}})
+                MERGE (e:`{self.namespace}`:`{element.element_type}` {{identifier: $identifier}})
                 SET e.name = $name,
                     e.documentation = $documentation,
                     e.properties_json = $properties_json,
@@ -202,19 +202,21 @@ class ArchimateManager:
 
         try:
             # Create Cypher query to add relationship
-            # Use relationship_type as the label (e.g., Model:Serving)
-            rel_label = self.neo4j.get_label(relationship.relationship_type)
+            # Use namespaced relationship type (e.g., Model:Realization, Model:Serving)
+            # This is consistent with Graph namespace which uses Graph:CONTAINS, Graph:CALLS, etc.
+            # Nodes are matched by having the namespace label (Model)
 
             # Convert properties to JSON string
             properties_json = (
                 json.dumps(relationship.properties) if relationship.properties else None
             )
 
+            # Get namespaced relationship type (e.g., "Realization" -> "Model:Realization")
+            rel_label = self.neo4j.get_label(relationship.relationship_type)
+
             query = f"""
-                MATCH (source {{identifier: $source}})
-                WHERE any(lbl IN labels(source) WHERE lbl STARTS WITH '{self.namespace}:')
-                MATCH (target {{identifier: $target}})
-                WHERE any(lbl IN labels(target) WHERE lbl STARTS WITH '{self.namespace}:')
+                MATCH (source:`{self.namespace}` {{identifier: $source}})
+                MATCH (target:`{self.namespace}` {{identifier: $target}})
                 CREATE (source)-[r:`{rel_label}` {{
                     identifier: $identifier,
                     name: $name,
@@ -263,13 +265,12 @@ class ArchimateManager:
             raise RuntimeError("Not connected to Neo4j. Call connect() first.")
 
         try:
-            # Find element by identifier across all type-specific labels
+            # Find element by identifier - nodes have namespace label (Model) + type label
             query = f"""
-                MATCH (e {{identifier: $identifier}})
-                WHERE any(lbl IN labels(e) WHERE lbl STARTS WITH '{self.namespace}:')
+                MATCH (e:`{self.namespace}` {{identifier: $identifier}})
                 RETURN e.identifier as identifier,
                        e.name as name,
-                       [lbl IN labels(e) WHERE lbl STARTS WITH '{self.namespace}:'][0] as label,
+                       [lbl IN labels(e) WHERE lbl <> '{self.namespace}'][0] as element_type,
                        e.documentation as documentation,
                        e.properties_json as properties_json,
                        e.enabled as enabled
@@ -279,9 +280,10 @@ class ArchimateManager:
 
             if result:
                 data = result[0]
-                # Extract element type from label (e.g., "Model:ApplicationComponent" -> "ApplicationComponent")
-                label = data["label"]
-                element_type = label.split(":")[-1] if label else "Unknown"
+                # Element type is the non-namespace label
+                element_type = (
+                    data["element_type"] if data.get("element_type") else "Unknown"
+                )
                 # Parse JSON properties back to dict
                 properties = (
                     json.loads(data["properties_json"])
@@ -321,10 +323,9 @@ class ArchimateManager:
             enabled_filter = "AND e.enabled = true" if enabled_only else ""
 
             if element_type:
-                # Get elements by specific type label
-                label = self.neo4j.get_label(element_type)
+                # Get elements by specific type label (namespace + type)
                 query = f"""
-                    MATCH (e:`{label}`)
+                    MATCH (e:`{self.namespace}`:`{element_type}`)
                     WHERE true {enabled_filter}
                     RETURN e.identifier as identifier,
                            e.name as name,
@@ -352,14 +353,13 @@ class ArchimateManager:
                         )
                     )
             else:
-                # Get all elements across all type labels
+                # Get all elements - match namespace label and extract type from other labels
                 query = f"""
-                    MATCH (e)
-                    WHERE any(lbl IN labels(e) WHERE lbl STARTS WITH '{self.namespace}:' AND lbl <> '{self.namespace}:Relationship')
-                    {enabled_filter}
+                    MATCH (e:`{self.namespace}`)
+                    WHERE true {enabled_filter}
                     RETURN e.identifier as identifier,
                            e.name as name,
-                           [lbl IN labels(e) WHERE lbl STARTS WITH '{self.namespace}:'][0] as label,
+                           [lbl IN labels(e) WHERE lbl <> '{self.namespace}'][0] as element_type,
                            e.documentation as documentation,
                            e.properties_json as properties_json,
                            e.enabled as enabled
@@ -367,9 +367,8 @@ class ArchimateManager:
                 result = self.neo4j.execute_read(query)
                 elements = []
                 for data in result:
-                    # Extract element type from label
-                    label = data["label"]
-                    etype = label.split(":")[-1] if label else "Unknown"
+                    # Element type is the non-namespace label
+                    etype = data.get("element_type") or "Unknown"
                     properties = (
                         json.loads(data["properties_json"])
                         if data.get("properties_json")
@@ -410,14 +409,11 @@ class ArchimateManager:
         try:
             ns = self.namespace
 
-            # Build query - match any relationship type in namespace
-            # Extract relationship type from type(r)
+            # Build query - match relationships between Model namespace nodes
+            # Relationship types are now plain (e.g., Realization, Serving)
             if source_id and target_id:
                 query = f"""
-                    MATCH (source {{identifier: $source_id}})-[r]->(target {{identifier: $target_id}})
-                    WHERE any(lbl IN labels(source) WHERE lbl STARTS WITH '{ns}:')
-                    AND any(lbl IN labels(target) WHERE lbl STARTS WITH '{ns}:')
-                    AND type(r) STARTS WITH '{ns}:'
+                    MATCH (source:`{ns}` {{identifier: $source_id}})-[r]->(target:`{ns}` {{identifier: $target_id}})
                     RETURN source.identifier as source,
                            target.identifier as target,
                            r.identifier as identifier,
@@ -429,10 +425,7 @@ class ArchimateManager:
                 params = {"source_id": source_id, "target_id": target_id}
             elif source_id:
                 query = f"""
-                    MATCH (source {{identifier: $source_id}})-[r]->(target)
-                    WHERE any(lbl IN labels(source) WHERE lbl STARTS WITH '{ns}:')
-                    AND any(lbl IN labels(target) WHERE lbl STARTS WITH '{ns}:')
-                    AND type(r) STARTS WITH '{ns}:'
+                    MATCH (source:`{ns}` {{identifier: $source_id}})-[r]->(target:`{ns}`)
                     RETURN source.identifier as source,
                            target.identifier as target,
                            r.identifier as identifier,
@@ -444,10 +437,7 @@ class ArchimateManager:
                 params = {"source_id": source_id}
             elif target_id:
                 query = f"""
-                    MATCH (source)-[r]->(target {{identifier: $target_id}})
-                    WHERE any(lbl IN labels(source) WHERE lbl STARTS WITH '{ns}:')
-                    AND any(lbl IN labels(target) WHERE lbl STARTS WITH '{ns}:')
-                    AND type(r) STARTS WITH '{ns}:'
+                    MATCH (source:`{ns}`)-[r]->(target:`{ns}` {{identifier: $target_id}})
                     RETURN source.identifier as source,
                            target.identifier as target,
                            r.identifier as identifier,
@@ -459,10 +449,7 @@ class ArchimateManager:
                 params = {"target_id": target_id}
             else:
                 query = f"""
-                    MATCH (source)-[r]->(target)
-                    WHERE any(lbl IN labels(source) WHERE lbl STARTS WITH '{ns}:')
-                    AND any(lbl IN labels(target) WHERE lbl STARTS WITH '{ns}:')
-                    AND type(r) STARTS WITH '{ns}:'
+                    MATCH (source:`{ns}`)-[r]->(target:`{ns}`)
                     RETURN source.identifier as source,
                            target.identifier as target,
                            r.identifier as identifier,
@@ -477,12 +464,11 @@ class ArchimateManager:
 
             relationships = []
             for data in result:
-                # Extract relationship type from label (e.g., "Model:Serving" -> "Serving")
-                rel_type = (
-                    data["rel_type"].split(":")[-1]
-                    if data.get("rel_type")
-                    else "Unknown"
-                )
+                # Relationship type is stored with namespace prefix (e.g., "Model:Realization")
+                # Strip the namespace prefix for the model object
+                rel_type = data.get("rel_type") or "Unknown"
+                if rel_type.startswith(f"{self.namespace}:"):
+                    rel_type = rel_type[len(self.namespace) + 1 :]
                 # Parse JSON properties back to dict
                 properties = (
                     json.loads(data["properties_json"])
@@ -556,10 +542,8 @@ class ArchimateManager:
             raise RuntimeError("Not connected to Neo4j. Call connect() first.")
 
         try:
-            ns = self.namespace
             query = f"""
-                MATCH (e {{identifier: $identifier}})
-                WHERE any(lbl IN labels(e) WHERE lbl STARTS WITH '{ns}:')
+                MATCH (e:`{self.namespace}` {{identifier: $identifier}})
                 SET e.enabled = false,
                     e.disabled_reason = $reason
                 RETURN e.identifier as identifier
@@ -596,11 +580,9 @@ class ArchimateManager:
             return 0
 
         try:
-            ns = self.namespace
             query = f"""
-                MATCH (e)
+                MATCH (e:`{self.namespace}`)
                 WHERE e.identifier IN $identifiers
-                AND any(lbl IN labels(e) WHERE lbl STARTS WITH '{ns}:')
                 SET e.enabled = false,
                     e.disabled_reason = $reason
                 RETURN count(e) as count
@@ -630,11 +612,10 @@ class ArchimateManager:
             raise RuntimeError("Not connected to Neo4j. Call connect() first.")
 
         try:
-            ns = self.namespace
+            # Match relationships between Model namespace nodes
             query = f"""
-                MATCH ()-[r]->()
+                MATCH (:`{self.namespace}`)-[r]->(:`{self.namespace}`)
                 WHERE r.identifier = $identifier
-                AND type(r) STARTS WITH '{ns}:'
                 DELETE r
                 RETURN count(r) as count
             """
@@ -665,11 +646,10 @@ class ArchimateManager:
             return 0
 
         try:
-            ns = self.namespace
+            # Match relationships between Model namespace nodes
             query = f"""
-                MATCH ()-[r]->()
+                MATCH (:`{self.namespace}`)-[r]->(:`{self.namespace}`)
                 WHERE r.identifier IN $identifiers
-                AND type(r) STARTS WITH '{ns}:'
                 DELETE r
                 RETURN count(r) as count
             """

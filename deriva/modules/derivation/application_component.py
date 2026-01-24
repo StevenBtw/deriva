@@ -54,6 +54,11 @@ class ApplicationComponentDerivation(HybridDerivation):
 
     OUTBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
+            target_type="ApplicationComponent",
+            rel_type="Composition",
+            description="Application components contain other application components",
+        ),
+        RelationshipRule(
             target_type="ApplicationService",
             rel_type="Composition",
             description="Application components contain application services",
@@ -67,6 +72,11 @@ class ApplicationComponentDerivation(HybridDerivation):
             target_type="ApplicationInterface",
             rel_type="Composition",
             description="Application components expose interfaces",
+        ),
+        RelationshipRule(
+            target_type="BusinessFunction",
+            rel_type="Realization",
+            description="Application components realize business functions",
         ),
     ]
 

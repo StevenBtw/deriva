@@ -158,26 +158,32 @@ def generate_method_node_id(
     Generate a method node ID from repo name, file path, and method name.
 
     Uses '::' as separator to avoid collision with underscores in names.
+    Format matches method.py: method::{repo}::{file_slug}::{type_name}::{method_name}
+
+    IMPORTANT: Do NOT strip repo prefix from file_path - method.py includes it
+    in node IDs. The file_path should be the full path as passed to extraction
+    (e.g., "deriva/cli/cli.py" not "cli/cli.py").
 
     Args:
         repo_name: Repository name (may contain underscores)
-        file_path: File path relative to repo root
+        file_path: File path relative to repo root (should include repo prefix for
+                   files inside repo subdirectory, e.g., "deriva/cli/cli.py")
         method_name: Name of the method/function
-        class_name: Optional class name for methods
+        class_name: Optional class name for methods (None = module-level function)
 
     Returns:
         Formatted method node ID string
 
     Examples:
         >>> generate_method_node_id("my_repo", "src/app.py", "main")
-        'method::my_repo::src_app.py::main'
-        >>> generate_method_node_id("my_repo", "src/user.py", "__init__", "User")
-        'method::my_repo::src_user.py::User.__init__'
+        'method::my_repo::src_app.py::module::main'
+        >>> generate_method_node_id("my_repo", "my_repo/src/user.py", "__init__", "User")
+        'method::my_repo::my_repo_src_user.py::User::__init__'
     """
-    safe_path = file_path.replace("/", "_").replace("\\", "_")
-    if class_name:
-        return f"method::{repo_name}::{safe_path}::{class_name}.{method_name}"
-    return f"method::{repo_name}::{safe_path}::{method_name}"
+    file_path_slug = file_path.replace("/", "_").replace("\\", "_")
+    method_name_slug = method_name.replace(" ", "_").replace("-", "_")
+    type_name_slug = (class_name or "module").replace(" ", "_").replace("-", "_")
+    return f"method::{repo_name}::{file_path_slug}::{type_name_slug}::{method_name_slug}"
 
 
 # =============================================================================

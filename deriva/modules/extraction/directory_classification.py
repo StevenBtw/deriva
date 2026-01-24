@@ -86,7 +86,7 @@ def build_classification_prompt(
     Build the LLM prompt for directory classification.
 
     Args:
-        directories: List of directory info dicts with 'name' and 'path' keys
+        directories: List of directory info dicts with 'name', 'path', and optional file stats
         instruction: Classification instruction from config (contains all rules)
         example: Example output from config
 
@@ -95,17 +95,38 @@ def build_classification_prompt(
     """
     import json
 
-    # Format directory list
-    dir_list = json.dumps(
-        [
-            {
-                "name": d.get("name", d.get("dirName", "")),
-                "path": d.get("path", d.get("dirPath", "")),
-            }
-            for d in directories
-        ],
-        indent=2,
-    )
+    # Format directory list with file context if available
+    formatted_dirs = []
+    for d in directories:
+        dir_info: dict[str, Any] = {
+            "name": d.get("name", d.get("dirName", "")),
+            "path": d.get("path", d.get("dirPath", "")),
+        }
+        # Include file stats if available (from graph query enrichment)
+        file_count = d.get("file_count", 0)
+        if file_count and file_count > 0:
+            file_stats = []
+            if d.get("source_count", 0) > 0:
+                file_stats.append(f"source:{d['source_count']}")
+            if d.get("config_count", 0) > 0:
+                file_stats.append(f"config:{d['config_count']}")
+            if d.get("docs_count", 0) > 0:
+                file_stats.append(f"docs:{d['docs_count']}")
+            if d.get("test_count", 0) > 0:
+                file_stats.append(f"test:{d['test_count']}")
+            dir_info["files"] = f"{file_count} ({', '.join(file_stats)})" if file_stats else str(file_count)
+
+            # Include subtypes (languages) if available
+            subtypes = d.get("subtypes", [])
+            if subtypes and len(subtypes) > 0:
+                # Filter out None values
+                valid_subtypes = [s for s in subtypes if s]
+                if valid_subtypes:
+                    dir_info["languages"] = valid_subtypes
+
+        formatted_dirs.append(dir_info)
+
+    dir_list = json.dumps(formatted_dirs, indent=2)
 
     prompt = f"""{instruction}
 

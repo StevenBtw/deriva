@@ -37,6 +37,7 @@ from deriva.adapters.archimate.models import Element, Relationship
 from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
     Candidate,
+    CandidateDecision,
     GenerationResult,
     RelationshipRule,
     batch_candidates,
@@ -291,6 +292,9 @@ class ElementDerivationBase(ABC):
             self.logger.info("No candidates found for %s", self.ELEMENT_TYPE)
             return result
 
+        # Track all queried candidates for threshold analysis
+        result.candidates_queried = len(candidates)
+
         self.logger.info(
             "Found %d candidates for %s", len(candidates), self.ELEMENT_TYPE
         )
@@ -302,20 +306,80 @@ class ElementDerivationBase(ABC):
 
         if not filtered:
             self.logger.info("No candidates passed filtering for %s", self.ELEMENT_TYPE)
+            # Track rejected candidates
+            for c in candidates:
+                result.candidate_decisions.append(
+                    CandidateDecision(
+                        node_id=c.node_id,
+                        name=c.name,
+                        element_type=self.ELEMENT_TYPE,
+                        pagerank=c.pagerank,
+                        kcore_level=c.kcore_level,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                        confidence=c.properties.get("confidence"),
+                        stage="filtered_out",
+                        became_element=False,
+                    )
+                )
             return result
+
+        result.candidates_filtered = len(filtered)
+        filtered_ids = {c.node_id for c in filtered}
 
         self.logger.info(
             "Filtered to %d candidates for LLM (%s)", len(filtered), self.ELEMENT_TYPE
         )
 
+        # Track candidates filtered out at this stage
+        for c in candidates:
+            if c.node_id not in filtered_ids:
+                result.candidate_decisions.append(
+                    CandidateDecision(
+                        node_id=c.node_id,
+                        name=c.name,
+                        element_type=self.ELEMENT_TYPE,
+                        pagerank=c.pagerank,
+                        kcore_level=c.kcore_level,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                        confidence=c.properties.get("confidence"),
+                        stage="filtered_out",
+                        became_element=False,
+                    )
+                )
+
         # Pre-generation duplicate check - filter out candidates matching existing elements
+        pre_dedup_ids = {c.node_id for c in filtered}
         filtered = self._filter_existing_duplicates(filtered, archimate_manager)
+        post_dedup_ids = {c.node_id for c in filtered}
+
+        # Track candidates removed by deduplication
+        for c in candidates:
+            if c.node_id in pre_dedup_ids and c.node_id not in post_dedup_ids:
+                result.candidate_decisions.append(
+                    CandidateDecision(
+                        node_id=c.node_id,
+                        name=c.name,
+                        element_type=self.ELEMENT_TYPE,
+                        pagerank=c.pagerank,
+                        kcore_level=c.kcore_level,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                        confidence=c.properties.get("confidence"),
+                        stage="duplicate_removed",
+                        became_element=False,
+                    )
+                )
 
         if not filtered:
             self.logger.info(
                 "All candidates matched existing elements for %s", self.ELEMENT_TYPE
             )
             return result
+
+        # Track candidates sent to LLM
+        result.candidates_to_llm = len(filtered)
 
         # Batch and process
         batches = batch_candidates(filtered, batch_size)
@@ -433,6 +497,8 @@ class ElementDerivationBase(ABC):
 
         # Create elements
         batch_elements: list[dict[str, Any]] = []
+        created_source_ids: set[str] = set()
+
         for derived in parse_result.get("data", []):
             element_result = build_element(
                 derived, self.ELEMENT_TYPE, batch_enrichments
@@ -456,10 +522,60 @@ class ElementDerivationBase(ABC):
                 result.elements_created += 1
                 result.created_elements.append(element_data)
                 batch_elements.append(element_data)
+
+                # Track source node that became element
+                source_id = derived.get("source")
+                if source_id:
+                    created_source_ids.add(source_id)
             except Exception as e:
                 result.errors.append(
                     f"Failed to create {self.ELEMENT_TYPE} element "
                     f"{element_data.get('identifier', 'unknown')}: {e}"
+                )
+
+        # Track candidate decisions for this batch
+        for c in batch:
+            if c.node_id in created_source_ids:
+                # Find the element that was created from this candidate
+                element_id = None
+                element_confidence = None
+                for derived in parse_result.get("data", []):
+                    if derived.get("source") == c.node_id:
+                        element_id = derived.get("identifier")
+                        element_confidence = derived.get("confidence")
+                        break
+
+                result.candidate_decisions.append(
+                    CandidateDecision(
+                        node_id=c.node_id,
+                        name=c.name,
+                        element_type=self.ELEMENT_TYPE,
+                        pagerank=c.pagerank,
+                        kcore_level=c.kcore_level,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                        confidence=c.properties.get("confidence"),
+                        stage="created",
+                        became_element=True,
+                        element_id=element_id,
+                        element_confidence=element_confidence,
+                    )
+                )
+            else:
+                # Candidate was sent to LLM but rejected
+                result.candidate_decisions.append(
+                    CandidateDecision(
+                        node_id=c.node_id,
+                        name=c.name,
+                        element_type=self.ELEMENT_TYPE,
+                        pagerank=c.pagerank,
+                        kcore_level=c.kcore_level,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                        confidence=c.properties.get("confidence"),
+                        stage="llm_rejected",
+                        became_element=False,
+                    )
                 )
 
         # Derive relationships

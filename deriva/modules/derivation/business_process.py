@@ -74,9 +74,20 @@ class BusinessProcessDerivation(HybridDerivation):
             rel_type="Access",
             description="Business processes access business objects",
         ),
+        RelationshipRule(
+            target_type="DataObject",
+            rel_type="Access",
+            description="Business processes access data objects",
+        ),
     ]
 
-    INBOUND_RULES: list[RelationshipRule] = []
+    INBOUND_RULES: list[RelationshipRule] = [
+        RelationshipRule(
+            target_type="ApplicationService",
+            rel_type="Serving",
+            description="Application services serve business processes",
+        ),
+    ]
 
     def filter_candidates(
         self,

@@ -451,6 +451,10 @@ class ExternalDependencyNode:
     - external_api: Third-party API integrations (Stripe, SendGrid)
     - external_service: External SaaS/systems (MongoDB Atlas)
     - external_database: External database services
+
+    Properties:
+    - declared: True if dependency was found in a manifest file (requirements.txt, package.json)
+    - used: True if dependency is imported in code
     """
 
     name: str
@@ -464,6 +468,8 @@ class ExternalDependencyNode:
     origin_source: str | None = None  # File where dependency was discovered
     confidence: float = 1.0
     extraction_method: str = "llm"  # structural, ast, or llm
+    declared: bool = True  # True if found in manifest file
+    used: bool = False  # True if imported in code
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -481,6 +487,8 @@ class ExternalDependencyNode:
             "originSource": self.origin_source,
             "confidence": self.confidence,
             "extractionMethod": self.extraction_method,
+            "declared": self.declared,
+            "used": self.used,
             "type": "ExternalDependency",
         }
 
