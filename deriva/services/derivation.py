@@ -412,6 +412,7 @@ def run_derivation(
     }
     errors: list[str] = []
     all_created_elements: list[dict] = []
+    all_candidate_decisions: list[dict] = []  # For threshold optimization analysis
 
     # Create enrichment cache manager with control settings
     enrichment_cache = EnrichmentCacheManager(
@@ -582,6 +583,11 @@ def run_derivation(
 
                 if step_created_elements:
                     all_created_elements.extend(step_created_elements)
+
+                # Collect candidate decisions for threshold optimization
+                step_candidate_decisions = step_result.get("candidate_decisions", [])
+                if step_candidate_decisions:
+                    all_candidate_decisions.extend(step_candidate_decisions)
 
                 # Track created relationships for OCEL logging
                 step_created_relationships = step_result.get("created_relationships", [])
@@ -774,6 +780,7 @@ def run_derivation(
         "stats": stats,
         "errors": errors,
         "created_elements": all_created_elements,
+        "candidate_decisions": all_candidate_decisions,  # For threshold optimization
     }
 
 

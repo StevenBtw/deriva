@@ -83,6 +83,13 @@ def run_stage(
             help="Only run this step (disables all others for the stage)",
         ),
     ] = None,
+    export_candidates: Annotated[
+        str | None,
+        typer.Option(
+            "--export-candidates",
+            help="Export candidate decisions to JSON file (for threshold optimization)",
+        ),
+    ] = None,
 ) -> None:
     """Run pipeline stages."""
     if stage not in ("extraction", "derivation", "all"):
@@ -182,6 +189,28 @@ def run_stage(
                     progress=progress_reporter,
                 )
             _print_derivation_result(result)
+
+            # Export candidate decisions if requested
+            if export_candidates and result.get("candidate_decisions"):
+                import json
+                from pathlib import Path
+
+                output_path = Path(export_candidates)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+
+                candidate_data = {
+                    "repo": repo or "unknown",
+                    "total_candidates": len(result["candidate_decisions"]),
+                    "decisions": result["candidate_decisions"],
+                }
+
+                with open(output_path, "w") as f:
+                    json.dump(candidate_data, f, indent=2)
+
+                typer.echo(
+                    f"\nExported {len(result['candidate_decisions'])} "
+                    f"candidate decisions to {output_path}"
+                )
 
         elif stage == "all":
             with progress_reporter:
