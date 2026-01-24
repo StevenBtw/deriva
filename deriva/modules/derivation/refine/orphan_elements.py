@@ -208,11 +208,13 @@ class OrphanElementsStep:
             graph_rels = graph_manager.query(graph_rel_query, {"source_id": source_id})
 
             # Map graph relationships to potential ArchiMate relationships
+            # Note: USES maps to Serving (dependency), not Access (data access)
+            # Access is specifically for Behavior→Passive element access
             rel_mapping = {
                 "CONTAINS": "Composition",
                 "CALLS": "Flow",
                 "IMPORTS": "Serving",
-                "USES": "Access",
+                "USES": "Serving",  # Dependency usage, not data access
             }
 
             for rel in graph_rels:

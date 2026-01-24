@@ -402,7 +402,7 @@ def run_derivation(
         Dict with success, stats, errors
     """
     if phases is None:
-        phases = ["prep", "generate"]
+        phases = ["prep", "generate", "refine"]
 
     stats = {
         "elements_created": 0,
@@ -827,7 +827,7 @@ def run_derivation_iter(
         ProgressUpdate objects for each step in the pipeline
     """
     if phases is None:
-        phases = ["prep", "generate"]
+        phases = ["prep", "generate", "refine"]
 
     stats = {
         "elements_created": 0,

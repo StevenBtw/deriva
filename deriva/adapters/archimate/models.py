@@ -39,7 +39,7 @@ class RelationshipType:
     allowed_targets: set[str]  # Element types that can be target (empty = any)
 
 
-# ArchiMate 3.1 Element Types (Application & Business Layers)
+# ArchiMate 3.2 Element Types (Application, Business & Technology Layers)
 ELEMENT_TYPES: dict[str, ElementType] = {
     # Application Layer
     "ApplicationComponent": ElementType(
@@ -182,16 +182,21 @@ TECHNOLOGY_LAYER: set[str] = {
 
 
 # =============================================================================
-# ArchiMate 3.1 Relationship Types with Constraints
+# ArchiMate 3.2 Relationship Types with Constraints
 # =============================================================================
+# Reference: https://pubs.opengroup.org/architecture/archimate3-doc/ch-Relationships-and-Relationship-Connectors.html
+#
+# ArchiMate 3.2 Rule: "Aggregation, composition, and specialization relationships
+# are always permitted between two elements of the same type."
+# This means Passive→Passive Composition is valid (e.g., BusinessObject contains BusinessObject)
 
 RELATIONSHIP_TYPES: dict[str, RelationshipType] = {
     # Structural Relationships
     "Composition": RelationshipType(
         name="Composition",
         description="Element consists of other elements (same aspect, same layer)",
-        allowed_sources=STRUCTURE_ELEMENTS,  # Only structure elements can compose
-        allowed_targets=STRUCTURE_ELEMENTS,  # Only structure elements can be composed
+        allowed_sources=STRUCTURE_ELEMENTS | PASSIVE_ELEMENTS,  # Structure or Passive can compose
+        allowed_targets=STRUCTURE_ELEMENTS | PASSIVE_ELEMENTS,  # Structure or Passive can be composed
     ),
     "Aggregation": RelationshipType(
         name="Aggregation",

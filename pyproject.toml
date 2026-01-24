@@ -38,7 +38,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "python-dotenv>=1.2.1",
     "pyyaml>=6.0.3",
-    "rich>=14.2.0",
+    "rich>=14.3.0",
     "lxml>=6.0.2",
     # Databases
     "duckdb>=1.4.3",
@@ -56,7 +56,7 @@ dependencies = [
     "pypdf>=6.6.0",
     "python-docx>=1.2.0",
     # Graph Algorithms
-    "solvor>=0.5.3",
+    "solvor>=0.5.4",
     # LLM 
     "backoff>=2.2.1",
     "pydantic-ai>=1.47.0",

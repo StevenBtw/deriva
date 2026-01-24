@@ -1030,17 +1030,22 @@ def derive_neighbor_relationships(
 # =============================================================================
 # Edge-type to ArchiMate relationship mapping
 # =============================================================================
+# Uses ArchiMate 3.2 metamodel constraints from models.py:
+# - Flow: Behavior → Behavior only
+# - Access: Behavior/Structure → Passive only (DataObject, BusinessObject)
+# - Serving: general dependency between elements
 EDGE_RELATIONSHIP_MAP: dict[str, dict[str, tuple[str, float]]] = {
     # Graph edge type -> {target element type -> (ArchiMate relationship, confidence)}
     "CALLS": {
-        "ApplicationService": ("Serving", 0.92),
-        "ApplicationInterface": ("Flow", 0.90),
+        "ApplicationService": ("Serving", 0.92),  # Service dependency
+        "ApplicationInterface": ("Serving", 0.90),  # Interface is Structure, not Behavior
         "ApplicationComponent": ("Serving", 0.88),
     },
     "IMPORTS": {
-        "DataObject": ("Access", 0.90),
-        "ApplicationComponent": ("Access", 0.88),
-        "TechnologyService": ("Access", 0.85),
+        "DataObject": ("Access", 0.90),  # Access is valid for Passive targets
+        "BusinessObject": ("Access", 0.88),  # Access is valid for Passive targets
+        "ApplicationComponent": ("Serving", 0.85),  # Serving for non-Passive
+        "TechnologyService": ("Serving", 0.83),  # Serving for non-Passive
     },
     "USES": {
         "TechnologyService": ("Serving", 0.93),
@@ -1065,10 +1070,10 @@ def derive_edge_relationships(
     It provides higher confidence than generic neighbor relationships because
     it uses explicit code dependency information.
 
-    Edge type mapping:
-    - CALLS edges -> Serving/Flow relationships (for service dependencies)
-    - IMPORTS edges -> Access relationships (for data/module dependencies)
-    - USES edges -> Serving relationships (for technology dependencies)
+    Edge type mapping (per ArchiMate 3.2 metamodel):
+    - CALLS edges -> Serving relationships (service/component dependencies)
+    - IMPORTS edges -> Access (for Passive targets) or Serving (for others)
+    - USES edges -> Serving relationships (technology dependencies)
 
     Args:
         new_elements: Elements just created in this batch
@@ -2462,6 +2467,17 @@ def derive_batch_relationships(
         if rel_type not in valid_types:
             logger.debug("Skipping relationship: invalid type %s", rel_type)
             continue
+
+        # Prevent circular Composition relationships
+        if rel_type == "Composition":
+            reverse_key = (target, source, "Composition")
+            if reverse_key in created_pairs:
+                logger.debug(
+                    "Skipping circular Composition: %s -> %s (reverse exists)",
+                    source,
+                    target,
+                )
+                continue
 
         # Enforce minimum confidence threshold for consistency
         confidence = rel_data.get("confidence", 0.5)

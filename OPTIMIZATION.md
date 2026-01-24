@@ -394,6 +394,30 @@ LANGUAGE CONSTRAINTS:
 </aspect_classification>
 ```
 
+### ArchiMate 3.2 Relationship Constraints
+
+Relationships must follow aspect-based constraints defined in the metamodel. The canonical definitions are in [models.py](deriva/adapters/archimate/models.py).
+
+| Relationship | Valid Sources | Valid Targets | Description |
+|--------------|---------------|---------------|-------------|
+| **Composition** | Structure, Passive | Structure, Passive | Parent contains child (same-type always allowed) |
+| **Aggregation** | Structure, Behavior | Structure, Behavior, Passive | Weak grouping |
+| **Assignment** | Structure | Behavior | Actor performs process |
+| **Realization** | Structure, Behavior | Behavior, Passive | Internal realizes external |
+| **Serving** | Structure, Behavior | Structure, Behavior | Provides functionality to |
+| **Access** | Structure, Behavior | **Passive only** | Reads/writes data |
+| **Flow** | **Behavior only** | **Behavior only** | Transfer between behaviors |
+| **Triggering** | **Behavior only** | **Behavior only** | Temporal/causal dependency |
+
+> **Sources:** [ArchiMate 3.2 Relationships](https://pubs.opengroup.org/architecture/archimate3-doc/ch-Relationships-and-Relationship-Connectors.html), [Appendix B: Normative](https://pubs.opengroup.org/architecture/archimate3-doc/ch-relationships-Normative.html)
+
+**Key Rules:**
+- **Flow** is Behavior→Behavior only. Use **Access** for Behavior→Passive (data access)
+- **Composition** allows same-type relationships (e.g., BusinessObject→BusinessObject)
+- Avoid **Association** - prefer specific relationship types
+
+**Refine Step Implication:** The `graph_relationships` step should use `RELATIONSHIP_TYPES` from `models.py` for validation, not custom definitions.
+
 ### Temperature and Consistency
 
 | Temperature | Use Case | Trade-off |
