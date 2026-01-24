@@ -102,12 +102,9 @@ class BusinessObjectDerivation(HybridDerivation):
         """
         Filter candidates for BusinessObject derivation.
 
-        Uses hybrid filtering:
-        1. Enrich with graph metrics
-        2. Apply pattern matching (include/exclude patterns)
-        3. Apply graph filtering (PageRank threshold)
-        4. Prioritize likely business objects (looks like a noun class)
-        5. Limit to max_candidates for LLM
+        Strategy depends on source type:
+        - BusinessConcept: Filter by confidence (already semantically identified)
+        - TypeDefinition: Original pattern-based and graph filtering
         """
         include_patterns = include_patterns or set()
         exclude_patterns = exclude_patterns or set()
@@ -116,6 +113,62 @@ class BusinessObjectDerivation(HybridDerivation):
         for c in candidates:
             enrich_candidate(c, enrichments)
 
+        # Check if candidates are BusinessConcept (have conceptType property)
+        is_business_concept = any(
+            "BusinessConcept" in c.labels or c.properties.get("conceptType")
+            for c in candidates
+        )
+
+        if is_business_concept:
+            # BusinessConcept source: filter by confidence, skip graph metrics
+            return self._filter_business_concepts(candidates, max_candidates)
+
+        # TypeDefinition source: original filtering
+        return self._filter_typedef_candidates(
+            candidates, enrichments, max_candidates, include_patterns, exclude_patterns
+        )
+
+    def _filter_business_concepts(
+        self,
+        candidates: list[Candidate],
+        max_candidates: int,
+    ) -> list[Candidate]:
+        """Filter BusinessConcept candidates by confidence.
+
+        BusinessConcepts are already semantically identified as entities,
+        so we just filter by confidence and limit count.
+        """
+        MIN_CONFIDENCE = 0.7
+
+        filtered = []
+        for c in candidates:
+            if not c.name:
+                continue
+            confidence = c.properties.get("confidence", 0)
+            if confidence >= MIN_CONFIDENCE:
+                filtered.append(c)
+
+        # Sort by confidence descending
+        filtered.sort(key=lambda c: c.properties.get("confidence", 0), reverse=True)
+
+        self.logger.debug(
+            "BusinessObject filter (BusinessConcept): %d total -> %d passed confidence >= %.1f",
+            len(candidates),
+            len(filtered),
+            MIN_CONFIDENCE,
+        )
+
+        return filtered[:max_candidates]
+
+    def _filter_typedef_candidates(
+        self,
+        candidates: list[Candidate],
+        enrichments: dict[str, dict[str, Any]],
+        max_candidates: int,
+        include_patterns: set[str],
+        exclude_patterns: set[str],
+    ) -> list[Candidate]:
+        """Filter TypeDefinition candidates using pattern and graph filtering."""
         # Filter out nulls
         filtered = [c for c in candidates if c.name]
 
@@ -143,7 +196,7 @@ class BusinessObjectDerivation(HybridDerivation):
             likely_filtered.extend(others_filtered)
 
         self.logger.debug(
-            "BusinessObject filter: %d total -> %d after null check -> %d final",
+            "BusinessObject filter (TypeDefinition): %d total -> %d after null check -> %d final",
             len(candidates),
             len(filtered),
             len(likely_filtered),

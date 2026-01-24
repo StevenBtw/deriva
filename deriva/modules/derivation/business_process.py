@@ -100,12 +100,9 @@ class BusinessProcessDerivation(HybridDerivation):
     ) -> list[Candidate]:
         """Filter candidates for BusinessProcess derivation.
 
-        Strategy:
-        1. Enrich with graph metrics
-        2. Identify orchestrator methods (call 3+ other methods)
-        3. Filter by process patterns
-        4. Apply graph filtering (PageRank threshold)
-        5. Prioritize orchestrators in final selection
+        Strategy depends on source type:
+        - BusinessConcept: Filter by confidence (already semantically identified)
+        - Method: Original orchestrator detection and graph filtering
         """
         include_patterns = include_patterns or set()
         exclude_patterns = exclude_patterns or set()
@@ -113,6 +110,68 @@ class BusinessProcessDerivation(HybridDerivation):
         for c in candidates:
             enrich_candidate(c, enrichments)
 
+        # Check if candidates are BusinessConcept (have conceptType property)
+        is_business_concept = any(
+            "BusinessConcept" in c.labels or c.properties.get("conceptType")
+            for c in candidates
+        )
+
+        if is_business_concept:
+            # BusinessConcept source: filter by confidence, skip graph metrics
+            return self._filter_business_concepts(candidates, max_candidates)
+
+        # Method source: original orchestrator-based filtering
+        return self._filter_method_candidates(
+            candidates, enrichments, max_candidates, include_patterns, exclude_patterns
+        )
+
+    def _filter_business_concepts(
+        self,
+        candidates: list[Candidate],
+        max_candidates: int,
+    ) -> list[Candidate]:
+        """Filter BusinessConcept candidates by confidence.
+
+        BusinessConcepts are already semantically identified as processes,
+        so we just filter by confidence and limit count.
+        """
+        # Filter by confidence (property or direct attribute)
+        MIN_CONFIDENCE = 0.7
+
+        filtered = []
+        for c in candidates:
+            confidence = c.properties.get("confidence", 0)
+            if confidence >= MIN_CONFIDENCE:
+                filtered.append(c)
+
+        # Sort by confidence descending
+        filtered.sort(key=lambda c: c.properties.get("confidence", 0), reverse=True)
+
+        self.logger.debug(
+            "BusinessProcess filter (BusinessConcept): %d total -> %d passed confidence >= %.1f",
+            len(candidates),
+            len(filtered),
+            MIN_CONFIDENCE,
+        )
+
+        return filtered[:max_candidates]
+
+    def _filter_method_candidates(
+        self,
+        candidates: list[Candidate],
+        enrichments: dict[str, dict[str, Any]],
+        max_candidates: int,
+        include_patterns: set[str],
+        exclude_patterns: set[str],
+    ) -> list[Candidate]:
+        """Filter Method candidates using orchestrator detection and graph metrics.
+
+        Original strategy:
+        1. Identify orchestrator methods (call 3+ other methods)
+        2. Filter by process patterns
+        3. Apply graph filtering (PageRank threshold)
+        4. Prioritize orchestrators in final selection
+        """
         # Pre-filter: exclude dunder methods
         filtered = [c for c in candidates if c.name and not c.name.startswith("__")]
 
@@ -156,7 +215,7 @@ class BusinessProcessDerivation(HybridDerivation):
             combined.extend(others)
 
         self.logger.debug(
-            "BusinessProcess filter: %d total -> %d orchestrators, %d pattern-matched -> %d final",
+            "BusinessProcess filter (Method): %d total -> %d orchestrators, %d pattern-matched -> %d final",
             len(candidates),
             len(orchestrators),
             len(likely_processes),

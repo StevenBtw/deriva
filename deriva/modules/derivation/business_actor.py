@@ -135,12 +135,9 @@ class BusinessActorDerivation(HybridDerivation):
         """
         Filter candidates for BusinessActor derivation.
 
-        Strategy:
-        1. Enrich with graph metrics
-        2. Detect auth-related decorators (@login_required, @permission, etc.)
-        3. Check for actor-related name patterns
-        4. Apply pattern matching from config
-        5. Apply graph filtering (PageRank threshold)
+        Strategy depends on source type:
+        - BusinessConcept: Filter by confidence (already semantically identified)
+        - TypeDefinition: Original auth/pattern-based filtering
         """
         include_patterns = include_patterns or set()
         exclude_patterns = exclude_patterns or set()
@@ -148,6 +145,67 @@ class BusinessActorDerivation(HybridDerivation):
         for c in candidates:
             enrich_candidate(c, enrichments)
 
+        # Check if candidates are BusinessConcept (have conceptType property)
+        is_business_concept = any(
+            "BusinessConcept" in c.labels or c.properties.get("conceptType")
+            for c in candidates
+        )
+
+        if is_business_concept:
+            # BusinessConcept source: filter by confidence, skip graph metrics
+            return self._filter_business_concepts(candidates, max_candidates)
+
+        # TypeDefinition source: original auth/pattern-based filtering
+        return self._filter_typedef_candidates(
+            candidates, enrichments, max_candidates, include_patterns, exclude_patterns
+        )
+
+    def _filter_business_concepts(
+        self,
+        candidates: list[Candidate],
+        max_candidates: int,
+    ) -> list[Candidate]:
+        """Filter BusinessConcept candidates by confidence.
+
+        BusinessConcepts are already semantically identified as actors,
+        so we just filter by confidence and limit count.
+        """
+        MIN_CONFIDENCE = 0.7
+
+        filtered = []
+        for c in candidates:
+            confidence = c.properties.get("confidence", 0)
+            if confidence >= MIN_CONFIDENCE:
+                filtered.append(c)
+
+        # Sort by confidence descending
+        filtered.sort(key=lambda c: c.properties.get("confidence", 0), reverse=True)
+
+        self.logger.debug(
+            "BusinessActor filter (BusinessConcept): %d total -> %d passed confidence >= %.1f",
+            len(candidates),
+            len(filtered),
+            MIN_CONFIDENCE,
+        )
+
+        return filtered[:max_candidates]
+
+    def _filter_typedef_candidates(
+        self,
+        candidates: list[Candidate],
+        enrichments: dict[str, dict[str, Any]],
+        max_candidates: int,
+        include_patterns: set[str],
+        exclude_patterns: set[str],
+    ) -> list[Candidate]:
+        """Filter TypeDefinition candidates using auth/pattern detection.
+
+        Original strategy:
+        1. Detect auth-related decorators (@login_required, @permission, etc.)
+        2. Check for actor-related name patterns
+        3. Apply pattern matching from config
+        4. Apply graph filtering (PageRank threshold)
+        """
         filtered = [c for c in candidates if c.name]
 
         # Group candidates by signal strength
@@ -194,7 +252,7 @@ class BusinessActorDerivation(HybridDerivation):
             combined.extend(others)
 
         self.logger.debug(
-            "BusinessActor filter: %d total -> %d auth, %d actor-named, %d pattern -> %d final",
+            "BusinessActor filter (TypeDefinition): %d total -> %d auth, %d actor-named, %d pattern -> %d final",
             len(candidates),
             len(auth_decorated),
             len(actor_named),
