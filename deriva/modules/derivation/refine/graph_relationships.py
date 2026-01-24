@@ -418,6 +418,35 @@ class GraphRelationshipsStep:
         Used when source_identifier property is not available.
         Searches for graph node IDs in the properties_json field.
         """
+        # Build element type filters (same as primary query)
+        valid_combos = VALID_ELEMENT_COMBOS.get(rel_type, {})
+        valid_sources = valid_combos.get("sources")
+        valid_targets = valid_combos.get("targets")
+
+        source_filter = ""
+        target_filter = ""
+        circular_filter = ""
+
+        if valid_sources:
+            source_types = ", ".join(f"'{model_ns}:{t}'" for t in valid_sources)
+            source_filter = f"""
+                AND any(lbl IN labels(model_src) WHERE lbl IN [{source_types}])
+            """
+
+        if valid_targets:
+            target_types = ", ".join(f"'{model_ns}:{t}'" for t in valid_targets)
+            target_filter = f"""
+                AND any(lbl IN labels(model_tgt) WHERE lbl IN [{target_types}])
+            """
+
+        # Prevent circular Composition relationships
+        if rel_type == "Composition":
+            circular_filter = f"""
+              AND NOT EXISTS {{
+                  (model_tgt)-[reverse:`{model_ns}:Composition`]->(model_src)
+              }}
+            """
+
         query = f"""
             // Find graph edges of the specified type
             MATCH (graph_src)-[edge:`{graph_ns}:{edge_type}`]->(graph_tgt)
@@ -433,11 +462,14 @@ class GraphRelationshipsStep:
               AND model_src.properties_json CONTAINS src_id
               AND model_tgt.properties_json CONTAINS tgt_id
               AND model_src.identifier <> model_tgt.identifier  // Prevent self-loops
+              {source_filter}
+              {target_filter}
               // Exclude if relationship already exists
               AND NOT EXISTS {{
                   (model_src)-[existing]->(model_tgt)
                   WHERE type(existing) STARTS WITH '{model_ns}:'
               }}
+              {circular_filter}
 
             RETURN DISTINCT
                 model_src.identifier AS source_id,
