@@ -102,9 +102,9 @@ class BusinessObjectDerivation(HybridDerivation):
         """
         Filter candidates for BusinessObject derivation.
 
-        Strategy depends on source type:
+        Strategy: Handle mixed BusinessConcept + TypeDefinition sources
         - BusinessConcept: Filter by confidence (already semantically identified)
-        - TypeDefinition: Original pattern-based and graph filtering
+        - TypeDefinition: Pattern-based and graph filtering
         """
         include_patterns = include_patterns or set()
         exclude_patterns = exclude_patterns or set()
@@ -113,20 +113,38 @@ class BusinessObjectDerivation(HybridDerivation):
         for c in candidates:
             enrich_candidate(c, enrichments)
 
-        # Check if candidates are BusinessConcept (have conceptType property)
-        is_business_concept = any(
-            "BusinessConcept" in c.labels or c.properties.get("conceptType")
-            for c in candidates
+        # Separate BusinessConcept from TypeDefinition candidates
+        business_concepts = []
+        type_definitions = []
+
+        for c in candidates:
+            if not c.name:
+                continue
+            if "BusinessConcept" in c.labels or c.properties.get("conceptType"):
+                business_concepts.append(c)
+            elif "TypeDefinition" in c.labels:
+                type_definitions.append(c)
+
+        # Filter each group appropriately
+        filtered_concepts = self._filter_business_concepts(
+            business_concepts, max_candidates
+        )
+        filtered_types = self._filter_typedef_candidates(
+            type_definitions, enrichments, max_candidates, include_patterns, exclude_patterns
         )
 
-        if is_business_concept:
-            # BusinessConcept source: filter by confidence, skip graph metrics
-            return self._filter_business_concepts(candidates, max_candidates)
+        # Combine: BusinessConcepts first (higher semantic confidence), then TypeDefinitions
+        combined = filtered_concepts + filtered_types
 
-        # TypeDefinition source: original filtering
-        return self._filter_typedef_candidates(
-            candidates, enrichments, max_candidates, include_patterns, exclude_patterns
+        self.logger.debug(
+            "BusinessObject filter: %d total -> %d concepts, %d typedefs -> %d final",
+            len(candidates),
+            len(filtered_concepts),
+            len(filtered_types),
+            len(combined),
         )
+
+        return combined[:max_candidates]
 
     def _filter_business_concepts(
         self,
