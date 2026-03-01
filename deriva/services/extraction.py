@@ -531,33 +531,27 @@ def _extract_technology_structural(
         """
         results = graph_manager.query(tech_query, {"repo_name": repo.name})
         for r in results:
-            existing_technologies.append({
-                "id": r.get("id", ""),
-                "name": r.get("name", ""),
-                "category": r.get("category", ""),
-            })
+            existing_technologies.append(
+                {
+                    "id": r.get("id", ""),
+                    "name": r.get("name", ""),
+                    "category": r.get("category", ""),
+                }
+            )
         logger.debug(f"Found {len(existing_technologies)} existing Technology nodes")
     except Exception as e:
         logger.debug(f"Could not query existing Technology nodes: {e}")
 
     # 2. Get infrastructure config files (docker-compose, Dockerfile, .env)
     infra_files: list[dict[str, str]] = []
-    infra_file_patterns = {
-        "dockerfile", "docker-compose.yml", "docker-compose.yaml",
-        "compose.yml", "compose.yaml", ".env", ".env.example",
-        ".env.local", ".env.development"
-    }
+    infra_file_patterns = {"dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml", ".env", ".env.example", ".env.local", ".env.development"}
 
     for file_info in classified_files:
         file_path = file_info.get("path", "")
         file_name = Path(file_path).name.lower()
 
         # Check if it's an infrastructure file
-        is_infra = (
-            file_name in infra_file_patterns
-            or file_name.startswith("dockerfile.")
-            or "docker-compose" in file_name
-        )
+        is_infra = file_name in infra_file_patterns or file_name.startswith("dockerfile.") or "docker-compose" in file_name
 
         if is_infra:
             try:

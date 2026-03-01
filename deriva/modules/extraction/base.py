@@ -183,7 +183,9 @@ def generate_method_node_id(
     file_path_slug = file_path.replace("/", "_").replace("\\", "_")
     method_name_slug = method_name.replace(" ", "_").replace("-", "_")
     type_name_slug = (class_name or "module").replace(" ", "_").replace("-", "_")
-    return f"method::{repo_name}::{file_path_slug}::{type_name_slug}::{method_name_slug}"
+    return (
+        f"method::{repo_name}::{file_path_slug}::{type_name_slug}::{method_name_slug}"
+    )
 
 
 # =============================================================================

@@ -870,7 +870,10 @@ def derive_community_relationships(
             if not is_valid:
                 logger.warning(
                     "Skipping invalid OUTBOUND rule: %s -[%s]-> %s: %s",
-                    new_type, rule.rel_type, rule.target_type, msg,
+                    new_type,
+                    rule.rel_type,
+                    rule.target_type,
+                    msg,
                 )
                 continue
 
@@ -913,7 +916,10 @@ def derive_community_relationships(
             if not is_valid:
                 logger.warning(
                     "Skipping invalid INBOUND rule: %s -[%s]-> %s: %s",
-                    rule.target_type, rule.rel_type, new_type, msg,
+                    rule.target_type,
+                    rule.rel_type,
+                    new_type,
+                    msg,
                 )
                 continue
 
@@ -1078,7 +1084,10 @@ EDGE_RELATIONSHIP_MAP: dict[str, dict[str, tuple[str, float]]] = {
     # Graph edge type -> {target element type -> (ArchiMate relationship, confidence)}
     "CALLS": {
         "ApplicationService": ("Serving", 0.92),  # Service dependency
-        "ApplicationInterface": ("Serving", 0.90),  # Interface is Structure, not Behavior
+        "ApplicationInterface": (
+            "Serving",
+            0.90,
+        ),  # Interface is Structure, not Behavior
         "ApplicationComponent": ("Serving", 0.88),
     },
     "IMPORTS": {
@@ -1297,7 +1306,10 @@ def derive_deterministic_relationships(
             if not is_valid:
                 logger.warning(
                     "Skipping invalid OUTBOUND rule: %s -[%s]-> %s: %s",
-                    element_type, rule.rel_type, rule.target_type, msg,
+                    element_type,
+                    rule.rel_type,
+                    rule.target_type,
+                    msg,
                 )
                 continue
 
@@ -1351,7 +1363,10 @@ def derive_deterministic_relationships(
             if not is_valid:
                 logger.warning(
                     "Skipping invalid INBOUND rule: %s -[%s]-> %s: %s",
-                    rule.target_type, rule.rel_type, element_type, msg,
+                    rule.target_type,
+                    rule.rel_type,
+                    element_type,
+                    msg,
                 )
                 continue
 

@@ -721,13 +721,15 @@ def _(ft_table, mo):
         ft_subtype_input = mo.ui.text(value=_selected["Subtype"], label="Subtype")
         ft_save_btn = mo.ui.run_button(label="Save")
         ft_delete_btn = mo.ui.run_button(label="Delete", kind="danger")
-        mo.vstack([
-            mo.md("### Edit File Type"),
-            ft_ext_display,
-            ft_type_input,
-            ft_subtype_input,
-            mo.hstack([ft_save_btn, ft_delete_btn]),
-        ])
+        mo.vstack(
+            [
+                mo.md("### Edit File Type"),
+                ft_ext_display,
+                ft_type_input,
+                ft_subtype_input,
+                mo.hstack([ft_save_btn, ft_delete_btn]),
+            ]
+        )
     else:
         ft_ext_display = None
         ft_type_input = None
@@ -916,16 +918,20 @@ def _(ext_node_type_select, get_ext_refresh, mo, session):
                 full_width=True,
             )
             ext_save_btn = mo.ui.run_button(label="Save")
-            ext_form = mo.vstack([
-                mo.hstack([
-                    mo.md(f"**Version:** {_ver}"),
-                    mo.callout(mo.md(f"**{_method}**"), kind=_method_color),
-                ]),
-                ext_enabled,
-                ext_instruction,
-                ext_input_sources,
-                ext_save_btn,
-            ])
+            ext_form = mo.vstack(
+                [
+                    mo.hstack(
+                        [
+                            mo.md(f"**Version:** {_ver}"),
+                            mo.callout(mo.md(f"**{_method}**"), kind=_method_color),
+                        ]
+                    ),
+                    ext_enabled,
+                    ext_instruction,
+                    ext_input_sources,
+                    ext_save_btn,
+                ]
+            )
         else:
             ext_form = mo.md("_Config not found_")
     else:
@@ -1056,17 +1062,21 @@ def _(der_element_type_select, get_der_refresh, mo, session):
                 full_width=True,
             )
             der_save_btn = mo.ui.run_button(label="Save")
-            der_form = mo.vstack([
-                mo.hstack([
-                    mo.md(f"**Version:** {_ver}"),
-                    mo.callout(mo.md(f"**{_phase}**"), kind=_phase_colors.get(_phase, "neutral")),
-                    mo.callout(mo.md(f"**{_method}**"), kind=_method_colors.get(_method, "neutral")),
-                ]),
-                der_enabled,
-                der_instruction,
-                der_query,
-                der_save_btn,
-            ])
+            der_form = mo.vstack(
+                [
+                    mo.hstack(
+                        [
+                            mo.md(f"**Version:** {_ver}"),
+                            mo.callout(mo.md(f"**{_phase}**"), kind=_phase_colors.get(_phase, "neutral")),
+                            mo.callout(mo.md(f"**{_method}**"), kind=_method_colors.get(_method, "neutral")),
+                        ]
+                    ),
+                    der_enabled,
+                    der_instruction,
+                    der_query,
+                    der_save_btn,
+                ]
+            )
         else:
             der_form = mo.md("_Config not found_")
     else:
@@ -1110,6 +1120,7 @@ def _(
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 

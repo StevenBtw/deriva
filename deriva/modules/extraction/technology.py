@@ -57,7 +57,10 @@ DOCKER_IMAGE_TO_TECHNOLOGY: dict[str, tuple[str, str, str]] = {
 # Format: "pattern": ("TechName", "category", "description")
 ENV_PATTERNS: list[tuple[str, tuple[str, str, str]]] = [
     (r"NEO4J_", ("Neo4j", "system_software", "Graph database")),
-    (r"POSTGRES_|POSTGRESQL_|PG_", ("PostgreSQL", "system_software", "Relational database")),
+    (
+        r"POSTGRES_|POSTGRESQL_|PG_",
+        ("PostgreSQL", "system_software", "Relational database"),
+    ),
     (r"MYSQL_", ("MySQL", "system_software", "Relational database")),
     (r"MONGO_|MONGODB_", ("MongoDB", "system_software", "Document database")),
     (r"REDIS_", ("Redis", "system_software", "In-memory cache")),
@@ -94,8 +97,7 @@ def parse_docker_compose(file_content: str) -> list[dict[str, Any]]:
 
     # Find image: declarations
     image_pattern = re.compile(
-        r"^\s*image:\s*['\"]?([^\s:'\"]+)(?::([^\s'\"]+))?",
-        re.MULTILINE
+        r"^\s*image:\s*['\"]?([^\s:'\"]+)(?::([^\s'\"]+))?", re.MULTILINE
     )
 
     for match in image_pattern.finditer(file_content):
@@ -113,13 +115,15 @@ def parse_docker_compose(file_content: str) -> list[dict[str, Any]]:
 
             if tech_name.lower() not in seen:
                 seen.add(tech_name.lower())
-                technologies.append({
-                    "name": tech_name,
-                    "category": category,
-                    "description": description,
-                    "version": version,
-                    "source": "docker-compose",
-                })
+                technologies.append(
+                    {
+                        "name": tech_name,
+                        "category": category,
+                        "description": description,
+                        "version": version,
+                        "source": "docker-compose",
+                    }
+                )
 
     return technologies
 
@@ -139,8 +143,7 @@ def parse_dockerfile(file_content: str) -> list[dict[str, Any]]:
 
     # Parse FROM instructions
     from_pattern = re.compile(
-        r"^FROM\s+([^\s:]+)(?::([^\s]+))?",
-        re.MULTILINE | re.IGNORECASE
+        r"^FROM\s+([^\s:]+)(?::([^\s]+))?", re.MULTILINE | re.IGNORECASE
     )
 
     for match in from_pattern.finditer(file_content):
@@ -157,13 +160,15 @@ def parse_dockerfile(file_content: str) -> list[dict[str, Any]]:
 
             if tech_name.lower() not in seen:
                 seen.add(tech_name.lower())
-                technologies.append({
-                    "name": tech_name,
-                    "category": category,
-                    "description": description,
-                    "version": version,
-                    "source": "dockerfile",
-                })
+                technologies.append(
+                    {
+                        "name": tech_name,
+                        "category": category,
+                        "description": description,
+                        "version": version,
+                        "source": "dockerfile",
+                    }
+                )
 
     return technologies
 
@@ -187,13 +192,15 @@ def parse_env_file(file_content: str) -> list[dict[str, Any]]:
 
             if tech_name.lower() not in seen:
                 seen.add(tech_name.lower())
-                technologies.append({
-                    "name": tech_name,
-                    "category": category,
-                    "description": description,
-                    "version": None,
-                    "source": "env",
-                })
+                technologies.append(
+                    {
+                        "name": tech_name,
+                        "category": category,
+                        "description": description,
+                        "version": None,
+                        "source": "env",
+                    }
+                )
 
     return technologies
 
@@ -230,7 +237,13 @@ def extract_technologies_structural(
     # Build lookup of existing technologies by normalized name
     existing_by_name: dict[str, dict[str, Any]] = {}
     for tech in existing_technologies:
-        name = tech.get("name", "").lower().replace(" ", "").replace("-", "").replace("_", "")
+        name = (
+            tech.get("name", "")
+            .lower()
+            .replace(" ", "")
+            .replace("-", "")
+            .replace("_", "")
+        )
         existing_by_name[name] = tech
 
     # Track what we've already processed
@@ -247,7 +260,10 @@ def extract_technologies_structural(
 
         if file_name == "dockerfile" or file_name.startswith("dockerfile."):
             parsed_techs = parse_dockerfile(file_content)
-        elif "docker-compose" in file_name or file_name in ("compose.yml", "compose.yaml"):
+        elif "docker-compose" in file_name or file_name in (
+            "compose.yml",
+            "compose.yaml",
+        ):
             parsed_techs = parse_docker_compose(file_content)
         elif file_name in (".env", ".env.example", ".env.local", ".env.development"):
             parsed_techs = parse_env_file(file_content)
@@ -257,7 +273,9 @@ def extract_technologies_structural(
         # Process parsed technologies
         for tech in parsed_techs:
             tech_name = tech["name"]
-            normalized_name = tech_name.lower().replace(" ", "").replace("-", "").replace("_", "")
+            normalized_name = (
+                tech_name.lower().replace(" ", "").replace("-", "").replace("_", "")
+            )
 
             # Build file node ID for edge
             original_path = strip_chunk_suffix(file_path)
@@ -272,7 +290,9 @@ def extract_technologies_structural(
 
                 if existing_id:
                     edge = {
-                        "edge_id": generate_edge_id(file_node_id, existing_id, "CONFIGURES"),
+                        "edge_id": generate_edge_id(
+                            file_node_id, existing_id, "CONFIGURES"
+                        ),
                         "from_node_id": file_node_id,
                         "to_node_id": existing_id,
                         "relationship_type": "CONFIGURES",
@@ -399,7 +419,9 @@ def build_extraction_prompt(
     # Add existing dependencies context (so LLM knows what NOT to extract)
     if existing_dependencies:
         dep_names = [d.get("name", "") for d in existing_dependencies[:30]]
-        prompt_parts.append("ALREADY EXTRACTED as ExternalDependency (do NOT re-extract as Technology):")
+        prompt_parts.append(
+            "ALREADY EXTRACTED as ExternalDependency (do NOT re-extract as Technology):"
+        )
         prompt_parts.append(", ".join(dep_names))
         prompt_parts.append("")
 
@@ -410,12 +432,14 @@ def build_extraction_prompt(
         prompt_parts.append(", ".join(tech_names))
         prompt_parts.append("")
 
-    prompt_parts.extend([
-        "Example output format:",
-        example,
-        "",
-        "Extract infrastructure technologies from this file. Return JSON matching the schema.",
-    ])
+    prompt_parts.extend(
+        [
+            "Example output format:",
+            example,
+            "",
+            "Extract infrastructure technologies from this file. Return JSON matching the schema.",
+        ]
+    )
 
     return "\n".join(prompt_parts)
 
@@ -434,6 +458,7 @@ def parse_llm_response(response: Any) -> list[dict[str, Any]]:
         data = response.data
     elif hasattr(response, "content"):
         import json
+
         try:
             data = json.loads(response.content)
         except json.JSONDecodeError:
@@ -473,7 +498,9 @@ def build_technology_node(
         "label": "Technology",
         "properties": {
             "techName": tech_name,
-            "techCategory": tech_data.get("techCategory", tech_data.get("category", "service")),
+            "techCategory": tech_data.get(
+                "techCategory", tech_data.get("category", "service")
+            ),
             "description": tech_data.get("description", ""),
             "version": tech_data.get("version"),
             "originSource": file_path,
@@ -546,7 +573,13 @@ def extract_technologies(
         existing_tech_names = set()
         if existing_technologies:
             for t in existing_technologies:
-                name = t.get("name", "").lower().replace(" ", "").replace("-", "").replace("_", "")
+                name = (
+                    t.get("name", "")
+                    .lower()
+                    .replace(" ", "")
+                    .replace("-", "")
+                    .replace("_", "")
+                )
                 existing_tech_names.add(name)
 
         # Build nodes and edges
@@ -557,7 +590,9 @@ def extract_technologies(
             if not tech_name or not tech_name.strip():
                 continue
 
-            normalized_name = tech_name.lower().replace(" ", "").replace("-", "").replace("_", "")
+            normalized_name = (
+                tech_name.lower().replace(" ", "").replace("-", "").replace("_", "")
+            )
 
             # Skip if already exists
             if normalized_name in existing_tech_names:
@@ -570,7 +605,9 @@ def extract_technologies(
 
             # Build edge: File -> Technology (CONFIGURES)
             edge = {
-                "edge_id": generate_edge_id(file_node_id, node["node_id"], "CONFIGURES"),
+                "edge_id": generate_edge_id(
+                    file_node_id, node["node_id"], "CONFIGURES"
+                ),
                 "from_node_id": file_node_id,
                 "to_node_id": node["node_id"],
                 "relationship_type": "CONFIGURES",
@@ -581,7 +618,9 @@ def extract_technologies(
             edges.append(edge)
 
     except Exception as e:
-        errors.append(f"Technology extraction failed for {file_path}: {type(e).__name__}: {e}")
+        errors.append(
+            f"Technology extraction failed for {file_path}: {type(e).__name__}: {e}"
+        )
 
     return {
         "success": len(errors) == 0,
@@ -596,4 +635,9 @@ def extract_technologies(
 
 def extract_technologies_batch(*args: Any, **kwargs: Any) -> dict[str, Any]:
     """Batch extraction - not implemented, use single-file extraction."""
-    return {"success": True, "data": {"nodes": [], "edges": []}, "errors": [], "stats": {}}
+    return {
+        "success": True,
+        "data": {"nodes": [], "edges": []},
+        "errors": [],
+        "stats": {},
+    }

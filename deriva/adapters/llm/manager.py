@@ -69,7 +69,9 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
     """Get or create the thread pool executor for LLM calls."""
     global _llm_executor
     if _llm_executor is None:
-        _llm_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm_")
+        _llm_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="llm_"
+        )
     return _llm_executor
 
 
@@ -80,6 +82,7 @@ def _is_event_loop_running() -> bool:
         return loop is not None
     except RuntimeError:
         return False
+
 
 logger = logging.getLogger(__name__)
 

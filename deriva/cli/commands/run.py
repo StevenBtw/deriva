@@ -252,7 +252,9 @@ def run_stage(
                 with open(output_path, "w") as f:
                     json.dump(candidate_data, f, indent=2)
 
-                typer.echo(f"\nExported {len(result['candidate_decisions'])} candidate decisions to {output_path}")
+                typer.echo(
+                    f"\nExported {len(result['candidate_decisions'])} candidate decisions to {output_path}"
+                )
 
         elif stage == "all":
             with progress_reporter:

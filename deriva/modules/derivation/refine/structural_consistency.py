@@ -30,8 +30,14 @@ logger = logging.getLogger(__name__)
 # These relationships have strict source/target aspect requirements
 ASPECT_CONSTRAINED_RELATIONSHIPS = {
     "Flow": {"valid_sources": BEHAVIOR_ELEMENTS, "valid_targets": BEHAVIOR_ELEMENTS},
-    "Triggering": {"valid_sources": BEHAVIOR_ELEMENTS, "valid_targets": BEHAVIOR_ELEMENTS},
-    "Access": {"valid_sources": None, "valid_targets": PASSIVE_ELEMENTS},  # Any source, passive target
+    "Triggering": {
+        "valid_sources": BEHAVIOR_ELEMENTS,
+        "valid_targets": BEHAVIOR_ELEMENTS,
+    },
+    "Access": {
+        "valid_sources": None,
+        "valid_targets": PASSIVE_ELEMENTS,
+    },  # Any source, passive target
 }
 
 # Mapping of Graph relationship types to expected ArchiMate relationship types

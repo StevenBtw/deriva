@@ -114,7 +114,11 @@ def build_classification_prompt(
                 file_stats.append(f"docs:{d['docs_count']}")
             if d.get("test_count", 0) > 0:
                 file_stats.append(f"test:{d['test_count']}")
-            dir_info["files"] = f"{file_count} ({', '.join(file_stats)})" if file_stats else str(file_count)
+            dir_info["files"] = (
+                f"{file_count} ({', '.join(file_stats)})"
+                if file_stats
+                else str(file_count)
+            )
 
             # Include subtypes (languages) if available
             subtypes = d.get("subtypes", [])

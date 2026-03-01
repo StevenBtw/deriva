@@ -35,15 +35,12 @@ from .base import (
 class DuplicateCheckResult(BaseModel):
     """LLM response model for semantic duplicate checking."""
 
-    is_duplicate: bool = Field(
-        description="True if elements represent the same thing"
-    )
+    is_duplicate: bool = Field(description="True if elements represent the same thing")
     confidence: float = Field(
         ge=0.0, le=1.0, description="Confidence level (0.0 to 1.0)"
     )
-    reasoning: str | None = Field(
-        default=None, description="Brief explanation"
-    )
+    reasoning: str | None = Field(default=None, description="Brief explanation")
+
 
 if TYPE_CHECKING:
     from deriva.adapters.archimate import ArchimateManager

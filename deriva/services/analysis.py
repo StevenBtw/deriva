@@ -560,11 +560,9 @@ class BenchmarkAnalyzer:
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "repository", "model", "run",
-                "total_elements", "stable_elements", "element_stability",
-                "total_relationships", "stable_relationships", "relationship_stability"
-            ])
+            writer.writerow(
+                ["repository", "model", "run", "total_elements", "stable_elements", "element_stability", "total_relationships", "stable_relationships", "relationship_stability"]
+            )
 
             for repo, phases in report.stability_reports.items():
                 derivation = phases.get("derivation")
@@ -579,11 +577,7 @@ class BenchmarkAnalyzer:
                     stable_rel = sum(b.stable for b in derivation.relationship_breakdown)
                     rel_stability = stable_rel / total_rel if total_rel > 0 else 0.0
 
-                    writer.writerow([
-                        repo, "all", "all",
-                        total_elem, stable_elem, f"{elem_stability:.2%}",
-                        total_rel, stable_rel, f"{rel_stability:.2%}"
-                    ])
+                    writer.writerow([repo, "all", "all", total_elem, stable_elem, f"{elem_stability:.2%}", total_rel, stable_rel, f"{rel_stability:.2%}"])
 
         return str(path)
 
@@ -606,22 +600,22 @@ class BenchmarkAnalyzer:
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "repository", "model", "gt_elements", "extracted_elements",
-                "matched", "precision", "recall", "f1"
-            ])
+            writer.writerow(["repository", "model", "gt_elements", "extracted_elements", "matched", "precision", "recall", "f1"])
 
             for repo, sem_report in report.semantic_reports.items():
                 if sem_report:
-                    writer.writerow([
-                        repo, "all",
-                        sem_report.reference_element_count,
-                        sem_report.derived_element_count,
-                        len(sem_report.correctly_derived),
-                        f"{sem_report.precision:.3f}",
-                        f"{sem_report.recall:.3f}",
-                        f"{sem_report.f1_score:.3f}"
-                    ])
+                    writer.writerow(
+                        [
+                            repo,
+                            "all",
+                            sem_report.reference_element_count,
+                            sem_report.derived_element_count,
+                            len(sem_report.correctly_derived),
+                            f"{sem_report.precision:.3f}",
+                            f"{sem_report.recall:.3f}",
+                            f"{sem_report.f1_score:.3f}",
+                        ]
+                    )
                 else:
                     writer.writerow([repo, "all", 0, 0, 0, "N/A", "N/A", "N/A"])
 
@@ -645,9 +639,7 @@ class BenchmarkAnalyzer:
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "repository", "model", "validity_pct", "type_correct_pct", "name_quality_pct"
-            ])
+            writer.writerow(["repository", "model", "validity_pct", "type_correct_pct", "name_quality_pct"])
 
             for repo in report.stability_reports:
                 sem_report = report.semantic_reports.get(repo)
@@ -659,19 +651,13 @@ class BenchmarkAnalyzer:
                 # Type correct: Elements with matching ArchiMate type
                 type_correct = 0.0
                 if sem_report and sem_report.correctly_derived:
-                    exact_matches = len([m for m in sem_report.correctly_derived
-                                        if m.match_type in ("exact", "fuzzy_name")])
+                    exact_matches = len([m for m in sem_report.correctly_derived if m.match_type in ("exact", "fuzzy_name")])
                     type_correct = exact_matches / max(sem_report.derived_element_count, 1)
 
                 # Name quality: Coverage score from fit analysis
                 name_quality = fit.coverage_score if fit else 0.0
 
-                writer.writerow([
-                    repo, "all",
-                    f"{validity:.1%}",
-                    f"{type_correct:.1%}",
-                    f"{name_quality:.1%}"
-                ])
+                writer.writerow([repo, "all", f"{validity:.1%}", f"{type_correct:.1%}", f"{name_quality:.1%}"])
 
         return str(path)
 
@@ -725,10 +711,7 @@ class BenchmarkAnalyzer:
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "repository", "model", "run", "duration_sec",
-                "event_count", "tokens_in", "tokens_out", "api_calls"
-            ])
+            writer.writerow(["repository", "model", "run", "duration_sec", "event_count", "tokens_in", "tokens_out", "api_calls"])
 
             for run_id, metrics in run_metrics.items():
                 # Parse run number from run_id (format: session:repo:model:n)
@@ -745,14 +728,9 @@ class BenchmarkAnalyzer:
                     except (TypeError, AttributeError):
                         duration = 0.0
 
-                writer.writerow([
-                    metrics["repo"], metrics["model"], run_num,
-                    f"{duration:.1f}",
-                    metrics["events"],
-                    metrics["tokens_in"],
-                    metrics["tokens_out"],
-                    metrics["api_calls"]
-                ])
+                writer.writerow(
+                    [metrics["repo"], metrics["model"], run_num, f"{duration:.1f}", metrics["events"], metrics["tokens_in"], metrics["tokens_out"], metrics["api_calls"]]
+                )
 
         return str(path)
 
@@ -781,25 +759,13 @@ class BenchmarkAnalyzer:
         paths = {}
 
         # JSON exports
-        paths["inter_model_json"] = self.export_json(
-            results_dir / "inter_model_agreement.json"
-        )
-        paths["markdown"] = self.export_markdown(
-            results_dir / "benchmark_analysis.md"
-        )
+        paths["inter_model_json"] = self.export_json(results_dir / "inter_model_agreement.json")
+        paths["markdown"] = self.export_markdown(results_dir / "benchmark_analysis.md")
 
         # CSV exports per BENCHMARK_OUTPUT.md spec
-        paths["consistency_csv"] = self.export_consistency_metrics_csv(
-            results_dir / "consistency_metrics.csv"
-        )
-        paths["ground_truth_csv"] = self.export_ground_truth_comparison_csv(
-            results_dir / "ground_truth_comparison.csv"
-        )
-        paths["quality_csv"] = self.export_quality_verification_csv(
-            results_dir / "quality_verification.csv"
-        )
-        paths["execution_csv"] = self.export_execution_metrics_csv(
-            results_dir / "execution_metrics.csv"
-        )
+        paths["consistency_csv"] = self.export_consistency_metrics_csv(results_dir / "consistency_metrics.csv")
+        paths["ground_truth_csv"] = self.export_ground_truth_comparison_csv(results_dir / "ground_truth_comparison.csv")
+        paths["quality_csv"] = self.export_quality_verification_csv(results_dir / "quality_verification.csv")
+        paths["execution_csv"] = self.export_execution_metrics_csv(results_dir / "execution_metrics.csv")
 
         return paths

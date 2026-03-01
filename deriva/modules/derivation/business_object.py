@@ -130,7 +130,11 @@ class BusinessObjectDerivation(HybridDerivation):
             business_concepts, max_candidates
         )
         filtered_types = self._filter_typedef_candidates(
-            type_definitions, enrichments, max_candidates, include_patterns, exclude_patterns
+            type_definitions,
+            enrichments,
+            max_candidates,
+            include_patterns,
+            exclude_patterns,
         )
 
         # Combine: BusinessConcepts first (higher semantic confidence), then TypeDefinitions

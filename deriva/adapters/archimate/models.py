@@ -195,8 +195,10 @@ RELATIONSHIP_TYPES: dict[str, RelationshipType] = {
     "Composition": RelationshipType(
         name="Composition",
         description="Element consists of other elements (same aspect, same layer)",
-        allowed_sources=STRUCTURE_ELEMENTS | PASSIVE_ELEMENTS,  # Structure or Passive can compose
-        allowed_targets=STRUCTURE_ELEMENTS | PASSIVE_ELEMENTS,  # Structure or Passive can be composed
+        allowed_sources=STRUCTURE_ELEMENTS
+        | PASSIVE_ELEMENTS,  # Structure or Passive can compose
+        allowed_targets=STRUCTURE_ELEMENTS
+        | PASSIVE_ELEMENTS,  # Structure or Passive can be composed
     ),
     "Aggregation": RelationshipType(
         name="Aggregation",
