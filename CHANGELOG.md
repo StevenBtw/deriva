@@ -4,20 +4,40 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 ---
 
-# v0.6.x - Deriva (December 2025 - January 2026)
+# v0.7.x - Deriva (March 2026 - )
 
-Version 0.6.x is the first robust, end-to-end implementation of Deriva, but still very unstable. The goal for 0.6.x is to be fully feature complete, and have good performance in quality, efficiency, consistency and generalizability. Versions 0.7.x will be all about stability, portability, user experience, documenation and clean architecture/code standards, making those values low priority for 0.6.x.
+Version 0.7.x is all about stability, portability, user experience, documentation and clean architecture/code standards.
 
-## v0.6.9 - (Unreleased)
+## v0.7.0 - (Unreleased)
 
-I have been running a lot of benchmarks on flask_invoice_generator, full-stack-fastapi-template and taiga-back/taiga-front. Besides a lot of new config versions, I also added a few improvements to further reduce tokens per run and added some things to make my life easier while benchmarking and trying to get the % up without any overly cannonical or repository specific prompts. Currently not breaking the 60% barrier, for relationships (the hardest one).
+TBD
+
+---
+
+# v0.6.x - Deriva (December 2025 - March 2026)
+
+Version 0.6.x is the first robust, end-to-end implementation of Deriva, but still very unstable. The goal for 0.6.x is to be fully feature complete, and have good performance in quality, efficiency, consistency and generalizability. 0.6.x will be the last version using neo4j, which will be replaced with grafeo for performance/stability reasons.
+
+## v0.6.9 - Benchmarks, Relationships & Analysis (March 1, 2026)
+
+I have been running a lot of benchmarks on flask_invoice_generator, full-stack-fastapi-template and taiga-back/taiga-front. Besides a lot of new config versions, I also added a few improvements to further reduce tokens per run and added some things to make my life easier while benchmarking and trying to get the % up without any overly canonical or repository specific prompts. Currently not breaking the 60% barrier, for relationships (the hardest one).
+
+### CLI
+
+- **Single Step Execution**: New `--only-step` option for `run` command to run a single extraction/derivation step (disables all others)
+- **Benchmark Step Isolation**: New `--only-extraction-step` and `--only-derivation-step` options for benchmark runs
+- **Enrichment Cache Control**: New `--nocache-enrichment-configs` option for selective cache bypass during benchmarks
+- **Sequence Reordering**: New `config sequence` command to reorder derivation step execution (e.g., bottom-up: Technology → Application → Business)
+- **Read-Only Config Access**: New `config query` command for safe config access during benchmark runs (non-blocking)
+- **Batch Size in CLI**: Added `--batch-size` option to `config update` for extraction batching
 
 ### Extraction
 
-- **Edge Extraction Module**: New `edges.py` for Tree-sitter based relationship extraction. Extracts IMPORTS, USES, CALLS, DECORATED_BY, and REFERENCES edges with single AST parse per file. Language-specific filter constants added for Python, JavaScript, Java, and C#
-- **Directory Classification Step**: New extraction step after directories to create technology and business concept nodes, guiding subsequent LLM extraction
+- **Edge Extraction Module**: New `edges.py` for Tree-sitter based relationship extraction. Extracts IMPORTS, USES, CALLS, DECORATED_BY, and REFERENCES edges in a single efficient parse per file. Language-specific filter constants for Python, JavaScript, Java, and C#. Fixed type node ID format mismatch that caused REFERENCES edge creation failures
+- **Directory Classification Step**: New extraction step after directories to create technology and business concept nodes (with batched LLM calls), guiding subsequent LLM extraction
+- **Structural Technology Extraction**: New extraction method for Technology nodes from infrastructure files (docker-compose.yml, Dockerfile, .env) without LLM
 - **Token Efficiency**: Compact JSON serialization (~15% savings), system/user prompt separation, and multi-file batching (`--batch-size N`). Estimated 40-60% total reduction
-- **Fixed REFERENCES Edges**: Corrected type node ID format mismatch in `edges.py` that caused edge creation failures
+- **Error Context**: Error messages now include step context (e.g., `[Extraction - TypeDefinition] error...`) for easier debugging
 
 ### Derivation
 
@@ -34,6 +54,7 @@ I have been running a lot of benchmarks on flask_invoice_generator, full-stack-f
 - **Pydantic Structured Output**: New `schemas.py` with Pydantic models for all extraction types. LLM manager auto-resolves JSON schemas to models, enforcing structure via PydanticAI
 - **Rate Limiting**: Adaptive throttling (auto-reduces RPM on 429s), circuit breaker pattern, Retry-After header respect, error classification, and model-specific rate limits via env vars
 - **Graph Metadata**: Element properties now include all graph metrics (kcore, articulation points, degree); propagated to relationships
+- **Graph Labels**: Split Neo4j labels into namespace (Graph/Model) and node type, enabling cleaner queries and consistent naming across extraction and derivation
 - **Database Locking**: Non-blocking during benchmarks/pipeline runs, versions used for isolation
 
 ## v0.6.8 - Library Migration & Overall Cleanup (January 16, 2026)

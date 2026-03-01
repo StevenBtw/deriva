@@ -2452,7 +2452,7 @@ class TestDeriveCommunityRelationships:
         from deriva.modules.derivation.base import RelationshipRule, derive_community_relationships
 
         new_elements = [
-            {"identifier": "new_comp", "properties": {"source_community": "comm_1"}},
+            {"identifier": "new_comp", "element_type": "ApplicationComponent", "properties": {"source_community": "comm_1"}},
         ]
         existing_elements = [
             {"identifier": "old_svc", "element_type": "ApplicationService", "properties": {"source_community": "comm_1"}},
@@ -2473,7 +2473,7 @@ class TestDeriveCommunityRelationships:
         from deriva.modules.derivation.base import RelationshipRule, derive_community_relationships
 
         new_elements = [
-            {"identifier": "new_comp", "properties": {"source_community": "comm_1"}},
+            {"identifier": "new_comp", "element_type": "ApplicationComponent", "properties": {"source_community": "comm_1"}},
         ]
         existing_elements = [
             {"identifier": "old_svc", "element_type": "ApplicationService", "properties": {"source_community": "comm_2"}},
@@ -2489,7 +2489,7 @@ class TestDeriveCommunityRelationships:
         from deriva.modules.derivation.base import RelationshipRule, derive_community_relationships
 
         new_elements = [
-            {"identifier": "new_svc", "properties": {"source_community": "comm_1"}},
+            {"identifier": "new_svc", "element_type": "ApplicationService", "properties": {"source_community": "comm_1"}},
         ]
         existing_elements = [
             {"identifier": "old_comp", "element_type": "ApplicationComponent", "properties": {"source_community": "comm_1"}},

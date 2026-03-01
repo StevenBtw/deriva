@@ -1,0 +1,164 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<ns0:model xmlns:ns0="http://www.archimatetool.com/archimate" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="lightblue" id="235fba2d" version="3.1.1">
+  <folder name="Business" id="3ff34621" type="business">
+    <element xsi:type="archimate:BusinessActor" id="d9f2d520" name="Metadata Manager" />
+    <element xsi:type="archimate:BusinessActor" id="26e8003e" name="Business Actor" />
+    <element xsi:type="archimate:BusinessFunction" id="dd61e692" name="Create Metadata" />
+    <element xsi:type="archimate:BusinessFunction" id="bddbceee" name="Create Schema" />
+    <element xsi:type="archimate:BusinessFunction" id="b8ab890b" name="Update Schema Status" />
+    <element xsi:type="archimate:BusinessFunction" id="90e9a77f" name="Delete Default Vesrion" />
+    <element xsi:type="archimate:BusinessFunction" id="e8e89610" name="Get Entity Dependencies" />
+    <element xsi:type="archimate:BusinessFunction" id="554c418e" name="Get Entity Roles" />
+    <element xsi:type="archimate:BusinessFunction" id="3adb52ba" name="Get Entity Names" />
+    <element xsi:type="archimate:BusinessFunction" id="55f303db" name="Get Entity Versions" />
+    <element xsi:type="archimate:BusinessFunction" id="a021bd68" name="Get Metadata" />
+    <element xsi:type="archimate:BusinessFunction" id="f06b014e" name="Update Entity Info" />
+    <element xsi:type="archimate:BusinessFunction" id="6e1aa927" name="Update Default Version" />
+    <element xsi:type="archimate:BusinessFunction" id="09e8e464" name="Delete Entity" />
+    <element xsi:type="archimate:BusinessActor" id="9d4c0f66" name="Authenticated User" />
+    <element xsi:type="archimate:BusinessFunction" id="e5560ae0" name="Find Data" />
+    <element xsi:type="archimate:BusinessFunction" id="ab1782af" name="Insert Data" />
+    <element xsi:type="archimate:BusinessFunction" id="c9992969" name="Save Data" />
+    <element xsi:type="archimate:BusinessFunction" id="45f8d734" name="Update Data" />
+    <element xsi:type="archimate:BusinessFunction" id="511db343" name="Delete Data" />
+    <element xsi:type="archimate:BusinessActor" id="f06df85c" name="Authenticated User" />
+    </folder>
+  <folder name="Application" id="29316bce" type="application">
+    <element xsi:type="archimate:ApplicationComponent" id="61c6f34c" name="Mediator" />
+    <element xsi:type="archimate:ApplicationInterface" id="2e0a7323" name="Data REST API" />
+    <element xsi:type="archimate:DataObject" id="4938c971" name="Metadata" />
+    <element xsi:type="archimate:ApplicationService" id="4f1cf996" name="Data REST Resource" />
+    <element xsi:type="archimate:ApplicationComponent" id="b14bf5da" name="Mongo Metadata" />
+    <element xsi:type="archimate:ApplicationComponent" id="4443a91e" name="Mongo CRUD Controller" />
+    <element xsi:type="archimate:ApplicationInterface" id="d6b7228c" name="Metadata REST API" />
+    <element xsi:type="archimate:ApplicationService" id="127cee61" name="Metadata REST Resource" />
+    <element xsi:type="archimate:ApplicationComponent" id="871d4d1c" name="Abstract Metadata" />
+    <element xsi:type="archimate:ApplicationComponent" id="f278f9db" name="Swagger Documentation Plugin" />
+    <element xsi:type="archimate:ApplicationComponent" id="dda1c1b7" name="Metadata Application" />
+    <element xsi:type="archimate:DataObject" id="8c975e63" name="Entity Data" />
+    <element xsi:type="archimate:ApplicationComponent" id="e94c9859" name="CRUD Controller" />
+    <element xsi:type="archimate:ApplicationComponent" id="3cd379be" name="Aggregator Controller" />
+    <element xsi:type="archimate:ApplicationComponent" id="5ce107e3" name="Async Controller" />
+    <element xsi:type="archimate:ApplicationService" id="4393865a" name="Swagger Service" />
+    <element xsi:type="archimate:ApplicationComponent" id="fbdc494d" name="Swagger" />
+    <element xsi:type="archimate:DataObject" id="b4a170b8" name="Swagger Resource" />
+    <element xsi:type="archimate:ApplicationComponent" id="cbc051bf" name="Controller" />
+    <element xsi:type="archimate:ApplicationComponent" id="55ee1292" name="RDBMS CRUD Controller" />
+    <element xsi:type="archimate:ApplicationInterface" id="d3f0f55d" name="Metadata Management Application" />
+    <element xsi:type="archimate:ApplicationService" id="1536b71b" name="Metadata Application" />
+    <element xsi:type="archimate:ApplicationInterface" id="2da68a7a" name="Swagger UI" />
+    <element xsi:type="archimate:ApplicationComponent" id="01fce7e7" name="Metadata Controller" />
+    <element xsi:type="archimate:ApplicationComponent" id="ac898cea" name="Documentation Plugin" />
+    <element xsi:type="archimate:DataObject" id="c5da42fe" name="Entity Data" />
+    <element xsi:type="archimate:DataObject" id="6e3195a2" name="Entity Message" />
+    <element xsi:type="archimate:DataObject" id="a13ec3ec" name="CRUD Configuration" />
+    <element xsi:type="archimate:DataObject" id="2592187a" name="Metadata Configuration" />
+    <element xsi:type="archimate:DataObject" id="6e7dcd2b" name="Datastore Configuration" />
+    <element xsi:type="archimate:ApplicationComponent" id="50efb463" name="Hook" />
+    <element xsi:type="archimate:ApplicationComponent" id="93c06022" name="Publish Hook" />
+    <element xsi:type="archimate:ApplicationComponent" id="ef8e894b" name="Audit Hook" />
+    <element xsi:type="archimate:DataObject" id="4babf88a" name="Published Message" />
+    <element xsi:type="archimate:ApplicationService" id="41ba52ab" name="Data Application" />
+    <element xsi:type="archimate:ApplicationInterface" id="52b06d70" name="Data Management Application" />
+    <element xsi:type="archimate:ApplicationComponent" id="2e8bafb6" name="Data Application" />
+    <element xsi:type="archimate:DataObject" id="b0ac34eb" name="Aggregate Data" />
+    <element xsi:type="archimate:ApplicationService" id="080a7928" name="Mongo Database" />
+    <element xsi:type="archimate:ApplicationService" id="f68ac859" name="Relational Database" />
+    <element xsi:type="archimate:ApplicationService" id="563b842e" name="Graphite" />
+    <element xsi:type="archimate:ApplicationComponent" id="f2499f36" name="Servo + Hystrix" />
+    <element xsi:type="archimate:ApplicationService" id="407e5d49" name="Message Broker" />
+    <element xsi:type="archimate:ApplicationComponent" id="262e6237" name="LDAP CRUD Controller" />
+    <element xsi:type="archimate:ApplicationService" id="eeefef18" name="LDAP" />
+  </folder>
+  <folder name="Technology" id="6f2a757f" type="technology">
+    <element xsi:type="archimate:SystemSoftware" id="95c3b89b" name="Mongo Database" />
+    <element xsi:type="archimate:Device" id="520b8098" name="device" />
+    <element xsi:type="archimate:SystemSoftware" id="bc327649" name="JBoss EAP" />
+    <element xsi:type="archimate:Device" id="42f5e9f2" name="rdbms" />
+    <element xsi:type="archimate:SystemSoftware" id="8ab0765d" name="Oracle DB" />
+    <element xsi:type="archimate:SystemSoftware" id="85287a2c" name="JBoss A-MQ" />
+    <element xsi:type="archimate:SystemSoftware" id="73b1d12e" name="Apache Karaf" />
+    <element xsi:type="archimate:SystemSoftware" id="c94a0fbf" name="JBoss EAP" />
+    <element xsi:type="archimate:Device" id="b7eb81c9" name="swagger" />
+    <element xsi:type="archimate:Device" id="8c7430cf" name="metadata" />
+    <element xsi:type="archimate:Device" id="8d26b770" name="data" />
+    <element xsi:type="archimate:Node" id="10218162" name="Application Server: CRUD" />
+    <element xsi:type="archimate:Node" id="53cfcdc9" name="Application Server: Metadata" />
+    <element xsi:type="archimate:Node" id="362adccd" name="Application Server: Documentation" />
+    <element xsi:type="archimate:Device" id="41db450b" name="broker" />
+    <element xsi:type="archimate:Node" id="968e86df" name="Messaging Broker" />
+    <element xsi:type="archimate:Node" id="b9eed54c" name="Relational Database" />
+    <element xsi:type="archimate:Device" id="bed8afd3" name="mongo" />
+    <element xsi:type="archimate:Node" id="b5c5713b" name="Mongo Database" />
+    <element xsi:type="archimate:SystemSoftware" id="0f21c46b" name="RDBMS" />
+    <element xsi:type="archimate:SystemSoftware" id="b28d7230" name="MySQL DB" />
+    <element xsi:type="archimate:SystemSoftware" id="4c9bee46" name="Postgres DB" />
+    <element xsi:type="archimate:Node" id="df4b210a" name="Enterprise Service Bus" />
+    <element xsi:type="archimate:SystemSoftware" id="c6a0fc15" name="Netflix/Hystrix">
+      <documentation>https://github.com/Netflix/Hystrix</documentation>
+    </element>
+  </folder>
+  <folder name="Motivation" id="06f05462" type="motivation">
+    </folder>
+  <folder name="Implementation &amp; Migration" id="70b27f39" type="implementation_migration">
+    </folder>
+  <folder name="Connectors" id="6a48dc22" type="connectors" />
+  <folder name="Relations" id="0010f3fa" type="relations">
+    <element xsi:type="archimate:RealisationRelationship" id="32e31786" source="61c6f34c" target="4f1cf996" />
+    <element xsi:type="archimate:RealisationRelationship" id="25abf0aa" source="871d4d1c" target="127cee61" />
+    <element xsi:type="archimate:AccessRelationship" id="5fe6eadf" source="4443a91e" target="8c975e63" accessType="3" />
+    <element xsi:type="archimate:AccessRelationship" id="cd15ee97" source="b14bf5da" target="4938c971" accessType="3" />
+    <element xsi:type="archimate:RealisationRelationship" id="9b9c0776" source="fbdc494d" target="4393865a" />
+    <element xsi:type="archimate:AccessRelationship" id="d76d16f4" name="creates" source="f278f9db" target="b4a170b8" />
+    <element xsi:type="archimate:AccessRelationship" id="0840a94e" source="fbdc494d" target="b4a170b8" accessType="1" />
+    <element xsi:type="archimate:AssociationRelationship" id="9ef0c130" source="bc327649" target="520b8098" />
+    <element xsi:type="archimate:AggregationRelationship" id="63335b4b" source="cbc051bf" target="5ce107e3" />
+    <element xsi:type="archimate:AggregationRelationship" id="8bf37ece" source="cbc051bf" target="3cd379be" />
+    <element xsi:type="archimate:AggregationRelationship" id="44bc4ce3" source="cbc051bf" target="e94c9859" />
+    <element xsi:type="archimate:AssignmentRelationship" id="dbe5c45c" source="2e0a7323" target="4f1cf996" />
+    <element xsi:type="archimate:AssignmentRelationship" id="7be54008" source="d6b7228c" target="127cee61" />
+    <element xsi:type="archimate:AssignmentRelationship" id="0fd0a33c" source="d3f0f55d" target="1536b71b" />
+    <element xsi:type="archimate:RealisationRelationship" id="90a8bf3d" source="dda1c1b7" target="1536b71b" />
+    <element xsi:type="archimate:AssignmentRelationship" id="02aed784" source="2da68a7a" target="4393865a" />
+    <element xsi:type="archimate:AggregationRelationship" id="c354cfc3" source="61c6f34c" target="b14bf5da" />
+    <element xsi:type="archimate:AggregationRelationship" id="47528f1a" source="871d4d1c" target="01fce7e7" />
+    <element xsi:type="archimate:AggregationRelationship" id="57dc30c1" source="871d4d1c" target="ac898cea" />
+    <element xsi:type="archimate:AggregationRelationship" id="27fd0ca9" source="61c6f34c" target="ac898cea" />
+    <element xsi:type="archimate:AccessRelationship" id="947ae34d" source="55ee1292" target="c5da42fe" accessType="3" />
+    <element xsi:type="archimate:AccessRelationship" id="1090e500" source="5ce107e3" target="6e3195a2" accessType="3" />
+    <element xsi:type="archimate:CompositionRelationship" id="a5055322" source="73b1d12e" target="85287a2c" />
+    <element xsi:type="archimate:CompositionRelationship" id="58a03451" source="10218162" target="8d26b770" />
+    <element xsi:type="archimate:AggregationRelationship" id="e2148167" source="10218162" target="c94a0fbf" />
+    <element xsi:type="archimate:CompositionRelationship" id="fa63e2f5" source="53cfcdc9" target="8c7430cf" />
+    <element xsi:type="archimate:CompositionRelationship" id="f51d18f4" source="362adccd" target="b7eb81c9" />
+    <element xsi:type="archimate:AggregationRelationship" id="694ab8de" source="53cfcdc9" target="c94a0fbf" />
+    <element xsi:type="archimate:AggregationRelationship" id="f5c1686e" source="362adccd" target="c94a0fbf" />
+    <element xsi:type="archimate:CompositionRelationship" id="a6ba36a1" source="968e86df" target="41db450b" />
+    <element xsi:type="archimate:AggregationRelationship" id="86ecc6ca" source="968e86df" target="85287a2c" />
+    <element xsi:type="archimate:CompositionRelationship" id="c8c49316" source="b9eed54c" target="42f5e9f2" />
+    <element xsi:type="archimate:CompositionRelationship" id="b35ae8ec" source="b5c5713b" target="bed8afd3" />
+    <element xsi:type="archimate:AggregationRelationship" id="7e3515ea" source="b5c5713b" target="95c3b89b" />
+    <element xsi:type="archimate:AggregationRelationship" id="7a6910df" source="b9eed54c" target="0f21c46b" />
+    <element xsi:type="archimate:CompositionRelationship" id="70802a95" source="61c6f34c" target="cbc051bf" />
+    <element xsi:type="archimate:AggregationRelationship" id="075de827" source="cbc051bf" target="55ee1292" />
+    <element xsi:type="archimate:AggregationRelationship" id="53a007ca" source="cbc051bf" target="4443a91e" />
+    <element xsi:type="archimate:AccessRelationship" id="87db646e" source="127cee61" target="2592187a" accessType="1" />
+    <element xsi:type="archimate:AccessRelationship" id="867eeae1" source="4f1cf996" target="a13ec3ec" accessType="1" />
+    <element xsi:type="archimate:AccessRelationship" id="2f3a98c7" source="4f1cf996" target="6e7dcd2b" accessType="1" />
+    <element xsi:type="archimate:AccessRelationship" id="c1f50e30" source="127cee61" target="6e7dcd2b" accessType="1" />
+    <element xsi:type="archimate:AccessRelationship" id="f7c2c476" source="93c06022" target="4babf88a" />
+    <element xsi:type="archimate:AssignmentRelationship" id="fee96adc" source="52b06d70" target="41ba52ab" />
+    <element xsi:type="archimate:RealisationRelationship" id="21dbcc00" source="2e8bafb6" target="41ba52ab" />
+    <element xsi:type="archimate:AggregationRelationship" id="09315e3c" source="b14bf5da" target="f2499f36" />
+    <element xsi:type="archimate:AggregationRelationship" id="dc53fc58" source="61c6f34c" target="f2499f36" />
+    <element xsi:type="archimate:CompositionRelationship" id="001e3685" source="61c6f34c" target="e94c9859" />
+    </folder>
+  <folder name="Views" id="19b98b0d" type="diagrams">
+    <folder name="Technical" id="ee62d621">
+      </folder>
+    <folder name="Simplifications" id="ccc0b6dd">
+      </folder>
+    <folder name="Deployable" id="a06110ff">
+      </folder>
+    </folder>
+</ns0:model>

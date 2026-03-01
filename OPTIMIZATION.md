@@ -10,7 +10,7 @@ This guide documents lessons learned from optimizing Deriva's LLM-based pipeline
 
 - [Optimization Methodology](#optimization-methodology)
 - [Prompt Engineering Principles](#prompt-engineering-principles)
-- [ArchiMate Best Practices](#archimate-best-practices)
+- [ArchiMate Knowledge](#archimate-knowledge)
 - [Case Study: Initial Optimization](#case-study-initial-optimization)
 - [Graph-Based Optimization](#graph-based-optimization)
 - [Optimization Log](#optimization-log)
@@ -239,11 +239,14 @@ Maximum 5 services per repository
 
 ---
 
-## ArchiMate Best Practices
+## ArchiMate Knowledge
 
-This section synthesizes best practices from academic research and industry experts for deriving high-quality ArchiMate models.
+For comprehensive ArchiMate reference including element definitions, relationship rules, and metamodel constraints, see **[ARCHIMATE.md](ARCHIMATE.md)**.
 
-> **Sources:** [AlbertoDMendoza/ArchiMateBestPractices](https://github.com/AlbertoDMendoza/ArchiMateBestPractices) and academic literature on LLM-based modeling.
+Key sections for prompt engineering:
+- [The Three Aspects](ARCHIMATE.md#the-three-aspects) - Active/Behavior/Passive classification
+- [Relationships](ARCHIMATE.md#relationships) - Valid relationship types and constraints
+- [Common Pitfalls](ARCHIMATE.md#common-pitfalls) - Modeling mistakes to avoid
 
 ### Research Findings
 
@@ -261,101 +264,6 @@ Key findings from academic research on LLM-based ArchiMate derivation:
 | LLMs show higher consistency than humans | Reitemeyer 2025 | Multiple runs can improve reliability |
 | **Consistency ≠ accuracy (independent properties)** | Raj 2025 | Validate correctness separately from consistency |
 | Human-in-the-loop is essential | All sources | Design for validation, not full automation |
-
-### Naming Conventions
-
-**Industry expert guidance** (Gerben Wierda, *Mastering ArchiMate*):
-
-<details>
-<summary><strong>Wierda's Three-Line Naming Pattern</strong></summary>
-
-Use a structured naming pattern with grouping, name, and type:
-
-```text
-[Customer System]
-Change Address
-(Application Process)
-```
-
-In Archi, implement with Label Expressions:
-
-```text
-[${property:Group}]
-${name}
-(${type})
-```
-
-</details>
-
-**General naming recommendations:**
-
-| Rule | Example | Anti-pattern |
-|------|---------|--------------|
-| Use compound terms for clarity | `Student Information System` | `System` |
-| Singular noun phrases for structural elements | `Data Warehouse`, `User Portal` | `Data Warehouses` |
-| Verb phrases for behavioral elements | `Manage Applications`, `Process Payments` | `Application Manager` |
-| Title Case for element names | `Auxiliary Services` | `auxiliary services` |
-| Avoid abbreviations unless well-known | `Customer Relationship Management` | `CRM` (unless universal) |
-| Avoid qualifiers in names | `Reporting` | `Reporting (Finance)` |
-
-### Element Type Definitions
-
-When deriving ArchiMate elements, use these definitions and code signals:
-
-<details>
-<summary><strong>Application Layer Elements</strong></summary>
-
-| Element Type | Definition | Code Signals |
-|--------------|------------|--------------|
-| ApplicationComponent | Modular, deployable unit encapsulating behavior/data | Directories, packages, modules |
-| ApplicationInterface | Point of access to application services | API endpoints, routes, controllers |
-| ApplicationService | Explicitly defined exposed behavior | Service classes, handlers |
-| DataObject | Data structured for automated processing | ORM models, schemas, entities |
-
-</details>
-
-<details>
-<summary><strong>Business Layer Elements</strong></summary>
-
-| Element Type | Definition | Code Signals |
-|--------------|------------|--------------|
-| BusinessObject | Passive element with business relevance | Domain concepts, business entities |
-| BusinessProcess | Sequence of business behaviors | Workflows, transactions |
-| BusinessActor | Entity capable of performing behavior | User roles, system actors |
-| BusinessFunction | Collection of business behavior | Capability groupings |
-
-</details>
-
-<details>
-<summary><strong>Technology Layer Elements</strong></summary>
-
-| Element Type | Definition | Code Signals |
-|--------------|------------|--------------|
-| TechnologyService | Externally visible technology functionality | External APIs, databases, queues |
-| Node | Computational/physical resource | Servers, containers |
-| SystemSoftware | Software managing hardware | Operating systems, runtimes |
-| Device | Physical computational resource | Hardware, IoT devices |
-
-</details>
-
-### Relationship Types
-
-<details>
-<summary><strong>Valid ArchiMate Relationships</strong></summary>
-
-| Relationship | Meaning | Example |
-|--------------|---------|---------|
-| Composition | A consists of B (strong ownership) | Module contains submodules |
-| Aggregation | A groups B (weak ownership) | Package includes classes |
-| Serving | A provides functionality to B | Service serves component |
-| Realization | A implements B | Class realizes interface |
-| Access | A reads/writes B | Service accesses data object |
-| Flow | Transfer of data/information | Data flows between services |
-| Assignment | Allocates responsibility | Actor assigned to process |
-
-</details>
-
-**Invalid types to avoid:** `Association`, `Dependency`, `Uses` - map these to `Serving` or `Flow` instead.
 
 ### Temperature and Consistency
 
@@ -409,7 +317,7 @@ def aggregate_elements(runs: list[list[dict]]) -> list[dict]:
 
 </details>
 
-### Common Pitfalls
+### LLM-Specific Pitfalls
 
 <details>
 <summary><strong>Identifier Hallucination</strong></summary>
@@ -1242,6 +1150,7 @@ Before optimizing prompts for consistency, ensure token efficiency:
 
 ## Further Reading
 
+- [ARCHIMATE.md](ARCHIMATE.md) - ArchiMate element definitions, relationships, and metamodel reference
 - [BENCHMARKS.md](BENCHMARKS.md) - User guide for running benchmarks
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Architecture and development patterns
 - [ArchiMate Best Practices & Resource Guide](https://github.com/AlbertoDMendoza/ArchiMateBestPractices) - Detailed prompt templates for ArchiMate derivation

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.0"
+__generated_with = "0.19.4"
 app = marimo.App(width="columns", app_title="Deriva")
 
 
@@ -21,30 +21,37 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _(mo, session):
+    _repos = session.get_repositories()
+    _repo_options = ["All Repositories"] + [r["name"] for r in _repos]
+    repo_selector = mo.ui.dropdown(
+        options=_repo_options,
+        label="Repository",
+        value="All Repositories",
+    )
     run_deriva_btn = mo.ui.run_button(label="Run Deriva", kind="success")
     extraction_btn = mo.ui.run_button(label="Run Extraction")
     derivation_btn = mo.ui.run_button(label="Run Derivation")
 
     mo.vstack(
         [
+            repo_selector,
             run_deriva_btn,
             mo.md("---"),
             mo.md("### Individual Steps"),
             mo.hstack([extraction_btn, derivation_btn]),
         ]
     )
-    return derivation_btn, extraction_btn, run_deriva_btn
+    return derivation_btn, extraction_btn, repo_selector, run_deriva_btn
 
 
 @app.cell
 async def _(
-    MarimoLiveProgressReporter,
-    MarimoProgressReporter,
     asyncio,
     derivation_btn,
     extraction_btn,
     mo,
+    repo_selector,
     run_deriva_btn,
     session,
 ):
@@ -54,11 +61,15 @@ async def _(
     _summary = None
     _elapsed = 0.0
 
+    # Get selected repo (None means all repos)
+    _selected_repo = repo_selector.value if repo_selector.value != "All Repositories" else None
+
     if run_deriva_btn.value:
         import time
 
         _start = time.time()
-        print("[Deriva] Running full pipeline...")
+        _repo_msg = f" for {_selected_repo}" if _selected_repo else ""
+        print(f"[Deriva] Running full pipeline{_repo_msg}...")
 
         _extraction_stats = {}
         _derivation_stats = {}
@@ -69,15 +80,15 @@ async def _(
         _ext_last = None
 
         for _update in mo.status.progress_bar(
-            session.run_extraction_iter(),
+            session.run_extraction_iter(repo_name=_selected_repo),
             total=_ext_total,
             title="Extraction",
-            subtitle=lambda u: f"{u.step}: {u.message}" if u.step else "Starting...",
+            subtitle="Processing...",
             show_rate=True,
             show_eta=True,
         ):
             _ext_last = _update
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.01)
 
         if _ext_last and _ext_last.stats:
             _extraction_stats = _ext_last.stats.get("stats", {})
@@ -91,12 +102,12 @@ async def _(
             session.run_derivation_iter(),
             total=_der_total,
             title="Derivation",
-            subtitle=lambda u: f"{u.step}: {u.message}" if u.step else "Starting...",
+            subtitle="Processing...",
             show_rate=True,
             show_eta=True,
         ):
             _der_last = _update
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.01)
 
         if _der_last and _der_last.stats:
             _derivation_stats = _der_last.stats.get("stats", {})
@@ -108,10 +119,10 @@ async def _(
 
         print(f"[Deriva] Pipeline complete: {_steps_completed} steps in {_elapsed:.1f}s")
         _msg = f"""**Pipeline Complete** ({_elapsed:.1f}s)
-- Extraction: {_extraction_stats.get("nodes_created", 0)} nodes
-- Derivation: {_derivation_stats.get("elements_created", 0)} elements
-- Steps completed: {_steps_completed}
-- Errors: {len(_all_errors)}"""
+    - Extraction: {_extraction_stats.get("nodes_created", 0)} nodes
+    - Derivation: {_derivation_stats.get("elements_created", 0)} elements
+    - Steps completed: {_steps_completed}
+    - Errors: {len(_all_errors)}"""
 
         if _all_errors:
             _result = {"errors": _all_errors}
@@ -122,7 +133,8 @@ async def _(
         import time
 
         _start = time.time()
-        print("[Deriva] Running extraction...")
+        _repo_msg = f" for {_selected_repo}" if _selected_repo else ""
+        print(f"[Deriva] Running extraction{_repo_msg}...")
 
         # Get total step count for determinate progress bar
         _total_steps = session.get_extraction_step_count()
@@ -132,17 +144,17 @@ async def _(
         _step_messages = []
 
         for _update in mo.status.progress_bar(
-            session.run_extraction_iter(),
+            session.run_extraction_iter(repo_name=_selected_repo),
             total=_total_steps,
             title="Extraction",
-            subtitle=lambda u: f"{u.step}: {u.message}" if u.step else "Starting...",
+            subtitle="Processing...",
             show_rate=True,
             show_eta=True,
         ):
             _last_update = _update
             if _update.status == "complete" and _update.step:
                 _step_messages.append(f"- {_update.step}: {_update.message}")
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.01)
 
         _elapsed = time.time() - _start
 
@@ -164,11 +176,12 @@ async def _(
         if _step_messages:
             _step_details = "\n\n**Steps:**\n" + "\n".join(_step_messages)
 
-        _msg = f"""**Extraction Complete** ({_elapsed:.1f}s)
-- Repos: {_stats.get("repos_processed", 0)}
-- Nodes: {_stats.get("nodes_created", 0)}
-- Edges: {_stats.get("edges_created", 0)}
-- Steps: {_stats.get("steps_completed", 0)}{_step_details}"""
+        _repo_label = f" ({_selected_repo})" if _selected_repo else ""
+        _msg = f"""**Extraction Complete{_repo_label}** ({_elapsed:.1f}s)
+    - Repos: {_stats.get("repos_processed", 0)}
+    - Nodes: {_stats.get("nodes_created", 0)}
+    - Edges: {_stats.get("edges_created", 0)}
+    - Steps: {_stats.get("steps_completed", 0)}{_step_details}"""
 
         if _errors:
             _result = {"errors": _errors}
@@ -192,14 +205,14 @@ async def _(
             session.run_derivation_iter(),
             total=_total_steps,
             title="Derivation",
-            subtitle=lambda u: f"{u.step}: {u.message}" if u.step else "Starting...",
+            subtitle="Processing...",
             show_rate=True,
             show_eta=True,
         ):
             _last_update = _update
             if _update.status == "complete" and _update.step:
                 _step_messages.append(f"- {_update.step}: {_update.message}")
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.01)
 
         _elapsed = time.time() - _start
 
@@ -218,9 +231,9 @@ async def _(
 
         print(f"[Deriva] Derivation complete: {_stats.get('elements_created', 0)} elements in {_elapsed:.1f}s")
         _msg = f"""**Derivation Complete** ({_elapsed:.1f}s)
-- Elements: {_stats.get("elements_created", 0)}
-- Relationships: {_stats.get("relationships_created", 0)}
-- Steps: {_stats.get("steps_completed", 0)}"""
+    - Elements: {_stats.get("elements_created", 0)}
+    - Relationships: {_stats.get("relationships_created", 0)}
+    - Steps: {_stats.get("steps_completed", 0)}"""
 
         if _errors:
             _result = {"errors": _errors}
@@ -336,7 +349,15 @@ def _(mo):
 
 
 @app.cell
-def _(clone_btn, get_repos_refresh, mo, repo_name_input, repo_url_input, session, set_repos_refresh):
+def _(
+    clone_btn,
+    get_repos_refresh,
+    mo,
+    repo_name_input,
+    repo_url_input,
+    session,
+    set_repos_refresh,
+):
     if clone_btn.value and repo_url_input.value:
         print(f"[Deriva] Cloning repository: {repo_url_input.value}")
         _result = session.clone_repository(
@@ -365,7 +386,14 @@ def _(mo, repos_table):
 
 
 @app.cell
-def _(delete_repo_btn, get_repos_refresh, mo, repos_table, session, set_repos_refresh):
+def _(
+    delete_repo_btn,
+    get_repos_refresh,
+    mo,
+    repos_table,
+    session,
+    set_repos_refresh,
+):
     if delete_repo_btn.value and repos_table and repos_table.value:
         _selected = repos_table.value
         print(f"[Deriva] Deleting {len(_selected)} repository(s)...")
@@ -692,18 +720,44 @@ def _(ft_table, mo):
         ft_type_input = mo.ui.text(value=_selected["Type"], label="Type")
         ft_subtype_input = mo.ui.text(value=_selected["Subtype"], label="Subtype")
         ft_save_btn = mo.ui.run_button(label="Save")
-        mo.vstack([ft_ext_display, ft_type_input, ft_subtype_input, ft_save_btn])
+        ft_delete_btn = mo.ui.run_button(label="Delete", kind="danger")
+        mo.vstack(
+            [
+                mo.md("### Edit File Type"),
+                ft_ext_display,
+                ft_type_input,
+                ft_subtype_input,
+                mo.hstack([ft_save_btn, ft_delete_btn]),
+            ]
+        )
     else:
         ft_ext_display = None
         ft_type_input = None
         ft_subtype_input = None
         ft_save_btn = None
+        ft_delete_btn = None
         mo.md("_Select a file type to edit_")
-    return ft_ext_display, ft_save_btn, ft_subtype_input, ft_type_input
+    return (
+        ft_delete_btn,
+        ft_ext_display,
+        ft_save_btn,
+        ft_subtype_input,
+        ft_type_input,
+    )
 
 
 @app.cell
-def _(ft_ext_display, ft_save_btn, ft_subtype_input, ft_type_input, get_ft_refresh, mo, session, set_ft_refresh):
+def _(
+    ft_delete_btn,
+    ft_ext_display,
+    ft_save_btn,
+    ft_subtype_input,
+    ft_type_input,
+    get_ft_refresh,
+    mo,
+    session,
+    set_ft_refresh,
+):
     if ft_save_btn and ft_save_btn.value and ft_ext_display:
         print(f"[Deriva] Saving file type: {ft_ext_display.value}")
         _ok = session.update_file_type(ft_ext_display.value, ft_type_input.value, ft_subtype_input.value)
@@ -714,6 +768,65 @@ def _(ft_ext_display, ft_save_btn, ft_subtype_input, ft_type_input, get_ft_refre
         else:
             print(f"[Deriva] File type save failed: {ft_ext_display.value}")
             mo.callout(mo.md("Save failed"), kind="danger")
+    elif ft_delete_btn and ft_delete_btn.value and ft_ext_display:
+        print(f"[Deriva] Deleting file type: {ft_ext_display.value}")
+        _ok = session.delete_file_type(ft_ext_display.value)
+        set_ft_refresh(get_ft_refresh() + 1)
+        if _ok:
+            print(f"[Deriva] File type deleted: {ft_ext_display.value}")
+            mo.callout(mo.md(f"Deleted **{ft_ext_display.value}**"), kind="success")
+        else:
+            print(f"[Deriva] File type delete failed: {ft_ext_display.value}")
+            mo.callout(mo.md("Delete failed"), kind="danger")
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Add File Type
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    ft_add_ext = mo.ui.text(placeholder=".tsx", label="Extension")
+    ft_add_type = mo.ui.dropdown(
+        options=["source", "config", "docs", "test", "build", "asset", "data", "exclude"],
+        label="Type",
+        value="source",
+    )
+    ft_add_subtype = mo.ui.text(placeholder="typescript", label="Subtype")
+    ft_add_btn = mo.ui.run_button(label="Add")
+    mo.hstack([ft_add_ext, ft_add_type, ft_add_subtype, ft_add_btn])
+    return ft_add_btn, ft_add_ext, ft_add_subtype, ft_add_type
+
+
+@app.cell
+def _(
+    ft_add_btn,
+    ft_add_ext,
+    ft_add_subtype,
+    ft_add_type,
+    get_ft_refresh,
+    mo,
+    session,
+    set_ft_refresh,
+):
+    if ft_add_btn.value and ft_add_ext.value:
+        _ext = ft_add_ext.value.strip()
+        _type = ft_add_type.value
+        _subtype = ft_add_subtype.value.strip() or _ext.lstrip(".")
+        print(f"[Deriva] Adding file type: {_ext}")
+        _ok = session.add_file_type(_ext, _type, _subtype)
+        set_ft_refresh(get_ft_refresh() + 1)
+        if _ok:
+            print(f"[Deriva] File type added: {_ext}")
+            mo.callout(mo.md(f"Added **{_ext}**: {_type}/{_subtype}"), kind="success")
+        else:
+            print(f"[Deriva] File type add failed: {_ext}")
+            mo.callout(mo.md(f"Failed to add **{_ext}** (may already exist)"), kind="danger")
     return
 
 
@@ -741,6 +854,7 @@ def _(get_ext_refresh, mo, session):
         {
             "Seq": c["sequence"],
             "Node Type": c["node_type"],
+            "Method": c.get("extraction_method", "?"),
             "Ver": _versions.get(c["node_type"], 1),
             "Enabled": "Yes" if c["enabled"] else "",
             "Input": (c["input_sources"] or "")[:30],
@@ -770,31 +884,61 @@ def _(ext_node_type_select, get_ext_refresh, mo, session):
     ext_instruction = None
     ext_input_sources = None
     ext_save_btn = None
+    ext_form = None
 
     if ext_node_type_select and ext_node_type_select.value:
         _configs = session.get_extraction_configs()
-        _cfg = next((c for c in _configs if c["node_type"] == ext_node_type_select.value), None)
+        _cfg = next(
+            (c for c in _configs if c["node_type"] == ext_node_type_select.value),
+            None,
+        )
         _versions = session.get_config_versions().get("extraction", {})
         _ver = _versions.get(ext_node_type_select.value, 1)
 
         if _cfg:
+            _method = _cfg.get("extraction_method", "unknown")
+            _method_colors = {
+                "deterministic": "success",
+                "deterministic/treesitter": "success",
+                "treesitter": "info",
+                "parser": "info",
+                "llm": "danger",
+            }
+            _method_color = _method_colors.get(_method, "neutral")
             ext_enabled = mo.ui.checkbox(label="Enabled", value=_cfg["enabled"])
-            ext_instruction = mo.ui.text_area(value=_cfg["instruction"] or "", label="Instruction", rows=3)
-            ext_input_sources = mo.ui.text(value=_cfg["input_sources"] or "", label="Input Sources")
+            ext_instruction = mo.ui.text_area(
+                value=_cfg["instruction"] or "",
+                label="Instruction",
+                rows=6,
+                full_width=True,
+            )
+            ext_input_sources = mo.ui.text(
+                value=_cfg["input_sources"] or "",
+                label="Input Sources",
+                full_width=True,
+            )
             ext_save_btn = mo.ui.run_button(label="Save")
-
-    # Build form or placeholder
-    if ext_enabled is not None:
-        ext_form = mo.vstack([mo.md(f"**Current version:** {_ver}"), ext_enabled, ext_instruction, ext_input_sources, ext_save_btn])
+            ext_form = mo.vstack(
+                [
+                    mo.hstack(
+                        [
+                            mo.md(f"**Version:** {_ver}"),
+                            mo.callout(mo.md(f"**{_method}**"), kind=_method_color),
+                        ]
+                    ),
+                    ext_enabled,
+                    ext_instruction,
+                    ext_input_sources,
+                    ext_save_btn,
+                ]
+            )
+        else:
+            ext_form = mo.md("_Config not found_")
     else:
         ext_form = mo.md("_Select a node type to edit_")
-    return ext_enabled, ext_input_sources, ext_instruction, ext_save_btn, ext_form
 
-
-@app.cell
-def _(ext_form):
     ext_form
-    return
+    return ext_enabled, ext_input_sources, ext_instruction, ext_save_btn
 
 
 @app.cell
@@ -861,6 +1005,7 @@ def _(get_der_refresh, mo, session):
             "Seq": c["sequence"],
             "Phase": c.get("phase", "generate"),
             "Step": c["element_type"],
+            "Method": "LLM" if c.get("llm", False) else "Graph",
             "Ver": _versions.get(c["element_type"], 1),
             "Enabled": "Yes" if c["enabled"] else "",
         }
@@ -885,19 +1030,59 @@ def _(get_der_refresh, mo, session):
 @app.cell
 def _(der_element_type_select, get_der_refresh, mo, session):
     _ = get_der_refresh()
-    if der_element_type_select.value:
+    der_enabled = None
+    der_instruction = None
+    der_query = None
+    der_save_btn = None
+    der_form = None
+
+    if der_element_type_select and der_element_type_select.value:
         _configs = session.get_derivation_configs()
         _cfg = next((c for c in _configs if c["element_type"] == der_element_type_select.value), None)
         _versions = session.get_config_versions().get("derivation", {})
         _ver = _versions.get(der_element_type_select.value, 1)
 
         if _cfg:
+            _phase = _cfg.get("phase", "generate")
+            _is_llm = _cfg.get("llm", False)
+            _method = "llm" if _is_llm else "graph"
+            _phase_colors = {"prep": "info", "generate": "warn", "refine": "success", "relationship": "neutral"}
+            _method_colors = {"llm": "danger", "graph": "success"}
             der_enabled = mo.ui.checkbox(label="Enabled", value=_cfg["enabled"])
-            der_instruction = mo.ui.text_area(value=_cfg["instruction"] or "", label="Instruction", rows=3)
-            der_query = mo.ui.text_area(value=_cfg["input_graph_query"] or "", label="Graph Query", rows=2)
+            der_instruction = mo.ui.text_area(
+                value=_cfg["instruction"] or "",
+                label="Instruction",
+                rows=6,
+                full_width=True,
+            )
+            der_query = mo.ui.text_area(
+                value=_cfg["input_graph_query"] or "",
+                label="Graph Query",
+                rows=3,
+                full_width=True,
+            )
             der_save_btn = mo.ui.run_button(label="Save")
+            der_form = mo.vstack(
+                [
+                    mo.hstack(
+                        [
+                            mo.md(f"**Version:** {_ver}"),
+                            mo.callout(mo.md(f"**{_phase}**"), kind=_phase_colors.get(_phase, "neutral")),
+                            mo.callout(mo.md(f"**{_method}**"), kind=_method_colors.get(_method, "neutral")),
+                        ]
+                    ),
+                    der_enabled,
+                    der_instruction,
+                    der_query,
+                    der_save_btn,
+                ]
+            )
+        else:
+            der_form = mo.md("_Config not found_")
+    else:
+        der_form = mo.md("_Select an element type to edit_")
 
-            mo.vstack([mo.md(f"**Current version:** {_ver}"), der_enabled, der_instruction, der_query, der_save_btn])
+    der_form
     return der_enabled, der_instruction, der_query, der_save_btn
 
 
@@ -913,13 +1098,13 @@ def _(
     session,
     set_der_refresh,
 ):
-    if der_save_btn.value and der_element_type_select.value:
+    if der_save_btn and der_save_btn.value and der_element_type_select and der_element_type_select.value:
         print(f"[Deriva] Saving derivation config: {der_element_type_select.value}")
         _result = session.save_derivation_config(
             der_element_type_select.value,
-            enabled=der_enabled.value,
-            instruction=der_instruction.value,
-            input_graph_query=der_query.value,
+            enabled=der_enabled.value if der_enabled else False,
+            instruction=der_instruction.value if der_instruction else "",
+            input_graph_query=der_query.value if der_query else "",
         )
         set_der_refresh(get_der_refresh() + 1)
         if _result.get("success"):
@@ -950,11 +1135,10 @@ def _(mo):
 def _():
     import asyncio
 
-    from deriva.app.progress import MarimoLiveProgressReporter, MarimoProgressReporter
     from deriva.services.session import PipelineSession
 
     session = PipelineSession(auto_connect=True)
-    return MarimoLiveProgressReporter, MarimoProgressReporter, PipelineSession, asyncio, session
+    return asyncio, session
 
 
 @app.cell
@@ -980,10 +1164,5 @@ def _(mo):
     return
 
 
-def main() -> None:
-    """Entry point for the Marimo app."""
-    app.run()
-
-
 if __name__ == "__main__":
-    main()
+    app.run()

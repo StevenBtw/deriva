@@ -49,7 +49,7 @@ class NodeDerivation(HybridDerivation):
     """
 
     ELEMENT_TYPE = "Node"
-    MIN_PAGERANK = 0.0005  # Config files often have low pagerank
+    MIN_PAGERANK = None  # Infrastructure files have low pagerank but are important
     USE_COMMUNITY_ROOTS = False
 
     OUTBOUND_RULES: list[RelationshipRule] = [

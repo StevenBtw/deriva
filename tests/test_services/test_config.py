@@ -1033,9 +1033,9 @@ class TestCreateExtractionConfigVersion:
         from deriva.services.config import create_extraction_config_version
 
         engine = MagicMock()
-        # Current config: (id, version, sequence, enabled, input_sources, instruction, example, temperature, max_tokens, batch_size)
+        # Current config: (id, version, sequence, enabled, input_sources, instruction, example, temperature, max_tokens, batch_size, extraction_method)
         engine.execute.return_value.fetchone.side_effect = [
-            (1, 1, 1, True, '{"files": []}', "instruction", "example", 0.7, 4096, 1),
+            (1, 1, 1, True, '{"files": []}', "instruction", "example", 0.7, 4096, 1, "llm"),
             (2,),  # Next ID
         ]
 

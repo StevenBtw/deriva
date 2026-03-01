@@ -857,7 +857,7 @@ def create_extraction_config_version(
     current = engine.execute(
         """
         SELECT id, version, sequence, enabled, input_sources, instruction, example,
-               temperature, max_tokens, batch_size
+               temperature, max_tokens, batch_size, extraction_method
         FROM extraction_config
         WHERE node_type = ? AND is_active = TRUE
         """,
@@ -867,7 +867,7 @@ def create_extraction_config_version(
     if not current:
         return {"success": False, "error": f"Config not found for {node_type}"}
 
-    (old_id, old_version, sequence, cur_enabled, cur_sources, cur_instruction, cur_example, cur_temperature, cur_max_tokens, cur_batch_size) = current
+    (old_id, old_version, sequence, cur_enabled, cur_sources, cur_instruction, cur_example, cur_temperature, cur_max_tokens, cur_batch_size, cur_method) = current
     new_version = old_version + 1
 
     new_instruction = instruction if instruction is not None else cur_instruction
@@ -891,10 +891,10 @@ def create_extraction_config_version(
         """
         INSERT INTO extraction_config
         (id, node_type, version, sequence, enabled, input_sources, instruction, example,
-         temperature, max_tokens, batch_size, is_active, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
+         temperature, max_tokens, batch_size, extraction_method, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
         """,
-        [next_id, node_type, new_version, sequence, new_enabled, new_sources, new_instruction, new_example, new_temperature, new_max_tokens, new_batch_size],
+        [next_id, node_type, new_version, sequence, new_enabled, new_sources, new_instruction, new_example, new_temperature, new_max_tokens, new_batch_size, cur_method],
     )
 
     return {

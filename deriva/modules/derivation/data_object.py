@@ -23,7 +23,7 @@ LLM role:
 Relationships:
 - OUTBOUND: DataObject -> TechnologyService (Realization) - config realizes tech
 - INBOUND: TechnologyService -> DataObject (Access) - tech accesses data
-- INBOUND: ApplicationService -> DataObject (Flow) - app services flow data
+- INBOUND: ApplicationService -> DataObject (Access) - app services access data
 - INBOUND: BusinessProcess -> DataObject (Access) - processes access data
 
 ArchiMate Layer: Application Layer
@@ -53,7 +53,7 @@ class DataObjectDerivation(HybridDerivation):
     """
 
     ELEMENT_TYPE = "DataObject"
-    MIN_PAGERANK = 0.001  # Filter very low importance files
+    MIN_PAGERANK = None  # Config files have low pagerank but are important for cross-layer connections
     USE_COMMUNITY_ROOTS = False  # Data files don't form communities
 
     OUTBOUND_RULES = [
@@ -72,8 +72,8 @@ class DataObjectDerivation(HybridDerivation):
         ),
         RelationshipRule(
             target_type="ApplicationService",
-            rel_type="Flow",
-            description="Application services transfer data to/from data objects",
+            rel_type="Access",
+            description="Application services access data objects",
         ),
         RelationshipRule(
             target_type="BusinessProcess",

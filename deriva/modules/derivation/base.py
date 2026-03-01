@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from deriva.adapters.archimate.models import validate_relationship_rule
 from deriva.adapters.graph.cache import (
     EnrichmentCache,
     EnrichmentCacheManager,
@@ -208,6 +209,45 @@ class RelationshipRule:
 
 
 @dataclass
+class CandidateDecision:
+    """Tracks a candidate's journey through derivation for threshold analysis."""
+
+    node_id: str
+    name: str
+    element_type: str  # e.g., "BusinessProcess", "ApplicationService"
+
+    # Graph metrics at decision time
+    pagerank: float = 0.0
+    kcore_level: int = 0
+    in_degree: int = 0
+    out_degree: int = 0
+    confidence: float | None = None  # From BusinessConcept if applicable
+
+    # Decision outcome
+    stage: str = "queried"  # queried → filtered → sent_to_llm → created | rejected
+    became_element: bool = False
+    element_id: str | None = None  # If became element
+    element_confidence: float | None = None  # LLM confidence if created
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON export."""
+        return {
+            "node_id": self.node_id,
+            "name": self.name,
+            "element_type": self.element_type,
+            "pagerank": round(self.pagerank, 4),
+            "kcore_level": self.kcore_level,
+            "in_degree": self.in_degree,
+            "out_degree": self.out_degree,
+            "confidence": self.confidence,
+            "stage": self.stage,
+            "became_element": self.became_element,
+            "element_id": self.element_id,
+            "element_confidence": self.element_confidence,
+        }
+
+
+@dataclass
 class GenerationResult:
     """Result from element generation (includes relationships)."""
 
@@ -217,6 +257,12 @@ class GenerationResult:
     created_elements: list[dict[str, Any]] = field(default_factory=list)
     created_relationships: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+
+    # Candidate tracking for threshold optimization
+    candidates_queried: int = 0
+    candidates_filtered: int = 0
+    candidates_to_llm: int = 0
+    candidate_decisions: list[CandidateDecision] = field(default_factory=list)
 
 
 @dataclass
@@ -815,7 +861,22 @@ def derive_community_relationships(
             continue
 
         # Process OUTBOUND rules (FROM new TO existing in same community)
+        new_type = new_elem.get("element_type", "")
         for rule in outbound_rules:
+            # Validate rule against ArchiMate metamodel
+            is_valid, msg = validate_relationship_rule(
+                new_type, rule.rel_type, rule.target_type
+            )
+            if not is_valid:
+                logger.warning(
+                    "Skipping invalid OUTBOUND rule: %s -[%s]-> %s: %s",
+                    new_type,
+                    rule.rel_type,
+                    rule.target_type,
+                    msg,
+                )
+                continue
+
             targets = [
                 e for e in same_community if e.get("element_type") == rule.target_type
             ]
@@ -847,6 +908,21 @@ def derive_community_relationships(
 
         # Process INBOUND rules (FROM existing in same community TO new)
         for rule in inbound_rules:
+            # Validate rule against ArchiMate metamodel
+            # For INBOUND: source=rule.target_type, target=new_type
+            is_valid, msg = validate_relationship_rule(
+                rule.target_type, rule.rel_type, new_type
+            )
+            if not is_valid:
+                logger.warning(
+                    "Skipping invalid INBOUND rule: %s -[%s]-> %s: %s",
+                    rule.target_type,
+                    rule.rel_type,
+                    new_type,
+                    msg,
+                )
+                continue
+
             sources = [
                 e for e in same_community if e.get("element_type") == rule.target_type
             ]
@@ -941,10 +1017,18 @@ def derive_neighbor_relationships(
 
                 existing_id = existing.get("identifier", "")
                 existing_type = existing.get("element_type", "")
+                new_type = new_elem.get("element_type", "")
 
                 # Check OUTBOUND rules
                 for rule in outbound_rules:
                     if existing_type == rule.target_type:
+                        # Validate rule against ArchiMate metamodel
+                        is_valid, _ = validate_relationship_rule(
+                            new_type, rule.rel_type, rule.target_type
+                        )
+                        if not is_valid:
+                            continue
+
                         pair_key = (new_id, existing_id, rule.rel_type)
                         if pair_key not in created_pairs:
                             created_pairs.add(pair_key)
@@ -961,6 +1045,13 @@ def derive_neighbor_relationships(
                 # Check INBOUND rules
                 for rule in inbound_rules:
                     if existing_type == rule.target_type:
+                        # Validate rule against ArchiMate metamodel
+                        is_valid, _ = validate_relationship_rule(
+                            rule.target_type, rule.rel_type, new_type
+                        )
+                        if not is_valid:
+                            continue
+
                         pair_key = (existing_id, new_id, rule.rel_type)
                         if pair_key not in created_pairs:
                             created_pairs.add(pair_key)
@@ -985,17 +1076,25 @@ def derive_neighbor_relationships(
 # =============================================================================
 # Edge-type to ArchiMate relationship mapping
 # =============================================================================
+# Uses ArchiMate 3.2 metamodel constraints from models.py:
+# - Flow: Behavior → Behavior only
+# - Access: Behavior/Structure → Passive only (DataObject, BusinessObject)
+# - Serving: general dependency between elements
 EDGE_RELATIONSHIP_MAP: dict[str, dict[str, tuple[str, float]]] = {
     # Graph edge type -> {target element type -> (ArchiMate relationship, confidence)}
     "CALLS": {
-        "ApplicationService": ("Serving", 0.92),
-        "ApplicationInterface": ("Flow", 0.90),
+        "ApplicationService": ("Serving", 0.92),  # Service dependency
+        "ApplicationInterface": (
+            "Serving",
+            0.90,
+        ),  # Interface is Structure, not Behavior
         "ApplicationComponent": ("Serving", 0.88),
     },
     "IMPORTS": {
-        "DataObject": ("Access", 0.90),
-        "ApplicationComponent": ("Access", 0.88),
-        "TechnologyService": ("Access", 0.85),
+        "DataObject": ("Access", 0.90),  # Access is valid for Passive targets
+        "BusinessObject": ("Access", 0.88),  # Access is valid for Passive targets
+        "ApplicationComponent": ("Serving", 0.85),  # Serving for non-Passive
+        "TechnologyService": ("Serving", 0.83),  # Serving for non-Passive
     },
     "USES": {
         "TechnologyService": ("Serving", 0.93),
@@ -1020,10 +1119,10 @@ def derive_edge_relationships(
     It provides higher confidence than generic neighbor relationships because
     it uses explicit code dependency information.
 
-    Edge type mapping:
-    - CALLS edges -> Serving/Flow relationships (for service dependencies)
-    - IMPORTS edges -> Access relationships (for data/module dependencies)
-    - USES edges -> Serving relationships (for technology dependencies)
+    Edge type mapping (per ArchiMate 3.2 metamodel):
+    - CALLS edges -> Serving relationships (service/component dependencies)
+    - IMPORTS edges -> Access (for Passive targets) or Serving (for others)
+    - USES edges -> Serving relationships (technology dependencies)
 
     Args:
         new_elements: Elements just created in this batch
@@ -1200,6 +1299,20 @@ def derive_deterministic_relationships(
 
         # Process OUTBOUND rules (FROM new TO existing)
         for rule in outbound_rules:
+            # Validate rule against ArchiMate metamodel
+            is_valid, msg = validate_relationship_rule(
+                element_type, rule.rel_type, rule.target_type
+            )
+            if not is_valid:
+                logger.warning(
+                    "Skipping invalid OUTBOUND rule: %s -[%s]-> %s: %s",
+                    element_type,
+                    rule.rel_type,
+                    rule.target_type,
+                    msg,
+                )
+                continue
+
             targets = [
                 e
                 for e in existing_elements
@@ -1242,6 +1355,21 @@ def derive_deterministic_relationships(
 
         # Process INBOUND rules (FROM existing TO new)
         for rule in inbound_rules:
+            # Validate rule against ArchiMate metamodel
+            # For INBOUND: source=rule.target_type, target=element_type
+            is_valid, msg = validate_relationship_rule(
+                rule.target_type, rule.rel_type, element_type
+            )
+            if not is_valid:
+                logger.warning(
+                    "Skipping invalid INBOUND rule: %s -[%s]-> %s: %s",
+                    rule.target_type,
+                    rule.rel_type,
+                    element_type,
+                    msg,
+                )
+                continue
+
             sources = [
                 e
                 for e in existing_elements
@@ -2417,6 +2545,17 @@ def derive_batch_relationships(
         if rel_type not in valid_types:
             logger.debug("Skipping relationship: invalid type %s", rel_type)
             continue
+
+        # Prevent circular Composition relationships
+        if rel_type == "Composition":
+            reverse_key = (target, source, "Composition")
+            if reverse_key in created_pairs:
+                logger.debug(
+                    "Skipping circular Composition: %s -> %s (reverse exists)",
+                    source,
+                    target,
+                )
+                continue
 
         # Enforce minimum confidence threshold for consistency
         confidence = rel_data.get("confidence", 0.5)

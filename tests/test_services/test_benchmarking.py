@@ -1274,7 +1274,7 @@ class TestBenchmarkOrchestrator:
 
             # Check export was called with correct path pattern
             assert result is not None
-            assert "my-repo_azure-gpt4_3.xml" in result
+            assert "my-repo_azure-gpt4_run3.xml" in result
             assert "test_session" in result
             assert "models" in result
 
@@ -1308,7 +1308,7 @@ class TestBenchmarkOrchestrator:
 
             # Should sanitize / to _
             assert result is not None
-            assert "org_repo_model_variant_1.xml" in result
+            assert "org_repo_model_variant_run1.xml" in result
 
     def test_export_run_model_handles_export_error(self):
         """Should return None when export fails."""

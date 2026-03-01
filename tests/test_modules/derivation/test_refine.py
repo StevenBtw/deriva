@@ -1227,7 +1227,7 @@ class TestStructuralConsistencyStep:
         result = step.run(
             archimate_manager=mock_archimate_manager,
             graph_manager=mock_graph_manager,
-            params={"check_containment": False, "check_calls": False},
+            params={"check_containment": False, "check_calls": False, "check_aspect_constraints": False},
         )
 
         # Should return quickly with no checks performed
@@ -1384,19 +1384,16 @@ class TestDuplicateElementsMerge:
     def test_semantic_duplicate_returns_llm_result(self):
         """Should return LLM result for semantic check."""
         from deriva.modules.derivation.refine.duplicate_elements import (
+            DuplicateCheckResult,
             DuplicateElementsStep,
         )
 
         elem_a = MockElement("id1", "Auth", "ApplicationComponent")
         elem_b = MockElement("id2", "Login", "ApplicationComponent")
 
-        # Create a mock response object with content attribute (JSON string)
-        mock_response = MagicMock()
-        mock_response.content = '{"is_duplicate": true, "confidence": 0.92}'
-        mock_response.response_type = "live"
-
+        # The LLM function now uses response_model=DuplicateCheckResult (Pydantic structured output)
         mock_llm = MagicMock()
-        mock_llm.return_value = mock_response
+        mock_llm.return_value = DuplicateCheckResult(is_duplicate=True, confidence=0.92, reasoning="Same auth concept")
 
         step = DuplicateElementsStep()
         is_dup, conf = step._check_semantic_duplicate(mock_llm, elem_a, elem_b)

@@ -39,7 +39,7 @@ class RelationshipType:
     allowed_targets: set[str]  # Element types that can be target (empty = any)
 
 
-# ArchiMate 3.1 Element Types (Application & Business Layers)
+# ArchiMate 3.2 Element Types (Application, Business & Technology Layers)
 ELEMENT_TYPES: dict[str, ElementType] = {
     # Application Layer
     "ApplicationComponent": ElementType(
@@ -182,16 +182,23 @@ TECHNOLOGY_LAYER: set[str] = {
 
 
 # =============================================================================
-# ArchiMate 3.1 Relationship Types with Constraints
+# ArchiMate 3.2 Relationship Types with Constraints
 # =============================================================================
+# Reference: https://pubs.opengroup.org/architecture/archimate3-doc/ch-Relationships-and-Relationship-Connectors.html
+#
+# ArchiMate 3.2 Rule: "Aggregation, composition, and specialization relationships
+# are always permitted between two elements of the same type."
+# This means Passive→Passive Composition is valid (e.g., BusinessObject contains BusinessObject)
 
 RELATIONSHIP_TYPES: dict[str, RelationshipType] = {
     # Structural Relationships
     "Composition": RelationshipType(
         name="Composition",
         description="Element consists of other elements (same aspect, same layer)",
-        allowed_sources=STRUCTURE_ELEMENTS,  # Only structure elements can compose
-        allowed_targets=STRUCTURE_ELEMENTS,  # Only structure elements can be composed
+        allowed_sources=STRUCTURE_ELEMENTS
+        | PASSIVE_ELEMENTS,  # Structure or Passive can compose
+        allowed_targets=STRUCTURE_ELEMENTS
+        | PASSIVE_ELEMENTS,  # Structure or Passive can be composed
     ),
     "Aggregation": RelationshipType(
         name="Aggregation",
@@ -482,3 +489,62 @@ class Relationship:
             documentation=data.get("documentation"),
             properties=data.get("properties", {}),
         )
+
+
+# =============================================================================
+# Validation Helper Functions
+# =============================================================================
+
+# Singleton metamodel instance for validation
+_metamodel: ArchiMateMetamodel | None = None
+
+
+def _get_metamodel() -> ArchiMateMetamodel:
+    """Get or create singleton metamodel instance."""
+    global _metamodel
+    if _metamodel is None:
+        _metamodel = ArchiMateMetamodel()
+    return _metamodel
+
+
+def validate_relationship_rule(
+    source_type: str, rel_type: str, target_type: str
+) -> tuple[bool, str]:
+    """Validate a relationship rule against ArchiMate metamodel constraints.
+
+    This is a convenience function for validating relationship rules defined
+    in derivation modules (OUTBOUND_RULES, INBOUND_RULES).
+
+    Args:
+        source_type: Source element type (e.g., "ApplicationService")
+        rel_type: Relationship type (e.g., "Flow", "Access")
+        target_type: Target element type (e.g., "BusinessObject")
+
+    Returns:
+        Tuple of (is_valid, reason_message)
+
+    Example:
+        >>> is_valid, msg = validate_relationship_rule("ApplicationService", "Flow", "BusinessObject")
+        >>> print(is_valid, msg)
+        False Flow cannot target BusinessObject
+    """
+    metamodel = _get_metamodel()
+    return metamodel.can_relate(source_type, rel_type, target_type)
+
+
+def get_element_aspect(element_type: str) -> str | None:
+    """Get the aspect (Structure, Behavior, Passive) for an element type.
+
+    Args:
+        element_type: Element type name (e.g., "ApplicationService")
+
+    Returns:
+        Aspect string or None if element type is invalid
+    """
+    if element_type in STRUCTURE_ELEMENTS:
+        return "Structure"
+    if element_type in BEHAVIOR_ELEMENTS:
+        return "Behavior"
+    if element_type in PASSIVE_ELEMENTS:
+        return "Passive"
+    return None

@@ -50,8 +50,9 @@ class BusinessFunctionDerivation(HybridDerivation):
     """
 
     ELEMENT_TYPE = "BusinessFunction"
-    MIN_PAGERANK = 0.001  # Filter low-importance modules
+    MIN_PAGERANK = None  # Query already filters by confidence
     USE_COMMUNITY_ROOTS = True  # Prioritize modules that are community centers
+    PATTERN_MATCH_DEFAULT = True  # Accept candidates by default
 
     OUTBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
@@ -71,6 +72,16 @@ class BusinessFunctionDerivation(HybridDerivation):
             target_type="BusinessActor",
             rel_type="Assignment",
             description="Business actors perform business functions",
+        ),
+        RelationshipRule(
+            target_type="ApplicationComponent",
+            rel_type="Realization",
+            description="Application components realize business functions",
+        ),
+        RelationshipRule(
+            target_type="ApplicationService",
+            rel_type="Serving",
+            description="Application services serve business functions",
         ),
     ]
 

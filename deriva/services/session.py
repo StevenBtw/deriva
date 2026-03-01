@@ -157,7 +157,7 @@ class PipelineSession:
     # LLM (Lazy loaded)
     # =========================================================================
 
-    def _get_llm_query_fn(self, no_cache: bool = False) -> Callable[[str, dict], Any] | None:
+    def _get_llm_query_fn(self, no_cache: bool = False) -> Callable[..., Any] | None:
         """Get LLM query function, lazy loading the manager."""
         if self._llm_manager is None:
             try:
@@ -173,15 +173,17 @@ class PipelineSession:
 
         def query_fn(
             prompt: str,
-            schema: dict,
+            schema: dict | None = None,
             temperature: float | None = None,
             max_tokens: int | None = None,
             system_prompt: str | None = None,
+            response_model: type | None = None,
         ) -> Any:
             assert self._llm_manager is not None
             return self._llm_manager.query(
                 prompt,
                 schema=schema,
+                response_model=response_model,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 system_prompt=system_prompt,
@@ -763,6 +765,7 @@ class PipelineSession:
                 "input_sources": c.input_sources,
                 "instruction": c.instruction,
                 "example": c.example,
+                "extraction_method": c.extraction_method,
             }
             for c in configs
         ]
@@ -845,6 +848,8 @@ class PipelineSession:
                 "input_graph_query": c.input_graph_query,
                 "instruction": c.instruction,
                 "example": c.example,
+                "phase": c.phase,
+                "llm": c.llm,
             }
             for c in configs
         ]

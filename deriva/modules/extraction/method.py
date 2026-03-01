@@ -566,73 +566,9 @@ def extract_methods_from_source(
                 }
             edges.append(edge)
 
-            # Create CALLS edges based on parameter type annotations
-            builtin_types = {
-                "str",
-                "int",
-                "float",
-                "bool",
-                "None",
-                "Any",
-                "object",
-                "list",
-                "dict",
-                "set",
-                "tuple",
-                "List",
-                "Dict",
-                "Set",
-                "Tuple",
-                "Optional",
-                "Union",
-                "Callable",
-                "Iterator",
-                "Iterable",
-                "Type",
-                "Sequence",
-                "Mapping",
-                "Self",
-            }
-            for param in ext_method.parameters:
-                annotation = param.get("annotation")
-                if not annotation:
-                    continue
-                # Extract base type from annotation (handle generics like List[MyType])
-                # Strip generic brackets: List[MyType] -> MyType, Dict[str, MyType] -> MyType
-                type_name = annotation
-                if "[" in type_name:
-                    # Extract inner types from generic
-                    inner = type_name[type_name.index("[") + 1 : type_name.rindex("]")]
-                    # Take the last non-builtin type from comma-separated types
-                    for inner_type in inner.split(","):
-                        inner_type = inner_type.strip()
-                        if inner_type and inner_type not in builtin_types:
-                            type_name = inner_type
-                            break
-                    else:
-                        continue  # All inner types are builtin
-                # Skip builtin types
-                if type_name in builtin_types:
-                    continue
-                # Create CALLS edge to the type definition
-                type_slug = (
-                    type_name.replace(" ", "_").replace("-", "_").replace(".", "_")
-                )
-                target_type_id = f"typedef::{repo_name}::{safe_path}::{type_slug}"
-                calls_edge = {
-                    "edge_id": generate_edge_id(
-                        node_data["node_id"], target_type_id, "CALLS"
-                    ),
-                    "from_node_id": node_data["node_id"],
-                    "to_node_id": target_type_id,
-                    "relationship_type": "CALLS",
-                    "properties": {
-                        "created_at": current_timestamp(),
-                        "parameter_name": param["name"],
-                        "type_annotation": annotation,
-                    },
-                }
-                edges.append(calls_edge)
+            # Note: Type annotation references (REFERENCES edges) are handled by
+            # the dedicated "References" extraction step in edges.py, which provides
+            # proper cross-file resolution via global_type_lookup.
 
         return {
             "success": True,

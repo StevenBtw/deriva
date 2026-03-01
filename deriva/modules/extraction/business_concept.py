@@ -165,7 +165,7 @@ def get_existing_concepts_from_graph(
     """
     query = """
     MATCH (c:BusinessConcept)
-    WHERE c.repositoryName = $repo_name
+    WHERE c.repository_name = $repo_name
     RETURN c.conceptName AS conceptName,
            c.conceptType AS conceptType,
            c.originSource AS source

@@ -53,8 +53,9 @@ class ApplicationInterfaceDerivation(HybridDerivation):
     """
 
     ELEMENT_TYPE = "ApplicationInterface"
-    MIN_PAGERANK = 0.001  # Filter low-importance methods
+    MIN_PAGERANK = None  # Query filters by pattern, no need for pagerank filter
     USE_COMMUNITY_ROOTS = False  # Interfaces are endpoints, not hubs
+    PATTERN_MATCH_DEFAULT = True  # Accept candidates by default
 
     OUTBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(

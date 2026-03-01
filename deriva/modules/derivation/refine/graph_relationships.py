@@ -25,7 +25,10 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from deriva.adapters.archimate.models import Relationship
+from deriva.adapters.archimate.models import (
+    RELATIONSHIP_TYPES,
+    Relationship,
+)
 
 from .base import RefineResult, register_refine_step
 
@@ -48,88 +51,32 @@ EDGE_TO_RELATIONSHIP: dict[str, str] = {
     "INHERITS": "Realization",  # Class inheritance (subclass realizes base)
 }
 
-# Valid source/target element type combinations per ArchiMate relationship type
-# Based on ArchiMate 3.2 metamodel constraints
-VALID_ELEMENT_COMBOS: dict[str, dict[str, set[str] | None]] = {
-    "Composition": {
-        # Composition: parent contains child (structural elements)
-        "sources": {
-            "ApplicationComponent",
-            "Node",
-            "Device",
-            "SystemSoftware",
-            "BusinessFunction",
-        },
-        "targets": {
-            "ApplicationComponent",
-            "ApplicationService",
-            "ApplicationInterface",
-            "DataObject",
-            "Node",
-            "Device",
-            "SystemSoftware",
-            "TechnologyService",
-        },
-    },
-    "Realization": {
-        # Realization: internal behavior realizes external behavior
-        # Also used for class inheritance (INHERITS edges)
-        "sources": {
-            "ApplicationComponent",
-            "ApplicationService",
-            "SystemSoftware",
-            "Node",
-            "Device",
-        },
-        "targets": {
-            "ApplicationComponent",  # For class inheritance
-            "ApplicationService",
-            "ApplicationInterface",
-            "TechnologyService",
-            "BusinessService",
-            "BusinessProcess",
-        },
-    },
-    "Serving": {
-        # Serving: element provides functionality to another
-        "sources": None,  # Any element can serve
-        "targets": None,  # Any element can be served
-    },
-    "Flow": {
-        # Flow: transfer of data/information between behaviors
-        "sources": {
-            "ApplicationService",
-            "ApplicationInterface",
-            "BusinessProcess",
-            "BusinessFunction",
-            "BusinessEvent",
-            "TechnologyService",
-        },
-        "targets": {
-            "ApplicationService",
-            "ApplicationInterface",
-            "BusinessProcess",
-            "BusinessFunction",
-            "BusinessEvent",
-            "DataObject",
-            "BusinessObject",
-            "TechnologyService",
-        },
-    },
-    "Access": {
-        # Access: behavior accesses data
-        "sources": {
-            "ApplicationService",
-            "ApplicationInterface",
-            "BusinessProcess",
-            "BusinessFunction",
-        },
-        "targets": {
-            "DataObject",
-            "BusinessObject",
-        },
-    },
-}
+# =============================================================================
+# Relationship validation uses RELATIONSHIP_TYPES from models.py
+# This ensures consistency with the canonical ArchiMate 3.2 metamodel
+# =============================================================================
+
+
+def get_valid_element_combos(rel_type: str) -> dict[str, set[str] | None]:
+    """Get valid source/target element types for a relationship type.
+
+    Uses the canonical RELATIONSHIP_TYPES from models.py to ensure
+    ArchiMate 3.2 metamodel compliance.
+
+    Args:
+        rel_type: Relationship type (e.g., "Composition", "Flow")
+
+    Returns:
+        Dict with "sources" and "targets" sets, or None if any element is allowed
+    """
+    if rel_type not in RELATIONSHIP_TYPES:
+        return {"sources": None, "targets": None}
+
+    rel_def = RELATIONSHIP_TYPES[rel_type]
+    return {
+        "sources": rel_def.allowed_sources if rel_def.allowed_sources else None,
+        "targets": rel_def.allowed_targets if rel_def.allowed_targets else None,
+    }
 
 
 @register_refine_step("graph_relationships")
@@ -307,8 +254,8 @@ class GraphRelationshipsStep:
         Returns:
             List of candidate dicts with source_id, target_id, names
         """
-        # Build element type filter if needed
-        valid_combos = VALID_ELEMENT_COMBOS.get(rel_type, {})
+        # Build element type filter using canonical metamodel from models.py
+        valid_combos = get_valid_element_combos(rel_type)
         valid_sources = valid_combos.get("sources")
         valid_targets = valid_combos.get("targets")
 
@@ -418,6 +365,35 @@ class GraphRelationshipsStep:
         Used when source_identifier property is not available.
         Searches for graph node IDs in the properties_json field.
         """
+        # Build element type filters using canonical metamodel from models.py
+        valid_combos = get_valid_element_combos(rel_type)
+        valid_sources = valid_combos.get("sources")
+        valid_targets = valid_combos.get("targets")
+
+        source_filter = ""
+        target_filter = ""
+        circular_filter = ""
+
+        if valid_sources:
+            source_types = ", ".join(f"'{model_ns}:{t}'" for t in valid_sources)
+            source_filter = f"""
+                AND any(lbl IN labels(model_src) WHERE lbl IN [{source_types}])
+            """
+
+        if valid_targets:
+            target_types = ", ".join(f"'{model_ns}:{t}'" for t in valid_targets)
+            target_filter = f"""
+                AND any(lbl IN labels(model_tgt) WHERE lbl IN [{target_types}])
+            """
+
+        # Prevent circular Composition relationships
+        if rel_type == "Composition":
+            circular_filter = f"""
+              AND NOT EXISTS {{
+                  (model_tgt)-[reverse:`{model_ns}:Composition`]->(model_src)
+              }}
+            """
+
         query = f"""
             // Find graph edges of the specified type
             MATCH (graph_src)-[edge:`{graph_ns}:{edge_type}`]->(graph_tgt)
@@ -433,11 +409,14 @@ class GraphRelationshipsStep:
               AND model_src.properties_json CONTAINS src_id
               AND model_tgt.properties_json CONTAINS tgt_id
               AND model_src.identifier <> model_tgt.identifier  // Prevent self-loops
+              {source_filter}
+              {target_filter}
               // Exclude if relationship already exists
               AND NOT EXISTS {{
                   (model_src)-[existing]->(model_tgt)
                   WHERE type(existing) STARTS WITH '{model_ns}:'
               }}
+              {circular_filter}
 
             RETURN DISTINCT
                 model_src.identifier AS source_id,

@@ -17,11 +17,12 @@ Refine Step Name: "duplicate_elements"
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from deriva.modules.derivation.base import extract_response_content
+from pydantic import BaseModel, Field
+
+from deriva.adapters.llm import FailedResponse
 
 from .base import (
     RefineResult,
@@ -29,6 +30,17 @@ from .base import (
     register_refine_step,
     similarity_ratio,
 )
+
+
+class DuplicateCheckResult(BaseModel):
+    """LLM response model for semantic duplicate checking."""
+
+    is_duplicate: bool = Field(description="True if elements represent the same thing")
+    confidence: float = Field(
+        ge=0.0, le=1.0, description="Confidence level (0.0 to 1.0)"
+    )
+    reasoning: str | None = Field(default=None, description="Brief explanation")
+
 
 if TYPE_CHECKING:
     from deriva.adapters.archimate import ArchimateManager
@@ -330,36 +342,17 @@ Element B:
 Consider if they represent the same concept, entity, or component in the architecture.
 """
 
-        schema = {
-            "type": "object",
-            "properties": {
-                "is_duplicate": {
-                    "type": "boolean",
-                    "description": "True if elements represent the same thing",
-                },
-                "confidence": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 1,
-                    "description": "Confidence level (0.0 to 1.0)",
-                },
-                "reasoning": {
-                    "type": "string",
-                    "description": "Brief explanation",
-                },
-            },
-            "required": ["is_duplicate", "confidence"],
-        }
-
         try:
-            response = llm_query_fn(prompt, schema)
-            content, error = extract_response_content(response)
-            if error:
-                logger.warning(f"LLM semantic check failed: {error}")
+            # Use Pydantic model for structured output
+            response = llm_query_fn(prompt, response_model=DuplicateCheckResult)
+
+            # Handle failed responses
+            if isinstance(response, FailedResponse):
+                logger.warning(f"LLM semantic check failed: {response.error}")
                 return False, 0.0
-            # Parse the JSON content
-            parsed = json.loads(content)
-            return parsed.get("is_duplicate", False), parsed.get("confidence", 0.0)
+
+            # response is a DuplicateCheckResult instance
+            return response.is_duplicate, response.confidence
         except Exception as e:
             logger.warning(f"LLM semantic check failed: {e}")
             return False, 0.0

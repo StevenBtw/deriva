@@ -38,14 +38,14 @@ dependencies = [
     "pydantic-settings>=2.0",
     "python-dotenv>=1.2.1",
     "pyyaml>=6.0.3",
-    "rich>=14.2.0",
+    "rich>=14.3.1",
     "lxml>=6.0.2",
     # Databases
-    "duckdb>=1.4.3",
+    "duckdb>=1.4.4",
     "neo4j>=6.1.0",
     "sqlglot>=28.6.0",
     # UI
-    "marimo>=0.19.4",
+    "marimo>=0.19.6",
     # Code Analysis (tree-sitter)
     "tree-sitter>=0.24.6",
     "tree-sitter-python>=0.23.0",
@@ -53,15 +53,16 @@ dependencies = [
     "tree-sitter-java>=0.23.0",
     "tree-sitter-c-sharp>=0.23.0",
     # Document Parsing
-    "pypdf>=6.6.0",
+    "pypdf>=6.6.2",
     "python-docx>=1.2.0",
     # Graph Algorithms
-    "solvor>=0.5.3",
+    "solvor>=0.5.4",
     # LLM 
     "backoff>=2.2.1",
-    "pydantic-ai>=1.44.0",
+    "pydantic-ai>=1.47.0",
     # Utilities
     "diskcache>=5.6.3",
+    "nest-asyncio>=1.6.0",
     "structlog>=24.0",
     "typer>=0.21.1",
 ]
@@ -71,8 +72,8 @@ dev = [
     "pre-commit>=4.5.1",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
-    "ruff>=0.14.13",
-    "ty>=0.0.12",
+    "ruff>=0.14.14",
+    "ty>=0.0.13",
     "types-lxml>=2025.3.30",
 ]
 
@@ -157,7 +158,7 @@ docstring-quotes = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-v"
+addopts = "-v -m 'not integration'"
 markers = [
     "integration: integration tests (run locally with -m integration)",
 ]
