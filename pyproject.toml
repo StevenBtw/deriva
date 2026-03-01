@@ -42,7 +42,7 @@ dependencies = [
     "lxml>=6.0.2",
     # Databases
     "duckdb>=1.4.4",
-    "grafeo>=0.5.11",
+    "grafeo>=0.5.10",
     "sqlglot>=29",
     # UI
     "marimo>=0.20",
