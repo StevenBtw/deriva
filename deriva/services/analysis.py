@@ -568,13 +568,13 @@ class BenchmarkAnalyzer:
                 derivation = phases.get("derivation")
                 if derivation:
                     # Aggregate element stats
-                    total_elem = sum(b.total for b in derivation.element_breakdown)
-                    stable_elem = sum(b.stable for b in derivation.element_breakdown)
+                    total_elem = sum(b.total_count for b in derivation.element_breakdown)
+                    stable_elem = sum(b.stable_count for b in derivation.element_breakdown)
                     elem_stability = stable_elem / total_elem if total_elem > 0 else 0.0
 
                     # Aggregate relationship stats
-                    total_rel = sum(b.total for b in derivation.relationship_breakdown)
-                    stable_rel = sum(b.stable for b in derivation.relationship_breakdown)
+                    total_rel = sum(b.total_count for b in derivation.relationship_breakdown)
+                    stable_rel = sum(b.stable_count for b in derivation.relationship_breakdown)
                     rel_stability = stable_rel / total_rel if total_rel > 0 else 0.0
 
                     writer.writerow([repo, "all", "all", total_elem, stable_elem, f"{elem_stability:.2%}", total_rel, stable_rel, f"{rel_stability:.2%}"])
@@ -608,12 +608,12 @@ class BenchmarkAnalyzer:
                         [
                             repo,
                             "all",
-                            sem_report.reference_element_count,
-                            sem_report.derived_element_count,
+                            sem_report.total_reference_elements,
+                            sem_report.total_derived_elements,
                             len(sem_report.correctly_derived),
-                            f"{sem_report.precision:.3f}",
-                            f"{sem_report.recall:.3f}",
-                            f"{sem_report.f1_score:.3f}",
+                            f"{sem_report.element_precision:.3f}",
+                            f"{sem_report.element_recall:.3f}",
+                            f"{(2 * sem_report.element_precision * sem_report.element_recall / max(sem_report.element_precision + sem_report.element_recall, 0.001)):.3f}",
                         ]
                     )
                 else:
@@ -646,13 +646,13 @@ class BenchmarkAnalyzer:
                 fit = report.fit_analyses.get(repo)
 
                 # Validity: Precision (elements traceable to reference)
-                validity = sem_report.precision if sem_report else 0.0
+                validity = sem_report.element_precision if sem_report else 0.0
 
                 # Type correct: Elements with matching ArchiMate type
                 type_correct = 0.0
                 if sem_report and sem_report.correctly_derived:
                     exact_matches = len([m for m in sem_report.correctly_derived if m.match_type in ("exact", "fuzzy_name")])
-                    type_correct = exact_matches / max(sem_report.derived_element_count, 1)
+                    type_correct = exact_matches / max(sem_report.total_derived_elements, 1)
 
                 # Name quality: Coverage score from fit analysis
                 name_quality = fit.coverage_score if fit else 0.0

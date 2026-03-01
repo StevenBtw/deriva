@@ -1,6 +1,6 @@
 [project]
 name = "Deriva"
-version = "0.7.0"
+version = "0.6.9"
 description = "Deriva is a research project aimed at enabling digital architects by automating the derivation of enterprise architecture models. Deriva uses dual knowledge graphs, heuristics and LLM's."
 readme = "README.md"
 requires-python = ">=3.14"

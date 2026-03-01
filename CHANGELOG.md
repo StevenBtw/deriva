@@ -4,7 +4,7 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 ---
 
-# v0.7.x - Deriva (January 2026 - )
+# v0.7.x - Deriva (March 2026 - )
 
 Version 0.7.x is all about stability, portability, user experience, documentation and clean architecture/code standards.
 
@@ -14,13 +14,13 @@ TBD
 
 ---
 
-# v0.6.x - Deriva (December 2025 - January 2026)
+# v0.6.x - Deriva (December 2025 - March 2026)
 
-Version 0.6.x is the first robust, end-to-end implementation of Deriva, but still very unstable. The goal for 0.6.x is to be fully feature complete, and have good performance in quality, efficiency, consistency and generalizability.
+Version 0.6.x is the first robust, end-to-end implementation of Deriva, but still very unstable. The goal for 0.6.x is to be fully feature complete, and have good performance in quality, efficiency, consistency and generalizability. 0.6.x will be the last version using neo4j, which will be replaced with grafeo for performance/stability reasons.
 
-## v0.6.9 - (Unreleased)
+## v0.6.9 - Benchmarks, Relationships & Analysis (March 1, 2026)
 
-I have been running a lot of benchmarks on flask_invoice_generator, full-stack-fastapi-template and taiga-back/taiga-front. Besides a lot of new config versions, I also added a few improvements to further reduce tokens per run and added some things to make my life easier while benchmarking and trying to get the % up without any overly cannonical or repository specific prompts. Currently not breaking the 60% barrier, for relationships (the hardest one).
+I have been running a lot of benchmarks on flask_invoice_generator, full-stack-fastapi-template and taiga-back/taiga-front. Besides a lot of new config versions, I also added a few improvements to further reduce tokens per run and added some things to make my life easier while benchmarking and trying to get the % up without any overly canonical or repository specific prompts. Currently not breaking the 60% barrier, for relationships (the hardest one).
 
 ### CLI
 
