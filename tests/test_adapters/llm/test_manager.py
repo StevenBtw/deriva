@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from deriva.adapters.llm.manager import (
     LLMManager,
+    _serialize_output,
     load_benchmark_models,
 )
 from deriva.adapters.llm.models import (
@@ -18,6 +19,34 @@ from deriva.adapters.llm.models import (
     FailedResponse,
     LiveResponse,
 )
+
+# =============================================================================
+# _serialize_output() Tests
+# =============================================================================
+
+
+class TestSerializeOutput:
+    """Tests for _serialize_output helper."""
+
+    def test_pydantic_model(self):
+        """Should call model_dump_json() on Pydantic models."""
+
+        class MyModel(BaseModel):
+            name: str
+            value: int
+
+        result = _serialize_output(MyModel(name="test", value=42))
+        assert '"name":"test"' in result
+        assert '"value":42' in result
+
+    def test_plain_string(self):
+        """Should use str() for non-Pydantic objects."""
+        assert _serialize_output("hello") == "hello"
+
+    def test_none(self):
+        """Should stringify None."""
+        assert _serialize_output(None) == "None"
+
 
 # =============================================================================
 # load_benchmark_models() Tests
