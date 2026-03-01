@@ -62,8 +62,8 @@ class ApplicationServiceDerivation(HybridDerivation):
     OUTBOUND_RULES = [
         RelationshipRule(
             target_type="BusinessObject",
-            rel_type="Flow",
-            description="Application services transfer/process business data",
+            rel_type="Access",
+            description="Application services access business data",
         ),
         RelationshipRule(
             target_type="BusinessProcess",

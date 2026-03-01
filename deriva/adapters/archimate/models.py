@@ -487,3 +487,62 @@ class Relationship:
             documentation=data.get("documentation"),
             properties=data.get("properties", {}),
         )
+
+
+# =============================================================================
+# Validation Helper Functions
+# =============================================================================
+
+# Singleton metamodel instance for validation
+_metamodel: ArchiMateMetamodel | None = None
+
+
+def _get_metamodel() -> ArchiMateMetamodel:
+    """Get or create singleton metamodel instance."""
+    global _metamodel
+    if _metamodel is None:
+        _metamodel = ArchiMateMetamodel()
+    return _metamodel
+
+
+def validate_relationship_rule(
+    source_type: str, rel_type: str, target_type: str
+) -> tuple[bool, str]:
+    """Validate a relationship rule against ArchiMate metamodel constraints.
+
+    This is a convenience function for validating relationship rules defined
+    in derivation modules (OUTBOUND_RULES, INBOUND_RULES).
+
+    Args:
+        source_type: Source element type (e.g., "ApplicationService")
+        rel_type: Relationship type (e.g., "Flow", "Access")
+        target_type: Target element type (e.g., "BusinessObject")
+
+    Returns:
+        Tuple of (is_valid, reason_message)
+
+    Example:
+        >>> is_valid, msg = validate_relationship_rule("ApplicationService", "Flow", "BusinessObject")
+        >>> print(is_valid, msg)
+        False Flow cannot target BusinessObject
+    """
+    metamodel = _get_metamodel()
+    return metamodel.can_relate(source_type, rel_type, target_type)
+
+
+def get_element_aspect(element_type: str) -> str | None:
+    """Get the aspect (Structure, Behavior, Passive) for an element type.
+
+    Args:
+        element_type: Element type name (e.g., "ApplicationService")
+
+    Returns:
+        Aspect string or None if element type is invalid
+    """
+    if element_type in STRUCTURE_ELEMENTS:
+        return "Structure"
+    if element_type in BEHAVIOR_ELEMENTS:
+        return "Behavior"
+    if element_type in PASSIVE_ELEMENTS:
+        return "Passive"
+    return None

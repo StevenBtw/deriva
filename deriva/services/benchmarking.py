@@ -1048,11 +1048,11 @@ class BenchmarkOrchestrator:
             models_dir = Path("workspace/benchmarks") / session_id / "models"
             models_dir.mkdir(parents=True, exist_ok=True)
 
-            # Generate unique filename: {repo}_{model}_{iteration}.xml
+            # Generate unique filename: {repo}_{model}_run{iteration}.xml
             # Sanitize names to be filesystem-safe
             safe_repo = repo_name.replace("/", "_").replace("\\", "_")
             safe_model = model_name.replace("/", "_").replace("\\", "_")
-            filename = f"{safe_repo}_{safe_model}_{iteration}.xml"
+            filename = f"{safe_repo}_{safe_model}_run{iteration}.xml"
             output_path = models_dir / filename
 
             # Export using ArchiMateXMLExporter
@@ -1163,9 +1163,10 @@ class BenchmarkOrchestrator:
         """
         session_id = self.session_id or "unknown"
         output_dir = Path("workspace/benchmarks") / session_id
-        output_dir.mkdir(parents=True, exist_ok=True)
+        ocel_dir = output_dir / "ocel"
+        ocel_dir.mkdir(parents=True, exist_ok=True)
 
-        ocel_jsonl_path = output_dir / "events.jsonl"
+        ocel_jsonl_path = ocel_dir / "benchmark_events.jsonl"
         return self.ocel_log.export_jsonl_incremental(ocel_jsonl_path)
 
     def _export_ocel(self) -> str:
@@ -1175,15 +1176,19 @@ class BenchmarkOrchestrator:
         output_dir = Path("workspace/benchmarks") / session_id
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Export OCEL JSON
-        ocel_json_path = output_dir / "events.ocel.json"
+        # Create ocel subdirectory per BENCHMARK_OUTPUT.md spec
+        ocel_dir = output_dir / "ocel"
+        ocel_dir.mkdir(parents=True, exist_ok=True)
+
+        # Export OCEL JSON to ocel/benchmark_events.json
+        ocel_json_path = ocel_dir / "benchmark_events.json"
         self.ocel_log.export_json(ocel_json_path)
 
-        # Export JSONL for streaming
-        ocel_jsonl_path = output_dir / "events.jsonl"
+        # Export JSONL for streaming to ocel/benchmark_events.jsonl
+        ocel_jsonl_path = ocel_dir / "benchmark_events.jsonl"
         self.ocel_log.export_jsonl(ocel_jsonl_path)
 
-        # Export summary
+        # Export session metadata (renamed from summary.json)
         summary = {
             "session_id": self.session_id,
             "config": self.config.to_dict(),
@@ -1192,7 +1197,7 @@ class BenchmarkOrchestrator:
             "total_events": len(self.ocel_log.events),
             "object_types": list(self.ocel_log.object_types),
         }
-        with open(output_dir / "summary.json", "w") as f:
+        with open(output_dir / "session_metadata.json", "w") as f:
             json.dump(summary, f, indent=2)
 
         return str(ocel_json_path)
@@ -1204,33 +1209,78 @@ class BenchmarkOrchestrator:
         model_name: str,
     ) -> int:
         """
-        Copy used LLM cache entries to the benchmark session folder for audit trail.
+        Consolidate used LLM cache entries into single llm_cache.json.
+
+        Per BENCHMARK_OUTPUT.md spec, consolidates all cache entries into a single
+        JSON file instead of per-model subdirectories with individual files.
 
         Args:
             used_cache_keys: List of cache keys (SHA256 hashes) used during the run
             cache_dir: Source cache directory where cache files are stored
-            model_name: Name of the model (used for organizing cache by model)
+            model_name: Name of the model (used for tagging entries)
 
         Returns:
-            Number of cache files successfully copied
+            Number of cache entries in consolidated file
         """
         session_id = self.session_id or "unknown"
-        target_dir = Path("workspace/benchmarks") / session_id / "cache" / model_name
-        target_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = Path("workspace/benchmarks") / session_id / "cache" / "llm_cache.json"
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
 
-        copied = 0
+        # Load existing consolidated cache or create new
+        consolidated: dict[str, Any] = {}
+        if cache_file.exists():
+            try:
+                with open(cache_file) as f:
+                    consolidated = json.load(f)
+            except json.JSONDecodeError:
+                consolidated = {}
+
+        # Add new entries from this run
         for cache_key in set(used_cache_keys):  # Deduplicate
             src = cache_dir / f"{cache_key}.json"
-            if src.exists():
-                dst = target_dir / f"{cache_key}.json"
-                if not dst.exists():  # Don't overwrite existing copies
-                    try:
-                        shutil.copy2(src, dst)
-                        copied += 1
-                    except OSError:
-                        pass  # Skip on copy errors, don't fail the benchmark
+            if src.exists() and cache_key not in consolidated:
+                try:
+                    with open(src) as f:
+                        data = json.load(f)
+                        # Extract fields per BENCHMARK_OUTPUT.md spec
+                        # Handle different cache formats
+                        prompt = ""
+                        response = ""
+                        tokens_in = 0
+                        tokens_out = 0
+                        timestamp = ""
 
-        return copied
+                        if "request" in data:
+                            messages = data.get("request", {}).get("messages", [])
+                            if messages:
+                                prompt = messages[-1].get("content", "")
+                        if "response" in data:
+                            resp = data.get("response", {})
+                            if isinstance(resp, dict):
+                                response = resp.get("content", str(resp))
+                            else:
+                                response = str(resp)
+                        if "usage" in data:
+                            tokens_in = data["usage"].get("input_tokens", 0)
+                            tokens_out = data["usage"].get("output_tokens", 0)
+                        timestamp = data.get("created_at", data.get("timestamp", ""))
+
+                        consolidated[cache_key] = {
+                            "model": model_name,
+                            "prompt": prompt[:500] if prompt else "",  # Truncate for size
+                            "response": response[:500] if response else "",  # Truncate
+                            "tokens_in": tokens_in,
+                            "tokens_out": tokens_out,
+                            "timestamp": timestamp,
+                        }
+                except (OSError, json.JSONDecodeError):
+                    pass  # Skip on read errors
+
+        # Write consolidated cache
+        with open(cache_file, "w") as f:
+            json.dump(consolidated, f, indent=2)
+
+        return len(consolidated)
 
 
 # =============================================================================

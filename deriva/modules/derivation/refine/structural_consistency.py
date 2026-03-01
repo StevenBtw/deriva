@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from deriva.adapters.archimate.models import BEHAVIOR_ELEMENTS, PASSIVE_ELEMENTS
+
 from .base import RefineResult, register_refine_step
 
 if TYPE_CHECKING:
@@ -23,6 +25,14 @@ if TYPE_CHECKING:
     from deriva.adapters.graph import GraphManager
 
 logger = logging.getLogger(__name__)
+
+# ArchiMate relationship aspect constraints
+# These relationships have strict source/target aspect requirements
+ASPECT_CONSTRAINED_RELATIONSHIPS = {
+    "Flow": {"valid_sources": BEHAVIOR_ELEMENTS, "valid_targets": BEHAVIOR_ELEMENTS},
+    "Triggering": {"valid_sources": BEHAVIOR_ELEMENTS, "valid_targets": BEHAVIOR_ELEMENTS},
+    "Access": {"valid_sources": None, "valid_targets": PASSIVE_ELEMENTS},  # Any source, passive target
+}
 
 # Mapping of Graph relationship types to expected ArchiMate relationship types
 GRAPH_TO_ARCHIMATE_MAPPING = {
@@ -55,6 +65,8 @@ class StructuralConsistencyStep:
             params: Optional parameters:
                 - check_containment: Check CONTAINS→Composition (default: True)
                 - check_calls: Check CALLS→Flow/Serving (default: True)
+                - check_aspect_constraints: Check Flow/Access aspect constraints (default: True)
+                - fix_aspect_violations: Auto-fix Flow→Passive to Access (default: False)
                 - strict_mode: Fail on any violations (default: False)
 
         Returns:
@@ -63,6 +75,8 @@ class StructuralConsistencyStep:
         params = params or {}
         check_containment = params.get("check_containment", True)
         check_calls = params.get("check_calls", True)
+        check_aspect_constraints = params.get("check_aspect_constraints", True)
+        fix_aspect_violations = params.get("fix_aspect_violations", False)
 
         result = RefineResult(
             success=True,
@@ -94,6 +108,12 @@ class StructuralConsistencyStep:
             if check_calls:
                 self._check_call_preservation(
                     graph_manager, archimate_manager, result, model_ns
+                )
+
+            # Check ArchiMate aspect constraints (Flow/Triggering/Access)
+            if check_aspect_constraints:
+                self._check_aspect_constraints(
+                    archimate_manager, result, model_ns, fix_aspect_violations
                 )
 
             logger.info(
@@ -233,3 +253,198 @@ class StructuralConsistencyStep:
             pass
 
         return None
+
+    def _check_aspect_constraints(
+        self,
+        archimate_manager: ArchimateManager,
+        result: RefineResult,
+        model_ns: str,
+        fix_violations: bool = False,
+    ) -> None:
+        """Check that relationships respect ArchiMate aspect constraints.
+
+        Flow and Triggering: Must be between Behavior elements only
+        Access: Must target Passive elements only
+
+        Args:
+            archimate_manager: Manager for ArchiMate model operations
+            result: RefineResult to update with findings
+            model_ns: Model namespace
+            fix_violations: If True, auto-fix Flow→Passive to Access
+        """
+        # Query all Flow relationships and check source/target element types
+        flow_query = f"""
+            MATCH (source)-[r:`{model_ns}:Flow`]->(target)
+            WHERE source.enabled = true AND target.enabled = true
+            RETURN r.identifier as rel_id,
+                   source.identifier as source_id,
+                   source.name as source_name,
+                   source.element_type as source_type,
+                   target.identifier as target_id,
+                   target.name as target_name,
+                   target.element_type as target_type
+        """
+
+        try:
+            flow_rels = archimate_manager.query(flow_query)
+        except Exception as e:
+            logger.warning(f"Flow aspect constraint check query failed: {e}")
+            flow_rels = []
+
+        violations_found = 0
+        violations_fixed = 0
+
+        for rel in flow_rels:
+            source_type = rel.get("source_type", "")
+            target_type = rel.get("target_type", "")
+
+            # Check if source is a Behavior element
+            source_valid = source_type in BEHAVIOR_ELEMENTS
+            # Check if target is a Behavior element
+            target_valid = target_type in BEHAVIOR_ELEMENTS
+
+            if not source_valid or not target_valid:
+                violations_found += 1
+
+                # Determine the specific violation
+                if not target_valid and target_type in PASSIVE_ELEMENTS:
+                    violation_type = "flow_to_passive"
+                    suggested_fix = "Change to Access relationship"
+                elif not source_valid:
+                    violation_type = "flow_from_non_behavior"
+                    suggested_fix = "Review source element type"
+                else:
+                    violation_type = "flow_to_non_behavior"
+                    suggested_fix = "Review target element type"
+
+                if fix_violations and violation_type == "flow_to_passive":
+                    # Auto-fix: Change Flow to Access
+                    try:
+                        self._fix_flow_to_access(
+                            archimate_manager, rel["rel_id"], model_ns
+                        )
+                        violations_fixed += 1
+                        result.details.append(
+                            {
+                                "action": "fixed",
+                                "issue_type": violation_type,
+                                "relationship_id": rel["rel_id"],
+                                "source": f"{rel['source_name']} ({source_type})",
+                                "target": f"{rel['target_name']} ({target_type})",
+                                "fix_applied": "Changed Flow to Access",
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to fix Flow→Passive violation: {e}")
+                        result.issues_found += 1
+                        result.details.append(
+                            {
+                                "action": "flagged",
+                                "issue_type": violation_type,
+                                "relationship_id": rel["rel_id"],
+                                "source": f"{rel['source_name']} ({source_type})",
+                                "target": f"{rel['target_name']} ({target_type})",
+                                "suggested_fix": suggested_fix,
+                                "fix_error": str(e),
+                            }
+                        )
+                else:
+                    result.issues_found += 1
+                    result.details.append(
+                        {
+                            "action": "flagged",
+                            "issue_type": violation_type,
+                            "relationship_id": rel["rel_id"],
+                            "source": f"{rel['source_name']} ({source_type})",
+                            "target": f"{rel['target_name']} ({target_type})",
+                            "suggested_fix": suggested_fix,
+                        }
+                    )
+
+        if violations_found > 0:
+            logger.warning(
+                f"Found {violations_found} Flow aspect constraint violations, "
+                f"fixed {violations_fixed}"
+            )
+        else:
+            result.details.append(
+                {
+                    "action": "info",
+                    "message": "No Flow aspect constraint violations found",
+                    "flow_relationships_checked": len(flow_rels),
+                }
+            )
+
+    def _fix_flow_to_access(
+        self,
+        archimate_manager: ArchimateManager,
+        rel_id: str,
+        model_ns: str,
+    ) -> None:
+        """Fix a Flow→Passive violation by changing the relationship type to Access.
+
+        Args:
+            archimate_manager: Manager for ArchiMate model operations
+            rel_id: Identifier of the relationship to fix
+            model_ns: Model namespace
+        """
+        # Update the relationship type from Flow to Access
+        # This requires deleting the old relationship and creating a new one
+        # because Neo4j doesn't allow changing relationship types in-place
+
+        # Get the relationship details first
+        query = f"""
+            MATCH (source)-[r:`{model_ns}:Flow`]->(target)
+            WHERE r.identifier = $rel_id
+            RETURN source.identifier as source_id,
+                   target.identifier as target_id,
+                   r.name as name,
+                   r.documentation as documentation,
+                   r.properties_json as properties_json,
+                   r.confidence as confidence
+        """
+
+        results = archimate_manager.query(query, {"rel_id": rel_id})
+        if not results:
+            raise ValueError(f"Relationship {rel_id} not found")
+
+        rel_data = results[0]
+
+        # Delete the old Flow relationship
+        delete_query = f"""
+            MATCH ()-[r:`{model_ns}:Flow`]->()
+            WHERE r.identifier = $rel_id
+            DELETE r
+        """
+        archimate_manager.query(delete_query, {"rel_id": rel_id})
+
+        # Create new Access relationship with same properties
+        create_query = f"""
+            MATCH (source {{identifier: $source_id}}), (target {{identifier: $target_id}})
+            WHERE any(lbl IN labels(source) WHERE lbl STARTS WITH '{model_ns}:')
+              AND any(lbl IN labels(target) WHERE lbl STARTS WITH '{model_ns}:')
+            CREATE (source)-[r:`{model_ns}:Access` {{
+                identifier: $rel_id,
+                relationship_type: 'Access',
+                name: $name,
+                documentation: $documentation,
+                properties_json: $properties_json,
+                confidence: $confidence
+            }}]->(target)
+            RETURN r.identifier as new_id
+        """
+
+        archimate_manager.query(
+            create_query,
+            {
+                "source_id": rel_data["source_id"],
+                "target_id": rel_data["target_id"],
+                "rel_id": rel_id,
+                "name": rel_data.get("name"),
+                "documentation": rel_data.get("documentation"),
+                "properties_json": rel_data.get("properties_json"),
+                "confidence": rel_data.get("confidence", 0.9),
+            },
+        )
+
+        logger.info(f"Fixed Flow→Access: {rel_id}")

@@ -25,7 +25,7 @@ LLM role:
 Relationships:
 - OUTBOUND: BusinessObject -> BusinessObject (Composition/Aggregation)
 - INBOUND: BusinessProcess -> BusinessObject (Access)
-- INBOUND: ApplicationService -> BusinessObject (Flow)
+- INBOUND: ApplicationService -> BusinessObject (Access)
 
 ArchiMate Layer: Business Layer
 ArchiMate Type: BusinessObject
@@ -85,8 +85,8 @@ class BusinessObjectDerivation(HybridDerivation):
         ),
         RelationshipRule(
             target_type="ApplicationService",
-            rel_type="Flow",
-            description="Application services flow data to business objects",
+            rel_type="Access",
+            description="Application services access business objects",
         ),
     ]
 

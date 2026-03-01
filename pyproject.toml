@@ -38,10 +38,10 @@ dependencies = [
     "pydantic-settings>=2.0",
     "python-dotenv>=1.2.1",
     "pyyaml>=6.0.3",
-    "rich>=14.3.0",
+    "rich>=14.3.1",
     "lxml>=6.0.2",
     # Databases
-    "duckdb>=1.4.3",
+    "duckdb>=1.4.4",
     "neo4j>=6.1.0",
     "sqlglot>=28.6.0",
     # UI
@@ -53,7 +53,7 @@ dependencies = [
     "tree-sitter-java>=0.23.0",
     "tree-sitter-c-sharp>=0.23.0",
     # Document Parsing
-    "pypdf>=6.6.0",
+    "pypdf>=6.6.2",
     "python-docx>=1.2.0",
     # Graph Algorithms
     "solvor>=0.5.4",

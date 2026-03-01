@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from deriva.adapters.archimate.models import validate_relationship_rule
 from deriva.adapters.graph.cache import (
     EnrichmentCache,
     EnrichmentCacheManager,
@@ -860,7 +861,19 @@ def derive_community_relationships(
             continue
 
         # Process OUTBOUND rules (FROM new TO existing in same community)
+        new_type = new_elem.get("element_type", "")
         for rule in outbound_rules:
+            # Validate rule against ArchiMate metamodel
+            is_valid, msg = validate_relationship_rule(
+                new_type, rule.rel_type, rule.target_type
+            )
+            if not is_valid:
+                logger.warning(
+                    "Skipping invalid OUTBOUND rule: %s -[%s]-> %s: %s",
+                    new_type, rule.rel_type, rule.target_type, msg,
+                )
+                continue
+
             targets = [
                 e for e in same_community if e.get("element_type") == rule.target_type
             ]
@@ -892,6 +905,18 @@ def derive_community_relationships(
 
         # Process INBOUND rules (FROM existing in same community TO new)
         for rule in inbound_rules:
+            # Validate rule against ArchiMate metamodel
+            # For INBOUND: source=rule.target_type, target=new_type
+            is_valid, msg = validate_relationship_rule(
+                rule.target_type, rule.rel_type, new_type
+            )
+            if not is_valid:
+                logger.warning(
+                    "Skipping invalid INBOUND rule: %s -[%s]-> %s: %s",
+                    rule.target_type, rule.rel_type, new_type, msg,
+                )
+                continue
+
             sources = [
                 e for e in same_community if e.get("element_type") == rule.target_type
             ]
@@ -986,10 +1011,18 @@ def derive_neighbor_relationships(
 
                 existing_id = existing.get("identifier", "")
                 existing_type = existing.get("element_type", "")
+                new_type = new_elem.get("element_type", "")
 
                 # Check OUTBOUND rules
                 for rule in outbound_rules:
                     if existing_type == rule.target_type:
+                        # Validate rule against ArchiMate metamodel
+                        is_valid, _ = validate_relationship_rule(
+                            new_type, rule.rel_type, rule.target_type
+                        )
+                        if not is_valid:
+                            continue
+
                         pair_key = (new_id, existing_id, rule.rel_type)
                         if pair_key not in created_pairs:
                             created_pairs.add(pair_key)
@@ -1006,6 +1039,13 @@ def derive_neighbor_relationships(
                 # Check INBOUND rules
                 for rule in inbound_rules:
                     if existing_type == rule.target_type:
+                        # Validate rule against ArchiMate metamodel
+                        is_valid, _ = validate_relationship_rule(
+                            rule.target_type, rule.rel_type, new_type
+                        )
+                        if not is_valid:
+                            continue
+
                         pair_key = (existing_id, new_id, rule.rel_type)
                         if pair_key not in created_pairs:
                             created_pairs.add(pair_key)
@@ -1250,6 +1290,17 @@ def derive_deterministic_relationships(
 
         # Process OUTBOUND rules (FROM new TO existing)
         for rule in outbound_rules:
+            # Validate rule against ArchiMate metamodel
+            is_valid, msg = validate_relationship_rule(
+                element_type, rule.rel_type, rule.target_type
+            )
+            if not is_valid:
+                logger.warning(
+                    "Skipping invalid OUTBOUND rule: %s -[%s]-> %s: %s",
+                    element_type, rule.rel_type, rule.target_type, msg,
+                )
+                continue
+
             targets = [
                 e
                 for e in existing_elements
@@ -1292,6 +1343,18 @@ def derive_deterministic_relationships(
 
         # Process INBOUND rules (FROM existing TO new)
         for rule in inbound_rules:
+            # Validate rule against ArchiMate metamodel
+            # For INBOUND: source=rule.target_type, target=element_type
+            is_valid, msg = validate_relationship_rule(
+                rule.target_type, rule.rel_type, element_type
+            )
+            if not is_valid:
+                logger.warning(
+                    "Skipping invalid INBOUND rule: %s -[%s]-> %s: %s",
+                    rule.target_type, rule.rel_type, element_type, msg,
+                )
+                continue
+
             sources = [
                 e
                 for e in existing_elements

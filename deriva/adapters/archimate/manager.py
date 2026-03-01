@@ -143,12 +143,19 @@ class ArchimateManager:
                 json.dumps(element.properties) if element.properties else None
             )
 
+            # Extract source_identifier from properties for graph-based relationship derivation
+            # The graph_relationships refine step needs this to link elements to source graph nodes
+            source_identifier = (
+                element.properties.get("source") if element.properties else None
+            )
+
             query = f"""
                 MERGE (e:`{self.namespace}`:`{element.element_type}` {{identifier: $identifier}})
                 SET e.name = $name,
                     e.documentation = $documentation,
                     e.properties_json = $properties_json,
-                    e.enabled = $enabled
+                    e.enabled = $enabled,
+                    e.source_identifier = $source_identifier
                 RETURN e.identifier as identifier
             """
 
@@ -160,6 +167,7 @@ class ArchimateManager:
                     "documentation": element.documentation,
                     "properties_json": properties_json,
                     "enabled": element.enabled,
+                    "source_identifier": source_identifier,
                 },
             )
 

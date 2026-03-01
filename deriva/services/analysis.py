@@ -10,6 +10,7 @@ Orchestrates multi-dimensional analysis of benchmark results:
 
 from __future__ import annotations
 
+import csv
 import json
 from datetime import datetime
 from pathlib import Path
@@ -112,15 +113,26 @@ class BenchmarkAnalyzer:
 
     def _load_ocel(self, session_id: str) -> OCELLog:
         """Load OCEL log from file."""
-        ocel_path = Path("workspace/benchmarks") / session_id / "events.ocel.json"
+        # Try new location first (ocel/ subdirectory per BENCHMARK_OUTPUT.md)
+        ocel_dir = Path("workspace/benchmarks") / session_id / "ocel"
+        ocel_path = ocel_dir / "benchmark_events.json"
 
         if ocel_path.exists():
             return OCELLog.from_json(ocel_path)
 
-        # Try JSONL format
-        jsonl_path = Path("workspace/benchmarks") / session_id / "events.jsonl"
+        # Try JSONL format in new location
+        jsonl_path = ocel_dir / "benchmark_events.jsonl"
         if jsonl_path.exists():
             return OCELLog.from_jsonl(jsonl_path)
+
+        # Fallback to old location for backward compatibility
+        old_ocel_path = Path("workspace/benchmarks") / session_id / "events.ocel.json"
+        if old_ocel_path.exists():
+            return OCELLog.from_json(old_ocel_path)
+
+        old_jsonl_path = Path("workspace/benchmarks") / session_id / "events.jsonl"
+        if old_jsonl_path.exists():
+            return OCELLog.from_jsonl(old_jsonl_path)
 
         # Return empty log if files not found
         return OCELLog()
@@ -528,21 +540,266 @@ class BenchmarkAnalyzer:
 
         return str(path)
 
-    def export_all(self, output_dir: str | Path) -> dict[str, str]:
+    def export_consistency_metrics_csv(self, path: str | Path) -> str:
         """
-        Export all formats to a directory.
+        Export consistency_metrics.csv with per-run element and relationship stability.
+
+        Columns: repository, model, run, total_elements, stable_elements,
+                 element_stability, total_relationships, stable_relationships,
+                 relationship_stability
 
         Args:
-            output_dir: Output directory
+            path: Output file path
+
+        Returns:
+            Path to exported file
+        """
+        report = self.generate_report()
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "repository", "model", "run",
+                "total_elements", "stable_elements", "element_stability",
+                "total_relationships", "stable_relationships", "relationship_stability"
+            ])
+
+            for repo, phases in report.stability_reports.items():
+                derivation = phases.get("derivation")
+                if derivation:
+                    # Aggregate element stats
+                    total_elem = sum(b.total for b in derivation.element_breakdown)
+                    stable_elem = sum(b.stable for b in derivation.element_breakdown)
+                    elem_stability = stable_elem / total_elem if total_elem > 0 else 0.0
+
+                    # Aggregate relationship stats
+                    total_rel = sum(b.total for b in derivation.relationship_breakdown)
+                    stable_rel = sum(b.stable for b in derivation.relationship_breakdown)
+                    rel_stability = stable_rel / total_rel if total_rel > 0 else 0.0
+
+                    writer.writerow([
+                        repo, "all", "all",
+                        total_elem, stable_elem, f"{elem_stability:.2%}",
+                        total_rel, stable_rel, f"{rel_stability:.2%}"
+                    ])
+
+        return str(path)
+
+    def export_ground_truth_comparison_csv(self, path: str | Path) -> str:
+        """
+        Export ground_truth_comparison.csv with precision/recall/F1 against reference models.
+
+        Columns: repository, model, gt_elements, extracted_elements, matched,
+                 precision, recall, f1
+
+        Args:
+            path: Output file path
+
+        Returns:
+            Path to exported file
+        """
+        report = self.generate_report()
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "repository", "model", "gt_elements", "extracted_elements",
+                "matched", "precision", "recall", "f1"
+            ])
+
+            for repo, sem_report in report.semantic_reports.items():
+                if sem_report:
+                    writer.writerow([
+                        repo, "all",
+                        sem_report.reference_element_count,
+                        sem_report.derived_element_count,
+                        len(sem_report.correctly_derived),
+                        f"{sem_report.precision:.3f}",
+                        f"{sem_report.recall:.3f}",
+                        f"{sem_report.f1_score:.3f}"
+                    ])
+                else:
+                    writer.writerow([repo, "all", 0, 0, 0, "N/A", "N/A", "N/A"])
+
+        return str(path)
+
+    def export_quality_verification_csv(self, path: str | Path) -> str:
+        """
+        Export quality_verification.csv with quality rubric scores.
+
+        Columns: repository, model, validity_pct, type_correct_pct, name_quality_pct
+
+        Args:
+            path: Output file path
+
+        Returns:
+            Path to exported file
+        """
+        report = self.generate_report()
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "repository", "model", "validity_pct", "type_correct_pct", "name_quality_pct"
+            ])
+
+            for repo in report.stability_reports:
+                sem_report = report.semantic_reports.get(repo)
+                fit = report.fit_analyses.get(repo)
+
+                # Validity: Precision (elements traceable to reference)
+                validity = sem_report.precision if sem_report else 0.0
+
+                # Type correct: Elements with matching ArchiMate type
+                type_correct = 0.0
+                if sem_report and sem_report.correctly_derived:
+                    exact_matches = len([m for m in sem_report.correctly_derived
+                                        if m.match_type in ("exact", "fuzzy_name")])
+                    type_correct = exact_matches / max(sem_report.derived_element_count, 1)
+
+                # Name quality: Coverage score from fit analysis
+                name_quality = fit.coverage_score if fit else 0.0
+
+                writer.writerow([
+                    repo, "all",
+                    f"{validity:.1%}",
+                    f"{type_correct:.1%}",
+                    f"{name_quality:.1%}"
+                ])
+
+        return str(path)
+
+    def export_execution_metrics_csv(self, path: str | Path) -> str:
+        """
+        Export execution_metrics.csv with runtime performance data.
+
+        Columns: repository, model, run, duration_sec, event_count,
+                 tokens_in, tokens_out, api_calls
+
+        Args:
+            path: Output file path
+
+        Returns:
+            Path to exported file
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Parse OCEL for timing data from all sessions
+        run_metrics: dict[str, dict[str, Any]] = {}
+
+        for ocel_log in self.ocel_logs.values():
+            for event in ocel_log.events:
+                if event.activity == "StartRun":
+                    run_id = event.objects.get("BenchmarkRun", [""])[0]
+                    run_metrics[run_id] = {
+                        "start": event.timestamp,
+                        "repo": event.objects.get("Repository", [""])[0],
+                        "model": event.objects.get("Model", [""])[0],
+                        "events": 0,
+                        "tokens_in": 0,
+                        "tokens_out": 0,
+                        "api_calls": 0,
+                    }
+                elif event.activity == "CompleteRun":
+                    run_id = event.objects.get("BenchmarkRun", [""])[0]
+                    if run_id in run_metrics:
+                        run_metrics[run_id]["end"] = event.timestamp
+                elif event.activity in ("LLMRequest", "llm_request"):
+                    run_id = event.objects.get("BenchmarkRun", [""])[0]
+                    if run_id in run_metrics:
+                        run_metrics[run_id]["api_calls"] += 1
+                        run_metrics[run_id]["tokens_in"] += event.attributes.get("tokens_in", 0)
+                        run_metrics[run_id]["tokens_out"] += event.attributes.get("tokens_out", 0)
+
+                # Count all events for this run
+                for run_id in event.objects.get("BenchmarkRun", []):
+                    if run_id in run_metrics:
+                        run_metrics[run_id]["events"] += 1
+
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "repository", "model", "run", "duration_sec",
+                "event_count", "tokens_in", "tokens_out", "api_calls"
+            ])
+
+            for run_id, metrics in run_metrics.items():
+                # Parse run number from run_id (format: session:repo:model:n)
+                parts = run_id.split(":")
+                run_num = parts[-1] if len(parts) >= 4 else "1"
+
+                # Calculate duration
+                start = metrics.get("start")
+                end = metrics.get("end", start)
+                duration = 0.0
+                if start and end:
+                    try:
+                        duration = (end - start).total_seconds()
+                    except (TypeError, AttributeError):
+                        duration = 0.0
+
+                writer.writerow([
+                    metrics["repo"], metrics["model"], run_num,
+                    f"{duration:.1f}",
+                    metrics["events"],
+                    metrics["tokens_in"],
+                    metrics["tokens_out"],
+                    metrics["api_calls"]
+                ])
+
+        return str(path)
+
+    def export_all(self, output_dir: str | Path) -> dict[str, str]:
+        """
+        Export all formats to results/ directory per BENCHMARK_OUTPUT.md spec.
+
+        Creates a results/ subdirectory with:
+        - inter_model_agreement.json
+        - consistency_metrics.csv
+        - ground_truth_comparison.csv
+        - quality_verification.csv
+        - execution_metrics.csv
+        - benchmark_analysis.md (human-readable report)
+
+        Args:
+            output_dir: Output directory (results/ subdirectory will be created)
 
         Returns:
             Dict mapping format -> file path
         """
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        results_dir = output_dir / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
 
         paths = {}
-        paths["json"] = self.export_json(output_dir / "benchmark_analysis.json")
-        paths["markdown"] = self.export_markdown(output_dir / "benchmark_analysis.md")
+
+        # JSON exports
+        paths["inter_model_json"] = self.export_json(
+            results_dir / "inter_model_agreement.json"
+        )
+        paths["markdown"] = self.export_markdown(
+            results_dir / "benchmark_analysis.md"
+        )
+
+        # CSV exports per BENCHMARK_OUTPUT.md spec
+        paths["consistency_csv"] = self.export_consistency_metrics_csv(
+            results_dir / "consistency_metrics.csv"
+        )
+        paths["ground_truth_csv"] = self.export_ground_truth_comparison_csv(
+            results_dir / "ground_truth_comparison.csv"
+        )
+        paths["quality_csv"] = self.export_quality_verification_csv(
+            results_dir / "quality_verification.csv"
+        )
+        paths["execution_csv"] = self.export_execution_metrics_csv(
+            results_dir / "execution_metrics.csv"
+        )
 
         return paths

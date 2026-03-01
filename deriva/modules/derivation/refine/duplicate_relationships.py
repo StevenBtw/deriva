@@ -62,11 +62,11 @@ class DuplicateRelationshipsStep:
             self._remove_self_loops(archimate_manager, result)
 
             # Find exact duplicates: same source, target, type
+            # Note: Nodes have separate labels (e.g., Model + ApplicationComponent)
+            # not combined labels (Model:ApplicationComponent)
             duplicate_query = f"""
-                MATCH (a)-[r1]->(b), (a)-[r2]->(b)
-                WHERE any(lbl IN labels(a) WHERE lbl STARTS WITH '{ns}:')
-                  AND any(lbl IN labels(b) WHERE lbl STARTS WITH '{ns}:')
-                  AND type(r1) = type(r2)
+                MATCH (a:`{ns}`)-[r1]->(b:`{ns}`), (a)-[r2]->(b)
+                WHERE type(r1) = type(r2)
                   AND type(r1) STARTS WITH '{ns}:'
                   AND elementId(r1) < elementId(r2)
                   AND a.enabled = true AND b.enabled = true
@@ -135,10 +135,8 @@ class DuplicateRelationshipsStep:
 
         # Find elements with multiple relationships to the same target
         multi_rel_query = f"""
-            MATCH (a)-[r]->(b)
-            WHERE any(lbl IN labels(a) WHERE lbl STARTS WITH '{ns}:')
-              AND any(lbl IN labels(b) WHERE lbl STARTS WITH '{ns}:')
-              AND type(r) STARTS WITH '{ns}:'
+            MATCH (a:`{ns}`)-[r]->(b:`{ns}`)
+            WHERE type(r) STARTS WITH '{ns}:'
               AND a.enabled = true AND b.enabled = true
             WITH a, b, collect({{id: r.identifier, type: type(r)}}) as rels
             WHERE size(rels) > 1
@@ -207,9 +205,8 @@ class DuplicateRelationshipsStep:
         ns = archimate_manager.namespace
 
         self_loop_query = f"""
-            MATCH (a)-[r]->(a)
-            WHERE any(lbl IN labels(a) WHERE lbl STARTS WITH '{ns}:')
-              AND type(r) STARTS WITH '{ns}:'
+            MATCH (a:`{ns}`)-[r]->(a)
+            WHERE type(r) STARTS WITH '{ns}:'
             RETURN r.identifier as rel_id,
                    a.identifier as element_id,
                    a.name as element_name,

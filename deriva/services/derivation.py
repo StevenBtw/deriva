@@ -631,9 +631,27 @@ def run_derivation(
                     progress.complete_step()
 
     # Run consolidated relationship derivation if deferred
-    if defer_relationships and all_created_elements:
-        if verbose:
-            print(f"  Deriving relationships for {len(all_created_elements)} elements...")
+    # If no elements were created in this run, use existing elements from the model
+    elements_for_relationships = all_created_elements
+    if defer_relationships and not all_created_elements:
+        # Fetch existing elements from the model for relationship derivation
+        existing_elements = archimate_manager.get_elements(enabled_only=True)
+        if existing_elements:
+            elements_for_relationships = [
+                {
+                    "identifier": e.identifier,
+                    "name": e.name,
+                    "element_type": e.element_type,
+                    "properties": e.properties or {},
+                }
+                for e in existing_elements
+            ]
+            if verbose:
+                print(f"  Using {len(elements_for_relationships)} existing elements for relationship derivation...")
+
+    if defer_relationships and elements_for_relationships:
+        if verbose and all_created_elements:
+            print(f"  Deriving relationships for {len(elements_for_relationships)} elements...")
 
         # Start progress tracking
         if progress:
@@ -642,7 +660,7 @@ def run_derivation(
         try:
             relationship_rules = _collect_relationship_rules()
             relationships = derive_consolidated_relationships(
-                all_elements=all_created_elements,
+                all_elements=elements_for_relationships,
                 relationship_rules=relationship_rules,
                 llm_query_fn=llm_query_fn,
                 graph_manager=graph_manager,
@@ -650,8 +668,8 @@ def run_derivation(
 
             # Persist relationships to archimate model with graph metadata for stability analysis
             for rel_data in relationships:
-                source_props = _get_element_props(all_created_elements, rel_data["source"])
-                target_props = _get_element_props(all_created_elements, rel_data["target"])
+                source_props = _get_element_props(elements_for_relationships, rel_data["source"])
+                target_props = _get_element_props(elements_for_relationships, rel_data["target"])
 
                 relationship = Relationship(
                     source=rel_data["source"],
@@ -1004,6 +1022,86 @@ def run_derivation_iter(
                     total=total_steps,
                     message=error_msg,
                 )
+
+    # Run consolidated relationship derivation if deferred
+    # If no elements were created in this run, use existing elements from the model
+    elements_for_relationships = all_created_elements
+    if defer_relationships and not all_created_elements:
+        # Fetch existing elements from the model for relationship derivation
+        existing_elements = archimate_manager.get_elements(enabled_only=True)
+        if existing_elements:
+            elements_for_relationships = [
+                {
+                    "identifier": e.identifier,
+                    "name": e.name,
+                    "element_type": e.element_type,
+                    "properties": e.properties or {},
+                }
+                for e in existing_elements
+            ]
+            if verbose:
+                print(f"  Using {len(elements_for_relationships)} existing elements for relationship derivation...")
+
+    if defer_relationships and elements_for_relationships:
+        current_step += 1
+        if verbose and all_created_elements:
+            print(f"  Deriving relationships for {len(elements_for_relationships)} elements...")
+
+        try:
+            relationship_rules = _collect_relationship_rules()
+            relationships = derive_consolidated_relationships(
+                all_elements=elements_for_relationships,
+                relationship_rules=relationship_rules,
+                llm_query_fn=llm_query_fn,
+                graph_manager=graph_manager,
+            )
+
+            # Persist relationships to archimate model
+            for rel_data in relationships:
+                source_props = _get_element_props(elements_for_relationships, rel_data["source"])
+                target_props = _get_element_props(elements_for_relationships, rel_data["target"])
+
+                relationship = Relationship(
+                    source=rel_data["source"],
+                    target=rel_data["target"],
+                    relationship_type=rel_data["relationship_type"],
+                    properties={
+                        "confidence": rel_data.get("confidence", 0.5),
+                        "source_pagerank": source_props.get("source_pagerank"),
+                        "source_kcore": source_props.get("source_kcore_level"),
+                        "source_community": source_props.get("source_louvain_community"),
+                        "target_pagerank": target_props.get("source_pagerank"),
+                        "target_kcore": target_props.get("source_kcore_level"),
+                        "target_community": target_props.get("source_louvain_community"),
+                    },
+                )
+                archimate_manager.add_relationship(relationship)
+
+            rel_count = len(relationships)
+            stats["relationships_created"] += rel_count
+
+            yield ProgressUpdate(
+                phase="derivation",
+                step="ConsolidatedRelationships",
+                status="complete",
+                current=current_step,
+                total=total_steps,
+                message=f"{rel_count} relationships derived",
+                stats={"relationships_created": rel_count},
+            )
+
+        except Exception as e:
+            error_msg = f"Error in consolidated relationships: {str(e)}"
+            errors.append(error_msg)
+
+            yield ProgressUpdate(
+                phase="derivation",
+                step="ConsolidatedRelationships",
+                status="error",
+                current=current_step,
+                total=total_steps,
+                message=error_msg,
+            )
 
     # Run refine phase
     if "refine" in phases:
