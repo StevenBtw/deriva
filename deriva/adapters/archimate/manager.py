@@ -1,7 +1,7 @@
-"""ArchiMate Manager Service - Main interface for ArchiMate operations using Neo4j.
+"""ArchiMate Manager Service - Main interface for ArchiMate operations.
 
 This module provides the ArchimateManager class which handles all ArchiMate model
-operations using the shared neo4j_manager service with namespace isolation.
+operations using the shared grafeo connection with namespace isolation.
 
 Usage:
     from deriva.adapters.archimate import ArchimateManager
@@ -32,7 +32,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from deriva.adapters.neo4j import Neo4jConnection
+from deriva.adapters.grafeo import GrafeoConnection as Neo4jConnection
 
 from .models import ArchiMateMetamodel, Element, Relationship
 from .validation import ArchiMateValidator, ValidationError
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 class ArchimateManager:
-    """Manage ArchiMate models in Neo4j.
+    """Manage ArchiMate models in grafeo.
 
     This class provides a high-level interface for:
     - Creating and managing ArchiMate elements and relationships

@@ -1,7 +1,7 @@
-"""Graph Manager - Main interface for graph operations using Neo4j.
+"""Graph Manager - Main interface for graph operations.
 
 This module provides the GraphManager class which handles all graph database
-operations using the shared Neo4j connection with namespace isolation.
+operations using the shared grafeo connection with namespace isolation.
 
 Usage:
     from deriva.adapters.graph import GraphManager
@@ -31,8 +31,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-# Import Neo4j connection from the neo4j manager package
-from deriva.adapters.neo4j import Neo4jConnection
+# Import graph database connection (grafeo embedded)
+from deriva.adapters.grafeo import GrafeoConnection as Neo4jConnection
 
 from .models import (
     BusinessConceptNode,

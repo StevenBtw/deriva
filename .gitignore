@@ -1,7 +1,6 @@
 *__pycache__*
 temp_*
 tmp_*
-.cl*/*
 .env
 workspace/*
 deriva/adapters/neo4j/data/*
