@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar, cast, overload
 
 import asyncio
 import concurrent.futures
@@ -651,24 +651,25 @@ class LLMManager:
                 }
 
             # Handle response
+            output: Any = result.output
             if response_model:
                 # Explicit response_model: return the Pydantic instance
                 if write_cache:
                     content = (
-                        result.output.model_dump_json()
-                        if hasattr(result.output, "model_dump_json")
-                        else str(result.output)
+                        output.model_dump_json()
+                        if hasattr(output, "model_dump_json")
+                        else str(output)
                     )
                     self.cache.set_response(
                         cache_key, content, prompt, self.model, usage
                     )
-                return result.output
+                return cast(T, output)
             elif using_schema_model:
                 # Schema-resolved model: serialize to JSON for backwards compatibility
                 content = (
-                    result.output.model_dump_json()
-                    if hasattr(result.output, "model_dump_json")
-                    else str(result.output)
+                    output.model_dump_json()
+                    if hasattr(output, "model_dump_json")
+                    else str(output)
                 )
                 if write_cache:
                     self.cache.set_response(
