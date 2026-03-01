@@ -8,9 +8,22 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.7.x is all about stability, portability, user experience, documentation and clean architecture/code standards.
 
-## v0.7.0 - (Unreleased)
+## v0.7.0 - Grafeo Migration (March 1, 2026)
 
-TBD
+Replaced Neo4j (Docker container) with grafeo, an embedded Rust graph database. Removes the external Docker dependency entirely and the graph database now runs in-process. (500-1000x speedup yah!)
+
+### Infrastructure
+
+- **Grafeo adapter**: New `deriva/adapters/grafeo/` with `GrafeoConnection`, a drop-in replacement for the old `Neo4jConnection`, using a shared `GrafeoDB` singleton with namespace isolation
+- **No Docker required**: Graph database is embedded (in-memory by default, persistent via `GRAFEO_DB_PATH` env var)
+- **Removed Neo4j**: Deleted `deriva/adapters/neo4j/` and all Neo4j driver dependencies
+
+### Breaking Changes
+
+- `Neo4jSettings` → `GrafeoSettings` (env prefix: `GRAFEO_`)
+- `NEO4J_GRAPH_NAMESPACE` → `GRAPH_NAMESPACE`, `NEO4J_NAMESPACE_ARCHIMATE` → `ARCHIMATE_NAMESPACE`
+- `session.start_neo4j()` / `stop_neo4j()` → `start_graph_db()` / `stop_graph_db()`
+- `get_enrichments_from_neo4j()` → `get_enrichments_from_graph()`
 
 ---
 
