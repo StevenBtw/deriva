@@ -562,7 +562,7 @@ requires-dist = [
     { name = "backoff", specifier = ">=2.2.1" },
     { name = "diskcache", specifier = ">=5.6.3" },
     { name = "duckdb", specifier = ">=1.4.4" },
-    { name = "grafeo", specifier = ">=0.5.10" },
+    { name = "grafeo", specifier = ">=0.5.11" },
     { name = "lxml", specifier = ">=6.0.2" },
     { name = "marimo", specifier = ">=0.20" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
@@ -881,20 +881,19 @@ wheels = [
 
 [[package]]
 name = "grafeo"
-version = "0.5.10"
-source = { registry = "https://pypi.org/simple" }
+version = "0.5.11"
+source = { directory = "../../GrafeoDB/grafeo/crates/bindings/python" }
 dependencies = [
     { name = "solvor" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/73/6c/d3ec3dcf277e921a0de38d0691664dabb536bb0ef91529cfed528652c355/grafeo-0.5.10.tar.gz", hash = "sha256:1260a31f0992125c042c030b86c68027ea7f79a38c0d9096243f29540db274f8", size = 986494 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4b/82/851b3ca72fc0b03c318929322b055cfefcc422a04f03d221c34c9b9cce30/grafeo-0.5.10-cp314-cp314-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2a2a92b40cc8c01c9771c3437c30c4988325f7e7d289579123147bce3c6e59e1", size = 2746029 },
-    { url = "https://files.pythonhosted.org/packages/01/f8/60255d0e52a264181924e0c57180476569cccbb67102cc0580a3e34dbe61/grafeo-0.5.10-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fa400d640c3d4c5cd4d5af6afdbae822d9127d34ccc2cfba60738bea3a41f0df", size = 2865288 },
-    { url = "https://files.pythonhosted.org/packages/86/52/73130e5e2b6a2ff5b6878dd18c6134e5a8a47adc616a18522114715770e6/grafeo-0.5.10-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:b6376bf78540bd19e212cdfa71262f7ae783f0bd4a84307de17e40241931e9ce", size = 2924696 },
-    { url = "https://files.pythonhosted.org/packages/0c/9d/aeabac5cc14a8c17326fb8e5d9d38f49104b54766f78c14c2b8e46518fff/grafeo-0.5.10-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:9ecfe6e1c2501af04eeff2b0c87b927a855b830a02f0710903766fea0a4437dc", size = 3095206 },
-    { url = "https://files.pythonhosted.org/packages/72/95/cdc9fac6c9dbe2a08b7df076247cd21a9cf2bca1b21a846a2768c5041c3b/grafeo-0.5.10-cp314-cp314t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f7b6f68d8010b3084ae4676fda702d02de5985c8dc459774a4891b8a76e6e308", size = 2745869 },
-    { url = "https://files.pythonhosted.org/packages/d0/35/b122b2c28aa9ebe8768ec17855f5930beb9039391912331acf67d58ec9f6/grafeo-0.5.10-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:9ee814ef6fd4316a2e029d08838c92617e594fc8ee706ac53b978a85b292d593", size = 2923587 },
-    { url = "https://files.pythonhosted.org/packages/de/3b/ae4a00dde432f4dbb9677e94035d94e5edf1b1b36d707f2c889a9cc89398/grafeo-0.5.10-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:1e49d31076b7346e2723bfee248b14adeb83255ac037d0567bfe20a18012bcef", size = 3099069 },
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.3.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.0" },
+    { name = "solvor", specifier = ">=0.6.1" },
+    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.15" },
 ]
 
 [[package]]
