@@ -369,9 +369,7 @@ class GraphManager:
                 RETURN n.id as id
             """
 
-            result = self.db.execute_write(
-                query, {"node_id": node_id, "value": value}
-            )
+            result = self.db.execute_write(query, {"node_id": node_id, "value": value})
 
             if result:
                 logger.debug(f"Updated {property_name}={value} on node {node_id}")

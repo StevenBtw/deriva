@@ -100,9 +100,7 @@ class GrafeoConnection:
         self._log_queries = False
 
         load_dotenv()
-        self._log_queries = (
-            os.getenv("GRAFEO_LOG_QUERIES", "false").lower() == "true"
-        )
+        self._log_queries = os.getenv("GRAFEO_LOG_QUERIES", "false").lower() == "true"
 
         logger.info("Initialized GrafeoConnection with namespace: %s", namespace)
 
@@ -117,9 +115,7 @@ class GrafeoConnection:
             return
 
         self.db = get_database()
-        logger.info(
-            "Connected to grafeo (namespace '%s')", self.namespace
-        )
+        logger.info("Connected to grafeo (namespace '%s')", self.namespace)
 
     def disconnect(self) -> None:
         """Release reference to the shared database.
