@@ -542,7 +542,7 @@ class TestGetEnrichmentsFromGraph:
     """Tests for get_enrichments_from_graph function."""
 
     def test_returns_enrichments_from_graph_manager(self):
-        """Should fetch enrichments from Neo4j via graph_manager."""
+        """Should fetch enrichments from the graph via graph_manager."""
         from unittest.mock import MagicMock
 
         from deriva.modules.derivation.base import get_enrichments_from_graph

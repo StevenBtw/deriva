@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 from deriva.adapters.database import get_connection
-from deriva.adapters.graph import GraphManager
 from deriva.adapters.grafeo import close_database
+from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
 from deriva.common.logging import RunLogger
 from deriva.common.types import HasToDict, RunLoggerProtocol

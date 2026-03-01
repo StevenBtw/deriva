@@ -173,7 +173,6 @@ omit = [
     # Marimo app (interactive UI, not unit testable)
     "deriva/app/*",
     # Graph database adapters
-    "deriva/adapters/neo4j/*",
     "deriva/adapters/grafeo/*",
     "deriva/adapters/graph/*",
     "deriva/adapters/database/*",
