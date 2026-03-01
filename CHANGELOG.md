@@ -8,7 +8,7 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.7.x is all about stability, portability, user experience, documentation and clean architecture/code standards.
 
-## v0.7.0 - Grafeo Migration (March 1, 2026)
+## v0.7.0 - Grafeo Migration (Unreleased)
 
 Replaced Neo4j (Docker container) with grafeo, an embedded Rust graph database. Removes the external Docker dependency entirely and the graph database now runs in-process. (500-1000x speedup yah!)
 
