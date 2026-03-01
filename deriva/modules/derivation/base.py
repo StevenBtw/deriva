@@ -281,19 +281,19 @@ class DerivationResult:
 # =============================================================================
 
 
-def get_enrichments_from_neo4j(
+def get_enrichments_from_graph(
     graph_manager: "GraphManager",
     use_cache: bool = True,
     cache_manager: EnrichmentCacheManager | None = None,
     config_name: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """
-    Get all graph enrichment data from Neo4j node properties.
+    Get all graph enrichment data from graph node properties.
 
     The prep phase stores enrichments (PageRank, Louvain, k-core, etc.)
-    as properties on Neo4j nodes. This function reads them back.
+    as properties on graph nodes. This function reads them back.
 
-    Uses caching to avoid repeated Neo4j queries when called multiple times
+    Uses caching to avoid repeated graph queries when called multiple times
     for different element types in the same generation phase.
 
     Args:
@@ -324,13 +324,13 @@ def get_enrichments_from_neo4j(
                 )
                 return cached
         except Exception as e:
-            logger.debug("Cache lookup failed, querying Neo4j: %s", e)
+            logger.debug("Cache lookup failed, querying graph: %s", e)
         should_write_cache = True
     else:
         should_write_cache = False
 
-    # Query Neo4j
-    # Note: Labels in Neo4j are stored as separate items (e.g., ['Graph', 'Directory']),
+    # Query the graph
+    # Note: Labels are stored as separate items (e.g., ['Graph', 'Directory']),
     # not as concatenated strings (e.g., 'Graph:Directory').
     query = """
         MATCH (n)
@@ -374,7 +374,7 @@ def get_enrichments_from_neo4j(
 
         return enrichments
     except Exception as e:
-        logger.warning("Failed to get enrichments from Neo4j: %s", e)
+        logger.warning("Failed to get enrichments from graph: %s", e)
         return {}
 
 
@@ -390,9 +390,9 @@ def clear_enrichment_cache() -> None:
 
 # Backward compatibility alias (deprecated)
 def get_enrichments(engine: Any) -> dict[str, dict[str, Any]]:
-    """Deprecated: Use get_enrichments_from_neo4j() instead."""
+    """Deprecated: Use get_enrichments_from_graph() instead."""
     logger.warning(
-        "get_enrichments(engine) is deprecated - enrichments should be read from Neo4j"
+        "get_enrichments(engine) is deprecated - enrichments should be read from the graph"
     )
     return {}
 
@@ -2017,7 +2017,7 @@ def clamp_confidence(value: Any, default: float = 0.5) -> float:
     try:
         conf = float(value) if value is not None else default
         return max(0.0, min(1.0, conf))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
 
 
@@ -2828,7 +2828,7 @@ __all__ = [
     "DerivationResult",
     # Enrichment
     "get_enrichments",
-    "get_enrichments_from_neo4j",
+    "get_enrichments_from_graph",
     "clear_enrichment_cache",
     "enrich_candidate",
     # Filtering

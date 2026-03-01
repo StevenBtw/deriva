@@ -126,7 +126,7 @@ def run_stage(
         typer.echo(f"Phase: {phase}")
 
     with PipelineSession() as session:
-        typer.echo("Connected to Neo4j")
+        typer.echo("Connected to grafeo")
 
         # Handle --only-step option
         if only_step:
@@ -290,7 +290,7 @@ def export(
 
     with PipelineSession() as session:
         if verbose:
-            typer.echo("Connected to Neo4j")
+            typer.echo("Connected to grafeo")
 
         result = session.export_model(output_path=output, model_name=model_name)
 

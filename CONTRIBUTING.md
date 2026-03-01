@@ -23,7 +23,7 @@ cd Deriva
 
 # Copy environment template
 cp .env.example .env
-# Edit .env with your configuration (Neo4j, LLM keys, etc.)
+# Edit .env with your configuration (LLM keys, etc.)
 
 # Install with dev dependencies
 uv sync --all-extras
@@ -92,7 +92,7 @@ deriva/
 │
 ├── adapters/ (Stateful I/O services)
 │   ├── database/    - DuckDB configuration storage
-│   ├── neo4j/       - Neo4j connection pool
+│   ├── grafeo/      - Embedded graph database (grafeo)
 │   ├── repository/  - Git operations
 │   ├── graph/       - Graph CRUD (namespace: Graph)
 │   ├── archimate/   - ArchiMate CRUD (namespace: Model)
@@ -213,7 +213,7 @@ Marimo: displays results in UI  |  CLI: prints summary to stdout
 | Column | Purpose |
 |--------|---------|
 | Column 0 | Run Deriva (pipeline buttons, status callouts) |
-| Column 1 | Configuration (runs, repos, Neo4j, graph stats, ArchiMate, LLM) |
+| Column 1 | Configuration (runs, repos, graph database, graph stats, ArchiMate, LLM) |
 | Column 2 | Extraction Settings (file types, extraction step config) |
 | Column 3 | Derivation Settings (13 element types across Business/Application/Technology layers) |
 
@@ -422,11 +422,10 @@ What does this class represent? Why does it exist?
 ```python
 class GraphManager:
     """
-    High-level interface for Neo4j graph operations.
+    High-level interface for graph database operations.
 
-    Wraps Neo4j driver complexity and provides domain-specific operations
-    like "add repository" rather than raw Cypher. Uses connection pooling
-    internally so you can safely create instances per-request.
+    Wraps grafeo complexity and provides domain-specific operations
+    like "add repository" rather than raw Cypher.
     """
 ```
 
@@ -475,7 +474,7 @@ Comments explain **why**, not **what**.
 if raw.startswith(b'\xff\xfe'):
     return raw.decode('utf-16-le')
 
-# Neo4j MERGE needs deterministic IDs to avoid duplicates
+# MERGE needs deterministic IDs to avoid duplicates
 node_id = f"Repository_{repo_name}"
 
 # LLMs sometimes return markdown-wrapped JSON
@@ -540,7 +539,7 @@ def read_file(path: Path) -> str | None:
 def connect(self) -> None:
     """Raises ConnectionError if connection fails."""
     try:
-        self._driver = neo4j.GraphDatabase.driver(self._uri)
+        self._db = get_database()
     except Exception as e:
         raise ConnectionError(f"Failed to connect: {e}") from e
 ```
@@ -670,7 +669,7 @@ name = 'Deriva'
 
 ### Dependencies
 
-- Can import **infrastructure adapters** (e.g., GraphManager ← Neo4jConnection)
+- Can import **infrastructure adapters** (e.g., GraphManager ← GrafeoConnection)
 - **Cannot** import other domain adapters (e.g., GraphManager ✗← ArchimateManager)
 - **Cannot** import modules
 
@@ -1341,7 +1340,7 @@ Deriva splits configuration by **ownership** - who needs to change it and why:
 
 ### Environment Variables
 
-- Naming: `{MANAGER}_{CATEGORY}_{SETTING}` (e.g., `NEO4J_POOL_SIZE`)
+- Naming: `{MANAGER}_{CATEGORY}_{SETTING}` (e.g., `GRAFEO_DB_PATH`)
 - Provide **sensible defaults** in code if env var missing
 - Comma-separated for lists (e.g., `ARCHIMATE_ELEMENT_TYPES=Component,Service`)
 - Boolean as string: `true`/`false` (case-insensitive)
@@ -1764,7 +1763,7 @@ def _(session, mo):
 | `run_derivation(...)` | Run derivation pipeline |
 | `run_pipeline(...)` | Run full pipeline |
 | `export_model(path, name)` | Export ArchiMate XML |
-| `start_neo4j()` / `stop_neo4j()` | Container control |
+| `start_graph_db()` / `stop_graph_db()` | Graph database control |
 | `clear_graph()` / `clear_model()` | Clear data |
 
 </details>
@@ -1853,7 +1852,7 @@ def test_add_and_get_node():
     assert retrieved['id'] == 'test1'
 ```
 
-Adapter tests may require external services (Neo4j, DuckDB) - use fixtures for setup/teardown.
+Adapter tests may require external services (DuckDB) - use fixtures for setup/teardown.
 
 ---
 
@@ -1892,7 +1891,7 @@ This project includes several specialized documentation files:
 | LLM Adapter | [deriva/adapters/llm/README.md](deriva/adapters/llm/README.md) |
 | Graph Adapter | [deriva/adapters/graph/README.md](deriva/adapters/graph/README.md) |
 | Database Adapter | [deriva/adapters/database/README.md](deriva/adapters/database/README.md) |
-| Neo4j Adapter | [deriva/adapters/neo4j/README.md](deriva/adapters/neo4j/README.md) |
+| Grafeo Adapter | [deriva/adapters/grafeo/README.md](deriva/adapters/grafeo/README.md) |
 | ArchiMate Adapter | [deriva/adapters/archimate/README.md](deriva/adapters/archimate/README.md) |
 | Repository Adapter | [deriva/adapters/repository/README.md](deriva/adapters/repository/README.md) |
 | Marimo App | [deriva/app/README.md](deriva/app/README.md) |

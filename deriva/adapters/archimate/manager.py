@@ -1,7 +1,7 @@
-"""ArchiMate Manager Service - Main interface for ArchiMate operations using Neo4j.
+"""ArchiMate Manager Service - Main interface for ArchiMate operations.
 
 This module provides the ArchimateManager class which handles all ArchiMate model
-operations using the shared neo4j_manager service with namespace isolation.
+operations using the shared grafeo connection with namespace isolation.
 
 Usage:
     from deriva.adapters.archimate import ArchimateManager
@@ -32,7 +32,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from deriva.adapters.neo4j import Neo4jConnection
+from deriva.adapters.grafeo import GrafeoConnection
 
 from .models import ArchiMateMetamodel, Element, Relationship
 from .validation import ArchiMateValidator, ValidationError
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 class ArchimateManager:
-    """Manage ArchiMate models in Neo4j.
+    """Manage ArchiMate models in grafeo.
 
     This class provides a high-level interface for:
     - Creating and managing ArchiMate elements and relationships
@@ -49,7 +49,7 @@ class ArchimateManager:
     - Querying model structure
     - Exporting to ArchiMate XML format
 
-    Uses the shared neo4j_manager service with "ArchiMate" namespace.
+    Uses the shared grafeo connection with "Model" namespace.
     """
 
     def __init__(self):
@@ -59,11 +59,8 @@ class ArchimateManager:
         """
         load_dotenv()
 
-        self.neo4j: Neo4jConnection | None = None
-        # Try both env var names for backward compatibility
-        self.namespace = os.getenv("ARCHIMATE_NAMESPACE") or os.getenv(
-            "NEO4J_NAMESPACE_ARCHIMATE", "Model"
-        )
+        self.db: GrafeoConnection | None = None
+        self.namespace = os.getenv("ARCHIMATE_NAMESPACE", "Model")
         self.metamodel = ArchiMateMetamodel()
         self.validator = ArchiMateValidator(
             strict_mode=os.getenv("ARCHIMATE_VALIDATION_STRICT_MODE", "false").lower()
@@ -73,30 +70,29 @@ class ArchimateManager:
         logger.info(f"Initialized ArchimateManager with namespace: {self.namespace}")
 
     def connect(self) -> None:
-        """Establish connection to Neo4j via neo4j_manager."""
-        if self.neo4j is not None:
+        """Establish connection to the graph database."""
+        if self.db is not None:
             logger.warning("Connection already established")
             return
 
         try:
-            # Create Neo4j connection with namespace
-            self.neo4j = Neo4jConnection(namespace=self.namespace)
-            self.neo4j.connect()
+            self.db = GrafeoConnection(namespace=self.namespace)
+            self.db.connect()
 
             logger.info(
-                f"Successfully connected to Neo4j with namespace '{self.namespace}'"
+                f"Successfully connected to grafeo with namespace '{self.namespace}'"
             )
 
         except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {e}")
-            raise ConnectionError(f"Could not connect to Neo4j: {e}")
+            logger.error(f"Failed to connect to grafeo: {e}")
+            raise ConnectionError(f"Could not connect to grafeo: {e}")
 
     def disconnect(self) -> None:
-        """Close the Neo4j connection."""
-        if self.neo4j is not None:
-            self.neo4j.disconnect()
-            self.neo4j = None
-            logger.info("Disconnected from Neo4j")
+        """Close the graph database connection."""
+        if self.db is not None:
+            self.db.disconnect()
+            self.db = None
+            logger.info("Disconnected from grafeo")
 
     def __enter__(self) -> ArchimateManager:
         """Context manager entry."""
@@ -121,10 +117,10 @@ class ArchimateManager:
 
         Raises:
             ValidationError: If validation fails
-            RuntimeError: If not connected to Neo4j
+            RuntimeError: If not connected to grafeo
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         # Validate element
         if validate:
@@ -138,7 +134,7 @@ class ArchimateManager:
             # This allows queries like MATCH (e:TechnologyService) to work
             # while still having namespace isolation via the Model label
 
-            # Convert properties to JSON string (Neo4j can't store empty dicts)
+            # Convert properties to JSON string
             properties_json = (
                 json.dumps(element.properties) if element.properties else None
             )
@@ -159,7 +155,7 @@ class ArchimateManager:
                 RETURN e.identifier as identifier
             """
 
-            result = self.neo4j.execute_write(
+            result = self.db.execute_write(
                 query,
                 {
                     "identifier": element.identifier,
@@ -197,10 +193,10 @@ class ArchimateManager:
 
         Raises:
             ValidationError: If validation fails
-            RuntimeError: If not connected to Neo4j
+            RuntimeError: If not connected to grafeo
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         # Validate relationship
         if validate:
@@ -220,7 +216,7 @@ class ArchimateManager:
             )
 
             # Get namespaced relationship type (e.g., "Realization" -> "Model:Realization")
-            rel_label = self.neo4j.get_label(relationship.relationship_type)
+            rel_label = self.db.get_label(relationship.relationship_type)
 
             query = f"""
                 MATCH (source:`{self.namespace}` {{identifier: $source}})
@@ -234,7 +230,7 @@ class ArchimateManager:
                 RETURN r.identifier as identifier
             """
 
-            result = self.neo4j.execute_write(
+            result = self.db.execute_write(
                 query,
                 {
                     "source": relationship.source,
@@ -269,8 +265,8 @@ class ArchimateManager:
         Returns:
             Element or None if not found
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
             # Find element by identifier - nodes have namespace label (Model) + type label
@@ -284,7 +280,7 @@ class ArchimateManager:
                        e.enabled as enabled
             """
 
-            result = self.neo4j.execute_read(query, {"identifier": identifier})
+            result = self.db.execute_read(query, {"identifier": identifier})
 
             if result:
                 data = result[0]
@@ -324,8 +320,8 @@ class ArchimateManager:
         Returns:
             List of elements
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
             enabled_filter = "AND e.enabled = true" if enabled_only else ""
@@ -341,7 +337,7 @@ class ArchimateManager:
                            e.properties_json as properties_json,
                            e.enabled as enabled
                 """
-                result = self.neo4j.execute_read(query)
+                result = self.db.execute_read(query)
                 # All elements have same type
                 elements = []
                 for data in result:
@@ -372,7 +368,7 @@ class ArchimateManager:
                            e.properties_json as properties_json,
                            e.enabled as enabled
                 """
-                result = self.neo4j.execute_read(query)
+                result = self.db.execute_read(query)
                 elements = []
                 for data in result:
                     # Element type is the non-namespace label
@@ -411,8 +407,8 @@ class ArchimateManager:
         Returns:
             List of relationships
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
             ns = self.namespace
@@ -468,7 +464,7 @@ class ArchimateManager:
                 """
                 params = {}
 
-            result = self.neo4j.execute_read(query, params)
+            result = self.db.execute_read(query, params)
 
             relationships = []
             for data in result:
@@ -502,12 +498,12 @@ class ArchimateManager:
             raise
 
     def clear_model(self) -> None:
-        """Clear all ArchiMate elements and relationships from Neo4j."""
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        """Clear all ArchiMate elements and relationships from the graph."""
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
-            self.neo4j.clear_namespace()
+            self.db.clear_namespace()
             logger.info(f"Cleared all ArchiMate data from namespace '{self.namespace}'")
 
         except Exception as e:
@@ -526,11 +522,11 @@ class ArchimateManager:
         Returns:
             Query results as list of dictionaries
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
-            return self.neo4j.execute(cypher_query, params)
+            return self.db.execute(cypher_query, params)
 
         except Exception as e:
             logger.error(f"Query failed: {e}")
@@ -546,8 +542,8 @@ class ArchimateManager:
         Returns:
             True if element was disabled, False if not found
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
             query = f"""
@@ -556,7 +552,7 @@ class ArchimateManager:
                     e.disabled_reason = $reason
                 RETURN e.identifier as identifier
             """
-            result = self.neo4j.execute_write(
+            result = self.db.execute_write(
                 query, {"identifier": identifier, "reason": reason}
             )
 
@@ -581,8 +577,8 @@ class ArchimateManager:
         Returns:
             Number of elements disabled
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         if not identifiers:
             return 0
@@ -595,7 +591,7 @@ class ArchimateManager:
                     e.disabled_reason = $reason
                 RETURN count(e) as count
             """
-            result = self.neo4j.execute_write(
+            result = self.db.execute_write(
                 query, {"identifiers": identifiers, "reason": reason}
             )
 
@@ -616,8 +612,8 @@ class ArchimateManager:
         Returns:
             True if relationship was deleted, False if not found
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
             # Match relationships between Model namespace nodes
@@ -627,7 +623,7 @@ class ArchimateManager:
                 DELETE r
                 RETURN count(r) as count
             """
-            result = self.neo4j.execute_write(query, {"identifier": identifier})
+            result = self.db.execute_write(query, {"identifier": identifier})
 
             if result and result[0]["count"] > 0:
                 logger.debug(f"Deleted relationship: {identifier}")
@@ -647,8 +643,8 @@ class ArchimateManager:
         Returns:
             Number of relationships deleted
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         if not identifiers:
             return 0
@@ -661,7 +657,7 @@ class ArchimateManager:
                 DELETE r
                 RETURN count(r) as count
             """
-            result = self.neo4j.execute_write(query, {"identifiers": identifiers})
+            result = self.db.execute_write(query, {"identifiers": identifiers})
 
             count = result[0]["count"] if result else 0
             logger.info(f"Deleted {count} relationships")

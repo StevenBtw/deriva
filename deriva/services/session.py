@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 from deriva.adapters.database import get_connection
+from deriva.adapters.grafeo import close_database
 from deriva.adapters.graph import GraphManager
-from deriva.adapters.neo4j import Neo4jConnection
 from deriva.adapters.repository import RepoManager
 from deriva.common.logging import RunLogger
 from deriva.common.types import HasToDict, RunLoggerProtocol
@@ -50,7 +50,7 @@ class PipelineSession:
     - Lifecycle: connect/disconnect, context manager support
     - Queries: get stats, nodes, elements for reactive UI
     - Orchestration: run extraction, derivation (with phases), full pipeline
-    - Infrastructure: Neo4j container control, data clearing
+    - Infrastructure: graph database control, data clearing
     - Export: ArchiMate XML export
     """
 
@@ -75,7 +75,6 @@ class PipelineSession:
         self._graph_manager: GraphManager | None = None
         self._archimate_manager: ArchimateManager | None = None
         self._repo_manager: RepoManager | None = None
-        self._neo4j_conn: Neo4jConnection | None = None
         self._llm_manager: Any | None = None  # Lazy loaded
 
         # Test-only mocks (set by tests)
@@ -83,7 +82,6 @@ class PipelineSession:
         self._mock_graph: Any | None = None
         self._mock_archimate: Any | None = None
         self._mock_repo: Any | None = None
-        self._mock_neo4j: Any | None = None
         self._mock_engine: Any | None = None
         self._mock_extraction: Any | None = None
         self._mock_derivation: Any | None = None
@@ -107,7 +105,7 @@ class PipelineSession:
         # Database (get_connection uses DB_PATH from env)
         self._engine = get_connection()
 
-        # Neo4j managers
+        # Graph managers (grafeo embedded)
         self._graph_manager = GraphManager()
         self._graph_manager.connect()
 
@@ -116,9 +114,6 @@ class PipelineSession:
 
         # Repository manager
         self._repo_manager = RepoManager(workspace_dir=self._workspace_dir)
-
-        # Neo4j connection for container control
-        self._neo4j_conn = Neo4jConnection(namespace="Docker")
 
         self._connected = True
 
@@ -136,9 +131,11 @@ class PipelineSession:
             self._archimate_manager = None
 
         self._repo_manager = None
-        self._neo4j_conn = None
         self._engine: Any | None = None
         self._connected = False
+
+        # Release the shared grafeo database
+        close_database()
 
     def __enter__(self) -> PipelineSession:
         """Context manager entry."""
@@ -298,26 +295,24 @@ class PipelineSession:
         return result
 
     # =========================================================================
-    # INFRASTRUCTURE (Neo4j container control)
+    # INFRASTRUCTURE (graph database control)
     # =========================================================================
 
-    def get_neo4j_status(self) -> dict[str, Any]:
-        """Get Neo4j container status."""
-        if self._neo4j_conn is None:
-            self._neo4j_conn = Neo4jConnection(namespace="Docker")
-        return self._neo4j_conn.get_container_status()
+    def get_graph_db_status(self) -> dict[str, Any]:
+        """Get graph database status (grafeo embedded — always running)."""
+        return {
+            "running": True,
+            "engine": "grafeo_embedded",
+            "status": "Running (embedded)",
+        }
 
-    def start_neo4j(self) -> dict[str, Any]:
-        """Start Neo4j container."""
-        if self._neo4j_conn is None:
-            self._neo4j_conn = Neo4jConnection(namespace="Docker")
-        return self._neo4j_conn.start_container()
+    def start_graph_db(self) -> dict[str, Any]:
+        """Start graph database (no-op — grafeo is embedded)."""
+        return {"success": True, "message": "Grafeo is embedded, always available"}
 
-    def stop_neo4j(self) -> dict[str, Any]:
-        """Stop Neo4j container."""
-        if self._neo4j_conn is None:
-            self._neo4j_conn = Neo4jConnection(namespace="Docker")
-        return self._neo4j_conn.stop_container()
+    def stop_graph_db(self) -> dict[str, Any]:
+        """Stop graph database (no-op — grafeo is embedded)."""
+        return {"success": True, "message": "Grafeo is embedded, no container to stop"}
 
     def clear_graph(self) -> dict[str, Any]:
         """Clear all graph data."""

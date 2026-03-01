@@ -23,7 +23,6 @@ class TestPipelineSessionLifecycle:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager") as mock_repo,
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             assert session.is_connected()
@@ -39,7 +38,6 @@ class TestPipelineSessionLifecycle:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession()
             session.connect()
@@ -56,7 +54,6 @@ class TestPipelineSessionLifecycle:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession()
             session.connect()
@@ -72,7 +69,6 @@ class TestPipelineSessionLifecycle:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             session.disconnect()
@@ -88,7 +84,6 @@ class TestPipelineSessionLifecycle:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             with PipelineSession() as session:
                 assert session.is_connected()
@@ -114,7 +109,6 @@ class TestPipelineSessionEnsureConnected:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             mock_graph.return_value.get_nodes_by_type.return_value = []
 
@@ -134,7 +128,6 @@ class TestPipelineSessionQueries:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager") as mock_repo,
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
 
@@ -202,12 +195,10 @@ class TestPipelineSessionInfrastructure:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection") as mock_neo4j,
         ):
             session = PipelineSession(auto_connect=True)
             session._mock_graph = mock_graph.return_value
             session._mock_archimate = mock_archimate.return_value
-            session._mock_neo4j = mock_neo4j.return_value
             yield session
 
     def test_clear_graph(self, connected_session):
@@ -219,12 +210,12 @@ class TestPipelineSessionInfrastructure:
 
     def test_clear_graph_error(self, connected_session):
         """Should return error on failure."""
-        connected_session._mock_graph.clear_graph.side_effect = Exception("Neo4j error")
+        connected_session._mock_graph.clear_graph.side_effect = Exception("Graph error")
 
         result = connected_session.clear_graph()
 
         assert result["success"] is False
-        assert "Neo4j error" in result["error"]
+        assert "Graph error" in result["error"]
 
     def test_clear_model(self, connected_session):
         """Should clear model and return success."""
@@ -233,13 +224,12 @@ class TestPipelineSessionInfrastructure:
         connected_session._mock_archimate.clear_model.assert_called_once()
         assert result["success"] is True
 
-    def test_get_neo4j_status(self, connected_session):
-        """Should return container status."""
-        connected_session._mock_neo4j.get_container_status.return_value = {"running": True}
-
-        status = connected_session.get_neo4j_status()
+    def test_get_graph_db_status(self, connected_session):
+        """Should return graph database status (grafeo embedded, always running)."""
+        status = connected_session.get_graph_db_status()
 
         assert status["running"] is True
+        assert status["engine"] == "grafeo_embedded"
 
 
 class TestPipelineSessionRepositoryManagement:
@@ -253,7 +243,6 @@ class TestPipelineSessionRepositoryManagement:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager") as mock_repo,
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             session._mock_repo = mock_repo.return_value
@@ -300,7 +289,6 @@ class TestPipelineSessionRunManagement:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             session._mock_engine = mock_db.return_value
@@ -361,7 +349,6 @@ class TestPipelineSessionLLM:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
 
@@ -379,7 +366,6 @@ class TestPipelineSessionLLM:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
 
@@ -400,7 +386,6 @@ class TestPipelineSessionOrchestration:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.extraction") as mock_extraction,
             patch("deriva.services.session.derivation") as mock_derivation,
             patch("deriva.services.session.pipeline") as mock_pipeline,
@@ -461,7 +446,6 @@ class TestPipelineSessionIterators:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.extraction") as mock_extraction,
             patch("deriva.services.session.derivation") as mock_derivation,
             patch("deriva.services.session.config") as mock_config,
@@ -596,40 +580,38 @@ class TestPipelineSessionGetRunLogger:
         assert logger is None
 
 
-class TestPipelineSessionNeo4jControl:
-    """Tests for Neo4j container control methods."""
+class TestPipelineSessionGraphDbControl:
+    """Tests for graph database control methods (grafeo embedded)."""
 
-    def test_start_neo4j(self):
-        """Should start Neo4j container."""
+    def test_start_graph_db(self):
+        """Should return success (grafeo is embedded, always available)."""
         with (
             patch("deriva.services.session.get_connection"),
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection") as mock_neo4j,
         ):
             session = PipelineSession(auto_connect=True)
-            mock_neo4j.return_value.start_container.return_value = {"success": True}
 
-            result = session.start_neo4j()
+            result = session.start_graph_db()
 
             assert result["success"] is True
+            assert "embedded" in result["message"].lower()
 
-    def test_stop_neo4j(self):
-        """Should stop Neo4j container."""
+    def test_stop_graph_db(self):
+        """Should return success (grafeo is embedded, no container to stop)."""
         with (
             patch("deriva.services.session.get_connection"),
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection") as mock_neo4j,
         ):
             session = PipelineSession(auto_connect=True)
-            mock_neo4j.return_value.stop_container.return_value = {"success": True}
 
-            result = session.stop_neo4j()
+            result = session.stop_graph_db()
 
             assert result["success"] is True
+            assert "embedded" in result["message"].lower()
 
 
 class TestPipelineSessionDerivationNoLLM:
@@ -643,7 +625,6 @@ class TestPipelineSessionDerivationNoLLM:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             yield session
@@ -677,7 +658,6 @@ class TestPipelineSessionExport:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             session._mock_archimate = mock_archimate.return_value
@@ -722,7 +702,6 @@ class TestPipelineSessionConfigMethods:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.config") as mock_config,
         ):
             session = PipelineSession(auto_connect=True)
@@ -887,7 +866,6 @@ class TestPipelineSessionFileTypeStats:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             mock_db.return_value.execute.return_value.fetchone.side_effect = [
@@ -913,7 +891,6 @@ class TestPipelineSessionLLMManagement:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             session._llm_manager = MagicMock()
@@ -930,7 +907,6 @@ class TestPipelineSessionLLMManagement:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             # Force _llm_manager to None
@@ -948,7 +924,6 @@ class TestPipelineSessionLLMManagement:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.benchmarking"),
         ):
             session = PipelineSession(auto_connect=True)
@@ -970,7 +945,6 @@ class TestPipelineSessionMiscMethods:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.pipeline") as mock_pipeline,
         ):
             session = PipelineSession(auto_connect=True)
@@ -1028,7 +1002,6 @@ class TestPipelineSessionRepositoryInfo:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager") as mock_repo,
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             session._mock_repo = mock_repo.return_value
@@ -1081,7 +1054,6 @@ class TestPipelineSessionExtractionStepCount:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager") as mock_repo,
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.config") as mock_config,
         ):
             session = PipelineSession(auto_connect=True)
@@ -1106,7 +1078,6 @@ class TestPipelineSessionCypherQueries:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             session._mock_graph = mock_graph.return_value
@@ -1159,7 +1130,6 @@ class TestPipelineSessionArchimateElements:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             session._mock_archimate = mock_archimate.return_value
@@ -1245,7 +1215,6 @@ class TestPipelineSessionBenchmarking:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             session._mock_engine = mock_db.return_value
@@ -1353,7 +1322,6 @@ class TestPipelineSessionLLMQueryFn:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             assert session._llm_manager is None
@@ -1372,7 +1340,6 @@ class TestPipelineSessionLLMQueryFn:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
 
@@ -1388,7 +1355,6 @@ class TestPipelineSessionLLMQueryFn:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             mock_manager = MagicMock()
@@ -1405,7 +1371,6 @@ class TestPipelineSessionLLMQueryFn:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             mock_manager = MagicMock()
@@ -1428,7 +1393,6 @@ class TestPipelineSessionLLMInfo:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             mock_manager = MagicMock()
@@ -1447,7 +1411,6 @@ class TestPipelineSessionLLMInfo:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
 
@@ -1464,7 +1427,6 @@ class TestPipelineSessionLLMInfo:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             session._llm_manager = None
@@ -1485,7 +1447,6 @@ class TestPipelineSessionDisconnect:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession()
             # Disconnect without connecting should not error
@@ -1505,7 +1466,6 @@ class TestPipelineSessionClearModelError:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             mock_archimate.return_value.clear_model.side_effect = Exception("Model error")
@@ -1516,61 +1476,50 @@ class TestPipelineSessionClearModelError:
             assert "Model error" in result["error"]
 
 
-class TestPipelineSessionNeo4jNotConnected:
-    """Tests for Neo4j control when not initially connected."""
+class TestPipelineSessionGraphDbNotConnected:
+    """Tests for graph database control stubs (grafeo embedded, always available)."""
 
-    def test_get_neo4j_status_creates_connection(self):
-        """Should create Neo4j connection if not present."""
+    def test_get_graph_db_status_always_running(self):
+        """Should return running status even without full connection (grafeo is embedded)."""
         with (
             patch("deriva.services.session.get_connection"),
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection") as mock_neo4j,
         ):
             session = PipelineSession(auto_connect=True)
-            session._neo4j_conn = None  # Simulate no connection
 
-            mock_neo4j.return_value.get_container_status.return_value = {"running": False}
-            result = session.get_neo4j_status()
+            result = session.get_graph_db_status()
 
-            mock_neo4j.assert_called_with(namespace="Docker")
-            assert result["running"] is False
+            assert result["running"] is True
+            assert result["engine"] == "grafeo_embedded"
 
-    def test_start_neo4j_creates_connection(self):
-        """Should create Neo4j connection if not present."""
+    def test_start_graph_db_always_succeeds(self):
+        """Should return success (grafeo is embedded, no container to start)."""
         with (
             patch("deriva.services.session.get_connection"),
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection") as mock_neo4j,
         ):
             session = PipelineSession(auto_connect=True)
-            session._neo4j_conn = None
 
-            mock_neo4j.return_value.start_container.return_value = {"success": True}
-            result = session.start_neo4j()
+            result = session.start_graph_db()
 
-            mock_neo4j.assert_called_with(namespace="Docker")
             assert result["success"] is True
 
-    def test_stop_neo4j_creates_connection(self):
-        """Should create Neo4j connection if not present."""
+    def test_stop_graph_db_always_succeeds(self):
+        """Should return success (grafeo is embedded, no container to stop)."""
         with (
             patch("deriva.services.session.get_connection"),
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection") as mock_neo4j,
         ):
             session = PipelineSession(auto_connect=True)
-            session._neo4j_conn = None
 
-            mock_neo4j.return_value.stop_container.return_value = {"success": True}
-            result = session.stop_neo4j()
+            result = session.stop_graph_db()
 
-            mock_neo4j.assert_called_with(namespace="Docker")
             assert result["success"] is True
 
 
@@ -1584,7 +1533,6 @@ class TestPipelineSessionGetRepositoriesStringReturn:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager") as mock_repo,
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             mock_repo.return_value.list_repositories.return_value = ["repo1", "repo2"]
@@ -1602,7 +1550,6 @@ class TestPipelineSessionGetRepositoriesStringReturn:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager") as mock_repo,
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             # Create object without to_dict
@@ -1625,7 +1572,6 @@ class TestPipelineSessionArchimateStatsEdgeCases:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
 
@@ -1648,7 +1594,6 @@ class TestPipelineSessionArchimateStatsEdgeCases:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
 
@@ -1675,7 +1620,6 @@ class TestPipelineSessionExportEdgeCases:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.ArchiMateXMLExporter") as mock_exporter,
         ):
             session = PipelineSession(auto_connect=True)
@@ -1712,7 +1656,6 @@ class TestPipelineSessionExportEdgeCases:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.ArchiMateXMLExporter") as mock_exporter,
         ):
             session = PipelineSession(auto_connect=True)
@@ -1739,7 +1682,6 @@ class TestPipelineSessionCreateRunError:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             mock_db.return_value.execute.side_effect = Exception("DB error")
@@ -1760,7 +1702,6 @@ class TestPipelineSessionExtractionStepCountFiltered:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager") as mock_repo,
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.config") as mock_config,
         ):
             session = PipelineSession(auto_connect=True)
@@ -1788,7 +1729,6 @@ class TestPipelineSessionFileTypesEdgeCases:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.config") as mock_config,
         ):
             from deriva.common.types import HasToDict
@@ -1814,7 +1754,6 @@ class TestPipelineSessionFileTypesEdgeCases:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
             patch("deriva.services.session.config") as mock_config,
         ):
             session = PipelineSession(auto_connect=True)

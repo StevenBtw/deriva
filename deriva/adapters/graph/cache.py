@@ -1,7 +1,7 @@
 """
 Caching functionality for graph operations.
 
-Provides caching for expensive Neo4j queries like enrichment fetching.
+Provides caching for expensive graph queries like enrichment fetching.
 Uses graph state hash to detect when cache should be invalidated.
 """
 
@@ -85,8 +85,8 @@ class EnrichmentCache(BaseDiskCache):
         if cached := cache.get_enrichments(graph_hash):
             return cached
 
-        # Compute enrichments from Neo4j
-        enrichments = get_enrichments_from_neo4j(graph_manager)
+        # Compute enrichments from graph
+        enrichments = get_enrichments_from_graph(graph_manager)
         cache.set_enrichments(graph_hash, enrichments)
         return enrichments
     """

@@ -171,7 +171,7 @@ def run_stage(
         typer.echo(f"Phase: {phase}")
 
     with PipelineSession() as session:
-        typer.echo("Connected to Neo4j")
+        typer.echo("Connected to grafeo")
 
         # Handle --only-step option
         if only_step:

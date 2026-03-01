@@ -1,12 +1,12 @@
 # ArchiMate Adapter
 
-Create, validate, and export ArchiMate enterprise architecture models using Neo4j.
+Create, validate, and export ArchiMate enterprise architecture models using grafeo (embedded).
 
 **Version:** 2.0.0
 
 ## Purpose
 
-The ArchiMate adapter stores derived ArchiMate elements and relationships in Neo4j (namespace: `Model`), validates them against the ArchiMate 3.2 metamodel, and exports to XML format compatible with the [Archi](https://www.archimatetool.com/) modeling tool.
+The ArchiMate adapter stores derived ArchiMate elements and relationships in grafeo (namespace: `Model`), validates them against the ArchiMate 3.2 metamodel, and exports to XML format compatible with the [Archi](https://www.archimatetool.com/) modeling tool.
 
 ## Key Exports
 
@@ -90,7 +90,7 @@ deriva/adapters/archimate/
 
 ## Data Isolation
 
-Uses Neo4j with namespace `Model` for label prefixing (e.g., `Model:ApplicationComponent`), keeping ArchiMate data separate from the Graph namespace.
+Uses grafeo with namespace `Model` for label prefixing (e.g., `Model:ApplicationComponent`), keeping ArchiMate data separate from the Graph namespace.
 
 ## See Also
 

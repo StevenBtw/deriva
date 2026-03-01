@@ -1,0 +1,26 @@
+# typos configuration
+# https://github.com/crate-ci/typos
+
+[files]
+extend-exclude = [
+    ".venv/",
+    "*.lock",
+    "workspace/",
+    "reference/",
+    "deriva/adapters/archimate/archimate_xsd/",
+    ".pytest_cache/",
+    ".ruff_cache/",
+    "*.db",
+]
+
+[default.extend-words]
+# ArchiMate element ID prefixes (ba_ = BusinessActor, nd_ = Node)
+ba = "ba"
+nd = "nd"
+
+[default.extend-identifiers]
+# Lemmatizer suffix-stripping results (intentional truncated forms)
+continu = "continu"
+processe = "processe"
+ment = "ment"
+ful = "ful"

@@ -1,12 +1,12 @@
 # Graph Adapter
 
-Property graph database for storing repository structure, code elements, and their relationships using Neo4j.
+Property graph database for storing repository structure, code elements, and their relationships using grafeo (embedded).
 
 **Version:** 1.0.0
 
 ## Purpose
 
-The Graph adapter stores extracted repository information in Neo4j (namespace: `Graph`). It maintains the intermediate representation between raw code and ArchiMate models, including files, directories, type definitions, business concepts, and their relationships.
+The Graph adapter stores extracted repository information in grafeo (namespace: `Graph`). It maintains the intermediate representation between raw code and ArchiMate models, including files, directories, type definitions, business concepts, and their relationships.
 
 ## Key Exports
 
@@ -113,7 +113,7 @@ deriva/adapters/graph/
 
 ## Data Isolation
 
-Uses Neo4j with namespace `Graph` for label prefixing (e.g., `Graph:Repository`, `Graph:File`), keeping extraction data separate from the ArchiMate namespace.
+Uses grafeo with namespace `Graph` for label prefixing (e.g., `Graph:Repository`, `Graph:File`), keeping extraction data separate from the ArchiMate namespace.
 
 ## See Also
 

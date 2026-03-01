@@ -101,7 +101,7 @@ def read_docx(file_path: Path) -> str | None:
                     level = int(style_name.split()[-1])
                     prefix = "#" * level
                     lines.append(f"{prefix} {text}")
-                except (ValueError, IndexError):
+                except ValueError, IndexError:
                     # Fallback for non-standard heading styles
                     lines.append(f"## {text}")
             elif style_name == "Title":

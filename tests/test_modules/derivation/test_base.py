@@ -538,14 +538,14 @@ class TestCandidate:
         assert "lineNumber" not in result["properties"]
 
 
-class TestGetEnrichmentsFromNeo4j:
-    """Tests for get_enrichments_from_neo4j function."""
+class TestGetEnrichmentsFromGraph:
+    """Tests for get_enrichments_from_graph function."""
 
     def test_returns_enrichments_from_graph_manager(self):
-        """Should fetch enrichments from Neo4j via graph_manager."""
+        """Should fetch enrichments from the graph via graph_manager."""
         from unittest.mock import MagicMock
 
-        from deriva.modules.derivation.base import get_enrichments_from_neo4j
+        from deriva.modules.derivation.base import get_enrichments_from_graph
 
         mock_graph_manager = MagicMock()
         mock_graph_manager.query.return_value = [
@@ -553,7 +553,7 @@ class TestGetEnrichmentsFromNeo4j:
             {"node_id": "node_2", "pagerank": 0.3, "louvain_community": "comm_2", "kcore_level": 1, "is_articulation_point": False, "in_degree": 1, "out_degree": 2},
         ]
 
-        result = get_enrichments_from_neo4j(mock_graph_manager)
+        result = get_enrichments_from_graph(mock_graph_manager)
 
         assert "node_1" in result
         assert result["node_1"]["pagerank"] == 0.5
@@ -570,14 +570,14 @@ class TestGetEnrichmentsFromNeo4j:
         """Should handle NULL values in enrichment data."""
         from unittest.mock import MagicMock
 
-        from deriva.modules.derivation.base import get_enrichments_from_neo4j
+        from deriva.modules.derivation.base import get_enrichments_from_graph
 
         mock_graph_manager = MagicMock()
         mock_graph_manager.query.return_value = [
             {"node_id": "node_1", "pagerank": None, "louvain_community": None, "kcore_level": None, "is_articulation_point": None, "in_degree": None, "out_degree": None},
         ]
 
-        result = get_enrichments_from_neo4j(mock_graph_manager)
+        result = get_enrichments_from_graph(mock_graph_manager)
 
         assert result["node_1"]["pagerank"] == 0.0
         assert result["node_1"]["louvain_community"] is None
@@ -590,12 +590,12 @@ class TestGetEnrichmentsFromNeo4j:
         """Should return empty dict on query error."""
         from unittest.mock import MagicMock
 
-        from deriva.modules.derivation.base import get_enrichments_from_neo4j
+        from deriva.modules.derivation.base import get_enrichments_from_graph
 
         mock_graph_manager = MagicMock()
         mock_graph_manager.query.side_effect = Exception("DB error")
 
-        result = get_enrichments_from_neo4j(mock_graph_manager)
+        result = get_enrichments_from_graph(mock_graph_manager)
 
         assert result == {}
 
@@ -1816,7 +1816,7 @@ class TestSharedGenerateBehavior:
         from deriva.modules.derivation.application_component import ApplicationComponentDerivation
 
         derivation = ApplicationComponentDerivation()
-        with patch("deriva.modules.derivation.element_base.get_enrichments_from_neo4j", return_value={}):
+        with patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}):
             with patch("deriva.modules.derivation.element_base.query_candidates", return_value=[]):
                 result = derivation.generate(
                     graph_manager=MagicMock(),
@@ -1841,7 +1841,7 @@ class TestSharedGenerateBehavior:
         from deriva.modules.derivation.application_component import ApplicationComponentDerivation
 
         derivation = ApplicationComponentDerivation()
-        with patch("deriva.modules.derivation.element_base.get_enrichments_from_neo4j", return_value={}):
+        with patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}):
             with patch("deriva.modules.derivation.element_base.query_candidates", side_effect=Exception("DB error")):
                 result = derivation.generate(
                     graph_manager=MagicMock(),
@@ -1867,7 +1867,7 @@ class TestSharedGenerateBehavior:
         from deriva.modules.derivation.base import GenerationResult
 
         derivation = ApplicationComponentDerivation()
-        with patch("deriva.modules.derivation.element_base.get_enrichments_from_neo4j", return_value={}):
+        with patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}):
             with patch("deriva.modules.derivation.element_base.query_candidates", return_value=[]):
                 result = derivation.generate(
                     graph_manager=MagicMock(),

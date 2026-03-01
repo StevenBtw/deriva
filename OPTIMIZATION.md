@@ -476,7 +476,7 @@ enrichments = enrich.enrich_graph(
     edges=edges,
     algorithms=['pagerank', 'louvain', 'kcore', 'articulation_points', 'degree']
 )
-# Write to Neo4j: graph_manager.batch_update_properties(enrichments)
+# Write to graph: graph_manager.batch_update_properties(enrichments)
 ```
 
 </details>

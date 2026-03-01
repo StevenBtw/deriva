@@ -1,16 +1,16 @@
 """
 Graph Enrichment Module - Pre-derivation graph analysis using solvor.
 
-Computes graph algorithm properties that are stored as Neo4j node properties.
+Computes graph algorithm properties that are stored as graph node properties.
 Similar to how classification enriches files before extraction,
 enrich prepares graph metrics before derivation.
 
 This module contains pure functions that:
 1. Take nodes and edges in a simple format
 2. Run graph algorithms via solvor
-3. Return enrichment dicts ready for Neo4j property updates
+3. Return enrichment dicts ready for graph property updates
 
-The service layer handles Neo4j I/O - this module has no I/O dependencies.
+The service layer handles graph I/O - this module has no I/O dependencies.
 
 Algorithms:
 - PageRank: Node importance/centrality

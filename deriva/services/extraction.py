@@ -5,7 +5,7 @@ Orchestrates the extraction pipeline by:
 1. Loading extraction configs from DuckDB
 2. Getting files from repositories
 3. Calling extraction module functions
-4. Persisting results to Neo4j GraphManager
+4. Persisting results to GraphManager
 
 Used by both Marimo (visual) and CLI (headless).
 
@@ -651,7 +651,7 @@ def _extract_edges(
     except Exception:
         pass  # Proceed without external package list
 
-    # Build global method lookup from Neo4j for cross-file CALLS/DECORATED_BY resolution
+    # Build global method lookup from graph for cross-file CALLS/DECORATED_BY resolution
     # Key: (method_name, class_name or None) -> list of node_ids with file_paths
     global_method_lookup: dict[tuple[str, str | None], list[dict]] = {}
     try:
@@ -667,7 +667,7 @@ def _extract_edges(
             node_id = m.get("id", "")
 
             # Keep file_path as-is (with repo prefix) to match classified_files format
-            # Both Neo4j filePath and classified_files paths include the full relative path
+            # Both graph filePath and classified_files paths include the full relative path
             # e.g., "deriva/cli/cli.py" for files inside the deriva/ subdirectory
 
             key = (method_name, class_name)
@@ -684,7 +684,7 @@ def _extract_edges(
     except Exception as e:
         logger.warning(f"Failed to build global method lookup: {e}")
 
-    # Build global type lookup from Neo4j for cross-file REFERENCES resolution
+    # Build global type lookup from graph for cross-file REFERENCES resolution
     # Key: type_name -> list of node_ids with file_paths
     global_type_lookup: dict[str, list[dict]] = {}
     try:
@@ -697,7 +697,7 @@ def _extract_edges(
             node_id = t.get("id", "")
 
             # Keep file_path as-is (with repo prefix) to match classified_files format
-            # Both Neo4j filePath and classified_files paths include the full relative path
+            # Both graph filePath and classified_files paths include the full relative path
 
             if type_name not in global_type_lookup:
                 global_type_lookup[type_name] = []

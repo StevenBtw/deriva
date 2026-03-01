@@ -3,8 +3,7 @@
 [![Build Status](https://github.com/StevenBtw/Deriva/actions/workflows/ci.yml/badge.svg)](https://github.com/StevenBtw/Deriva/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
-[![Neo4j](https://img.shields.io/badge/Neo4j-5.x-008CC1.svg?logo=neo4j)](https://neo4j.com/)
-[![Docker](https://img.shields.io/badge/Docker-required-2496ED.svg?logo=docker)](https://www.docker.com/)
+[![Grafeo](https://img.shields.io/badge/Grafeo-embedded-green.svg)](https://github.com/StevenBtw/grafeo)
 [![Marimo](https://img.shields.io/badge/Marimo-notebook-orange.svg)](https://marimo.io/)
 
 **Automatically generate ArchiMate enterprise architecture models from software repositories.**
@@ -14,7 +13,7 @@ Deriva analyzes code repositories and transforms them into [ArchiMate](https://w
 ## How It Works
 
 1. **Clone** a Git repository
-2. **Extraction** - Build a graph representation in Neo4j:
+2. **Extraction** - Build a graph representation:
    - **Classify phase**: Categorize files by type and subtype using registry
    - **Parse phase**: Extract semantic nodes (TypeDefinitions, Methods, BusinessConcepts, etc.)
    - Python files use fast AST parsing; other languages use LLM
@@ -29,7 +28,6 @@ Deriva analyzes code repositories and transforms them into [ArchiMate](https://w
 ### Prerequisites
 
 - **Python 3.14+**
-- **Docker** (for Neo4j)
 - **uv** (Python package manager)
 
 ### 1. Install uv
@@ -50,7 +48,7 @@ cd Deriva
 
 # Create environment configuration
 cp .env.example .env
-# Edit .env with your settings (Neo4j, LLM API keys, etc.)
+# Edit .env with your settings (LLM API keys, etc.)
 ```
 
 ### 3. Create Python Environment
@@ -78,25 +76,7 @@ source .venv/bin/activate
 uv sync
 ```
 
-### 5. Start Neo4j
-
-```bash
-cd deriva/adapters/neo4j
-docker-compose up -d
-```
-
-Neo4j will be available at:
-
-- **Browser UI**: http://localhost:7474 (no authentication)
-- **Bolt Protocol**: `bolt://localhost:7687`
-
-Verify Neo4j is running:
-
-```bash
-docker ps  # Should show deriva_neo4j container
-```
-
-### 6. Launch Deriva
+### 5. Launch Deriva
 
 ```bash
 cd ../../..  # Back to Deriva root
@@ -205,10 +185,8 @@ deriva export -o workspace/output/model.xml
 All configuration lives in `.env`. Key settings:
 
 ```bash
-# Neo4j (default docker-compose has auth disabled)
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USERNAME=
-NEO4J_PASSWORD=
+# Graph database (grafeo embedded)
+GRAFEO_DB_PATH=          # Empty = in-memory, path = persistent file
 
 # LLM Provider (mistral, openai, azure, anthropic, ollama, lmstudio)
 LLM_MISTRAL_DEVSTRAL_PROVIDER=mistral
@@ -218,7 +196,7 @@ LLM_MISTRAL_DEVSTRAL_KEY=your-mistral-api-key
 LLM_MISTRAL_DEVSTRAL_STRUCTURED_OUTPUT=true
 
 # Namespaces
-NEO4J_GRAPH_NAMESPACE=Graph
+GRAPH_NAMESPACE=Graph
 ARCHIMATE_NAMESPACE=Model
 ```
 
@@ -345,7 +323,7 @@ Deriva uses a multi-column marimo notebook layout:
 | Column | Purpose |
 |--------|---------|
 | **0** | **Run Deriva**: Pipeline execution buttons, status display |
-| **1** | **Configuration**: Runs, repositories, Neo4j, graph stats, ArchiMate, LLM |
+| **1** | **Configuration**: Runs, repositories, graph database, graph stats, ArchiMate, LLM |
 | **2** | **Extraction Settings**: File type registry, extraction step configuration |
 | **3** | **Derivation Settings**: Element type configuration (13 types across Business/Application/Technology layers), relationship derivation |
 
@@ -355,7 +333,7 @@ The UI is powered by `PipelineSession` from the services layer, providing a clea
 
 ## Data Storage
 
-- **Neo4j Graph Database**:
+- **Grafeo** (embedded graph database):
   - **Graph namespace**: Intermediate representation (Modules, Files, Dependencies)
   - **Model namespace**: ArchiMate elements and relationships
 - **DuckDB** (`deriva/adapters/database/sql.db`): File type registry, extraction configs, settings
@@ -369,9 +347,9 @@ The UI is powered by `PipelineSession` from the services layer, providing a clea
 
 ---
 
-## Querying Neo4j Directly
+## Querying the Graph
 
-Access the Neo4j browser at http://localhost:7474 and run Cypher queries:
+You can query the embedded grafeo graph database using Cypher via the CLI or Marimo notebook:
 
 ```cypher
 // See all repositories
@@ -484,38 +462,6 @@ OCEL files can be analyzed with process mining tools like PM4Py, Celonis, or cus
 
 ## Troubleshooting
 
-### Neo4j Connection Issues
-
-```bash
-# Check if running
-docker ps
-
-# View logs
-cd deriva/adapters/neo4j && docker-compose logs
-
-# Restart
-docker-compose restart
-
-# Clear all data (destructive!)
-docker-compose down -v
-```
-
-### Port Conflicts
-
-If ports 7687/7474 are in use, edit `deriva/adapters/neo4j/docker-compose.yml`:
-
-```yaml
-ports:
-  - "7688:7687"
-  - "7475:7474"
-```
-
-Update `.env` accordingly:
-
-```bash
-NEO4J_URI=bolt://localhost:7688
-```
-
 ### Marimo Issues
 
 ```bash
@@ -548,7 +494,7 @@ See [LICENSE](LICENSE) for the full license text.
 ## Acknowledgments
 
 - [Marimo](https://marimo.io) - Reactive Python notebooks
-- [Neo4j](https://neo4j.com) - Graph database
+- [Grafeo](https://github.com/StevenBtw/grafeo) - Embedded graph database
 - [ArchiMate](https://www.opengroup.org/archimate-forum) - Enterprise architecture standard
 - [Archi](https://www.archimatetool.com) - Open source ArchiMate modeling tool
 - [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) - Multi-language AST parsing

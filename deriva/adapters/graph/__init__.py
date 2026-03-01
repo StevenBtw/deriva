@@ -1,6 +1,6 @@
-"""Graph Manager - Neo4j-based graph database for repository structure.
+"""Graph Manager - Grafeo-based graph database for repository structure.
 
-This module provides a property graph database using Neo4j
+This module provides a property graph database using grafeo (embedded)
 to store and query repository structure, dependencies, and relationships.
 """
 

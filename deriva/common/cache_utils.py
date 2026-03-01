@@ -162,10 +162,12 @@ class BaseDiskCache:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize diskcache
+        # Initialize diskcache with JSON serialization (no pickle)
         self._cache = diskcache.Cache(
             str(self.cache_dir),
             size_limit=size_limit or self.DEFAULT_SIZE_LIMIT,
+            disk=diskcache.JSONDisk,
+            disk_compress_level=0,
         )
 
     def get(self, cache_key: str) -> dict[str, Any] | None:

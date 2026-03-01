@@ -16,30 +16,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # =============================================================================
 
 
-class Neo4jSettings(BaseSettings):
-    """Neo4j connection settings."""
+class GrafeoSettings(BaseSettings):
+    """Grafeo (embedded graph database) settings."""
 
-    model_config = SettingsConfigDict(env_prefix="NEO4J_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="GRAFEO_", env_file=".env", extra="ignore")
 
-    uri: str = "bolt://localhost:7687"
-    username: str = ""
-    password: str = ""
-    database: str = "neo4j"
-    encrypted: bool = False
-
-    # Connection pool settings
-    max_connection_lifetime: int = 3600
-    max_connection_pool_size: int = 50
-    connection_acquisition_timeout: int = 60
-
-    # Logging
-    log_level: str = "INFO"
+    db_path: str = ""  # Empty = in-memory, path = persistent
     log_queries: bool = False
-    suppress_notifications: bool = True
-
-    # Namespaces
-    namespace_graph: str = "Graph"
-    namespace_archimate: str = "Model"
 
 
 class LLMSettings(BaseSettings):
@@ -114,7 +97,7 @@ class DerivaSettings(BaseSettings):
 
     Usage:
         settings = DerivaSettings()
-        print(settings.neo4j.uri)
+        print(settings.grafeo.db_path)
         print(settings.llm.temperature)
     """
 
@@ -126,8 +109,8 @@ class DerivaSettings(BaseSettings):
 
     # Nested settings are loaded separately
     @property
-    def neo4j(self) -> Neo4jSettings:
-        return Neo4jSettings()
+    def grafeo(self) -> GrafeoSettings:
+        return GrafeoSettings()
 
     @property
     def llm(self) -> LLMSettings:

@@ -1,6 +1,6 @@
 [project]
 name = "Deriva"
-version = "0.6.9"
+version = "0.7.0"
 description = "Deriva is a research project aimed at enabling digital architects by automating the derivation of enterprise architecture models. Deriva uses dual knowledge graphs, heuristics and LLM's."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -13,7 +13,7 @@ keywords = [
     "enterprise-architecture",
     "code-analysis",
     "llm",
-    "neo4j",
+    "grafeo",
     "marimo",
 ]
 classifiers = [
@@ -35,17 +35,17 @@ classifiers = [
 dependencies = [
     # Core
     "pydantic>=2.12.5",
-    "pydantic-settings>=2.0",
+    "pydantic-settings>=2.13",
     "python-dotenv>=1.2.1",
     "pyyaml>=6.0.3",
-    "rich>=14.3.1",
+    "rich>=14.3",
     "lxml>=6.0.2",
     # Databases
     "duckdb>=1.4.4",
-    "neo4j>=6.1.0",
-    "sqlglot>=28.6.0",
+    "grafeo>=0.5.10",
+    "sqlglot>=29",
     # UI
-    "marimo>=0.19.6",
+    "marimo>=0.20",
     # Code Analysis (tree-sitter)
     "tree-sitter>=0.24.6",
     "tree-sitter-python>=0.23.0",
@@ -53,28 +53,30 @@ dependencies = [
     "tree-sitter-java>=0.23.0",
     "tree-sitter-c-sharp>=0.23.0",
     # Document Parsing
-    "pypdf>=6.6.2",
+    "pypdf>=6.7",
     "python-docx>=1.2.0",
     # Graph Algorithms
-    "solvor>=0.5.4",
-    # LLM 
+    "solvor>=0.6",
+    # LLM
     "backoff>=2.2.1",
-    "pydantic-ai>=1.47.0",
+    "pydantic-ai>=1.63.0",
     # Utilities
     "diskcache>=5.6.3",
     "nest-asyncio>=1.6.0",
     "structlog>=24.0",
-    "typer>=0.21.1",
+    "typer>=0.24",
+    "prek>=0.3.4",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pre-commit>=4.5.1",
+    "pip-audit>=2.9.0",
+    "prek>=0.1.0",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
-    "ruff>=0.14.14",
-    "ty>=0.0.13",
-    "types-lxml>=2025.3.30",
+    "ruff>=0.15",
+    "ty>=0.0.19",
+    "types-lxml>=2026.2",
 ]
 
 [project.urls]
@@ -170,8 +172,8 @@ omit = [
     "*/tests/*",
     # Marimo app (interactive UI, not unit testable)
     "deriva/app/*",
-    # External adapters requiring infrastructure (Neo4j, Docker, etc.)
-    "deriva/adapters/neo4j/*",
+    # Graph database adapters
+    "deriva/adapters/grafeo/*",
     "deriva/adapters/graph/*",
     "deriva/adapters/database/*",
     "deriva/adapters/archimate/*",

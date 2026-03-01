@@ -127,7 +127,7 @@ class TestElementDerivationBase:
 
         # Patch the helper functions to control behavior
         with (
-            patch("deriva.modules.derivation.element_base.get_enrichments_from_neo4j") as mock_enrichments,
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph") as mock_enrichments,
             patch("deriva.modules.derivation.element_base.query_candidates") as mock_candidates,
         ):
             mock_enrichments.return_value = {}

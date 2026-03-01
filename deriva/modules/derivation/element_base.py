@@ -45,7 +45,7 @@ from deriva.modules.derivation.base import (
     build_element,
     derive_batch_relationships,
     extract_response_content,
-    get_enrichments_from_neo4j,
+    get_enrichments_from_graph,
     parse_derivation_response,
     query_candidates,
 )
@@ -84,7 +84,7 @@ class ElementDerivationBase(ABC):
     - filter_candidates(): Module-specific candidate filtering
 
     The generate() method handles:
-    - Enrichment retrieval from Neo4j
+    - Enrichment retrieval from graph
     - Candidate querying
     - Batching
     - LLM calls for element derivation
@@ -243,7 +243,7 @@ class ElementDerivationBase(ABC):
 
         This is the common flow shared by all element modules:
         1. Get filter kwargs (patterns for pattern-based modules)
-        2. Get enrichments from Neo4j
+        2. Get enrichments from graph
         3. Query candidates
         4. Filter candidates (module-specific)
         5. Batch candidates
@@ -274,7 +274,7 @@ class ElementDerivationBase(ABC):
         filter_kwargs = self.get_filter_kwargs(engine)
 
         # Get enrichments and query candidates
-        enrichments = get_enrichments_from_neo4j(
+        enrichments = get_enrichments_from_graph(
             graph_manager,
             cache_manager=cache_manager,
             config_name=self.ELEMENT_TYPE,

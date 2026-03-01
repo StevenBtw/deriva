@@ -17,9 +17,9 @@ class TestGraphManagerInit:
         """Should initialize with default namespace."""
         manager = GraphManager()
         assert manager.namespace == "Graph"
-        assert manager.neo4j is None
+        assert manager.db is None
 
-    @patch.dict("os.environ", {"NEO4J_GRAPH_NAMESPACE": "CustomGraph"}, clear=True)
+    @patch.dict("os.environ", {"GRAPH_NAMESPACE": "CustomGraph"}, clear=True)
     def test_uses_env_namespace(self):
         """Should use namespace from environment."""
         manager = GraphManager()
@@ -29,43 +29,43 @@ class TestGraphManagerInit:
 class TestGraphManagerConnection:
     """Tests for GraphManager connection handling."""
 
-    @patch("deriva.adapters.graph.manager.Neo4jConnection")
+    @patch("deriva.adapters.graph.manager.GrafeoConnection")
     @patch.dict("os.environ", {}, clear=True)
-    def test_connect_creates_neo4j_connection(self, mock_neo4j_class):
-        """Should create Neo4j connection on connect."""
+    def test_connect_creates_grafeo_connection(self, mock_grafeo_class):
+        """Should create grafeo connection on connect."""
         mock_conn = MagicMock()
-        mock_neo4j_class.return_value = mock_conn
+        mock_grafeo_class.return_value = mock_conn
 
         manager = GraphManager()
         manager.connect()
 
-        mock_neo4j_class.assert_called_once_with(namespace="Graph")
+        mock_grafeo_class.assert_called_once_with(namespace="Graph")
         mock_conn.connect.assert_called_once()
-        assert manager.neo4j is mock_conn
+        assert manager.db is mock_conn
 
-    @patch("deriva.adapters.graph.manager.Neo4jConnection")
+    @patch("deriva.adapters.graph.manager.GrafeoConnection")
     @patch.dict("os.environ", {}, clear=True)
-    def test_disconnect_closes_connection(self, mock_neo4j_class):
+    def test_disconnect_closes_connection(self, mock_grafeo_class):
         """Should close connection on disconnect."""
         mock_conn = MagicMock()
-        mock_neo4j_class.return_value = mock_conn
+        mock_grafeo_class.return_value = mock_conn
 
         manager = GraphManager()
         manager.connect()
         manager.disconnect()
 
         mock_conn.disconnect.assert_called_once()
-        assert manager.neo4j is None
+        assert manager.db is None
 
-    @patch("deriva.adapters.graph.manager.Neo4jConnection")
+    @patch("deriva.adapters.graph.manager.GrafeoConnection")
     @patch.dict("os.environ", {}, clear=True)
-    def test_context_manager(self, mock_neo4j_class):
+    def test_context_manager(self, mock_grafeo_class):
         """Should work as context manager."""
         mock_conn = MagicMock()
-        mock_neo4j_class.return_value = mock_conn
+        mock_grafeo_class.return_value = mock_conn
 
         with GraphManager() as manager:
-            assert manager.neo4j is mock_conn
+            assert manager.db is mock_conn
 
         mock_conn.disconnect.assert_called_once()
 
@@ -73,7 +73,7 @@ class TestGraphManagerConnection:
     def test_connect_twice_warns(self):
         """Should warn when already connected."""
         manager = GraphManager()
-        manager.neo4j = MagicMock()  # Simulate existing connection
+        manager.db = MagicMock()  # Simulate existing connection
 
         # Should not raise, just warn
         manager.connect()

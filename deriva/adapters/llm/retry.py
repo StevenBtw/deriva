@@ -277,7 +277,7 @@ def _extract_retry_after_from_exception(exception: Exception) -> float | None:
             if key in body:
                 try:
                     return float(body[key])
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
 
         # Check nested error object
@@ -287,7 +287,7 @@ def _extract_retry_after_from_exception(exception: Exception) -> float | None:
                 if key in error:
                     try:
                         return float(error[key])
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         pass
 
     return None

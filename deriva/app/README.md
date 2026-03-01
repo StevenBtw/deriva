@@ -19,7 +19,7 @@ Opens in browser at: <http://127.0.0.1:2718>
 | Column | Purpose |
 |--------|---------|
 | **0** | **Run Deriva** - Pipeline buttons, status display |
-| **1** | **Configuration** - Runs, repositories, Neo4j, graph stats, ArchiMate model |
+| **1** | **Configuration** - Runs, repositories, graph database, graph stats, ArchiMate model |
 | **2** | **Extraction Settings** - File type registry, extraction step config |
 | **3** | **Derivation Settings** - Derivation step config (prep/generate/refine phases) |
 

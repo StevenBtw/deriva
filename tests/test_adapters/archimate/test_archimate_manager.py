@@ -1,11 +1,7 @@
 """Basic tests for ArchiMate Manager.
 
-To run these tests, you must have Neo4j running:
-    cd neo4j_manager
-    docker-compose up -d
-
-Then run:
-    pytest tests/test_managers/archimate/test_archimate_manager.py -m integration
+Run:
+    pytest tests/test_adapters/archimate/test_archimate_manager.py -m integration
 """
 
 import pytest
@@ -45,17 +41,17 @@ def test_connect_disconnect():
     """Test basic connection and disconnection."""
     manager = ArchimateManager()
     manager.connect()
-    assert manager.neo4j is not None
+    assert manager.db is not None
     manager.disconnect()
-    assert manager.neo4j is None
+    assert manager.db is None
 
 
 def test_context_manager():
     """Test using ArchimateManager as context manager."""
     with ArchimateManager() as manager:
-        assert manager.neo4j is not None
+        assert manager.db is not None
     # After context, should be disconnected
-    assert manager.neo4j is None
+    assert manager.db is None
 
 
 def test_add_element(archimate_manager):
@@ -194,8 +190,8 @@ def test_cypher_query(archimate_manager):
 
     # Custom query to count elements (namespace-aware label)
     # Elements are created with their type as label (e.g., Model:ApplicationComponent)
-    assert archimate_manager.neo4j is not None
-    element_label = archimate_manager.neo4j.get_label("ApplicationComponent")
+    assert archimate_manager.db is not None
+    element_label = archimate_manager.db.get_label("ApplicationComponent")
     query = f"""
         MATCH (e:`{element_label}`)
         RETURN count(e) as element_count
