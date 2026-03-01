@@ -1680,13 +1680,26 @@ class TestExtractEdgesCreateStubNodes:
             with patch("deriva.modules.extraction.edges.extract_edges_batch") as mock_batch:
                 mock_batch.return_value = {
                     "data": {
+                        "nodes": [
+                            {
+                                "node_id": "extdep::test_repo::requests",
+                                "label": "ExternalDependency",
+                                "properties": {
+                                    "dependencyName": "requests",
+                                    "dependencyCategory": "library",
+                                    "declared": False,
+                                    "used": True,
+                                    "ecosystem": "pypi",
+                                },
+                            }
+                        ],
                         "edges": [
                             {
                                 "from_node_id": "file_1",
                                 "to_node_id": "extdep::test_repo::requests",
                                 "relationship_type": "USES",
                             }
-                        ]
+                        ],
                     },
                     "stats": {},
                     "errors": [],

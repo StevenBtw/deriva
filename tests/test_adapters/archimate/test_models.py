@@ -94,8 +94,8 @@ class TestArchiMateMetamodel:
 
     def test_can_relate_invalid_source_type(self, metamodel):
         """Should reject relationship from invalid source type."""
-        # DataObject typically can't be source of Composition
-        can_relate, reason = metamodel.can_relate("DataObject", "Composition", "ApplicationComponent")
+        # DataObject (passive) cannot be source of Flow (requires behavior elements)
+        can_relate, reason = metamodel.can_relate("DataObject", "Flow", "BusinessProcess")
         assert not can_relate
 
     def test_can_relate_invalid_target_type(self, metamodel):

@@ -588,7 +588,7 @@ class TestExtractImportEdges:
         imports = [ExtractedImport(module="models", names=["User"], line=1, is_from_import=True)]
         all_files = {"main.py", "models.py"}
 
-        edges, stats = _extract_import_edges(
+        edges, _nodes, stats = _extract_import_edges(
             imports=imports,
             file_path="main.py",
             repo_name="test-repo",
@@ -608,7 +608,7 @@ class TestExtractImportEdges:
 
         imports = [ExtractedImport(module="flask", names=["Flask"], line=1, is_from_import=True)]
 
-        edges, stats = _extract_import_edges(
+        edges, _nodes, stats = _extract_import_edges(
             imports=imports,
             file_path="main.py",
             repo_name="test-repo",
@@ -628,7 +628,7 @@ class TestExtractImportEdges:
 
         imports = [ExtractedImport(module="os", names=["path"], line=1, is_from_import=True)]
 
-        edges, stats = _extract_import_edges(
+        edges, _nodes, stats = _extract_import_edges(
             imports=imports,
             file_path="main.py",
             repo_name="test-repo",
@@ -652,7 +652,7 @@ class TestExtractImportEdges:
         ]
 
         # Only request IMPORTS, not USES
-        edges, stats = _extract_import_edges(
+        edges, _nodes, stats = _extract_import_edges(
             imports=imports,
             file_path="main.py",
             repo_name="test-repo",

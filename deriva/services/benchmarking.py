@@ -38,7 +38,6 @@ Analysis Usage:
 from __future__ import annotations
 
 import json
-import shutil
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime

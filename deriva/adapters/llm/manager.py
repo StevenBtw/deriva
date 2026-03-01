@@ -44,6 +44,23 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 
+from deriva.common.exceptions import CircuitOpenError
+
+from .cache import CacheManager
+from .model_registry import VALID_PROVIDERS, get_pydantic_ai_model
+from .models import (
+    BenchmarkModelConfig,
+    CachedResponse,
+    ConfigurationError,
+    FailedResponse,
+    LiveResponse,
+    LLMResponse,
+    ValidationError,
+)
+from .rate_limiter import RateLimitConfig, RateLimiter, get_default_rate_limit
+from .retry import classify_exception
+from .schemas import EXTRACTION_SCHEMAS
+
 # Thread pool for running LLM calls outside of existing event loops
 _llm_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
@@ -63,23 +80,6 @@ def _is_event_loop_running() -> bool:
         return loop is not None
     except RuntimeError:
         return False
-
-from deriva.common.exceptions import CircuitOpenError
-
-from .cache import CacheManager
-from .model_registry import VALID_PROVIDERS, get_pydantic_ai_model
-from .models import (
-    BenchmarkModelConfig,
-    CachedResponse,
-    ConfigurationError,
-    FailedResponse,
-    LiveResponse,
-    LLMResponse,
-    ValidationError,
-)
-from .rate_limiter import RateLimitConfig, RateLimiter, get_default_rate_limit
-from .retry import classify_exception
-from .schemas import EXTRACTION_SCHEMAS
 
 logger = logging.getLogger(__name__)
 

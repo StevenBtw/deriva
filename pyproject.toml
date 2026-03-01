@@ -158,7 +158,7 @@ docstring-quotes = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-v"
+addopts = "-v -m 'not integration'"
 markers = [
     "integration: integration tests (run locally with -m integration)",
 ]

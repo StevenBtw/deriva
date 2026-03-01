@@ -148,7 +148,7 @@ class TestGenerateMethod:
             {
                 "id": "node_1",
                 "name": "TestElement",
-                "labels": ["Directory"],
+                "labels": ["TypeDefinition"],
                 "properties": {"path": "/src/test"},
             },
         ]

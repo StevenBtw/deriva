@@ -1124,7 +1124,6 @@ def _(mo):
 def _():
     import asyncio
 
-    from deriva.app.progress import MarimoLiveProgressReporter, MarimoProgressReporter
     from deriva.services.session import PipelineSession
 
     session = PipelineSession(auto_connect=True)

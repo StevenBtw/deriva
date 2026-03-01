@@ -751,7 +751,7 @@ def _extract_edges(
                     name=props.get("dependencyName", "unknown"),
                     dependency_category=props.get("dependencyCategory", "library"),
                     repository_name=repo.name,
-                    description=f"External package discovered via import",
+                    description="External package discovered via import",
                     confidence=props.get("confidence", 1.0),
                     extraction_method="treesitter",
                 )
