@@ -262,7 +262,7 @@ if RICH_AVAILABLE:
                     task = self._progress._tasks.get(self._phase_task)
                     if task and task.total is not None:
                         self._progress.update(self._phase_task, completed=task.total)
-                except (IndexError, KeyError):
+                except IndexError, KeyError:
                     pass  # Task may have been removed
 
             if message:
@@ -540,7 +540,7 @@ if RICH_AVAILABLE:
                     task = self._progress._tasks.get(self._phase_task)
                     if task and task.total is not None:
                         self._progress.update(self._phase_task, completed=task.total)
-                except (IndexError, KeyError):
+                except IndexError, KeyError:
                     pass  # Task may have been removed
 
             self._refresh_display()

@@ -317,7 +317,7 @@ def _get_git_remote_url(repo_path: Path) -> str | None:
             check=True,
         )
         return result.stdout.strip()
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return None
 
 
@@ -339,7 +339,7 @@ def _get_repository_description(repo_path: Path) -> str | None:
                             lines.append(line)
                     if lines:
                         return " ".join(lines)[:500]
-            except (OSError, UnicodeDecodeError):
+            except OSError, UnicodeDecodeError:
                 pass
     return None
 
@@ -379,7 +379,7 @@ def _get_repository_times(repo_path: Path) -> tuple[str, str]:
         )
         if result.stdout.strip():
             created_at = result.stdout.strip()
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         pass
 
     last_updated = datetime.now().isoformat()
@@ -392,7 +392,7 @@ def _get_repository_times(repo_path: Path) -> tuple[str, str]:
         )
         if result.stdout.strip():
             last_updated = result.stdout.strip()
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         pass
 
     return created_at, last_updated
@@ -408,7 +408,7 @@ def _get_default_branch(repo_path: Path) -> str:
             check=True,
         )
         return result.stdout.strip()
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return "unknown"
 
 
@@ -422,7 +422,7 @@ def _get_commit_hash(repo_path: Path) -> str | None:
             check=True,
         )
         return result.stdout.strip()
-    except (subprocess.CalledProcessError, OSError):
+    except subprocess.CalledProcessError, OSError:
         return None
 
 

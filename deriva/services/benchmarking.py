@@ -1272,7 +1272,7 @@ class BenchmarkOrchestrator:
                             "tokens_out": tokens_out,
                             "timestamp": timestamp,
                         }
-                except (OSError, json.JSONDecodeError):
+                except OSError, json.JSONDecodeError:
                     pass  # Skip on read errors
 
         # Write consolidated cache

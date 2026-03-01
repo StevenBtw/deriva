@@ -1370,7 +1370,7 @@ def get_confidence_threshold(engine: Any, key: str, default: float | None = None
     if value is not None:
         try:
             return float(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
 
     # Use provided default or fall back to built-in defaults
@@ -1397,7 +1397,7 @@ def get_derivation_limit(engine: Any, key: str, default: int | None = None) -> i
     if value is not None:
         try:
             return int(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
 
     # Use provided default or fall back to built-in defaults
@@ -1499,7 +1499,7 @@ def get_algorithm_setting_float(engine: Any, key: str, default: float | None = N
     value = get_algorithm_setting(engine, key)
     try:
         return float(value)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return default if default is not None else 0.0
 
 
@@ -1508,7 +1508,7 @@ def get_algorithm_setting_int(engine: Any, key: str, default: int | None = None)
     value = get_algorithm_setting(engine, key)
     try:
         return int(value)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return default if default is not None else 0
 
 

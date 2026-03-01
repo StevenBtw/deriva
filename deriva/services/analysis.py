@@ -725,7 +725,7 @@ class BenchmarkAnalyzer:
                 if start and end:
                     try:
                         duration = (end - start).total_seconds()
-                    except (TypeError, AttributeError):
+                    except TypeError, AttributeError:
                         duration = 0.0
 
                 writer.writerow(

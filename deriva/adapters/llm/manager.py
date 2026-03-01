@@ -210,6 +210,14 @@ def load_benchmark_models() -> dict[str, BenchmarkModelConfig]:
     return configs
 
 
+def _serialize_output(output: object) -> str:
+    """Serialize a pydantic model or arbitrary output to a JSON string."""
+    dump = getattr(output, "model_dump_json", None)
+    if callable(dump):
+        return dump()
+    return str(output)
+
+
 class LLMManager:
     """
     Manages LLM API calls with intelligent caching and structured output support.
@@ -655,22 +663,14 @@ class LLMManager:
             if response_model:
                 # Explicit response_model: return the Pydantic instance
                 if write_cache:
-                    content = (
-                        output.model_dump_json()
-                        if hasattr(output, "model_dump_json")
-                        else str(output)
-                    )
+                    content = _serialize_output(output)
                     self.cache.set_response(
                         cache_key, content, prompt, self.model, usage
                     )
                 return cast(T, output)
             elif using_schema_model:
                 # Schema-resolved model: serialize to JSON for backwards compatibility
-                content = (
-                    output.model_dump_json()
-                    if hasattr(output, "model_dump_json")
-                    else str(output)
-                )
+                content = _serialize_output(output)
                 if write_cache:
                     self.cache.set_response(
                         cache_key, content, prompt, self.model, usage
@@ -778,7 +778,7 @@ class LLMManager:
                         total_prompt += usage.get("prompt_tokens", 0)
                         total_completion += usage.get("completion_tokens", 0)
                         total_calls += 1
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError, OSError:
                 continue
 
         return {

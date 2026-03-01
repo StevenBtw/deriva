@@ -65,7 +65,7 @@ def read_file_with_encoding(file_path: Path) -> str | None:
         # Try Latin-1 as fallback (accepts all byte values)
         return raw.decode("latin-1")
 
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return None
 
 

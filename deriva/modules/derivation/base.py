@@ -2017,7 +2017,7 @@ def clamp_confidence(value: Any, default: float = 0.5) -> float:
     try:
         conf = float(value) if value is not None else default
         return max(0.0, min(1.0, conf))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
 
 
