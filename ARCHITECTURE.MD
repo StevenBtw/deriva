@@ -42,8 +42,8 @@ Repository --> Extraction --> Graph --> Derivation --> ArchiMate Model --> Expor
 |  +-------------------------------+  +-----------------------------------+   |
 |  |   External System Adapters    |  |       Business Logic Modules      |   |
 |  |  +---------+ +-------------+  |  |  +-------------+ +-------------+  |   |
-|  |  |  Neo4j  | |  Database   |  |  |  |  Extraction | |  Derivation |  |   |
-|  |  |  (neo4j)| |  (database) |  |  |  |             | |             |  |   |
+|  |  | Grafeo  | |  Database   |  |  |  |  Extraction | |  Derivation |  |   |
+|  |  | (grafeo)| |  (database) |  |  |  |             | |             |  |   |
 |  |  +---------+ +-------------+  |  |  |  - Business | |  - Prep     |  |   |
 |  |  +---------+ +-------------+  |  |  |  - TypeDef  | |  - Generate |  |   |
 |  |  |  Graph  | |  ArchiMate  |  |  |  |  - Method   | |  - Refine   |  |   |
@@ -101,7 +101,7 @@ External system integrations:
 
 | Adapter | Purpose |
 |---------|---------|
-| `neo4j/` | Shared Neo4j connection with namespace isolation |
+| `grafeo/` | Embedded graph database with namespace isolation |
 | `database/` | DuckDB for configuration and metadata storage |
 | `graph/` | Graph operations (nodes, edges) in "Graph" namespace |
 | `archimate/` | ArchiMate model operations in "Model" namespace |
@@ -234,8 +234,8 @@ Each layer has a `ruff.toml` file enforcing boundaries:
 
 | Store | Purpose | Location |
 |-------|---------|----------|
-| Neo4j (Graph) | Intermediate representation | `bolt://localhost:7687` |
-| Neo4j (Model) | ArchiMate elements/relationships | `bolt://localhost:7687` |
+| Grafeo (Graph) | Intermediate representation | Embedded (in-memory or `GRAFEO_DB_PATH`) |
+| Grafeo (Model) | ArchiMate elements/relationships | Embedded (shared instance) |
 | DuckDB | Configuration, metadata | `deriva/adapters/database/sql.db` |
 | Workspace | Repositories, benchmarks, exports | `workspace/` |
 
@@ -243,7 +243,7 @@ Each layer has a `ruff.toml` file enforcing boundaries:
 
 1. **Services as API Layer**: CLI and App only interact with the backend through `PipelineSession`, ensuring consistent behavior and single point of change.
 
-2. **Namespace Isolation**: Neo4j uses label prefixes (`Graph:`, `Model:`) to separate extraction data from ArchiMate model data in a single database.
+2. **Namespace Isolation**: Grafeo uses label prefixes (`Graph:`, `Model:`) to separate extraction data from ArchiMate model data in a single embedded database.
 
 3. **Configuration Versioning**: All config changes create new versions, enabling rollback and A/B testing during optimization.
 
