@@ -39,7 +39,7 @@ def mock_graph_manager():
     """Mock GraphManager that handles both enrichment and candidate queries.
 
     The generate() function makes two queries:
-    1. get_enrichments_from_neo4j - returns node_id, pagerank, louvain_community, etc.
+    1. get_enrichments_from_graph - returns node_id, pagerank, louvain_community, etc.
     2. query_candidates - returns id, name, labels, properties
     """
     manager = MagicMock()

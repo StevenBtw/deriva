@@ -31,8 +31,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-# Import graph database connection (grafeo embedded)
-from deriva.adapters.grafeo import GrafeoConnection as Neo4jConnection
+from deriva.adapters.grafeo import GrafeoConnection
 
 from .models import (
     BusinessConceptNode,
@@ -129,7 +128,7 @@ def _extract_repo_from_node_id(node_id: str) -> str | None:
 
 
 class GraphManager:
-    """Manages graph database operations using Neo4j.
+    """Manages graph database operations using grafeo (embedded).
 
     This class provides a high-level interface for:
     - Creating and managing property graphs
@@ -137,7 +136,7 @@ class GraphManager:
     - Querying graph structure with Cypher
     - Traversing relationships
 
-    Uses the shared neo4j_manager service with "Graph" namespace.
+    Uses the shared grafeo connection with "Graph" namespace.
 
     Example:
         from deriva.adapters.graph import GraphManager
@@ -156,36 +155,35 @@ class GraphManager:
     def __init__(self):
         """Initialize the GraphManager using .env configuration."""
         load_dotenv()
-        self.neo4j: Neo4jConnection | None = None
-        self.namespace = os.getenv("NEO4J_GRAPH_NAMESPACE", "Graph")
+        self.db: GrafeoConnection | None = None
+        self.namespace = os.getenv("GRAPH_NAMESPACE", "Graph")
 
         logger.info(f"Initializing GraphManager with namespace: {self.namespace}")
 
     def connect(self) -> None:
-        """Establish connection to Neo4j via neo4j_manager."""
-        if self.neo4j is not None:
+        """Establish connection to the graph database."""
+        if self.db is not None:
             logger.warning("Connection already established")
             return
 
         try:
-            # Create Neo4j connection with namespace
-            self.neo4j = Neo4jConnection(namespace=self.namespace)
-            self.neo4j.connect()
+            self.db = GrafeoConnection(namespace=self.namespace)
+            self.db.connect()
 
             logger.info(
-                f"Successfully connected to Neo4j with namespace '{self.namespace}'"
+                f"Successfully connected to grafeo with namespace '{self.namespace}'"
             )
 
         except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {e}")
-            raise ConnectionError(f"Could not connect to Neo4j: {e}")
+            logger.error(f"Failed to connect to grafeo: {e}")
+            raise ConnectionError(f"Could not connect to grafeo: {e}")
 
     def disconnect(self) -> None:
-        """Close the Neo4j connection."""
-        if self.neo4j is not None:
-            self.neo4j.disconnect()
-            self.neo4j = None
-            logger.info("Disconnected from Neo4j")
+        """Close the graph database connection."""
+        if self.db is not None:
+            self.db.disconnect()
+            self.db = None
+            logger.info("Disconnected from grafeo")
 
     def __enter__(self) -> GraphManager:
         """Context manager entry."""
@@ -208,8 +206,8 @@ class GraphManager:
         Returns:
             The node ID
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         # Generate node ID if not provided - use node's generate_id() method
         if node_id is None:
@@ -225,7 +223,7 @@ class GraphManager:
         properties_json = json.dumps(properties) if properties else None
 
         # Extract scalar properties to store directly on node
-        # Neo4j can store: strings, numbers, booleans, and arrays of these
+        # Graph can store: strings, numbers, booleans, and arrays of these
         flat_props = {}
         for key, value in properties.items():
             if isinstance(value, (str, int, float, bool)) or value is None:
@@ -267,7 +265,7 @@ class GraphManager:
                 RETURN n.id as id
             """
 
-            result = self.neo4j.execute_write(query, params)
+            result = self.db.execute_write(query, params)
 
             if result:
                 logger.debug(f"Added node: {node_id} ({node_label})")
@@ -299,8 +297,8 @@ class GraphManager:
         Returns:
             The edge ID
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         # Generate edge ID if not provided
         if edge_id is None:
@@ -313,7 +311,7 @@ class GraphManager:
 
         try:
             # Use relationship type as the label (e.g., Graph:CONTAINS)
-            edge_label = self.neo4j.get_label(relationship)
+            edge_label = self.db.get_label(relationship)
 
             query = f"""
                 MATCH (src) WHERE src.id = $src_id
@@ -323,7 +321,7 @@ class GraphManager:
                 RETURN r.id as id
             """
 
-            result = self.neo4j.execute_write(
+            result = self.db.execute_write(
                 query,
                 {
                     "src_id": src_id,
@@ -356,13 +354,13 @@ class GraphManager:
         Args:
             node_id: Node ID to update
             property_name: Property name to set
-            value: Property value (must be Neo4j-compatible: str, int, float, bool, list)
+            value: Property value (must be graph-compatible: str, int, float, bool, list)
 
         Returns:
             True if updated, False if node not found
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
             query = f"""
@@ -371,7 +369,7 @@ class GraphManager:
                 RETURN n.id as id
             """
 
-            result = self.neo4j.execute_write(
+            result = self.db.execute_write(
                 query, {"node_id": node_id, "value": value}
             )
 
@@ -397,8 +395,8 @@ class GraphManager:
         Returns:
             Number of nodes updated
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         if not node_ids:
             return 0
@@ -411,7 +409,7 @@ class GraphManager:
                 RETURN count(n) as updated
             """
 
-            result = self.neo4j.execute_write(
+            result = self.db.execute_write(
                 query, {"node_ids": node_ids, "value": value}
             )
 
@@ -441,8 +439,8 @@ class GraphManager:
         Returns:
             Number of nodes updated
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         if not updates:
             return 0
@@ -462,7 +460,7 @@ class GraphManager:
                 for node_id, props in updates.items()
             ]
 
-            result = self.neo4j.execute_write(query, {"updates": update_list})
+            result = self.db.execute_write(query, {"updates": update_list})
 
             if result:
                 count = result[0]["updated"]
@@ -483,8 +481,8 @@ class GraphManager:
         Returns:
             Node data as dictionary or None if not found
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
             query = """
@@ -495,7 +493,7 @@ class GraphManager:
                        n.properties_json as properties_json
             """
 
-            result = self.neo4j.execute_read(query, {"node_id": node_id})
+            result = self.db.execute_read(query, {"node_id": node_id})
 
             if result:
                 data = result[0]
@@ -525,8 +523,8 @@ class GraphManager:
         Returns:
             True if node exists, False otherwise
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
             query = """
@@ -534,7 +532,7 @@ class GraphManager:
                 WHERE n.id = $node_id
                 RETURN count(n) > 0 as exists
             """
-            result = self.neo4j.execute_read(query, {"node_id": node_id})
+            result = self.db.execute_read(query, {"node_id": node_id})
             return result[0]["exists"] if result else False
 
         except Exception as e:
@@ -550,8 +548,8 @@ class GraphManager:
         Returns:
             List of node dictionaries
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
             # Query by node type label directly
@@ -563,7 +561,7 @@ class GraphManager:
                        n.properties_json as properties_json
             """
 
-            result = self.neo4j.execute_read(query)
+            result = self.db.execute_read(query)
 
             nodes = []
             for data in result:
@@ -592,8 +590,8 @@ class GraphManager:
         Returns:
             True if deleted, False if not found
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
             query = """
@@ -602,7 +600,7 @@ class GraphManager:
                 RETURN count(n) as deleted
             """
 
-            result = self.neo4j.execute_write(query, {"node_id": node_id})
+            result = self.db.execute_write(query, {"node_id": node_id})
 
             if result and result[0]["deleted"] > 0:
                 logger.debug(f"Deleted node: {node_id}")
@@ -625,11 +623,11 @@ class GraphManager:
         Returns:
             Query results as list of dictionaries
         """
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
-            return self.neo4j.execute(cypher_query, params)
+            return self.db.execute(cypher_query, params)
 
         except Exception as e:
             logger.error(f"Query failed: {e}")
@@ -637,11 +635,11 @@ class GraphManager:
 
     def clear_graph(self) -> None:
         """Clear all nodes and edges from the graph."""
-        if self.neo4j is None:
-            raise RuntimeError("Not connected to Neo4j. Call connect() first.")
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         try:
-            self.neo4j.clear_namespace()
+            self.db.clear_namespace()
             logger.info(f"Cleared all graph data from namespace '{self.namespace}'")
 
         except Exception as e:

@@ -1592,7 +1592,7 @@ class TestExportCommandVerbose:
         result = runner.invoke(app, ["export", "-v"])
 
         assert result.exit_code == 0
-        assert "Connected to Neo4j" in result.stdout
+        assert "Connected to grafeo" in result.stdout
 
 
 class TestExportCommandDefaultName:
@@ -3324,7 +3324,7 @@ class TestRunAppExtraction:
 
         assert result.exit_code == 0
         assert "EXTRACTION" in result.stdout
-        assert "Connected to Neo4j" in result.stdout
+        assert "Connected to grafeo" in result.stdout
         mock_session.run_extraction.assert_called_once()
 
     @patch("deriva.cli.commands.run.create_progress_reporter")

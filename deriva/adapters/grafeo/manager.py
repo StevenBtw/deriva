@@ -1,13 +1,13 @@
 """Grafeo Connection Service - Embedded graph database for Deriva.
 
-Drop-in replacement for Neo4jConnection using grafeo (embedded, no Docker).
-Provides the same namespace-isolated interface that GraphManager and
+Embedded graph database connection for Deriva.
+Provides the namespace-isolated interface that GraphManager and
 ArchimateManager expect.
 
 Features:
 - Embedded graph database (no external server)
 - Cypher query language support
-- Namespace isolation via label prefixes (same as Neo4j adapter)
+- Namespace isolation via label prefixes
 - Configurable storage: in-memory (default) or persistent file
 
 Usage:
@@ -79,9 +79,8 @@ def close_database() -> None:
 class GrafeoConnection:
     """Embedded graph database connection with namespace support.
 
-    Drop-in replacement for Neo4jConnection. All managers share a single
-    embedded GrafeoDB instance; namespace isolation works via label prefixes
-    (same dual-label scheme as the Neo4j adapter).
+    All managers share a single embedded GrafeoDB instance; namespace
+    isolation works via label prefixes (dual-label scheme).
 
     Example:
         >>> conn = GrafeoConnection(namespace="Graph")

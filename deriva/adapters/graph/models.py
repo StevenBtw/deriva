@@ -1,7 +1,7 @@
 """Graph models for repository structure.
 
 This module defines the node and relationship models for representing
-repository structure in Neo4j.
+repository structure in the graph database.
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ class RepositoryNode:
         return f"Repository_{self.name}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "repoName": self.name,  # Use metamodel field name
             "url": self.url,
@@ -114,7 +114,7 @@ class DirectoryNode:
         return f"Directory_{self.repository_name}_{safe_path}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "name": self.name,
             "path": normalize_path(self.path, self.repository_name),
@@ -140,7 +140,7 @@ class ModuleNode:
         return f"Module_{self.repository_name}_{self.name}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "name": self.name,
             "paths": [normalize_path(p, self.repository_name) for p in self.paths],
@@ -171,7 +171,7 @@ class FileNode:
         return f"File_{self.repository_name}_{safe_path}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "fileName": self.name,  # Use metamodel field name
             "filePath": normalize_path(
@@ -227,7 +227,7 @@ class BusinessConceptNode:
         return f"BusinessConcept_{self.repository_name}_{self.name}_{self.concept_type}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "conceptName": self.name,
             "conceptType": self.concept_type,
@@ -268,7 +268,7 @@ class TechnologyNode:
         return f"Technology_{self.name}_{self.tech_category}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "techName": self.name,
             "techCategory": self.tech_category,
@@ -302,7 +302,7 @@ class TypeDefinitionNode:
         return f"TypeDefinition_{self.repository_name}_{self.name}_{self.type_category}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "typeName": self.name,
             "category": self.type_category,
@@ -344,7 +344,7 @@ class MethodNode:
         return f"Method_{self.repository_name}_{self.type_name}_{self.name}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "methodName": self.name,
             "returnType": self.return_type,
@@ -395,7 +395,7 @@ class TestNode:
         return f"Test_{self.repository_name}_{self.name}_{self.test_type}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "testName": self.name,
             "testType": self.test_type,
@@ -428,7 +428,7 @@ class ServiceNode:
         return f"Service_{self.repository_name}_{self.name}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "serviceName": self.name,
             "description": self.description,
@@ -477,7 +477,7 @@ class ExternalDependencyNode:
         return f"ExternalDependency_{self.name}{version_suffix}"
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for Neo4j."""
+        """Convert to dictionary for graph storage."""
         return {
             "dependencyName": self.name,
             "dependencyCategory": self.dependency_category,

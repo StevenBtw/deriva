@@ -396,7 +396,7 @@ class StructuralConsistencyStep:
         """
         # Update the relationship type from Flow to Access
         # This requires deleting the old relationship and creating a new one
-        # because Neo4j doesn't allow changing relationship types in-place
+        # because the graph doesn't allow changing relationship types in-place
 
         # Get the relationship details first
         query = f"""

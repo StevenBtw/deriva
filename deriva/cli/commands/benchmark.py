@@ -163,7 +163,7 @@ def benchmark_run(
     typer.echo(f"{'=' * 60}\n")
 
     with PipelineSession() as session:
-        typer.echo("Connected to Neo4j")
+        typer.echo("Connected to grafeo")
 
         # Handle --only-extraction-step and --only-derivation-step
         if only_extraction_step:

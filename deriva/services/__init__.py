@@ -10,7 +10,7 @@ Primary API:
         - Lifecycle: connect(), disconnect(), context manager
         - Queries: get_graph_stats(), get_archimate_elements(), etc.
         - Orchestration: run_extraction(), run_derivation(), run_pipeline()
-        - Infrastructure: start_neo4j(), stop_neo4j(), clear_graph()
+        - Infrastructure: start_graph_db(), stop_graph_db(), clear_graph()
         - Export: export_model()
 
 Usage (CLI):

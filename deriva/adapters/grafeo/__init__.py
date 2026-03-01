@@ -1,7 +1,7 @@
 """Grafeo Adapter - Embedded graph database connection for Deriva.
 
 This package provides an embedded graph database connection using grafeo,
-replacing the Neo4j server dependency. Multiple managers share a single
+providing an embedded alternative to external graph databases. Multiple managers share a single
 database instance with namespace isolation via label prefixes.
 
 Example:

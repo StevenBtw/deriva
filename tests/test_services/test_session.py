@@ -23,7 +23,6 @@ class TestPipelineSessionLifecycle:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager") as mock_repo,
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession(auto_connect=True)
             assert session.is_connected()
@@ -39,7 +38,6 @@ class TestPipelineSessionLifecycle:
             patch("deriva.services.session.GraphManager") as mock_graph,
             patch("deriva.services.session.ArchimateManager") as mock_archimate,
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession()
             session.connect()
@@ -56,7 +54,6 @@ class TestPipelineSessionLifecycle:
             patch("deriva.services.session.GraphManager"),
             patch("deriva.services.session.ArchimateManager"),
             patch("deriva.services.session.RepoManager"),
-            patch("deriva.services.session.Neo4jConnection"),
         ):
             session = PipelineSession()
             session.connect()

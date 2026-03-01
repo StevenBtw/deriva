@@ -419,17 +419,16 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Neo4j
+    ## Graph Database
     """)
     return
 
 
 @app.cell
 def _(mo, session):
-    # Always try DB connectivity first - this is the most reliable check
+    # Check graph database connectivity
     _db_connected = False
     _db_error = None
-    _docker_status = None
 
     try:
         _stats = session.get_graph_stats()
@@ -437,62 +436,20 @@ def _(mo, session):
     except Exception as e:
         _db_error = str(e)
 
-    # Also try Docker status for additional info
-    try:
-        _docker_status = session.get_neo4j_status()
-    except Exception:
-        pass  # Docker status is optional
-
     if _db_connected:
         _kind = "success"
-        _port = _docker_status.get("port", 7687) if _docker_status else 7687
-        _text = f"**Status:** Connected\n- Port: {_port}\n- Nodes: {_stats.get('total_nodes', 0)}"
+        _text = f"**Status:** Connected (grafeo embedded)\n- Nodes: {_stats.get('total_nodes', 0)}"
     else:
         _kind = "warn"
         _text = "**Status:** Not connected"
         if _db_error:
             _text += f"\n- Error: {_db_error[:100]}"
 
-    start_neo4j_btn = mo.ui.run_button(label="Start", disabled=_db_connected)
-    stop_neo4j_btn = mo.ui.run_button(label="Stop", disabled=not _db_connected)
-
     mo.vstack(
         [
             mo.callout(mo.md(_text), kind=_kind),
-            mo.hstack([start_neo4j_btn, stop_neo4j_btn]),
         ]
     )
-    return start_neo4j_btn, stop_neo4j_btn
-
-
-@app.cell
-def _(mo, session, start_neo4j_btn, stop_neo4j_btn):
-    if start_neo4j_btn.value:
-        print("[Deriva] Starting Neo4j...")
-        try:
-            _result = session.start_neo4j()
-            if _result.get("success", True):
-                print("[Deriva] Neo4j start initiated")
-                mo.callout(mo.md("Neo4j starting..."), kind="info")
-            else:
-                print(f"[Deriva] Neo4j start failed: {_result.get('error', 'Unknown')}")
-                mo.callout(mo.md(f"Error: {_result.get('error', 'Unknown')}"), kind="danger")
-        except Exception as e:
-            print(f"[Deriva] Neo4j start error: {str(e)[:100]}")
-            mo.callout(mo.md(f"Docker error: {str(e)[:100]}"), kind="danger")
-    elif stop_neo4j_btn.value:
-        print("[Deriva] Stopping Neo4j...")
-        try:
-            _result = session.stop_neo4j()
-            if _result.get("success", True):
-                print("[Deriva] Neo4j stop initiated")
-                mo.callout(mo.md("Neo4j stopping..."), kind="info")
-            else:
-                print(f"[Deriva] Neo4j stop failed: {_result.get('error', 'Unknown')}")
-                mo.callout(mo.md(f"Error: {_result.get('error', 'Unknown')}"), kind="danger")
-        except Exception as e:
-            print(f"[Deriva] Neo4j stop error: {str(e)[:100]}")
-            mo.callout(mo.md(f"Docker error: {str(e)[:100]}"), kind="danger")
     return
 
 

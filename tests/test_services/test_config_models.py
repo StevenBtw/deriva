@@ -13,36 +13,34 @@ from deriva.services.config_models import (
     DerivationLimits,
     ExtractionConfigModel,
     FileTypeModel,
+    GrafeoSettings,
     LLMSettings,
     LouvainConfig,
-    Neo4jSettings,
     PageRankConfig,
 )
 
 # Type alias to help with BaseSettings._env_file parameter which isn't in the type signature
-_Neo4jSettings: Any = Neo4jSettings
+_GrafeoSettings: Any = GrafeoSettings
 _LLMSettings: Any = LLMSettings
 _DerivaSettings: Any = DerivaSettings
 
 
-class TestNeo4jSettings:
-    """Tests for Neo4jSettings."""
+class TestGrafeoSettings:
+    """Tests for GrafeoSettings."""
 
     def test_default_values(self):
         """Should have sensible defaults."""
-        settings = _Neo4jSettings(_env_file=None)
-        assert settings.uri == "bolt://localhost:7687"
-        assert settings.database == "neo4j"
-        assert settings.encrypted is False
-        assert settings.max_connection_pool_size == 50
+        settings = _GrafeoSettings(_env_file=None)
+        assert settings.db_path == ""
+        assert settings.log_queries is False
 
     def test_loads_from_env(self, monkeypatch):
         """Should load values from environment."""
-        monkeypatch.setenv("NEO4J_URI", "bolt://custom:7687")
-        monkeypatch.setenv("NEO4J_DATABASE", "test_db")
-        settings = _Neo4jSettings(_env_file=None)
-        assert settings.uri == "bolt://custom:7687"
-        assert settings.database == "test_db"
+        monkeypatch.setenv("GRAFEO_DB_PATH", "/tmp/test.db")
+        monkeypatch.setenv("GRAFEO_LOG_QUERIES", "true")
+        settings = _GrafeoSettings(_env_file=None)
+        assert settings.db_path == "/tmp/test.db"
+        assert settings.log_queries is True
 
 
 class TestLLMSettings:
@@ -82,7 +80,7 @@ class TestDerivaSettings:
     def test_nested_settings(self):
         """Should provide access to nested settings."""
         settings = _DerivaSettings(_env_file=None)
-        assert settings.neo4j.uri == "bolt://localhost:7687"
+        assert settings.grafeo.db_path == ""
         assert settings.llm.temperature == 0.6
         assert settings.graph.namespace == "Graph"
 

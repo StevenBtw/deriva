@@ -195,14 +195,12 @@ def mock_session_dependencies():
         patch("deriva.services.session.GraphManager") as mock_graph,
         patch("deriva.services.session.ArchimateManager") as mock_archimate,
         patch("deriva.services.session.RepoManager") as mock_repo,
-        patch("deriva.services.session.Neo4jConnection") as mock_neo4j,
     ):
         yield {
             "db": mock_db,
             "graph": mock_graph,
             "archimate": mock_archimate,
             "repo": mock_repo,
-            "neo4j": mock_neo4j,
         }
 
 

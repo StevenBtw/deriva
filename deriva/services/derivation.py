@@ -151,7 +151,7 @@ def generate_element(
         archimate_manager: Connected ArchimateManager for element creation
         llm_query_fn: Function to call LLM (prompt, schema, **kwargs) -> response
         element_type: ArchiMate element type (e.g., 'ApplicationService')
-        engine: DuckDB connection for patterns (enrichments read from Neo4j)
+        engine: DuckDB connection for patterns (enrichments read from graph)
         query: Cypher query to get candidate nodes
         instruction: LLM instruction prompt
         example: Example output for LLM
@@ -247,7 +247,7 @@ def _get_graph_edges(
             If provided, only returns edges where both nodes belong to this repo.
             This enables per-repository enrichment isolation in multi-repo setups.
 
-    Note: Labels in Neo4j are separate (e.g., ['Graph', 'Directory'], not 'Graph:Directory').
+    Note: Labels are separate (e.g., ['Graph', 'Directory'], not 'Graph:Directory').
     We match any node with the 'Graph' label to get all graph nodes.
     """
     if repository_name:
@@ -282,7 +282,7 @@ def _run_prep_step(
     """Run a single prep step (graph enrichment algorithm).
 
     Enrich steps compute graph metrics (PageRank, Louvain, k-core, etc.)
-    and store them as properties on Neo4j nodes.
+    and store them as properties on graph nodes.
     """
     step_name = cfg.step_name
     logger = logging.getLogger(__name__)
@@ -326,7 +326,7 @@ def _run_prep_step(
         if not result.enrichments:
             return {"success": True, "stats": {"nodes_updated": 0}}
 
-        # Write enrichments to Neo4j
+        # Write enrichments to graph
         nodes_updated = graph_manager.batch_update_properties(result.enrichments)
 
         logger.info(
