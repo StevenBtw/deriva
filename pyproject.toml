@@ -59,7 +59,7 @@ dependencies = [
     "solvor>=0.6",
     # LLM
     "backoff>=2.2.1",
-    "pydantic-ai>=1.63.0",
+    "pydantic-ai>=1",
     # Utilities
     "diskcache>=5.6.3",
     "nest-asyncio>=1.6.0",
@@ -75,7 +75,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
     "ruff>=0.15",
-    "ty>=0.0.19",
+    "ty>=0.0.21",
     "types-lxml>=2026.2",
 ]
 
