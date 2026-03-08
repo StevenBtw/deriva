@@ -924,7 +924,8 @@ class BenchmarkOrchestrator:
             llm = nocache_llm if skip_cache else cached_llm
 
             # Generate cache key for tracking (uses same logic as CacheManager)
-            effective_schema = response_model.model_json_schema() if response_model else schema
+            model_schema_fn = getattr(response_model, "model_json_schema", None)
+            effective_schema = model_schema_fn() if model_schema_fn else schema
             cache_key = CacheManager.generate_cache_key(
                 prompt=prompt,
                 model=llm.model,
@@ -935,15 +936,16 @@ class BenchmarkOrchestrator:
 
             # Call the actual LLM with optional parameters
             # Pass bench_hash for per-run cache isolation if enabled
-            response = llm.query(
-                prompt,
-                schema=schema,
-                response_model=response_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                bench_hash=bench_hash,
-                system_prompt=system_prompt,
-            )
+            kwargs: dict[str, Any] = {
+                "schema": schema,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "bench_hash": bench_hash,
+                "system_prompt": system_prompt,
+            }
+            if response_model is not None:
+                kwargs["response_model"] = response_model
+            response = llm.query(prompt, **kwargs)
 
             # Log the query as an OCEL event (metadata only)
             usage = getattr(response, "usage", None) or {}
