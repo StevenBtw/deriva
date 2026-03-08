@@ -910,10 +910,11 @@ class BenchmarkOrchestrator:
 
         def query_fn(
             prompt: str,
-            schema: dict,
+            schema: dict | None = None,
             temperature: float | None = None,
             max_tokens: int | None = None,
             system_prompt: str | None = None,
+            response_model: type | None = None,
         ) -> Any:
             # Check if current config should skip cache
             current_config = run_logger.current_config
@@ -923,10 +924,11 @@ class BenchmarkOrchestrator:
             llm = nocache_llm if skip_cache else cached_llm
 
             # Generate cache key for tracking (uses same logic as CacheManager)
+            effective_schema = response_model.model_json_schema() if response_model else schema
             cache_key = CacheManager.generate_cache_key(
                 prompt=prompt,
                 model=llm.model,
-                schema=schema,
+                schema=effective_schema,
                 bench_hash=bench_hash,
             )
             used_cache_keys.append(cache_key)
@@ -936,6 +938,7 @@ class BenchmarkOrchestrator:
             response = llm.query(
                 prompt,
                 schema=schema,
+                response_model=response_model,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 bench_hash=bench_hash,
