@@ -55,6 +55,7 @@ from deriva.adapters.llm.cache import CacheManager
 from deriva.adapters.llm.manager import load_benchmark_models
 from deriva.adapters.llm.models import BenchmarkModelConfig
 from deriva.common.ocel import OCELLog, create_run_id, hash_content
+from deriva.services import config as config_service
 from deriva.services import derivation, extraction
 
 # =============================================================================
@@ -422,6 +423,108 @@ class BenchmarkOrchestrator:
 
         return errors
 
+    def _ensure_extraction(self, verbose: bool = False) -> list[str]:
+        """Ensure extraction data exists for all benchmark repositories.
+
+        For each repository, checks the extraction fingerprint (hash of
+        extraction config versions + repo commit). If the fingerprint matches,
+        extraction is skipped. Otherwise, clears that repo's graph data and
+        re-extracts.
+
+        This runs once before the benchmark loop so that derivation iterations
+        don't pay the extraction cost repeatedly.
+
+        Args:
+            verbose: Print progress to stdout
+
+        Returns:
+            List of error messages (empty if all succeeded)
+        """
+        errors: list[str] = []
+        config_versions = getattr(self, "_config_versions_snapshot", None)
+
+        if verbose:
+            print("\n--- Ensuring extraction data ---")
+
+        for repo_name in self.config.repositories:
+            try:
+                # Compute expected fingerprint
+                current_fp = extraction.compute_extraction_fingerprint(self.engine, repo_name, config_versions)
+
+                # Check if extraction is current
+                stored_fp = self.graph_manager.get_extraction_fingerprint(repo_name)
+
+                if stored_fp == current_fp:
+                    if verbose:
+                        print(f"  {repo_name}: extraction cached (fingerprint match)")
+                    continue
+
+                # Need to (re-)extract
+                if stored_fp:
+                    reason = "fingerprint mismatch (configs or repo changed)"
+                else:
+                    reason = "no cached extraction"
+
+                if verbose:
+                    print(f"  {repo_name}: extracting ({reason})")
+
+                # Clear only this repo's data, not the whole graph
+                self.graph_manager.clear_graph_for_repo(repo_name)
+
+                # Use first model's LLM for extraction (extraction is model-independent
+                # for deterministic steps; LLM steps use cache anyway)
+                first_model = self.config.models[0]
+                model_config = self._model_configs[first_model]
+                llm_manager = LLMManager.from_config(model_config, nocache=False)
+
+                def llm_query_fn(
+                    prompt: str,
+                    schema: dict | None = None,
+                    temperature: float | None = None,
+                    max_tokens: int | None = None,
+                    system_prompt: str | None = None,
+                    response_model: type | None = None,
+                ) -> Any:
+                    return llm_manager.query(  # type: ignore[call-overload]
+                        prompt,
+                        schema=schema,
+                        response_model=response_model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        system_prompt=system_prompt,
+                    )
+
+                result = extraction.run_extraction(
+                    engine=self.engine,
+                    graph_manager=self.graph_manager,
+                    llm_query_fn=llm_query_fn,
+                    repo_name=repo_name,
+                    verbose=False,
+                    config_versions=config_versions,
+                    model=model_config.model,
+                )
+
+                if result.get("success"):
+                    if verbose:
+                        s = result.get("stats", {})
+                        print(f"  {repo_name}: extracted {s.get('nodes_created', 0)} nodes, {s.get('edges_created', 0)} edges")
+                else:
+                    repo_errors = result.get("errors", [])
+                    errors.extend(repo_errors)
+                    if verbose:
+                        print(f"  {repo_name}: extraction failed: {repo_errors}")
+
+            except Exception as e:
+                error_msg = f"Extraction failed for {repo_name}: {e}"
+                errors.append(error_msg)
+                if verbose:
+                    print(f"  {repo_name}: ERROR: {e}")
+
+        if verbose:
+            print("--- Extraction phase complete ---\n")
+
+        return errors
+
     def run(
         self,
         verbose: bool = False,
@@ -498,6 +601,14 @@ class BenchmarkOrchestrator:
             print(f"Mode: {'per-repo' if self.config.per_repo else 'combined'}")
             print(f"Total runs: {self.config.total_runs()}")
             print(f"{'=' * 60}\n")
+
+        # Pre-extract: ensure extraction data exists for all repos
+        # This runs extraction once per repo (or skips if cached),
+        # so the benchmark loop only needs to re-derive.
+        if "extraction" in self.config.stages:
+            extraction_errors = self._ensure_extraction(verbose=verbose)
+            if extraction_errors:
+                errors.extend(extraction_errors)
 
         run_number = 0
         total_runs = self.config.total_runs()
@@ -714,9 +825,9 @@ class BenchmarkOrchestrator:
         stats: dict[str, Any] = {"extraction": {}, "derivation": {}}
 
         try:
-            # Clear graph/model once at start
+            # Only clear Model namespace between runs.
+            # Extraction data persists (handled by _ensure_extraction before the loop).
             if self.config.clear_between_runs:
-                self.graph_manager.clear_graph()
                 self.archimate_manager.clear_model()
 
             # Create LLM managers for this model
@@ -753,42 +864,10 @@ class BenchmarkOrchestrator:
 
             stages = self.config.stages
 
-            # Run extraction for ALL repositories (accumulate in graph)
+            # Extraction is handled by _ensure_extraction() before the benchmark loop.
+            # Log stats if extraction was part of this benchmark's stages.
             if "extraction" in stages:
-                total_extraction_stats: dict[str, Any] = {
-                    "nodes_created": 0,
-                    "edges_created": 0,
-                    "steps_completed": 0,
-                    "per_repo": {},
-                }
-
-                for repo_name in repositories:
-                    if verbose:
-                        print(f"  Extracting: {repo_name}")
-
-                    result = extraction.run_extraction(
-                        engine=self.engine,
-                        graph_manager=self.graph_manager,
-                        llm_query_fn=llm_query_fn,
-                        repo_name=repo_name,
-                        verbose=False,
-                        run_logger=cast("RunLoggerProtocol", ocel_run_logger),
-                        progress=progress,
-                        model=model_config.model,
-                        config_versions=getattr(self, "_config_versions_snapshot", None),
-                    )
-
-                    repo_stats = result.get("stats", {})
-                    total_extraction_stats["per_repo"][repo_name] = repo_stats
-                    total_extraction_stats["nodes_created"] += repo_stats.get("nodes_created", 0)
-                    total_extraction_stats["edges_created"] += repo_stats.get("edges_created", 0)
-                    total_extraction_stats["steps_completed"] += repo_stats.get("steps_completed", 0)
-
-                    self._log_extraction_results(result)
-                    if not result.get("success"):
-                        errors.extend(result.get("errors", []))
-
-                stats["extraction"] = total_extraction_stats
+                stats["extraction"] = {"skipped": True, "reason": "pre-extracted"}
 
             # Run derivation ONCE on combined graph
             if "derivation" in stages:
@@ -1081,7 +1160,6 @@ class BenchmarkOrchestrator:
 
     def _create_session(self) -> None:
         """Create benchmark session in database with config version snapshot."""
-        from deriva.services import config as config_service
 
         assert self.session_start is not None, "session_start must be set"
 

@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from pydantic_settings import SettingsConfigDict
 
 from deriva.services.config_models import (
     BenchmarkModelConfigModel,
@@ -77,8 +78,14 @@ class TestDerivaSettings:
         settings = _DerivaSettings(_env_file=None)
         assert settings.repository_workspace_dir == "workspace/repositories"
 
-    def test_nested_settings(self):
-        """Should provide access to nested settings."""
+    def test_nested_settings(self, monkeypatch):
+        """Should provide access to nested settings.
+
+        Nested settings properties create fresh instances that read .env,
+        so we must clear the env var to isolate the test.
+        """
+        monkeypatch.delenv("GRAFEO_DB_PATH", raising=False)
+        monkeypatch.setattr(GrafeoSettings, "model_config", SettingsConfigDict(env_prefix="GRAFEO_", env_file=None, extra="ignore"))
         settings = _DerivaSettings(_env_file=None)
         assert settings.grafeo.db_path == ""
         assert settings.llm.temperature == 0.6

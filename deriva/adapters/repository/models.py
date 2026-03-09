@@ -79,7 +79,7 @@ class FileNode:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary recursively."""
-        result = {
+        result: dict[str, Any] = {
             "name": self.name,
             "path": self.path,
             "type": self.type,

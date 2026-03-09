@@ -173,7 +173,7 @@ class CrossLayerCoherenceStep:
             }}
             RETURN source.identifier as identifier,
                    source.name as name,
-                   [lbl IN labels(source) WHERE lbl STARTS WITH '{ns}:'][0] as label
+                   [lbl IN labels(source) WHERE lbl <> '{ns}'][0] as label
         """
 
         disconnected = archimate_manager.query(query)
@@ -185,9 +185,7 @@ class CrossLayerCoherenceStep:
             )
 
             for elem in disconnected:
-                element_type = (
-                    elem["label"].split(":")[-1] if elem["label"] else "Unknown"
-                )
+                element_type = elem["label"] if elem["label"] else "Unknown"
                 result.issues_found += 1
                 result.details.append(
                     {
@@ -230,7 +228,7 @@ class CrossLayerCoherenceStep:
             }}
             RETURN elem.identifier as identifier,
                    elem.name as name,
-                   [lbl IN labels(elem) WHERE lbl STARTS WITH '{ns}:'][0] as label
+                   [lbl IN labels(elem) WHERE lbl <> '{ns}'][0] as label
         """
 
         floating = archimate_manager.query(query)
@@ -241,9 +239,7 @@ class CrossLayerCoherenceStep:
             )
 
             for elem in floating:
-                element_type = (
-                    elem["label"].split(":")[-1] if elem["label"] else "Unknown"
-                )
+                element_type = elem["label"] if elem["label"] else "Unknown"
                 result.issues_found += 1
                 result.details.append(
                     {

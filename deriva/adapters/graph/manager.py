@@ -643,3 +643,147 @@ class GraphManager:
         except Exception as e:
             logger.error(f"Failed to clear graph: {e}")
             raise
+
+    def clear_graph_for_repo(self, repo_name: str) -> int:
+        """Clear all nodes and edges for a specific repository.
+
+        Deletes only Graph-namespace nodes where repository_name matches.
+        All node types (including Repository) get repository_name set
+        by add_node(), so a single filter covers everything.
+
+        Args:
+            repo_name: Repository name to clear
+
+        Returns:
+            Number of nodes deleted
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        try:
+            ns = self.namespace
+            # Count first (grafeo can't RETURN after DETACH DELETE)
+            count_query = f"""
+                MATCH (n:`{ns}`)
+                WHERE n.repository_name = $repo_name
+                RETURN count(n) as cnt
+            """
+            count_result = self.db.execute_read(count_query, {"repo_name": repo_name})
+            count = count_result[0]["cnt"] if count_result else 0
+
+            if count > 0:
+                delete_query = f"""
+                    MATCH (n:`{ns}`)
+                    WHERE n.repository_name = $repo_name
+                    DETACH DELETE n
+                """
+                self.db.execute_write(delete_query, {"repo_name": repo_name})
+
+            logger.info(
+                "Cleared %d nodes for repo '%s' from namespace '%s'",
+                count,
+                repo_name,
+                self.namespace,
+            )
+            return count
+
+        except Exception as e:
+            logger.error("Failed to clear graph for repo '%s': %s", repo_name, e)
+            raise
+
+    def has_extraction(self, repo_name: str) -> bool:
+        """Check if extraction data exists for a repository.
+
+        Looks for a Repository node with the given repository_name
+        in the Graph namespace.
+
+        Args:
+            repo_name: Repository name to check
+
+        Returns:
+            True if extraction data exists
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        try:
+            query = """
+                MATCH (n:Repository)
+                WHERE n.repository_name = $repo_name
+                RETURN count(n) as cnt
+            """
+            result = self.db.execute_read(query, {"repo_name": repo_name})
+            return (result[0]["cnt"] > 0) if result else False
+
+        except Exception as e:
+            logger.error("Failed to check extraction for '%s': %s", repo_name, e)
+            return False
+
+    def get_extraction_fingerprint(self, repo_name: str) -> str | None:
+        """Get the stored extraction fingerprint for a repository.
+
+        The fingerprint is a hash of extraction config versions and repo commit,
+        stored on the Repository node after extraction completes.
+
+        Args:
+            repo_name: Repository name
+
+        Returns:
+            Fingerprint hash string, or None if not set
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        try:
+            query = """
+                MATCH (n:Repository)
+                WHERE n.repository_name = $repo_name
+                RETURN n.extraction_fingerprint as fingerprint
+            """
+            result = self.db.execute_read(query, {"repo_name": repo_name})
+            if result and result[0].get("fingerprint"):
+                return result[0]["fingerprint"]
+            return None
+
+        except Exception as e:
+            logger.error("Failed to get fingerprint for '%s': %s", repo_name, e)
+            return None
+
+    def set_extraction_fingerprint(self, repo_name: str, fingerprint: str) -> bool:
+        """Store an extraction fingerprint on the Repository node.
+
+        Called after extraction completes to record what configs and
+        repo state produced the current graph data.
+
+        Args:
+            repo_name: Repository name
+            fingerprint: Hash string to store
+
+        Returns:
+            True if updated, False if Repository node not found
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        try:
+            query = """
+                MATCH (n:Repository)
+                WHERE n.repository_name = $repo_name
+                SET n.extraction_fingerprint = $fingerprint
+                RETURN n.id as id
+            """
+            result = self.db.execute_write(
+                query, {"repo_name": repo_name, "fingerprint": fingerprint}
+            )
+            if result:
+                logger.info(
+                    "Set extraction fingerprint for '%s': %s...",
+                    repo_name,
+                    fingerprint[:12],
+                )
+                return True
+            return False
+
+        except Exception as e:
+            logger.error("Failed to set fingerprint for '%s': %s", repo_name, e)
+            raise
