@@ -34,15 +34,15 @@ classifiers = [
 
 dependencies = [
     # Core
-    "pydantic>=2.12.5",
+    "pydantic>=2.12",
     "pydantic-settings>=2.13",
-    "python-dotenv>=1.2.1",
-    "pyyaml>=6.0.3",
+    "python-dotenv>=1.2",
+    "pyyaml>=6.0",
     "rich>=14.3",
-    "lxml>=6.0.2",
+    "lxml>=6.0",
     # Databases
-    "duckdb>=1.4.4",
-    "grafeo>=0.5.17",
+    "duckdb>=1.5",
+    "grafeo>=0.5",
     "sqlglot>=29",
     # UI
     "marimo>=0.20",
@@ -53,8 +53,8 @@ dependencies = [
     "tree-sitter-java>=0.23.0",
     "tree-sitter-c-sharp>=0.23.0",
     # Document Parsing
-    "pypdf>=6.7",
-    "python-docx>=1.2.0",
+    "pypdf>=6",
+    "python-docx>=1.2",
     # Graph Algorithms
     "solvor>=0.6",
     # LLM
@@ -65,17 +65,16 @@ dependencies = [
     "nest-asyncio>=1.6.0",
     "structlog>=24.0",
     "typer>=0.24",
-    "prek>=0.3.4",
+    "prek>=0.3",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pip-audit>=2.9.0",
-    "prek>=0.1.0",
-    "pytest>=9.0.2",
-    "pytest-cov>=7.0.0",
+    "pip-audit>=2",
+    "pytest>=9.0",
+    "pytest-cov>=7",
     "ruff>=0.15",
-    "ty>=0.0.21",
+    "ty>=0.0",
     "types-lxml>=2026.2",
 ]
 
