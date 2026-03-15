@@ -46,6 +46,7 @@ dependencies = [
     "sqlglot>=29",
     # UI
     "marimo>=0.20",
+    "anywidget-graph>=0.2",
     # Code Analysis (tree-sitter)
     "tree-sitter>=0.24.6",
     "tree-sitter-python>=0.23.0",
