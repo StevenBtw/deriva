@@ -189,7 +189,11 @@ def run_stage(
             else:
                 derivation_configs = session.get_derivation_configs()
                 for cfg in derivation_configs:
-                    name = cfg.get("step_name", cfg.get("name", ""))
+                    name = (
+                        cfg.get("element_type", "")
+                        or cfg.get("step_name", "")
+                        or cfg.get("name", "")
+                    )
                     if name == only_step:
                         session.enable_step("derivation", name)
                     else:
