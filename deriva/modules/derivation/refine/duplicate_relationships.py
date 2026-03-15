@@ -205,8 +205,9 @@ class DuplicateRelationshipsStep:
         ns = archimate_manager.namespace
 
         self_loop_query = f"""
-            MATCH (a:`{ns}`)-[r]->(a)
+            MATCH (a:`{ns}`)-[r]->(b:`{ns}`)
             WHERE type(r) STARTS WITH '{ns}:'
+              AND a.identifier = b.identifier
             RETURN r.identifier as rel_id,
                    a.identifier as element_id,
                    a.name as element_name,

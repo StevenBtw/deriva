@@ -557,7 +557,13 @@ def _(get_graph_refresh, mo, session):
     if _node_ids:
         _edge_results = session.query_graph("MATCH (src)-[r]->(dst) RETURN src.id as source, type(r) as label, dst.id as target")
         for _e in _edge_results:
-            _key = (_e["source"], _e["target"], _e.get("label", ""))
+            _src = _e["source"]
+            _tgt = _e["target"]
+            if _src is None or _tgt is None:
+                continue
+            if _src not in _node_ids or _tgt not in _node_ids:
+                continue
+            _key = (_src, _tgt, _e.get("label", ""))
             if _key not in _seen_edges:
                 _seen_edges.add(_key)
                 _edges.append(
