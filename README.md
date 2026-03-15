@@ -10,6 +10,8 @@
 
 Deriva analyzes code repositories and transforms them into [ArchiMate](https://www.opengroup.org/archimate-forum) models that can be opened in the [Archi modeling tool](https://www.archimatetool.com/).
 
+![Deriva App](assets/app.png)
+
 ## How It Works
 
 1. **Clone** a Git repository
