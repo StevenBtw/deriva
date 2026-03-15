@@ -149,15 +149,13 @@ class StructuralConsistencyStep:
         containment_query = f"""
             MATCH (graph_parent)-[:`Graph:CONTAINS`]->(graph_child)
             WHERE graph_parent.active = true AND graph_child.active = true
-              AND any(lbl IN labels(graph_parent) WHERE lbl STARTS WITH 'Graph:')
-              AND any(lbl IN labels(graph_child) WHERE lbl STARTS WITH 'Graph:')
+              AND 'Graph' IN labels(graph_parent)
+              AND 'Graph' IN labels(graph_child)
             WITH graph_parent.id as parent_source, graph_child.id as child_source
 
             // Find Model elements derived from these Graph nodes
-            MATCH (model_parent), (model_child)
-            WHERE any(lbl IN labels(model_parent) WHERE lbl STARTS WITH '{model_ns}:')
-              AND any(lbl IN labels(model_child) WHERE lbl STARTS WITH '{model_ns}:')
-              AND model_parent.enabled = true AND model_child.enabled = true
+            MATCH (model_parent:{model_ns}), (model_child:{model_ns})
+            WHERE model_parent.enabled = true AND model_child.enabled = true
               AND model_parent.properties_json CONTAINS parent_source
               AND model_child.properties_json CONTAINS child_source
 
@@ -216,10 +214,8 @@ class StructuralConsistencyStep:
         # Graph CALLS relationships with Model Flow/Serving relationships
 
         call_query = f"""
-            MATCH (model_source)-[r]->(model_target)
-            WHERE any(lbl IN labels(model_source) WHERE lbl STARTS WITH '{model_ns}:')
-              AND any(lbl IN labels(model_target) WHERE lbl STARTS WITH '{model_ns}:')
-              AND type(r) IN ['{model_ns}:Flow', '{model_ns}:Serving']
+            MATCH (model_source:{model_ns})-[r]->(model_target:{model_ns})
+            WHERE type(r) IN ['{model_ns}:Flow', '{model_ns}:Serving']
               AND model_source.enabled = true AND model_target.enabled = true
             RETURN count(*) as flow_serving_count
         """
@@ -243,8 +239,7 @@ class StructuralConsistencyStep:
     ) -> str | None:
         """Get the source Graph node ID for a Model element."""
         query = f"""
-            MATCH (e {{identifier: $identifier}})
-            WHERE any(lbl IN labels(e) WHERE lbl STARTS WITH '{model_ns}:')
+            MATCH (e:{model_ns} {{identifier: $identifier}})
             RETURN e.properties_json as properties_json
         """
 
@@ -426,9 +421,7 @@ class StructuralConsistencyStep:
 
         # Create new Access relationship with same properties
         create_query = f"""
-            MATCH (source {{identifier: $source_id}}), (target {{identifier: $target_id}})
-            WHERE any(lbl IN labels(source) WHERE lbl STARTS WITH '{model_ns}:')
-              AND any(lbl IN labels(target) WHERE lbl STARTS WITH '{model_ns}:')
+            MATCH (source:{model_ns} {{identifier: $source_id}}), (target:{model_ns} {{identifier: $target_id}})
             CREATE (source)-[r:`{model_ns}:Access` {{
                 identifier: $rel_id,
                 relationship_type: 'Access',

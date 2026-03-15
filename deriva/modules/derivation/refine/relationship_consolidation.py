@@ -95,10 +95,8 @@ class RelationshipConsolidationStep:
             # Step 1: Get all relationships with their properties
             ns = archimate_manager.namespace
             rel_query = f"""
-                MATCH (source)-[r]->(target)
-                WHERE any(lbl IN labels(source) WHERE lbl STARTS WITH '{ns}:')
-                  AND any(lbl IN labels(target) WHERE lbl STARTS WITH '{ns}:')
-                  AND type(r) STARTS WITH '{ns}:'
+                MATCH (source:{ns})-[r]->(target:{ns})
+                WHERE type(r) STARTS WITH '{ns}:'
                   AND source.enabled = true AND target.enabled = true
                 RETURN r.identifier as identifier,
                        source.identifier as source_id,

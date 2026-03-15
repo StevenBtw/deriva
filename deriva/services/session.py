@@ -334,6 +334,39 @@ class PipelineSession:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def clear_graph_for_repo(self, repo_name: str) -> dict[str, Any]:
+        """Clear graph data for a specific repository only."""
+        self._ensure_connected()
+        assert self._graph_manager is not None
+        try:
+            deleted = self._graph_manager.clear_graph_for_repo(repo_name)
+            return {"success": True, "deleted": deleted, "repository": repo_name}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def has_extraction(self, repo_name: str) -> bool:
+        """Check if extraction data exists for a repository."""
+        self._ensure_connected()
+        assert self._graph_manager is not None
+        return self._graph_manager.has_extraction(repo_name)
+
+    def is_extraction_current(self, repo_name: str) -> bool:
+        """Check if extraction data is current (fingerprint matches).
+
+        Compares stored fingerprint against current extraction configs
+        and repo commit hash. Returns False if re-extraction is needed.
+        """
+        self._ensure_connected()
+        assert self._graph_manager is not None
+        assert self._engine is not None
+
+        stored_fp = self._graph_manager.get_extraction_fingerprint(repo_name)
+        if not stored_fp:
+            return False
+
+        current_fp = extraction.compute_extraction_fingerprint(self._engine, repo_name)
+        return stored_fp == current_fp
+
     # =========================================================================
     # ORCHESTRATION (pipeline operations)
     # =========================================================================

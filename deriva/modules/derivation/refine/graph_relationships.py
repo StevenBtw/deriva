@@ -264,13 +264,13 @@ class GraphRelationshipsStep:
         circular_filter = ""
 
         if valid_sources:
-            source_types = ", ".join(f"'{model_ns}:{t}'" for t in valid_sources)
+            source_types = ", ".join(f"'{t}'" for t in valid_sources)
             source_filter = f"""
                 AND any(lbl IN labels(model_src) WHERE lbl IN [{source_types}])
             """
 
         if valid_targets:
-            target_types = ", ".join(f"'{model_ns}:{t}'" for t in valid_targets)
+            target_types = ", ".join(f"'{t}'" for t in valid_targets)
             target_filter = f"""
                 AND any(lbl IN labels(model_tgt) WHERE lbl IN [{target_types}])
             """
@@ -293,10 +293,8 @@ class GraphRelationshipsStep:
 
             // Find model elements that were derived from these graph nodes
             // Elements store their source graph node ID in source_identifier
-            MATCH (model_src), (model_tgt)
-            WHERE any(lbl IN labels(model_src) WHERE lbl STARTS WITH '{model_ns}:')
-              AND any(lbl IN labels(model_tgt) WHERE lbl STARTS WITH '{model_ns}:')
-              AND model_src.enabled = true AND model_tgt.enabled = true
+            MATCH (model_src:{model_ns}), (model_tgt:{model_ns})
+            WHERE model_src.enabled = true AND model_tgt.enabled = true
               AND model_src.source_identifier = graph_src.id
               AND model_tgt.source_identifier = graph_tgt.id
               AND model_src.identifier <> model_tgt.identifier  // Prevent self-loops
@@ -375,13 +373,13 @@ class GraphRelationshipsStep:
         circular_filter = ""
 
         if valid_sources:
-            source_types = ", ".join(f"'{model_ns}:{t}'" for t in valid_sources)
+            source_types = ", ".join(f"'{t}'" for t in valid_sources)
             source_filter = f"""
                 AND any(lbl IN labels(model_src) WHERE lbl IN [{source_types}])
             """
 
         if valid_targets:
-            target_types = ", ".join(f"'{model_ns}:{t}'" for t in valid_targets)
+            target_types = ", ".join(f"'{t}'" for t in valid_targets)
             target_filter = f"""
                 AND any(lbl IN labels(model_tgt) WHERE lbl IN [{target_types}])
             """
@@ -402,10 +400,8 @@ class GraphRelationshipsStep:
             WITH graph_src.id as src_id, graph_tgt.id as tgt_id
 
             // Find model elements that reference these graph nodes in properties
-            MATCH (model_src), (model_tgt)
-            WHERE any(lbl IN labels(model_src) WHERE lbl STARTS WITH '{model_ns}:')
-              AND any(lbl IN labels(model_tgt) WHERE lbl STARTS WITH '{model_ns}:')
-              AND model_src.enabled = true AND model_tgt.enabled = true
+            MATCH (model_src:{model_ns}), (model_tgt:{model_ns})
+            WHERE model_src.enabled = true AND model_tgt.enabled = true
               AND model_src.properties_json CONTAINS src_id
               AND model_tgt.properties_json CONTAINS tgt_id
               AND model_src.identifier <> model_tgt.identifier  // Prevent self-loops

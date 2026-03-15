@@ -56,6 +56,7 @@ from deriva.adapters.graph.models import (
     TypeDefinitionNode,
 )
 from deriva.adapters.repository import RepoManager
+from deriva.common.cache_utils import hash_inputs
 from deriva.common.document_reader import read_document
 from deriva.common.file_utils import read_file_with_encoding
 from deriva.common.ocel import create_edge_id
@@ -70,6 +71,42 @@ from deriva.modules.extraction.directory_classification import (
     classify_directories,
 )
 from deriva.services import config
+
+
+def compute_extraction_fingerprint(
+    engine: Any,
+    repo_name: str,
+    config_versions: dict[str, dict[str, int]] | None = None,
+) -> str:
+    """Compute a fingerprint for the current extraction state of a repository.
+
+    The fingerprint combines:
+    - Extraction config versions (what instructions/prompts are active)
+    - Repository HEAD commit hash (what code is being extracted)
+
+    If either changes, the fingerprint changes, signaling re-extraction is needed.
+
+    Args:
+        engine: DuckDB connection for config queries
+        repo_name: Repository name to get commit hash for
+        config_versions: Optional pre-loaded config versions. If None, fetched from DB.
+
+    Returns:
+        SHA256 hash string
+    """
+    # Get extraction config versions
+    if config_versions and "extraction" in config_versions:
+        ext_versions = config_versions["extraction"]
+    else:
+        all_versions = config.get_active_config_versions(engine)
+        ext_versions = all_versions.get("extraction", {})
+
+    # Get repo commit hash
+    repo_mgr = RepoManager()
+    repo_info = repo_mgr.get_repository_info(repo_name)
+    commit = repo_info.last_commit if repo_info else "unknown"
+
+    return hash_inputs("extraction", ext_versions, commit)
 
 
 def run_extraction(
@@ -271,6 +308,18 @@ def run_extraction(
             run_logger.phase_error("extraction", "; ".join(errors[:3]), "Extraction completed with errors")
         else:
             run_logger.phase_complete("extraction", "Extraction completed successfully", stats=stats)
+
+    # Set extraction fingerprint on each processed repo (for cache validation)
+    if not errors:
+        for repo in repos:
+            if not hasattr(repo, "name"):
+                continue
+            try:
+                repo_name_str = str(repo.name)
+                fp = compute_extraction_fingerprint(engine, repo_name_str, config_versions)
+                graph_manager.set_extraction_fingerprint(repo_name_str, fp)
+            except Exception as e:
+                logger.warning("Failed to set extraction fingerprint for '%s': %s", repo.name, e)
 
     # Complete progress tracking
     if progress:

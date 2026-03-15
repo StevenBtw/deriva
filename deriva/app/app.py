@@ -511,6 +511,96 @@ def _(clear_graph_btn, get_graph_refresh, mo, session, set_graph_refresh):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Extraction Graph Visualization
+    """)
+    return
+
+
+@app.cell
+def _(get_graph_refresh, mo, session):
+    from anywidget_graph import Graph
+
+    _ = get_graph_refresh()
+
+    _node_types = ["Repository", "Directory", "File", "BusinessConcept", "Technology", "TypeDefinition", "Method", "Test", "ExternalDependency"]
+    _type_colors = {
+        "Repository": "#e74c3c",
+        "Directory": "#f39c12",
+        "File": "#3498db",
+        "BusinessConcept": "#9b59b6",
+        "Technology": "#1abc9c",
+        "TypeDefinition": "#2ecc71",
+        "Method": "#e67e22",
+        "Test": "#95a5a6",
+        "ExternalDependency": "#34495e",
+    }
+
+    _nodes = []
+    _node_ids = set()
+    for _nt in _node_types:
+        for _n in session.get_graph_nodes(_nt):
+            if _n["id"] and _n["id"] not in _node_ids:
+                _node_ids.add(_n["id"])
+                _nid = _n["id"] or ""
+                _nodes.append(
+                    {
+                        "id": _nid,
+                        "label": _n["label"] or _nid.split("::")[-1] or _nt,
+                        "group": _nt,
+                        "color": _type_colors.get(_nt, "#95a5a6"),
+                    }
+                )
+
+    # Get edges via Cypher (deduplicated)
+    _edges = []
+    _seen_edges = set()
+    if _node_ids:
+        _edge_results = session.query_graph("MATCH (src)-[r]->(dst) RETURN src.id as source, type(r) as label, dst.id as target")
+        for _e in _edge_results:
+            _src = _e["source"]
+            _tgt = _e["target"]
+            if _src is None or _tgt is None:
+                continue
+            if _src not in _node_ids or _tgt not in _node_ids:
+                continue
+            _key = (_src, _tgt, _e.get("label", ""))
+            if _key not in _seen_edges:
+                _seen_edges.add(_key)
+                _edges.append(
+                    {
+                        "source": _e["source"],
+                        "target": _e["target"],
+                        "label": _e.get("label", ""),
+                    }
+                )
+
+    if _nodes:
+        extraction_graph = Graph.from_dict(
+            {"nodes": _nodes, "edges": _edges},
+            width=800,
+            height=500,
+            show_labels=True,
+            show_edge_labels=False,
+            dark_mode=True,
+            layout="force",
+        )
+        _output = mo.vstack(
+            [
+                mo.md(f"**Nodes:** {len(_nodes)} | **Edges:** {len(_edges)}"),
+                extraction_graph,
+            ]
+        )
+    else:
+        extraction_graph = None
+        _output = mo.md("_Run extraction to see the graph_")
+
+    _output
+    return (extraction_graph,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## ArchiMate Model
     """)
     return
@@ -588,6 +678,103 @@ def _(clear_model_btn, get_model_refresh, mo, session, set_model_refresh):
             print(f"[Deriva] Clear model failed: {_result.get('error', 'Unknown')}")
         mo.callout(mo.md(_result.get("message", _result.get("error", "Unknown"))), kind=_kind)
     return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Model Graph Visualization
+    """)
+    return
+
+
+@app.cell
+def _(get_model_refresh, mo, session):
+    from anywidget_graph import Graph as ModelGraph
+
+    _ = get_model_refresh()
+
+    _layer_colors = {
+        "ApplicationComponent": "#3498db",
+        "ApplicationInterface": "#2980b9",
+        "ApplicationService": "#1f6dad",
+        "DataObject": "#5dade2",
+        "BusinessActor": "#e74c3c",
+        "BusinessProcess": "#c0392b",
+        "BusinessFunction": "#e67e22",
+        "BusinessEvent": "#f39c12",
+        "BusinessObject": "#d35400",
+        "Node": "#1abc9c",
+        "Device": "#16a085",
+        "SystemSoftware": "#2ecc71",
+        "TechnologyService": "#27ae60",
+    }
+
+    _elements = session.get_archimate_elements()
+    _relationships = session.get_archimate_relationships()
+
+    _nodes = []
+    _node_ids = set()
+    for _el in _elements:
+        _etype = _el.get("element_type", "")
+        _eid = _el.get("identifier", "")
+        if _eid and _eid not in _node_ids:
+            _node_ids.add(_eid)
+            # Determine layer for grouping
+            if _etype.startswith("Business"):
+                _layer = "Business"
+            elif _etype.startswith("Application") or _etype == "DataObject":
+                _layer = "Application"
+            else:
+                _layer = "Technology"
+            _nodes.append(
+                {
+                    "id": _eid,
+                    "label": _el.get("name", _eid),
+                    "group": _layer,
+                    "color": _layer_colors.get(_etype, "#95a5a6"),
+                }
+            )
+
+    _edges = []
+    _seen_edges = set()
+    for _rel in _relationships:
+        _src = _rel.get("source", "")
+        _tgt = _rel.get("target", "")
+        _rtype = _rel.get("relationship_type", "")
+        _key = (_src, _tgt, _rtype)
+        if _src in _node_ids and _tgt in _node_ids and _key not in _seen_edges:
+            _seen_edges.add(_key)
+            _edges.append(
+                {
+                    "source": _src,
+                    "target": _tgt,
+                    "label": _rtype,
+                }
+            )
+
+    if _nodes:
+        model_graph = ModelGraph.from_dict(
+            {"nodes": _nodes, "edges": _edges},
+            width=800,
+            height=500,
+            show_labels=True,
+            show_edge_labels=True,
+            dark_mode=True,
+            layout="force",
+        )
+        _output = mo.vstack(
+            [
+                mo.md(f"**Elements:** {len(_nodes)} | **Relationships:** {len(_edges)}"),
+                model_graph,
+            ]
+        )
+    else:
+        model_graph = None
+        _output = mo.md("_Run derivation to see the model graph_")
+
+    _output
+    return (model_graph,)
 
 
 @app.cell(hide_code=True)

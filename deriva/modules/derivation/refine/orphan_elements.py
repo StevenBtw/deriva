@@ -63,9 +63,8 @@ class OrphanElementsStep:
             # Query for elements with no relationships
             ns = archimate_manager.namespace
             orphan_query = f"""
-                MATCH (e)
-                WHERE any(lbl IN labels(e) WHERE lbl STARTS WITH '{ns}:')
-                  AND e.enabled = true
+                MATCH (e:{ns})
+                WHERE e.enabled = true
                 WITH e
                 WHERE NOT EXISTS {{
                     MATCH (e)-[r]-()
@@ -73,7 +72,7 @@ class OrphanElementsStep:
                 }}
                 RETURN e.identifier as identifier,
                        e.name as name,
-                       [lbl IN labels(e) WHERE lbl STARTS WITH '{ns}:'][0] as label,
+                       [lbl IN labels(e) WHERE lbl <> '{ns}'][0] as label,
                        e.properties_json as properties_json
             """
 
@@ -89,7 +88,7 @@ class OrphanElementsStep:
                 identifier = orphan["identifier"]
                 name = orphan["name"]
                 label = orphan["label"]
-                element_type = label.split(":")[-1] if label else "Unknown"
+                element_type = label if label else "Unknown"
 
                 # Check source graph for potential relationships
                 proposed_relationships = []
@@ -170,8 +169,7 @@ class OrphanElementsStep:
             # Find the element's source node
             ns = archimate_manager.namespace
             source_query = f"""
-                MATCH (e {{identifier: $identifier}})
-                WHERE any(lbl IN labels(e) WHERE lbl STARTS WITH '{ns}:')
+                MATCH (e:{ns} {{identifier: $identifier}})
                 RETURN e.properties_json as properties_json
             """
             result = archimate_manager.query(
@@ -201,7 +199,7 @@ class OrphanElementsStep:
             graph_rel_query = """
                 MATCH (source)-[r]->(target)
                 WHERE source.id = $source_id
-                  AND any(lbl IN labels(target) WHERE lbl STARTS WITH 'Graph:')
+                  AND 'Graph' IN labels(target)
                 RETURN type(r) as rel_type, target.id as target_id, target.name as target_name
                 LIMIT 5
             """
