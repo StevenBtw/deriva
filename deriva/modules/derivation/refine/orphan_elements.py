@@ -105,7 +105,7 @@ class OrphanElementsStep:
                     try:
                         props = json.loads(orphan["properties_json"])
                         importance = props.get("source_pagerank", 0)
-                    except (json.JSONDecodeError, TypeError):
+                    except json.JSONDecodeError, TypeError:
                         pass
 
                 # Decide action based on importance and params
@@ -188,7 +188,7 @@ class OrphanElementsStep:
 
             try:
                 props = json.loads(props_json)
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 return proposals
 
             source_id = props.get("source")

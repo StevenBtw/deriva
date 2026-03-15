@@ -54,7 +54,7 @@ dependencies = [
     "tree-sitter-java>=0.23.0",
     "tree-sitter-c-sharp>=0.23.0",
     # Document Parsing
-    "pypdf>=6",
+    "pypdf>=6.8",
     "python-docx>=1.2",
     # Graph Algorithms
     "solvor>=0.6",
@@ -62,6 +62,7 @@ dependencies = [
     "backoff>=2.2.1",
     "pydantic-ai>=1",
     # Utilities
+    "pyjwt>=2.12",  # CVE-2026-32597 fix (transitive via mcp)
     "diskcache>=5.6.3",
     "nest-asyncio>=1.6.0",
     "structlog>=24.0",
