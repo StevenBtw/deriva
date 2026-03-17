@@ -496,7 +496,7 @@ See [LICENSE](LICENSE) for the full license text.
 ## Acknowledgments
 
 - [Marimo](https://marimo.io) - Reactive Python notebooks
-- [Grafeo](https://github.com/StevenBtw/grafeo) - Embedded graph database
+- [Grafeo](https://github.com/GrafeoDB/grafeo) - Embedded graph database
 - [ArchiMate](https://www.opengroup.org/archimate-forum) - Enterprise architecture standard
 - [Archi](https://www.archimatetool.com) - Open source ArchiMate modeling tool
 - [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) - Multi-language AST parsing
