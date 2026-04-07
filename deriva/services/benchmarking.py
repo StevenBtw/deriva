@@ -164,6 +164,7 @@ class OCELRunLogger:
         if relationships_created:
             objects_dict["Relationship"] = relationships_created
 
+        _stats = stats or {}
         self.ocel_log.create_event(
             activity=activity,
             objects=objects_dict,
@@ -172,7 +173,8 @@ class OCELRunLogger:
             objects_created=len(objects_created),
             edges_created=len(edges_created) if edges_created else 0,
             relationships_created=len(relationships_created) if relationships_created else 0,
-            stats=stats or {},
+            duration_seconds=_stats.get("duration_seconds", 0),
+            stats=_stats,
             errors=errors or [],
         )
 
@@ -192,8 +194,12 @@ class OCELStepContext:
         self._created_objects: list[str] = []
         self._created_edges: list[str] = []  # Edge IDs for extraction
         self._created_relationships: list[str] = []  # Relationship IDs for derivation
+        self._start_time: float = 0.0
 
     def __enter__(self) -> OCELStepContext:
+        import time
+
+        self._start_time = time.time()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -214,6 +220,11 @@ class OCELStepContext:
         """Track a created relationship ID for OCEL logging (derivation)."""
         self._created_relationships.append(relationship_id)
 
+    def _elapsed_seconds(self) -> float:
+        import time
+
+        return round(time.time() - self._start_time, 2) if self._start_time else 0.0
+
     def complete(self, message: str = "") -> None:
         """Mark step as completed and log to OCEL."""
         self._completed = True
@@ -224,7 +235,7 @@ class OCELStepContext:
             objects_created=self._created_objects,
             edges_created=self._created_edges if self._created_edges else None,
             relationships_created=self._created_relationships if self._created_relationships else None,
-            stats={"items_created": self.items_created, "items_processed": self.items_processed},
+            stats={"items_created": self.items_created, "items_processed": self.items_processed, "duration_seconds": self._elapsed_seconds()},
             errors=[],
         )
 
@@ -238,7 +249,7 @@ class OCELStepContext:
             objects_created=self._created_objects,
             edges_created=self._created_edges if self._created_edges else None,
             relationships_created=self._created_relationships if self._created_relationships else None,
-            stats={"items_created": self.items_created, "items_failed": self.items_failed},
+            stats={"items_created": self.items_created, "items_failed": self.items_failed, "duration_seconds": self._elapsed_seconds()},
             errors=[error],
         )
 

@@ -79,6 +79,11 @@ class BusinessProcessDerivation(HybridDerivation):
             rel_type="Access",
             description="Business processes access data objects",
         ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Triggering",
+            description="Business processes trigger other business processes",
+        ),
     ]
 
     INBOUND_RULES: list[RelationshipRule] = [
@@ -86,6 +91,16 @@ class BusinessProcessDerivation(HybridDerivation):
             target_type="ApplicationService",
             rel_type="Serving",
             description="Application services serve business processes",
+        ),
+        RelationshipRule(
+            target_type="BusinessEvent",
+            rel_type="Triggering",
+            description="Business events trigger business processes",
+        ),
+        RelationshipRule(
+            target_type="BusinessActor",
+            rel_type="Assignment",
+            description="Business actors are assigned to business processes",
         ),
     ]
 

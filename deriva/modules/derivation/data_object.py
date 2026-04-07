@@ -56,13 +56,7 @@ class DataObjectDerivation(HybridDerivation):
     MIN_PAGERANK = None  # Config files have low pagerank but are important for cross-layer connections
     USE_COMMUNITY_ROOTS = False  # Data files don't form communities
 
-    OUTBOUND_RULES = [
-        RelationshipRule(
-            target_type="TechnologyService",
-            rel_type="Realization",
-            description="Data objects (config/requirements) realize technology services",
-        ),
-    ]
+    OUTBOUND_RULES = []
 
     INBOUND_RULES = [
         RelationshipRule(

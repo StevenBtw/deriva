@@ -74,13 +74,7 @@ class TechnologyServiceDerivation(HybridDerivation):
         ),
     ]
 
-    INBOUND_RULES = [
-        RelationshipRule(
-            target_type="DataObject",
-            rel_type="Realization",
-            description="Data objects (config files) realize technology services",
-        ),
-    ]
+    INBOUND_RULES = []
 
     # Uses HybridDerivation.filter_candidates() which handles:
     # - Pattern matching (include/exclude from config)

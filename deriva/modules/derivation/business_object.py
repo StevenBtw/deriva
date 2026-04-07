@@ -70,11 +70,6 @@ class BusinessObjectDerivation(HybridDerivation):
             rel_type="Composition",
             description="Business objects contain other business objects",
         ),
-        RelationshipRule(
-            target_type="BusinessObject",
-            rel_type="Aggregation",
-            description="Business objects reference other business objects",
-        ),
     ]
 
     INBOUND_RULES = [

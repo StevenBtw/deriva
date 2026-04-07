@@ -62,8 +62,13 @@ class BusinessFunctionDerivation(HybridDerivation):
         ),
         RelationshipRule(
             target_type="BusinessProcess",
-            rel_type="Composition",
-            description="Business functions contain business processes",
+            rel_type="Aggregation",
+            description="Business functions aggregate business processes",
+        ),
+        RelationshipRule(
+            target_type="BusinessFunction",
+            rel_type="Aggregation",
+            description="Business functions aggregate other business functions",
         ),
     ]
 

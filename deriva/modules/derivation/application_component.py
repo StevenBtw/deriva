@@ -59,9 +59,14 @@ class ApplicationComponentDerivation(HybridDerivation):
             description="Application components contain other application components",
         ),
         RelationshipRule(
+            target_type="ApplicationComponent",
+            rel_type="Aggregation",
+            description="Application components aggregate related application components",
+        ),
+        RelationshipRule(
             target_type="ApplicationService",
-            rel_type="Composition",
-            description="Application components contain application services",
+            rel_type="Assignment",
+            description="Application components perform application services",
         ),
         RelationshipRule(
             target_type="DataObject",
@@ -83,8 +88,8 @@ class ApplicationComponentDerivation(HybridDerivation):
     INBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
             target_type="TechnologyService",
-            rel_type="Realization",
-            description="Technology services realize application components",
+            rel_type="Serving",
+            description="Technology services serve application components",
         ),
         RelationshipRule(
             target_type="Node",

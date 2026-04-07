@@ -63,6 +63,11 @@ class ApplicationInterfaceDerivation(HybridDerivation):
             rel_type="Serving",
             description="Application interfaces expose application services",
         ),
+        RelationshipRule(
+            target_type="BusinessActor",
+            rel_type="Serving",
+            description="Application interfaces serve business actors",
+        ),
     ]
 
     INBOUND_RULES: list[RelationshipRule] = [
@@ -70,11 +75,6 @@ class ApplicationInterfaceDerivation(HybridDerivation):
             target_type="ApplicationComponent",
             rel_type="Composition",
             description="Application components contain interfaces",
-        ),
-        RelationshipRule(
-            target_type="BusinessActor",
-            rel_type="Serving",
-            description="Application interfaces serve business actors",
         ),
     ]
 
