@@ -2455,10 +2455,18 @@ def derive_batch_relationships(
     )
 
     # -------------------------------------------------------------------------
-    # LLM REFINEMENT: Run for ALL elements, skip already-created relationships
+    # LLM REFINEMENT: Skip when deterministic tiers already found relationships
     # -------------------------------------------------------------------------
-    # LLM provides consistency - deterministic methods may vary between runs
-    # We run LLM for all elements but deduplicate against deterministic results
+    MIN_DETERMINISTIC_FOR_SKIP = 2
+    if len(all_relationships) >= MIN_DETERMINISTIC_FOR_SKIP:
+        logger.info(
+            "Skipping LLM refinement for %s: %d deterministic relationships sufficient",
+            element_type,
+            len(all_relationships),
+        )
+        return all_relationships
+
+    # LLM provides consistency when deterministic methods found few relationships
     prompt = build_unified_relationship_prompt(
         new_elements=new_elements,  # All elements for LLM consistency
         existing_elements=filtered_existing,

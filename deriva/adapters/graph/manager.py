@@ -691,6 +691,59 @@ class GraphManager:
             logger.error("Failed to clear graph for repo '%s': %s", repo_name, e)
             raise
 
+    def clear_nodes_by_labels(self, repo_name: str, labels: list[str]) -> int:
+        """Clear nodes with specific labels for a repository.
+
+        Deletes nodes matching ANY of the given labels where repository_name matches.
+        Edges connected to deleted nodes are also removed (DETACH DELETE).
+
+        Args:
+            repo_name: Repository name to clear
+            labels: Node labels to clear (e.g., ["BusinessConcept", "Technology"])
+
+        Returns:
+            Number of nodes deleted
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        if not labels:
+            return 0
+
+        try:
+            ns = self.namespace
+            label_conditions = " OR ".join(f"n:`{ns}:{label}`" for label in labels)
+
+            count_query = f"""
+                MATCH (n:`{ns}`)
+                WHERE n.repository_name = $repo_name AND ({label_conditions})
+                RETURN count(n) as cnt
+            """
+            count_result = self.db.execute_read(count_query, {"repo_name": repo_name})
+            count = count_result[0]["cnt"] if count_result else 0
+
+            if count > 0:
+                delete_query = f"""
+                    MATCH (n:`{ns}`)
+                    WHERE n.repository_name = $repo_name AND ({label_conditions})
+                    DETACH DELETE n
+                """
+                self.db.execute_write(delete_query, {"repo_name": repo_name})
+
+            logger.info(
+                "Cleared %d nodes with labels %s for repo '%s'",
+                count,
+                labels,
+                repo_name,
+            )
+            return count
+
+        except Exception as e:
+            logger.error(
+                "Failed to clear nodes by labels for repo '%s': %s", repo_name, e
+            )
+            raise
+
     def has_extraction(self, repo_name: str) -> bool:
         """Check if extraction data exists for a repository.
 

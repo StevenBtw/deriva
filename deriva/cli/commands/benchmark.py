@@ -97,6 +97,20 @@ def benchmark_run(
             help="Configs to skip enrichment cache for (comma-separated)",
         ),
     ] = None,
+    no_cache_extraction: Annotated[
+        bool,
+        typer.Option(
+            "--no-cache-extraction",
+            help="Force full re-extraction (ignore fingerprint cache)",
+        ),
+    ] = False,
+    no_cache_extraction_llm: Annotated[
+        bool,
+        typer.Option(
+            "--no-cache-extraction-llm",
+            help="Re-run LLM extraction steps only (keep structural/AST cached)",
+        ),
+    ] = False,
     only_extraction_step: Annotated[
         str | None,
         typer.Option(
@@ -160,6 +174,10 @@ def benchmark_run(
     )
     if nocache_enrichment_configs_list:
         typer.echo(f"No-cache enrichment configs: {nocache_enrichment_configs_list}")
+    if no_cache_extraction:
+        typer.echo("Extraction cache: disabled (full re-extraction)")
+    elif no_cache_extraction_llm:
+        typer.echo("Extraction cache: structural/AST only (LLM steps re-run)")
     typer.echo(f"{'=' * 60}\n")
 
     with PipelineSession() as session:
@@ -206,6 +224,8 @@ def benchmark_run(
                 per_repo=per_repo,
                 use_enrichment_cache=use_enrichment_cache_flag,
                 nocache_enrichment_configs=nocache_enrichment_configs_list,
+                no_cache_extraction=no_cache_extraction,
+                no_cache_extraction_llm=no_cache_extraction_llm,
             )
 
         typer.echo(f"\n{'=' * 60}")

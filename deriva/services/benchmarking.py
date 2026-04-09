@@ -273,6 +273,9 @@ class BenchmarkConfig:
     # Enrichment cache settings (mirrors LLM cache patterns)
     use_enrichment_cache: bool = True  # Global enrichment cache setting
     nocache_enrichment_configs: list[str] = field(default_factory=list)  # Configs to skip enrichment cache
+    # Extraction cache settings
+    no_cache_extraction: bool = False  # Force full re-extraction (ignore fingerprint)
+    no_cache_extraction_llm: bool = False  # Re-run LLM extraction steps only (keep structural/AST)
 
     def total_runs(self) -> int:
         """Calculate total number of runs in the matrix.
@@ -434,16 +437,38 @@ class BenchmarkOrchestrator:
 
         return errors
 
+    def _make_extraction_llm_fn(self) -> Any:
+        """Create LLM query function for extraction steps."""
+        first_model = self.config.models[0]
+        model_config = self._model_configs[first_model]
+        llm_manager = LLMManager.from_config(model_config, nocache=False)
+
+        def llm_query_fn(
+            prompt: str,
+            schema: dict | None = None,
+            temperature: float | None = None,
+            max_tokens: int | None = None,
+            system_prompt: str | None = None,
+            response_model: type | None = None,
+        ) -> Any:
+            return llm_manager.query(  # type: ignore[call-overload]
+                prompt,
+                schema=schema,
+                response_model=response_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+            )
+
+        return llm_query_fn, model_config
+
     def _ensure_extraction(self, verbose: bool = False) -> list[str]:
         """Ensure extraction data exists for all benchmark repositories.
 
-        For each repository, checks the extraction fingerprint (hash of
-        extraction config versions + repo commit). If the fingerprint matches,
-        extraction is skipped. Otherwise, clears that repo's graph data and
-        re-extracts.
-
-        This runs once before the benchmark loop so that derivation iterations
-        don't pay the extraction cost repeatedly.
+        Supports three cache modes:
+        - Default: fingerprint-based caching (skip if configs+repo unchanged)
+        - no_cache_extraction: force full re-extraction
+        - no_cache_extraction_llm: keep structural/AST data, re-run LLM steps only
 
         Args:
             verbose: Print progress to stdout
@@ -457,63 +482,87 @@ class BenchmarkOrchestrator:
         if verbose:
             print("\n--- Ensuring extraction data ---")
 
+        # Labels created by LLM extraction steps (safe to clear and re-extract)
+        LLM_LABELS = ["BusinessConcept", "Technology", "ExternalDependency"]
+
         for repo_name in self.config.repositories:
             try:
-                # Compute expected fingerprint
                 current_fp = extraction.compute_extraction_fingerprint(self.engine, repo_name, config_versions)
-
-                # Check if extraction is current
                 stored_fp = self.graph_manager.get_extraction_fingerprint(repo_name)
+                fp_match = stored_fp == current_fp
 
-                if stored_fp == current_fp:
+                if self.config.no_cache_extraction:
+                    # Mode: Force full re-extraction
                     if verbose:
-                        print(f"  {repo_name}: extraction cached (fingerprint match)")
-                    continue
-
-                # Need to (re-)extract
-                if stored_fp:
-                    reason = "fingerprint mismatch (configs or repo changed)"
-                else:
-                    reason = "no cached extraction"
-
-                if verbose:
-                    print(f"  {repo_name}: extracting ({reason})")
-
-                # Clear only this repo's data, not the whole graph
-                self.graph_manager.clear_graph_for_repo(repo_name)
-
-                # Use first model's LLM for extraction (extraction is model-independent
-                # for deterministic steps; LLM steps use cache anyway)
-                first_model = self.config.models[0]
-                model_config = self._model_configs[first_model]
-                llm_manager = LLMManager.from_config(model_config, nocache=False)
-
-                def llm_query_fn(
-                    prompt: str,
-                    schema: dict | None = None,
-                    temperature: float | None = None,
-                    max_tokens: int | None = None,
-                    system_prompt: str | None = None,
-                    response_model: type | None = None,
-                ) -> Any:
-                    return llm_manager.query(  # type: ignore[call-overload]
-                        prompt,
-                        schema=schema,
-                        response_model=response_model,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        system_prompt=system_prompt,
+                        print(f"  {repo_name}: extracting (forced by --no-cache-extraction)")
+                    self.graph_manager.clear_graph_for_repo(repo_name)
+                    llm_query_fn, model_config = self._make_extraction_llm_fn()
+                    result = extraction.run_extraction(
+                        engine=self.engine,
+                        graph_manager=self.graph_manager,
+                        llm_query_fn=llm_query_fn,
+                        repo_name=repo_name,
+                        verbose=False,
+                        config_versions=config_versions,
+                        model=model_config.model,
                     )
 
-                result = extraction.run_extraction(
-                    engine=self.engine,
-                    graph_manager=self.graph_manager,
-                    llm_query_fn=llm_query_fn,
-                    repo_name=repo_name,
-                    verbose=False,
-                    config_versions=config_versions,
-                    model=model_config.model,
-                )
+                elif self.config.no_cache_extraction_llm:
+                    # Mode: Keep structural/AST, re-run LLM extraction only
+                    has_data = self.graph_manager.has_extraction(repo_name)
+
+                    if has_data:
+                        # Structural/AST data exists; clear only LLM nodes and re-run LLM steps
+                        cleared = self.graph_manager.clear_nodes_by_labels(repo_name, LLM_LABELS)
+                        if verbose:
+                            print(f"  {repo_name}: cleared {cleared} LLM nodes, re-running LLM extraction steps")
+                        llm_query_fn, model_config = self._make_extraction_llm_fn()
+                        result = extraction.run_extraction(
+                            engine=self.engine,
+                            graph_manager=self.graph_manager,
+                            llm_query_fn=llm_query_fn,
+                            repo_name=repo_name,
+                            verbose=False,
+                            config_versions=config_versions,
+                            model=model_config.model,
+                            extraction_methods=["llm"],
+                        )
+                    else:
+                        # No data at all; do full extraction first
+                        if verbose:
+                            print(f"  {repo_name}: no cached data, running full extraction")
+                        llm_query_fn, model_config = self._make_extraction_llm_fn()
+                        result = extraction.run_extraction(
+                            engine=self.engine,
+                            graph_manager=self.graph_manager,
+                            llm_query_fn=llm_query_fn,
+                            repo_name=repo_name,
+                            verbose=False,
+                            config_versions=config_versions,
+                            model=model_config.model,
+                        )
+
+                else:
+                    # Default mode: fingerprint-based caching
+                    if fp_match:
+                        if verbose:
+                            print(f"  {repo_name}: extraction cached (fingerprint match)")
+                        continue
+
+                    reason = "fingerprint mismatch (configs or repo changed)" if stored_fp else "no cached extraction"
+                    if verbose:
+                        print(f"  {repo_name}: extracting ({reason})")
+                    self.graph_manager.clear_graph_for_repo(repo_name)
+                    llm_query_fn, model_config = self._make_extraction_llm_fn()
+                    result = extraction.run_extraction(
+                        engine=self.engine,
+                        graph_manager=self.graph_manager,
+                        llm_query_fn=llm_query_fn,
+                        repo_name=repo_name,
+                        verbose=False,
+                        config_versions=config_versions,
+                        model=model_config.model,
+                    )
 
                 if result.get("success"):
                     if verbose:

@@ -735,11 +735,15 @@ def run_derivation(
                     refine_params["graph_metadata"] = graph_metadata
 
                 # Run the refine step
+                # Skip LLM for duplicate_elements: Tier 2 fuzzy matching is
+                # sufficient; Tier 3 semantic LLM checks add up to 10 calls
+                # per run with marginal deduplication benefit.
+                use_llm = cfg.llm and cfg.step_name != "duplicate_elements"
                 refine_result = run_refine_step(
                     step_name=cfg.step_name,
                     archimate_manager=archimate_manager,
                     graph_manager=graph_manager,
-                    llm_query_fn=llm_query_fn if cfg.llm else None,
+                    llm_query_fn=llm_query_fn if use_llm else None,
                     params=refine_params,
                 )
 
@@ -1123,11 +1127,15 @@ def run_derivation_iter(
                         pass
 
                 # Run the refine step
+                # Skip LLM for duplicate_elements: Tier 2 fuzzy matching is
+                # sufficient; Tier 3 semantic LLM checks add up to 10 calls
+                # per run with marginal deduplication benefit.
+                use_llm = cfg.llm and cfg.step_name != "duplicate_elements"
                 refine_result = run_refine_step(
                     step_name=cfg.step_name,
                     archimate_manager=archimate_manager,
                     graph_manager=graph_manager,
-                    llm_query_fn=llm_query_fn if cfg.llm else None,
+                    llm_query_fn=llm_query_fn if use_llm else None,
                     params=refine_params,
                 )
 

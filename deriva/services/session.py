@@ -1036,6 +1036,8 @@ class PipelineSession:
         per_repo: bool = False,
         use_enrichment_cache: bool = True,
         nocache_enrichment_configs: list[str] | None = None,
+        no_cache_extraction: bool = False,
+        no_cache_extraction_llm: bool = False,
     ) -> benchmarking.BenchmarkResult:
         """
         Run a full benchmark matrix.
@@ -1092,6 +1094,8 @@ class PipelineSession:
             per_repo=per_repo,
             use_enrichment_cache=use_enrichment_cache,
             nocache_enrichment_configs=nocache_enrichment_configs or [],
+            no_cache_extraction=no_cache_extraction,
+            no_cache_extraction_llm=no_cache_extraction_llm,
         )
 
         orchestrator = benchmarking.BenchmarkOrchestrator(

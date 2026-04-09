@@ -121,6 +121,7 @@ def run_extraction(
     model: str | None = None,
     phases: list[str] | None = None,
     config_versions: dict[str, dict[str, int]] | None = None,
+    extraction_methods: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Run the extraction pipeline.
@@ -138,6 +139,8 @@ def run_extraction(
         phases: Phases to run (classify, parse), or None for all
         config_versions: Optional config version snapshot (for benchmark consistency).
                         Dict with {"extraction": {node_type: version}}
+        extraction_methods: If set, only run steps with matching extraction_method
+                           (e.g., ["llm"] to run only LLM steps). None runs all steps.
 
     Returns:
         Dict with success, stats, errors
@@ -236,6 +239,13 @@ def run_extraction(
 
         # Process each extraction step in sequence order (parse phase)
         for cfg in configs:
+            # Skip steps that don't match the requested extraction methods
+            if extraction_methods and cfg.extraction_method not in extraction_methods:
+                stats["steps_skipped"] += 1
+                if verbose:
+                    print(f"  Skipping: {cfg.node_type} (method={cfg.extraction_method})")
+                continue
+
             node_type = cfg.node_type
 
             if verbose:
