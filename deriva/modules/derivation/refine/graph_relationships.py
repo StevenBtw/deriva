@@ -40,9 +40,13 @@ logger = logging.getLogger(__name__)
 
 # Graph edge type → ArchiMate relationship type mapping
 # Based on ArchiMate semantics and graph_ideas.md research
+#
+# NOTE: CONTAINS and DECLARES are excluded. These edges exist between
+# File->File, Directory->Directory, and TypeDefinition->TypeDefinition
+# (10,000+ edges). Mapping them all to Composition creates an explosion
+# of 100+ relationships. Composition between ArchiMate elements is
+# handled by the per-element-type relationship rules instead.
 EDGE_TO_RELATIONSHIP: dict[str, str] = {
-    "CONTAINS": "Composition",  # Structural containment
-    "DECLARES": "Composition",  # Type declares member
     "IMPLEMENTS": "Realization",  # Interface realization
     "USES": "Serving",  # Uses external dependency
     "CALLS": "Flow",  # Call between behaviors

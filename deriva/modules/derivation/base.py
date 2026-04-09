@@ -2455,18 +2455,23 @@ def derive_batch_relationships(
     )
 
     # -------------------------------------------------------------------------
-    # LLM REFINEMENT: Skip when deterministic tiers already found relationships
+    # LLM REFINEMENT: Skip only when deterministic tiers found DIVERSE types
     # -------------------------------------------------------------------------
-    MIN_DETERMINISTIC_FOR_SKIP = 2
-    if len(all_relationships) >= MIN_DETERMINISTIC_FOR_SKIP:
+    # The LLM is the only source for Aggregation, Realization, Flow, and
+    # Triggering. Deterministic tiers mostly produce Composition and Serving.
+    # Only skip LLM when multiple relationship types were already found.
+    deterministic_types = {r["relationship_type"] for r in all_relationships}
+    if len(deterministic_types) >= 2 and len(all_relationships) >= 3:
         logger.info(
-            "Skipping LLM refinement for %s: %d deterministic relationships sufficient",
+            "Skipping LLM refinement for %s: %d deterministic relationships "
+            "across %d types sufficient",
             element_type,
             len(all_relationships),
+            len(deterministic_types),
         )
         return all_relationships
 
-    # LLM provides consistency when deterministic methods found few relationships
+    # LLM provides relationship type diversity beyond deterministic methods
     prompt = build_unified_relationship_prompt(
         new_elements=new_elements,  # All elements for LLM consistency
         existing_elements=filtered_existing,

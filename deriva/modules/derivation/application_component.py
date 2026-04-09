@@ -48,9 +48,10 @@ class ApplicationComponentDerivation(HybridDerivation):
     ELEMENT_TYPE = "ApplicationComponent"
 
     # Graph filtering configuration - prioritize community roots
+    # Loosened from 0.001/0.6 to capture more components (ref models have 14-21)
     USE_COMMUNITY_ROOTS = True
-    COMMUNITY_ROOT_RATIO = 0.6  # 60% community roots
-    MIN_PAGERANK = 0.001
+    COMMUNITY_ROOT_RATIO = 0.3  # 30% community roots, 70% by PageRank
+    MIN_PAGERANK = 0.0001
 
     OUTBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
