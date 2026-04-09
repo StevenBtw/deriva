@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, Callable
 
 from deriva.adapters.archimate.models import Element, Relationship
@@ -390,22 +391,71 @@ class ElementDerivationBase(ABC):
         if max_tokens is not None:
             llm_kwargs["max_tokens"] = max_tokens
 
-        for batch_num, batch in enumerate(batches, 1):
-            self._process_batch(
-                batch_num=batch_num,
-                batch=batch,
-                instruction=instruction,
-                example=example,
-                llm_query_fn=llm_query_fn,
-                llm_kwargs=llm_kwargs,
-                archimate_manager=archimate_manager,
-                graph_manager=graph_manager,
-                existing_elements=existing_elements,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                defer_relationships=defer_relationships,
-                result=result,
-            )
+        # Fire all batch LLM calls in parallel, then process results
+        # sequentially (element creation and relationship derivation
+        # need ordered access to shared state).
+        if len(batches) > 1:
+            llm_responses: dict[int, tuple[Any, str | None]] = {}
+
+            def _call_llm(
+                batch_num: int, batch: list[Candidate]
+            ) -> tuple[int, Any, str | None]:
+                prompt = build_derivation_prompt(
+                    candidates=batch,
+                    instruction=instruction,
+                    example=example,
+                    element_type=self.ELEMENT_TYPE,
+                )
+                try:
+                    response = llm_query_fn(prompt, DERIVATION_SCHEMA, **llm_kwargs)
+                    content, error = extract_response_content(response)
+                    return (batch_num, content, error)
+                except Exception as e:
+                    return (batch_num, None, str(e))
+
+            with ThreadPoolExecutor(max_workers=len(batches)) as pool:
+                futures = {
+                    pool.submit(_call_llm, i, b): i for i, b in enumerate(batches, 1)
+                }
+                for future in as_completed(futures):
+                    batch_num, content, error = future.result()
+                    llm_responses[batch_num] = (content, error)
+
+            # Process results sequentially (preserves element creation order)
+            for batch_num, batch in enumerate(batches, 1):
+                content, error = llm_responses[batch_num]
+                self._process_batch_response(
+                    batch_num=batch_num,
+                    batch=batch,
+                    response_content=content,
+                    response_error=error,
+                    llm_query_fn=llm_query_fn,
+                    archimate_manager=archimate_manager,
+                    graph_manager=graph_manager,
+                    existing_elements=existing_elements,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    defer_relationships=defer_relationships,
+                    result=result,
+                )
+        else:
+            # Single batch: no parallelism needed
+            for batch_num, batch in enumerate(batches, 1):
+                self._process_batch(
+                    batch_num=batch_num,
+                    batch=batch,
+                    instruction=instruction,
+                    example=example,
+                    llm_query_fn=llm_query_fn,
+                    llm_kwargs=llm_kwargs,
+                    archimate_manager=archimate_manager,
+                    graph_manager=graph_manager,
+                    existing_elements=existing_elements,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    defer_relationships=defer_relationships,
+                    result=result,
+                )
 
         self.logger.info(
             "Created %d %s elements and %d relationships",
@@ -563,6 +613,151 @@ class ElementDerivationBase(ABC):
                 )
             else:
                 # Candidate was sent to LLM but rejected
+                result.candidate_decisions.append(
+                    CandidateDecision(
+                        node_id=c.node_id,
+                        name=c.name,
+                        element_type=self.ELEMENT_TYPE,
+                        pagerank=c.pagerank,
+                        kcore_level=c.kcore_level,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                        confidence=c.properties.get("confidence"),
+                        stage="llm_rejected",
+                        became_element=False,
+                    )
+                )
+
+        # Derive relationships
+        if batch_elements and existing_elements and not defer_relationships:
+            self._derive_relationships(
+                batch_elements=batch_elements,
+                existing_elements=existing_elements,
+                llm_query_fn=llm_query_fn,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                graph_manager=graph_manager,
+                archimate_manager=archimate_manager,
+                result=result,
+            )
+
+    def _process_batch_response(
+        self,
+        batch_num: int,
+        batch: list[Candidate],
+        response_content: str | None,
+        response_error: str | None,
+        llm_query_fn: Callable[..., Any],
+        archimate_manager: "ArchimateManager",
+        graph_manager: "GraphManager",
+        existing_elements: list[dict[str, Any]],
+        temperature: float | None,
+        max_tokens: int | None,
+        defer_relationships: bool,
+        result: GenerationResult,
+    ) -> None:
+        """Process a batch using a pre-fetched LLM response.
+
+        Used by the parallel batch path: LLM calls are fired concurrently,
+        then responses are processed sequentially here.
+        """
+        if response_error:
+            result.errors.append(
+                f"LLM error in batch {batch_num} ({self.ELEMENT_TYPE}): {response_error}"
+            )
+            return
+
+        if response_content is None:
+            result.errors.append(
+                f"No response for batch {batch_num} ({self.ELEMENT_TYPE})"
+            )
+            return
+
+        # Parse response
+        parse_result = parse_derivation_response(response_content)
+        if not parse_result["success"]:
+            result.errors.extend(
+                [
+                    f"{self.ELEMENT_TYPE} batch {batch_num}: {e}"
+                    for e in parse_result.get("errors", [])
+                ]
+            )
+            return
+
+        # Build enrichment lookup for this batch
+        batch_enrichments = {
+            c.node_id: {
+                "pagerank": c.pagerank,
+                "louvain_community": c.louvain_community,
+            }
+            for c in batch
+        }
+
+        # Create elements
+        batch_elements: list[dict[str, Any]] = []
+        created_source_ids: set[str] = set()
+
+        for derived in parse_result.get("data", []):
+            element_result = build_element(
+                derived, self.ELEMENT_TYPE, batch_enrichments
+            )
+
+            if not element_result["success"]:
+                result.errors.extend(element_result.get("errors", []))
+                continue
+
+            element_data = element_result["data"]
+
+            try:
+                element = Element(
+                    name=element_data["name"],
+                    element_type=element_data["element_type"],
+                    identifier=element_data["identifier"],
+                    documentation=element_data.get("documentation"),
+                    properties=element_data.get("properties", {}),
+                )
+                archimate_manager.add_element(element)
+                result.elements_created += 1
+                result.created_elements.append(element_data)
+                batch_elements.append(element_data)
+
+                source_id = derived.get("source")
+                if source_id:
+                    created_source_ids.add(source_id)
+            except Exception as e:
+                result.errors.append(
+                    f"Failed to create {self.ELEMENT_TYPE} element "
+                    f"{element_data.get('identifier', 'unknown')}: {e}"
+                )
+
+        # Track candidate decisions
+        for c in batch:
+            if c.node_id in created_source_ids:
+                element_id = None
+                element_confidence = None
+                for derived in parse_result.get("data", []):
+                    if derived.get("source") == c.node_id:
+                        element_id = derived.get("identifier")
+                        element_confidence = derived.get("confidence")
+                        break
+
+                result.candidate_decisions.append(
+                    CandidateDecision(
+                        node_id=c.node_id,
+                        name=c.name,
+                        element_type=self.ELEMENT_TYPE,
+                        pagerank=c.pagerank,
+                        kcore_level=c.kcore_level,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                        confidence=c.properties.get("confidence"),
+                        stage="created",
+                        became_element=True,
+                        element_id=element_id,
+                        element_confidence=element_confidence,
+                    )
+                )
+            else:
                 result.candidate_decisions.append(
                     CandidateDecision(
                         node_id=c.node_id,

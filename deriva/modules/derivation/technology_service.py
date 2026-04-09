@@ -74,7 +74,13 @@ class TechnologyServiceDerivation(HybridDerivation):
         ),
     ]
 
-    INBOUND_RULES = []
+    INBOUND_RULES = [
+        RelationshipRule(
+            target_type="Device",
+            rel_type="Realization",
+            description="Devices realize technology services",
+        ),
+    ]
 
     # Uses HybridDerivation.filter_candidates() which handles:
     # - Pattern matching (include/exclude from config)

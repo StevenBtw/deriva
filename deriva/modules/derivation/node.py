@@ -68,6 +68,16 @@ class NodeDerivation(HybridDerivation):
             rel_type="Serving",
             description="Nodes serve application components",
         ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Realization",
+            description="Technology nodes realize business processes",
+        ),
+        RelationshipRule(
+            target_type="SystemSoftware",
+            rel_type="Aggregation",
+            description="Nodes aggregate system software",
+        ),
     ]
 
     INBOUND_RULES: list[RelationshipRule] = []

@@ -84,6 +84,16 @@ class ApplicationComponentDerivation(HybridDerivation):
             rel_type="Realization",
             description="Application components realize business functions",
         ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Realization",
+            description="Application components realize business processes",
+        ),
+        RelationshipRule(
+            target_type="ApplicationService",
+            rel_type="Realization",
+            description="Application components realize application services",
+        ),
     ]
 
     INBOUND_RULES: list[RelationshipRule] = [

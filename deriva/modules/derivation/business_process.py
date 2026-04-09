@@ -84,6 +84,16 @@ class BusinessProcessDerivation(HybridDerivation):
             rel_type="Triggering",
             description="Business processes trigger other business processes",
         ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Flow",
+            description="Data or control flow between business processes",
+        ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Aggregation",
+            description="Business processes aggregate sub-processes",
+        ),
     ]
 
     INBOUND_RULES: list[RelationshipRule] = [
@@ -101,6 +111,16 @@ class BusinessProcessDerivation(HybridDerivation):
             target_type="BusinessActor",
             rel_type="Assignment",
             description="Business actors are assigned to business processes",
+        ),
+        RelationshipRule(
+            target_type="ApplicationComponent",
+            rel_type="Realization",
+            description="Application components realize business processes",
+        ),
+        RelationshipRule(
+            target_type="Node",
+            rel_type="Realization",
+            description="Nodes realize business processes",
         ),
     ]
 

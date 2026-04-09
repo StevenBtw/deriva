@@ -77,6 +77,21 @@ class ApplicationServiceDerivation(HybridDerivation):
             rel_type="Serving",
             description="Application services serve business functions",
         ),
+        RelationshipRule(
+            target_type="ApplicationService",
+            rel_type="Flow",
+            description="Data flow between application services",
+        ),
+        RelationshipRule(
+            target_type="ApplicationService",
+            rel_type="Aggregation",
+            description="Application services aggregate sub-services",
+        ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Triggering",
+            description="Application services trigger business processes",
+        ),
     ]
 
     INBOUND_RULES = [
@@ -84,6 +99,11 @@ class ApplicationServiceDerivation(HybridDerivation):
             target_type="TechnologyService",
             rel_type="Serving",
             description="Technology services serve application services",
+        ),
+        RelationshipRule(
+            target_type="ApplicationComponent",
+            rel_type="Realization",
+            description="Application components realize application services",
         ),
     ]
 
