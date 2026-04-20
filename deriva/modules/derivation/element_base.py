@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, Callable
 
 from deriva.adapters.archimate.models import Element, Relationship
@@ -44,6 +43,7 @@ from deriva.modules.derivation.base import (
     batch_candidates,
     build_derivation_prompt,
     build_element,
+    compute_candidate_strength,
     derive_batch_relationships,
     extract_response_content,
     get_enrichments_from_graph,
@@ -97,6 +97,9 @@ class ElementDerivationBase(ABC):
     ELEMENT_TYPE: str
     OUTBOUND_RULES: list[RelationshipRule]
     INBOUND_RULES: list[RelationshipRule]
+
+    # Confidence gate: elements below this threshold are not created
+    MIN_ELEMENT_CONFIDENCE: float = 0.5
 
     def __init__(self) -> None:
         """Initialize the derivation class."""
@@ -221,6 +224,86 @@ class ElementDerivationBase(ABC):
             )
 
         return filtered
+
+    def _consolidate_near_duplicates(
+        self,
+        candidates: list[Candidate],
+        threshold: float = 0.85,
+    ) -> list[Candidate]:
+        """Merge near-duplicate candidates before sending to LLM.
+
+        Groups candidates with similar normalized names and keeps only the
+        highest-PageRank representative from each group. This prevents the
+        LLM from seeing "rollback", "execute_rollback", and "perform_rollback"
+        as three separate candidates.
+
+        Uses the same normalize_name() and similarity_ratio() as the existing
+        duplicate_elements refine step (270+ synonym mappings built in).
+
+        Args:
+            candidates: Filtered candidates (post graph filtering)
+            threshold: Similarity threshold for grouping (default 0.85)
+
+        Returns:
+            Consolidated candidates with near-duplicates merged
+        """
+        if len(candidates) <= 1:
+            return candidates
+
+        # Normalize all names upfront
+        norms = [(c, normalize_name(c.name)) for c in candidates]
+
+        # Union-Find grouping
+        parent: dict[int, int] = {i: i for i in range(len(norms))}
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for i in range(len(norms)):
+            for j in range(i + 1, len(norms)):
+                if similarity_ratio(norms[i][1], norms[j][1]) >= threshold:
+                    union(i, j)
+
+        # Group by root
+        groups: dict[int, list[Candidate]] = {}
+        for i, (c, _) in enumerate(norms):
+            root = find(i)
+            groups.setdefault(root, []).append(c)
+
+        # From each group, keep highest pagerank (tiebreaker: alphabetical node_id)
+        result = []
+        for group in groups.values():
+            survivor = max(
+                group,
+                key=lambda c: (c.pagerank or 0, c.node_id),
+            )
+            result.append(survivor)
+            if len(group) > 1:
+                merged_names = [c.name for c in group if c is not survivor]
+                self.logger.debug(
+                    "Consolidated near-duplicates for %s: kept '%s', merged %s",
+                    self.ELEMENT_TYPE,
+                    survivor.name,
+                    merged_names,
+                )
+
+        if len(result) < len(candidates):
+            self.logger.info(
+                "Near-duplicate consolidation: %d -> %d candidates for %s",
+                len(candidates),
+                len(result),
+                self.ELEMENT_TYPE,
+            )
+
+        return result
 
     def generate(
         self,
@@ -379,8 +462,15 @@ class ElementDerivationBase(ABC):
             )
             return result
 
+        # Consolidate near-duplicate candidate names before LLM
+        filtered = self._consolidate_near_duplicates(filtered)
+
         # Track candidates sent to LLM
         result.candidates_to_llm = len(filtered)
+
+        # Compute abstention strength signal from the filtered set.
+        # Shared across batches so the LLM sees one consistent view.
+        strength = compute_candidate_strength(filtered)
 
         # Batch and process
         batches = batch_candidates(filtered, batch_size)
@@ -391,71 +481,23 @@ class ElementDerivationBase(ABC):
         if max_tokens is not None:
             llm_kwargs["max_tokens"] = max_tokens
 
-        # Fire all batch LLM calls in parallel, then process results
-        # sequentially (element creation and relationship derivation
-        # need ordered access to shared state).
-        if len(batches) > 1:
-            llm_responses: dict[int, tuple[Any, str | None]] = {}
-
-            def _call_llm(
-                batch_num: int, batch: list[Candidate]
-            ) -> tuple[int, Any, str | None]:
-                prompt = build_derivation_prompt(
-                    candidates=batch,
-                    instruction=instruction,
-                    example=example,
-                    element_type=self.ELEMENT_TYPE,
-                )
-                try:
-                    response = llm_query_fn(prompt, DERIVATION_SCHEMA, **llm_kwargs)
-                    content, error = extract_response_content(response)
-                    return (batch_num, content, error)
-                except Exception as e:
-                    return (batch_num, None, str(e))
-
-            with ThreadPoolExecutor(max_workers=len(batches)) as pool:
-                futures = {
-                    pool.submit(_call_llm, i, b): i for i, b in enumerate(batches, 1)
-                }
-                for future in as_completed(futures):
-                    batch_num, content, error = future.result()
-                    llm_responses[batch_num] = (content, error)
-
-            # Process results sequentially (preserves element creation order)
-            for batch_num, batch in enumerate(batches, 1):
-                content, error = llm_responses[batch_num]
-                self._process_batch_response(
-                    batch_num=batch_num,
-                    batch=batch,
-                    response_content=content,
-                    response_error=error,
-                    llm_query_fn=llm_query_fn,
-                    archimate_manager=archimate_manager,
-                    graph_manager=graph_manager,
-                    existing_elements=existing_elements,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    defer_relationships=defer_relationships,
-                    result=result,
-                )
-        else:
-            # Single batch: no parallelism needed
-            for batch_num, batch in enumerate(batches, 1):
-                self._process_batch(
-                    batch_num=batch_num,
-                    batch=batch,
-                    instruction=instruction,
-                    example=example,
-                    llm_query_fn=llm_query_fn,
-                    llm_kwargs=llm_kwargs,
-                    archimate_manager=archimate_manager,
-                    graph_manager=graph_manager,
-                    existing_elements=existing_elements,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    defer_relationships=defer_relationships,
-                    result=result,
-                )
+        for batch_num, batch in enumerate(batches, 1):
+            self._process_batch(
+                batch_num=batch_num,
+                batch=batch,
+                instruction=instruction,
+                example=example,
+                llm_query_fn=llm_query_fn,
+                llm_kwargs=llm_kwargs,
+                strength=strength,
+                archimate_manager=archimate_manager,
+                graph_manager=graph_manager,
+                existing_elements=existing_elements,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                defer_relationships=defer_relationships,
+                result=result,
+            )
 
         self.logger.info(
             "Created %d %s elements and %d relationships",
@@ -480,6 +522,7 @@ class ElementDerivationBase(ABC):
         max_tokens: int | None,
         defer_relationships: bool,
         result: GenerationResult,
+        strength: dict[str, Any] | None = None,
     ) -> None:
         """
         Process a single batch of candidates.
@@ -508,6 +551,7 @@ class ElementDerivationBase(ABC):
             instruction=instruction,
             example=example,
             element_type=self.ELEMENT_TYPE,
+            strength=strength,
         )
 
         # Call LLM
@@ -559,6 +603,17 @@ class ElementDerivationBase(ABC):
                 continue
 
             element_data = element_result["data"]
+
+            # Confidence gate: skip elements the LLM flagged as poor matches
+            confidence = element_data.get("properties", {}).get("confidence", 1.0)
+            if confidence < self.MIN_ELEMENT_CONFIDENCE:
+                self.logger.debug(
+                    "Skipping low-confidence element %s (%.2f < %.2f)",
+                    element_data.get("name", "?"),
+                    confidence,
+                    self.MIN_ELEMENT_CONFIDENCE,
+                )
+                continue
 
             try:
                 element = Element(
@@ -613,151 +668,6 @@ class ElementDerivationBase(ABC):
                 )
             else:
                 # Candidate was sent to LLM but rejected
-                result.candidate_decisions.append(
-                    CandidateDecision(
-                        node_id=c.node_id,
-                        name=c.name,
-                        element_type=self.ELEMENT_TYPE,
-                        pagerank=c.pagerank,
-                        kcore_level=c.kcore_level,
-                        in_degree=c.in_degree,
-                        out_degree=c.out_degree,
-                        confidence=c.properties.get("confidence"),
-                        stage="llm_rejected",
-                        became_element=False,
-                    )
-                )
-
-        # Derive relationships
-        if batch_elements and existing_elements and not defer_relationships:
-            self._derive_relationships(
-                batch_elements=batch_elements,
-                existing_elements=existing_elements,
-                llm_query_fn=llm_query_fn,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                graph_manager=graph_manager,
-                archimate_manager=archimate_manager,
-                result=result,
-            )
-
-    def _process_batch_response(
-        self,
-        batch_num: int,
-        batch: list[Candidate],
-        response_content: str | None,
-        response_error: str | None,
-        llm_query_fn: Callable[..., Any],
-        archimate_manager: "ArchimateManager",
-        graph_manager: "GraphManager",
-        existing_elements: list[dict[str, Any]],
-        temperature: float | None,
-        max_tokens: int | None,
-        defer_relationships: bool,
-        result: GenerationResult,
-    ) -> None:
-        """Process a batch using a pre-fetched LLM response.
-
-        Used by the parallel batch path: LLM calls are fired concurrently,
-        then responses are processed sequentially here.
-        """
-        if response_error:
-            result.errors.append(
-                f"LLM error in batch {batch_num} ({self.ELEMENT_TYPE}): {response_error}"
-            )
-            return
-
-        if response_content is None:
-            result.errors.append(
-                f"No response for batch {batch_num} ({self.ELEMENT_TYPE})"
-            )
-            return
-
-        # Parse response
-        parse_result = parse_derivation_response(response_content)
-        if not parse_result["success"]:
-            result.errors.extend(
-                [
-                    f"{self.ELEMENT_TYPE} batch {batch_num}: {e}"
-                    for e in parse_result.get("errors", [])
-                ]
-            )
-            return
-
-        # Build enrichment lookup for this batch
-        batch_enrichments = {
-            c.node_id: {
-                "pagerank": c.pagerank,
-                "louvain_community": c.louvain_community,
-            }
-            for c in batch
-        }
-
-        # Create elements
-        batch_elements: list[dict[str, Any]] = []
-        created_source_ids: set[str] = set()
-
-        for derived in parse_result.get("data", []):
-            element_result = build_element(
-                derived, self.ELEMENT_TYPE, batch_enrichments
-            )
-
-            if not element_result["success"]:
-                result.errors.extend(element_result.get("errors", []))
-                continue
-
-            element_data = element_result["data"]
-
-            try:
-                element = Element(
-                    name=element_data["name"],
-                    element_type=element_data["element_type"],
-                    identifier=element_data["identifier"],
-                    documentation=element_data.get("documentation"),
-                    properties=element_data.get("properties", {}),
-                )
-                archimate_manager.add_element(element)
-                result.elements_created += 1
-                result.created_elements.append(element_data)
-                batch_elements.append(element_data)
-
-                source_id = derived.get("source")
-                if source_id:
-                    created_source_ids.add(source_id)
-            except Exception as e:
-                result.errors.append(
-                    f"Failed to create {self.ELEMENT_TYPE} element "
-                    f"{element_data.get('identifier', 'unknown')}: {e}"
-                )
-
-        # Track candidate decisions
-        for c in batch:
-            if c.node_id in created_source_ids:
-                element_id = None
-                element_confidence = None
-                for derived in parse_result.get("data", []):
-                    if derived.get("source") == c.node_id:
-                        element_id = derived.get("identifier")
-                        element_confidence = derived.get("confidence")
-                        break
-
-                result.candidate_decisions.append(
-                    CandidateDecision(
-                        node_id=c.node_id,
-                        name=c.name,
-                        element_type=self.ELEMENT_TYPE,
-                        pagerank=c.pagerank,
-                        kcore_level=c.kcore_level,
-                        in_degree=c.in_degree,
-                        out_degree=c.out_degree,
-                        confidence=c.properties.get("confidence"),
-                        stage="created",
-                        became_element=True,
-                        element_id=element_id,
-                        element_confidence=element_confidence,
-                    )
-                )
-            else:
                 result.candidate_decisions.append(
                     CandidateDecision(
                         node_id=c.node_id,
@@ -958,6 +868,10 @@ class HybridFilteringMixin:
 
     # Graph filtering constants - override in subclass as needed
     MIN_PAGERANK: float | None = None
+    MIN_PAGERANK_PERCENTILE: float | None = (
+        None  # Scale-independent (e.g., 40.0 = top 60%)
+    )
+    MIN_KCORE_PERCENTILE: float | None = None
     USE_COMMUNITY_ROOTS: bool = False
     USE_ARTICULATION_POINTS: bool = False
     COMMUNITY_ROOT_RATIO: float = (
@@ -993,9 +907,26 @@ class HybridFilteringMixin:
 
         filtered = list(candidates)
 
-        # Filter by minimum PageRank
+        # Filter by minimum PageRank (absolute threshold)
         if self.MIN_PAGERANK is not None:
             filtered = [c for c in filtered if (c.pagerank or 0) >= self.MIN_PAGERANK]
+
+        # Filter by percentile thresholds (scale-independent)
+        # Only apply when percentile data is available (> 0 means prep phase computed it)
+        if self.MIN_PAGERANK_PERCENTILE is not None:
+            filtered = [
+                c
+                for c in filtered
+                if c.pagerank_percentile == 0
+                or c.pagerank_percentile >= self.MIN_PAGERANK_PERCENTILE
+            ]
+        if self.MIN_KCORE_PERCENTILE is not None:
+            filtered = [
+                c
+                for c in filtered
+                if c.kcore_percentile == 0
+                or c.kcore_percentile >= self.MIN_KCORE_PERCENTILE
+            ]
 
         if not filtered:
             return []

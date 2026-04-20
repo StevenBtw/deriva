@@ -41,28 +41,27 @@ def compute_graph_hash(graph_manager: "GraphManager") -> str:
         SHA256 hash string representing graph state
     """
     try:
-        # Get node and edge counts for active nodes
+        # Count active Graph-labeled nodes, grouped by repository so the hash
+        # changes whenever the active scope changes (e.g., switching repos
+        # between benchmark runs). Labels are stored as separate items in
+        # this codebase, so we match with 'Graph' IN labels(n), not STARTS WITH.
         stats_query = """
             MATCH (n)
-            WHERE any(label IN labels(n) WHERE label STARTS WITH 'Graph:')
+            WHERE 'Graph' IN labels(n)
               AND n.active = true
-            WITH count(n) as node_count
-            OPTIONAL MATCH ()-[r]->()
-            WHERE type(r) STARTS WITH 'Graph:'
-            RETURN node_count, count(r) as edge_count
+            RETURN coalesce(n.repository_name, '_') as repo, count(n) as c
+            ORDER BY repo
         """
         results = graph_manager.query(stats_query)
-        if results:
-            node_count = results[0].get("node_count", 0)
-            edge_count = results[0].get("edge_count", 0)
-        else:
-            node_count = 0
-            edge_count = 0
+        # Serialize the per-repo counts deterministically.
+        scope_signature = ";".join(
+            f"{row.get('repo', '_')}:{row.get('c', 0)}" for row in results
+        )
 
-        # Include namespace in hash
+        # Include namespace in hash.
         namespace = getattr(graph_manager, "namespace", "Graph")
 
-        return hash_inputs(namespace, node_count, edge_count)
+        return hash_inputs(namespace, scope_signature)
 
     except Exception as e:
         logger.warning(f"Failed to compute graph hash: {e}")

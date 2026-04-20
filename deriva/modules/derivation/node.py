@@ -50,6 +50,7 @@ class NodeDerivation(HybridDerivation):
 
     ELEMENT_TYPE = "Node"
     MIN_PAGERANK = None  # Infrastructure files have low pagerank but are important
+    MIN_KCORE_PERCENTILE = 30.0  # Top 70% by k-core (scale-independent)
     USE_COMMUNITY_ROOTS = False
 
     OUTBOUND_RULES: list[RelationshipRule] = [

@@ -30,6 +30,7 @@ from .base import (
     register_refine_step,
     similarity_ratio,
 )
+from .normalization import RepoContext, normalize_for_dedup
 
 
 class DuplicateCheckResult(BaseModel):
@@ -106,6 +107,8 @@ class DuplicateElementsStep:
                 logger.info("No elements found for duplicate detection")
                 return result
 
+            repo_ctx = _build_repo_context(graph_manager, archimate_manager)
+
             # Group elements by type for comparison
             by_type: dict[str, list] = {}
             for elem in elements:
@@ -117,7 +120,7 @@ class DuplicateElementsStep:
                 by_type[elem_type].append(elem)
 
             # Find duplicates within each type
-            tier1_duplicates = []  # Exact matches
+            tier1_duplicates = []  # Exact matches (including after canonicalization)
             tier2_duplicates = []  # Fuzzy matches
             tier3_candidates = []  # Semantic candidates (for LLM)
 
@@ -128,17 +131,23 @@ class DuplicateElementsStep:
                 # Compare each pair
                 for i, elem_a in enumerate(elems):
                     for elem_b in elems[i + 1 :]:
-                        # Tier 1: Exact name match
+                        # Tier 1: Exact name match, or exact match after canonicalization
+                        # (strips ArchiMate type suffixes and repo-name prefix).
                         if elem_a.name == elem_b.name:
                             tier1_duplicates.append((elem_a, elem_b))
                             continue
+                        canon_a = normalize_for_dedup(elem_a.name, repo_ctx)
+                        canon_b = normalize_for_dedup(elem_b.name, repo_ctx)
+                        if canon_a and canon_a == canon_b:
+                            tier1_duplicates.append((elem_a, elem_b))
+                            continue
 
-                        # Tier 2: Fuzzy match on normalized names
+                        # Tier 2: Fuzzy match on canonical + generic-normalized names.
                         norm_a = normalize_name(
-                            elem_a.name, extra_synonyms, use_lemmatization
+                            canon_a, extra_synonyms, use_lemmatization
                         )
                         norm_b = normalize_name(
-                            elem_b.name, extra_synonyms, use_lemmatization
+                            canon_b, extra_synonyms, use_lemmatization
                         )
                         similarity = similarity_ratio(norm_a, norm_b)
 
@@ -356,3 +365,36 @@ Consider if they represent the same concept, entity, or component in the archite
         except Exception as e:
             logger.warning(f"LLM semantic check failed: {e}")
             return False, 0.0
+
+
+def _build_repo_context(
+    graph_manager: GraphManager | None,
+    archimate_manager: ArchimateManager,
+) -> RepoContext:
+    """Build normalization context from runtime graph state.
+
+    Repo name is read from the active Repository node. BusinessObjects are
+    read from already-derived elements for entity-suffix collapse. Both are
+    optional; an empty context makes the repo-specific rules no-ops.
+    """
+    repo_name = ""
+    if graph_manager is not None:
+        try:
+            rows = graph_manager.query(
+                "MATCH (r:Graph:Repository) WHERE r.active = true "
+                "RETURN r.repository_name as name LIMIT 1"
+            )
+            if rows and rows[0].get("name"):
+                repo_name = rows[0]["name"]
+        except Exception as e:
+            logger.debug(f"Could not read active repository name: {e}")
+
+    business_objects: list[str] = []
+    try:
+        for elem in archimate_manager.get_elements(enabled_only=True):
+            if elem.element_type == "BusinessObject":
+                business_objects.append(elem.name)
+    except Exception as e:
+        logger.debug(f"Could not read BusinessObjects for dedup context: {e}")
+
+    return RepoContext(repo_name=repo_name, business_objects=business_objects)

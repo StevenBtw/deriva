@@ -747,6 +747,8 @@ def create_derivation_config_version(
     enabled: bool | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    batch_size: int | None = None,
+    max_candidates: int | None = None,
 ) -> dict[str, Any]:
     """
     Create a new version of a derivation config (versioned update).
@@ -773,7 +775,7 @@ def create_derivation_config_version(
         """
         SELECT id, version, phase, sequence, enabled, llm,
                input_graph_query, input_model_query, instruction, example, params,
-               temperature, max_tokens
+               temperature, max_tokens, batch_size, max_candidates
         FROM derivation_config
         WHERE step_name = ? AND is_active = TRUE
         """,
@@ -783,7 +785,23 @@ def create_derivation_config_version(
     if not current:
         return {"success": False, "error": f"Config not found for {step_name}"}
 
-    (old_id, old_version, phase, sequence, cur_enabled, llm, cur_graph_query, cur_model_query, cur_instruction, cur_example, cur_params, cur_temperature, cur_max_tokens) = current
+    (
+        old_id,
+        old_version,
+        phase,
+        sequence,
+        cur_enabled,
+        llm,
+        cur_graph_query,
+        cur_model_query,
+        cur_instruction,
+        cur_example,
+        cur_params,
+        cur_temperature,
+        cur_max_tokens,
+        cur_batch_size,
+        cur_max_candidates,
+    ) = current
     new_version = old_version + 1
 
     # Use current values if not provided
@@ -795,6 +813,8 @@ def create_derivation_config_version(
     new_enabled = enabled if enabled is not None else cur_enabled
     new_temperature = temperature if temperature is not None else cur_temperature
     new_max_tokens = max_tokens if max_tokens is not None else cur_max_tokens
+    new_batch_size = batch_size if batch_size is not None else cur_batch_size
+    new_max_candidates = max_candidates if max_candidates is not None else cur_max_candidates
 
     # Deactivate old config
     engine.execute(
@@ -812,8 +832,8 @@ def create_derivation_config_version(
         INSERT INTO derivation_config
         (id, step_name, phase, version, sequence, enabled, llm,
          input_graph_query, input_model_query, instruction, example, params,
-         temperature, max_tokens, is_active, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
+         temperature, max_tokens, batch_size, max_candidates, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
         """,
         [
             next_id,
@@ -830,6 +850,8 @@ def create_derivation_config_version(
             new_params,
             new_temperature,
             new_max_tokens,
+            new_batch_size,
+            new_max_candidates,
         ],
     )
 

@@ -974,9 +974,9 @@ class TestCreateDerivationConfigVersion:
         from deriva.services.config import create_derivation_config_version
 
         engine = MagicMock()
-        # Current config: (id, version, phase, sequence, enabled, llm, graph_query, model_query, instruction, example, params, temperature, max_tokens)
+        # Current config: (id, version, phase, sequence, enabled, llm, graph_query, model_query, instruction, example, params, temperature, max_tokens, batch_size, max_candidates)
         engine.execute.return_value.fetchone.side_effect = [
-            (1, 1, "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None, 0.7, 4096),  # Current config
+            (1, 1, "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None, 0.7, 4096, 10, 30),  # Current config
             (2,),  # Next ID
         ]
 
@@ -1009,7 +1009,7 @@ class TestCreateDerivationConfigVersion:
 
         engine = MagicMock()
         engine.execute.return_value.fetchone.side_effect = [
-            (1, 1, "generate", 5, True, True, "OLD_QUERY", "OLD_MODEL", "old_instruction", "old_example", '{"key": "value"}', 0.5, 2000),
+            (1, 1, "generate", 5, True, True, "OLD_QUERY", "OLD_MODEL", "old_instruction", "old_example", '{"key": "value"}', 0.5, 2000, 10, 30),
             (2,),
         ]
 

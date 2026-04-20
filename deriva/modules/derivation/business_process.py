@@ -66,6 +66,7 @@ class BusinessProcessDerivation(HybridDerivation):
 
     # Graph filtering configuration
     MIN_PAGERANK = 0.0005
+    MIN_PAGERANK_PERCENTILE = 40.0  # Top 60% by PageRank (scale-independent)
     MIN_ORCHESTRATOR_CALLS = 3  # Methods calling 3+ others are likely processes
 
     OUTBOUND_RULES = [

@@ -167,8 +167,10 @@ class Candidate:
 
     # Graph enrichment data (populated from DuckDB)
     pagerank: float = 0.0
+    pagerank_percentile: float = 0.0
     louvain_community: str | None = None
     kcore_level: int = 0
+    kcore_percentile: float = 0.0
     is_articulation_point: bool = False
     in_degree: int = 0
     out_degree: int = 0
@@ -338,8 +340,10 @@ def get_enrichments_from_graph(
           AND n.active = true
         RETURN n.id as node_id,
                n.pagerank as pagerank,
+               n.pagerank_percentile as pagerank_percentile,
                n.louvain_community as louvain_community,
                n.kcore_level as kcore_level,
+               n.kcore_percentile as kcore_percentile,
                n.is_articulation_point as is_articulation_point,
                n.in_degree as in_degree,
                n.out_degree as out_degree
@@ -349,8 +353,10 @@ def get_enrichments_from_graph(
         enrichments = {
             row["node_id"]: {
                 "pagerank": row.get("pagerank") or 0.0,
+                "pagerank_percentile": row.get("pagerank_percentile") or 0.0,
                 "louvain_community": row.get("louvain_community"),
                 "kcore_level": row.get("kcore_level") or 0,
+                "kcore_percentile": row.get("kcore_percentile") or 0.0,
                 "is_articulation_point": row.get("is_articulation_point") or False,
                 "in_degree": row.get("in_degree") or 0,
                 "out_degree": row.get("out_degree") or 0,
@@ -403,8 +409,10 @@ def enrich_candidate(
     """Add enrichment data to a candidate in-place."""
     data = enrichments.get(candidate.node_id, {})
     candidate.pagerank = data.get("pagerank", 0.0)
+    candidate.pagerank_percentile = data.get("pagerank_percentile", 0.0)
     candidate.louvain_community = data.get("louvain_community")
     candidate.kcore_level = data.get("kcore_level", 0)
+    candidate.kcore_percentile = data.get("kcore_percentile", 0.0)
     candidate.is_articulation_point = data.get("is_articulation_point", False)
     candidate.in_degree = data.get("in_degree", 0)
     candidate.out_degree = data.get("out_degree", 0)
@@ -1694,6 +1702,55 @@ def query_candidates(
     return candidates
 
 
+def compute_candidate_strength(candidates: list[Candidate]) -> dict[str, Any]:
+    """Compute graph-derived strength signals for a candidate set.
+
+    Used by the abstention mechanism to inform the LLM whether the candidate
+    evidence is strong enough to warrant creating elements. All signals come
+    from the graph (count, pagerank percentile, kcore percentile) — no
+    repo-specific inputs.
+
+    Returns a dict with:
+        count: number of candidates
+        avg_pagerank_percentile: mean pagerank percentile (0-100)
+        avg_kcore_percentile: mean kcore percentile (0-100)
+        strength_label: 'strong', 'moderate', 'weak', or 'minimal'
+    """
+    if not candidates:
+        return {
+            "count": 0,
+            "avg_pagerank_percentile": 0.0,
+            "avg_kcore_percentile": 0.0,
+            "strength_label": "minimal",
+        }
+
+    n = len(candidates)
+    avg_pr_pct = sum(c.pagerank_percentile for c in candidates) / n
+    avg_kcore_pct = sum(c.kcore_percentile for c in candidates) / n
+
+    # Label buckets. Thresholds tuned to the observed cross-repo baseline:
+    # - "minimal": so few or so weak that abstention should be strongly considered
+    # - "weak": below-median signals; low confidence in most candidates
+    # - "moderate": middling signals
+    # - "strong": many candidates with high graph importance
+    combined = (avg_pr_pct + avg_kcore_pct) / 2.0
+    if n <= 2 or combined < 20:
+        label = "minimal"
+    elif combined < 40:
+        label = "weak"
+    elif combined < 70:
+        label = "moderate"
+    else:
+        label = "strong"
+
+    return {
+        "count": n,
+        "avg_pagerank_percentile": round(avg_pr_pct, 1),
+        "avg_kcore_percentile": round(avg_kcore_pct, 1),
+        "strength_label": label,
+    }
+
+
 # =============================================================================
 # LLM Schemas
 # =============================================================================
@@ -1777,6 +1834,7 @@ def build_derivation_prompt(
     element_type: str,
     existing_identifiers: list[str] | None = None,
     existing_elements_summary: dict[str, list[str]] | None = None,
+    strength: dict[str, Any] | None = None,
 ) -> str:
     """
     Build LLM prompt for element derivation.
@@ -1821,6 +1879,28 @@ def build_derivation_prompt(
 {chr(10).join(lines)}
 """
 
+    # Abstention signal — inform the LLM about candidate evidence strength.
+    # The strength label bucketing is done upstream from graph signals only.
+    # "Zero is valid" guidance is only surfaced when strength is 'minimal' to
+    # avoid triggering over-abstention on repos with many noisy candidates.
+    strength_section = ""
+    abstention_rule = ""
+    if strength:
+        label = strength.get("strength_label", "unknown")
+        strength_section = f"""
+## Candidate Evidence Strength
+- Candidate count: {strength.get("count", 0)}
+- Avg pagerank percentile: {strength.get("avg_pagerank_percentile", 0.0)}
+- Avg kcore percentile: {strength.get("avg_kcore_percentile", 0.0)}
+- Overall strength: {label}
+"""
+        if label == "minimal":
+            abstention_rule = (
+                "2. The code may not support elements of this type at all. "
+                "If no candidate clearly fits the {etype} definition, returning "
+                "an empty list is a valid, correct answer.\n"
+            ).format(etype=element_type)
+
     return f"""You are deriving ArchiMate {element_type} elements from source code graph data.
 
 ## Instructions
@@ -1833,18 +1913,20 @@ Each includes graph metrics (pagerank, degree) to help assess importance.
 ```json
 {data_json}
 ```
-{forbidden_section}{context_section}
+{strength_section}{forbidden_section}{context_section}
 ## Example Output
 {example}
 
 ## Rules
-1. Only create elements from the provided candidates
-2. Use the node "id" as the "source" field to link back
-3. Provide meaningful names (not just the node name)
-4. Add documentation explaining the element's purpose
-5. Set confidence based on how well the candidate matches {element_type}
-6. If no candidates are suitable, return {{"elements": []}}
-7. Output stable, deterministic results - same inputs should produce same outputs
+1. Evaluate each candidate individually. Include candidates that fit the
+   ArchiMate {element_type} definition. For candidates that do not fit,
+   set confidence below 0.5 so they are dropped by the confidence gate.
+{abstention_rule}3. Use the node "id" as the "source" field to link back.
+4. Provide meaningful names; do not append ArchiMate type suffixes like
+   " Component", " Service", " Interface", or " API" to names.
+5. Add documentation explaining the element's purpose.
+6. Set confidence realistic to how well the candidate matches the definition.
+7. Output stable, deterministic results — same inputs should produce same outputs.
 
 Return a JSON object with an "elements" array.
 """
@@ -2037,11 +2119,18 @@ def build_element(
     Returns:
         Dict with success flag and element data
     """
+    from deriva.modules.derivation.refine.normalization import strip_archimate_suffix
+
     identifier = derived.get("identifier")
     name = derived.get("name")
 
     if not identifier or not name:
         return {"success": False, "errors": ["Missing identifier or name"]}
+
+    # Strip trailing ArchiMate type suffix for display stability. The prompt
+    # instructs the LLM to avoid suffixes but compliance varies across runs;
+    # this guarantees consistent names regardless of LLM variance.
+    name = strip_archimate_suffix(name)
 
     identifier = sanitize_identifier(identifier)
     # Clamp confidence to [0.0, 1.0] range (LLM may return out-of-range values)

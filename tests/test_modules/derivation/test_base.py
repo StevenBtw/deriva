@@ -80,12 +80,16 @@ class TestBuildElement:
     """Tests for build_element function."""
 
     def test_valid_element(self):
-        """Should build element from valid data."""
+        """Should build element from valid data.
+
+        ArchiMate type suffixes are stripped from names for display stability,
+        so 'Auth Component' becomes 'Auth'.
+        """
         derived = {"identifier": "app:auth", "name": "Auth Component", "confidence": 0.9, "source": "Directory:src/auth"}
         result = build_element(derived, "ApplicationComponent")
 
         assert result["success"] is True
-        assert result["data"]["name"] == "Auth Component"
+        assert result["data"]["name"] == "Auth"
         assert result["data"]["element_type"] == "ApplicationComponent"
         assert result["data"]["properties"]["confidence"] == 0.9
 

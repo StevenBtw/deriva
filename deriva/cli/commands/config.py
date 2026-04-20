@@ -180,6 +180,10 @@ def config_update(
             "--batch-size", help="Files per LLM call for extraction (1=no batching)"
         ),
     ] = None,
+    max_candidates: Annotated[
+        int | None,
+        typer.Option("--max-candidates", help="Maximum candidates for derivation"),
+    ] = None,
 ) -> None:
     """Update a configuration with versioning."""
     if step_type not in ("extraction", "derivation"):
@@ -230,6 +234,8 @@ def config_update(
                 example=example,
                 input_graph_query=query,
                 params=params,
+                batch_size=batch_size,
+                max_candidates=max_candidates,
             )
         elif step_type == "extraction":
             result = config.create_extraction_config_version(
