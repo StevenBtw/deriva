@@ -188,7 +188,7 @@ All configuration lives in `.env`. Key settings:
 
 ```bash
 # Graph database (grafeo embedded)
-GRAFEO_DB_PATH=          # Empty = in-memory, path = persistent file
+GRAFEO_DB_DIR=           # Empty = in-memory; directory = one <repo>.grafeo database per repository
 
 # LLM Provider (mistral, openai, azure, anthropic, ollama, lmstudio)
 LLM_MISTRAL_DEVSTRAL_PROVIDER=mistral

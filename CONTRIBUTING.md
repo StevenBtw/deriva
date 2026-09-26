@@ -1340,7 +1340,7 @@ Deriva splits configuration by **ownership** - who needs to change it and why:
 
 ### Environment Variables
 
-- Naming: `{MANAGER}_{CATEGORY}_{SETTING}` (e.g., `GRAFEO_DB_PATH`)
+- Naming: `{MANAGER}_{CATEGORY}_{SETTING}` (e.g., `GRAFEO_DB_DIR`)
 - Provide **sensible defaults** in code if env var missing
 - Comma-separated for lists (e.g., `ARCHIMATE_ELEMENT_TYPES=Component,Service`)
 - Boolean as string: `true`/`false` (case-insensitive)

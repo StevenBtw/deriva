@@ -234,7 +234,7 @@ Each layer has a `ruff.toml` file enforcing boundaries:
 
 | Store | Purpose | Location |
 |-------|---------|----------|
-| Grafeo (Graph) | Intermediate representation | Embedded (in-memory or `GRAFEO_DB_PATH`) |
+| Grafeo (Graph) | Intermediate representation | Embedded (in-memory, or one `.grafeo` file per repository in `GRAFEO_DB_DIR`) |
 | Grafeo (Model) | ArchiMate elements/relationships | Embedded (shared instance) |
 | DuckDB | Configuration, metadata | `deriva/adapters/database/sql.db` |
 | Workspace | Repositories, benchmarks, exports | `workspace/` |
