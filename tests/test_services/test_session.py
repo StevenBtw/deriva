@@ -141,7 +141,7 @@ class TestPipelineSessionQueries:
 
     def test_get_graph_stats(self, connected_session):
         """Should aggregate node counts by type."""
-        connected_session._mock_graph.get_nodes_by_type.side_effect = lambda t: ([{"id": "1"}] if t == "Repository" else [])
+        connected_session._mock_graph.get_nodes_by_type.side_effect = lambda t: [{"id": "1"}] if t == "Repository" else []
 
         stats = connected_session.get_graph_stats()
 
@@ -1765,3 +1765,45 @@ class TestPipelineSessionFileTypesEdgeCases:
 
             assert len(result) == 1
             assert result[0]["value"] == "simple_value"
+
+
+class TestOnlyStep:
+    """session.only_step enables a single step for a block and restores the exact prior state."""
+
+    @staticmethod
+    def _session_with(step_type: str, states: dict[str, bool]) -> PipelineSession:
+        session = PipelineSession()
+        key = "node_type" if step_type == "extraction" else "element_type"
+        getter = "get_extraction_configs" if step_type == "extraction" else "get_derivation_configs"
+        setattr(session, getter, lambda enabled_only=False: [{key: n, "enabled": e} for n, e in states.items()])
+        session.enable_step = lambda t, n: states.__setitem__(n, True) or True  # type: ignore[method-assign]
+        session.disable_step = lambda t, n: states.__setitem__(n, False) or True  # type: ignore[method-assign]
+        return session
+
+    def test_enables_only_target_inside_block_and_restores_after(self):
+        states = {"File": True, "BusinessConcept": True, "Technology": True, "Test": False}
+        session = self._session_with("extraction", states)
+        with session.only_step("extraction", "BusinessConcept"):
+            assert states == {"File": False, "BusinessConcept": True, "Technology": False, "Test": False}
+        assert states == {"File": True, "BusinessConcept": True, "Technology": True, "Test": False}
+
+    def test_restores_when_block_raises(self):
+        states = {"pagerank": True, "ApplicationComponent": True, "Completeness": False}
+        session = self._session_with("derivation", states)
+        with pytest.raises(RuntimeError), session.only_step("derivation", "ApplicationComponent"):
+            raise RuntimeError("boom")
+        assert states == {"pagerank": True, "ApplicationComponent": True, "Completeness": False}
+
+    def test_derivation_matches_on_element_type(self):
+        states = {"pagerank": True, "Node": False}
+        session = self._session_with("derivation", states)
+        with session.only_step("derivation", "Node"):
+            assert states == {"pagerank": False, "Node": True}
+
+    def test_unknown_step_raises_without_changing_anything(self):
+        states = {"File": True, "Technology": True}
+        session = self._session_with("extraction", states)
+        with pytest.raises(ValueError, match="Unknown extraction step"):
+            with session.only_step("extraction", "Typo"):
+                pass
+        assert states == {"File": True, "Technology": True}

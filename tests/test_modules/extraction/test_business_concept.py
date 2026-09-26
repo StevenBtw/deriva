@@ -958,3 +958,34 @@ class TestExtractBusinessConceptsBatch:
 
         # Should have errors from both files
         assert len(result["errors"]) >= 2
+
+
+class TestSystemPromptGeneralization:
+    """The hardcoded system prompt must not name benchmark-repo or legacy test-repo terms."""
+
+    FORBIDDEN = (
+        "kafka",
+        "spark",
+        "hdfs",
+        "mongodb",
+        "mysql",
+        "spring",
+        "akka",
+        "ldap",
+        "movie",
+        "invoice",
+        "customer",
+        "order",
+        "checkout",
+        "flask",
+        "execution",
+    )
+
+    def test_system_prompt_names_no_benchmark_terms(self):
+        import re
+
+        from deriva.modules.extraction.business_concept import build_system_prompt
+
+        prompt = build_system_prompt("").lower()
+        found = [t for t in self.FORBIDDEN if re.search(rf"(?<![a-z]){t}(?![a-z])", prompt)]
+        assert found == []

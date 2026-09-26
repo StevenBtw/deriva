@@ -381,6 +381,10 @@ deriva config list extraction
 deriva config show extraction BusinessConcept
 deriva status
 
+# Add a derivation step (created disabled, then enable it)
+deriva config add derivation my_refine_step --phase refine --sequence 4 --params '{"dry_run": true}'
+deriva config enable derivation my_refine_step
+
 # Manage file types
 deriva config filetype list
 deriva config filetype add ".lock" dependency lock

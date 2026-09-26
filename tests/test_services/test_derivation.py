@@ -321,7 +321,7 @@ class TestRunDerivationWithConfigs:
         enrich_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([enrich_cfg] if phase == "prep" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
             with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "a", "target": "b"}]):
                 with patch.object(derivation.prep, "enrich_graph", return_value=EnrichmentResult(enrichments={"a": {"pagerank": 0.5}})):
                     result = derivation.run_derivation(
@@ -352,7 +352,7 @@ class TestRunDerivationWithConfigs:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element") as mock_gen:
                 mock_gen.return_value = {
                     "success": True,
@@ -389,7 +389,7 @@ class TestRunDerivationWithConfigs:
         gen_cfg.batch_size = None  # Missing!
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             result = derivation.run_derivation(
                 engine=engine,
                 graph_manager=graph_manager,
@@ -420,7 +420,7 @@ class TestRunDerivationWithConfigs:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element", side_effect=Exception("LLM error")):
                 result = derivation.run_derivation(
                     engine=engine,
@@ -483,7 +483,7 @@ class TestRunDerivationWithConfigs:
         enrich_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([enrich_cfg] if phase == "prep" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
             with patch.object(derivation, "_get_graph_edges", return_value=[]):
                 derivation.run_derivation(
                     engine=engine,
@@ -515,7 +515,7 @@ class TestRunDerivationWithConfigs:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element") as mock_gen:
                 mock_gen.return_value = {
                     "success": True,
@@ -599,7 +599,7 @@ class TestRunDerivationWithConfigs:
             }
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg1, gen_cfg2] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg1, gen_cfg2] if phase == "generate" else []
             with patch.object(derivation, "generate_element", side_effect=track_generate):
                 derivation.run_derivation(
                     engine=engine,
@@ -628,7 +628,7 @@ class TestRunDerivationWithConfigs:
         gen_cfg.input_graph_query = None  # Missing required param
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             derivation.run_derivation(
                 engine=engine,
                 graph_manager=graph_manager,
@@ -652,7 +652,7 @@ class TestRunDerivationWithConfigs:
         enrich_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([enrich_cfg] if phase == "prep" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
             with patch.object(derivation, "_run_prep_step", return_value={"success": False, "errors": ["Test error"]}):
                 derivation.run_derivation(
                     engine=engine,
@@ -764,7 +764,7 @@ class TestRunDerivationIter:
         enrich_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([enrich_cfg] if phase == "prep" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
             with patch.object(derivation, "_get_graph_edges", return_value=[]):
                 updates = list(
                     derivation.run_derivation_iter(
@@ -813,7 +813,7 @@ class TestRunDerivationIter:
         enrich_cfg2.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([enrich_cfg1, enrich_cfg2] if phase == "prep" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg1, enrich_cfg2] if phase == "prep" else []
             with patch.object(derivation, "_get_graph_edges", return_value=[]):
                 updates = list(
                     derivation.run_derivation_iter(
@@ -848,7 +848,7 @@ class TestRunDerivationIter:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element") as mock_gen:
                 mock_gen.return_value = {
                     "success": True,
@@ -887,7 +887,7 @@ class TestRunDerivationIter:
         gen_cfg.batch_size = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             updates = list(
                 derivation.run_derivation_iter(
                     engine=engine,
@@ -920,7 +920,7 @@ class TestRunDerivationIter:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element", side_effect=Exception("LLM crashed")):
                 updates = list(
                     derivation.run_derivation_iter(
@@ -948,7 +948,7 @@ class TestRunDerivationIter:
         enrich_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([enrich_cfg] if phase == "prep" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
             with patch.object(derivation, "_get_graph_edges", return_value=[]):
                 updates = list(
                     derivation.run_derivation_iter(
@@ -1006,7 +1006,7 @@ class TestRunDerivationIter:
             }
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg1, gen_cfg2] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg1, gen_cfg2] if phase == "generate" else []
             with patch.object(derivation, "generate_element", side_effect=track_generate):
                 list(
                     derivation.run_derivation_iter(
@@ -1139,7 +1139,7 @@ class TestRunDerivationRefinePhase:
         refine_cfg.llm = False
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([refine_cfg] if phase == "refine" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [refine_cfg] if phase == "refine" else []
             with patch.object(derivation, "run_refine_step") as mock_refine:
                 mock_result = MagicMock()
                 mock_result.elements_disabled = 2
@@ -1172,7 +1172,7 @@ class TestRunDerivationRefinePhase:
         refine_cfg.llm = False
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([refine_cfg] if phase == "refine" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [refine_cfg] if phase == "refine" else []
             with patch.object(derivation, "run_refine_step") as mock_refine:
                 mock_result = MagicMock()
                 mock_result.elements_disabled = 0
@@ -1205,7 +1205,7 @@ class TestRunDerivationRefinePhase:
         refine_cfg.llm = False
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([refine_cfg] if phase == "refine" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [refine_cfg] if phase == "refine" else []
             with patch.object(derivation, "run_refine_step", side_effect=Exception("Refine failed")):
                 result = derivation.run_derivation(
                     engine=engine,
@@ -1229,7 +1229,7 @@ class TestRunDerivationRefinePhase:
         refine_cfg.llm = False
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([refine_cfg] if phase == "refine" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [refine_cfg] if phase == "refine" else []
             with patch.object(derivation, "run_refine_step") as mock_refine:
                 mock_result = MagicMock()
                 mock_result.elements_disabled = 0
@@ -1272,7 +1272,7 @@ class TestRunDerivationDeferRelationships:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element") as mock_gen:
                 mock_gen.return_value = {
                     "success": True,
@@ -1314,7 +1314,7 @@ class TestRunDerivationDeferRelationships:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element") as mock_gen:
                 mock_gen.return_value = {
                     "success": True,
@@ -1342,6 +1342,51 @@ class TestRunDerivationDeferRelationships:
         assert result["stats"]["relationships_created"] == 1
         archimate_manager.add_relationship.assert_called_once()
 
+    def test_deferred_relationships_persist_derived_from(self):
+        """Saved relationships keep their origin (derived_from) for tiering."""
+        engine = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+
+        gen_cfg = MagicMock()
+        gen_cfg.step_name = "gen_app"
+        gen_cfg.element_type = "ApplicationComponent"
+        gen_cfg.input_graph_query = "MATCH (n) RETURN n"
+        gen_cfg.instruction = "Gen"
+        gen_cfg.example = "{}"
+        gen_cfg.max_candidates = 10
+        gen_cfg.batch_size = 5
+        gen_cfg.temperature = None
+        gen_cfg.max_tokens = None
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
+            with patch.object(derivation, "generate_element") as mock_gen:
+                mock_gen.return_value = {
+                    "success": True,
+                    "elements_created": 2,
+                    "relationships_created": 0,
+                    "created_elements": [
+                        {"identifier": "e1", "properties": {"source_pagerank": 0.5}},
+                        {"identifier": "e2", "properties": {"source_pagerank": 0.3}},
+                    ],
+                    "errors": [],
+                }
+                with patch.object(derivation, "derive_consolidated_relationships") as mock_rel:
+                    mock_rel.return_value = [{"source": "e1", "target": "e2", "relationship_type": "Access", "confidence": 0.8, "derived_from": "graph_neighbor"}]
+
+                    derivation.run_derivation(
+                        engine=engine,
+                        graph_manager=graph_manager,
+                        archimate_manager=archimate_manager,
+                        llm_query_fn=MagicMock(),
+                        defer_relationships=True,
+                        phases=["generate"],
+                    )
+
+        saved = archimate_manager.add_relationship.call_args[0][0]
+        assert saved.properties["derived_from"] == "graph_neighbor"
+
     def test_deferred_relationships_verbose_output(self, capsys):
         """Should print verbose output for consolidated relationships."""
         engine = MagicMock()
@@ -1360,7 +1405,7 @@ class TestRunDerivationDeferRelationships:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element") as mock_gen:
                 mock_gen.return_value = {
                     "success": True,
@@ -1436,7 +1481,7 @@ class TestRunDerivationIterRefinePhase:
         refine_cfg.llm = False
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([refine_cfg] if phase == "refine" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [refine_cfg] if phase == "refine" else []
             with patch.object(derivation, "run_refine_step") as mock_refine:
                 mock_result = MagicMock()
                 mock_result.elements_disabled = 1
@@ -1471,7 +1516,7 @@ class TestRunDerivationIterRefinePhase:
         refine_cfg.llm = False
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([refine_cfg] if phase == "refine" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [refine_cfg] if phase == "refine" else []
             with patch.object(derivation, "run_refine_step", side_effect=Exception("Refine error")):
                 updates = list(
                     derivation.run_derivation_iter(
@@ -1502,7 +1547,7 @@ class TestRunDerivationIterVerbose:
         enrich_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([enrich_cfg] if phase == "prep" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
             with patch.object(derivation, "_get_graph_edges", return_value=[]):
                 list(
                     derivation.run_derivation_iter(
@@ -1535,7 +1580,7 @@ class TestRunDerivationIterVerbose:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element") as mock_gen:
                 mock_gen.return_value = {
                     "success": True,
@@ -1570,7 +1615,7 @@ class TestRunDerivationIterVerbose:
         refine_cfg.llm = False
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([refine_cfg] if phase == "refine" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [refine_cfg] if phase == "refine" else []
             with patch.object(derivation, "run_refine_step") as mock_refine:
                 mock_result = MagicMock()
                 mock_result.elements_disabled = 0
@@ -1610,7 +1655,7 @@ class TestRunDerivationWithRunLoggerErrors:
         enrich_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([enrich_cfg] if phase == "prep" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
             with patch.object(derivation, "_run_prep_step", return_value={"success": False, "errors": ["Test prep error"]}):
                 derivation.run_derivation(
                     engine=engine,
@@ -1644,7 +1689,7 @@ class TestRunDerivationWithRunLoggerErrors:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element") as mock_gen:
                 mock_gen.return_value = {
                     "success": True,
@@ -1689,7 +1734,7 @@ class TestRunDerivationProgressReporter:
         gen_cfg.max_tokens = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([gen_cfg] if phase == "generate" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
             with patch.object(derivation, "generate_element") as mock_gen:
                 mock_gen.return_value = {
                     "success": True,
@@ -1726,7 +1771,7 @@ class TestRunDerivationProgressReporter:
         refine_cfg.llm = False
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
-            mock_get.side_effect = lambda engine, enabled_only, phase: ([refine_cfg] if phase == "refine" else [])
+            mock_get.side_effect = lambda engine, enabled_only, phase: [refine_cfg] if phase == "refine" else []
             with patch.object(derivation, "run_refine_step") as mock_refine:
                 mock_result = MagicMock()
                 mock_result.elements_disabled = 5

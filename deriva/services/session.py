@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 from deriva.common.types import ProgressUpdate
@@ -668,6 +669,31 @@ class PipelineSession:
         assert self._engine is not None
         return config.disable_step(self._engine, step_type, name)
 
+    @contextmanager
+    def only_step(self, step_type: str, name: str) -> Iterator[None]:
+        """Enable only `name` for the duration of the block, then restore the exact prior state."""
+        if step_type == "extraction":
+            configs, key = self.get_extraction_configs(), "node_type"
+        else:
+            configs, key = self.get_derivation_configs(), "element_type"
+        names = [c[key] for c in configs if c.get(key)]
+        if name not in names:
+            raise ValueError(f"Unknown {step_type} step: {name}")
+        enabled_before = {c[key] for c in configs if c.get(key) and c.get("enabled")}
+        try:
+            for n in names:
+                if n == name:
+                    self.enable_step(step_type, n)
+                else:
+                    self.disable_step(step_type, n)
+            yield
+        finally:
+            for n in names:
+                if n in enabled_before:
+                    self.enable_step(step_type, n)
+                else:
+                    self.disable_step(step_type, n)
+
     def get_file_types(self) -> list[dict]:
         """Get file type registry."""
         self._ensure_connected()
@@ -902,6 +928,12 @@ class PipelineSession:
             instruction=instruction,
             example=example,
         )
+
+    def add_derivation_step(self, step_name: str, phase: str, sequence: int, params: str | None = None) -> bool:
+        """Add a new derivation step (disabled, version 1)."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.add_derivation_step(self._engine, step_name, phase, sequence, params=params)
 
     def save_derivation_config(
         self,

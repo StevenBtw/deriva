@@ -40,6 +40,12 @@ if TYPE_CHECKING:
     from deriva.services.config_models import DerivaSettings
 
 
+def _affected_rows(result: Any) -> int:
+    # DuckDB reports rowcount -1 for UPDATE/DELETE; the count comes back as a row.
+    row = result.fetchone()
+    return int(row[0]) if row else 0
+
+
 @lru_cache
 def get_settings() -> DerivaSettings:
     """
@@ -301,8 +307,7 @@ def update_extraction_config(
     params.append(node_type)
     query = f"UPDATE extraction_config SET {', '.join(updates)} WHERE node_type = ? AND is_active = TRUE"
 
-    result = engine.execute(query, params)
-    return result.rowcount > 0 if hasattr(result, "rowcount") else True
+    return _affected_rows(engine.execute(query, params)) > 0
 
 
 # =============================================================================
@@ -456,9 +461,7 @@ def update_derivation_sequence(
             params = [idx, step_name, phase]
 
         try:
-            result = engine.execute(query, params)
-            rowcount = result.rowcount if hasattr(result, "rowcount") else 0
-            if rowcount > 0:
+            if _affected_rows(engine.execute(query, params)) > 0:
                 updated.append({"step_name": step_name, "sequence": idx})
             else:
                 errors.append(f"Step '{step_name}' not found or not active")
@@ -525,13 +528,31 @@ def update_derivation_config(
     query_params.append(step_name)
     query = f"UPDATE derivation_config SET {', '.join(updates)} WHERE step_name = ? AND is_active = TRUE"
 
-    result = engine.execute(query, query_params)
-    return result.rowcount > 0 if hasattr(result, "rowcount") else True
+    return _affected_rows(engine.execute(query, query_params)) > 0
 
 
 # =============================================================================
 # File Type Registry Operations
 # =============================================================================
+
+
+def add_derivation_step(
+    engine: Any,
+    step_name: str,
+    phase: str,
+    sequence: int,
+    params: str | None = None,
+) -> bool:
+    """Add a new derivation step as version 1, disabled. Returns False if it exists."""
+    exists = engine.execute("SELECT 1 FROM derivation_config WHERE step_name = ? LIMIT 1", [step_name]).fetchone()
+    if exists:
+        return False
+    next_id = engine.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM derivation_config").fetchone()[0]
+    engine.execute(
+        "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, llm, params, is_active) VALUES (?, ?, ?, 1, ?, FALSE, FALSE, ?, TRUE)",
+        [next_id, step_name, phase, sequence, params],
+    )
+    return True
 
 
 def get_file_types(engine: Any) -> list[FileType]:
@@ -594,7 +615,7 @@ def update_file_type(engine: Any, extension: str, file_type: str, subtype: str) 
         "UPDATE file_type_registry SET file_type = ?, subtype = ? WHERE extension = ?",
         [file_type, subtype, extension],
     )
-    return result.rowcount > 0 if hasattr(result, "rowcount") else True
+    return _affected_rows(result) > 0
 
 
 def delete_file_type(engine: Any, extension: str) -> bool:
@@ -603,7 +624,7 @@ def delete_file_type(engine: Any, extension: str) -> bool:
         "DELETE FROM file_type_registry WHERE extension = ?",
         [extension],
     )
-    return result.rowcount > 0 if hasattr(result, "rowcount") else True
+    return _affected_rows(result) > 0
 
 
 # =============================================================================
@@ -1334,7 +1355,7 @@ def update_derivation_patterns(
         [patterns_json, step_name, pattern_type, pattern_category],
     )
 
-    if hasattr(result, "rowcount") and result.rowcount > 0:
+    if _affected_rows(result) > 0:
         return True
 
     # Insert if not exists

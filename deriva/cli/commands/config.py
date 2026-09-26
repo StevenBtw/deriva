@@ -142,6 +142,32 @@ def config_disable(
             raise typer.Exit(1)
 
 
+@app.command("add")
+def config_add(
+    step_type: Annotated[
+        str, typer.Argument(help="Type of configuration (derivation)")
+    ],
+    name: Annotated[str, typer.Argument(help="Step name")],
+    phase: Annotated[str, typer.Option("--phase", help="prep, generate or refine")],
+    sequence: Annotated[
+        int, typer.Option("--sequence", help="Execution order within the phase")
+    ],
+    params: Annotated[
+        str | None, typer.Option("--params", "-p", help="Params JSON")
+    ] = None,
+) -> None:
+    """Add a new derivation step (created disabled; enable with 'config enable')."""
+    if step_type != "derivation":
+        typer.echo("Error: only 'derivation' steps can be added", err=True)
+        raise typer.Exit(1)
+    with PipelineSession() as session:
+        if session.add_derivation_step(name, phase, sequence, params=params):
+            typer.echo(f"Added derivation step: {name} (disabled)")
+        else:
+            typer.echo(f"Step already exists: {step_type}/{name}")
+            raise typer.Exit(1)
+
+
 @app.command("update")
 def config_update(
     step_type: Annotated[str, typer.Argument(help="Type of configuration to update")],

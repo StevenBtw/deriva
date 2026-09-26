@@ -634,6 +634,28 @@ class ArchimateManager:
             logger.error(f"Failed to delete relationship {identifier}: {e}")
             raise
 
+    def redirect_relationship(
+        self, identifier: str, new_source: str, new_target: str
+    ) -> str:
+        """Replace a relationship by one with new endpoints; returns the new identifier."""
+        old = next(
+            (r for r in self.get_relationships() if r.identifier == identifier), None
+        )
+        if old is None:
+            raise ValueError(f"Relationship not found: {identifier}")
+        new_id = self.add_relationship(
+            Relationship(
+                source=new_source,
+                target=new_target,
+                relationship_type=old.relationship_type,
+                name=old.name,
+                documentation=old.documentation,
+                properties={**old.properties, "redirected_from": identifier},
+            )
+        )
+        self.delete_relationship(identifier)
+        return new_id
+
     def delete_relationships(self, identifiers: list[str]) -> int:
         """Delete multiple relationships by identifier.
 

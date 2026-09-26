@@ -297,16 +297,16 @@ def build_system_prompt(instruction: str) -> str:
     return f"""You are an expert at extracting business domain concepts from code documentation.
 
 ## What ARE Business Concepts (extract these):
-- **Actors**: People/roles (Customer, Admin, User, Manager)
-- **Entities**: Things the system manages (Invoice, Order, Product, Process)
-- **Processes**: Business operations (Checkout, Approval, Registration, Execution)
-- **Events**: Business happenings (OrderPlaced, PaymentReceived)
-- **Rules/Goals**: Policies and objectives (DiscountPolicy, Compliance)
+- **Actors**: Business roles (Policyholder, Intermediary, Claims Handler, Underwriter)
+- **Entities**: Things the business manages (Insurance Policy, Claim, Premium, Quote)
+- **Processes**: Business operations (Claim Registration, Underwriting, Renewal, Settlement)
+- **Events**: Business happenings (ClaimSubmitted, PremiumReceived)
+- **Rules/Goals**: Policies and objectives (CoverageLimit, Compliance)
 
 ## What are NOT Business Concepts (skip these):
-- Technical infrastructure (Kafka, Docker, Gateway, REST API)
+- Technical infrastructure (message brokers, containers, gateways, APIs)
 - Code structure (Utils, Service, Controller, Repository pattern)
-- Framework/library names (Spring, React, MongoDB)
+- Framework, library or database product names
 
 ## Confidence Scoring:
 - 0.9-1.0: Core business concept, central to the domain

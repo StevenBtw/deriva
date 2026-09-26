@@ -205,6 +205,29 @@ class GrafeoConnection:
         """
         return self.execute(query, parameters, database)
 
+    def set_node_properties(self, key: str, updates: dict[Any, dict[str, Any]]) -> int:
+        """Set properties on the nodes whose ``key`` property matches, via an index.
+
+        Args:
+            key: Property identifying the nodes (e.g. "id").
+            updates: Mapping of key value to the properties to set.
+
+        Returns:
+            Number of nodes updated (unknown key values are skipped).
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        if not self.db.has_property_index(key):
+            self.db.create_property_index(key)
+        count = 0
+        for value, props in updates.items():
+            for node in self.db.find_nodes_by_property(key, value):
+                for name, prop in props.items():
+                    self.db.set_node_property(node, name, prop)
+                count += 1
+        return count
+
     # ------------------------------------------------------------------
     # Namespace helpers
     # ------------------------------------------------------------------

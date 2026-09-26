@@ -964,6 +964,16 @@ def derive_community_relationships(
     return relationships
 
 
+# Rule triples (source_type, target_type, rel_type) whose semantic pairing is
+# reliable when source and target are graph-connected within 2 hops, but whose
+# LLM proposal is non-deterministic. Promoting these to the neighbor tier with
+# a wider radius reduces relationship variance without touching other rules.
+SEMANTIC_PAIR_RULES_2HOP: set[tuple[str, str, str]] = {
+    ("BusinessActor", "BusinessProcess", "Assignment"),
+    ("BusinessActor", "BusinessFunction", "Assignment"),
+}
+
+
 def derive_neighbor_relationships(
     new_elements: list[dict[str, Any]],
     existing_elements: list[dict[str, Any]],
@@ -973,7 +983,7 @@ def derive_neighbor_relationships(
 ) -> list[dict[str, Any]]:
     """
     Create relationships between elements whose source nodes are direct
-    neighbors in the graph (1-hop).
+    neighbors in the graph (1-hop), plus semantic-pair rules at 2-hop.
 
     This is Tier 1b of the graph-first relationship derivation approach.
 
@@ -1076,6 +1086,76 @@ def derive_neighbor_relationships(
         except Exception as e:
             logger.warning("Error querying graph neighbors for %s: %s", source_id, e)
             continue
+
+    # 2-hop pass for semantic-pair rules: narrowly expands radius for rule
+    # triples known to have reliable semantic pairing but variable LLM output.
+    new_type_ref = new_elements[0].get("element_type", "") if new_elements else ""
+    semantic_outbound = [
+        r
+        for r in outbound_rules
+        if (new_type_ref, r.target_type, r.rel_type) in SEMANTIC_PAIR_RULES_2HOP
+    ]
+    semantic_inbound = [
+        r
+        for r in inbound_rules
+        if (r.target_type, new_type_ref, r.rel_type) in SEMANTIC_PAIR_RULES_2HOP
+    ]
+    if semantic_outbound or semantic_inbound:
+        for new_elem in new_elements:
+            new_id = new_elem.get("identifier", "")
+            source_id = new_elem.get("properties", {}).get("source")
+            if not new_id or not source_id:
+                continue
+            connected = get_connected_source_ids(graph_manager, [source_id], max_hops=2)
+            new_type = new_elem.get("element_type", "")
+            for neighbor_source_id in connected:
+                if neighbor_source_id == source_id:
+                    continue
+                existing = existing_by_source.get(neighbor_source_id)
+                if not existing:
+                    continue
+                existing_id = existing.get("identifier", "")
+                existing_type = existing.get("element_type", "")
+                for rule in semantic_outbound:
+                    if existing_type != rule.target_type:
+                        continue
+                    is_valid, _ = validate_relationship_rule(
+                        new_type, rule.rel_type, rule.target_type
+                    )
+                    if not is_valid:
+                        continue
+                    pair_key = (new_id, existing_id, rule.rel_type)
+                    if pair_key not in created_pairs:
+                        created_pairs.add(pair_key)
+                        relationships.append(
+                            {
+                                "source": new_id,
+                                "target": existing_id,
+                                "relationship_type": rule.rel_type,
+                                "confidence": 0.88,
+                                "derived_from": "graph_neighbor_2hop",
+                            }
+                        )
+                for rule in semantic_inbound:
+                    if existing_type != rule.target_type:
+                        continue
+                    is_valid, _ = validate_relationship_rule(
+                        rule.target_type, rule.rel_type, new_type
+                    )
+                    if not is_valid:
+                        continue
+                    pair_key = (existing_id, new_id, rule.rel_type)
+                    if pair_key not in created_pairs:
+                        created_pairs.add(pair_key)
+                        relationships.append(
+                            {
+                                "source": existing_id,
+                                "target": new_id,
+                                "relationship_type": rule.rel_type,
+                                "confidence": 0.88,
+                                "derived_from": "graph_neighbor_2hop",
+                            }
+                        )
 
     logger.debug("Graph neighbor derivation: %d relationships", len(relationships))
     return relationships
@@ -1932,6 +2012,66 @@ Return a JSON object with an "elements" array.
 """
 
 
+def build_single_candidate_prompt(
+    candidate: Candidate | dict[str, Any],
+    instruction: str,
+    element_type: str,
+    existing_elements_summary: dict[str, list[str]] | None = None,
+) -> str:
+    """Build a focused prompt asking the LLM to judge ONE candidate.
+
+    Isolating the decision per candidate prevents cross-candidate correlations
+    in the output (one name influencing a sibling's name, or the batch-level
+    abstention trigger dropping legitimate middles). The LLM returns either
+    zero or one element.
+    """
+    if isinstance(candidate, Candidate):
+        cand_dict = candidate.to_dict(include_props=ESSENTIAL_PROPS)
+    else:
+        cand_dict = candidate
+    cand_json = json.dumps(cand_dict, separators=(",", ":"), default=str)
+
+    context_section = ""
+    if existing_elements_summary:
+        lines = []
+        for etype, names in existing_elements_summary.items():
+            if names:
+                lines.append(f"- {etype}: {', '.join(names[:10])}")
+        if lines:
+            context_section = (
+                "\n## Existing Elements (for naming alignment)\n"
+                + "\n".join(lines)
+                + "\n"
+            )
+
+    return f"""You are naming ONE candidate node as an ArchiMate {element_type}.
+
+## Instructions
+{instruction}
+
+## Candidate
+```json
+{cand_json}
+```
+{context_section}
+## Rules
+1. The candidate has already been selected as an {element_type} by upstream
+   graph filtering. Your job is to name and document it, not to re-judge whether
+   it qualifies.
+2. Return exactly ONE element with identifier, name, documentation,
+   confidence (0.5-1.0), and source = the candidate id.
+3. Do NOT append ArchiMate type suffixes (" Component", " Service", " Interface", " API") to the name.
+4. Set confidence based on naming clarity, not on whether the candidate fits.
+   When the candidate's role is ambiguous, pick the most plausible name and
+   set confidence around 0.6-0.7 rather than rejecting.
+5. If "Existing Elements" are shown above, pick a name DISTINCT from any
+   listed name of the same type. Two siblings must not share a name.
+6. Output stable, deterministic results.
+
+Return a JSON object with an "elements" array of exactly one element.
+"""
+
+
 # =============================================================================
 # Prompt Building - Relationships
 # =============================================================================
@@ -2107,6 +2247,7 @@ def build_element(
     derived: dict[str, Any],
     element_type: str,
     candidate_enrichments: dict[str, dict[str, Any]] | None = None,
+    repo_name: str = "",
 ) -> dict[str, Any]:
     """Build ArchiMate element dict from LLM output.
 
@@ -2115,11 +2256,17 @@ def build_element(
         element_type: The ArchiMate element type
         candidate_enrichments: Optional mapping of node_id -> enrichment data
             (pagerank, louvain_community, etc.) to add to properties
+        repo_name: Active repo name. When non-empty, the leading repo token
+            is stripped from the element name for cross-run stability
+            (e.g., "<Repo> Client Interaction" -> "Client Interaction").
 
     Returns:
         Dict with success flag and element data
     """
-    from deriva.modules.derivation.refine.normalization import strip_archimate_suffix
+    from deriva.modules.derivation.refine.normalization import (
+        strip_archimate_suffix,
+        strip_repo_prefix,
+    )
 
     identifier = derived.get("identifier")
     name = derived.get("name")
@@ -2131,6 +2278,8 @@ def build_element(
     # instructs the LLM to avoid suffixes but compliance varies across runs;
     # this guarantees consistent names regardless of LLM variance.
     name = strip_archimate_suffix(name)
+    if repo_name:
+        name = strip_repo_prefix(name, repo_name)
 
     identifier = sanitize_identifier(identifier)
     # Clamp confidence to [0.0, 1.0] range (LLM may return out-of-range values)
@@ -2221,6 +2370,7 @@ TARGET ELEMENTS (derive relationships TO these):
 RULES:
 - Use identifiers EXACTLY as shown in the elements above (case-sensitive)
 - Source must be from SOURCE ELEMENTS, target from TARGET ELEMENTS
+- Source MUST NOT equal target. An element cannot have a relationship with itself.
 """
 
     if valid_relationship_types:
@@ -2318,7 +2468,7 @@ def build_unified_relationship_prompt(
             )
 
     # Note: identifier lists and valid_rel_types removed - they're in the JSON/rules (saves tokens)
-    prompt = f"""You are deriving ArchiMate relationships for newly created {element_type} elements.
+    prompt = f"""You are deriving ArchiMate 3.2 relationships for newly created {element_type} elements.
 
 ## New {element_type} Elements (just created)
 ```json
@@ -2335,14 +2485,23 @@ def build_unified_relationship_prompt(
 
 {inbound_text}
 
+## ArchiMate 3.2 Conventions (apply to reduce ambiguity)
+- Strongest-valid-wins: when multiple rules match the SAME (source, target) pair, pick the STRONGEST applicable type in this order: Composition > Aggregation > Assignment > Realization > Serving > Triggering > Flow > Association.
+- One relationship per ordered pair: emit AT MOST one relationship for a given (source, target). Do not emit both a strong and a weak type for the same pair.
+- Composition is exclusive: a part belongs to AT MOST ONE whole. If target X already appears as the target of a Composition from some source, do NOT create another Composition into X.
+- Direction matters: Realization points from the realizer to the realized (component Realizes service). Serving points from the provider to the consumer (service Serves consumer). Assignment points from active structure to behavior (actor Assigned to process).
+- Access is for passive only: use Access (or Read/Write/Update access) ONLY when the target is a passive-structure element (BusinessObject or DataObject). Never use Access between two active or two behavior elements.
+- Prefer structural types over Association: only fall back to Association when no stronger type fits.
+
 ## Rules
-1. ONLY create relationships that match the rules above
-2. Use identifiers EXACTLY as shown in the elements above (case-sensitive)
-3. Source/target must exist in the elements listed above
-4. Set confidence 0.5-1.0 based on clarity
-5. Maximum 3 relationships per new element
-6. If no valid relationships exist, return empty array
-7. Output stable, deterministic results
+1. ONLY create relationships that match the rules above AND the ArchiMate conventions.
+2. Use identifiers EXACTLY as shown in the elements above (case-sensitive).
+3. Source/target must exist in the elements listed above.
+4. Source MUST NOT equal target. An element cannot have a relationship with itself.
+5. Set confidence 0.5-1.0 based on clarity.
+6. Maximum 3 relationships per new element.
+7. If no valid relationships exist, return empty array.
+8. Output stable, deterministic results: when in doubt between two pairings, pick the stronger-typed one and omit the weaker one.
 
 Return {{"relationships": []}} with source, target, relationship_type, confidence for each.
 """
@@ -2622,6 +2781,16 @@ def derive_batch_relationships(
         target = rel_data.get("target")
         rel_type = rel_data.get("relationship_type")
 
+        # Reject self-loops: an element cannot have a relationship to itself.
+        if source and target and source == target:
+            logger.debug(
+                "Skipping self-loop relationship: %s -[%s]-> %s",
+                source,
+                rel_type,
+                target,
+            )
+            continue
+
         # Skip if already created by deterministic derivation
         if (source, target, rel_type) in created_pairs:
             logger.debug(
@@ -2676,8 +2845,49 @@ def derive_batch_relationships(
                 "target": target,
                 "relationship_type": rel_type,
                 "confidence": confidence,
+                "derived_from": "llm",
             }
         )
+
+    # Post-LLM graph grounding: require each LLM relationship to have
+    # source_node <-> target_node connection within 2 hops in the extraction graph.
+    # This prevents "name-based pairing" hallucinations disconnected from the code.
+    if graph_manager and llm_relationships:
+        element_by_id = {
+            e.get("identifier", ""): e
+            for e in list(new_elements) + list(filtered_existing)
+        }
+        before = len(llm_relationships)
+        grounded: list[dict[str, Any]] = []
+        for rel in llm_relationships:
+            src_elem = element_by_id.get(rel["source"])
+            tgt_elem = element_by_id.get(rel["target"])
+            src_node = (src_elem or {}).get("properties", {}).get("source")
+            tgt_node = (tgt_elem or {}).get("properties", {}).get("source")
+            if not src_node or not tgt_node:
+                # Missing provenance on either side -> cannot ground; drop.
+                logger.debug(
+                    "Dropping LLM rel without source/target node id: %s -> %s",
+                    rel["source"],
+                    rel["target"],
+                )
+                continue
+            connected = get_connected_source_ids(graph_manager, [src_node], max_hops=2)
+            if tgt_node in connected:
+                grounded.append(rel)
+            else:
+                logger.debug(
+                    "Dropping ungrounded LLM rel: %s -> %s (no 2-hop path in extraction graph)",
+                    rel["source"],
+                    rel["target"],
+                )
+        logger.info(
+            "Graph grounding: %d/%d LLM relationships kept for %s",
+            len(grounded),
+            before,
+            element_type,
+        )
+        llm_relationships = grounded
 
     # Add LLM relationships to the combined deterministic results
     all_relationships.extend(llm_relationships)
@@ -2770,6 +2980,13 @@ def derive_element_relationships(
         target = rel_data.get("target")
         rel_type = rel_data.get("relationship_type")
 
+        # Reject self-loops: an element cannot have a relationship to itself.
+        if source and target and source == target:
+            logger.debug(
+                f"Skipping self-loop relationship: {source} -[{rel_type}]-> {target}"
+            )
+            continue
+
         # Validate source is from this element type
         if source not in source_ids:
             logger.debug(
@@ -2795,6 +3012,7 @@ def derive_element_relationships(
                 "target": target,
                 "relationship_type": rel_type,
                 "confidence": rel_data.get("confidence", 0.5),
+                "derived_from": "llm",
             }
         )
 
@@ -2960,6 +3178,7 @@ __all__ = [
     "RELATIONSHIP_SCHEMA",
     # Prompts
     "build_derivation_prompt",
+    "build_single_candidate_prompt",
     "build_relationship_prompt",
     "build_element_relationship_prompt",
     "build_per_element_relationship_prompt",

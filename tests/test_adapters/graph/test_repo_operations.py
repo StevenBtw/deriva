@@ -149,3 +149,37 @@ class TestExtractionFingerprint:
 
         graph_manager.clear_graph_for_repo("myapp")
         assert graph_manager.get_extraction_fingerprint("myapp") is None
+
+
+class TestBatchUpdateProperties:
+    """Enrichment write-back: index-backed, visible to Cypher, unknown ids ignored."""
+
+    def test_writes_properties_visible_to_cypher(self, graph_manager):
+        _add_repo(graph_manager, "alpha")
+
+        updated = graph_manager.batch_update_properties(
+            {
+                "repo::alpha": {"pagerank": 0.5, "kcore_level": 3},
+                "dir::alpha::src": {"pagerank": 0.1, "is_articulation_point": True},
+                "missing::node": {"pagerank": 0.9},
+            }
+        )
+
+        assert updated == 2
+        rows = graph_manager.query(
+            "MATCH (n) WHERE n.id IN ['repo::alpha', 'dir::alpha::src'] RETURN n.id AS id, n.pagerank AS pr, n.kcore_level AS k, n.is_articulation_point AS ap ORDER BY id"
+        )
+        assert rows == [
+            {"id": "dir::alpha::src", "pr": 0.1, "k": None, "ap": True},
+            {"id": "repo::alpha", "pr": 0.5, "k": 3, "ap": None},
+        ]
+
+    def test_uses_property_index_on_id(self, graph_manager):
+        _add_repo(graph_manager, "alpha")
+
+        graph_manager.batch_update_properties({"repo::alpha": {"pagerank": 0.5}})
+
+        assert graph_manager.db.db.has_property_index("id")
+
+    def test_empty_updates_write_nothing(self, graph_manager):
+        assert graph_manager.batch_update_properties({}) == 0

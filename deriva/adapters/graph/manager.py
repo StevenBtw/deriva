@@ -425,7 +425,7 @@ class GraphManager:
         """Batch update multiple properties on multiple nodes.
 
         Used by enrichment to write algorithm results (pagerank, community, etc.)
-        to graph nodes efficiently in a single transaction.
+        to graph nodes via index lookups on the node id.
 
         Args:
             updates: Dict mapping node_id to property dict
@@ -444,27 +444,11 @@ class GraphManager:
             return 0
 
         try:
-            # Use UNWIND for efficient batch update
-            query = """
-                UNWIND $updates AS update
-                MATCH (n {id: update.node_id})
-                SET n += update.properties
-                RETURN count(n) as updated
-            """
-
-            # Convert to list format for UNWIND
-            update_list = [
-                {"node_id": node_id, "properties": props}
-                for node_id, props in updates.items()
-            ]
-
-            result = self.db.execute_write(query, {"updates": update_list})
-
-            if result:
-                count = result[0]["updated"]
-                logger.debug(f"Batch updated properties on {count} nodes")
-                return count
-            return 0
+            # Index lookups via the grafeo API: an UNWIND ... MATCH (n {id: ...}) write
+            # does not use the property index and scans all nodes per row.
+            count = self.db.set_node_properties("id", updates)
+            logger.debug(f"Batch updated properties on {count} nodes")
+            return count
 
         except Exception as e:
             logger.error(f"Failed to batch update properties: {e}")

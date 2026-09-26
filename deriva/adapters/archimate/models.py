@@ -2,7 +2,7 @@
 
 This module defines:
 - Core data structures for ArchiMate elements and relationships (instances)
-- ArchiMate 3.1 metamodel type definitions and validation rules
+- ArchiMate 3.2 metamodel type definitions and validation rules
 
 Reference: https://pubs.opengroup.org/architecture/archimate3-doc/
 """
@@ -35,8 +35,9 @@ class RelationshipType:
 
     name: str
     description: str
-    allowed_sources: set[str]  # Element types that can be source (empty = any)
-    allowed_targets: set[str]  # Element types that can be target (empty = any)
+    # Element types appearing as source / target for this type in RELATIONSHIP_TABLE
+    allowed_sources: set[str]
+    allowed_targets: set[str]
 
 
 # ArchiMate 3.2 Element Types (Application, Business & Technology Layers)
@@ -182,75 +183,163 @@ TECHNOLOGY_LAYER: set[str] = {
 
 
 # =============================================================================
-# ArchiMate 3.2 Relationship Types with Constraints
+# ArchiMate 3.2 Relationship Table
 # =============================================================================
-# Reference: https://pubs.opengroup.org/architecture/archimate3-doc/ch-Relationships-and-Relationship-Connectors.html
+# Source: ArchiMate 3.2 Specification, Appendix B.5 "Relationship Tables", restricted
+# to the 13 element types Deriva derives. The spec publishes the tables as images;
+# letters were read from them and cross-checked (case-insensitively, all 169 cells)
+# against Archi's relationships.xml v3.2.
 #
-# ArchiMate 3.2 Rule: "Aggregation, composition, and specialization relationships
-# are always permitted between two elements of the same type."
-# This means Passive→Passive Composition is valid (e.g., BusinessObject contains BusinessObject)
+# Uppercase letter: relationship explicit in the metamodel figures ("direct").
+# Lowercase letter: allowed only via the spec's derivation rules ("derived").
+# Deriva never applies derivation rules itself; the tier is read from the table.
+
+RELATIONSHIP_LETTERS: dict[str, str] = {
+    "a": "Access",
+    "c": "Composition",
+    "f": "Flow",
+    "g": "Aggregation",
+    "i": "Assignment",
+    "n": "Influence",
+    "o": "Association",
+    "r": "Realization",
+    "s": "Specialization",
+    "t": "Triggering",
+    "v": "Serving",
+}
+_LETTER_BY_RELATIONSHIP = {
+    name: letter for letter, name in RELATIONSHIP_LETTERS.items()
+}
+
+_TABLE_COLUMNS = (
+    "BusinessActor",
+    "BusinessProcess",
+    "BusinessFunction",
+    "BusinessEvent",
+    "BusinessObject",
+    "ApplicationComponent",
+    "ApplicationInterface",
+    "ApplicationService",
+    "DataObject",
+    "Node",
+    "Device",
+    "SystemSoftware",
+    "TechnologyService",
+)
+
+# Row = source, columns in _TABLE_COLUMNS order = target.
+# fmt: off
+_TABLE_ROWS: dict[str, tuple[str, ...]] = {
+    "BusinessActor":        ("SCGvtfO", "IvtfO", "IvtfO", "IvtfO", "aO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO"),
+    "BusinessProcess":      ("vtfO", "SCGvTFO", "CGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO"),
+    "BusinessFunction":     ("vtfO", "CGvTFO", "SCGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO"),
+    "BusinessEvent":        ("vtfO", "vTFO", "vTFO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO"),
+    "BusinessObject":       ("O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O", "O", "O", "O"),
+    "ApplicationComponent": ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGRvtfO", "CgrvtfO", "irvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO"),
+    "ApplicationInterface": ("VtfO", "vtfO", "vtfO", "vtfO", "aO", "VtfO", "SCGvtfO", "IvtfO", "aO", "VtfO", "VtfO", "VtfO", "vtfO"),
+    "ApplicationService":   ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "SCGvTFO", "AO", "VtfO", "VtfO", "VtfO", "vtfO"),
+    "DataObject":           ("O", "O", "O", "O", "RO", "O", "O", "O", "SCGO", "O", "O", "O", "O"),
+    "Node":                 ("ivtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGivtfO", "CGirvtfO", "CGirvtfO", "irvtfO"),
+    "Device":               ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "SCGvtfO", "CGIrvtfO", "irvtfO"),
+    "SystemSoftware":       ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "vtfO", "SCGIrvtfO", "irvtfO"),
+    "TechnologyService":    ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "RvtfO", "aO", "VtfO", "VtfO", "VtfO", "SCGvTFO"),
+}
+# fmt: on
+
+RELATIONSHIP_TABLE: dict[tuple[str, str], str] = {
+    (source, target): cell
+    for source, row in _TABLE_ROWS.items()
+    for target, cell in zip(_TABLE_COLUMNS, row, strict=True)
+}
+
+# Relationship types Deriva may propose. Association, Specialization and Influence
+# are valid ArchiMate but deliberately not derived.
+DERIVABLE_RELATIONSHIP_TYPES: tuple[str, ...] = (
+    "Composition",
+    "Aggregation",
+    "Assignment",
+    "Realization",
+    "Serving",
+    "Access",
+    "Flow",
+    "Triggering",
+)
+
+
+def relationship_tier(
+    source_type: str, relationship_type: str, target_type: str
+) -> str | None:
+    """Return "direct", "derived", or None if ArchiMate 3.2 does not allow it."""
+    letter = _LETTER_BY_RELATIONSHIP.get(relationship_type)
+    cell = RELATIONSHIP_TABLE.get((source_type, target_type))
+    if letter is None or cell is None:
+        return None
+    if letter.upper() in cell:
+        return "direct"
+    if letter in cell:
+        return "derived"
+    return None
+
+
+def _endpoints(relationship_type: str) -> tuple[set[str], set[str]]:
+    letter = _LETTER_BY_RELATIONSHIP[relationship_type]
+    pairs = [
+        pair for pair, cell in RELATIONSHIP_TABLE.items() if letter in cell.lower()
+    ]
+    return {s for s, _ in pairs}, {t for _, t in pairs}
+
+
+def _relationship_type(name: str, description: str) -> RelationshipType:
+    sources, targets = _endpoints(name)
+    return RelationshipType(
+        name=name,
+        description=description,
+        allowed_sources=sources,
+        allowed_targets=targets,
+    )
+
 
 RELATIONSHIP_TYPES: dict[str, RelationshipType] = {
-    # Structural Relationships
-    "Composition": RelationshipType(
-        name="Composition",
-        description="Element consists of other elements (same aspect, same layer)",
-        allowed_sources=STRUCTURE_ELEMENTS
-        | PASSIVE_ELEMENTS,  # Structure or Passive can compose
-        allowed_targets=STRUCTURE_ELEMENTS
-        | PASSIVE_ELEMENTS,  # Structure or Passive can be composed
+    # Structural
+    "Composition": _relationship_type(
+        "Composition", "Element consists of other elements"
     ),
-    "Aggregation": RelationshipType(
-        name="Aggregation",
-        description="Element combines other elements (same or compatible aspects)",
-        allowed_sources=STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS,
-        allowed_targets=STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS | PASSIVE_ELEMENTS,
+    "Aggregation": _relationship_type("Aggregation", "Element combines other elements"),
+    "Assignment": _relationship_type(
+        "Assignment", "Active structure element performs or is responsible for behavior"
     ),
-    # Dependency Relationships
-    "Assignment": RelationshipType(
-        name="Assignment",
-        description="Structure element performs or is responsible for behavior",
-        allowed_sources=STRUCTURE_ELEMENTS,  # Only structure elements can be assigned
-        allowed_targets=BEHAVIOR_ELEMENTS,  # Only to behavior elements
+    "Realization": _relationship_type(
+        "Realization", "Element realizes a more abstract element"
     ),
-    "Realization": RelationshipType(
-        name="Realization",
-        description="Structure element realizes behavior; lower layer realizes higher",
-        allowed_sources=STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS,
-        allowed_targets=BEHAVIOR_ELEMENTS | PASSIVE_ELEMENTS,
+    # Dependency
+    "Serving": _relationship_type(
+        "Serving", "Element provides services to another element"
     ),
-    "Serving": RelationshipType(
-        name="Serving",
-        description="Element provides services to another element",
-        allowed_sources=BEHAVIOR_ELEMENTS
-        | STRUCTURE_ELEMENTS,  # Services/components serve
-        allowed_targets=STRUCTURE_ELEMENTS
-        | BEHAVIOR_ELEMENTS,  # Other elements are served
+    "Access": _relationship_type(
+        "Access", "Behavior or structure accesses passive elements (data)"
     ),
-    "Access": RelationshipType(
-        name="Access",
-        description="Behavior/structure accesses passive elements (data)",
-        allowed_sources=BEHAVIOR_ELEMENTS | STRUCTURE_ELEMENTS,
-        allowed_targets=PASSIVE_ELEMENTS,  # Only passive elements can be accessed
+    "Influence": _relationship_type(
+        "Influence", "Element influences a motivation element"
     ),
-    # Dynamic Relationships
-    "Flow": RelationshipType(
-        name="Flow",
-        description="Transfer of information between behavior elements",
-        allowed_sources=BEHAVIOR_ELEMENTS,  # Only behavior elements can flow
-        allowed_targets=BEHAVIOR_ELEMENTS,  # Only to behavior elements
+    "Association": _relationship_type("Association", "Unspecified relationship"),
+    # Dynamic
+    "Flow": _relationship_type("Flow", "Transfer from one element to another"),
+    "Triggering": _relationship_type(
+        "Triggering", "Temporal or causal relationship between elements"
     ),
-    "Triggering": RelationshipType(
-        name="Triggering",
-        description="Behavior element triggers another behavior element (temporal/causal)",
-        allowed_sources=BEHAVIOR_ELEMENTS,  # Only behavior elements can trigger
-        allowed_targets=BEHAVIOR_ELEMENTS,  # Only behavior elements can be triggered
+    # Other
+    "Specialization": _relationship_type(
+        "Specialization", "Element is a particular kind of another element"
     ),
 }
 
 
 class ArchiMateMetamodel:
     """ArchiMate metamodel with validation rules."""
+
+    # ArchiMate 3.2: a part is composed into at most one whole, and composition hierarchies are acyclic.
+    single_parent_relationship_types: frozenset[str] = frozenset({"Composition"})
+    acyclic_relationship_types: frozenset[str] = frozenset({"Composition"})
 
     def __init__(self):
         self.element_types = ELEMENT_TYPES
@@ -301,26 +390,17 @@ class ArchiMateMetamodel:
         if not self.is_valid_relationship_type(relationship_type):
             return False, f"Invalid relationship type: {relationship_type}"
 
-        rel_type = self.relationship_types[relationship_type]
-
-        # Check allowed sources (if specified)
-        if (
-            rel_type.allowed_sources
-            and source_element_type not in rel_type.allowed_sources
-        ):
+        tier = relationship_tier(
+            source_element_type, relationship_type, target_element_type
+        )
+        if tier is None:
             return (
                 False,
-                f"{relationship_type} cannot originate from {source_element_type}",
+                f"{relationship_type} from {source_element_type} to "
+                f"{target_element_type} is not allowed by ArchiMate 3.2",
             )
 
-        # Check allowed targets (if specified)
-        if (
-            rel_type.allowed_targets
-            and target_element_type not in rel_type.allowed_targets
-        ):
-            return False, f"{relationship_type} cannot target {target_element_type}"
-
-        return True, "Valid relationship"
+        return True, f"Valid relationship ({tier})"
 
     def get_allowed_element_types(self) -> list[str]:
         """Get list of all allowed element types."""
@@ -337,7 +417,10 @@ class ArchiMateMetamodel:
     def get_valid_relationships_from(
         self, source_element_type: str
     ) -> list[dict[str, Any]]:
-        """Get valid relationship types and their allowed targets for a source element type.
+        """Get derivable relationship types and their allowed targets for a source type.
+
+        Only DERIVABLE_RELATIONSHIP_TYPES are listed; Association, Specialization
+        and Influence are valid but never proposed by Deriva.
 
         Args:
             source_element_type: The source element type (e.g., "ApplicationComponent")
@@ -350,25 +433,15 @@ class ArchiMateMetamodel:
 
         valid_relationships = []
 
-        for rel_name, rel_type in self.relationship_types.items():
-            # Check if source is allowed (empty set means any source is allowed)
-            if (
-                rel_type.allowed_sources
-                and source_element_type not in rel_type.allowed_sources
-            ):
-                continue
+        for rel_name in DERIVABLE_RELATIONSHIP_TYPES:
+            rel_type = self.relationship_types[rel_name]
+            allowed_targets = [
+                t
+                for t in self.element_types
+                if relationship_tier(source_element_type, rel_name, t)
+            ]
 
-            # Determine allowed targets
-            if rel_type.allowed_targets:
-                # Only include target types that exist in our element_types
-                allowed_targets = [
-                    t for t in rel_type.allowed_targets if t in self.element_types
-                ]
-            else:
-                # All element types are allowed
-                allowed_targets = list(self.element_types.keys())
-
-            if allowed_targets:  # Only include if there are valid targets
+            if allowed_targets:
                 valid_relationships.append(
                     {
                         "relationship_type": rel_name,
@@ -526,7 +599,7 @@ def validate_relationship_rule(
     Example:
         >>> is_valid, msg = validate_relationship_rule("ApplicationService", "Flow", "BusinessObject")
         >>> print(is_valid, msg)
-        False Flow cannot target BusinessObject
+        False Flow from ApplicationService to BusinessObject is not allowed by ArchiMate 3.2
     """
     metamodel = _get_metamodel()
     return metamodel.can_relate(source_type, rel_type, target_type)

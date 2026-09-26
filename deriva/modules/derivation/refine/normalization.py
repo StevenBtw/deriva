@@ -27,6 +27,7 @@ _ARCHIMATE_TYPE_SUFFIXES = (
     "endpoint",
     "gateway",
     "controller",
+    "command",
 )
 
 
@@ -47,8 +48,8 @@ def strip_archimate_suffix(name: str) -> str:
     """Remove a trailing ArchiMate type suffix if present.
 
     Examples:
-        'Mongo Controller' -> 'Mongo'
-        'Data REST API' -> 'Data REST'
+        'Storage Controller' -> 'Storage'
+        'Order API' -> 'Order'
         'User' -> 'User'  (single token, unchanged)
     """
     if not name:
@@ -113,9 +114,8 @@ def collapse_bo_suffix_groups(
 ) -> dict[str, str]:
     """Map names that differ only by a BusinessObject token to a shared canonical.
 
-    Example: with business_objects=['Data', 'Likes', 'Ratings'],
-    ['Aggregate Data', 'Aggregate Likes', 'Aggregate Ratings'] all map to
-    'Aggregate <BO>'.
+    Example: with business_objects=['Order', 'Item'],
+    ['Validate Order', 'Validate Item'] both map to 'Validate <BO>'.
 
     Returns a dict from original name to canonical form. Used for
     BusinessProcess entity-suffix collapse (plan rule 4).

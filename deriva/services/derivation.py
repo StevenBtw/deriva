@@ -677,6 +677,7 @@ def run_derivation(
                     relationship_type=rel_data["relationship_type"],
                     properties={
                         "confidence": rel_data.get("confidence", 0.5),
+                        "derived_from": rel_data.get("derived_from"),
                         "source_pagerank": source_props.get("source_pagerank"),
                         "source_kcore": source_props.get("source_kcore_level"),
                         "source_community": source_props.get("source_louvain_community"),
@@ -1071,6 +1072,7 @@ def run_derivation_iter(
                     relationship_type=rel_data["relationship_type"],
                     properties={
                         "confidence": rel_data.get("confidence", 0.5),
+                        "derived_from": rel_data.get("derived_from"),
                         "source_pagerank": source_props.get("source_pagerank"),
                         "source_kcore": source_props.get("source_kcore_level"),
                         "source_community": source_props.get("source_louvain_community"),

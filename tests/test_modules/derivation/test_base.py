@@ -1316,6 +1316,26 @@ class TestBuildUnifiedRelationshipPrompt:
 class TestDeriveBatchRelationships:
     """Tests for derive_batch_relationships function."""
 
+    def test_llm_relationships_are_tagged_llm(self):
+        """LLM-proposed relationships carry derived_from='llm' for tiering."""
+        from unittest.mock import MagicMock
+
+        from deriva.modules.derivation.base import RelationshipRule, derive_batch_relationships
+
+        mock_llm = MagicMock()
+        mock_llm.return_value.content = '{"relationships": [{"source": "new_app", "target": "old_svc", "relationship_type": "Serving", "confidence": 0.9}]}'
+
+        result = derive_batch_relationships(
+            new_elements=[{"identifier": "new_app", "element_type": "ApplicationComponent"}],
+            existing_elements=[{"identifier": "old_svc", "element_type": "ApplicationService"}],
+            element_type="ApplicationComponent",
+            outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
+            inbound_rules=[],
+            llm_query_fn=mock_llm,
+        )
+
+        assert result[0]["derived_from"] == "llm"
+
     def test_returns_empty_for_no_new_elements(self):
         """Should return empty list when no new elements."""
         from unittest.mock import MagicMock

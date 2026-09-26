@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import sys
+from contextlib import ExitStack
 from typing import Annotated
 
 import typer
@@ -125,30 +126,19 @@ def run_stage(
     if phase:
         typer.echo(f"Phase: {phase}")
 
-    with PipelineSession() as session:
+    with PipelineSession() as session, ExitStack() as step_scope:
         typer.echo("Connected to grafeo")
 
-        # Handle --only-step option
         if only_step:
             step_type = "extraction" if stage in ("extraction", "all") else "derivation"
-            typer.echo(f"Enabling only {step_type} step: {only_step}")
-
-            if step_type == "extraction":
-                extraction_configs = session.get_extraction_configs()
-                for cfg in extraction_configs:
-                    name = cfg.get("node_type", cfg.get("name", ""))
-                    if name == only_step:
-                        session.enable_step("extraction", name)
-                    else:
-                        session.disable_step("extraction", name)
-            else:
-                derivation_configs = session.get_derivation_configs()
-                for cfg in derivation_configs:
-                    name = cfg.get("step_name", cfg.get("name", ""))
-                    if name == only_step:
-                        session.enable_step("derivation", name)
-                    else:
-                        session.disable_step("derivation", name)
+            typer.echo(
+                f"Enabling only {step_type} step: {only_step} (restored afterwards)"
+            )
+            try:
+                step_scope.enter_context(session.only_step(step_type, only_step))
+            except ValueError as e:
+                typer.echo(f"Error: {e}", err=True)
+                raise typer.Exit(1) from e
 
         # Show LLM status
         llm_info = session.llm_info

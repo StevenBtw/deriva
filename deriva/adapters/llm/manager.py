@@ -660,21 +660,26 @@ class LLMManager:
 
             # Handle response
             output: Any = result.output
-            if response_model:
-                # Explicit response_model: return the Pydantic instance
-                if write_cache:
-                    content = _serialize_output(output)
+
+            def _try_cache_write(content: str) -> None:
+                """Cache-write is best-effort; disk-full must not fail the call."""
+                try:
                     self.cache.set_response(
                         cache_key, content, prompt, self.model, usage
                     )
+                except Exception as cache_err:
+                    logger.warning("LLM cache write failed (non-fatal): %s", cache_err)
+
+            if response_model:
+                # Explicit response_model: return the Pydantic instance
+                if write_cache:
+                    _try_cache_write(_serialize_output(output))
                 return cast(T, output)
             elif using_schema_model:
                 # Schema-resolved model: serialize to JSON for backwards compatibility
                 content = _serialize_output(output)
                 if write_cache:
-                    self.cache.set_response(
-                        cache_key, content, prompt, self.model, usage
-                    )
+                    _try_cache_write(content)
                 return LiveResponse(
                     prompt=prompt,
                     model=self.model,
@@ -686,9 +691,7 @@ class LLMManager:
                 # Unstructured string output
                 content = str(result.output) if result.output else ""
                 if write_cache:
-                    self.cache.set_response(
-                        cache_key, content, prompt, self.model, usage
-                    )
+                    _try_cache_write(content)
                 return LiveResponse(
                     prompt=prompt,
                     model=self.model,

@@ -204,3 +204,27 @@ def test_cypher_query(archimate_manager):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_redirect_relationship(archimate_manager):
+    """Redirect keeps type and properties, points to new endpoints, records the origin."""
+    a = Element("Survivor", "ApplicationComponent")
+    b = Element("Duplicate", "ApplicationComponent")
+    x = Element("Portal", "ApplicationComponent")
+    for e in (a, b, x):
+        archimate_manager.add_element(e)
+    old = Relationship(source=b.identifier, target=x.identifier, relationship_type="Serving", properties={"derived_from": "rule"})
+    archimate_manager.add_relationship(old)
+
+    new_id = archimate_manager.redirect_relationship(old.identifier, a.identifier, x.identifier)
+
+    assert archimate_manager.get_relationships(source_id=b.identifier) == []
+    (moved,) = archimate_manager.get_relationships(source_id=a.identifier)
+    assert moved.identifier == new_id
+    assert (moved.target, moved.relationship_type) == (x.identifier, "Serving")
+    assert moved.properties == {"derived_from": "rule", "redirected_from": old.identifier}
+
+
+def test_redirect_unknown_relationship_raises(archimate_manager):
+    with pytest.raises(ValueError, match="Relationship not found"):
+        archimate_manager.redirect_relationship("missing", "a", "b")

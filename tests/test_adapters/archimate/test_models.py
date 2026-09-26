@@ -186,6 +186,122 @@ class TestGetValidRelationshipsFrom:
         assert any(rt in rel_types for rt in ["Serving", "Flow", "Realization"])
 
 
+class TestSpecRelationshipTable:
+    """ArchiMate 3.2 Appendix B.5 relationship table for the 13 derived element types."""
+
+    @pytest.fixture
+    def metamodel(self):
+        return ArchiMateMetamodel()
+
+    @pytest.mark.parametrize(
+        ("source", "rel", "target"),
+        [
+            ("BusinessProcess", "Composition", "BusinessProcess"),
+            ("BusinessProcess", "Composition", "BusinessFunction"),
+            ("BusinessFunction", "Composition", "BusinessProcess"),
+            ("BusinessFunction", "Composition", "BusinessFunction"),
+            ("BusinessEvent", "Composition", "BusinessEvent"),
+            ("ApplicationService", "Composition", "ApplicationService"),
+            ("TechnologyService", "Composition", "TechnologyService"),
+            ("BusinessObject", "Aggregation", "BusinessObject"),
+            ("DataObject", "Aggregation", "DataObject"),
+            ("ApplicationComponent", "Realization", "ApplicationComponent"),
+            ("DataObject", "Realization", "BusinessObject"),
+            ("Device", "Assignment", "SystemSoftware"),
+            ("SystemSoftware", "Assignment", "SystemSoftware"),
+        ],
+    )
+    def test_accepts_direct_relationships_from_spec(self, metamodel, source, rel, target):
+        can_relate, reason = metamodel.can_relate(source, rel, target)
+        assert can_relate, reason
+
+    @pytest.mark.parametrize(
+        ("source", "rel", "target"),
+        [
+            ("BusinessActor", "Composition", "Node"),
+            ("DataObject", "Composition", "BusinessObject"),
+            ("ApplicationComponent", "Composition", "DataObject"),
+            ("ApplicationComponent", "Assignment", "BusinessProcess"),
+            ("BusinessActor", "Assignment", "ApplicationService"),
+            ("ApplicationComponent", "Realization", "BusinessObject"),
+            ("ApplicationService", "Realization", "ApplicationService"),
+            ("BusinessActor", "Aggregation", "BusinessProcess"),
+            ("ApplicationComponent", "Access", "ApplicationService"),
+            ("BusinessObject", "Serving", "BusinessProcess"),
+        ],
+    )
+    def test_rejects_relationships_not_in_spec(self, metamodel, source, rel, target):
+        can_relate, _ = metamodel.can_relate(source, rel, target)
+        assert not can_relate
+
+    @pytest.mark.parametrize(
+        ("source", "rel", "target"),
+        [
+            ("ApplicationComponent", "Assignment", "ApplicationService"),
+            ("ApplicationComponent", "Realization", "ApplicationService"),
+            ("Node", "Assignment", "SystemSoftware"),
+            ("Node", "Realization", "TechnologyService"),
+            ("ApplicationComponent", "Flow", "ApplicationComponent"),
+            ("BusinessActor", "Triggering", "BusinessActor"),
+        ],
+    )
+    def test_accepts_derived_relationships_from_spec(self, metamodel, source, rel, target):
+        can_relate, reason = metamodel.can_relate(source, rel, target)
+        assert can_relate, reason
+
+    def test_association_is_valid_between_any_pair(self, metamodel):
+        types = metamodel.get_allowed_element_types()
+        for source in types:
+            for target in types:
+                can_relate, reason = metamodel.can_relate(source, "Association", target)
+                assert can_relate, reason
+
+    def test_specialization_only_between_same_type(self, metamodel):
+        assert metamodel.can_relate("Node", "Specialization", "Node")[0]
+        assert not metamodel.can_relate("Node", "Specialization", "Device")[0]
+
+    def test_influence_not_valid_between_core_elements(self, metamodel):
+        assert not metamodel.can_relate("BusinessActor", "Influence", "BusinessProcess")[0]
+
+    @pytest.mark.parametrize(
+        ("source", "rel", "target", "tier"),
+        [
+            ("DataObject", "Realization", "BusinessObject", "direct"),
+            ("ApplicationInterface", "Assignment", "ApplicationService", "direct"),
+            ("ApplicationService", "Serving", "BusinessProcess", "direct"),
+            ("ApplicationComponent", "Assignment", "ApplicationService", "derived"),
+            ("ApplicationComponent", "Serving", "BusinessActor", "derived"),
+            ("BusinessActor", "Association", "Node", "direct"),
+            ("ApplicationComponent", "Composition", "DataObject", None),
+        ],
+    )
+    def test_relationship_tier(self, source, rel, target, tier):
+        from deriva.adapters.archimate import models
+
+        assert models.relationship_tier(source, rel, target) == tier
+
+    def test_table_totals_match_transcription(self):
+        from deriva.adapters.archimate import models
+
+        derivable = ["Composition", "Aggregation", "Assignment", "Realization", "Serving", "Access", "Flow", "Triggering"]
+        types = list(models.ELEMENT_TYPES)
+        valid = sum(1 for s in types for t in types for r in derivable if models.relationship_tier(s, r, t))
+        non_association = [r for r in models.RELATIONSHIP_TYPES if r != "Association"]
+        direct = sum(1 for s in types for t in types for r in non_association if models.relationship_tier(s, r, t) == "direct")
+        assert valid == 473
+        assert direct == 104
+
+    def test_valid_relationships_from_excludes_non_derivable_types(self, metamodel):
+        rel_types = {r["relationship_type"] for r in metamodel.get_valid_relationships_from("BusinessActor")}
+        assert "Association" not in rel_types
+        assert "Specialization" not in rel_types
+
+    def test_valid_relationships_from_lists_only_spec_targets(self, metamodel):
+        result = metamodel.get_valid_relationships_from("DataObject")
+        by_type = {r["relationship_type"]: set(r["allowed_targets"]) for r in result}
+        assert by_type == {"Realization": {"BusinessObject"}, "Composition": {"DataObject"}, "Aggregation": {"DataObject"}}
+
+
 class TestElement:
     """Tests for Element model."""
 
@@ -227,3 +343,12 @@ class TestRelationship:
         """Should store custom properties."""
         rel = Relationship(source="src", target="tgt", relationship_type="Serving", properties={"confidence": 0.9})
         assert rel.properties["confidence"] == 0.9
+
+
+class TestStructuralRules:
+    """ArchiMate 3.2: a part belongs to at most one whole via Composition, and wholes do not contain themselves."""
+
+    def test_single_parent_and_acyclic_types(self):
+        metamodel = ArchiMateMetamodel()
+        assert metamodel.single_parent_relationship_types == frozenset({"Composition"})
+        assert metamodel.acyclic_relationship_types == frozenset({"Composition"})

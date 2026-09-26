@@ -53,6 +53,11 @@ class ApplicationComponentDerivation(HybridDerivation):
     COMMUNITY_ROOT_RATIO = 0.3  # 30% community roots, 70% by PageRank
     MIN_PAGERANK = 0.0001
 
+    # Two-phase mode: filter is sole gatekeeper for inclusion; the LLM names
+    # one element per filtered candidate. Eliminates source-presence flutter
+    # caused by the LLM inconsistently rejecting borderline candidates.
+    PER_CANDIDATE_LLM = True
+
     OUTBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
             target_type="ApplicationComponent",

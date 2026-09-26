@@ -69,6 +69,10 @@ class BusinessProcessDerivation(HybridDerivation):
     MIN_PAGERANK_PERCENTILE = 40.0  # Top 60% by PageRank (scale-independent)
     MIN_ORCHESTRATOR_CALLS = 3  # Methods calling 3+ others are likely processes
 
+    # Two-phase mode: filter is sole gatekeeper for inclusion; the LLM names
+    # one element per filtered candidate.
+    PER_CANDIDATE_LLM = True
+
     OUTBOUND_RULES = [
         RelationshipRule(
             target_type="BusinessObject",

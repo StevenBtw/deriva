@@ -1255,8 +1255,8 @@ class TestRunCommandOnlyStep:
 
         assert result.exit_code == 0
         assert "Enabling only extraction step: BusinessConcept" in result.stdout
-        mock_session.enable_step.assert_called_with("extraction", "BusinessConcept")
-        mock_session.disable_step.assert_called_with("extraction", "TypeDefinition")
+        mock_session.only_step.assert_called_once_with("extraction", "BusinessConcept")
+        mock_session.only_step.return_value.__exit__.assert_called_once()
 
     @patch("deriva.cli.cli.create_progress_reporter")
     @patch("deriva.cli.cli.PipelineSession")
@@ -1283,8 +1283,21 @@ class TestRunCommandOnlyStep:
 
         assert result.exit_code == 0
         assert "Enabling only derivation step: ApplicationComponent" in result.stdout
-        mock_session.enable_step.assert_called_with("derivation", "ApplicationComponent")
-        mock_session.disable_step.assert_called_with("derivation", "BusinessProcess")
+        mock_session.only_step.assert_called_once_with("derivation", "ApplicationComponent")
+        mock_session.only_step.return_value.__exit__.assert_called_once()
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_run_with_unknown_only_step_exits_with_error(self, mock_session_class):
+        """Should exit 1 without running when the step name is unknown."""
+        mock_session = MagicMock()
+        mock_session.only_step.side_effect = ValueError("Unknown extraction step: Typo")
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["run", "extraction", "--only-step", "Typo"])
+
+        assert result.exit_code == 1
+        assert "Unknown extraction step: Typo" in result.output
+        mock_session.run_extraction.assert_not_called()
 
 
 class TestRunCommandDerivationSuccess:
@@ -3688,3 +3701,27 @@ class TestRunAppVerboseQuiet:
         runner.invoke(run_app, ["-q", "extraction"])
 
         mock_progress.assert_called_once_with(quiet=True)
+
+
+class TestConfigAddCommand:
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_adds_step(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.add_derivation_step.return_value = True
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "add", "derivation", "joint_consistency", "--phase", "refine", "--sequence", "4", "--params", '{"dry_run": true}'])
+
+        assert result.exit_code == 0
+        mock_session.add_derivation_step.assert_called_once_with("joint_consistency", "refine", 4, params='{"dry_run": true}')
+        assert "Added derivation step: joint_consistency (disabled)" in result.stdout
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_existing_step_exits_1(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.add_derivation_step.return_value = False
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "add", "derivation", "graph_relationships", "--phase", "refine", "--sequence", "4"])
+
+        assert result.exit_code == 1
