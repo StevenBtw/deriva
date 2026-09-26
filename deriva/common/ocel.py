@@ -503,3 +503,25 @@ def parse_run_id(run_id: str) -> dict[str, str | int]:
             "iteration": int(parts[3]),
         }
     return {"run_id": run_id}
+
+
+def load_benchmark_ocel(benchmarks_dir: Path | str, session_id: str) -> OCELLog:
+    """Load a benchmark session's event log.
+
+    Looks for ``ocel/benchmark_events.json(l)`` (current layout), then the legacy
+    ``events.ocel.json`` / ``events.jsonl`` in the session root. Empty log if none exist.
+    """
+    session_dir = Path(benchmarks_dir) / session_id
+    for path in (
+        session_dir / "ocel" / "benchmark_events.json",
+        session_dir / "ocel" / "benchmark_events.jsonl",
+        session_dir / "events.ocel.json",
+        session_dir / "events.jsonl",
+    ):
+        if path.exists():
+            return (
+                OCELLog.from_jsonl(path)
+                if path.suffix == ".jsonl"
+                else OCELLog.from_json(path)
+            )
+    return OCELLog()

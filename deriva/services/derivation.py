@@ -656,6 +656,7 @@ def run_derivation(
         # Start progress tracking
         if progress:
             progress.start_step("ConsolidatedRelationships")
+        rel_ctx = run_logger.step_start("ConsolidatedRelationships", "Deriving relationships") if run_logger else None
 
         try:
             relationship_rules = _collect_relationship_rules()
@@ -695,10 +696,15 @@ def run_derivation(
                 print(f"    + {rel_count} consolidated relationships")
             if progress:
                 progress.complete_step(f"{rel_count} relationships")
+            if rel_ctx:
+                rel_ctx.items_created = rel_count
+                rel_ctx.complete()
 
         except Exception as e:
             error_msg = f"Error in consolidated relationships: {str(e)}"
             errors.append(error_msg)
+            if rel_ctx:
+                rel_ctx.error(error_msg)
             if progress:
                 progress.log(error_msg, level="error")
                 progress.complete_step()

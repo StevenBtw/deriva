@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from deriva.common.ocel import OCELLog, parse_run_id
+from deriva.common.ocel import OCELLog, load_benchmark_ocel, parse_run_id
 from deriva.modules.analysis import (
     ConfigDeviation,
     DeviationReport,
@@ -65,16 +65,7 @@ class ConfigDeviationAnalyzer:
 
     def _load_ocel(self) -> OCELLog:
         """Load OCEL log from file."""
-        ocel_path = Path("workspace/benchmarks") / self.session_id / "events.ocel.json"
-
-        if ocel_path.exists():
-            return OCELLog.from_json(ocel_path)
-
-        jsonl_path = Path("workspace/benchmarks") / self.session_id / "events.jsonl"
-        if jsonl_path.exists():
-            return OCELLog.from_jsonl(jsonl_path)
-
-        return OCELLog()
+        return load_benchmark_ocel("workspace/benchmarks", self.session_id)
 
     def _load_runs(self) -> list[dict[str, Any]]:
         """Load benchmark runs from database."""

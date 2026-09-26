@@ -13,7 +13,9 @@ Refine Step Name: "structural_consistency"
 
 from __future__ import annotations
 
+import json
 import logging
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from deriva.adapters.archimate.models import BEHAVIOR_ELEMENTS, PASSIVE_ELEMENTS
@@ -144,55 +146,56 @@ class StructuralConsistencyStep:
 
         Graph: (parent:Directory)-[:CONTAINS]->(child:Directory)
         Expected Model: (parent:ApplicationComponent)-[:Composition]->(child:ApplicationComponent)
+
+        An element represents a graph node when its serialized properties mention the
+        node id. Model rows are read once and joined in Python (a Cypher join of edges
+        x element pairs does not use indexes).
         """
-        # Query Graph for containment relationships between nodes that have Model representations
-        containment_query = f"""
-            MATCH (graph_parent)-[:`Graph:CONTAINS`]->(graph_child)
-            WHERE graph_parent.active = true AND graph_child.active = true
-              AND 'Graph' IN labels(graph_parent)
-              AND 'Graph' IN labels(graph_child)
-            WITH graph_parent.id as parent_source, graph_child.id as child_source
+        edges = graph_manager.query(
+            "MATCH (p:Graph)-[:`Graph:CONTAINS`]->(c:Graph) "
+            "WHERE p.active = true AND c.active = true "
+            "RETURN p.id AS parent, c.id AS child"
+        )
+        elements = [
+            (e, json.dumps(e.properties))
+            for e in archimate_manager.get_elements(enabled_only=True)
+            if e.properties
+        ]
+        rel_types: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for r in archimate_manager.get_relationships():
+            rel_types[(r.source, r.target)].append(r.relationship_type)
 
-            // Find Model elements derived from these Graph nodes
-            MATCH (model_parent:{model_ns}), (model_child:{model_ns})
-            WHERE model_parent.enabled = true AND model_child.enabled = true
-              AND model_parent.properties_json CONTAINS parent_source
-              AND model_child.properties_json CONTAINS child_source
+        mentions: dict[str, list] = {}
+        rows: list[tuple] = []
+        for edge in sorted(edges, key=lambda e: (e["parent"] or "", e["child"] or "")):
+            parent_source, child_source = edge["parent"], edge["child"]
+            for node_id in (parent_source, child_source):
+                if node_id not in mentions:
+                    mentions[node_id] = [
+                        e for e, text in elements if node_id and node_id in text
+                    ]
+            for parent in mentions[parent_source]:
+                for child in mentions[child_source]:
+                    types = rel_types.get((parent.identifier, child.identifier)) or [
+                        None
+                    ]
+                    rows.extend(
+                        (parent_source, child_source, parent, child, t) for t in types
+                    )
 
-            // Check if there's a corresponding Model relationship
-            OPTIONAL MATCH (model_parent)-[model_rel]->(model_child)
-            WHERE type(model_rel) STARTS WITH '{model_ns}:'
-
-            RETURN parent_source, child_source,
-                   model_parent.identifier as parent_model_id,
-                   model_parent.name as parent_name,
-                   model_child.identifier as child_model_id,
-                   model_child.name as child_name,
-                   model_rel IS NOT NULL as has_model_relationship,
-                   type(model_rel) as model_rel_type
-            LIMIT 100
-        """
-
-        try:
-            containments = archimate_manager.query(containment_query)
-        except Exception as e:
-            # Fallback to simpler query if complex one fails
-            logger.warning(f"Complex containment query failed, using fallback: {e}")
-            containments = []
-
-        for item in containments:
-            if not item["has_model_relationship"]:
+        for parent_source, child_source, parent, child, rel_type in rows[:100]:
+            if rel_type is None:
                 result.issues_found += 1
                 result.details.append(
                     {
                         "action": "flagged",
                         "issue_type": "missing_containment_relationship",
-                        "graph_parent": item["parent_source"],
-                        "graph_child": item["child_source"],
-                        "model_parent_id": item["parent_model_id"],
-                        "model_parent_name": item["parent_name"],
-                        "model_child_id": item["child_model_id"],
-                        "model_child_name": item["child_name"],
+                        "graph_parent": parent_source,
+                        "graph_child": child_source,
+                        "model_parent_id": parent.identifier,
+                        "model_parent_name": parent.name,
+                        "model_child_id": child.identifier,
+                        "model_child_name": child.name,
                         "expected_rel_type": "Composition",
                         "reason": "containment_not_preserved",
                     }

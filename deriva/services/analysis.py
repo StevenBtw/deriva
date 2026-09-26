@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from deriva.common.ocel import OCELLog
+from deriva.common.ocel import OCELLog, load_benchmark_ocel
 from deriva.modules.analysis.cross_repo_analysis import (
     compare_across_repos,
     generate_cross_repo_recommendations,
@@ -113,29 +113,7 @@ class BenchmarkAnalyzer:
 
     def _load_ocel(self, session_id: str) -> OCELLog:
         """Load OCEL log from file."""
-        # Try new location first (ocel/ subdirectory per BENCHMARK_OUTPUT.md)
-        ocel_dir = Path("workspace/benchmarks") / session_id / "ocel"
-        ocel_path = ocel_dir / "benchmark_events.json"
-
-        if ocel_path.exists():
-            return OCELLog.from_json(ocel_path)
-
-        # Try JSONL format in new location
-        jsonl_path = ocel_dir / "benchmark_events.jsonl"
-        if jsonl_path.exists():
-            return OCELLog.from_jsonl(jsonl_path)
-
-        # Fallback to old location for backward compatibility
-        old_ocel_path = Path("workspace/benchmarks") / session_id / "events.ocel.json"
-        if old_ocel_path.exists():
-            return OCELLog.from_json(old_ocel_path)
-
-        old_jsonl_path = Path("workspace/benchmarks") / session_id / "events.jsonl"
-        if old_jsonl_path.exists():
-            return OCELLog.from_jsonl(old_jsonl_path)
-
-        # Return empty log if files not found
-        return OCELLog()
+        return load_benchmark_ocel("workspace/benchmarks", session_id)
 
     def _load_session_info(self, session_id: str) -> dict:
         """Load session summary from file."""
@@ -697,7 +675,7 @@ class BenchmarkAnalyzer:
                     run_id = event.objects.get("BenchmarkRun", [""])[0]
                     if run_id in run_metrics:
                         run_metrics[run_id]["end"] = event.timestamp
-                elif event.activity in ("LLMRequest", "llm_request"):
+                elif event.activity == "LLMQuery":
                     run_id = event.objects.get("BenchmarkRun", [""])[0]
                     if run_id in run_metrics:
                         run_metrics[run_id]["api_calls"] += 1

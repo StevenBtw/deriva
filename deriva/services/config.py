@@ -57,7 +57,7 @@ def get_settings() -> DerivaSettings:
     Usage:
         settings = get_settings()
         print(settings.llm.temperature)
-        print(settings.grafeo.db_path)
+        print(settings.grafeo.db_dir)
     """
     from deriva.services.config_models import DerivaSettings
 

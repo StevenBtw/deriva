@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any, TypeVar, cast, overload
 
@@ -532,6 +534,20 @@ class LLMManager:
         bench_hash: str | None = None,
     ) -> LLMResponse: ...
 
+    @property
+    def last_call(self) -> dict[str, Any] | None:
+        """Metrics of the latest query() on the current thread.
+
+        Keys: cache_key, cache_hit, latency_ms, wait_ms, requests, input_tokens,
+        output_tokens, error_type.
+        """
+        return getattr(self._call_store(), "call", None)
+
+    def _call_store(self) -> threading.local:
+        if "_calls" not in self.__dict__:
+            self.__dict__["_calls"] = threading.local()
+        return self.__dict__["_calls"]
+
     def query(
         self,
         prompt: str,
@@ -577,6 +593,19 @@ class LLMManager:
         read_cache = use_cache and not self.nocache
         write_cache = use_cache
 
+        # Filled in along the way so every return path leaves complete metrics
+        call: dict[str, Any] = {
+            "cache_key": cache_key,
+            "cache_hit": False,
+            "latency_ms": 0.0,
+            "wait_ms": 0.0,
+            "requests": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "error_type": None,
+        }
+        self._call_store().call = call
+
         try:
             # Validate prompt
             if not prompt or not isinstance(prompt, str) or len(prompt.strip()) == 0:
@@ -590,10 +619,13 @@ class LLMManager:
                     if content and content.strip():
                         if response_model:
                             try:
-                                return response_model.model_validate_json(content)
+                                validated = response_model.model_validate_json(content)
+                                call["cache_hit"] = True
+                                return validated
                             except Exception:
                                 pass  # Cache miss, continue to API call
                         else:
+                            call["cache_hit"] = True
                             return CachedResponse(
                                 prompt=cached["prompt"],
                                 model=cached["model"],
@@ -603,7 +635,7 @@ class LLMManager:
                             )
 
             # Rate limit
-            self._rate_limiter.wait_if_needed()
+            call["wait_ms"] = round(self._rate_limiter.wait_if_needed() * 1000, 1)
 
             # Resolve output type:
             # 1. Use explicit response_model if provided
@@ -632,6 +664,7 @@ class LLMManager:
             # pydantic_ai's run_sync() uses run_until_complete() which fails
             # if there's already a running event loop. In that case, we run
             # the LLM call in a separate thread.
+            started = time.perf_counter()
             if _is_event_loop_running():
                 # Running inside an async context (marimo/Jupyter) - use thread pool
                 def _run_in_thread() -> Any:
@@ -646,16 +679,21 @@ class LLMManager:
                     model_settings=settings,
                 )
 
+            call["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
             self._rate_limiter.record_success()
 
-            # Extract usage
+            # Extract usage (pydantic-ai: result.usage() returns RunUsage)
             usage = None
-            if hasattr(result, "usage") and result.usage:
+            usage_fn = getattr(result, "usage", None)
+            run_usage = usage_fn() if callable(usage_fn) else None
+            if run_usage is not None:
+                call["requests"] = run_usage.requests
+                call["input_tokens"] = run_usage.input_tokens
+                call["output_tokens"] = run_usage.output_tokens
                 usage = {
-                    "prompt_tokens": getattr(result.usage, "request_tokens", 0) or 0,
-                    "completion_tokens": getattr(result.usage, "response_tokens", 0)
-                    or 0,
-                    "total_tokens": getattr(result.usage, "total_tokens", 0) or 0,
+                    "prompt_tokens": run_usage.input_tokens,
+                    "completion_tokens": run_usage.output_tokens,
+                    "total_tokens": run_usage.input_tokens + run_usage.output_tokens,
                 }
 
             # Handle response
@@ -701,6 +739,7 @@ class LLMManager:
                 )
 
         except CircuitOpenError as e:
+            call["error_type"] = "CircuitOpenError"
             # Circuit breaker is open - fail fast without attempting request
             logger.warning(
                 "LLM query blocked by circuit breaker: %s",
@@ -714,6 +753,7 @@ class LLMManager:
             )
 
         except ValidationError as e:
+            call["error_type"] = "ValidationError"
             logger.warning("LLM query failed with ValidationError: %s", e)
             return FailedResponse(
                 prompt=prompt,
@@ -723,6 +763,7 @@ class LLMManager:
             )
 
         except Exception as e:
+            call["error_type"] = type(e).__name__
             # Classify the error and update rate limiter state
             category, retry_after = classify_exception(e)
 

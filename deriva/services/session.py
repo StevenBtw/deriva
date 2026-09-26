@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 from deriva.adapters.database import get_connection
-from deriva.adapters.grafeo import close_database
+from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
 from deriva.common.logging import RunLogger
@@ -60,6 +60,7 @@ class PipelineSession:
         db_path: str | None = None,
         auto_connect: bool = False,
         workspace_dir: str | None = None,
+        repository: str | None = None,
     ):
         """Initialize session.
 
@@ -67,8 +68,11 @@ class PipelineSession:
             db_path: Path to DuckDB database (default: deriva/adapters/database/sql.db)
             auto_connect: If True, connect immediately (useful for Marimo)
             workspace_dir: Repository workspace directory (default: from env)
+            repository: Graph database to work in: a repository name, or the joined
+                names of a combined run (default: the shared "default" database)
         """
         self._db_path = db_path
+        self.repository = repository or DEFAULT_DATABASE
         self._workspace_dir = workspace_dir or os.getenv("REPOSITORY_WORKSPACE_DIR", "workspace/repositories")
 
         # Managers (created on connect)
@@ -106,7 +110,8 @@ class PipelineSession:
         # Database (get_connection uses DB_PATH from env)
         self._engine = get_connection()
 
-        # Graph managers (grafeo embedded)
+        # Graph managers (grafeo embedded), in the session's repository database
+        use_database(self.repository)
         self._graph_manager = GraphManager()
         self._graph_manager.connect()
 
@@ -117,6 +122,11 @@ class PipelineSession:
         self._repo_manager = RepoManager(workspace_dir=self._workspace_dir)
 
         self._connected = True
+
+    def use_repository(self, repository: str) -> None:
+        """Switch the graph and model managers to another repository's database."""
+        self.repository = repository
+        use_database(repository)
 
     def disconnect(self) -> None:
         """Disconnect all managers."""

@@ -126,7 +126,7 @@ def run_stage(
     if phase:
         typer.echo(f"Phase: {phase}")
 
-    with PipelineSession() as session, ExitStack() as step_scope:
+    with PipelineSession(repository=repo) as session, ExitStack() as step_scope:
         typer.echo("Connected to grafeo")
 
         if only_step:
@@ -221,9 +221,14 @@ def run_stage(
 
 
 @app.command("status")
-def status() -> None:
+def status(
+    repo: Annotated[
+        str | None,
+        typer.Option("--repo", help="Repository whose graph database to use (default: shared)"),
+    ] = None,
+) -> None:
     """Show current pipeline status."""
-    with PipelineSession() as session:
+    with PipelineSession(repository=repo) as session:
         typer.echo("\nDERIVA STATUS")
         typer.echo("=" * 60)
 
@@ -270,6 +275,10 @@ def export(
     verbose: Annotated[
         bool, typer.Option("-v", "--verbose", help="Print detailed progress")
     ] = False,
+    repo: Annotated[
+        str | None,
+        typer.Option("--repo", help="Repository whose graph database to use (default: shared)"),
+    ] = None,
 ) -> None:
     """Export ArchiMate model to file."""
     model_name = name or "Deriva Model"
@@ -278,7 +287,7 @@ def export(
     typer.echo("DERIVA - Exporting ArchiMate Model")
     typer.echo(f"{'=' * 60}")
 
-    with PipelineSession() as session:
+    with PipelineSession(repository=repo) as session:
         if verbose:
             typer.echo("Connected to grafeo")
 
@@ -304,6 +313,10 @@ def export(
 @app.command("clear")
 def clear(
     target: Annotated[str, typer.Argument(help="Data layer to clear (graph, model)")],
+    repo: Annotated[
+        str | None,
+        typer.Option("--repo", help="Repository whose graph database to use (default: shared)"),
+    ] = None,
 ) -> None:
     """Clear graph or model data."""
     if target not in ("graph", "model"):
@@ -316,7 +329,7 @@ def clear(
     typer.echo(f"DERIVA - Clearing {target.upper()}")
     typer.echo(f"{'=' * 60}")
 
-    with PipelineSession() as session:
+    with PipelineSession(repository=repo) as session:
         if target == "graph":
             result = session.clear_graph()
         elif target == "model":
@@ -339,6 +352,8 @@ def clear(
 
 def main() -> int:
     """Main entry point."""
+    # Line-buffer stdout so progress appears live, also when piped to a file
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
     try:
         app()
         return 0
