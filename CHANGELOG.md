@@ -15,12 +15,16 @@ Replaced Neo4j (Docker container) with grafeo, an embedded Rust graph database. 
 ### Infrastructure
 
 - **Grafeo adapter**: New `deriva/adapters/grafeo/` with `GrafeoConnection`, a drop-in replacement for the old `Neo4jConnection`, using a shared `GrafeoDB` singleton with namespace isolation
-- **No Docker required**: Graph database is embedded (in-memory by default, persistent via `GRAFEO_DB_PATH` env var)
+- **No Docker required**: Graph database is embedded (in-memory by default, persistent via `GRAFEO_DB_DIR`)
+- **One graph database per repository**: `GRAFEO_DB_DIR` holds a `<repository>.grafeo` file per repository (combined benchmark runs use the joined repository names, commands without `--repo` use `default.grafeo`). Benchmark runs are isolated per repository; `run`, `export`, `clear` and `status` accept `--repo`
+- **Faster graph access**: property indexes on `id` and `identifier`; enrichment write-back and `graph_relationships` use index lookups and Python joins instead of unindexed Cypher joins
+- **Observability**: real step durations in benchmark event logs, extraction events, LLM latency/rate-limit wait/requests/tokens per call, slow-query warnings (`GRAFEO_SLOW_QUERY_MS`) and a `timings.json` summary per benchmark session
 - **Removed Neo4j**: Deleted `deriva/adapters/neo4j/` and all Neo4j driver dependencies
 
 ### Breaking Changes
 
 - `Neo4jSettings` → `GrafeoSettings` (env prefix: `GRAFEO_`)
+- `GRAFEO_DB_PATH` (single file) → `GRAFEO_DB_DIR` (directory, one database per repository); a set `GRAFEO_DB_PATH` now raises an error
 - `NEO4J_GRAPH_NAMESPACE` → `GRAPH_NAMESPACE`, `NEO4J_NAMESPACE_ARCHIMATE` → `ARCHIMATE_NAMESPACE`
 - `session.start_neo4j()` / `stop_neo4j()` → `start_graph_db()` / `stop_graph_db()`
 - `get_enrichments_from_neo4j()` → `get_enrichments_from_graph()`
