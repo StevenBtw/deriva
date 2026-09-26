@@ -839,6 +839,28 @@ from deriva.services.benchmarking import (
 class TestOCELRunLogger:
     """Tests for OCELRunLogger class."""
 
+    def test_verbose_logger_prints_step_completion(self, capsys):
+        logger = OCELRunLogger(ocel_log=OCELLog(), run_id="run-1", session_id="s", model="m", repo="r", verbose=True)
+        logger.phase_start("derivation", "")
+
+        with patch("deriva.services.benchmarking.time.perf_counter", side_effect=[1.0, 3.25, 3.25]):
+            logger.step_start("pagerank").complete()
+
+        out = capsys.readouterr().out
+        assert "pagerank" in out and "2.25s" in out
+
+    def test_step_duration_is_measured_without_with_block(self):
+        """Pipelines call step_start() without `with`; the duration must still be real."""
+        ocel_log = OCELLog()
+        logger = OCELRunLogger(ocel_log=ocel_log, run_id="run-1", session_id="session-1", model="m", repo="r")
+        logger.phase_start("derivation", "")
+
+        with patch("deriva.services.benchmarking.time.perf_counter", side_effect=[10.0, 12.5]):
+            logger.step_start("pagerank").complete()
+
+        (event,) = [e for e in ocel_log.events if e.activity == "DeriveConfig"]
+        assert event.attributes["duration_seconds"] == 2.5
+
     def test_init(self):
         """Should initialize with required fields."""
         ocel_log = OCELLog()
@@ -1857,3 +1879,145 @@ class TestBenchmarkAnalyzer:
 
                 result = analyzer._get_elements_by_run("gpt-4", "repo1")
                 assert result == {}
+
+
+class TestEnsureExtractionEvents:
+    """Extraction appears in the benchmark event log with timing and cache status."""
+
+    def _orchestrator(self):
+        from deriva.services.benchmarking import BenchmarkConfig
+
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(),
+            graph_manager=MagicMock(),
+            archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["repo1"], models=["m"]),
+        )
+        orchestrator.session_id = "s1"
+        return orchestrator
+
+    def test_cached_extraction_emits_event(self):
+        orchestrator = self._orchestrator()
+        with patch("deriva.services.benchmarking.extraction.compute_extraction_fingerprint", return_value="fp"):
+            orchestrator.graph_manager.get_extraction_fingerprint.return_value = "fp"
+            orchestrator._ensure_extraction()
+
+        (event,) = [e for e in orchestrator.ocel_log.events if e.activity == "EnsureExtraction"]
+        assert event.attributes["cached"] is True
+        assert event.attributes["repository"] == "repo1"
+        assert event.attributes["duration_seconds"] >= 0
+
+    def test_extraction_run_gets_ocel_run_logger_and_emits_event(self):
+        orchestrator = self._orchestrator()
+        orchestrator._make_extraction_llm_fn = MagicMock(return_value=(MagicMock(), MagicMock(model="m")))
+        with (
+            patch("deriva.services.benchmarking.extraction.compute_extraction_fingerprint", return_value="new"),
+            patch("deriva.services.benchmarking.extraction.run_extraction", return_value={"success": True, "stats": {"nodes_created": 5, "edges_created": 4}}) as run_extraction,
+        ):
+            orchestrator.graph_manager.get_extraction_fingerprint.return_value = "old"
+            orchestrator._ensure_extraction()
+
+        assert isinstance(run_extraction.call_args.kwargs["run_logger"], OCELRunLogger)
+        (event,) = [e for e in orchestrator.ocel_log.events if e.activity == "EnsureExtraction"]
+        assert event.attributes["cached"] is False
+        assert (event.attributes["nodes_created"], event.attributes["edges_created"]) == (5, 4)
+
+
+class TestLLMQueryEvent:
+    """The benchmark LLM wrapper logs the manager's per-call metrics."""
+
+    def test_event_carries_call_metrics(self):
+        from deriva.services.benchmarking import BenchmarkConfig
+
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["r"], models=["m"]),
+        )
+        llm = MagicMock()
+        llm.query.return_value = MagicMock(content="{}", usage=None)
+        llm.last_call = {
+            "cache_key": "k1", "cache_hit": False, "latency_ms": 812.5, "wait_ms": 40.0,
+            "requests": 2, "input_tokens": 100, "output_tokens": 20, "error_type": None,
+        }
+        run_logger = MagicMock(current_config="ApplicationComponent")
+
+        query_fn = orchestrator._create_logging_query_fn(llm, llm, run_logger)
+        query_fn("prompt")
+
+        (event,) = [e for e in orchestrator.ocel_log.events if e.activity == "LLMQuery"]
+        a = event.attributes
+        assert (a["cache_key"], a["latency_ms"], a["wait_ms"], a["requests"]) == ("k1", 812.5, 40.0, 2)
+        assert (a["tokens_in"], a["tokens_out"], a["cache_hit"], a["error_type"]) == (100, 20, False, None)
+        assert query_fn.used_cache_keys == ["k1"]
+
+
+class TestTimingsExport:
+    def test_export_writes_timings_per_run_with_top_queries(self, tmp_path, monkeypatch):
+        import json
+
+        from deriva.common.timing import query_stats
+        from deriva.services.benchmarking import BenchmarkConfig
+
+        monkeypatch.chdir(tmp_path)
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["r"], models=["m"]),
+        )
+        orchestrator.session_id = "s1"
+        log = orchestrator.ocel_log
+        log.create_event(activity="EnsureExtraction", objects={"BenchmarkSession": ["s1"]}, repository="r", cached=True, duration_seconds=0.2)
+        log.create_event(activity="DeriveConfig", objects={"BenchmarkRun": ["run-1"]}, config_id="pagerank", duration_seconds=1.5)
+        log.create_event(activity="CompleteRun", objects={"BenchmarkRun": ["run-1"]}, duration_seconds=9.0)
+        query_stats.reset()
+        query_stats.record("MATCH (n) RETURN n", 12.0)
+
+        orchestrator._export_ocel()
+
+        timings = json.loads((tmp_path / "workspace/benchmarks/s1/timings.json").read_text())
+        assert timings["extraction"] == [{"repository": "r", "cached": True, "seconds": 0.2}]
+        assert timings["runs"]["run-1"]["run_seconds"] == 9.0
+        assert timings["runs"]["run-1"]["steps"] == [{"step": "pagerank", "seconds": 1.5}]
+        assert timings["top_queries"][0]["query"] == "MATCH (n) RETURN n"
+        query_stats.reset()
+
+
+class TestDatabasePerRepo:
+    """Each benchmark repo is extracted and derived in its own graph database."""
+
+    def _orchestrator(self, per_repo: bool):
+        from deriva.services.benchmarking import BenchmarkConfig, RunResult
+
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["b", "a"], models=["m"], per_repo=per_repo, runs_per_combination=1),
+        )
+        calls: list[tuple[str, ...]] = []
+        orchestrator._ensure_extraction = MagicMock(  # type: ignore[method-assign]
+            side_effect=lambda verbose=False, repositories=None: calls.append(("extract", *repositories)) or []
+        )
+        orchestrator._run_combined = MagicMock(  # type: ignore[method-assign]
+            side_effect=lambda repositories, **kw: calls.append(("run", *repositories))
+            or RunResult(run_id="r", repositories=repositories, model="m", iteration=1, status="completed", stats={}, errors=[], duration_seconds=0.0)
+        )
+        return orchestrator, calls
+
+    def _run(self, orchestrator, calls):
+        with (
+            patch("deriva.services.benchmarking.load_benchmark_models", return_value={"m": MagicMock(provider="openai", model="m")}),
+            patch("deriva.services.benchmarking.use_database", side_effect=lambda key: calls.append(("db", key))),
+            patch.object(orchestrator, "_create_session"),
+            patch.object(orchestrator, "_complete_session"),
+            patch.object(orchestrator, "_export_ocel", return_value="x"),
+            patch.object(orchestrator, "_export_ocel_incremental"),
+        ):
+            orchestrator.run()
+
+    def test_per_repo_mode_switches_database_before_extraction(self):
+        orchestrator, calls = self._orchestrator(per_repo=True)
+        self._run(orchestrator, calls)
+        assert calls == [("db", "b"), ("extract", "b"), ("run", "b"), ("db", "a"), ("extract", "a"), ("run", "a")]
+
+    def test_combined_mode_uses_one_database_for_all_repos(self):
+        orchestrator, calls = self._orchestrator(per_repo=False)
+        self._run(orchestrator, calls)
+        assert calls == [("db", "a_b"), ("extract", "b", "a"), ("run", "b", "a")]

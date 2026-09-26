@@ -246,6 +246,12 @@ class TestMain:
             result = main()
         assert result == 1
 
+    def test_main_makes_stdout_line_buffered(self):
+        """Progress lines must appear live, also when stdout is piped to a file."""
+        with patch("deriva.cli.cli.app"), patch("deriva.cli.cli.sys.stdout") as stdout:
+            main()
+        stdout.reconfigure.assert_called_once_with(line_buffering=True)
+
 
 class TestConfigListCommand:
     """Tests for config list command."""
@@ -3725,3 +3731,29 @@ class TestConfigAddCommand:
         result = runner.invoke(app, ["config", "add", "derivation", "graph_relationships", "--phase", "refine", "--sequence", "4"])
 
         assert result.exit_code == 1
+
+
+class TestRepositoryDatabaseSelection:
+    """Commands with --repo work in that repository's graph database."""
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_run_opens_repo_database(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.run_extraction.return_value = {"success": True, "stats": {}}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        runner.invoke(app, ["run", "extraction", "--repo", "bigdata", "-q"])
+
+        assert mock_session_class.call_args.kwargs["repository"] == "bigdata"
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_export_and_clear_open_repo_database(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.export_model.return_value = {"success": True, "elements_exported": 0, "relationships_exported": 0, "output_path": "x"}
+        mock_session.clear_model.return_value = {"success": True}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        runner.invoke(app, ["export", "--repo", "bigdata", "-o", "x.xml"])
+        runner.invoke(app, ["clear", "model", "--repo", "lightblue"])
+
+        assert [c.kwargs["repository"] for c in mock_session_class.call_args_list] == ["bigdata", "lightblue"]

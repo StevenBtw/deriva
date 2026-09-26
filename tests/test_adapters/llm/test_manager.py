@@ -706,3 +706,54 @@ class TestUtilityMethods:
         assert "LLMManager" in repr_str
         assert "ollama" in repr_str
         assert "llama3" in repr_str
+
+
+class TestLastCall:
+    """Per-call metrics for observability: latency, rate-limit wait, requests, tokens, cache, errors."""
+
+    ENV = {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true"}
+
+    def _manager(self, tmp_path):
+        with patch("deriva.adapters.llm.manager.load_dotenv"):
+            with patch.dict("os.environ", {**self.ENV, "LLM_CACHE_DIR": str(tmp_path / "cache")}, clear=True):
+                return LLMManager()
+
+    def test_live_call_records_latency_wait_requests_and_tokens(self, tmp_path):
+        from pydantic_ai.usage import RunUsage
+
+        manager = self._manager(tmp_path)
+        manager._rate_limiter.wait_if_needed = MagicMock(return_value=0.25)  # type: ignore[method-assign]
+        mock_result = MagicMock()
+        mock_result.output = "ok"
+        mock_result.usage = MagicMock(return_value=RunUsage(input_tokens=11, output_tokens=7, requests=2))
+
+        with patch("deriva.adapters.llm.manager.Agent") as mock_agent_class:
+            mock_agent_class.return_value.run_sync.return_value = mock_result
+            response = manager.query("Hello")
+
+        call = manager.last_call
+        assert call["cache_hit"] is False and call["error_type"] is None
+        assert call["wait_ms"] == 250.0
+        assert call["latency_ms"] >= 0
+        assert (call["requests"], call["input_tokens"], call["output_tokens"]) == (2, 11, 7)
+        assert call["cache_key"]
+        assert response.usage == {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+
+    def test_cache_hit_is_recorded(self, tmp_path):
+        manager = self._manager(tmp_path)
+        manager.nocache = False
+        manager.cache.get = MagicMock(  # type: ignore[method-assign]
+            return_value={"prompt": "p", "model": "m", "content": "c", "cache_key": "k", "cached_at": "t"}
+        )
+
+        manager.query("Hello")
+
+        assert manager.last_call["cache_hit"] is True and manager.last_call["requests"] == 0
+
+    def test_error_type_is_recorded(self, tmp_path):
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as mock_agent_class:
+            mock_agent_class.return_value.run_sync.side_effect = RuntimeError("boom")
+            manager.query("Hello")
+
+        assert manager.last_call["error_type"] == "RuntimeError"

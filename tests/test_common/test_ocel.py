@@ -523,3 +523,40 @@ class TestParseRunId:
 
         assert result["iteration"] == 42
         assert isinstance(result["iteration"], int)
+
+
+class TestLoadBenchmarkOcel:
+    """One loader for a session's event log (ocel/benchmark_events.json(l), legacy root files)."""
+
+    def _write(self, path, activity):
+        log = OCELLog()
+        log.create_event(activity=activity, objects={})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        log.export_jsonl(path)
+
+    def test_reads_current_layout(self, tmp_path):
+        from deriva.common.ocel import load_benchmark_ocel
+
+        self._write(tmp_path / "s1" / "ocel" / "benchmark_events.jsonl", "Current")
+        assert [e.activity for e in load_benchmark_ocel(tmp_path, "s1").events] == ["Current"]
+
+    def test_falls_back_to_legacy_layout_then_empty(self, tmp_path):
+        from deriva.common.ocel import load_benchmark_ocel
+
+        self._write(tmp_path / "s1" / "events.jsonl", "Legacy")
+        assert [e.activity for e in load_benchmark_ocel(tmp_path, "s1").events] == ["Legacy"]
+        assert load_benchmark_ocel(tmp_path, "missing").events == []
+
+    def test_benchmark_analyzer_uses_current_layout(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        from deriva.services.benchmarking import BenchmarkAnalyzer
+
+        monkeypatch.chdir(tmp_path)
+        self._write(tmp_path / "workspace" / "benchmarks" / "s1" / "ocel" / "benchmark_events.jsonl", "Current")
+        with patch("deriva.services.benchmarking.get_benchmark_session", return_value={"session_id": "s1"}), patch(
+            "deriva.services.benchmarking.get_benchmark_runs", return_value=[]
+        ):
+            analyzer = BenchmarkAnalyzer("s1", MagicMock())
+
+        assert [e.activity for e in analyzer.ocel_log.events] == ["Current"]

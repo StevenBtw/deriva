@@ -47,6 +47,35 @@ class TestPipelineSessionLifecycle:
             mock_graph.return_value.connect.assert_called_once()
             mock_archimate.return_value.connect.assert_called_once()
 
+    def test_connect_opens_the_repository_database(self):
+        """A session for a repository works in that repository's own graph database."""
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.use_database") as use_database,
+        ):
+            PipelineSession(repository="bigdata").connect()
+            PipelineSession().connect()
+
+        assert [c.args[0] for c in use_database.call_args_list] == ["bigdata", "default"]
+
+    def test_use_repository_switches_database(self):
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.use_database") as use_database,
+        ):
+            session = PipelineSession()
+            session.connect()
+            session.use_repository("lightblue")
+
+        assert use_database.call_args.args[0] == "lightblue"
+        assert session.repository == "lightblue"
+
     def test_connect_idempotent(self):
         """Connect should be idempotent."""
         with (

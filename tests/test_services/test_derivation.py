@@ -1387,6 +1387,56 @@ class TestRunDerivationDeferRelationships:
         saved = archimate_manager.add_relationship.call_args[0][0]
         assert saved.properties["derived_from"] == "graph_neighbor"
 
+    def test_deferred_relationships_get_their_own_step(self):
+        """The relationship LLM step is logged as its own step, not under the last element type."""
+        engine = MagicMock()
+        run_logger = MagicMock()
+        graph_manager = MagicMock()
+        archimate_manager = MagicMock()
+
+        gen_cfg = MagicMock()
+        gen_cfg.step_name = "gen_app"
+        gen_cfg.element_type = "ApplicationComponent"
+        gen_cfg.input_graph_query = "MATCH (n) RETURN n"
+        gen_cfg.instruction = "Gen"
+        gen_cfg.example = "{}"
+        gen_cfg.max_candidates = 10
+        gen_cfg.batch_size = 5
+        gen_cfg.temperature = None
+        gen_cfg.max_tokens = None
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
+            with patch.object(derivation, "generate_element") as mock_gen:
+                mock_gen.return_value = {
+                    "success": True,
+                    "elements_created": 2,
+                    "relationships_created": 0,
+                    "created_elements": [
+                        {"identifier": "e1", "properties": {"source_pagerank": 0.5}},
+                        {"identifier": "e2", "properties": {"source_pagerank": 0.3}},
+                    ],
+                    "errors": [],
+                }
+                with patch.object(derivation, "derive_consolidated_relationships") as mock_rel:
+                    mock_rel.return_value = [{"source": "e1", "target": "e2", "relationship_type": "Access", "confidence": 0.8, "derived_from": "graph_neighbor"}]
+
+                    derivation.run_derivation(
+                        engine=engine,
+                        graph_manager=graph_manager,
+                        archimate_manager=archimate_manager,
+                        llm_query_fn=MagicMock(),
+                        defer_relationships=True,
+                        phases=["generate"],
+                        run_logger=run_logger,
+                    )
+
+        step_names = [c.args[0] for c in run_logger.step_start.call_args_list]
+        assert step_names == ["gen_app", "ConsolidatedRelationships"]
+        rel_ctx = run_logger.step_start.return_value
+        assert rel_ctx.items_created == 1
+        rel_ctx.complete.assert_called()
+
     def test_deferred_relationships_verbose_output(self, capsys):
         """Should print verbose output for consolidated relationships."""
         engine = MagicMock()

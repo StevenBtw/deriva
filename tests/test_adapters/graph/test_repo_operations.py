@@ -183,3 +183,45 @@ class TestBatchUpdateProperties:
 
     def test_empty_updates_write_nothing(self, graph_manager):
         assert graph_manager.batch_update_properties({}) == 0
+
+
+class TestAddEdge:
+    """Edge writes: index lookups for both ends, upsert by (endpoints, type, edge id)."""
+
+    def _nodes(self, gm):
+        _add_repo(gm, "alpha")
+        return "repo::alpha", "dir::alpha::src"
+
+    def test_edge_is_visible_to_cypher(self, graph_manager):
+        src, dst = self._nodes(graph_manager)
+
+        edge_id = graph_manager.add_edge(src, dst, "CONTAINS", properties={"order": 1})
+
+        rows = graph_manager.query(
+            "MATCH (s)-[r:`Graph:CONTAINS`]->(d) RETURN s.id AS s, d.id AS d, r.id AS id, r.properties_json AS pj"
+        )
+        assert rows == [{"s": src, "d": dst, "id": edge_id, "pj": '{"order": 1}'}]
+        assert edge_id == f"{src}_CONTAINS_{dst}"
+
+    def test_adding_the_same_edge_twice_keeps_one_edge(self, graph_manager):
+        src, dst = self._nodes(graph_manager)
+
+        graph_manager.add_edge(src, dst, "CONTAINS", properties={"v": 1})
+        graph_manager.add_edge(src, dst, "CONTAINS", properties={"v": 2})
+
+        rows = graph_manager.query("MATCH ()-[r:`Graph:CONTAINS`]->() RETURN r.properties_json AS pj")
+        assert rows == [{"pj": '{"v": 2}'}]
+
+    def test_missing_endpoint_raises(self, graph_manager):
+        src, _ = self._nodes(graph_manager)
+
+        with pytest.raises(RuntimeError, match="Make sure nodes"):
+            graph_manager.add_edge(src, "missing::node", "CONTAINS")
+
+    def test_endpoints_are_found_by_index_not_by_a_second_match(self, graph_manager):
+        src, dst = self._nodes(graph_manager)
+
+        with patch.object(graph_manager.db, "execute_write", wraps=graph_manager.db.execute_write) as write:
+            graph_manager.add_edge(src, dst, "CONTAINS")
+
+        assert not [c for c in write.call_args_list if "MATCH (dst)" in c.args[0]]

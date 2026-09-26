@@ -1157,49 +1157,14 @@ class TestStructuralConsistencyStep:
 
         assert result.success is True
 
-    def test_flags_missing_containment(self):
-        """Should flag missing containment relationships."""
-        from deriva.modules.derivation.refine.structural_consistency import StructuralConsistencyStep
-
-        mock_archimate_manager = MagicMock()
-        mock_archimate_manager.namespace = "Model"
-        mock_archimate_manager.query.side_effect = [
-            [
-                {
-                    "parent_source": "dir1",
-                    "child_source": "file1",
-                    "parent_model_id": "model_dir1",
-                    "parent_name": "Directory",
-                    "child_model_id": "model_file1",
-                    "child_name": "File",
-                    "has_model_relationship": False,
-                    "model_rel_type": None,
-                }
-            ],
-            [],  # call preservation check
-        ]
-
-        mock_graph_manager = MagicMock()
-
-        step = StructuralConsistencyStep()
-        result = step.run(
-            archimate_manager=mock_archimate_manager,
-            graph_manager=mock_graph_manager,
-        )
-
-        assert result.success is True
-        assert result.issues_found == 1
-        assert any(d.get("issue_type") == "missing_containment_relationship" for d in result.details)
-
-    def test_handles_query_failure_with_fallback(self):
-        """Should use fallback when complex query fails."""
+    def test_model_query_failure_does_not_fail_the_step(self):
+        """A failing call-preservation query is logged, not fatal."""
         from deriva.modules.derivation.refine.structural_consistency import (
             StructuralConsistencyStep,
         )
 
         mock_archimate_manager = MagicMock()
         mock_archimate_manager.namespace = "Model"
-        # The implementation has fallback behavior for query failures
         mock_archimate_manager.query.side_effect = Exception("Query error")
 
         mock_graph_manager = MagicMock()
@@ -1210,7 +1175,6 @@ class TestStructuralConsistencyStep:
             graph_manager=mock_graph_manager,
         )
 
-        # Implementation uses fallback, so it doesn't fail
         assert result.success is True
 
     def test_skips_checks_based_on_params(self):
