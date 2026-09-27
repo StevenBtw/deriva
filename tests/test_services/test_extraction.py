@@ -30,6 +30,7 @@ def default_excluded_directories():
     with patch.object(config, "get_excluded_directories", return_value=list(config.DEFAULT_EXCLUDED_DIRECTORIES)):
         yield
 
+
 class TestRunExtraction:
     """Tests for run_extraction function."""
 
@@ -1780,9 +1781,7 @@ class TestConceptNodesMergeAcrossFiles:
         try:
             for key in order:
                 _add_concept_node(gm, occurrences[key], "concept::repo::user")
-            return gm.get_node("concept::repo::user")["properties"], gm.query(
-                "MATCH (n:Graph:BusinessConcept) WHERE 'actor' IN n.conceptTypes RETURN n.id AS id"
-            )
+            return gm.get_node("concept::repo::user")["properties"], gm.query("MATCH (n:Graph:BusinessConcept) WHERE 'actor' IN n.conceptTypes RETURN n.id AS id")
         finally:
             gm.disconnect()
             close_database()
@@ -1799,3 +1798,72 @@ class TestConceptNodesMergeAcrossFiles:
         _, rows = self._store(["rtf", "readme"])
 
         assert rows == [{"id": "concept::repo::user"}]
+
+
+class TestExtractionMethodFilter:
+    """``extraction_methods`` selects steps; a filtered run is not a full extraction."""
+
+    @staticmethod
+    def _cfg(node_type, method):
+        cfg = MagicMock()
+        cfg.node_type = node_type
+        cfg.input_sources = None
+        cfg.extraction_method = method
+        return cfg
+
+    def _run(self, tmpdir, extraction_methods, progress=None):
+        graph_manager = MagicMock()
+        repo = MagicMock()
+        repo.name = "test_repo"
+        repo.path = tmpdir
+        configs = [self._cfg("Repository", "structural"), self._cfg("BusinessConcept", "llm")]
+        with (
+            patch("deriva.services.extraction.RepoManager") as repo_mgr,
+            patch("deriva.services.extraction.config.get_extraction_configs", return_value=configs),
+            patch("deriva.services.extraction.config.get_file_types", return_value=[]),
+            patch("deriva.services.extraction.compute_extraction_fingerprint", return_value="fp"),
+        ):
+            repo_mgr.return_value.list_repositories.return_value = [repo]
+            result = run_extraction(MagicMock(), graph_manager, extraction_methods=extraction_methods, progress=progress)
+        return result, graph_manager
+
+    def test_empty_selection_runs_no_steps(self, tmp_path):
+        result, graph_manager = self._run(str(tmp_path), [])
+
+        assert result["stats"]["steps_skipped"] == 2
+        graph_manager.add_node.assert_not_called()
+
+    def test_filtered_run_does_not_write_the_fingerprint(self, tmp_path):
+        _, graph_manager = self._run(str(tmp_path), ["structural"])
+
+        graph_manager.set_extraction_fingerprint.assert_not_called()
+
+    def test_full_run_writes_the_fingerprint(self, tmp_path):
+        _, graph_manager = self._run(str(tmp_path), None)
+
+        graph_manager.set_extraction_fingerprint.assert_called_once_with("test_repo", "fp")
+
+    def test_progress_total_counts_only_selected_steps(self, tmp_path):
+        progress = MagicMock()
+        self._run(str(tmp_path), ["structural"], progress=progress)
+
+        progress.start_phase.assert_called_once_with("extraction", 1)
+
+
+class TestLLMExtractionLabels:
+    """Node types an LLM-only re-extraction clears are the ones its LLM steps create."""
+
+    def test_returns_enabled_llm_step_node_types(self):
+        from deriva.services.extraction import llm_extraction_labels
+
+        configs = [
+            TestExtractionMethodFilter._cfg("Repository", "structural"),
+            TestExtractionMethodFilter._cfg("BusinessConcept", "llm"),
+            TestExtractionMethodFilter._cfg("ExternalDependency", "parser"),
+            TestExtractionMethodFilter._cfg("Technology", "llm"),
+        ]
+        with patch("deriva.services.extraction.config.get_extraction_configs", return_value=configs) as get:
+            labels = llm_extraction_labels(MagicMock())
+
+        assert labels == ["BusinessConcept", "Technology"]
+        assert get.call_args.kwargs["enabled_only"] is True

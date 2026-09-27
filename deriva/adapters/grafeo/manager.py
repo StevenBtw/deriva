@@ -78,6 +78,8 @@ def _database_file(key: str) -> str | None:
     directory = os.getenv("GRAFEO_DB_DIR", "")
     if not directory:
         return None
+    if not key or key in (".", "..") or any(sep in key for sep in ("/", "\\")):
+        raise ValueError(f"Invalid database key {key!r}: must be a plain file name")
     Path(directory).mkdir(parents=True, exist_ok=True)
     return str(Path(directory) / f"{key}.grafeo")
 
@@ -289,7 +291,12 @@ class GrafeoConnection:
             self.db.create_property_index(key)
         count = 0
         for value, props in updates.items():
+            if not props:
+                continue
             for node in self._find_nodes(key, value):
+                # The database is shared by all namespaces; touch only this one's nodes
+                if self.namespace not in (self.db.get_node_labels(node) or []):
+                    continue
                 for name, prop in props.items():
                     self.db.set_node_property(node, name, prop)
                 count += 1
@@ -385,7 +392,9 @@ class GrafeoConnection:
                             for name, value in properties.items():
                                 self.db.set_edge_property(row["eid"], name, value)
                 else:
-                    self.db.create_edge(src, dst, edge_type, {"id": edge_id, **properties})
+                    self.db.create_edge(
+                        src, dst, edge_type, {"id": edge_id, **properties}
+                    )
                     existing.add((src, dst, edge_id))
         _record_query(f"merge_edge({edge_type})", started)
         return True

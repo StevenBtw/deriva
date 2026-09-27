@@ -675,7 +675,7 @@ class BenchmarkAnalyzer:
                     run_id = event.objects.get("BenchmarkRun", [""])[0]
                     if run_id in run_metrics:
                         run_metrics[run_id]["end"] = event.timestamp
-                elif event.activity == "LLMQuery":
+                elif event.activity in ("LLMQuery", "LLMRequest", "llm_request"):  # older sessions used the last two
                     run_id = event.objects.get("BenchmarkRun", [""])[0]
                     if run_id in run_metrics:
                         run_metrics[run_id]["api_calls"] += 1

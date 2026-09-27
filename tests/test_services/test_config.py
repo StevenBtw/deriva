@@ -601,6 +601,13 @@ class TestSetSetting:
         insert_call = [c for c in calls if "INSERT" in str(c)]
         assert len(insert_call) > 0
 
+    def test_rejects_invalid_excluded_directories_without_writing(self):
+        engine = MagicMock()
+
+        with pytest.raises(ValueError, match="excluded_directories"):
+            set_setting(engine, "excluded_directories", "node_modules")
+        engine.execute.assert_not_called()
+
 
 class TestEnableStep:
     """Tests for enable_step function."""
@@ -1723,6 +1730,21 @@ class TestAddDerivationStep:
 
         assert add_derivation_step(engine, "graph_relationships", "refine", 4) is False
 
+    @pytest.mark.parametrize(
+        ("phase", "sequence", "params", "message"),
+        [
+            ("refnie", 4, None, "phase"),
+            ("refine", -1, None, "sequence"),
+            ("refine", 4, "{not json", "params"),
+        ],
+    )
+    def test_rejects_invalid_values_without_inserting(self, engine, phase, sequence, params, message):
+        from deriva.services.config import add_derivation_step
+
+        with pytest.raises(ValueError, match=message):
+            add_derivation_step(engine, "new_step", phase, sequence, params=params)
+        assert engine.execute("SELECT count(*) FROM derivation_config WHERE step_name = 'new_step'").fetchone()[0] == 0
+
 
 class TestExcludedDirectories:
     """Dependency directories skipped by every repository walk (system setting `excluded_directories`)."""
@@ -1766,8 +1788,7 @@ class TestExtractionConfigParams:
         engine = duckdb.connect(":memory:")
         engine.execute((SCRIPTS_DIR / "schema.sql").read_text(encoding="utf-8"))
         engine.execute(
-            "INSERT INTO extraction_config (id, node_type, version, sequence, enabled, instruction, example, is_active) "
-            "VALUES (1, 'Technology', 1, 1, TRUE, 'i', 'e', TRUE)"
+            "INSERT INTO extraction_config (id, node_type, version, sequence, enabled, instruction, example, is_active) VALUES (1, 'Technology', 1, 1, TRUE, 'i', 'e', TRUE)"
         )
         return engine
 

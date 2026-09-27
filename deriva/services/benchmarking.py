@@ -462,7 +462,9 @@ class BenchmarkOrchestrator:
         model_config = self._model_configs[self.config.models[0]]
         # --no-cache must reach extraction too, or extraction variance is never measured
         llm_manager = LLMManager.from_config(model_config, nocache=not self.config.use_cache)
-        return self._create_logging_query_fn(llm_manager, llm_manager, run_logger)
+        # Configs listed in nocache_configs always get a live call
+        nocache_manager = LLMManager.from_config(model_config, nocache=True) if self.config.use_cache else llm_manager
+        return self._create_logging_query_fn(llm_manager, nocache_manager, run_logger)
 
     def _extract_repo(
         self,
@@ -482,6 +484,7 @@ class BenchmarkOrchestrator:
             verbose=verbose,
         )
         previous_run_id, self._current_run_id = self._current_run_id, run_logger.run_id
+        previous_model, self._current_model = self._current_model, self.config.models[0]
         try:
             return extraction.run_extraction(
                 engine=self.engine,
@@ -496,6 +499,7 @@ class BenchmarkOrchestrator:
             )
         finally:
             self._current_run_id = previous_run_id
+            self._current_model = previous_model
 
     def _ensure_extraction(self, verbose: bool = False, repositories: list[str] | None = None) -> list[str]:
         """Ensure extraction data exists for all benchmark repositories.
@@ -517,13 +521,11 @@ class BenchmarkOrchestrator:
         if verbose:
             print("\n--- Ensuring extraction data ---")
 
-        # Labels created by LLM extraction steps (safe to clear and re-extract)
-        LLM_LABELS = ["BusinessConcept", "Technology", "ExternalDependency"]
-
         for repo_name in repositories if repositories is not None else self.config.repositories:
             start = time.perf_counter()
             result: dict[str, Any] | None = None
             mode = "fingerprint"
+            failure: str | None = None
             try:
                 current_fp = extraction.compute_extraction_fingerprint(self.engine, repo_name, config_versions)
                 stored_fp = self.graph_manager.get_extraction_fingerprint(repo_name)
@@ -544,7 +546,9 @@ class BenchmarkOrchestrator:
 
                     if has_data:
                         # Structural/AST data exists; clear only LLM nodes and re-run LLM steps
-                        cleared = self.graph_manager.clear_nodes_by_labels(repo_name, LLM_LABELS)
+                        # Clear exactly what the LLM steps re-create
+                        llm_labels = extraction.llm_extraction_labels(self.engine, config_versions)
+                        cleared = self.graph_manager.clear_nodes_by_labels(repo_name, llm_labels)
                         if verbose:
                             print(f"  {repo_name}: cleared {cleared} LLM nodes, re-running LLM extraction steps")
                         result = self._extract_repo(repo_name, config_versions, extraction_methods=["llm"], verbose=verbose)
@@ -578,6 +582,7 @@ class BenchmarkOrchestrator:
 
             except Exception as e:
                 error_msg = f"Extraction failed for {repo_name}: {e}"
+                failure = error_msg
                 errors.append(error_msg)
                 if verbose:
                     print(f"  {repo_name}: ERROR: {e}")
@@ -588,11 +593,11 @@ class BenchmarkOrchestrator:
                 objects={"BenchmarkSession": [self.session_id or ""], "Repository": [repo_name]},
                 repository=repo_name,
                 mode=mode,
-                cached=result is None,
+                cached=result is None and failure is None,
                 duration_seconds=round(time.perf_counter() - start, 2),
                 nodes_created=stats.get("nodes_created", 0),
                 edges_created=stats.get("edges_created", 0),
-                errors=(result or {}).get("errors", []),
+                errors=(result or {}).get("errors", []) + ([failure] if failure else []),
             )
 
         if verbose:
@@ -1227,10 +1232,7 @@ class BenchmarkOrchestrator:
             # JSON snapshot for consistency analysis: the XML carries no properties,
             # but identity by source node and relationship provenance need them
             snapshot = {
-                "elements": [
-                    {"identifier": e.identifier, "type": e.element_type, "name": e.name, "source": (e.properties or {}).get("source")}
-                    for e in elements
-                ],
+                "elements": [{"identifier": e.identifier, "type": e.element_type, "name": e.name, "source": (e.properties or {}).get("source")} for e in elements],
                 "relationships": [
                     {
                         "source": r.source,

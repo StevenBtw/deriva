@@ -41,21 +41,24 @@ def compute_graph_hash(graph_manager: "GraphManager") -> str:
         SHA256 hash string representing graph state
     """
     try:
-        # Count active Graph-labeled nodes, grouped by repository so the hash
-        # changes whenever the active scope changes (e.g., switching repos
-        # between benchmark runs). Labels are stored as separate items in
-        # this codebase, so we match with 'Graph' IN labels(n), not STARTS WITH.
+        # Count active Graph-labeled nodes and their outgoing edges, grouped by
+        # repository so the hash changes whenever the active scope or the edges
+        # change (enrichments such as PageRank depend on both). Labels are stored
+        # as separate items in this codebase, so we match with 'Graph' IN labels(n).
         stats_query = """
             MATCH (n)
             WHERE 'Graph' IN labels(n)
               AND n.active = true
-            RETURN coalesce(n.repository_name, '_') as repo, count(n) as c
+            OPTIONAL MATCH (n)-[r]->()
+            RETURN coalesce(n.repository_name, '_') as repo,
+                   count(DISTINCT n) as c, count(r) as e
             ORDER BY repo
         """
         results = graph_manager.query(stats_query)
         # Serialize the per-repo counts deterministically.
         scope_signature = ";".join(
-            f"{row.get('repo', '_')}:{row.get('c', 0)}" for row in results
+            f"{row.get('repo', '_')}:{row.get('c', 0)}:{row.get('e', 0)}"
+            for row in results
         )
 
         # Include namespace in hash.

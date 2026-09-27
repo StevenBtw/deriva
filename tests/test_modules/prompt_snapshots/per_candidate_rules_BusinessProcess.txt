@@ -1,0 +1,12 @@
+1. The candidate has already been selected as an BusinessProcess by upstream
+   graph filtering. Your job is to name and document it, not to re-judge whether
+   it qualifies.
+2. Return exactly ONE element with identifier, name, documentation,
+   confidence (0.5-1.0), and source = the candidate id.
+3. Do NOT append ArchiMate type suffixes (" Component", " Service", " Interface", " API") to the name.
+4. Set confidence based on naming clarity, not on whether the candidate fits.
+   When the candidate's role is ambiguous, pick the most plausible name and
+   set confidence around 0.6-0.7 rather than rejecting.
+5. If "Existing Elements" are shown above, pick a name DISTINCT from any
+   listed name of the same type. Two siblings must not share a name.
+6. Output stable, deterministic results.

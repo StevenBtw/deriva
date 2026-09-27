@@ -252,6 +252,13 @@ class TestMain:
             main()
         stdout.reconfigure.assert_called_once_with(line_buffering=True)
 
+    def test_main_runs_with_a_stdout_that_cannot_reconfigure(self):
+        """Redirected streams such as io.StringIO have no reconfigure()."""
+        import io
+
+        with patch("deriva.cli.cli.app"), patch("deriva.cli.cli.sys.stdout", io.StringIO()):
+            assert main() == 0
+
 
 class TestConfigListCommand:
     """Tests for config list command."""
@@ -3744,6 +3751,17 @@ class TestConfigAddCommand:
 
         assert result.exit_code == 1
 
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_invalid_values_exit_1_with_the_reason(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.add_derivation_step.side_effect = ValueError("phase must be one of prep, generate, refine, relationship")
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "add", "derivation", "x", "--phase", "refnie", "--sequence", "4"])
+
+        assert result.exit_code == 1
+        assert "phase must be one of" in result.output
+
 
 class TestRepositoryDatabaseSelection:
     """Commands with --repo work in that repository's graph database."""
@@ -3805,3 +3823,14 @@ class TestSettingCommands:
 
         assert result.exit_code == 0
         mock_session.set_setting.assert_called_once_with("excluded_directories", '[".git"]')
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_setting_set_invalid_value_exits_1(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.set_setting.side_effect = ValueError("excluded_directories must be a JSON list of directory names")
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "setting", "set", "excluded_directories", "node_modules"])
+
+        assert result.exit_code == 1
+        assert "JSON list" in result.output

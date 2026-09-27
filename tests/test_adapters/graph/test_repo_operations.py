@@ -104,6 +104,26 @@ class TestClearGraphForRepo:
         assert graph_manager.get_node("file::myapp::src/main.py") is None
 
 
+class TestClearNodesByLabels:
+    """Tests for clear_nodes_by_labels()."""
+
+    def test_deletes_only_the_given_labels_of_that_repo(self, graph_manager):
+        _add_repo(graph_manager, "repo_a")
+        _add_repo(graph_manager, "repo_b")
+
+        count = graph_manager.clear_nodes_by_labels("repo_a", ["File"])
+
+        assert count == 1
+        remaining = graph_manager.query("MATCH (f:File) RETURN f.repository_name as repo")
+        assert [r["repo"] for r in remaining] == ["repo_b"]
+        assert graph_manager.query("MATCH (d:Directory) RETURN count(d) as c")[0]["c"] == 2
+
+    def test_returns_zero_for_empty_labels(self, graph_manager):
+        _add_repo(graph_manager, "repo_a")
+
+        assert graph_manager.clear_nodes_by_labels("repo_a", []) == 0
+
+
 class TestExtractionFingerprint:
     """Tests for get/set extraction fingerprint."""
 
@@ -197,9 +217,7 @@ class TestAddEdge:
 
         edge_id = graph_manager.add_edge(src, dst, "CONTAINS", properties={"order": 1})
 
-        rows = graph_manager.query(
-            "MATCH (s)-[r:`Graph:CONTAINS`]->(d) RETURN s.id AS s, d.id AS d, r.id AS id, r.properties_json AS pj"
-        )
+        rows = graph_manager.query("MATCH (s)-[r:`Graph:CONTAINS`]->(d) RETURN s.id AS s, d.id AS d, r.id AS id, r.properties_json AS pj")
         assert rows == [{"s": src, "d": dst, "id": edge_id, "pj": '{"order": 1}'}]
         assert edge_id == f"{src}_CONTAINS_{dst}"
 
@@ -235,13 +253,9 @@ class TestAddNode:
 
         node_id = graph_manager.add_node(DirectoryNode(name="src", path="a/src", repository_name="a"), node_id="dir::a::src")
 
-        rows = graph_manager.query(
-            "MATCH (n {id: 'dir::a::src'}) RETURN labels(n) AS l, n.name AS name, n.active AS active, n.repository_name AS repo"
-        )
+        rows = graph_manager.query("MATCH (n {id: 'dir::a::src'}) RETURN labels(n) AS l, n.name AS name, n.active AS active, n.repository_name AS repo")
         assert node_id == "dir::a::src"
-        assert [{**r, "l": sorted(r["l"])} for r in rows] == [
-            {"l": ["Directory", "Graph"], "name": "src", "active": True, "repo": "a"}
-        ]
+        assert [{**r, "l": sorted(r["l"])} for r in rows] == [{"l": ["Directory", "Graph"], "name": "src", "active": True, "repo": "a"}]
 
     def test_adding_the_same_node_twice_updates_it(self, graph_manager):
         from deriva.adapters.graph.models import DirectoryNode
@@ -258,3 +272,24 @@ class TestAddNode:
             graph_manager.add_node(DirectoryNode(name="src", path="a/src", repository_name="a"), node_id="dir::a::src")
 
         assert not [c for c in write.call_args_list if "MERGE" in c.args[0]]
+
+
+class TestGraphHash:
+    """The enrichment cache key changes whenever the graph structure does."""
+
+    def test_adding_an_edge_changes_the_hash(self, graph_manager):
+        from deriva.adapters.graph.cache import compute_graph_hash
+
+        _add_repo(graph_manager, "repo_a")
+        before = compute_graph_hash(graph_manager)
+        graph_manager.add_edge("dir::repo_a::src", "file::repo_a::src/main.py", "CONTAINS")
+
+        assert compute_graph_hash(graph_manager) != before
+
+    def test_hash_is_stable_without_changes(self, graph_manager):
+        from deriva.adapters.graph.cache import compute_graph_hash
+
+        _add_repo(graph_manager, "repo_a")
+        graph_manager.add_edge("dir::repo_a::src", "file::repo_a::src/main.py", "CONTAINS")
+
+        assert compute_graph_hash(graph_manager) == compute_graph_hash(graph_manager)

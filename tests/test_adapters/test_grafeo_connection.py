@@ -39,6 +39,31 @@ def test_index_backed_writes_are_timed(conn):
     assert any(q["query"] == "set_node_properties(id)" for q in query_stats.top())
 
 
+def test_set_node_properties_stays_in_its_namespace(conn):
+    conn.execute("CREATE (:Graph {id: 'shared'})")
+    conn.execute("CREATE (:Model {id: 'shared'})")
+
+    count = conn.set_node_properties("id", {"shared": {"x": 1}})
+
+    assert count == 1
+    assert conn.execute("MATCH (n:Model) RETURN n.x AS x") == [{"x": None}]
+
+
+def test_set_node_properties_counts_only_nodes_it_changed(conn):
+    conn.execute("CREATE (:Graph {id: 'a'})")
+
+    assert conn.set_node_properties("id", {"a": {}}) == 0
+
+
+@pytest.mark.parametrize("key", ["../elsewhere", "a/b", r"a\b", "..", ""])
+def test_database_key_must_be_a_plain_file_name(key, tmp_path, monkeypatch):
+    from deriva.adapters.grafeo.manager import _database_file
+
+    monkeypatch.setenv("GRAFEO_DB_DIR", str(tmp_path))
+    with pytest.raises(ValueError, match="database key"):
+        _database_file(key)
+
+
 def test_slow_query_is_logged(conn, caplog, monkeypatch):
     monkeypatch.setenv("GRAFEO_SLOW_QUERY_MS", "0")
     with caplog.at_level(logging.WARNING, logger="deriva.adapters.grafeo.manager"):

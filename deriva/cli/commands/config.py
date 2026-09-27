@@ -19,7 +19,9 @@ app = typer.Typer(name="config", help="Manage pipeline configurations")
 # Filetype subapp
 filetype_app = typer.Typer(name="filetype", help="Manage file type registry")
 app.add_typer(filetype_app)
-setting_app = typer.Typer(name="setting", help="Manage system settings (e.g. excluded_directories)")
+setting_app = typer.Typer(
+    name="setting", help="Manage system settings (e.g. excluded_directories)"
+)
 app.add_typer(setting_app)
 
 
@@ -163,7 +165,12 @@ def config_add(
         typer.echo("Error: only 'derivation' steps can be added", err=True)
         raise typer.Exit(1)
     with PipelineSession() as session:
-        if session.add_derivation_step(name, phase, sequence, params=params):
+        try:
+            added = session.add_derivation_step(name, phase, sequence, params=params)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+        if added:
             typer.echo(f"Added derivation step: {name} (disabled)")
         else:
             typer.echo(f"Step already exists: {step_type}/{name}")
@@ -577,7 +584,9 @@ def filetype_stats() -> None:
 
 @setting_app.command("show")
 def setting_show(
-    key: Annotated[str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")],
+    key: Annotated[
+        str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")
+    ],
 ) -> None:
     """Show a system setting."""
     with PipelineSession() as session:
@@ -591,10 +600,16 @@ def setting_show(
 
 @setting_app.command("set")
 def setting_set(
-    key: Annotated[str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")],
+    key: Annotated[
+        str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")
+    ],
     value: Annotated[str, typer.Argument(help="New value (JSON for list settings)")],
 ) -> None:
     """Set a system setting."""
     with PipelineSession() as session:
-        session.set_setting(key, value)
+        try:
+            session.set_setting(key, value)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
         typer.echo(f"Set {key} = {value}")

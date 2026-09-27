@@ -40,6 +40,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from deriva.services.config_models import DerivaSettings
 
+# Phases a derivation_config row can belong to (same set as DerivationConfigModel.phase)
+DERIVATION_PHASES = ("prep", "generate", "refine", "relationship")
+
 
 def _affected_rows(result: Any) -> int:
     # DuckDB reports rowcount -1 for UPDATE/DELETE; the count comes back as a row.
@@ -548,7 +551,20 @@ def add_derivation_step(
     sequence: int,
     params: str | None = None,
 ) -> bool:
-    """Add a new derivation step as version 1, disabled. Returns False if it exists."""
+    """Add a new derivation step as version 1, disabled. Returns False if it exists.
+
+    Raises:
+        ValueError: phase is not a derivation phase, sequence is negative, or params is not JSON.
+    """
+    if phase not in DERIVATION_PHASES:
+        raise ValueError(f"phase must be one of {', '.join(DERIVATION_PHASES)}, got {phase!r}")
+    if sequence < 0:
+        raise ValueError(f"sequence must be >= 0, got {sequence}")
+    if params is not None:
+        try:
+            json.loads(params)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"params must be valid JSON: {e}") from e
     exists = engine.execute("SELECT 1 FROM derivation_config WHERE step_name = ? LIMIT 1", [step_name]).fetchone()
     if exists:
         return False
@@ -673,6 +689,10 @@ def get_excluded_directories(engine: Any) -> list[str]:
     raw = get_setting(engine, "excluded_directories")
     if raw is None:
         return list(DEFAULT_EXCLUDED_DIRECTORIES)
+    return _parse_excluded_directories(raw)
+
+
+def _parse_excluded_directories(raw: str) -> list[str]:
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as e:
@@ -683,7 +703,9 @@ def get_excluded_directories(engine: Any) -> list[str]:
 
 
 def set_setting(engine: Any, key: str, value: str) -> None:
-    """Set a system setting (upsert)."""
+    """Set a system setting (upsert); settings read as structured values are validated first."""
+    if key == "excluded_directories":
+        _parse_excluded_directories(value)
     existing = get_setting(engine, key)
     if existing is not None:
         engine.execute(
@@ -977,8 +999,19 @@ def create_extraction_config_version(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
         """,
         [
-            next_id, node_type, new_version, sequence, new_enabled, new_sources, new_instruction,
-            new_example, new_temperature, new_max_tokens, new_batch_size, cur_method, new_params,
+            next_id,
+            node_type,
+            new_version,
+            sequence,
+            new_enabled,
+            new_sources,
+            new_instruction,
+            new_example,
+            new_temperature,
+            new_max_tokens,
+            new_batch_size,
+            cur_method,
+            new_params,
         ],
     )
 

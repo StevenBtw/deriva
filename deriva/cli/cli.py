@@ -224,7 +224,9 @@ def run_stage(
 def status(
     repo: Annotated[
         str | None,
-        typer.Option("--repo", help="Repository whose graph database to use (default: shared)"),
+        typer.Option(
+            "--repo", help="Repository whose graph database to use (default: shared)"
+        ),
     ] = None,
 ) -> None:
     """Show current pipeline status."""
@@ -277,7 +279,9 @@ def export(
     ] = False,
     repo: Annotated[
         str | None,
-        typer.Option("--repo", help="Repository whose graph database to use (default: shared)"),
+        typer.Option(
+            "--repo", help="Repository whose graph database to use (default: shared)"
+        ),
     ] = None,
 ) -> None:
     """Export ArchiMate model to file."""
@@ -315,7 +319,9 @@ def clear(
     target: Annotated[str, typer.Argument(help="Data layer to clear (graph, model)")],
     repo: Annotated[
         str | None,
-        typer.Option("--repo", help="Repository whose graph database to use (default: shared)"),
+        typer.Option(
+            "--repo", help="Repository whose graph database to use (default: shared)"
+        ),
     ] = None,
 ) -> None:
     """Clear graph or model data."""
@@ -353,7 +359,9 @@ def clear(
 def main() -> int:
     """Main entry point."""
     # Line-buffer stdout so progress appears live, also when piped to a file
-    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    # (redirected streams such as io.StringIO have no reconfigure)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
     try:
         app()
         return 0

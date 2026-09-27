@@ -870,3 +870,57 @@ class TestTimeoutAndRetry:
 
         assert run.call_count == 1 and sleep.call_count == 0
         assert isinstance(response, FailedResponse)
+
+    def test_a_failed_query_counts_once_for_the_circuit_breaker(self, tmp_path):
+        import httpx
+
+        manager = self._manager(tmp_path)
+        self._query(manager, httpx.ReadTimeout("slow"))
+
+        assert manager._rate_limiter.get_stats()["consecutive_failures"] == 1
+
+    def test_backoff_is_jittered(self, tmp_path):
+        import httpx
+
+        with patch("deriva.adapters.llm.manager.random.uniform", return_value=0.25) as uniform:
+            _, _, sleep = self._query(self._manager(tmp_path), [httpx.ReadTimeout("slow"), MagicMock(output="ok")])
+
+        uniform.assert_called_once_with(0, 2.0)
+        sleep.assert_called_once_with(0.25)
+
+    def test_latency_is_recorded_for_failed_calls(self, tmp_path):
+        import itertools
+
+        import httpx
+
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.time.perf_counter", side_effect=itertools.count(0, 1.0)):
+            self._query(manager, httpx.ReadTimeout("slow"))
+
+        assert manager.last_call["latency_ms"] >= 1000
+
+    def test_requests_include_failed_attempts(self, tmp_path):
+        import httpx
+
+        manager = self._manager(tmp_path)
+        result = MagicMock(output="ok")
+        result.usage.return_value = MagicMock(requests=1, input_tokens=3, output_tokens=2)
+        self._query(manager, [httpx.ReadTimeout("slow"), result])
+
+        assert manager.last_call["requests"] == 2
+
+    def test_backoff_does_not_sleep_on_the_event_loop_thread(self, tmp_path):
+        import threading
+
+        import httpx
+
+        sleeping_threads = []
+        with (
+            patch("deriva.adapters.llm.manager._is_event_loop_running", return_value=True),
+            patch("deriva.adapters.llm.manager.Agent") as agent_class,
+            patch("deriva.adapters.llm.manager.time.sleep", side_effect=lambda _: sleeping_threads.append(threading.current_thread())),
+        ):
+            agent_class.return_value.run_sync.side_effect = [httpx.ReadTimeout("slow"), MagicMock(output="ok")]
+            self._manager(tmp_path).query("Hello")
+
+        assert sleeping_threads and threading.main_thread() not in sleeping_threads

@@ -685,8 +685,10 @@ class PipelineSession:
         """Enable only `name` for the duration of the block, then restore the exact prior state."""
         if step_type == "extraction":
             configs, key = self.get_extraction_configs(), "node_type"
-        else:
+        elif step_type == "derivation":
             configs, key = self.get_derivation_configs(), "element_type"
+        else:
+            raise ValueError(f"step_type must be 'extraction' or 'derivation', got {step_type!r}")
         names = [c[key] for c in configs if c.get(key)]
         if name not in names:
             raise ValueError(f"Unknown {step_type} step: {name}")

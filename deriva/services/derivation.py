@@ -34,6 +34,7 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 from collections.abc import Callable, Iterator
@@ -538,8 +539,9 @@ def run_derivation(
                     top_names = [n["id"].split("_")[-1] for n in prep_stats["top_nodes"][:3]]
                     print(f"    Top nodes: {top_names}")
 
-    # Relationship pass settings: used by generate and by the deferred relationship pass
-    relationship_config = _relationship_llm_config(relationship_configs)
+    # Relationship pass settings: used by generate and by the deferred relationship pass,
+    # read on first use so runs that derive no relationships never parse the row
+    relationship_config = functools.cache(lambda: _relationship_llm_config(relationship_configs))
 
     # Run generate phase
     if "generate" in phases:
@@ -615,7 +617,7 @@ def run_derivation(
                     existing_elements=all_created_elements,  # Pass accumulated elements
                     defer_relationships=defer_relationships,
                     cache_manager=enrichment_cache,
-                    relationship_config=relationship_config,
+                    relationship_config=relationship_config(),
                     per_candidate=_per_candidate_config(cfg.params),
                 )
 
@@ -711,7 +713,7 @@ def run_derivation(
                 relationship_rules=relationship_rules,
                 llm_query_fn=llm_query_fn,
                 graph_manager=graph_manager,
-                llm_config=relationship_config,
+                llm_config=relationship_config(),
             )
 
             # Persist relationships to archimate model with graph metadata for stability analysis
@@ -970,8 +972,9 @@ def run_derivation_iter(
                 stats={"prep": True},
             )
 
-    # Relationship pass settings: used by generate and by the deferred relationship pass
-    relationship_config = _relationship_llm_config(relationship_configs)
+    # Relationship pass settings: used by generate and by the deferred relationship pass,
+    # read on first use so runs that derive no relationships never parse the row
+    relationship_config = functools.cache(lambda: _relationship_llm_config(relationship_configs))
 
     # Run generate phase
     if "generate" in phases:
@@ -1042,7 +1045,7 @@ def run_derivation_iter(
                     existing_elements=all_created_elements,
                     defer_relationships=defer_relationships,
                     cache_manager=enrichment_cache,
-                    relationship_config=relationship_config,
+                    relationship_config=relationship_config(),
                     per_candidate=_per_candidate_config(cfg.params),
                 )
 
@@ -1118,7 +1121,7 @@ def run_derivation_iter(
                 relationship_rules=relationship_rules,
                 llm_query_fn=llm_query_fn,
                 graph_manager=graph_manager,
-                llm_config=relationship_config,
+                llm_config=relationship_config(),
             )
 
             # Persist relationships to archimate model

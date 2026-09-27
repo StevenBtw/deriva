@@ -79,9 +79,7 @@ def list_repo_files(repo_path: Path, excluded_dirs: list[str]) -> list[str]:
     return [
         rel
         for f in repo_path.rglob("*")
-        if f.is_file()
-        and not str(f).endswith(".pyc")
-        and not extraction.is_excluded_path(rel := f.relative_to(repo_path).as_posix(), excluded_dirs)
+        if f.is_file() and not str(f).endswith(".pyc") and not extraction.is_excluded_path(rel := f.relative_to(repo_path).as_posix(), excluded_dirs)
     ]
 
 
@@ -120,6 +118,15 @@ def compute_extraction_fingerprint(
     commit = repo_info.last_commit if repo_info else "unknown"
 
     return hash_inputs("extraction", ext_versions, commit, config.get_excluded_directories(engine))
+
+
+def llm_extraction_labels(engine: Any, config_versions: dict[str, dict[str, int]] | None = None) -> list[str]:
+    """Node types created by the enabled LLM extraction steps (what an LLM-only re-run replaces)."""
+    if config_versions and "extraction" in config_versions:
+        configs = config.get_extraction_configs_by_version(engine, config_versions["extraction"], enabled_only=True)
+    else:
+        configs = config.get_extraction_configs(engine, enabled_only=True)
+    return [c.node_type for c in configs if c.extraction_method == "llm"]
 
 
 def run_extraction(
@@ -200,8 +207,9 @@ def run_extraction(
 
     # Start progress tracking
     # If only classify: 1 step per repo; if parse: steps = configs * repos
+    selected = [c for c in configs if extraction_methods is None or c.extraction_method in extraction_methods]
     if run_parse:
-        total_steps = len(configs) * len(repos)
+        total_steps = len(selected) * len(repos)
     else:
         total_steps = len(repos)  # Just classification
     if progress:
@@ -247,7 +255,7 @@ def run_extraction(
         # Process each extraction step in sequence order (parse phase)
         for cfg in configs:
             # Skip steps that don't match the requested extraction methods
-            if extraction_methods and cfg.extraction_method not in extraction_methods:
+            if extraction_methods is not None and cfg.extraction_method not in extraction_methods:
                 stats["steps_skipped"] += 1
                 if verbose:
                     print(f"  Skipping: {cfg.node_type} (method={cfg.extraction_method})")
@@ -326,8 +334,9 @@ def run_extraction(
         else:
             run_logger.phase_complete("extraction", "Extraction completed successfully", stats=stats)
 
-    # Set extraction fingerprint on each processed repo (for cache validation)
-    if not errors:
+    # Set extraction fingerprint on each processed repo (for cache validation); a
+    # method-filtered run leaves the other steps' data as it was, so it is not current
+    if not errors and extraction_methods is None:
         for repo in repos:
             if not hasattr(repo, "name"):
                 continue

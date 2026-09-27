@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import threading
 import time
 from pathlib import Path
@@ -86,7 +87,10 @@ def _is_retriable(error: Exception) -> bool:
     """
     if isinstance(error, (httpx.TransportError, TimeoutError, ConnectionError)):
         return True
-    return isinstance(error, ModelHTTPError) and classify_exception(error)[0] in ("rate_limited", "transient")
+    return isinstance(error, ModelHTTPError) and classify_exception(error)[0] in (
+        "rate_limited",
+        "transient",
+    )
 
 
 def _is_event_loop_running() -> bool:
@@ -555,35 +559,51 @@ class LLMManager:
         """
         return getattr(self._call_store(), "call", None)
 
-    def _run_agent(self, agent: Agent[None, Any], prompt: str, settings: ModelSettings) -> Any:
-        """Run one agent call, retrying transient failures with exponential backoff.
+    def _run_agent(
+        self, agent: Agent[None, Any], prompt: str, settings: ModelSettings
+    ) -> tuple[Any, int]:
+        """Run one agent call with retries; returns the result and the number of failed attempts."""
+        if _is_event_loop_running():
+            # Running inside an async context (marimo/Jupyter): run the whole retry loop
+            # in the thread pool, so backoff waits do not block the event loop
+            return (
+                _get_executor()
+                .submit(self._run_with_retries, agent, prompt, settings)
+                .result()
+            )
+        return self._run_with_retries(agent, prompt, settings)
+
+    def _run_with_retries(
+        self, agent: Agent[None, Any], prompt: str, settings: ModelSettings
+    ) -> tuple[Any, int]:
+        """Retry transient failures with jittered exponential backoff.
 
         A stalled request is bounded by the timeout in ``settings``; timeouts,
         connection errors, rate limits and 5xx responses are retried up to
         ``max_retries`` times (honouring Retry-After), anything else is raised at once.
+        The circuit breaker and throttle count the query once, in ``query()``.
         """
         base_delay = self.config.get("retry_base_delay", 2.0)
         max_delay = self.config.get("retry_max_delay", 60.0)
         for attempt in range(self.max_retries + 1):
             try:
-                if _is_event_loop_running():
-                    # Running inside an async context (marimo/Jupyter) - use thread pool
-                    def _run_in_thread() -> Any:
-                        return agent.run_sync(prompt, model_settings=settings)
-
-                    return _get_executor().submit(_run_in_thread).result()
-                # No event loop conflict - use run_sync directly
-                return agent.run_sync(prompt, model_settings=settings)
+                return agent.run_sync(prompt, model_settings=settings), attempt
             except Exception as e:
                 if attempt == self.max_retries or not _is_retriable(e):
                     raise
-                category, retry_after = classify_exception(e)
-                if category == "rate_limited":
-                    self._rate_limiter.record_rate_limit(retry_after)
+                _, retry_after = classify_exception(e)
+                if retry_after:
+                    delay = min(retry_after, max_delay)
                 else:
-                    self._rate_limiter.record_failure()
-                delay = min(retry_after or base_delay * 2**attempt, max_delay)
-                logger.warning("LLM call failed (%s: %s), retry %d/%d in %.1fs", type(e).__name__, e, attempt + 1, self.max_retries, delay)
+                    delay = random.uniform(0, min(base_delay * 2**attempt, max_delay))
+                logger.warning(
+                    "LLM call failed (%s: %s), retry %d/%d in %.1fs",
+                    type(e).__name__,
+                    e,
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
+                )
                 time.sleep(delay)
         raise AssertionError("unreachable")
 
@@ -724,9 +744,10 @@ class LLMManager:
             # if there's already a running event loop. In that case, we run
             # the LLM call in a separate thread.
             started = time.perf_counter()
-            result = self._run_agent(agent, prompt, settings)
-
-            call["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
+            try:
+                result, failed_attempts = self._run_agent(agent, prompt, settings)
+            finally:
+                call["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
             self._rate_limiter.record_success()
 
             # Extract usage (pydantic-ai: result.usage() returns RunUsage)
@@ -734,7 +755,7 @@ class LLMManager:
             usage_fn = getattr(result, "usage", None)
             run_usage = usage_fn() if callable(usage_fn) else None
             if run_usage is not None:
-                call["requests"] = run_usage.requests
+                call["requests"] = run_usage.requests + failed_attempts
                 call["input_tokens"] = run_usage.input_tokens
                 call["output_tokens"] = run_usage.output_tokens
                 usage = {

@@ -660,7 +660,8 @@ class GraphManager:
 
         try:
             ns = self.namespace
-            label_conditions = " OR ".join(f"n:`{ns}:{label}`" for label in labels)
+            # Nodes carry the namespace and their type as separate labels (see add_node)
+            label_conditions = " OR ".join(f"n:`{ns}`:`{label}`" for label in labels)
 
             count_query = f"""
                 MATCH (n:`{ns}`)

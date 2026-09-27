@@ -1849,6 +1849,14 @@ class TestOnlyStep:
                 pass
         assert states == {"File": True, "Technology": True}
 
+    def test_unknown_step_type_raises_without_changing_anything(self):
+        states = {"pagerank": True, "Node": False}
+        session = self._session_with("derivation", states)
+        with pytest.raises(ValueError, match="step_type"):
+            with session.only_step("derivations", "Node"):
+                pass
+        assert states == {"pagerank": True, "Node": False}
+
 
 def test_connect_applies_pending_migrations():
     """Opening a session brings an older config database up to the current schema."""

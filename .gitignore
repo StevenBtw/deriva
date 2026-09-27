@@ -10,4 +10,3 @@ deriva/adapters/database/sql.db.wal
 .coverage
 coverage.xml
 walt/*
-tests/test_modules/prompt_snapshots/*

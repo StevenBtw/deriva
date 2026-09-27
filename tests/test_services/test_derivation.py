@@ -1878,6 +1878,25 @@ class TestRelationshipLLMConfig:
         with pytest.raises(ValueError, match="min_confidence"):
             derivation._relationship_llm_config([self._row(params='{"temperature": 0.0}')])
 
+    @pytest.mark.parametrize("runner", ["run_derivation", "run_derivation_iter"])
+    def test_runs_that_never_derive_relationships_do_not_read_the_row(self, runner):
+        """A prep-only run on an empty model must not fail on relationship rows it never uses."""
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = []
+        broken = [self._row(name="A"), self._row(name="B")]  # two enabled rows is an error when read
+
+        prep_rows = [SimpleNamespace(step_name="pagerank", params=None)]
+        rows = {"relationship": broken, "prep": prep_rows}
+
+        with (
+            patch.object(derivation.config, "get_derivation_configs") as mock_get,
+            patch.object(derivation, "_run_prep_step", return_value={}),
+        ):
+            mock_get.side_effect = lambda engine, enabled_only, phase: rows.get(phase, [])
+            run = getattr(derivation, runner)(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, phases=["prep"])
+            if runner == "run_derivation_iter":
+                list(run)
+
     def test_row_without_instruction_is_an_error(self):
         with pytest.raises(ValueError, match="instruction"):
             derivation._relationship_llm_config([self._row(instruction="")])

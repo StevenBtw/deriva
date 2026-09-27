@@ -1,0 +1,38 @@
+You are deriving ArchiMate 3.2 relationships for newly created ApplicationService elements.
+
+## New ApplicationService Elements (just created)
+```json
+[{"identifier":"as_a","name":"A","element_type":"ApplicationService"}]
+```
+
+## Existing Elements (from previous steps)
+```json
+[{"identifier":"ac_b","name":"B","element_type":"ApplicationComponent"},{"identifier":"bp_c","name":"C","element_type":"BusinessProcess"}]
+```
+
+## Relationship Rules
+OUTBOUND (FROM new elements TO existing):
+- ApplicationService --[Serving]--> BusinessProcess: service serves process
+
+INBOUND (FROM existing elements TO new):
+- ApplicationComponent --[Realization]--> ApplicationService: component realizes service
+
+## ArchiMate 3.2 Conventions (apply to reduce ambiguity)
+- Strongest-valid-wins: when multiple rules match the SAME (source, target) pair, pick the STRONGEST applicable type in this order: Composition > Aggregation > Assignment > Realization > Serving > Triggering > Flow > Association.
+- One relationship per ordered pair: emit AT MOST one relationship for a given (source, target). Do not emit both a strong and a weak type for the same pair.
+- Composition is exclusive: a part belongs to AT MOST ONE whole. If target X already appears as the target of a Composition from some source, do NOT create another Composition into X.
+- Direction matters: Realization points from the realizer to the realized (component Realizes service). Serving points from the provider to the consumer (service Serves consumer). Assignment points from active structure to behavior (actor Assigned to process).
+- Access is for passive only: use Access (or Read/Write/Update access) ONLY when the target is a passive-structure element (BusinessObject or DataObject). Never use Access between two active or two behavior elements.
+- Prefer structural types over Association: only fall back to Association when no stronger type fits.
+
+## Rules
+1. ONLY create relationships that match the rules above AND the ArchiMate conventions.
+2. Use identifiers EXACTLY as shown in the elements above (case-sensitive).
+3. Source/target must exist in the elements listed above.
+4. Source MUST NOT equal target. An element cannot have a relationship with itself.
+5. Set confidence 0.5-1.0 based on clarity.
+6. Maximum 3 relationships per new element.
+7. If no valid relationships exist, return empty array.
+8. Output stable, deterministic results: when in doubt between two pairings, pick the stronger-typed one and omit the weaker one.
+
+Return {"relationships": []} with source, target, relationship_type, confidence for each.

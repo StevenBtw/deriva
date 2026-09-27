@@ -1,0 +1,7 @@
+{
+  "prompt": {
+    "existing_dependencies_heading": "ALREADY EXTRACTED as ExternalDependency (do NOT re-extract as Technology):",
+    "existing_technologies_heading": "ALREADY EXTRACTED Technologies (do NOT duplicate):",
+    "closing_instruction": "Extract infrastructure technologies from this file. Return JSON matching the schema."
+  }
+}
