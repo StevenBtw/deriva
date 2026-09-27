@@ -62,14 +62,18 @@ dependencies = [
     "backoff>=2.2.1",
     "pydantic-ai>=1",
     # Utilities
-    "authlib>=1.6.9",  # CVE-2026-27962, CVE-2026-28490 fix (transitive via fastmcp)
-    "pyasn1>=0.6.3",  # CVE-2026-30922 fix (transitive via google-auth/rsa)
-    "pyjwt>=2.12",  # CVE-2026-32597 fix (transitive via mcp)
+    "authlib>=1.6.9",
+    # CVE-2026-27962, CVE-2026-28490 fix (transitive via fastmcp)
+    "pyasn1>=0.6.3",
+    # CVE-2026-30922 fix (transitive via google-auth/rsa)
+    "pyjwt>=2.12",
+    # CVE-2026-32597 fix (transitive via mcp)
     "diskcache>=5.6.3",
     "nest-asyncio>=1.6.0",
     "structlog>=24.0",
     "typer>=0.24",
     "prek>=0.3",
+    "httpx>=0.28.1",
 ]
 
 [project.optional-dependencies]
@@ -200,3 +204,9 @@ exclude_lines = [
 
 [tool.ty.environment]
 python-version = "3.14"
+
+# Local release builds of the engines Deriva 0.7.0 ships with (grafeo release/0.5.43,
+# solvor 0.6.2). Replace with version pins once both are published.
+[tool.uv.sources]
+grafeo = { path = "../../GrafeoDB/grafeo/crates/bindings/python" }
+solvor = { path = "../../solvOR/solvOR" }
