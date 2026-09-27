@@ -19,6 +19,8 @@ app = typer.Typer(name="config", help="Manage pipeline configurations")
 # Filetype subapp
 filetype_app = typer.Typer(name="filetype", help="Manage file type registry")
 app.add_typer(filetype_app)
+setting_app = typer.Typer(name="setting", help="Manage system settings (e.g. excluded_directories)")
+app.add_typer(setting_app)
 
 
 # =============================================================================
@@ -195,7 +197,7 @@ def config_update(
     ] = None,
     params: Annotated[
         str | None,
-        typer.Option("-p", "--params", help="New params JSON (derivation only)"),
+        typer.Option("-p", "--params", help="New params JSON"),
     ] = None,
     params_file: Annotated[
         str | None, typer.Option("--params-file", help="Read params JSON from file")
@@ -271,6 +273,7 @@ def config_update(
                 example=example,
                 input_sources=sources,
                 batch_size=batch_size,
+                params=params,
             )
         else:
             typer.echo(f"Versioned updates not yet supported for: {step_type}")
@@ -570,3 +573,28 @@ def filetype_stats() -> None:
             typer.echo(f"  {ft_type:<20} {count}")
 
         typer.echo(f"\n  {'Total':<20} {sum(stats.values())}")
+
+
+@setting_app.command("show")
+def setting_show(
+    key: Annotated[str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")],
+) -> None:
+    """Show a system setting."""
+    with PipelineSession() as session:
+        value = session.get_setting(key)
+
+        if value is None:
+            typer.echo(f"Setting not set: {key}", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"{key} = {value}")
+
+
+@setting_app.command("set")
+def setting_set(
+    key: Annotated[str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")],
+    value: Annotated[str, typer.Argument(help="New value (JSON for list settings)")],
+) -> None:
+    """Set a system setting."""
+    with PipelineSession() as session:
+        session.set_setting(key, value)
+        typer.echo(f"Set {key} = {value}")

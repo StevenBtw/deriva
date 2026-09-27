@@ -457,30 +457,12 @@ class BenchmarkOrchestrator:
 
         return errors
 
-    def _make_extraction_llm_fn(self) -> Any:
-        """Create LLM query function for extraction steps."""
-        first_model = self.config.models[0]
-        model_config = self._model_configs[first_model]
-        llm_manager = LLMManager.from_config(model_config, nocache=False)
-
-        def llm_query_fn(
-            prompt: str,
-            schema: dict | None = None,
-            temperature: float | None = None,
-            max_tokens: int | None = None,
-            system_prompt: str | None = None,
-            response_model: type | None = None,
-        ) -> Any:
-            return llm_manager.query(  # type: ignore[call-overload]
-                prompt,
-                schema=schema,
-                response_model=response_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-            )
-
-        return llm_query_fn, model_config
+    def _make_extraction_llm_fn(self, run_logger: OCELRunLogger) -> Any:
+        """LLM query function for extraction steps, logged like derivation calls."""
+        model_config = self._model_configs[self.config.models[0]]
+        # --no-cache must reach extraction too, or extraction variance is never measured
+        llm_manager = LLMManager.from_config(model_config, nocache=not self.config.use_cache)
+        return self._create_logging_query_fn(llm_manager, llm_manager, run_logger)
 
     def _extract_repo(
         self,
@@ -489,27 +471,31 @@ class BenchmarkOrchestrator:
         extraction_methods: list[str] | None = None,
         verbose: bool = False,
     ) -> dict[str, Any]:
-        """Run extraction for one repo, logging its steps to the benchmark event log."""
-        llm_query_fn, model_config = self._make_extraction_llm_fn()
+        """Run extraction for one repo, logging its steps and LLM calls to the event log."""
+        model = self._model_configs[self.config.models[0]].model
         run_logger = OCELRunLogger(
             ocel_log=self.ocel_log,
             run_id=f"{self.session_id}:extraction:{repo_name}",
             session_id=self.session_id or "",
-            model=model_config.model,
+            model=model,
             repo=repo_name,
             verbose=verbose,
         )
-        return extraction.run_extraction(
-            engine=self.engine,
-            graph_manager=self.graph_manager,
-            llm_query_fn=llm_query_fn,
-            repo_name=repo_name,
-            verbose=False,
-            run_logger=cast("RunLoggerProtocol", run_logger),
-            config_versions=config_versions,
-            model=model_config.model,
-            extraction_methods=extraction_methods,
-        )
+        previous_run_id, self._current_run_id = self._current_run_id, run_logger.run_id
+        try:
+            return extraction.run_extraction(
+                engine=self.engine,
+                graph_manager=self.graph_manager,
+                llm_query_fn=self._make_extraction_llm_fn(run_logger),
+                repo_name=repo_name,
+                verbose=False,
+                run_logger=cast("RunLoggerProtocol", run_logger),
+                config_versions=config_versions,
+                model=model,
+                extraction_methods=extraction_methods,
+            )
+        finally:
+            self._current_run_id = previous_run_id
 
     def _ensure_extraction(self, verbose: bool = False, repositories: list[str] | None = None) -> list[str]:
         """Ensure extraction data exists for all benchmark repositories.
@@ -1237,6 +1223,34 @@ class BenchmarkOrchestrator:
                 output_path=str(output_path),
                 model_name=model_display_name,
             )
+
+            # JSON snapshot for consistency analysis: the XML carries no properties,
+            # but identity by source node and relationship provenance need them
+            snapshot = {
+                "elements": [
+                    {"identifier": e.identifier, "type": e.element_type, "name": e.name, "source": (e.properties or {}).get("source")}
+                    for e in elements
+                ],
+                "relationships": [
+                    {
+                        "source": r.source,
+                        "target": r.target,
+                        "type": r.relationship_type,
+                        "derived_from": (r.properties or {}).get("derived_from"),
+                        "confidence": (r.properties or {}).get("confidence"),
+                    }
+                    for r in relationships
+                ],
+                # LLM-created graph nodes, so extraction consistency can be measured on its own
+                "graph": {
+                    "concepts": sorted(
+                        [row["id"], sorted(row.get("types") or [])]
+                        for row in self.graph_manager.query("MATCH (n:Graph:BusinessConcept) RETURN n.id AS id, n.conceptTypes AS types")
+                    ),
+                    "technologies": sorted(row["id"] for row in self.graph_manager.query("MATCH (n:Graph:Technology) RETURN n.id AS id")),
+                },
+            }
+            output_path.with_suffix(".json").write_text(json.dumps(snapshot, indent=1), encoding="utf-8")
 
             return str(output_path)
 

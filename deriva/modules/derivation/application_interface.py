@@ -57,10 +57,6 @@ class ApplicationInterfaceDerivation(HybridDerivation):
     USE_COMMUNITY_ROOTS = False  # Interfaces are endpoints, not hubs
     PATTERN_MATCH_DEFAULT = True  # Accept candidates by default
 
-    # Two-phase mode: filter is sole gatekeeper for inclusion; the LLM names
-    # one element per filtered candidate.
-    PER_CANDIDATE_LLM = True
-
     OUTBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
             target_type="ApplicationService",

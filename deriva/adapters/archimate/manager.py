@@ -145,20 +145,12 @@ class ArchimateManager:
                 element.properties.get("source") if element.properties else None
             )
 
-            query = f"""
-                MERGE (e:`{self.namespace}`:`{element.element_type}` {{identifier: $identifier}})
-                SET e.name = $name,
-                    e.documentation = $documentation,
-                    e.properties_json = $properties_json,
-                    e.enabled = $enabled,
-                    e.source_identifier = $source_identifier
-                RETURN e.identifier as identifier
-            """
-
-            result = self.db.execute_write(
-                query,
+            # Found through the identifier index; a MERGE would scan the namespace label
+            self.db.merge_node(
+                "identifier",
+                element.identifier,
+                [self.namespace, element.element_type],
                 {
-                    "identifier": element.identifier,
                     "name": element.name,
                     "documentation": element.documentation,
                     "properties_json": properties_json,
@@ -166,14 +158,8 @@ class ArchimateManager:
                     "source_identifier": source_identifier,
                 },
             )
-
-            if result:
-                logger.debug(
-                    f"Added element: {element.identifier} ({element.element_type})"
-                )
-                return result[0]["identifier"]
-            else:
-                raise RuntimeError("Failed to add element")
+            logger.debug(f"Added element: {element.identifier} ({element.element_type})")
+            return element.identifier
 
         except Exception as e:
             logger.error(f"Failed to add element {element.identifier}: {e}")

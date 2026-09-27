@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
-from deriva.adapters.database import get_connection
+from deriva.adapters.database import get_connection, run_migrations
 from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
@@ -107,8 +107,9 @@ class PipelineSession:
         if self._connected:
             return
 
-        # Database (get_connection uses DB_PATH from env)
+        # Database (get_connection uses DB_PATH from env); bring older schemas up to date
         self._engine = get_connection()
+        run_migrations(self._engine)
 
         # Graph managers (grafeo embedded), in the session's repository database
         use_database(self.repository)
@@ -969,6 +970,18 @@ class PipelineSession:
         self._ensure_connected()
         assert self._engine is not None
         return config.get_active_config_versions(self._engine)
+
+    def get_setting(self, key: str) -> str | None:
+        """Get a system setting value (None when not set)."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.get_setting(self._engine, key)
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Set a system setting value."""
+        self._ensure_connected()
+        assert self._engine is not None
+        config.set_setting(self._engine, key, value)
 
     def add_file_type(self, extension: str, file_type: str, subtype: str) -> bool:
         """Add a file type to the registry."""

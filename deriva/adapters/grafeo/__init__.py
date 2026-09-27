@@ -17,6 +17,18 @@ Example:
 
 from __future__ import annotations
 
-from .manager import GrafeoConnection, close_database, get_database
+from .manager import (
+    DEFAULT_DATABASE,
+    GrafeoConnection,
+    close_database,
+    get_database,
+    use_database,
+)
 
-__all__ = ["GrafeoConnection", "close_database", "get_database"]
+__all__ = [
+    "DEFAULT_DATABASE",
+    "GrafeoConnection",
+    "close_database",
+    "get_database",
+    "use_database",
+]

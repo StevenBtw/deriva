@@ -33,7 +33,7 @@ class CacheManager(BaseDiskCache):
     LLM response cache with prompt/model-based key generation.
 
     Extends BaseDiskCache with LLM-specific functionality:
-    - Cache key generation from prompt + model + schema + bench_hash
+    - Cache key generation from prompt + model + schema + bench_hash + system prompt + temperature + max_tokens
     - Response metadata storage (usage stats, timestamps)
 
     Example:
@@ -60,9 +60,15 @@ class CacheManager(BaseDiskCache):
         model: str,
         schema: dict[str, Any] | None = None,
         bench_hash: str | None = None,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         """
-        Generate a unique cache key based on prompt, model, and optional schema.
+        Generate a unique cache key from everything that shapes the response.
+
+        A changed system prompt, temperature or max_tokens must never be served
+        an answer cached for different settings.
 
         Args:
             prompt: The prompt text
@@ -71,6 +77,9 @@ class CacheManager(BaseDiskCache):
             bench_hash: Optional benchmark hash (e.g., "repo:model:run") for
                        per-run cache isolation. When set, cache entries are
                        unique per benchmark run, allowing resume after failures.
+            system_prompt: Optional system prompt sent with the prompt
+            temperature: Effective sampling temperature of the call
+            max_tokens: Effective max_tokens of the call
 
         Returns:
             SHA256 hash as cache key
@@ -87,6 +96,13 @@ class CacheManager(BaseDiskCache):
         if bench_hash:
             # Add benchmark context for per-run cache isolation
             parts.append(f"bench:{bench_hash}")
+
+        if system_prompt:
+            parts.append(f"system:{system_prompt}")
+        if temperature is not None:
+            parts.append(f"temperature:{temperature}")
+        if max_tokens is not None:
+            parts.append(f"max_tokens:{max_tokens}")
 
         return hash_inputs(*parts)
 

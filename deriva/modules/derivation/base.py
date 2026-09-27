@@ -210,6 +210,32 @@ class RelationshipRule:
     description: str = ""  # Human-readable description
 
 
+@dataclass(frozen=True)
+class RelationshipLLMConfig:
+    """Versioned settings for the LLM relationship pass (the relationship phase config row).
+
+    The rules and conventions the LLM follows are config, not code, so a run is
+    fully described by its config versions.
+    """
+
+    instruction: str  # Conventions and rules inserted into the relationship prompt
+    min_confidence: float  # LLM relationships below this confidence are dropped
+
+
+@dataclass(frozen=True)
+class PerCandidateConfig:
+    """Per-candidate naming mode for an element type (element config ``params.per_candidate``).
+
+    Each filtered candidate gets its own LLM call that names it, so one
+    candidate's name cannot perturb another's and the graph filter alone
+    decides inclusion. Small pools fall back to batch mode: their candidates
+    are often semantically similar, and batch competition keeps names distinct.
+    """
+
+    min_pool: int  # Per-candidate mode engages only for pools at least this large
+    rules: str  # Rules text for the single-candidate naming prompt
+
+
 @dataclass
 class CandidateDecision:
     """Tracks a candidate's journey through derivation for threshold analysis."""
@@ -2017,13 +2043,16 @@ def build_single_candidate_prompt(
     instruction: str,
     element_type: str,
     existing_elements_summary: dict[str, list[str]] | None = None,
+    *,
+    rules: str,
 ) -> str:
     """Build a focused prompt asking the LLM to judge ONE candidate.
 
     Isolating the decision per candidate prevents cross-candidate correlations
     in the output (one name influencing a sibling's name, or the batch-level
     abstention trigger dropping legitimate middles). The LLM returns either
-    zero or one element.
+    zero or one element. The rules text comes from the element config
+    (``params.per_candidate.rules``).
     """
     if isinstance(candidate, Candidate):
         cand_dict = candidate.to_dict(include_props=ESSENTIAL_PROPS)
@@ -2055,18 +2084,7 @@ def build_single_candidate_prompt(
 ```
 {context_section}
 ## Rules
-1. The candidate has already been selected as an {element_type} by upstream
-   graph filtering. Your job is to name and document it, not to re-judge whether
-   it qualifies.
-2. Return exactly ONE element with identifier, name, documentation,
-   confidence (0.5-1.0), and source = the candidate id.
-3. Do NOT append ArchiMate type suffixes (" Component", " Service", " Interface", " API") to the name.
-4. Set confidence based on naming clarity, not on whether the candidate fits.
-   When the candidate's role is ambiguous, pick the most plausible name and
-   set confidence around 0.6-0.7 rather than rejecting.
-5. If "Existing Elements" are shown above, pick a name DISTINCT from any
-   listed name of the same type. Two siblings must not share a name.
-6. Output stable, deterministic results.
+{rules}
 
 Return a JSON object with an "elements" array of exactly one element.
 """
@@ -2075,127 +2093,6 @@ Return a JSON object with an "elements" array of exactly one element.
 # =============================================================================
 # Prompt Building - Relationships
 # =============================================================================
-
-
-def build_relationship_prompt(elements: list[dict[str, Any]]) -> str:
-    """Build LLM prompt for relationship derivation.
-
-    Note: This is a legacy function. Prefer build_unified_relationship_prompt()
-    or build_per_element_relationship_prompt() for new code.
-    """
-    # Strip to essential fields (removes derived_at and other cache-breaking properties)
-    clean_elements = strip_for_relationship_prompt(elements)
-    # Use compact JSON to reduce token usage
-    elements_json = json.dumps(clean_elements, separators=(",", ":"), default=str)
-    valid_ids = [e.get("identifier", "") for e in elements if e.get("identifier")]
-
-    return f"""Derive relationships between these ArchiMate elements:
-
-```json
-{elements_json}
-```
-
-CRITICAL RULES:
-1. You must ONLY use identifiers from this exact list: {json.dumps(valid_ids)}
-2. Do NOT invent new identifiers or modify existing ones
-3. Use identifiers exactly as shown (case-sensitive, character-for-character)
-4. Only create relationships where BOTH source AND target exist in the list
-
-VALID RELATIONSHIP TYPES (use ONLY these exact names):
-- Composition: element consists of other elements
-- Aggregation: element combines other elements
-- Serving: element provides services to another
-- Realization: element realizes/implements another
-- Access: element reads/writes data objects
-- Flow: transfer of information between elements
-- Assignment: allocates responsibility between elements
-
-INVALID TYPES (NEVER use these):
-- Association (use Serving or Flow instead)
-- Dependency (use Serving instead)
-- Uses (use Serving instead)
-
-Output stable, deterministic results.
-Return {{"relationships": []}} with source, target, relationship_type for each.
-"""
-
-
-def build_element_relationship_prompt(
-    source_elements: list[dict[str, Any]],
-    target_elements: list[dict[str, Any]],
-    source_element_type: str,
-    valid_relationships: list[dict[str, Any]],
-    instruction: str | None = None,
-    example: str | None = None,
-) -> str:
-    """Build LLM prompt for element-type-specific relationship derivation.
-
-    Note: This is a legacy function. Prefer build_unified_relationship_prompt()
-    or build_per_element_relationship_prompt() for new code.
-    """
-    # Strip to essential fields (removes derived_at and other cache-breaking properties)
-    clean_sources = strip_for_relationship_prompt(source_elements)
-    clean_targets = strip_for_relationship_prompt(target_elements)
-    # Use compact JSON to reduce token usage
-    sources_json = json.dumps(clean_sources, separators=(",", ":"), default=str)
-    targets_json = json.dumps(clean_targets, separators=(",", ":"), default=str)
-
-    source_ids = [
-        e.get("identifier", "") for e in source_elements if e.get("identifier")
-    ]
-    target_ids = [
-        e.get("identifier", "") for e in target_elements if e.get("identifier")
-    ]
-
-    rel_rules = []
-    for rel in valid_relationships:
-        targets = ", ".join(rel["allowed_targets"])
-        rel_rules.append(
-            f"- {rel['relationship_type']}: {rel['description']} → can target: [{targets}]"
-        )
-    rel_rules_text = (
-        "\n".join(rel_rules) if rel_rules else "No valid relationship types."
-    )
-
-    default_instruction = f"""Derive relationships FROM the {source_element_type} elements.
-Only create relationships where the source is from the Source Elements list.
-Use only the relationship types valid for {source_element_type} as specified below."""
-
-    default_example = """{"relationships": [
-  {"source": "source_id", "target": "target_id", "relationship_type": "Serving", "confidence": 0.8}
-]}"""
-
-    return f"""You are deriving ArchiMate relationships FROM {source_element_type} elements.
-
-## Instructions
-{instruction or default_instruction}
-
-## Source Elements (type: {source_element_type})
-```json
-{sources_json}
-```
-
-## Target Elements (all types)
-```json
-{targets_json}
-```
-
-## Valid Relationship Types for {source_element_type}
-{rel_rules_text}
-
-## Example Output Format
-```json
-{example or default_example}
-```
-
-CRITICAL RULES:
-1. Source identifiers MUST be from: {json.dumps(source_ids)}
-2. Target identifiers MUST be from: {json.dumps(target_ids)}
-3. Use identifiers exactly as shown (case-sensitive)
-4. Only use relationship types listed above
-
-Return {{"relationships": []}} with source, target, relationship_type for each.
-"""
 
 
 # =============================================================================
@@ -2323,83 +2220,13 @@ def build_element(
 # =============================================================================
 
 
-def build_per_element_relationship_prompt(
-    source_elements: list[dict[str, Any]],
-    target_elements: list[dict[str, Any]],
-    source_element_type: str,
-    instruction: str,
-    example: str | None = None,
-    valid_relationship_types: list[str] | None = None,
-) -> str:
-    """
-    Build LLM prompt for per-element relationship derivation.
-
-    This is used when each element module derives its own relationships,
-    providing focused context and better consistency.
-
-    Args:
-        source_elements: Elements of the current type (relationships FROM these)
-        target_elements: All available target elements
-        source_element_type: The ArchiMate element type being processed
-        instruction: Custom instruction from database config
-        example: Example output from database config
-        valid_relationship_types: Allowed relationship types (from config)
-    """
-    # Strip to essential fields for relationship derivation (reduces tokens ~50%)
-    clean_sources = strip_for_relationship_prompt(source_elements)
-    clean_targets = strip_for_relationship_prompt(target_elements)
-    # Use compact JSON to reduce token usage
-    source_json = json.dumps(clean_sources, separators=(",", ":"), default=str)
-    target_json = json.dumps(clean_targets, separators=(",", ":"), default=str)
-
-    # Note: identifier lists removed - they're already in the JSON above (saves tokens)
-    prompt = f"""You are deriving ArchiMate relationships FROM {source_element_type} elements.
-
-{instruction}
-
-SOURCE ELEMENTS (derive relationships FROM these):
-```json
-{source_json}
-```
-
-TARGET ELEMENTS (derive relationships TO these):
-```json
-{target_json}
-```
-
-RULES:
-- Use identifiers EXACTLY as shown in the elements above (case-sensitive)
-- Source must be from SOURCE ELEMENTS, target from TARGET ELEMENTS
-- Source MUST NOT equal target. An element cannot have a relationship with itself.
-"""
-
-    if valid_relationship_types:
-        prompt += f"""
-ALLOWED RELATIONSHIP TYPES (use ONLY these):
-{json.dumps(valid_relationship_types)}
-"""
-
-    if example:
-        prompt += f"""
-EXAMPLE OUTPUT:
-```json
-{example}
-```
-"""
-
-    prompt += """
-Output stable, deterministic results.
-Return {"relationships": []} with source, target, relationship_type, confidence for each.
-"""
-    return prompt
-
-
 def build_unified_relationship_prompt(
     new_elements: list[dict[str, Any]],
     existing_elements: list[dict[str, Any]],
     element_type: str,
     outbound_rules: list[RelationshipRule],
     inbound_rules: list[RelationshipRule],
+    instruction: str,
 ) -> str:
     """
     Build LLM prompt for unified relationship derivation (both directions).
@@ -2414,6 +2241,7 @@ def build_unified_relationship_prompt(
         element_type: The ArchiMate element type just created
         outbound_rules: Rules for relationships FROM this type
         inbound_rules: Rules for relationships TO this type (from other types)
+        instruction: Conventions and rules from the relationship config row
 
     Returns:
         Prompt string for LLM
@@ -2485,23 +2313,7 @@ def build_unified_relationship_prompt(
 
 {inbound_text}
 
-## ArchiMate 3.2 Conventions (apply to reduce ambiguity)
-- Strongest-valid-wins: when multiple rules match the SAME (source, target) pair, pick the STRONGEST applicable type in this order: Composition > Aggregation > Assignment > Realization > Serving > Triggering > Flow > Association.
-- One relationship per ordered pair: emit AT MOST one relationship for a given (source, target). Do not emit both a strong and a weak type for the same pair.
-- Composition is exclusive: a part belongs to AT MOST ONE whole. If target X already appears as the target of a Composition from some source, do NOT create another Composition into X.
-- Direction matters: Realization points from the realizer to the realized (component Realizes service). Serving points from the provider to the consumer (service Serves consumer). Assignment points from active structure to behavior (actor Assigned to process).
-- Access is for passive only: use Access (or Read/Write/Update access) ONLY when the target is a passive-structure element (BusinessObject or DataObject). Never use Access between two active or two behavior elements.
-- Prefer structural types over Association: only fall back to Association when no stronger type fits.
-
-## Rules
-1. ONLY create relationships that match the rules above AND the ArchiMate conventions.
-2. Use identifiers EXACTLY as shown in the elements above (case-sensitive).
-3. Source/target must exist in the elements listed above.
-4. Source MUST NOT equal target. An element cannot have a relationship with itself.
-5. Set confidence 0.5-1.0 based on clarity.
-6. Maximum 3 relationships per new element.
-7. If no valid relationships exist, return empty array.
-8. Output stable, deterministic results: when in doubt between two pairings, pick the stronger-typed one and omit the weaker one.
+{instruction}
 
 Return {{"relationships": []}} with source, target, relationship_type, confidence for each.
 """
@@ -2518,6 +2330,7 @@ def derive_batch_relationships(
     temperature: float | None = None,
     max_tokens: int | None = None,
     graph_manager: "GraphManager | None" = None,
+    llm_config: RelationshipLLMConfig | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for a batch of newly created elements.
@@ -2536,6 +2349,8 @@ def derive_batch_relationships(
         graph_manager: Optional GraphManager for graph-aware filtering.
                       If provided, filters existing_elements to only include
                       those with graph proximity to new_elements.
+        llm_config: Relationship config row settings. None (row disabled)
+                    skips the LLM pass; graph tiers still run.
 
     Returns:
         List of validated relationship dicts
@@ -2719,6 +2534,10 @@ def derive_batch_relationships(
         )
         return all_relationships
 
+    if llm_config is None:
+        logger.info("LLM relationship pass disabled for %s", element_type)
+        return all_relationships
+
     # LLM provides relationship type diversity beyond deterministic methods
     prompt = build_unified_relationship_prompt(
         new_elements=new_elements,  # All elements for LLM consistency
@@ -2726,6 +2545,7 @@ def derive_batch_relationships(
         element_type=element_type,
         outbound_rules=outbound_rules,
         inbound_rules=inbound_rules,
+        instruction=llm_config.instruction,
     )
 
     if not prompt:
@@ -2830,7 +2650,7 @@ def derive_batch_relationships(
 
         # Enforce minimum confidence threshold for consistency
         confidence = rel_data.get("confidence", 0.5)
-        if confidence < 0.6:
+        if confidence < llm_config.min_confidence:
             logger.debug(
                 "Skipping low-confidence relationship (%s -> %s, confidence=%s)",
                 source,
@@ -2903,125 +2723,6 @@ def derive_batch_relationships(
     return all_relationships
 
 
-def derive_element_relationships(
-    source_elements: list[dict[str, Any]],
-    target_elements: list[dict[str, Any]],
-    source_element_type: str,
-    llm_query_fn: Any,
-    instruction: str,
-    example: str | None = None,
-    valid_relationship_types: list[str] | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> list[dict[str, Any]]:
-    """
-    Derive relationships FROM a specific element type.
-
-    This is called by each element module after generating its elements,
-    to derive relationships to all available target elements.
-
-    Args:
-        source_elements: Elements just created by this module
-        target_elements: All elements available as targets (from previous modules)
-        source_element_type: The element type being processed
-        llm_query_fn: Function to call LLM
-        instruction: Prompt instruction from database config
-        example: Example output from database config
-        valid_relationship_types: Allowed relationship types
-        temperature: LLM temperature override
-        max_tokens: LLM max_tokens override
-
-    Returns:
-        List of relationship dicts ready for persistence
-    """
-    if not source_elements or not target_elements:
-        return []
-
-    prompt = build_per_element_relationship_prompt(
-        source_elements=source_elements,
-        target_elements=target_elements,
-        source_element_type=source_element_type,
-        instruction=instruction,
-        example=example,
-        valid_relationship_types=valid_relationship_types,
-    )
-
-    llm_kwargs = {}
-    if temperature is not None:
-        llm_kwargs["temperature"] = temperature
-    if max_tokens is not None:
-        llm_kwargs["max_tokens"] = max_tokens
-
-    try:
-        response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA, **llm_kwargs)
-        response_content = (
-            response.content if hasattr(response, "content") else str(response)
-        )
-    except Exception as e:
-        logger.error(f"LLM error deriving {source_element_type} relationships: {e}")
-        return []
-
-    parse_result = parse_relationship_response(response_content)
-
-    if not parse_result["success"]:
-        logger.warning(
-            f"Failed to parse {source_element_type} relationships: {parse_result.get('errors')}"
-        )
-        return []
-
-    # Validate and filter relationships
-    source_ids = {e.get("identifier", "") for e in source_elements}
-    target_ids = {e.get("identifier", "") for e in target_elements}
-    valid_types = set(valid_relationship_types) if valid_relationship_types else None
-
-    relationships = []
-    for rel_data in parse_result.get("data", []):
-        source = rel_data.get("source")
-        target = rel_data.get("target")
-        rel_type = rel_data.get("relationship_type")
-
-        # Reject self-loops: an element cannot have a relationship to itself.
-        if source and target and source == target:
-            logger.debug(
-                f"Skipping self-loop relationship: {source} -[{rel_type}]-> {target}"
-            )
-            continue
-
-        # Validate source is from this element type
-        if source not in source_ids:
-            logger.debug(
-                f"Skipping relationship: source {source} not in {source_element_type}"
-            )
-            continue
-
-        # Validate target exists
-        if target not in target_ids:
-            logger.debug(f"Skipping relationship: target {target} not found")
-            continue
-
-        # Validate relationship type
-        if valid_types and rel_type not in valid_types:
-            logger.debug(
-                f"Skipping relationship: type {rel_type} not allowed for {source_element_type}"
-            )
-            continue
-
-        relationships.append(
-            {
-                "source": source,
-                "target": target,
-                "relationship_type": rel_type,
-                "confidence": rel_data.get("confidence", 0.5),
-                "derived_from": "llm",
-            }
-        )
-
-    logger.info(
-        f"Derived {len(relationships)} relationships FROM {source_element_type}"
-    )
-    return relationships
-
-
 # =============================================================================
 # Consolidated Relationship Derivation (Phase 4.6)
 # =============================================================================
@@ -3036,6 +2737,7 @@ def derive_consolidated_relationships(
     graph_manager: "GraphManager | None" = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    llm_config: RelationshipLLMConfig | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for all elements in a single consolidated pass.
@@ -3051,6 +2753,7 @@ def derive_consolidated_relationships(
         graph_manager: Optional GraphManager for graph-aware filtering
         temperature: Optional temperature override
         max_tokens: Optional max_tokens override
+        llm_config: Relationship config row settings (None skips the LLM pass)
 
     Returns:
         List of all derived relationship dicts
@@ -3098,6 +2801,7 @@ def derive_consolidated_relationships(
             temperature=temperature,
             max_tokens=max_tokens,
             graph_manager=graph_manager,
+            llm_config=llm_config,
         )
 
         all_relationships.extend(relationships)
@@ -3144,6 +2848,8 @@ __all__ = [
     # Data structures
     "Candidate",
     "RelationshipRule",
+    "RelationshipLLMConfig",
+    "PerCandidateConfig",
     "GenerationResult",
     "DerivationResult",
     # Enrichment
@@ -3179,9 +2885,6 @@ __all__ = [
     # Prompts
     "build_derivation_prompt",
     "build_single_candidate_prompt",
-    "build_relationship_prompt",
-    "build_element_relationship_prompt",
-    "build_per_element_relationship_prompt",
     "build_unified_relationship_prompt",
     # Response handling
     "extract_response_content",
@@ -3193,7 +2896,6 @@ __all__ = [
     "sanitize_identifier",
     "build_element",
     # Relationship derivation
-    "derive_element_relationships",
     "derive_batch_relationships",
     "derive_consolidated_relationships",
     # Results

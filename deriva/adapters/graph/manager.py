@@ -243,35 +243,17 @@ class GraphManager:
                 flat_props["repository_name"] = repo_name
 
         try:
-            # Build SET clause for flat properties
-            set_clauses = ["n.label = $label", "n.properties_json = $properties_json"]
-            params = {
-                "id": node_id,
-                "label": node_label,
-                "properties_json": properties_json,
-            }
-
-            for key, value in flat_props.items():
-                param_name = f"prop_{key}"
-                set_clauses.append(f"n.{key} = ${param_name}")
-                params[param_name] = value
-
-            # Use two separate labels: namespace (Graph) + type (Directory)
-            # This allows queries like MATCH (d:Directory) to work
-            # while still having namespace isolation via the Graph label
-            query = f"""
-                MERGE (n:`{self.namespace}`:`{node_label}` {{id: $id}})
-                SET {", ".join(set_clauses)}
-                RETURN n.id as id
-            """
-
-            result = self.db.execute_write(query, params)
-
-            if result:
-                logger.debug(f"Added node: {node_id} ({node_label})")
-                return result[0]["id"]
-            else:
-                raise RuntimeError("Failed to add node")
+            # Two labels: namespace (Graph) + type (Directory), so MATCH (d:Directory)
+            # works with namespace isolation. Found through the id index; a MERGE
+            # would scan every node with the namespace label.
+            self.db.merge_node(
+                "id",
+                node_id,
+                [self.namespace, node_label],
+                {"label": node_label, "properties_json": properties_json, **flat_props},
+            )
+            logger.debug(f"Added node: {node_id} ({node_label})")
+            return node_id
 
         except Exception as e:
             logger.error(f"Failed to add node {node_id}: {e}")
@@ -310,34 +292,16 @@ class GraphManager:
         properties_json = json.dumps(properties) if properties else None
 
         try:
-            # Use relationship type as the label (e.g., Graph:CONTAINS)
+            # Relationship type as the label (e.g., Graph:CONTAINS); endpoints are
+            # found through the id index (a second MATCH clause would scan all nodes)
             edge_label = self.db.get_label(relationship)
-
-            query = f"""
-                MATCH (src) WHERE src.id = $src_id
-                MATCH (dst) WHERE dst.id = $dst_id
-                MERGE (src)-[r:`{edge_label}` {{id: $edge_id}}]->(dst)
-                SET r.properties_json = $properties_json
-                RETURN r.id as id
-            """
-
-            result = self.db.execute_write(
-                query,
-                {
-                    "src_id": src_id,
-                    "dst_id": dst_id,
-                    "edge_id": edge_id,
-                    "properties_json": properties_json,
-                },
-            )
-
-            if result:
-                logger.debug(f"Added edge: {src_id} -{relationship}-> {dst_id}")
-                return result[0]["id"]
-            else:
+            props = {"properties_json": properties_json} if properties_json else {}
+            if not self.db.merge_edge("id", src_id, dst_id, edge_label, edge_id, props):
                 raise RuntimeError(
                     f"Failed to add edge. Make sure nodes {src_id} and {dst_id} exist."
                 )
+            logger.debug(f"Added edge: {src_id} -{relationship}-> {dst_id}")
+            return edge_id
 
         except Exception as e:
             # Log at debug level - edge failures are expected when targets don't exist yet

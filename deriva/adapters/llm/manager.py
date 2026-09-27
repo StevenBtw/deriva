@@ -41,9 +41,11 @@ from typing import Any, TypeVar, cast, overload
 
 import asyncio
 import concurrent.futures
+import httpx
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
 
 from deriva.common.exceptions import CircuitOpenError
@@ -75,6 +77,16 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
             max_workers=4, thread_name_prefix="llm_"
         )
     return _llm_executor
+
+
+def _is_retriable(error: Exception) -> bool:
+    """Timeouts, connection errors, rate limits and 5xx are worth another try; other errors are not.
+
+    Output validation retries are handled by the pydantic-ai agent itself.
+    """
+    if isinstance(error, (httpx.TransportError, TimeoutError, ConnectionError)):
+        return True
+    return isinstance(error, ModelHTTPError) and classify_exception(error)[0] in ("rate_limited", "transient")
 
 
 def _is_event_loop_running() -> bool:
@@ -543,6 +555,51 @@ class LLMManager:
         """
         return getattr(self._call_store(), "call", None)
 
+    def _run_agent(self, agent: Agent[None, Any], prompt: str, settings: ModelSettings) -> Any:
+        """Run one agent call, retrying transient failures with exponential backoff.
+
+        A stalled request is bounded by the timeout in ``settings``; timeouts,
+        connection errors, rate limits and 5xx responses are retried up to
+        ``max_retries`` times (honouring Retry-After), anything else is raised at once.
+        """
+        base_delay = self.config.get("retry_base_delay", 2.0)
+        max_delay = self.config.get("retry_max_delay", 60.0)
+        for attempt in range(self.max_retries + 1):
+            try:
+                if _is_event_loop_running():
+                    # Running inside an async context (marimo/Jupyter) - use thread pool
+                    def _run_in_thread() -> Any:
+                        return agent.run_sync(prompt, model_settings=settings)
+
+                    return _get_executor().submit(_run_in_thread).result()
+                # No event loop conflict - use run_sync directly
+                return agent.run_sync(prompt, model_settings=settings)
+            except Exception as e:
+                if attempt == self.max_retries or not _is_retriable(e):
+                    raise
+                category, retry_after = classify_exception(e)
+                if category == "rate_limited":
+                    self._rate_limiter.record_rate_limit(retry_after)
+                else:
+                    self._rate_limiter.record_failure()
+                delay = min(retry_after or base_delay * 2**attempt, max_delay)
+                logger.warning("LLM call failed (%s: %s), retry %d/%d in %.1fs", type(e).__name__, e, attempt + 1, self.max_retries, delay)
+                time.sleep(delay)
+        raise AssertionError("unreachable")
+
+    def _agent(self, output_type: Any, system_prompt: str) -> Agent[None, Any]:
+        """Reusable agent for this output type and system prompt (created lazily)."""
+        agents = self.__dict__.setdefault("_agents", {})
+        key = (output_type, system_prompt, self.max_retries)
+        if key not in agents:
+            agents[key] = Agent(
+                model=self._pydantic_model,
+                output_type=output_type,
+                system_prompt=system_prompt,
+                retries=self.max_retries,
+            )
+        return agents[key]
+
     def _call_store(self) -> threading.local:
         if "_calls" not in self.__dict__:
             self.__dict__["_calls"] = threading.local()
@@ -588,6 +645,9 @@ class LLMManager:
             self.model,
             response_model.model_json_schema() if response_model else schema,
             bench_hash=bench_hash,
+            system_prompt=system_prompt,
+            temperature=effective_temperature,
+            max_tokens=effective_max_tokens,
         )
 
         read_cache = use_cache and not self.nocache
@@ -647,16 +707,15 @@ class LLMManager:
             # Track if we're using schema-resolved model (for response handling)
             using_schema_model = resolved_model is not None and response_model is None
 
-            # Create PydanticAI agent
-            agent: Agent[None, Any] = Agent(
-                model=self._pydantic_model,
-                output_type=output_type,
-                system_prompt=system_prompt or "",
-                retries=self.max_retries,
-            )
+            # One PydanticAI agent per output type and system prompt (building one costs ~0.2 s)
+            agent = self._agent(output_type, system_prompt or "")
 
             # Run query
-            settings: ModelSettings = {"temperature": effective_temperature}
+            settings: ModelSettings = {
+                "temperature": effective_temperature,
+                # pydantic-ai's Mistral model only accepts a float timeout
+                "timeout": float(self.config.get("timeout", 60)),
+            }
             if effective_max_tokens is not None:
                 settings["max_tokens"] = effective_max_tokens
 
@@ -665,19 +724,7 @@ class LLMManager:
             # if there's already a running event loop. In that case, we run
             # the LLM call in a separate thread.
             started = time.perf_counter()
-            if _is_event_loop_running():
-                # Running inside an async context (marimo/Jupyter) - use thread pool
-                def _run_in_thread() -> Any:
-                    return agent.run_sync(prompt, model_settings=settings)
-
-                future = _get_executor().submit(_run_in_thread)
-                result = future.result()
-            else:
-                # No event loop conflict - use run_sync directly
-                result = agent.run_sync(
-                    prompt,
-                    model_settings=settings,
-                )
+            result = self._run_agent(agent, prompt, settings)
 
             call["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
             self._rate_limiter.record_success()

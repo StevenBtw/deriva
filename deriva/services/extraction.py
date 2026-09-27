@@ -30,6 +30,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable, Iterator
 from datetime import datetime
@@ -73,6 +74,17 @@ from deriva.modules.extraction.directory_classification import (
 from deriva.services import config
 
 
+def list_repo_files(repo_path: Path, excluded_dirs: list[str]) -> list[str]:
+    """Repository-relative file paths (forward slashes), skipping excluded directories and .pyc files."""
+    return [
+        rel
+        for f in repo_path.rglob("*")
+        if f.is_file()
+        and not str(f).endswith(".pyc")
+        and not extraction.is_excluded_path(rel := f.relative_to(repo_path).as_posix(), excluded_dirs)
+    ]
+
+
 def compute_extraction_fingerprint(
     engine: Any,
     repo_name: str,
@@ -83,6 +95,7 @@ def compute_extraction_fingerprint(
     The fingerprint combines:
     - Extraction config versions (what instructions/prompts are active)
     - Repository HEAD commit hash (what code is being extracted)
+    - Excluded directories setting (which parts of the repository are walked)
 
     If either changes, the fingerprint changes, signaling re-extraction is needed.
 
@@ -106,7 +119,7 @@ def compute_extraction_fingerprint(
     repo_info = repo_mgr.get_repository_info(repo_name)
     commit = repo_info.last_commit if repo_info else "unknown"
 
-    return hash_inputs("extraction", ext_versions, commit)
+    return hash_inputs("extraction", ext_versions, commit, config.get_excluded_directories(engine))
 
 
 def run_extraction(
@@ -205,14 +218,8 @@ def run_extraction(
         repo_path = Path(str(repo.path))
         stats["repos_processed"] += 1
 
-        # Get all files for classification
-        file_paths = []
-        for f in repo_path.rglob("*"):
-            # Exclude .git directory contents, __pycache__, and .pyc files
-            # Use f.parts to check for exact directory names (avoids matching .gitignore)
-            if f.is_file() and not any(x in f.parts for x in [".git", "__pycache__"]) and not str(f).endswith(".pyc"):
-                # Normalize to forward slashes for consistent path handling
-                file_paths.append(str(f.relative_to(repo_path)).replace("\\", "/"))
+        # Get all files for classification (outside excluded dependency directories)
+        file_paths = list_repo_files(repo_path, config.get_excluded_directories(engine))
 
         # Classify files (always needed - prerequisite for parse phase)
         classification_result = classification.classify_files(file_paths, registry_list)
@@ -361,9 +368,9 @@ def _run_extraction_step(
     if node_type == "Repository":
         result = _extract_repository(repo, graph_manager)
     elif node_type == "Directory":
-        result = _extract_directories(repo, repo_path, graph_manager)
+        result = _extract_directories(repo, repo_path, graph_manager, config.get_excluded_directories(engine))
     elif node_type == "File":
-        result = _extract_files(repo, repo_path, classified_files, undefined_files, graph_manager)
+        result = _extract_files(repo, repo_path, classified_files, undefined_files, graph_manager, config.get_excluded_directories(engine))
     elif node_type == "Imports":
         # Tree-sitter based import edge extraction (deterministic, no LLM)
         result = _extract_imports(repo, repo_path, classified_files, graph_manager)
@@ -445,9 +452,9 @@ def _extract_repository(repo: Any, graph_manager: GraphManager) -> dict[str, Any
     }
 
 
-def _extract_directories(repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
-    """Extract directory nodes."""
-    result = extraction.extract_directories(str(repo_path), repo.name)
+def _extract_directories(repo: Any, repo_path: Path, graph_manager: GraphManager, excluded_dirs: list[str]) -> dict[str, Any]:
+    """Extract directory nodes (outside excluded dependency directories)."""
+    result = extraction.extract_directories(str(repo_path), repo.name, excluded_dirs=excluded_dirs)
     edge_ids: list[str] = []
 
     if result["success"]:
@@ -486,8 +493,9 @@ def _extract_files(
     classified_files: list[dict],
     undefined_files: list[dict],
     graph_manager: GraphManager,
+    excluded_dirs: list[str],
 ) -> dict[str, Any]:
-    """Extract file nodes.
+    """Extract file nodes (outside excluded dependency directories).
 
     Args:
         repo: Repository info object
@@ -495,9 +503,10 @@ def _extract_files(
         classified_files: List of classified file dicts with file_type/subtype
         undefined_files: List of undefined file dicts (files with unknown extensions)
         graph_manager: GraphManager for persistence
+        excluded_dirs: Directory names skipped with their contents
     """
     # Use the module to scan all files from repo path
-    result = extraction.extract_files(str(repo_path), repo.name)
+    result = extraction.extract_files(str(repo_path), repo.name, excluded_dirs=excluded_dirs)
     edge_ids: list[str] = []
 
     # Build a lookup for classification info (normalize paths to forward slashes)
@@ -911,18 +920,11 @@ def _extract_directory_classification(
     edge_ids: list[str] = []
 
     # Query Directory nodes from the graph for this repository
-    # Include file stats for better LLM context (now that File extraction runs before this)
-    # Exclude node_modules, vendor, and other dependency directories
+    # Include file stats for better LLM context (now that File extraction runs before this).
+    # Dependency directories never become nodes (excluded_directories setting).
     query = """
     MATCH (d:Directory)
     WHERE d.repository_name = $repo_name
-      AND NOT d.path CONTAINS 'node_modules'
-      AND NOT d.path CONTAINS 'vendor/'
-      AND NOT d.path CONTAINS '.git/'
-      AND NOT d.path CONTAINS '__pycache__'
-      AND NOT d.path CONTAINS '.venv'
-      AND NOT d.path CONTAINS 'venv/'
-      AND NOT d.path CONTAINS 'site-packages'
     OPTIONAL MATCH (d)-[:CONTAINS]->(f:File)
     WITH d,
          count(f) AS file_count,
@@ -1022,7 +1024,10 @@ def _extract_directory_classification(
             continue
 
         node_id = node_data.get("id")
-        graph_manager.add_node(node, node_id=node_id)
+        if isinstance(node, BusinessConceptNode):
+            _add_concept_node(graph_manager, node, node_id)
+        else:
+            graph_manager.add_node(node, node_id=node_id)
         nodes_created += 1
 
     # Persist extracted edges
@@ -1075,10 +1080,6 @@ def _extract_llm_based(
 
     # Get files matching the input sources
     matching_files = extraction.filter_files_by_input_sources(classified_files, input_sources)
-
-    # Filter out files from dependency directories (node_modules, vendor, etc.)
-    dependency_patterns = ["node_modules", "vendor/", ".git/", "__pycache__", ".venv", "venv/", "site-packages"]
-    matching_files = [f for f in matching_files if not any(pattern in f.get("path", "") for pattern in dependency_patterns)]
 
     # Filter out binary/image files that can't be meaningfully analyzed as text
     binary_extensions = {
@@ -1147,6 +1148,7 @@ def _extract_llm_based(
         "instruction": cfg.instruction or "",
         "example": cfg.example or "",
         "input_sources": cfg.input_sources or "",
+        "params": json.loads(cfg.params) if cfg.params else {},
     }
 
     # For BusinessConcept: get seed concepts for context-aware extraction (hybrid approach)
@@ -1281,7 +1283,10 @@ def _extract_llm_based(
                 node = _create_node_from_data(node_type, node_data, repo.name, "llm")
                 if node:
                     node_id = node_data.get("node_id")
-                    graph_manager.add_node(node, node_id=node_id)
+                    if isinstance(node, BusinessConceptNode):
+                        _add_concept_node(graph_manager, node, node_id)
+                    else:
+                        graph_manager.add_node(node, node_id=node_id)
                     nodes_created += 1
 
             # Persist edges
@@ -1383,7 +1388,10 @@ def _extract_llm_based(
             node = _create_node_from_data(node_type, node_data, repo.name, extraction_method)
             if node:
                 node_id = node_data.get("node_id")
-                graph_manager.add_node(node, node_id=node_id)
+                if isinstance(node, BusinessConceptNode):
+                    _add_concept_node(graph_manager, node, node_id)
+                else:
+                    graph_manager.add_node(node, node_id=node_id)
                 nodes_created += 1
 
         # Persist extracted edges
@@ -1586,6 +1594,26 @@ def _build_llm_prompt(node_type: str, content: str, instruction: str | None, exa
     return prompt
 
 
+def _add_concept_node(graph_manager: GraphManager, node: BusinessConceptNode, node_id: str | None) -> None:
+    """Persist a BusinessConcept merged with the occurrence already stored under its id.
+
+    Several files (and directory classification) can yield the same concept with
+    different types; merging keeps all of them, so the stored node does not
+    depend on the order in which files are processed.
+    """
+    node_id = node_id or node.generate_id()  # same fallback as GraphManager.add_node
+    existing = graph_manager.get_node(node_id)
+    merged = extraction.merge_concept_properties(existing["properties"] if existing else None, node.to_dict())
+    node.name = merged["conceptName"]
+    node.concept_type = merged["conceptType"]
+    node.concept_types = merged["conceptTypes"]
+    node.description = merged["description"]
+    node.origin_source = merged["originSource"]
+    node.confidence = merged["confidence"]
+    node.extraction_method = merged["extractionMethod"]
+    graph_manager.add_node(node, node_id=node_id)
+
+
 def _create_node_from_data(node_type: str, node_data: dict, repo_name: str, extraction_method: str = "llm") -> Any:
     """Create a node model instance from extracted data.
 
@@ -1766,11 +1794,8 @@ def run_extraction_iter(
         repo_path = Path(str(repo.path))
         stats["repos_processed"] += 1
 
-        # Get all files for classification
-        file_paths = []
-        for f in repo_path.rglob("*"):
-            if f.is_file() and not any(x in f.parts for x in [".git", "__pycache__"]) and not str(f).endswith(".pyc"):
-                file_paths.append(str(f.relative_to(repo_path)).replace("\\", "/"))
+        # Get all files for classification (outside excluded dependency directories)
+        file_paths = list_repo_files(repo_path, config.get_excluded_directories(engine))
 
         # Classify files
         classification_result = classification.classify_files(file_paths, registry_list)

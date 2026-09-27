@@ -141,20 +141,14 @@ def normalize_to_percentiles(values: dict[str, float | int]) -> dict[str, float]
         # Single node is at 100th percentile by definition
         return {k: 100.0 for k in values}
 
-    # Sort by value (ascending)
-    sorted_items = sorted(values.items(), key=lambda x: x[1])
-
-    # Assign percentile ranks
-    # Using (rank / (n-1)) * 100 to get 0-100 range
-    result: dict[str, float] = {}
-    for rank, (node_id, _) in enumerate(sorted_items):
-        percentile = (rank / (n - 1)) * 100.0
-        result[node_id] = round(percentile, 2)
-
-    return result
+    # Tied values share their average rank, so the result does not depend on
+    # input order (which follows set/dict order and differs per process)
+    return normalize_to_percentiles_int(values)
 
 
-def normalize_to_percentiles_int(values: dict[str, int]) -> dict[str, float]:
+def normalize_to_percentiles_int(
+    values: dict[str, int] | dict[str, float],
+) -> dict[str, float]:
     """
     Convert integer values to percentile ranks, handling ties.
 
@@ -175,7 +169,7 @@ def normalize_to_percentiles_int(values: dict[str, int]) -> dict[str, float]:
         return {k: 100.0 for k in values}
 
     # Group nodes by value
-    value_to_nodes: dict[int, list[str]] = defaultdict(list)
+    value_to_nodes: dict[float, list[str]] = defaultdict(list)
     for node_id, val in values.items():
         value_to_nodes[val].append(node_id)
 
@@ -258,9 +252,14 @@ def build_directed_adjacency(
     return nodes, dict(outgoing), dict(incoming)
 
 
-def neighbors_fn(adj: dict[str, set[str]]) -> Callable[[str], set[str]]:
-    """Create a neighbors function for solvor from adjacency dict."""
-    return lambda node: adj.get(node, set())
+def neighbors_fn(adj: dict[str, set[str]]) -> Callable[[str], tuple[str, ...]]:
+    """Create a neighbors function for solvor from adjacency dict.
+
+    Neighbours are returned sorted: set iteration order depends on the per-process
+    hash seed, and solvor's results depend on visiting order.
+    """
+    ordered = {node: tuple(sorted(neighbours)) for node, neighbours in adj.items()}
+    return lambda node: ordered.get(node, ())
 
 
 # =============================================================================
@@ -295,7 +294,7 @@ def compute_pagerank(
         return {}
 
     result = solvor_pagerank(
-        nodes,
+        sorted(nodes),
         neighbors_fn(adj),
         damping=damping,
         max_iter=max_iter,

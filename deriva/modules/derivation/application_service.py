@@ -61,10 +61,6 @@ class ApplicationServiceDerivation(HybridDerivation):
     )
     USE_COMMUNITY_ROOTS = True  # Prioritize service hubs
 
-    # Two-phase mode: filter is sole gatekeeper for inclusion; the LLM names
-    # one element per filtered candidate.
-    PER_CANDIDATE_LLM = True
-
     OUTBOUND_RULES = [
         RelationshipRule(
             target_type="BusinessObject",

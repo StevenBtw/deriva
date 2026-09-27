@@ -19,10 +19,11 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
-from .base import current_timestamp, generate_edge_id, validate_required_fields
+from .base import current_timestamp, generate_edge_id, is_excluded_path, validate_required_fields
 
 
 def build_directory_node(
@@ -80,16 +81,18 @@ def build_directory_node(
     }
 
 
-def extract_directories(repo_path: str, repo_name: str) -> dict[str, Any]:
+def extract_directories(repo_path: str, repo_name: str, excluded_dirs: Collection[str] = (".git",)) -> dict[str, Any]:
     """
     Extract all directories from a repository path.
 
     Scans the repository filesystem and builds Directory nodes for each directory
-    found (excluding .git directories). Also creates CONTAINS relationships.
+    found, skipping excluded directories (dependency and tool directories) and
+    everything below them. Also creates CONTAINS relationships.
 
     Args:
         repo_path: Full path to the repository (from RepositoryManager)
         repo_name: Repository name for node ID generation
+        excluded_dirs: Directory names skipped with their contents (whole path segments)
 
     Returns:
         Dictionary with:
@@ -117,8 +120,8 @@ def extract_directories(repo_path: str, repo_name: str) -> dict[str, Any]:
 
         # Walk through all directories
         for dir_path in repo_path_obj.rglob("*"):
-            # Skip non-directories and .git directories
-            if not dir_path.is_dir() or ".git" in dir_path.parts:
+            # Skip non-directories and excluded directories (with their contents)
+            if not dir_path.is_dir() or is_excluded_path(dir_path.relative_to(repo_path_obj).as_posix(), excluded_dirs):
                 continue
 
             try:
@@ -131,13 +134,15 @@ def extract_directories(repo_path: str, repo_name: str) -> dict[str, Any]:
                     [
                         d
                         for d in dir_path.iterdir()
-                        if d.is_dir() and ".git" not in d.parts
+                        if d.is_dir() and d.name not in excluded_dirs
                     ]
                 )
 
                 # Calculate total size
                 total_size = sum(
-                    f.stat().st_size for f in dir_path.rglob("*") if f.is_file()
+                    f.stat().st_size
+                    for f in dir_path.rglob("*")
+                    if f.is_file() and not is_excluded_path(f.relative_to(repo_path_obj).as_posix(), excluded_dirs)
                 )
 
                 dir_metadata = {

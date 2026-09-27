@@ -70,7 +70,7 @@ def summarize_run_events(events: list[Any]) -> dict[str, Any]:
                     "seconds": a.get("duration_seconds", 0.0),
                 }
             )
-        elif e.activity == "DeriveConfig":
+        elif e.activity in ("ExtractConfig", "DeriveConfig"):
             summary["steps"].append(
                 {"step": a.get("config_id"), "seconds": a.get("duration_seconds", 0.0)}
             )
@@ -85,6 +85,10 @@ def summarize_run_events(events: list[Any]) -> dict[str, Any]:
             latency_ms += a.get("latency_ms", 0.0) or 0.0
             wait_ms += a.get("wait_ms", 0.0) or 0.0
     summary["steps"].sort(key=lambda s: -s["seconds"])
+    # Runs without a CompleteRun event (e.g. extraction) report the total of their steps
+    summary["run_seconds"] = round(
+        summary["run_seconds"] or sum(step["seconds"] for step in summary["steps"]), 2
+    )
     summary["llm"] = {
         **llm,
         "latency_seconds": round(latency_ms / 1000, 2),

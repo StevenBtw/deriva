@@ -39,6 +39,8 @@ from deriva.modules.derivation.base import (
     Candidate,
     CandidateDecision,
     GenerationResult,
+    PerCandidateConfig,
+    RelationshipLLMConfig,
     RelationshipRule,
     batch_candidates,
     build_derivation_prompt,
@@ -101,19 +103,6 @@ class ElementDerivationBase(ABC):
 
     # Confidence gate: elements below this threshold are not created
     MIN_ELEMENT_CONFIDENCE: float = 0.5
-
-    # When True, the element type is derived via per-candidate LLM calls
-    # instead of batched calls. Per-candidate mode isolates each keep/name
-    # decision so cross-candidate correlations cannot perturb outputs, at the
-    # cost of more LLM calls (one per filtered candidate).
-    PER_CANDIDATE_LLM: bool = False
-
-    # Minimum candidate pool size for per-candidate mode to actually engage.
-    # Below this threshold, the type falls back to batch mode regardless of
-    # PER_CANDIDATE_LLM. Small pools have high name-collision rates because
-    # the candidates are often semantically similar; batch competition keeps
-    # names distinct in those cases.
-    PER_CANDIDATE_MIN_POOL: int = 6
 
     def __init__(self) -> None:
         """Initialize the derivation class."""
@@ -335,6 +324,8 @@ class ElementDerivationBase(ABC):
         max_tokens: int | None = None,
         defer_relationships: bool = False,
         cache_manager: "EnrichmentCacheManager | None" = None,
+        relationship_config: RelationshipLLMConfig | None = None,
+        per_candidate: PerCandidateConfig | None = None,
     ) -> GenerationResult:
         """
         Generate elements of this type.
@@ -362,6 +353,10 @@ class ElementDerivationBase(ABC):
             max_tokens: Optional LLM max_tokens override
             defer_relationships: If True, skip relationship derivation
             cache_manager: Optional EnrichmentCacheManager for controlled caching
+            relationship_config: Relationship config row settings for the LLM
+                relationship pass (None skips that pass)
+            per_candidate: Per-candidate naming mode from the element config
+                (None uses batch mode)
 
         Returns:
             GenerationResult with success status, counts, and any errors
@@ -495,13 +490,11 @@ class ElementDerivationBase(ABC):
         if max_tokens is not None:
             llm_kwargs["max_tokens"] = max_tokens
 
-        use_per_candidate = (
-            self.PER_CANDIDATE_LLM and len(filtered) >= self.PER_CANDIDATE_MIN_POOL
-        )
-        if use_per_candidate:
+        if per_candidate is not None and len(filtered) >= per_candidate.min_pool:
             self._process_per_candidate(
                 filtered=filtered,
                 instruction=instruction,
+                rules=per_candidate.rules,
                 llm_query_fn=llm_query_fn,
                 llm_kwargs=llm_kwargs,
                 archimate_manager=archimate_manager,
@@ -511,6 +504,7 @@ class ElementDerivationBase(ABC):
                 max_tokens=max_tokens,
                 defer_relationships=defer_relationships,
                 result=result,
+                relationship_config=relationship_config,
             )
         else:
             for batch_num, batch in enumerate(batches, 1):
@@ -529,6 +523,7 @@ class ElementDerivationBase(ABC):
                     max_tokens=max_tokens,
                     defer_relationships=defer_relationships,
                     result=result,
+                    relationship_config=relationship_config,
                 )
 
         self.logger.info(
@@ -555,6 +550,7 @@ class ElementDerivationBase(ABC):
         defer_relationships: bool,
         result: GenerationResult,
         strength: dict[str, Any] | None = None,
+        relationship_config: RelationshipLLMConfig | None = None,
     ) -> None:
         """
         Process a single batch of candidates.
@@ -576,6 +572,7 @@ class ElementDerivationBase(ABC):
             max_tokens: LLM max tokens
             defer_relationships: Skip relationship derivation if True
             result: GenerationResult to update with counts and errors
+            relationship_config: Relationship config row settings (None skips the LLM pass)
         """
         # Build prompt
         prompt = build_derivation_prompt(
@@ -740,12 +737,14 @@ class ElementDerivationBase(ABC):
                 graph_manager=graph_manager,
                 archimate_manager=archimate_manager,
                 result=result,
+                relationship_config=relationship_config,
             )
 
     def _process_per_candidate(
         self,
         filtered: list[Candidate],
         instruction: str,
+        rules: str,
         llm_query_fn: Callable[..., Any],
         llm_kwargs: dict[str, Any],
         archimate_manager: "ArchimateManager",
@@ -755,6 +754,7 @@ class ElementDerivationBase(ABC):
         max_tokens: int | None,
         defer_relationships: bool,
         result: GenerationResult,
+        relationship_config: RelationshipLLMConfig | None = None,
     ) -> None:
         """Derive elements one candidate per LLM call, then batch relationships.
 
@@ -797,6 +797,7 @@ class ElementDerivationBase(ABC):
                 instruction=instruction,
                 element_type=self.ELEMENT_TYPE,
                 existing_elements_summary=existing_summary,
+                rules=rules,
             )
             try:
                 response = llm_query_fn(prompt, DERIVATION_SCHEMA, **llm_kwargs)
@@ -914,6 +915,7 @@ class ElementDerivationBase(ABC):
                 graph_manager=graph_manager,
                 archimate_manager=archimate_manager,
                 result=result,
+                relationship_config=relationship_config,
             )
 
     def _derive_relationships(
@@ -926,6 +928,7 @@ class ElementDerivationBase(ABC):
         graph_manager: "GraphManager",
         archimate_manager: "ArchimateManager",
         result: GenerationResult,
+        relationship_config: RelationshipLLMConfig | None = None,
     ) -> None:
         """
         Derive relationships for newly created elements.
@@ -939,6 +942,7 @@ class ElementDerivationBase(ABC):
             graph_manager: For graph-based relationship derivation
             archimate_manager: For creating relationships
             result: GenerationResult to update
+            relationship_config: Relationship config row settings (None skips the LLM pass)
         """
         relationships = derive_batch_relationships(
             new_elements=batch_elements,
@@ -950,6 +954,7 @@ class ElementDerivationBase(ABC):
             temperature=temperature,
             max_tokens=max_tokens,
             graph_manager=graph_manager,
+            llm_config=relationship_config,
         )
 
         for rel_data in relationships:

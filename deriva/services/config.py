@@ -33,6 +33,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
@@ -84,6 +85,7 @@ class ExtractionConfig:
         temperature: float | None = None,
         max_tokens: int | None = None,
         batch_size: int = 1,
+        params: str | None = None,
     ):
         self.node_type = node_type
         self.sequence = sequence
@@ -95,6 +97,7 @@ class ExtractionConfig:
         self.temperature = temperature  # None = use env default (LLM_TEMPERATURE)
         self.max_tokens = max_tokens  # None = use env default (LLM_MAX_TOKENS)
         self.batch_size = batch_size  # Number of files per LLM call (1 = no batching)
+        self.params = params  # JSON parameters (e.g. prompt texts), versioned with the step
 
 
 class DerivationConfig:
@@ -178,7 +181,7 @@ def get_extraction_configs(engine: Any, enabled_only: bool = False) -> list[Extr
     """
     query = """
         SELECT node_type, sequence, enabled, input_sources, instruction, example,
-               extraction_method, temperature, max_tokens, batch_size
+               extraction_method, temperature, max_tokens, batch_size, params
         FROM extraction_config
         WHERE is_active = TRUE
     """
@@ -199,6 +202,7 @@ def get_extraction_configs(engine: Any, enabled_only: bool = False) -> list[Extr
             temperature=row[7],
             max_tokens=row[8],
             batch_size=row[9] or 1,
+            params=row[10],
         )
         for row in rows
     ]
@@ -218,7 +222,7 @@ def get_extraction_config(engine: Any, node_type: str) -> ExtractionConfig | Non
     row = engine.execute(
         """
         SELECT node_type, sequence, enabled, input_sources, instruction, example,
-               extraction_method, temperature, max_tokens, batch_size
+               extraction_method, temperature, max_tokens, batch_size, params
         FROM extraction_config
         WHERE node_type = ? AND is_active = TRUE
         """,
@@ -239,6 +243,7 @@ def get_extraction_config(engine: Any, node_type: str) -> ExtractionConfig | Non
         temperature=row[7],
         max_tokens=row[8],
         batch_size=row[9] or 1,
+        params=row[10],
     )
 
 
@@ -645,6 +650,38 @@ def get_setting(engine: Any, key: str, default: str | None = None) -> str | None
     return row[0]
 
 
+# Dependency and tool directories by ecosystem convention (third-party or generated
+# content, not the repository's own code). Stored as JSON in system_settings.
+DEFAULT_EXCLUDED_DIRECTORIES: list[str] = [
+    ".git",
+    "__pycache__",
+    "node_modules",
+    "bower_components",
+    "vendor",
+    ".venv",
+    "venv",
+    "site-packages",
+]
+
+
+def get_excluded_directories(engine: Any) -> list[str]:
+    """Directory names skipped (with their contents) by every repository walk.
+
+    Read from the ``excluded_directories`` system setting (a JSON list); the
+    default list applies when it is not set.
+    """
+    raw = get_setting(engine, "excluded_directories")
+    if raw is None:
+        return list(DEFAULT_EXCLUDED_DIRECTORIES)
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"excluded_directories must be a JSON list of directory names: {e}") from e
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ValueError("excluded_directories must be a JSON list of directory names")
+    return value
+
+
 def set_setting(engine: Any, key: str, value: str) -> None:
     """Set a system setting (upsert)."""
     existing = get_setting(engine, key)
@@ -895,12 +932,13 @@ def create_extraction_config_version(
     temperature: float | None = None,
     max_tokens: int | None = None,
     batch_size: int | None = None,
+    params: str | None = None,
 ) -> dict[str, Any]:
     """Create a new version of an extraction config."""
     current = engine.execute(
         """
         SELECT id, version, sequence, enabled, input_sources, instruction, example,
-               temperature, max_tokens, batch_size, extraction_method
+               temperature, max_tokens, batch_size, extraction_method, params
         FROM extraction_config
         WHERE node_type = ? AND is_active = TRUE
         """,
@@ -910,7 +948,7 @@ def create_extraction_config_version(
     if not current:
         return {"success": False, "error": f"Config not found for {node_type}"}
 
-    (old_id, old_version, sequence, cur_enabled, cur_sources, cur_instruction, cur_example, cur_temperature, cur_max_tokens, cur_batch_size, cur_method) = current
+    (old_id, old_version, sequence, cur_enabled, cur_sources, cur_instruction, cur_example, cur_temperature, cur_max_tokens, cur_batch_size, cur_method, cur_params) = current
     new_version = old_version + 1
 
     new_instruction = instruction if instruction is not None else cur_instruction
@@ -920,6 +958,7 @@ def create_extraction_config_version(
     new_temperature = temperature if temperature is not None else cur_temperature
     new_max_tokens = max_tokens if max_tokens is not None else cur_max_tokens
     new_batch_size = batch_size if batch_size is not None else (cur_batch_size or 1)
+    new_params = params if params is not None else cur_params
 
     engine.execute(
         "UPDATE extraction_config SET is_active = FALSE WHERE id = ?",
@@ -934,10 +973,13 @@ def create_extraction_config_version(
         """
         INSERT INTO extraction_config
         (id, node_type, version, sequence, enabled, input_sources, instruction, example,
-         temperature, max_tokens, batch_size, extraction_method, is_active, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
+         temperature, max_tokens, batch_size, extraction_method, params, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)
         """,
-        [next_id, node_type, new_version, sequence, new_enabled, new_sources, new_instruction, new_example, new_temperature, new_max_tokens, new_batch_size, cur_method],
+        [
+            next_id, node_type, new_version, sequence, new_enabled, new_sources, new_instruction,
+            new_example, new_temperature, new_max_tokens, new_batch_size, cur_method, new_params,
+        ],
     )
 
     return {
@@ -1005,7 +1047,7 @@ def get_extraction_configs_by_version(
     for node_type, version in version_map.items():
         query = """
             SELECT node_type, sequence, enabled, input_sources, instruction, example,
-                   extraction_method, temperature, max_tokens, batch_size
+                   extraction_method, temperature, max_tokens, batch_size, params
             FROM extraction_config
             WHERE node_type = ? AND version = ?
         """
@@ -1026,6 +1068,7 @@ def get_extraction_configs_by_version(
                     temperature=row[7],
                     max_tokens=row[8],
                     batch_size=row[9] or 1,
+                    params=row[10],
                 )
             )
 

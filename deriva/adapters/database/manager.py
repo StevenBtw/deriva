@@ -104,16 +104,22 @@ def seed_database() -> bool:
     return seed_from_json(DB_PATH)
 
 
-def run_migrations() -> int:
+def run_migrations(conn: duckdb.DuckDBPyConnection | None = None) -> int:
     """Run any pending migrations (ALTER TABLE scripts).
 
     Migrations are scripts that start with a digit and contain ALTER statements.
-    This function safely skips columns that already exist.
+    This function safely skips columns that already exist, so it can run on
+    every connect.
+
+    Args:
+        conn: Connection to migrate; a new one is opened (and closed) when omitted
 
     Returns:
         Number of migrations applied
     """
-    conn = get_connection()
+    owns_connection = conn is None
+    if conn is None:
+        conn = get_connection()
     migrations_applied = 0
 
     # Find migration scripts (numbered SQL files)
@@ -130,11 +136,15 @@ def run_migrations() -> int:
         with open(migration_file, encoding="utf-8") as f:
             sql = f.read()
 
-        # Process ALTER TABLE ADD COLUMN statements safely
-        statements = [s.strip() for s in sql.split(";") if s.strip()]
+        # Process ALTER TABLE ADD COLUMN statements safely; drop comment lines so a
+        # comment above a statement does not hide the statement itself
+        statements = [
+            "\n".join(line for line in s.splitlines() if not line.strip().startswith("--")).strip()
+            for s in sql.split(";")
+        ]
 
         for statement in statements:
-            if not statement or statement.startswith("--"):
+            if not statement:
                 continue
 
             # Check if this is an ALTER TABLE ADD COLUMN
@@ -181,7 +191,8 @@ def run_migrations() -> int:
                 except Exception as e:
                     logger.debug("Statement failed (may be expected): %s", e)
 
-    conn.close()
+    if owns_connection:
+        conn.close()
     return migrations_applied
 
 

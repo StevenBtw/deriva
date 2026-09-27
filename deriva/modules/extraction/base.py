@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Collection
 from datetime import datetime
 from typing import Any
 
@@ -310,6 +311,16 @@ extract_llm_details_from_response = extract_llm_details
 # =============================================================================
 # Input Sources Parsing
 # =============================================================================
+
+
+def is_excluded_path(rel_path: str, excluded_dirs: Collection[str]) -> bool:
+    """True when any segment of a repository-relative path is an excluded directory.
+
+    Matches whole path segments, so ``vendor/lib.js`` is excluded but
+    ``vendored_notes.md`` is not. The list comes from the ``excluded_directories``
+    system setting (dependency and tool directories such as ``node_modules``).
+    """
+    return any(part in excluded_dirs for part in rel_path.replace("\\", "/").split("/"))
 
 
 def parse_input_sources(input_sources_json: str | None) -> dict[str, Any]:

@@ -281,46 +281,6 @@ BUSINESS_CONCEPT_MULTI_SCHEMA = {
 }
 
 
-def build_system_prompt(instruction: str) -> str:
-    """
-    Build system prompt with static instructions for business concept extraction.
-
-    This separates static role/guideline content (sent once) from dynamic
-    file-specific content (sent per file), reducing token usage.
-
-    Args:
-        instruction: Additional extraction instruction from config
-
-    Returns:
-        System prompt string
-    """
-    return f"""You are an expert at extracting business domain concepts from code documentation.
-
-## What ARE Business Concepts (extract these):
-- **Actors**: Business roles (Policyholder, Intermediary, Claims Handler, Underwriter)
-- **Entities**: Things the business manages (Insurance Policy, Claim, Premium, Quote)
-- **Processes**: Business operations (Claim Registration, Underwriting, Renewal, Settlement)
-- **Events**: Business happenings (ClaimSubmitted, PremiumReceived)
-- **Rules/Goals**: Policies and objectives (CoverageLimit, Compliance)
-
-## What are NOT Business Concepts (skip these):
-- Technical infrastructure (message brokers, containers, gateways, APIs)
-- Code structure (Utils, Service, Controller, Repository pattern)
-- Framework, library or database product names
-
-## Confidence Scoring:
-- 0.9-1.0: Core business concept, central to the domain
-- 0.8-0.9: Clear business concept
-- 0.7-0.8: Likely business-relevant
-- 0.6-0.7: Borderline, might be technical
-
-Only return concepts with confidence >= 0.6
-
-{instruction}
-
-IMPORTANT: Output stable, deterministic results. Always use the same naming conventions."""
-
-
 def build_user_prompt(
     file_content: str,
     file_path: str,
@@ -331,7 +291,7 @@ def build_user_prompt(
     Build user prompt with dynamic file-specific content only.
 
     This contains the file content and context that changes per extraction call.
-    Used together with build_system_prompt() for token-efficient extraction.
+    The config instruction is the system prompt, used verbatim.
 
     Args:
         file_content: Content of the file to analyze
@@ -393,8 +353,8 @@ def build_extraction_prompt(
     This combines system and user prompts for backward compatibility with
     callers that don't support separate system prompts.
 
-    For token-efficient extraction, use build_system_prompt() and build_user_prompt()
-    separately with an LLM that supports system prompts.
+    For token-efficient extraction, send the config instruction as the system prompt
+    and build_user_prompt() as the user prompt.
 
     Args:
         file_content: Content of the file to analyze
@@ -406,9 +366,8 @@ def build_extraction_prompt(
     Returns:
         Combined prompt string (system + user content)
     """
-    system = build_system_prompt(instruction)
     user = build_user_prompt(file_content, file_path, example, existing_concepts)
-    return f"{system}\n\n{user}"
+    return f"{instruction}\n\n{user}"
 
 
 def build_multi_file_user_prompt(
@@ -472,6 +431,37 @@ def build_multi_file_user_prompt(
 
 Return JSON with a "results" array. Each result must have "file_path" and "concepts" array.
 Example format for a single file's concepts: {example}"""
+
+
+def merge_concept_properties(existing: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
+    """Combine two occurrences of the same concept, independent of file order.
+
+    Files can classify one concept differently (a README calls "User" an
+    entity, a requirements document an actor). Every type is kept in
+    ``conceptTypes`` (sorted union) and ``confidence`` is the highest seen.
+    The single-valued fields (``conceptType``, description, origin) come from
+    the strongest occurrence: highest confidence, ties broken by origin path,
+    type and description, so any processing order gives the same node.
+    """
+
+    def types(props: dict[str, Any]) -> set[str]:
+        return set(props.get("conceptTypes") or [props.get("conceptType", "other")])
+
+    def strength(props: dict[str, Any]) -> tuple[float, str, str, str]:
+        return (
+            -float(props.get("confidence", 0.0)),
+            str(props.get("originSource", "")),
+            str(props.get("conceptType", "")),
+            str(props.get("description", "")),
+        )
+
+    occurrences = [new] if existing is None else [existing, new]
+    best = min(occurrences, key=strength)
+    return {
+        **best,
+        "conceptTypes": sorted(set().union(*(types(o) for o in occurrences))),
+        "confidence": max(float(o.get("confidence", 0.0)) for o in occurrences),
+    }
 
 
 def build_business_concept_node(
@@ -757,8 +747,8 @@ def extract_business_concepts_multi(
         instruction = config.get("instruction", "")
         example = config.get("example", "{}")
 
-        # Build prompts
-        system_prompt = build_system_prompt(instruction)
+        # The versioned config instruction is the whole system prompt
+        system_prompt = instruction
         user_prompt = build_multi_file_user_prompt(files, example, existing_concepts)
 
         llm_details["prompt"] = f"{system_prompt}\n\n{user_prompt}"
