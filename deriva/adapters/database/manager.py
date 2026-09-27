@@ -139,7 +139,9 @@ def run_migrations(conn: duckdb.DuckDBPyConnection | None = None) -> int:
         # Process ALTER TABLE ADD COLUMN statements safely; drop comment lines so a
         # comment above a statement does not hide the statement itself
         statements = [
-            "\n".join(line for line in s.splitlines() if not line.strip().startswith("--")).strip()
+            "\n".join(
+                line for line in s.splitlines() if not line.strip().startswith("--")
+            ).strip()
             for s in sql.split(";")
         ]
 

@@ -82,7 +82,7 @@ dev = [
     "pip-audit>=2",
     "pytest>=9",
     "pytest-cov>=7",
-    "ruff>=0.16",
+    "ruff>=0.15,<0.16",  # <0.16 until the layer ruff.toml files inherit the project config
     "ty>=0.0",
     "types-lxml>=2026.2",
 ]

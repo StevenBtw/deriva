@@ -550,12 +550,18 @@ def extract_technologies(
     edges: list[dict[str, Any]] = []
 
     texts = (config.get("params") or {}).get("prompt")
-    required = ("existing_dependencies_heading", "existing_technologies_heading", "closing_instruction")
+    required = (
+        "existing_dependencies_heading",
+        "existing_technologies_heading",
+        "closing_instruction",
+    )
     if not texts or any(k not in texts for k in required):
         return {
             "success": False,
             "data": {"nodes": [], "edges": []},
-            "errors": [f"Technology config needs params.prompt with {', '.join(required)}"],
+            "errors": [
+                f"Technology config needs params.prompt with {', '.join(required)}"
+            ],
             "stats": {"total_nodes": 0, "total_edges": 0},
         }
 

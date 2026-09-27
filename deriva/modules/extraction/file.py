@@ -14,7 +14,12 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
-from .base import current_timestamp, generate_edge_id, is_excluded_path, validate_required_fields
+from .base import (
+    current_timestamp,
+    generate_edge_id,
+    is_excluded_path,
+    validate_required_fields,
+)
 
 
 def build_file_node(file_metadata: dict[str, Any], repo_name: str) -> dict[str, Any]:
@@ -196,7 +201,9 @@ def extract_files(
 
         # First pass: collect all file paths for test matching
         for file_path in repo_path_obj.rglob("*"):
-            if file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs):
+            if file_path.is_dir() or is_excluded_path(
+                file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs
+            ):
                 continue
             rel_path = file_path.relative_to(repo_path_obj)
             file_paths_set.add(str(rel_path).replace("\\", "/"))
@@ -205,7 +212,9 @@ def extract_files(
         test_edges: list[dict[str, Any]] = []
 
         for file_path in repo_path_obj.rglob("*"):
-            if file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs):
+            if file_path.is_dir() or is_excluded_path(
+                file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs
+            ):
                 continue
 
             try:

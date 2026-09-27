@@ -23,7 +23,12 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
-from .base import current_timestamp, generate_edge_id, is_excluded_path, validate_required_fields
+from .base import (
+    current_timestamp,
+    generate_edge_id,
+    is_excluded_path,
+    validate_required_fields,
+)
 
 
 def build_directory_node(
@@ -81,7 +86,9 @@ def build_directory_node(
     }
 
 
-def extract_directories(repo_path: str, repo_name: str, excluded_dirs: Collection[str] = (".git",)) -> dict[str, Any]:
+def extract_directories(
+    repo_path: str, repo_name: str, excluded_dirs: Collection[str] = (".git",)
+) -> dict[str, Any]:
     """
     Extract all directories from a repository path.
 
@@ -121,7 +128,9 @@ def extract_directories(repo_path: str, repo_name: str, excluded_dirs: Collectio
         # Walk through all directories
         for dir_path in repo_path_obj.rglob("*"):
             # Skip non-directories and excluded directories (with their contents)
-            if not dir_path.is_dir() or is_excluded_path(dir_path.relative_to(repo_path_obj).as_posix(), excluded_dirs):
+            if not dir_path.is_dir() or is_excluded_path(
+                dir_path.relative_to(repo_path_obj).as_posix(), excluded_dirs
+            ):
                 continue
 
             try:
@@ -142,7 +151,10 @@ def extract_directories(repo_path: str, repo_name: str, excluded_dirs: Collectio
                 total_size = sum(
                     f.stat().st_size
                     for f in dir_path.rglob("*")
-                    if f.is_file() and not is_excluded_path(f.relative_to(repo_path_obj).as_posix(), excluded_dirs)
+                    if f.is_file()
+                    and not is_excluded_path(
+                        f.relative_to(repo_path_obj).as_posix(), excluded_dirs
+                    )
                 )
 
                 dir_metadata = {
