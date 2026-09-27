@@ -8,7 +8,7 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.7.x is all about stability, portability, user experience, documentation and clean architecture/code standards.
 
-## v0.7.0 - Grafeo Migration (Unreleased)
+## v0.7.0 - Grafeo Migration (September 27, 2026)
 
 Replaced Neo4j (Docker container) with grafeo, an embedded Rust graph database. Removes the external Docker dependency entirely and the graph database now runs in-process. (500-1000x speedup yah!)
 
@@ -24,6 +24,19 @@ Replaced Neo4j (Docker container) with grafeo, an embedded Rust graph database. 
 - **TypeDefinition LLM fallback limited to code**: TypeDefinition input sources list programming-language subtypes only, so markup, stylesheets, templates and shell/batch scripts are no longer sent to the LLM
 - **pydantic-ai 2**: the Mistral provider is now a declared extra (`pydantic-ai-slim[mistral]`); LLM agents are kept per thread so parallel calls do not share an HTTP client across event loops; token usage is read from pydantic-ai 2's `usage` property
 - **LLM timeouts and retries**: `LLM_TIMEOUT` now bounds every LLM call (a stalled request used to hang the run), and timeouts, connection errors, rate limits and 5xx responses are retried up to `LLM_MAX_RETRIES` with exponential backoff (honouring Retry-After); other errors fail at once
+- **grafeo and solvor from PyPI**: grafeo 0.5.43 and solvor 0.6.2 are regular PyPI dependencies again, no local builds needed
+- **Security**: locked dependencies with known vulnerabilities upgraded (among others cryptography, pypdf, requests and urllib3); the CI dependency audit skips Deriva itself, which is not published on PyPI
+- **Fixed: migrations could skip statements**: a comment line directly above a statement in a migration script hid that statement from the migration runner
+
+### Derivation
+
+- **Joint consistency refine step (experimental, disabled by default)**: `joint_consistency` selects relationships and duplicate-element merges together in one exact optimization (solvor MILP) under metamodel constraints: at most one relationship per ordered element pair, a single parent for single-parent relationship types, no cycles in acyclic relationship types, and no merge of two related elements. Stronger evidence tiers are optimized first. With `dry_run` (the default) it only writes a report
+- **`config add derivation`**: new CLI command to add a derivation step (created disabled) with `--phase`, `--sequence`, `-p/--params`, `--temperature` and `--max-candidates`
+
+### Benchmarking
+
+- **Consistency snapshots**: every benchmark run writes a JSON file next to its exported model with each element (identifier, type, name, source node), each relationship (with origin and confidence) and the LLM-extracted graph nodes (business concepts with their types, technologies), so runs can be compared on names and on source nodes
+- **`--no-cache` covers extraction**: with `--no-cache` the extraction steps also bypass the LLM cache, so a no-cache benchmark measures the whole pipeline
 
 ### Prompts in Versioned Config
 
@@ -796,6 +809,7 @@ Initial release with pipeline architecture, LLM client (OpenAI), Neo4j storage, 
 | **0.4.x** | Jun-Jul '25 | Web UI prototype | FastAPI/Jinja2 |
 | **0.5.x** | Aug-Nov '25 | Final development | Managers/Modules/Marimo/DuckDB |
 | **0.6.x** | Dec '25-Jan '26| AutoMate renamed to Deriva | Focus on benchmark and optimization |
+| **0.7.x** | Mar '26- | Grafeo migration | Embedded graph, prompts in versioned config, consistency |
 
 ---
 
