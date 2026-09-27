@@ -6,11 +6,22 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from deriva.services.pipeline import (
     get_pipeline_status,
     run_classification,
     run_full_pipeline,
 )
+
+
+@pytest.fixture(autouse=True)
+def default_excluded_directories():
+    """Tests use a bare MagicMock engine; give the walk the default exclusion list."""
+    from deriva.services import config
+
+    with patch.object(config, "get_excluded_directories", return_value=list(config.DEFAULT_EXCLUDED_DIRECTORIES)):
+        yield
 
 
 class TestRunFullPipeline:

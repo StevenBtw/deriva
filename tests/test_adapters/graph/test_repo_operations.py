@@ -225,3 +225,36 @@ class TestAddEdge:
             graph_manager.add_edge(src, dst, "CONTAINS")
 
         assert not [c for c in write.call_args_list if "MATCH (dst)" in c.args[0]]
+
+
+class TestAddNode:
+    """Node writes: index lookup, then update (same id and labels) or create."""
+
+    def test_node_is_created_with_labels_and_flat_properties(self, graph_manager):
+        from deriva.adapters.graph.models import DirectoryNode
+
+        node_id = graph_manager.add_node(DirectoryNode(name="src", path="a/src", repository_name="a"), node_id="dir::a::src")
+
+        rows = graph_manager.query(
+            "MATCH (n {id: 'dir::a::src'}) RETURN labels(n) AS l, n.name AS name, n.active AS active, n.repository_name AS repo"
+        )
+        assert node_id == "dir::a::src"
+        assert [{**r, "l": sorted(r["l"])} for r in rows] == [
+            {"l": ["Directory", "Graph"], "name": "src", "active": True, "repo": "a"}
+        ]
+
+    def test_adding_the_same_node_twice_updates_it(self, graph_manager):
+        from deriva.adapters.graph.models import DirectoryNode
+
+        graph_manager.add_node(DirectoryNode(name="src", path="a/src", repository_name="a"), node_id="dir::a::src")
+        graph_manager.add_node(DirectoryNode(name="source", path="a/src", repository_name="a"), node_id="dir::a::src")
+
+        assert graph_manager.query("MATCH (n {id: 'dir::a::src'}) RETURN n.name AS name") == [{"name": "source"}]
+
+    def test_node_writes_use_the_index_not_merge(self, graph_manager):
+        from deriva.adapters.graph.models import DirectoryNode
+
+        with patch.object(graph_manager.db, "execute_write", wraps=graph_manager.db.execute_write) as write:
+            graph_manager.add_node(DirectoryNode(name="src", path="a/src", repository_name="a"), node_id="dir::a::src")
+
+        assert not [c for c in write.call_args_list if "MERGE" in c.args[0]]

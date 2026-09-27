@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from deriva.modules.derivation.base import Candidate, GenerationResult, RelationshipRule
+from deriva.modules.derivation.base import (
+    Candidate,
+    GenerationResult,
+    PerCandidateConfig,
+    RelationshipLLMConfig,
+    RelationshipRule,
+)
 from deriva.modules.derivation.element_base import (
     ElementDerivationBase,
     PatternBasedDerivation,
@@ -155,6 +162,96 @@ class TestElementDerivationBase:
 
         assert result.success is True
         assert result.elements_created == 0
+
+
+class TestRelationshipConfigThreading:
+    """The relationship config row reaches the relationship pass in both generation modes."""
+
+    ELEMENT_RESPONSE = '{"elements": [{"identifier": "te_x", "name": "X", "documentation": "d", "source": "1", "confidence": 0.9}]}'
+
+    def _generate(self, derivation, relationship_config, per_candidate=None):
+        llm = MagicMock()
+        llm.return_value = SimpleNamespace(content=self.ELEMENT_RESPONSE)
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch(
+                "deriva.modules.derivation.element_base.query_candidates",
+                return_value=[Candidate(node_id="1", name="x", labels=["Node"], properties={})],
+            ),
+            patch("deriva.modules.derivation.element_base.derive_batch_relationships", return_value=[]) as derive,
+        ):
+            derivation.generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[{"identifier": "other", "name": "Other", "element_type": "Other"}],
+                relationship_config=relationship_config,
+                per_candidate=per_candidate,
+            )
+        return derive
+
+    def test_batch_mode_passes_relationship_config(self):
+        config = RelationshipLLMConfig(instruction="rules", min_confidence=0.6)
+
+        derive = self._generate(ConcreteDerivation(), config)
+
+        assert derive.call_args.kwargs["llm_config"] is config
+
+    def test_per_candidate_mode_passes_relationship_config(self):
+        config = RelationshipLLMConfig(instruction="rules", min_confidence=0.6)
+
+        derive = self._generate(ConcreteDerivation(), config, PerCandidateConfig(min_pool=1, rules="R"))
+
+        assert derive.call_args.kwargs["llm_config"] is config
+
+
+class TestPerCandidateMode:
+    """Per-candidate naming is switched on by the element config (params.per_candidate)."""
+
+    RESPONSE = '{"elements": [{"identifier": "te_x", "name": "X", "documentation": "d", "source": "1", "confidence": 0.9}]}'
+
+    def _prompts(self, per_candidate, n_candidates=2):
+        llm = MagicMock(return_value=SimpleNamespace(content=self.RESPONSE))
+        candidates = [Candidate(node_id=str(i), name=f"c{i}", labels=["Node"], properties={}) for i in range(n_candidates)]
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            ConcreteDerivation().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                per_candidate=per_candidate,
+            )
+        return [c.args[0] for c in llm.call_args_list]
+
+    def test_config_rules_go_into_one_prompt_per_candidate(self):
+        prompts = self._prompts(PerCandidateConfig(min_pool=2, rules="CONFIG NAMING RULES"))
+
+        assert len(prompts) == 2
+        assert all("CONFIG NAMING RULES" in p for p in prompts)
+
+    def test_pool_below_min_pool_uses_batch_mode(self):
+        prompts = self._prompts(PerCandidateConfig(min_pool=3, rules="CONFIG NAMING RULES"))
+
+        assert len(prompts) == 1
+        assert "CONFIG NAMING RULES" not in prompts[0]
+
+    def test_without_config_batch_mode_is_used(self):
+        assert len(self._prompts(None)) == 1
 
 
 class TestPatternBasedDerivation:

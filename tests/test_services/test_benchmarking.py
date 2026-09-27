@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from deriva.adapters.archimate import Element
 from deriva.services.benchmarking import (
     AnalysisSummary,
@@ -1909,7 +1911,8 @@ class TestEnsureExtractionEvents:
 
     def test_extraction_run_gets_ocel_run_logger_and_emits_event(self):
         orchestrator = self._orchestrator()
-        orchestrator._make_extraction_llm_fn = MagicMock(return_value=(MagicMock(), MagicMock(model="m")))
+        orchestrator._model_configs = {"m": MagicMock(model="m")}
+        orchestrator._make_extraction_llm_fn = MagicMock(return_value=MagicMock())
         with (
             patch("deriva.services.benchmarking.extraction.compute_extraction_fingerprint", return_value="new"),
             patch("deriva.services.benchmarking.extraction.run_extraction", return_value={"success": True, "stats": {"nodes_created": 5, "edges_created": 4}}) as run_extraction,
@@ -2021,3 +2024,124 @@ class TestDatabasePerRepo:
         orchestrator, calls = self._orchestrator(per_repo=False)
         self._run(orchestrator, calls)
         assert calls == [("db", "a_b"), ("extract", "b", "a"), ("run", "b", "a")]
+
+
+class TestExtractionLLMLogging:
+    def test_extraction_llm_calls_are_logged_under_the_extraction_run(self):
+        from deriva.services.benchmarking import BenchmarkConfig
+
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["repo1"], models=["m"]),
+        )
+        orchestrator.session_id = "s1"
+        orchestrator._model_configs = {"m": MagicMock(model="m")}
+        llm = MagicMock()
+        llm.query.return_value = MagicMock(content="{}")
+        llm.last_call = {"cache_key": "k", "cache_hit": False, "latency_ms": 5.0, "wait_ms": 1.0, "requests": 1,
+                         "input_tokens": 3, "output_tokens": 2, "error_type": None}
+
+        def fake_run_extraction(**kwargs):
+            kwargs["run_logger"].step_start("BusinessConcept")
+            kwargs["llm_query_fn"]("prompt")
+            return {"success": True, "stats": {}}
+
+        with (
+            patch("deriva.services.benchmarking.LLMManager.from_config", return_value=llm),
+            patch("deriva.services.benchmarking.extraction.run_extraction", side_effect=fake_run_extraction),
+        ):
+            orchestrator._extract_repo("repo1", None)
+
+        (event,) = [e for e in orchestrator.ocel_log.events if e.activity == "LLMQuery"]
+        assert event.objects["BenchmarkRun"] == ["s1:extraction:repo1"]
+        assert event.attributes["config_id"] == "BusinessConcept"
+        assert event.attributes["latency_ms"] == 5.0
+
+
+class TestRunModelSnapshot:
+    """Each exported run also writes a JSON snapshot with source nodes and relationship provenance."""
+
+    def test_snapshot_next_to_the_xml(self, tmp_path, monkeypatch):
+        import json
+
+        from deriva.adapters.archimate.models import Relationship
+
+        monkeypatch.chdir(tmp_path)
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [
+            Element(name="Orders", element_type="ApplicationComponent", identifier="ac_orders", properties={"source": "dir::r::orders", "confidence": 0.9}),
+            Element(name="Order", element_type="BusinessObject", identifier="bo_order", properties={"source": "concept::r::order"}),
+        ]
+        archimate_manager.get_relationships.return_value = [
+            Relationship(source="ac_orders", target="bo_order", relationship_type="Access", identifier="r1", properties={"derived_from": "llm", "confidence": 0.8}),
+        ]
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(),
+            graph_manager=MagicMock(),
+            archimate_manager=archimate_manager,
+            config=BenchmarkConfig(repositories=["r"], models=["m"], export_models=True),
+        )
+        orchestrator.session_id = "s"
+
+        with patch("deriva.services.benchmarking.ArchiMateXMLExporter"):
+            xml_path = orchestrator._export_run_model("r", "m", 2)
+
+        from pathlib import Path
+
+        snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
+        assert snapshot["elements"] == [
+            {"identifier": "ac_orders", "type": "ApplicationComponent", "name": "Orders", "source": "dir::r::orders"},
+            {"identifier": "bo_order", "type": "BusinessObject", "name": "Order", "source": "concept::r::order"},
+        ]
+        assert snapshot["relationships"] == [
+            {"source": "ac_orders", "target": "bo_order", "type": "Access", "derived_from": "llm", "confidence": 0.8},
+        ]
+
+
+class TestExtractionHonoursNoCache:
+    """--no-cache must also make extraction's LLM calls live, or extraction variance is never measured."""
+
+    @pytest.mark.parametrize(("use_cache", "nocache"), [(True, False), (False, True)])
+    def test_extraction_llm_manager_follows_the_cache_setting(self, use_cache, nocache):
+        from deriva.services.benchmarking import BenchmarkConfig
+
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["repo1"], models=["m"], use_cache=use_cache),
+        )
+        orchestrator._model_configs = {"m": MagicMock(model="m")}
+
+        with patch("deriva.services.benchmarking.LLMManager.from_config") as from_config:
+            orchestrator._make_extraction_llm_fn(MagicMock())
+
+        assert from_config.call_args.kwargs["nocache"] is nocache
+
+
+class TestRunSnapshotGraphNodes:
+    """The run snapshot also lists the LLM-created graph nodes, for extraction consistency."""
+
+    def test_concepts_and_technologies_are_recorded(self, tmp_path, monkeypatch):
+        import json
+        from pathlib import Path
+
+        monkeypatch.chdir(tmp_path)
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [Element(name="A", element_type="ApplicationComponent", identifier="a")]
+        archimate_manager.get_relationships.return_value = []
+        graph_manager = MagicMock()
+        graph_manager.query.side_effect = lambda q, *a, **k: (
+            [{"id": "concept::r::user", "types": ["entity", "actor"]}] if "BusinessConcept" in q else [{"id": "tech::r::kafka"}]
+        )
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(),
+            graph_manager=graph_manager,
+            archimate_manager=archimate_manager,
+            config=BenchmarkConfig(repositories=["r"], models=["m"], export_models=True),
+        )
+        orchestrator.session_id = "s"
+
+        with patch("deriva.services.benchmarking.ArchiMateXMLExporter"):
+            xml_path = orchestrator._export_run_model("r", "m", 1)
+
+        snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
+        assert snapshot["graph"] == {"concepts": [["concept::r::user", ["actor", "entity"]]], "technologies": ["tech::r::kafka"]}

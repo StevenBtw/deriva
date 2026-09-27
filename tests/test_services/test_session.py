@@ -860,6 +860,18 @@ class TestPipelineSessionConfigMethods:
         assert result["extraction"]["BusinessConcept"] == 1
         assert result["derivation"]["ApplicationComponent"] == 2
 
+    def test_get_setting(self, connected_session):
+        """Should delegate to config service."""
+        connected_session._mock_config.get_setting.return_value = '[".git"]'
+
+        assert connected_session.get_setting("excluded_directories") == '[".git"]'
+
+    def test_set_setting(self, connected_session):
+        """Should delegate to config service."""
+        connected_session.set_setting("excluded_directories", '[".git"]')
+
+        connected_session._mock_config.set_setting.assert_called_once_with(connected_session._engine, "excluded_directories", '[".git"]')
+
     def test_add_file_type(self, connected_session):
         """Should delegate to config service."""
         connected_session._mock_config.add_file_type.return_value = True
@@ -1836,3 +1848,23 @@ class TestOnlyStep:
             with session.only_step("extraction", "Typo"):
                 pass
         assert states == {"File": True, "Technology": True}
+
+
+def test_connect_applies_pending_migrations():
+    """Opening a session brings an older config database up to the current schema."""
+    from unittest.mock import MagicMock, patch
+
+    from deriva.services.session import PipelineSession
+
+    engine = MagicMock()
+    with (
+        patch("deriva.services.session.get_connection", return_value=engine),
+        patch("deriva.services.session.run_migrations") as migrate,
+        patch("deriva.services.session.use_database"),
+        patch("deriva.services.session.GraphManager"),
+        patch("deriva.services.session.ArchimateManager"),
+        patch("deriva.services.session.RepoManager"),
+    ):
+        PipelineSession(auto_connect=True)
+
+    migrate.assert_called_once_with(engine)

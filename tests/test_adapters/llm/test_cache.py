@@ -320,3 +320,24 @@ class TestCachedLLMCallDecorator:
         cache_key = CacheManager.generate_cache_key("test", "gpt-4", None)
         cached = cache_manager.get(cache_key)
         assert cached is None
+
+
+class TestCacheKeyCoversResponseShapingInputs:
+    """Everything that shapes the LLM response is part of the key, so changing it never serves a stale answer."""
+
+    @pytest.mark.parametrize(
+        ("a", "b"),
+        [
+            ({"system_prompt": "one"}, {"system_prompt": "two"}),
+            ({"system_prompt": "one"}, {}),
+            ({"temperature": 0.0}, {"temperature": 0.7}),
+            ({"max_tokens": 1000}, {"max_tokens": 4000}),
+        ],
+    )
+    def test_different_inputs_give_different_keys(self, a, b):
+        assert CacheManager.generate_cache_key("p", "m", **a) != CacheManager.generate_cache_key("p", "m", **b)
+
+    def test_same_inputs_give_the_same_key(self):
+        kwargs = {"system_prompt": "s", "temperature": 0.3, "max_tokens": 4000}
+
+        assert CacheManager.generate_cache_key("p", "m", **kwargs) == CacheManager.generate_cache_key("p", "m", **kwargs)

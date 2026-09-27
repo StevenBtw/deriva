@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deriva.modules.derivation.base import PerCandidateConfig, RelationshipLLMConfig
 from deriva.modules.derivation.prep import EnrichmentResult
 from deriva.services import derivation
 
@@ -350,6 +352,7 @@ class TestRunDerivationWithConfigs:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -418,6 +421,7 @@ class TestRunDerivationWithConfigs:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -513,6 +517,7 @@ class TestRunDerivationWithConfigs:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -573,6 +578,7 @@ class TestRunDerivationWithConfigs:
         gen_cfg1.batch_size = 5
         gen_cfg1.temperature = None
         gen_cfg1.max_tokens = None
+        gen_cfg1.params = None
 
         gen_cfg2 = MagicMock()
         gen_cfg2.step_name = "gen2"
@@ -584,6 +590,7 @@ class TestRunDerivationWithConfigs:
         gen_cfg2.batch_size = 5
         gen_cfg2.temperature = None
         gen_cfg2.max_tokens = None
+        gen_cfg2.params = None
 
         calls = []
 
@@ -846,6 +853,7 @@ class TestRunDerivationIter:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -918,6 +926,7 @@ class TestRunDerivationIter:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -980,6 +989,7 @@ class TestRunDerivationIter:
         gen_cfg1.batch_size = 5
         gen_cfg1.temperature = None
         gen_cfg1.max_tokens = None
+        gen_cfg1.params = None
 
         gen_cfg2 = MagicMock()
         gen_cfg2.step_name = "gen2"
@@ -991,6 +1001,7 @@ class TestRunDerivationIter:
         gen_cfg2.batch_size = 5
         gen_cfg2.temperature = None
         gen_cfg2.max_tokens = None
+        gen_cfg2.params = None
 
         existing_elements_calls = []
 
@@ -1270,6 +1281,7 @@ class TestRunDerivationDeferRelationships:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -1312,6 +1324,7 @@ class TestRunDerivationDeferRelationships:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -1358,6 +1371,7 @@ class TestRunDerivationDeferRelationships:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -1404,6 +1418,7 @@ class TestRunDerivationDeferRelationships:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -1453,6 +1468,7 @@ class TestRunDerivationDeferRelationships:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -1628,6 +1644,7 @@ class TestRunDerivationIterVerbose:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -1737,6 +1754,7 @@ class TestRunDerivationWithRunLoggerErrors:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -1782,6 +1800,7 @@ class TestRunDerivationProgressReporter:
         gen_cfg.batch_size = 5
         gen_cfg.temperature = None
         gen_cfg.max_tokens = None
+        gen_cfg.params = None
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []
@@ -1840,3 +1859,141 @@ class TestRunDerivationProgressReporter:
 
         complete_phase_call = progress.complete_phase.call_args
         assert "5 disabled" in complete_phase_call[0][0]
+
+
+class TestRelationshipLLMConfig:
+    """The enabled relationship-phase config row drives the LLM relationship pass."""
+
+    @staticmethod
+    def _row(instruction="rules", params='{"temperature": 0.0, "min_confidence": 0.6}', name="GlobalRelationships"):
+        return SimpleNamespace(step_name=name, instruction=instruction, params=params)
+
+    def test_no_enabled_row_skips_the_llm_pass(self):
+        assert derivation._relationship_llm_config([]) is None
+
+    def test_row_supplies_instruction_and_cutoff(self):
+        assert derivation._relationship_llm_config([self._row()]) == RelationshipLLMConfig(instruction="rules", min_confidence=0.6)
+
+    def test_row_without_min_confidence_is_an_error(self):
+        with pytest.raises(ValueError, match="min_confidence"):
+            derivation._relationship_llm_config([self._row(params='{"temperature": 0.0}')])
+
+    def test_row_without_instruction_is_an_error(self):
+        with pytest.raises(ValueError, match="instruction"):
+            derivation._relationship_llm_config([self._row(instruction="")])
+
+    def test_two_enabled_rows_are_an_error(self):
+        with pytest.raises(ValueError, match="Only one"):
+            derivation._relationship_llm_config([self._row(), self._row(name="Other")])
+
+
+def _run_derivation(**kwargs):
+    return derivation.run_derivation(**kwargs)
+
+
+def _run_derivation_iter(**kwargs):
+    return list(derivation.run_derivation_iter(**kwargs))
+
+
+class TestRelationshipConfigReachesTheRelationshipPass:
+    """Both runners pass the relationship row to both relationship paths."""
+
+    EXPECTED = RelationshipLLMConfig(instruction="rules", min_confidence=0.6)
+
+    @staticmethod
+    def _configs(engine, enabled_only, phase):
+        if phase == "generate":
+            return [
+                SimpleNamespace(
+                    step_name="ApplicationComponent",
+                    element_type="ApplicationComponent",
+                    input_graph_query="MATCH (n) RETURN n",
+                    instruction="Gen",
+                    example="{}",
+                    max_candidates=10,
+                    batch_size=5,
+                    temperature=None,
+                    max_tokens=None,
+                    params=None,
+                )
+            ]
+        if phase == "relationship":
+            return [SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6}')]
+        return []
+
+    def _run(self, runner, defer):
+        generated = {"success": True, "elements_created": 1, "relationships_created": 0, "created_elements": [{"identifier": "e1"}], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=self._configs),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+            patch.object(derivation, "derive_consolidated_relationships", return_value=[]) as consolidated,
+        ):
+            runner(
+                engine=MagicMock(),
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                llm_query_fn=MagicMock(),
+                defer_relationships=defer,
+                phases=["generate"],
+            )
+        return gen, consolidated
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_deferred_path(self, runner):
+        _, consolidated = self._run(runner, defer=True)
+
+        assert consolidated.call_args.kwargs["llm_config"] == self.EXPECTED
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_per_element_path(self, runner):
+        gen, _ = self._run(runner, defer=False)
+
+        assert gen.call_args.kwargs["relationship_config"] == self.EXPECTED
+
+
+class TestPerCandidateConfig:
+    """Per-candidate naming mode comes from the element row's params.per_candidate."""
+
+    def test_no_params_means_batch_mode(self):
+        assert derivation._per_candidate_config(None) is None
+        assert derivation._per_candidate_config('{"temperature": 0.0}') is None
+
+    def test_params_supply_min_pool_and_rules(self):
+        params = '{"temperature": 0.0, "per_candidate": {"min_pool": 6, "rules": "R"}}'
+
+        assert derivation._per_candidate_config(params) == PerCandidateConfig(min_pool=6, rules="R")
+
+    @pytest.mark.parametrize("value", ['{"min_pool": 6}', '{"rules": "R"}'])
+    def test_incomplete_per_candidate_is_an_error(self, value):
+        with pytest.raises(ValueError, match="per_candidate"):
+            derivation._per_candidate_config(f'{{"per_candidate": {value}}}')
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_it(self, runner):
+        cfg = SimpleNamespace(
+            step_name="ApplicationComponent",
+            element_type="ApplicationComponent",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"per_candidate": {"min_pool": 6, "rules": "R"}}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(
+                engine=MagicMock(),
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                llm_query_fn=MagicMock(),
+                defer_relationships=False,
+                phases=["generate"],
+            )
+
+        assert gen.call_args.kwargs["per_candidate"] == PerCandidateConfig(min_pool=6, rules="R")

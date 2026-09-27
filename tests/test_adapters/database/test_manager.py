@@ -64,3 +64,23 @@ class TestRunSqlFile:
 
             mock_get.assert_called_once()
             mock_conn.close.assert_called_once()
+
+
+class TestExtractionParamsMigration:
+    """Existing databases get extraction_config.params through the numbered migration."""
+
+    def test_adds_params_column_once(self):
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        conn.execute("CREATE TABLE extraction_config (id INTEGER PRIMARY KEY, node_type VARCHAR)")
+
+        first = run_migrations(conn)
+        second = run_migrations(conn)
+
+        columns = {r[0] for r in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'extraction_config'").fetchall()}
+        assert "params" in columns
+        assert (first, second) == (1, 0)
+        conn.execute("SELECT 1")  # a passed-in connection stays open

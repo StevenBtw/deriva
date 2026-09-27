@@ -2820,6 +2820,18 @@ class TestConfigUpdateFileOptions:
 
     @patch("deriva.cli.commands.config.config")
     @patch("deriva.cli.commands.config.PipelineSession")
+    def test_update_extraction_with_params(self, mock_session_class, mock_config):
+        """Extraction steps take versioned params too."""
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+        mock_config.create_extraction_config_version.return_value = {"success": True, "old_version": 1, "new_version": 2}
+
+        result = runner.invoke(app, ["config", "update", "extraction", "Technology", "-p", '{"prompt": {}}'])
+
+        assert result.exit_code == 0
+        assert mock_config.create_extraction_config_version.call_args.kwargs["params"] == '{"prompt": {}}'
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
     def test_update_extraction_with_sources(self, mock_session_class, mock_config):
         """Should update extraction with sources option."""
         mock_session = MagicMock()
@@ -3757,3 +3769,39 @@ class TestRepositoryDatabaseSelection:
         runner.invoke(app, ["clear", "model", "--repo", "lightblue"])
 
         assert [c.kwargs["repository"] for c in mock_session_class.call_args_list] == ["bigdata", "lightblue"]
+
+
+class TestSettingCommands:
+    """`config setting show|set` read and write system settings through the session."""
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_setting_show(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.get_setting.return_value = '[".git", "node_modules"]'
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "setting", "show", "excluded_directories"])
+
+        assert result.exit_code == 0
+        assert "node_modules" in result.stdout
+        mock_session.get_setting.assert_called_once_with("excluded_directories")
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_setting_show_missing(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.get_setting.return_value = None
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "setting", "show", "nope"])
+
+        assert result.exit_code == 1
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_setting_set(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "setting", "set", "excluded_directories", '[".git"]'])
+
+        assert result.exit_code == 0
+        mock_session.set_setting.assert_called_once_with("excluded_directories", '[".git"]')

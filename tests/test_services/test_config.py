@@ -150,8 +150,8 @@ class TestGetExtractionConfigs:
         # Columns: node_type, sequence, enabled, input_sources, instruction, example,
         #          extraction_method, temperature, max_tokens, batch_size
         engine.execute.return_value.fetchall.return_value = [
-            ("BusinessConcept", 1, True, '{"files": []}', "instruction1", "example1", "llm", None, None, 1),
-            ("TypeDefinition", 2, True, '{"files": []}', "instruction2", "example2", "ast", 0.5, 2000, 5),
+            ("BusinessConcept", 1, True, '{"files": []}', "instruction1", "example1", "llm", None, None, 1, None),
+            ("TypeDefinition", 2, True, '{"files": []}', "instruction2", "example2", "ast", 0.5, 2000, 5, None),
         ]
 
         configs = get_extraction_configs(engine)
@@ -171,7 +171,7 @@ class TestGetExtractionConfigs:
         """Should filter to enabled configs when requested."""
         engine = MagicMock()
         engine.execute.return_value.fetchall.return_value = [
-            ("BusinessConcept", 1, True, None, None, None, "llm", None, None, 1),
+            ("BusinessConcept", 1, True, None, None, None, "llm", None, None, 1, None),
         ]
 
         configs = get_extraction_configs(engine, enabled_only=True)
@@ -194,7 +194,7 @@ class TestGetExtractionConfigs:
         """Should default extraction_method to llm when None."""
         engine = MagicMock()
         engine.execute.return_value.fetchall.return_value = [
-            ("BusinessConcept", 1, True, None, None, None, None, None, None, None),
+            ("BusinessConcept", 1, True, None, None, None, None, None, None, None, None),
         ]
 
         configs = get_extraction_configs(engine)
@@ -211,7 +211,7 @@ class TestGetExtractionConfig:
         engine = MagicMock()
         # Columns: node_type, sequence, enabled, input_sources, instruction, example,
         #          extraction_method, temperature, max_tokens, batch_size
-        engine.execute.return_value.fetchone.return_value = ("BusinessConcept", 1, True, '{"files": []}', "instruction", "example", "llm", 0.7, 4096, 3)
+        engine.execute.return_value.fetchone.return_value = ("BusinessConcept", 1, True, '{"files": []}', "instruction", "example", "llm", 0.7, 4096, 3, None)
 
         config = get_extraction_config(engine, "BusinessConcept")
 
@@ -1019,7 +1019,7 @@ class TestCreateExtractionConfigVersion:
         engine = MagicMock()
         # Current config: (id, version, sequence, enabled, input_sources, instruction, example, temperature, max_tokens, batch_size, extraction_method)
         engine.execute.return_value.fetchone.side_effect = [
-            (1, 1, 1, True, '{"files": []}', "instruction", "example", 0.7, 4096, 1, "llm"),
+            (1, 1, 1, True, '{"files": []}', "instruction", "example", 0.7, 4096, 1, "llm", None),
             (2,),  # Next ID
         ]
 
@@ -1722,3 +1722,69 @@ class TestAddDerivationStep:
         from deriva.services.config import add_derivation_step
 
         assert add_derivation_step(engine, "graph_relationships", "refine", 4) is False
+
+
+class TestExcludedDirectories:
+    """Dependency directories skipped by every repository walk (system setting `excluded_directories`)."""
+
+    def test_default_when_not_configured(self):
+        from deriva.services.config import DEFAULT_EXCLUDED_DIRECTORIES, get_excluded_directories
+
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.return_value = None
+
+        assert get_excluded_directories(engine) == DEFAULT_EXCLUDED_DIRECTORIES
+        assert {"node_modules", "bower_components", "vendor", ".git"} <= set(DEFAULT_EXCLUDED_DIRECTORIES)
+
+    def test_configured_json_list(self):
+        from deriva.services.config import get_excluded_directories
+
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.return_value = ('[".git", "third_party"]',)
+
+        assert get_excluded_directories(engine) == [".git", "third_party"]
+
+    def test_invalid_value_is_an_error(self):
+        from deriva.services.config import get_excluded_directories
+
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.return_value = ("node_modules",)
+
+        with pytest.raises(ValueError, match="excluded_directories"):
+            get_excluded_directories(engine)
+
+
+class TestExtractionConfigParams:
+    """Extraction steps carry versioned params (prompt texts, switches), like derivation steps."""
+
+    @staticmethod
+    def _engine():
+        import duckdb
+
+        from deriva.adapters.database.manager import SCRIPTS_DIR
+
+        engine = duckdb.connect(":memory:")
+        engine.execute((SCRIPTS_DIR / "schema.sql").read_text(encoding="utf-8"))
+        engine.execute(
+            "INSERT INTO extraction_config (id, node_type, version, sequence, enabled, instruction, example, is_active) "
+            "VALUES (1, 'Technology', 1, 1, TRUE, 'i', 'e', TRUE)"
+        )
+        return engine
+
+    def test_new_version_stores_params(self):
+        from deriva.services.config import create_extraction_config_version, get_extraction_config
+
+        engine = self._engine()
+        result = create_extraction_config_version(engine, "Technology", params='{"prompt": {"closing_instruction": "x"}}')
+
+        assert result["new_version"] == 2
+        assert get_extraction_config(engine, "Technology").params == '{"prompt": {"closing_instruction": "x"}}'
+
+    def test_params_are_kept_when_other_fields_change(self):
+        from deriva.services.config import create_extraction_config_version, get_extraction_config
+
+        engine = self._engine()
+        create_extraction_config_version(engine, "Technology", params='{"a": 1}')
+        create_extraction_config_version(engine, "Technology", instruction="new")
+
+        assert get_extraction_config(engine, "Technology").params == '{"a": 1}'

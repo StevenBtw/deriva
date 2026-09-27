@@ -6,6 +6,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from deriva.services.extraction import (
     _build_llm_prompt,
     _create_node_from_data,
@@ -19,6 +21,14 @@ from deriva.services.extraction import (
     run_extraction,
 )
 
+
+@pytest.fixture(autouse=True)
+def default_excluded_directories():
+    """Most tests use a bare MagicMock engine; give the walk the default exclusion list."""
+    from deriva.services import config
+
+    with patch.object(config, "get_excluded_directories", return_value=list(config.DEFAULT_EXCLUDED_DIRECTORIES)):
+        yield
 
 class TestRunExtraction:
     """Tests for run_extraction function."""
@@ -180,7 +190,7 @@ class TestExtractDirectories:
 
             graph_manager = MagicMock()
 
-            result = _extract_directories(mock_repo, Path(tmpdir), graph_manager)
+            result = _extract_directories(mock_repo, Path(tmpdir), graph_manager, [".git"])
 
             assert result["nodes_created"] >= 1
             graph_manager.add_node.assert_called()
@@ -206,7 +216,7 @@ class TestExtractFiles:
 
             graph_manager = MagicMock()
 
-            result = _extract_files(mock_repo, Path(tmpdir), classified_files, [], graph_manager)
+            result = _extract_files(mock_repo, Path(tmpdir), classified_files, [], graph_manager, [".git"])
 
             assert result["nodes_created"] >= 1
             graph_manager.add_node.assert_called()
@@ -246,6 +256,7 @@ class TestExtractLLMBased:
         mock_cfg.node_type = "BusinessConcept"
         # Use proper JSON format for input_sources
         mock_cfg.input_sources = json_module.dumps({"files": [{"type": "source", "subtype": "python"}]})
+        mock_cfg.params = None
         mock_cfg.instruction = None
         mock_cfg.example = None
 
@@ -283,6 +294,7 @@ class TestExtractLLMBased:
             mock_cfg.node_type = "BusinessConcept"
             # Use proper JSON format for input_sources
             mock_cfg.input_sources = json_module.dumps({"files": [{"type": "source", "subtype": "python"}]})
+            mock_cfg.params = None
             mock_cfg.instruction = "Extract business concepts"
             mock_cfg.example = None
             mock_cfg.batch_size = 1
@@ -295,6 +307,7 @@ class TestExtractLLMBased:
             ]
 
             graph_manager = MagicMock()
+            graph_manager.get_node.return_value = None  # no stored concept yet
 
             # Mock LLM to return a valid response
             def mock_llm(prompt, schema):
@@ -1417,6 +1430,7 @@ class TestExtractDirectoryClassification:
         mock_repo.name = "test_repo"
 
         graph_manager = MagicMock()
+        graph_manager.get_node.return_value = None  # no stored concept yet
         graph_manager.query.return_value = [
             {"name": "src", "path": "src", "id": "dir_1"},
             {"name": "tests", "path": "tests", "id": "dir_2"},
@@ -1527,6 +1541,7 @@ class TestExtractLLMBasedBatching:
             mock_cfg = MagicMock()
             mock_cfg.node_type = "BusinessConcept"
             mock_cfg.input_sources = json_module.dumps({"files": [{"type": "source", "subtype": "python"}]})
+            mock_cfg.params = None
             mock_cfg.instruction = "Extract concepts"
             mock_cfg.example = "{}"
             mock_cfg.batch_size = 10  # Enable batching
@@ -1577,6 +1592,7 @@ class TestExtractLLMBasedTreesitter:
             mock_cfg = MagicMock()
             mock_cfg.node_type = "TypeDefinition"
             mock_cfg.input_sources = json_module.dumps({"files": [{"type": "source", "subtype": "python"}]})
+            mock_cfg.params = None
             mock_cfg.instruction = "Extract types"
             mock_cfg.example = "{}"
             mock_cfg.batch_size = 1
@@ -1623,6 +1639,7 @@ class TestExtractLLMBasedTreesitter:
             mock_cfg = MagicMock()
             mock_cfg.node_type = "Method"
             mock_cfg.input_sources = json_module.dumps({"files": [{"type": "source", "subtype": "python"}]})
+            mock_cfg.params = None
             mock_cfg.instruction = "Extract methods"
             mock_cfg.example = "{}"
             mock_cfg.batch_size = 1
@@ -1710,3 +1727,75 @@ class TestExtractEdgesCreateStubNodes:
             # Should have created a stub node
             graph_manager.add_node.assert_called()
             assert result["nodes_created"] >= 1
+
+
+class TestRepositoryWalkExclusions:
+    """The repository walk and the extraction fingerprint follow the excluded_directories setting."""
+
+    def test_list_repo_files_skips_excluded_directories(self, tmp_path):
+        from deriva.services.extraction import list_repo_files
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text("x")
+        (tmp_path / "src" / "app.pyc").write_text("x")
+        (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+        (tmp_path / "node_modules" / "pkg" / "index.js").write_text("x")
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".git" / "config").write_text("x")
+
+        assert list_repo_files(tmp_path, [".git", "node_modules"]) == ["src/app.py"]
+
+    def test_fingerprint_changes_with_excluded_directories(self):
+        from deriva.services import extraction
+
+        versions = {"extraction": {"File": 1}}
+        with (
+            patch.object(extraction, "RepoManager") as repo_mgr,
+            patch.object(extraction.config, "get_excluded_directories", side_effect=[[".git"], [".git", "node_modules"]]),
+        ):
+            repo_mgr.return_value.get_repository_info.return_value = MagicMock(last_commit="abc")
+            first = extraction.compute_extraction_fingerprint(MagicMock(), "repo", versions)
+            second = extraction.compute_extraction_fingerprint(MagicMock(), "repo", versions)
+
+        assert first != second
+
+
+class TestConceptNodesMergeAcrossFiles:
+    """Every BusinessConcept write merges with the stored node, so file order does not matter."""
+
+    @staticmethod
+    def _store(order):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import BusinessConceptNode
+        from deriva.services.extraction import _add_concept_node
+
+        occurrences = {
+            "readme": BusinessConceptNode("User", "entity", "from readme", "repo/README.md", "repo", 0.9),
+            "rtf": BusinessConceptNode("User", "actor", "from requirements", "repo/docs/requirements.rtf", "repo", 0.9),
+        }
+        close_database()
+        gm = GraphManager()
+        gm.connect()
+        try:
+            for key in order:
+                _add_concept_node(gm, occurrences[key], "concept::repo::user")
+            return gm.get_node("concept::repo::user")["properties"], gm.query(
+                "MATCH (n:Graph:BusinessConcept) WHERE 'actor' IN n.conceptTypes RETURN n.id AS id"
+            )
+        finally:
+            gm.disconnect()
+            close_database()
+
+    def test_same_node_for_either_file_order(self):
+        first, _ = self._store(["readme", "rtf"])
+        second, _ = self._store(["rtf", "readme"])
+
+        drop = {"extracted_at", "created_at", "updated_at"}
+        assert {k: v for k, v in first.items() if k not in drop} == {k: v for k, v in second.items() if k not in drop}
+        assert first["conceptTypes"] == ["actor", "entity"]
+
+    def test_actor_query_finds_the_concept(self):
+        _, rows = self._store(["rtf", "readme"])
+
+        assert rows == [{"id": "concept::repo::user"}]

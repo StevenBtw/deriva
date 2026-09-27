@@ -111,3 +111,59 @@ def test_tests_never_use_a_persistent_database():
     import os
 
     assert os.environ.get("GRAFEO_DB_DIR") == ""
+
+
+class TestMergeEdge:
+    """Edge upserts without a per-edge Cypher lookup; existing-edge keys are cached per type."""
+
+    def _nodes(self, conn, *ids):
+        for node_id in ids:
+            conn.execute("CREATE (:Graph {id: $id})", {"id": node_id})
+
+    def test_many_edges_use_one_lookup_query_per_edge_type(self, conn):
+        self._nodes(conn, *[f"n{i}" for i in range(20)])
+        for i in range(19):
+            conn.merge_edge("id", f"n{i}", f"n{i + 1}", "Graph:NEXT", f"e{i}", {})
+
+        lookups = [q for q in query_stats.top(50) if "Graph:NEXT" in q["query"] and "MATCH" in q["query"]]
+        assert [q["count"] for q in lookups] == [1]
+        assert conn.execute("MATCH ()-[r:`Graph:NEXT`]->() RETURN count(r) AS c") == [{"c": 19}]
+
+    def test_edges_are_recreated_after_a_delete(self, conn):
+        self._nodes(conn, "a", "b")
+        conn.merge_edge("id", "a", "b", "Graph:X", "e1", {})
+        conn.execute("MATCH (n:Graph) DETACH DELETE n")
+        self._nodes(conn, "a", "b")
+
+        conn.merge_edge("id", "a", "b", "Graph:X", "e1", {})
+
+        assert conn.execute("MATCH ()-[r:`Graph:X`]->() RETURN count(r) AS c") == [{"c": 1}]
+
+    def test_missing_endpoint_returns_false(self, conn):
+        self._nodes(conn, "a")
+        assert conn.merge_edge("id", "a", "missing", "Graph:X", "e1", {}) is False
+
+
+class TestDeletedNodesInIndex:
+    """grafeo's property index still returns deleted nodes; lookups must skip them."""
+
+    def _recreated(self, conn):
+        conn.execute("CREATE (:Graph:File {id: 'a'})")
+        conn.execute("CREATE (:Graph:File {id: 'b'})")
+        conn.db.create_property_index("id")
+        conn.execute("MATCH (n:Graph) DETACH DELETE n")
+
+    def test_merge_node_recreates_after_delete(self, conn):
+        self._recreated(conn)
+        conn.merge_node("id", "a", ["Graph", "File"], {"name": "A"})
+
+        assert conn.execute("MATCH (n:File) RETURN n.id AS id, n.name AS name") == [{"id": "a", "name": "A"}]
+
+    def test_merge_edge_and_property_writes_ignore_deleted_nodes(self, conn):
+        self._recreated(conn)
+        conn.merge_node("id", "a", ["Graph", "File"], {})
+        conn.merge_node("id", "b", ["Graph", "File"], {})
+
+        assert conn.merge_edge("id", "a", "b", "Graph:X", "e1", {}) is True
+        assert conn.set_node_properties("id", {"a": {"x": 1}}) == 1
+        assert conn.execute("MATCH (s)-[r:`Graph:X`]->(d) RETURN s.id AS s, d.id AS d") == [{"s": "a", "d": "b"}]

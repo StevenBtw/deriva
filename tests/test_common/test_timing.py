@@ -53,3 +53,18 @@ class TestSummarizeRunEvents:
             "latency_seconds": 0.95,
             "wait_seconds": 0.1,
         }
+
+
+class TestRunSecondsFallback:
+    def test_without_complete_run_the_step_total_is_used_and_rounded(self):
+        log = OCELLog()
+        log.create_event(activity="ExtractConfig", objects={}, config_id="File", duration_seconds=1.314)
+        log.create_event(activity="ExtractConfig", objects={}, config_id="Imports", duration_seconds=2.891)
+
+        assert summarize_run_events(log.events)["run_seconds"] == 4.21
+
+    def test_complete_run_seconds_are_rounded(self):
+        log = OCELLog()
+        log.create_event(activity="CompleteRun", objects={}, duration_seconds=4.031446)
+
+        assert summarize_run_events(log.events)["run_seconds"] == 4.03

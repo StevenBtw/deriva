@@ -5,14 +5,15 @@ from deriva.common import current_timestamp, extract_llm_details
 from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
     RELATIONSHIP_SCHEMA,
+    RelationshipLLMConfig,
     build_derivation_prompt,
     build_element,
-    build_element_relationship_prompt,
-    build_relationship_prompt,
     create_result,
     parse_derivation_response,
     parse_relationship_response,
 )
+
+REL_CFG = RelationshipLLMConfig(instruction="Relationship rules.", min_confidence=0.6)
 
 
 class TestBuildDerivationPrompt:
@@ -191,38 +192,6 @@ class TestRelationshipSchema:
         assert "relationship_type" in items_schema["required"]
 
 
-class TestBuildRelationshipPrompt:
-    """Tests for build_relationship_prompt function."""
-
-    def test_includes_elements(self):
-        """Should include elements in prompt."""
-        elements = [
-            {"identifier": "app:auth", "name": "Auth", "element_type": "ApplicationComponent"},
-            {"identifier": "app:api", "name": "API", "element_type": "ApplicationComponent"},
-        ]
-        prompt = build_relationship_prompt(elements)
-
-        assert "app:auth" in prompt
-        assert "app:api" in prompt
-        assert "Auth" in prompt
-
-    def test_includes_relationship_types(self):
-        """Should mention ArchiMate relationship types."""
-        prompt = build_relationship_prompt([])
-
-        assert "Composition" in prompt
-        assert "Serving" in prompt
-        assert "Realization" in prompt
-
-    def test_includes_instructions(self):
-        """Should include instructions for relationship derivation."""
-        prompt = build_relationship_prompt([])
-
-        assert "relationships" in prompt.lower()
-        assert "source" in prompt.lower()
-        assert "target" in prompt.lower()
-
-
 class TestParseRelationshipResponse:
     """Tests for parse_relationship_response function."""
 
@@ -328,162 +297,6 @@ class TestExtractLlmDetails:
 
         assert details["response"] == ""
         assert details["cache_used"] is False
-
-
-class TestBuildElementRelationshipPrompt:
-    """Tests for build_element_relationship_prompt function."""
-
-    def test_includes_source_elements(self):
-        """Should include source elements in prompt."""
-        source_elements = [
-            {"identifier": "app_auth", "name": "Auth Component", "element_type": "ApplicationComponent"},
-        ]
-        target_elements = [
-            {"identifier": "svc_login", "name": "Login Service", "element_type": "ApplicationService"},
-        ]
-        valid_relationships = [
-            {"relationship_type": "Serving", "description": "Provides services to", "allowed_targets": ["ApplicationService"]},
-        ]
-
-        prompt = build_element_relationship_prompt(
-            source_elements=source_elements,
-            target_elements=target_elements,
-            source_element_type="ApplicationComponent",
-            valid_relationships=valid_relationships,
-        )
-
-        assert "app_auth" in prompt
-        assert "Auth Component" in prompt
-        assert "Source Elements" in prompt
-
-    def test_includes_target_elements(self):
-        """Should include target elements in prompt."""
-        source_elements = [
-            {"identifier": "app_auth", "name": "Auth", "element_type": "ApplicationComponent"},
-        ]
-        target_elements = [
-            {"identifier": "svc_login", "name": "Login Service", "element_type": "ApplicationService"},
-            {"identifier": "data_user", "name": "User Data", "element_type": "DataObject"},
-        ]
-        valid_relationships = []
-
-        prompt = build_element_relationship_prompt(
-            source_elements=source_elements,
-            target_elements=target_elements,
-            source_element_type="ApplicationComponent",
-            valid_relationships=valid_relationships,
-        )
-
-        assert "svc_login" in prompt
-        assert "Login Service" in prompt
-        assert "data_user" in prompt
-        assert "Target Elements" in prompt
-
-    def test_includes_valid_relationship_types(self):
-        """Should include valid relationship types from metamodel."""
-        source_elements = [{"identifier": "app_auth", "name": "Auth", "element_type": "ApplicationComponent"}]
-        target_elements = [{"identifier": "svc_login", "name": "Login", "element_type": "ApplicationService"}]
-        valid_relationships = [
-            {"relationship_type": "Serving", "description": "Provides services to", "allowed_targets": ["ApplicationService"]},
-            {"relationship_type": "Composition", "description": "Consists of", "allowed_targets": ["ApplicationComponent"]},
-        ]
-
-        prompt = build_element_relationship_prompt(
-            source_elements=source_elements,
-            target_elements=target_elements,
-            source_element_type="ApplicationComponent",
-            valid_relationships=valid_relationships,
-        )
-
-        assert "Serving" in prompt
-        assert "Composition" in prompt
-        assert "Provides services to" in prompt
-        assert "ApplicationService" in prompt
-
-    def test_uses_custom_instruction(self):
-        """Should use custom instruction when provided."""
-        source_elements = [{"identifier": "app_auth", "name": "Auth", "element_type": "ApplicationComponent"}]
-        target_elements = []
-        valid_relationships = []
-        custom_instruction = "Custom instruction for deriving ApplicationComponent relationships"
-
-        prompt = build_element_relationship_prompt(
-            source_elements=source_elements,
-            target_elements=target_elements,
-            source_element_type="ApplicationComponent",
-            valid_relationships=valid_relationships,
-            instruction=custom_instruction,
-        )
-
-        assert custom_instruction in prompt
-
-    def test_uses_custom_example(self):
-        """Should use custom example when provided."""
-        source_elements = [{"identifier": "app_auth", "name": "Auth", "element_type": "ApplicationComponent"}]
-        target_elements = []
-        valid_relationships = []
-        custom_example = '{"relationships": [{"source": "custom_src", "target": "custom_tgt", "relationship_type": "Flow"}]}'
-
-        prompt = build_element_relationship_prompt(
-            source_elements=source_elements,
-            target_elements=target_elements,
-            source_element_type="ApplicationComponent",
-            valid_relationships=valid_relationships,
-            example=custom_example,
-        )
-
-        assert custom_example in prompt
-
-    def test_uses_default_instruction_when_not_provided(self):
-        """Should use default instruction when not provided."""
-        source_elements = [{"identifier": "app_auth", "name": "Auth", "element_type": "ApplicationComponent"}]
-        target_elements = []
-        valid_relationships = []
-
-        prompt = build_element_relationship_prompt(
-            source_elements=source_elements,
-            target_elements=target_elements,
-            source_element_type="ApplicationComponent",
-            valid_relationships=valid_relationships,
-        )
-
-        # Default instruction mentions deriving relationships FROM the element type
-        assert "Derive relationships FROM" in prompt
-        assert "ApplicationComponent" in prompt
-
-    def test_includes_identifier_validation_rules(self):
-        """Should include strict identifier validation rules."""
-        source_elements = [{"identifier": "app_auth", "name": "Auth", "element_type": "ApplicationComponent"}]
-        target_elements = [{"identifier": "svc_login", "name": "Login", "element_type": "ApplicationService"}]
-        valid_relationships = []
-
-        prompt = build_element_relationship_prompt(
-            source_elements=source_elements,
-            target_elements=target_elements,
-            source_element_type="ApplicationComponent",
-            valid_relationships=valid_relationships,
-        )
-
-        # Should include the identifier lists for validation
-        assert "app_auth" in prompt
-        assert "svc_login" in prompt
-        assert "CRITICAL RULES" in prompt
-
-    def test_mentions_source_element_type(self):
-        """Should mention the source element type throughout prompt."""
-        source_elements = [{"identifier": "svc_auth", "name": "Auth Service", "element_type": "ApplicationService"}]
-        target_elements = []
-        valid_relationships = []
-
-        prompt = build_element_relationship_prompt(
-            source_elements=source_elements,
-            target_elements=target_elements,
-            source_element_type="ApplicationService",
-            valid_relationships=valid_relationships,
-        )
-
-        # Element type should appear multiple times in context
-        assert prompt.count("ApplicationService") >= 2
 
 
 class TestCandidate:
@@ -1094,118 +907,6 @@ class TestDeprecatedGetEnrichments:
         assert result == {}
 
 
-class TestBuildPerElementRelationshipPrompt:
-    """Tests for build_per_element_relationship_prompt function."""
-
-    def test_includes_source_elements(self):
-        """Should include source elements in prompt."""
-        from deriva.modules.derivation.base import build_per_element_relationship_prompt
-
-        source_elements = [{"identifier": "app_auth", "name": "Auth Component", "element_type": "ApplicationComponent"}]
-        target_elements = [{"identifier": "svc_login", "name": "Login Service", "element_type": "ApplicationService"}]
-
-        prompt = build_per_element_relationship_prompt(
-            source_elements=source_elements,
-            target_elements=target_elements,
-            source_element_type="ApplicationComponent",
-            instruction="Derive relationships from components.",
-        )
-
-        assert "app_auth" in prompt
-        assert "Auth Component" in prompt
-        assert "SOURCE ELEMENTS" in prompt
-
-    def test_includes_target_elements(self):
-        """Should include target elements in prompt."""
-        from deriva.modules.derivation.base import build_per_element_relationship_prompt
-
-        source_elements = [{"identifier": "app_auth", "name": "Auth", "element_type": "ApplicationComponent"}]
-        target_elements = [
-            {"identifier": "svc_login", "name": "Login Service", "element_type": "ApplicationService"},
-            {"identifier": "data_user", "name": "User Data", "element_type": "DataObject"},
-        ]
-
-        prompt = build_per_element_relationship_prompt(
-            source_elements=source_elements,
-            target_elements=target_elements,
-            source_element_type="ApplicationComponent",
-            instruction="Derive relationships.",
-        )
-
-        assert "svc_login" in prompt
-        assert "data_user" in prompt
-        assert "TARGET ELEMENTS" in prompt
-
-    def test_includes_instruction(self):
-        """Should include custom instruction in prompt."""
-        from deriva.modules.derivation.base import build_per_element_relationship_prompt
-
-        prompt = build_per_element_relationship_prompt(
-            source_elements=[{"identifier": "app_auth", "name": "Auth", "element_type": "ApplicationComponent"}],
-            target_elements=[],
-            source_element_type="ApplicationComponent",
-            instruction="Custom instruction for relationship derivation",
-        )
-
-        assert "Custom instruction for relationship derivation" in prompt
-
-    def test_includes_valid_relationship_types(self):
-        """Should include allowed relationship types when provided."""
-        from deriva.modules.derivation.base import build_per_element_relationship_prompt
-
-        prompt = build_per_element_relationship_prompt(
-            source_elements=[{"identifier": "app_auth", "name": "Auth", "element_type": "ApplicationComponent"}],
-            target_elements=[],
-            source_element_type="ApplicationComponent",
-            instruction="Derive relationships.",
-            valid_relationship_types=["Serving", "Access", "Composition"],
-        )
-
-        assert "ALLOWED RELATIONSHIP TYPES" in prompt
-        assert "Serving" in prompt
-        assert "Access" in prompt
-
-    def test_includes_example_when_provided(self):
-        """Should include example output when provided."""
-        from deriva.modules.derivation.base import build_per_element_relationship_prompt
-
-        custom_example = '{"relationships": [{"source": "custom_src", "target": "custom_tgt"}]}'
-
-        prompt = build_per_element_relationship_prompt(
-            source_elements=[{"identifier": "app_auth", "name": "Auth", "element_type": "ApplicationComponent"}],
-            target_elements=[],
-            source_element_type="ApplicationComponent",
-            instruction="Derive relationships.",
-            example=custom_example,
-        )
-
-        assert custom_example in prompt
-        assert "EXAMPLE OUTPUT" in prompt
-
-    def test_lists_valid_identifiers(self):
-        """Should include source and target identifiers in element JSON."""
-        from deriva.modules.derivation.base import build_per_element_relationship_prompt
-
-        prompt = build_per_element_relationship_prompt(
-            source_elements=[
-                {"identifier": "src_1", "name": "Source 1"},
-                {"identifier": "src_2", "name": "Source 2"},
-            ],
-            target_elements=[
-                {"identifier": "tgt_1", "name": "Target 1"},
-            ],
-            source_element_type="ApplicationComponent",
-            instruction="Derive.",
-        )
-
-        # Identifiers should appear in the element JSON (no separate list)
-        assert "src_1" in prompt
-        assert "src_2" in prompt
-        assert "tgt_1" in prompt
-        assert "SOURCE ELEMENTS" in prompt
-        assert "TARGET ELEMENTS" in prompt
-
-
 class TestBuildUnifiedRelationshipPrompt:
     """Tests for build_unified_relationship_prompt function."""
 
@@ -1219,6 +920,7 @@ class TestBuildUnifiedRelationshipPrompt:
             element_type="ApplicationComponent",
             outbound_rules=[],
             inbound_rules=[],
+            instruction="Relationship rules.",
         )
 
         assert prompt == ""
@@ -1233,6 +935,7 @@ class TestBuildUnifiedRelationshipPrompt:
             element_type="ApplicationComponent",
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
+            instruction="Relationship rules.",
         )
 
         assert "new_app" in prompt
@@ -1252,6 +955,7 @@ class TestBuildUnifiedRelationshipPrompt:
             element_type="ApplicationComponent",
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
+            instruction="Relationship rules.",
         )
 
         assert "old_svc" in prompt
@@ -1268,6 +972,7 @@ class TestBuildUnifiedRelationshipPrompt:
             element_type="ApplicationComponent",
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving", description="serves")],
             inbound_rules=[],
+            instruction="Relationship rules.",
         )
 
         assert "OUTBOUND" in prompt
@@ -1284,6 +989,7 @@ class TestBuildUnifiedRelationshipPrompt:
             element_type="ApplicationService",
             outbound_rules=[],
             inbound_rules=[RelationshipRule(target_type="ApplicationComponent", rel_type="Serving", description="served by")],
+            instruction="Relationship rules.",
         )
 
         assert "INBOUND" in prompt
@@ -1302,6 +1008,7 @@ class TestBuildUnifiedRelationshipPrompt:
             element_type="ApplicationComponent",
             outbound_rules=[],
             inbound_rules=[],
+            instruction="Relationship rules.",
         )
 
         # Identifiers should appear in the element JSON (no separate list)
@@ -1315,6 +1022,70 @@ class TestBuildUnifiedRelationshipPrompt:
 
 class TestDeriveBatchRelationships:
     """Tests for derive_batch_relationships function."""
+
+    def test_without_llm_config_the_llm_is_not_called(self):
+        """A disabled relationship config row means graph tiers only, no LLM pass."""
+        from unittest.mock import MagicMock
+
+        from deriva.modules.derivation.base import RelationshipRule, derive_batch_relationships
+
+        mock_llm = MagicMock()
+
+        result = derive_batch_relationships(
+            new_elements=[{"identifier": "new_app", "element_type": "ApplicationComponent"}],
+            existing_elements=[{"identifier": "old_svc", "element_type": "ApplicationService"}],
+            element_type="ApplicationComponent",
+            outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
+            inbound_rules=[],
+            llm_query_fn=mock_llm,
+        )
+
+        mock_llm.assert_not_called()
+        assert result == []
+
+    def test_prompt_uses_config_instruction(self):
+        """The rules text comes from the versioned config, not from code."""
+        from unittest.mock import MagicMock
+
+        from deriva.modules.derivation.base import RelationshipLLMConfig, RelationshipRule, derive_batch_relationships
+
+        mock_llm = MagicMock()
+        mock_llm.return_value.content = '{"relationships": []}'
+
+        derive_batch_relationships(
+            new_elements=[{"identifier": "new_app", "element_type": "ApplicationComponent"}],
+            existing_elements=[{"identifier": "old_svc", "element_type": "ApplicationService"}],
+            element_type="ApplicationComponent",
+            outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
+            inbound_rules=[],
+            llm_query_fn=mock_llm,
+            llm_config=RelationshipLLMConfig(instruction="CUSTOM RULES FROM CONFIG", min_confidence=0.6),
+        )
+
+        assert "CUSTOM RULES FROM CONFIG" in mock_llm.call_args[0][0]
+
+    def test_min_confidence_comes_from_config(self):
+        """Relationships below the configured cutoff are dropped."""
+        from unittest.mock import MagicMock
+
+        from deriva.modules.derivation.base import RelationshipLLMConfig, RelationshipRule, derive_batch_relationships
+
+        mock_llm = MagicMock()
+        mock_llm.return_value.content = '{"relationships": [{"source": "new_app", "target": "old_svc", "relationship_type": "Serving", "confidence": 0.7}]}'
+
+        def run(min_confidence):
+            return derive_batch_relationships(
+                new_elements=[{"identifier": "new_app", "element_type": "ApplicationComponent"}],
+                existing_elements=[{"identifier": "old_svc", "element_type": "ApplicationService"}],
+                element_type="ApplicationComponent",
+                outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
+                inbound_rules=[],
+                llm_query_fn=mock_llm,
+                llm_config=RelationshipLLMConfig(instruction="rules", min_confidence=min_confidence),
+            )
+
+        assert len(run(0.65)) == 1
+        assert run(0.75) == []
 
     def test_llm_relationships_are_tagged_llm(self):
         """LLM-proposed relationships carry derived_from='llm' for tiering."""
@@ -1332,6 +1103,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
+            llm_config=REL_CFG,
         )
 
         assert result[0]["derived_from"] == "llm"
@@ -1386,6 +1158,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
+            llm_config=REL_CFG,
         )
 
         mock_llm.assert_called_once()
@@ -1408,6 +1181,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
+            llm_config=REL_CFG,
         )
 
         assert len(result) == 1
@@ -1432,6 +1206,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
+            llm_config=REL_CFG,
         )
 
         assert result == []
@@ -1452,6 +1227,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
+            llm_config=REL_CFG,
         )
 
         assert result == []
@@ -1472,6 +1248,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
+            llm_config=REL_CFG,
         )
 
         assert result == []
@@ -1496,6 +1273,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
+            llm_config=REL_CFG,
         )
 
         assert result == []
@@ -1516,6 +1294,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
+            llm_config=REL_CFG,
         )
 
         assert result == []
@@ -1536,6 +1315,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
+            llm_config=REL_CFG,
         )
 
         assert result == []
@@ -1556,6 +1336,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
+            llm_config=REL_CFG,
             temperature=0.7,
             max_tokens=2000,
         )
@@ -1563,266 +1344,6 @@ class TestDeriveBatchRelationships:
         call_kwargs = mock_llm.call_args[1]
         assert call_kwargs["temperature"] == 0.7
         assert call_kwargs["max_tokens"] == 2000
-
-
-class TestDeriveElementRelationships:
-    """Tests for derive_element_relationships function."""
-
-    def test_returns_empty_for_no_source_elements(self):
-        """Should return empty list when no source elements."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        result = derive_element_relationships(
-            source_elements=[],
-            target_elements=[{"identifier": "tgt"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=MagicMock(),
-            instruction="Test",
-        )
-
-        assert result == []
-
-    def test_returns_empty_for_no_target_elements(self):
-        """Should return empty list when no target elements."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        result = derive_element_relationships(
-            source_elements=[{"identifier": "src"}],
-            target_elements=[],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=MagicMock(),
-            instruction="Test",
-        )
-
-        assert result == []
-
-    def test_calls_llm_with_per_element_prompt(self):
-        """Should call LLM with per-element prompt."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value.content = '{"relationships": []}'
-
-        derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Custom instruction",
-        )
-
-        mock_llm.assert_called_once()
-        call_args = mock_llm.call_args
-        assert "src_app" in call_args[0][0]
-        assert "tgt_svc" in call_args[0][0]
-        assert "Custom instruction" in call_args[0][0]
-
-    def test_parses_valid_relationships(self):
-        """Should parse and return valid relationships."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value.content = '{"relationships": [{"source": "src_app", "target": "tgt_svc", "relationship_type": "Serving", "confidence": 0.85}]}'
-
-        result = derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Test",
-        )
-
-        assert len(result) == 1
-        assert result[0]["source"] == "src_app"
-        assert result[0]["target"] == "tgt_svc"
-        assert result[0]["relationship_type"] == "Serving"
-        assert result[0]["confidence"] == 0.85
-
-    def test_validates_source_from_source_elements(self):
-        """Should skip relationships with source not in source_elements."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value.content = '{"relationships": [{"source": "unknown_src", "target": "tgt_svc", "relationship_type": "Serving"}]}'
-
-        result = derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Test",
-        )
-
-        assert result == []
-
-    def test_validates_target_from_target_elements(self):
-        """Should skip relationships with target not in target_elements."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value.content = '{"relationships": [{"source": "src_app", "target": "unknown_tgt", "relationship_type": "Serving"}]}'
-
-        result = derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Test",
-        )
-
-        assert result == []
-
-    def test_validates_relationship_type_when_specified(self):
-        """Should skip relationships with invalid type when valid_types specified."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value.content = '{"relationships": [{"source": "src_app", "target": "tgt_svc", "relationship_type": "InvalidType"}]}'
-
-        result = derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Test",
-            valid_relationship_types=["Serving", "Access"],
-        )
-
-        assert result == []
-
-    def test_accepts_any_type_when_valid_types_not_specified(self):
-        """Should accept any relationship type when valid_types is None."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value.content = '{"relationships": [{"source": "src_app", "target": "tgt_svc", "relationship_type": "AnyType"}]}'
-
-        result = derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Test",
-            valid_relationship_types=None,
-        )
-
-        assert len(result) == 1
-        assert result[0]["relationship_type"] == "AnyType"
-
-    def test_handles_llm_exception(self):
-        """Should return empty list on LLM exception."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.side_effect = Exception("LLM error")
-
-        result = derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Test",
-        )
-
-        assert result == []
-
-    def test_handles_parse_failure(self):
-        """Should return empty list when parsing fails."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value.content = "not valid json"
-
-        result = derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Test",
-        )
-
-        assert result == []
-
-    def test_passes_temperature_and_max_tokens(self):
-        """Should pass temperature and max_tokens to LLM."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value.content = '{"relationships": []}'
-
-        derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Test",
-            temperature=0.5,
-            max_tokens=1500,
-        )
-
-        call_kwargs = mock_llm.call_args[1]
-        assert call_kwargs["temperature"] == 0.5
-        assert call_kwargs["max_tokens"] == 1500
-
-    def test_uses_default_confidence(self):
-        """Should use default confidence 0.5 when not provided."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value.content = '{"relationships": [{"source": "src_app", "target": "tgt_svc", "relationship_type": "Serving"}]}'
-
-        result = derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Test",
-        )
-
-        assert result[0]["confidence"] == 0.5
-
-    def test_handles_response_without_content_attribute(self):
-        """Should handle LLM response that is a string."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import derive_element_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value = '{"relationships": [{"source": "src_app", "target": "tgt_svc", "relationship_type": "Serving"}]}'
-
-        result = derive_element_relationships(
-            source_elements=[{"identifier": "src_app"}],
-            target_elements=[{"identifier": "tgt_svc"}],
-            source_element_type="ApplicationComponent",
-            llm_query_fn=mock_llm,
-            instruction="Test",
-        )
-
-        assert len(result) == 1
 
 
 class TestSharedGenerateBehavior:
