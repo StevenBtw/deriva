@@ -277,6 +277,13 @@ deriva config filetype stats
 
 > **Note:** Files with unrecognized extensions are automatically classified as `file_type="unknown"` with their extension as the subtype. This ensures all files get proper classification even without explicit registry entries.
 
+**Excluded directories:** dependency and tool directories are skipped by every repository walk (no Directory or File nodes, no LLM calls), matched as whole path segments. The list is the `excluded_directories` system setting (JSON list); by default `.git`, `__pycache__`, `node_modules`, `bower_components`, `vendor`, `.venv`, `venv` and `site-packages`. Changing it triggers re-extraction.
+
+```bash
+deriva config setting show excluded_directories
+deriva config setting set excluded_directories '[".git", "node_modules", "third_party"]'
+```
+
 ### Updating Configurations (Versioning)
 
 Deriva uses a **versioning system** for configurations. When you update a config, a new version is created while preserving previous versions for rollback.
@@ -389,6 +396,9 @@ deriva config enable derivation my_refine_step
 deriva config filetype list
 deriva config filetype add ".lock" dependency lock
 deriva config filetype stats
+
+# System settings (e.g. directories skipped during extraction)
+deriva config setting show excluded_directories
 
 # Run pipeline stages
 deriva run extraction --repo flask_invoice_generator -v
