@@ -515,7 +515,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=15" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16" },
-    { name = "solvor", directory = "../../solvOR/solvOR" },
+    { name = "solvor", specifier = ">=0.6.2" },
     { name = "sqlglot", specifier = ">=30" },
     { name = "structlog", specifier = ">=26.1.0" },
     { name = "tree-sitter", specifier = ">=0.26" },
@@ -2439,21 +2439,19 @@ wheels = [
 [[package]]
 name = "solvor"
 version = "0.6.2"
-source = { directory = "../../solvOR/solvOR" }
-
-[package.metadata]
-requires-dist = [
-    { name = "maturin", marker = "extra == 'dev'", specifier = ">=1.7,<2.0" },
-    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },
-    { name = "mkdocs-git-revision-date-localized-plugin", marker = "extra == 'docs'", specifier = ">=1.5.1" },
-    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9" },
-    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=1.0" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.5.1" },
-    { name = "prek", marker = "extra == 'dev'", specifier = ">=0.3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.29" },
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/21/3ad56e6cc20ab886c48aaff3cb07153e1cc04bb0859947162b46847e71eb/solvor-0.6.2.tar.gz", hash = "sha256:fe9cea887b0d2abf107d332082b97b061289292bc8b1f8f7d7c086dac3a9a7ae", size = 114925 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3c/ed/6d7249be8be538539cfc27ffc7a6950371d7fc32b2e0180c9303ce46540c/solvor-0.6.2-cp314-cp314-macosx_10_12_x86_64.whl", hash = "sha256:f7db5804466d6133b3d70f25515bd6b94b622a10a9b3b63571f94a817fa780f8", size = 387753 },
+    { url = "https://files.pythonhosted.org/packages/7a/5d/7a96a98c5c6142d09eb11edea0ce5c4a4ae87dd0845f58b2b52cd6c64098/solvor-0.6.2-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:932b1b9325e3e9f84056bd51db37cf924cf55c9c397950d7d920654055909aaf", size = 376186 },
+    { url = "https://files.pythonhosted.org/packages/f8/e4/96371dc9cc466fe2d69be5c58cd516e1fe6c6fdf978d0e36ac068cf01f11/solvor-0.6.2-cp314-cp314-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f2c66826db9f9a2583f93ef2533d42bff61f74f834a69343019528bb8c163684", size = 402150 },
+    { url = "https://files.pythonhosted.org/packages/96/40/fedc5458fbcb52d35c3e0da4af3765e0f6e0b2d3bedbb784441abdbd5c32/solvor-0.6.2-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:392a7c574ce192663e694471beb19b72c9da810aa667931a1caffa802a54363e", size = 406064 },
+    { url = "https://files.pythonhosted.org/packages/d5/a5/e8176f9fce0c360ea31cb5e4034e2a992e0db9b606603c8bd99c0129f502/solvor-0.6.2-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:f6787be8d70af117cc510bc65ffe88fb8660735731d5e7d4b92b921cfaa79a52", size = 578293 },
+    { url = "https://files.pythonhosted.org/packages/d5/45/0acab7116d68bd3743b3513dadd02ca144418ca8dd2c7c7f5e157f09cd77/solvor-0.6.2-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:ea50f324f332fc0b41ef98308bc92bc4316f6f6b37ea93ad1d121d64ad11fa5d", size = 617404 },
+    { url = "https://files.pythonhosted.org/packages/62/f0/fb599debfc9d7f016cbcc2c5d7e005fce368e7669decf4ad1567fea34c79/solvor-0.6.2-cp314-cp314-win_amd64.whl", hash = "sha256:7b743d3069a2886f4e049ba2143ff76888bf2b2721516a9064d2ae1e35c652dd", size = 282917 },
+    { url = "https://files.pythonhosted.org/packages/ec/bc/be6e19acdb36bd4b5ce75b5657184dc98e057315016c6cc6bb5341e7fd4b/solvor-0.6.2-cp314-cp314t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:88d20c6745a240a296d7dbe30075bc1a8a7c2c936cdc6acc4dd3d307f07d204c", size = 402602 },
+    { url = "https://files.pythonhosted.org/packages/cf/68/77d5485646f48be76d73104dc0f43c184f9735b9c3ea4d3aea2b36b83cf5/solvor-0.6.2-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:294090e6a065ddb46c2c1b517995354fa3b764af93e9bbea4f717bcbdd36c3e9", size = 578767 },
+    { url = "https://files.pythonhosted.org/packages/f8/20/854729b7bc61293984e681970f9b1a6a394502d4b6519d773439c513ea21/solvor-0.6.2-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:e0a2c731edcdcc1c6c00b97f7163970b8b56b33a7b6e3eba0065768e2263cf25", size = 617920 },
 ]
 
 [[package]]

@@ -608,9 +608,14 @@ class LLMManager:
         raise AssertionError("unreachable")
 
     def _agent(self, output_type: Any, system_prompt: str) -> Agent[None, Any]:
-        """Reusable agent for this output type and system prompt (created lazily)."""
+        """Reusable agent for this output type and system prompt, per thread (created lazily).
+
+        An agent's HTTP client belongs to the event loop of the thread that used it
+        first; sharing one agent across threads (parallel samples) made calls hang
+        until the timeout. Each thread therefore gets its own agents.
+        """
         agents = self.__dict__.setdefault("_agents", {})
-        key = (output_type, system_prompt, self.max_retries)
+        key = (output_type, system_prompt, self.max_retries, threading.get_ident())
         if key not in agents:
             agents[key] = Agent(
                 model=self._pydantic_model,
@@ -752,8 +757,9 @@ class LLMManager:
 
             # Extract usage (pydantic-ai: result.usage() returns RunUsage)
             usage = None
-            usage_fn = getattr(result, "usage", None)
-            run_usage = usage_fn() if callable(usage_fn) else None
+            # pydantic-ai 2: result.usage is a property; 1.x: a method
+            usage_attr = getattr(result, "usage", None)
+            run_usage = usage_attr() if callable(usage_attr) else usage_attr
             if run_usage is not None:
                 call["requests"] = run_usage.requests + failed_attempts
                 call["input_tokens"] = run_usage.input_tokens

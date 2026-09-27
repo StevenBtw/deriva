@@ -947,3 +947,51 @@ class TestTimeoutAndRetry:
             self._manager(tmp_path).query("Hello")
 
         assert sleeping_threads and threading.main_thread() not in sleeping_threads
+
+
+class TestAgentPerThread:
+    """pydantic-ai agents hold an async HTTP client bound to one event loop; each thread gets its own agent."""
+
+    def test_threads_get_separate_agents_and_reuse_their_own(self, tmp_path):
+        import threading
+
+        with patch("deriva.adapters.llm.manager.load_dotenv"):
+            with patch.dict(
+                "os.environ",
+                {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
+                clear=True,
+            ):
+                manager = LLMManager()
+
+        with patch("deriva.adapters.llm.manager.Agent", side_effect=lambda **kw: object()):
+            main_first = manager._agent(str, "s")
+            main_again = manager._agent(str, "s")
+            other: list[object] = []
+            worker = threading.Thread(target=lambda: other.append(manager._agent(str, "s")))
+            worker.start()
+            worker.join()
+
+        assert main_first is main_again
+        assert other[0] is not main_first
+
+
+def test_usage_as_property_is_recorded(tmp_path):
+    """pydantic-ai 2 exposes result.usage as a property (1.x: a method); both give token counts."""
+    from types import SimpleNamespace
+
+    from pydantic_ai.usage import RunUsage
+
+    with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch.dict(
+            "os.environ",
+            {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
+            clear=True,
+        ):
+            manager = LLMManager()
+
+    result = SimpleNamespace(output="ok", usage=RunUsage(input_tokens=11, output_tokens=7, requests=1))
+    with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+        agent_class.return_value.run_sync.return_value = result
+        manager.query("Hello")
+
+    assert (manager.last_call["input_tokens"], manager.last_call["output_tokens"]) == (11, 7)

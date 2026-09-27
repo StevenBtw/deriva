@@ -57,7 +57,7 @@ dependencies = [
     "pypdf>=6",
     "python-docx>=1.2",
     # Graph Algorithms
-    "solvor>=0.6",
+    "solvor>=0.6.2",
     # LLM
     "backoff>=2.2.1",
     "pydantic-ai>=2",
@@ -205,8 +205,3 @@ exclude_lines = [
 
 [tool.ty.environment]
 python-version = "3.14"
-
-# Local release build of solvor 0.6.2 (the version Deriva 0.7.0 ships with).
-# Replace with a version pin once it is published.
-[tool.uv.sources]
-solvor = { path = "../../solvOR/solvOR" }
