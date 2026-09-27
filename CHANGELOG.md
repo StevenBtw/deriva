@@ -31,6 +31,8 @@ Replaced Neo4j (Docker container) with grafeo, an embedded Rust graph database. 
 - **Extraction steps have versioned params**: `extraction_config.params` (JSON, added by a migration that runs automatically when a session connects), set with `config update extraction <step> -p/--params-file`. The Technology prompt headings and closing instruction live in `params.prompt`
 - **Fixed: business concept names lost their word boundaries**: name normalization lowercased everything after the first letter (`RealTimeDataStreaming` became `Realtimedatastreaming`) and singularized words such as "analysis"; it now keeps the original casing and only singularizes real plurals
 - **Fixed: derivation ran at the default temperature**: element steps kept their intended temperature in `params`, which was never read; the temperature now lives in the step's `temperature` column (new `config update --temperature`), and the relationship row's temperature applies to the consolidated relationship pass
+- **Stable business concept extraction**: directory classification only classifies (business, technology or skip, plus a type); the concept or technology name comes from the directory name. Document concept extraction asks the same prompt several times and keeps only concepts found by a majority (`params.samples`, `params.min_votes` on the extraction step); samples run in parallel
+- **Isolated element naming**: element names come from a separate naming call whose prompt depends only on the element's source node, its type and a configurable naming convention (`params.naming` on each element step); a majority of several answers wins, with the name from the code structure as fallback
 - **Element names come from the code structure**: an element's name and identifier are derived from its source node (directory, file, type, concept or technology name), so the same source always yields the same element; the LLM decides whether to keep a candidate and writes its documentation (its proposed name is kept as `llm_name`)
 - **Business concepts keep every type**: when files classify the same concept differently (for example entity in one document, actor in another), the concept node keeps all types (`conceptTypes`) instead of the last file's, so extraction results no longer depend on file order; derivation queries match on the set
 - **Fixed: LLM-extracted technologies were silently dropped**: the enforced output schema names fields `technologyName`/`technologyType` while the Technology module read `techName`/`techCategory`; the module now matches the enforced schema
@@ -787,12 +789,12 @@ Initial release with pipeline architecture, LLM client (OpenAI), Neo4j storage, 
 
 | Era | Dates | Key Event | Architecture |
 |-----|-------|-----------|--------------|
-| **0.1.x** | Feb 22-25 | Initial development | Monolithic pipeline + JSON configs |
-| **0.2.x** | Feb 26-Apr 15 | First Purge | FastAPI/Streamlit/Services/Strategies |
-| **0.3.x** | Apr 15-25 | Second Purge | UV/Extraction functions/File types |
-| **0.4.x** | Jun-Jul | Web UI prototype | FastAPI/Jinja2 |
-| **0.5.x** | Aug-Nov | Final development | Managers/Modules/Marimo/DuckDB |
-| **0.6.x** | Dec-Jan | AutoMate renamed to Deriva | Focus on benchmark and optimization |
+| **0.1.x** | Feb 22-25 '25 | Initial development | Monolithic pipeline + JSON configs |
+| **0.2.x** | Feb 26-Apr 15 '25 | First Purge | FastAPI/Streamlit/Services/Strategies |
+| **0.3.x** | Apr 15-25 '25 | Second Purge | UV/Extraction functions/File types |
+| **0.4.x** | Jun-Jul '25 | Web UI prototype | FastAPI/Jinja2 |
+| **0.5.x** | Aug-Nov '25 | Final development | Managers/Modules/Marimo/DuckDB |
+| **0.6.x** | Dec '25-Jan '26| AutoMate renamed to Deriva | Focus on benchmark and optimization |
 
 ---
 

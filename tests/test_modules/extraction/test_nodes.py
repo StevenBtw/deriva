@@ -50,6 +50,7 @@ TECH_PARAMS = {
     }
 }
 
+
 class TestBusinessConceptModule:
     """Tests for business_concept extraction module."""
 
@@ -592,10 +593,9 @@ class TestExtractBusinessConcepts:
             config={},
         )
 
-        # Should succeed with partial results
+        # A concept without a name cannot vote; the named one is kept
         assert result["success"] is True
         assert len(result["data"]["nodes"]) == 1
-        assert len(result["errors"]) > 0  # Errors from failed node
 
     def test_extract_success(self):
         """Should extract concepts successfully with mocked LLM."""

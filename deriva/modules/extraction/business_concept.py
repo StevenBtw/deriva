@@ -19,7 +19,9 @@ from typing import Any
 from .base import (
     create_empty_llm_details,
     current_timestamp,
+    normalize_concept_name,
     parse_json_response,
+    sample_llm,
     strip_chunk_suffix,
 )
 
@@ -433,7 +435,9 @@ Return JSON with a "results" array. Each result must have "file_path" and "conce
 Example format for a single file's concepts: {example}"""
 
 
-def merge_concept_properties(existing: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
+def merge_concept_properties(
+    existing: dict[str, Any] | None, new: dict[str, Any]
+) -> dict[str, Any]:
     """Combine two occurrences of the same concept, independent of file order.
 
     Files can classify one concept differently (a README calls "User" an
@@ -462,6 +466,62 @@ def merge_concept_properties(existing: dict[str, Any] | None, new: dict[str, Any
         "conceptTypes": sorted(set().union(*(types(o) for o in occurrences))),
         "confidence": max(float(o.get("confidence", 0.0)) for o in occurrences),
     }
+
+
+def vote_concepts(
+    samples: list[list[dict[str, Any]]], min_votes: int
+) -> list[dict[str, Any]]:
+    """Concepts named in at least ``min_votes`` of the samples (open extraction made stable).
+
+    Samples are answers to the same prompt. Concepts are matched on their
+    normalized name; the kept concept gets the types given by at least
+    ``min_votes`` samples (else the most frequent type), the median confidence,
+    and the name and description of its strongest occurrence.
+    """
+    groups: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    for index, concepts in enumerate(samples):
+        for concept in concepts:
+            name = str(concept.get("conceptName", "")).strip()
+            if name:
+                groups.setdefault(normalize_concept_name(name).lower(), []).append(
+                    (index, concept)
+                )
+
+    kept: list[dict[str, Any]] = []
+    for key in sorted(groups):
+        group = groups[key]
+        if len({index for index, _ in group}) < min_votes:
+            continue
+        type_votes: dict[str, int] = {}
+        for _, concept in group:
+            ctype = str(concept.get("conceptType", "other")).lower()
+            type_votes[ctype] = type_votes.get(ctype, 0) + 1
+        ranked = sorted(type_votes, key=lambda t: (-type_votes[t], t))
+        types = sorted(t for t in ranked if type_votes[t] >= min_votes) or ranked[:1]
+        confidences = sorted(float(c.get("confidence", 0.8)) for _, c in group)
+        middle = len(confidences) // 2
+        median = (
+            confidences[middle]
+            if len(confidences) % 2
+            else (confidences[middle - 1] + confidences[middle]) / 2
+        )
+        best = min(
+            (c for _, c in group),
+            key=lambda c: (
+                -float(c.get("confidence", 0.8)),
+                str(c.get("conceptName")),
+                str(c.get("description", "")),
+            ),
+        )
+        kept.append(
+            {
+                **best,
+                "conceptType": ranked[0],
+                "conceptTypes": types,
+                "confidence": round(median, 4),
+            }
+        )
+    return kept
 
 
 def build_business_concept_node(
@@ -530,6 +590,9 @@ def build_business_concept_node(
         "properties": {
             "conceptName": concept_data["conceptName"],
             "conceptType": concept_type,
+            "conceptTypes": sorted(
+                {t.lower() for t in concept_data.get("conceptTypes") or [concept_type]}
+            ),
             "description": concept_data["description"],
             "originSource": origin_source,
             "confidence": concept_data.get("confidence", 0.8),
@@ -622,8 +685,20 @@ def extract_business_concepts(
         )
         llm_details["prompt"] = prompt
 
-        # Call LLM
-        response = llm_query_fn(prompt, BUSINESS_CONCEPT_SCHEMA)
+        # Call LLM: k answers to the same prompt, combined by majority (params.samples / min_votes)
+        params = config.get("params") or {}
+        samples = int(params.get("samples", 1))
+        min_votes = int(params.get("min_votes", 1))
+        responses = sample_llm(llm_query_fn, prompt, BUSINESS_CONCEPT_SCHEMA, samples)
+        response = next((r for r in responses if r is not None), None)
+        if response is None:
+            return {
+                "success": False,
+                "data": {"nodes": [], "edges": []},
+                "errors": ["LLM error: every sample failed"],
+                "stats": {"total_nodes": 0, "total_edges": 0, "llm_error": True},
+                "llm_details": llm_details,
+            }
 
         # Extract LLM details from response
         if hasattr(response, "content"):
@@ -646,11 +721,18 @@ def extract_business_concepts(
                 "llm_details": llm_details,
             }
 
-        # Parse the response
-        parse_result = parse_llm_response(response.content)
+        # Parse every sample; unparsable samples do not vote
+        parsed_samples = []
+        for sample in responses:
+            if sample is None or getattr(sample, "error", None):
+                continue
+            sample_result = parse_llm_response(sample.content)
+            if sample_result["success"]:
+                parsed_samples.append(sample_result["data"])
+            else:
+                errors.extend(sample_result["errors"])
 
-        if not parse_result["success"]:
-            errors.extend(parse_result["errors"])
+        if not parsed_samples:
             return {
                 "success": False,
                 "data": {"nodes": [], "edges": []},
@@ -658,6 +740,7 @@ def extract_business_concepts(
                 "stats": {"total_nodes": 0, "total_edges": 0, "parse_error": True},
                 "llm_details": llm_details,
             }
+        parse_result = {"data": vote_concepts(parsed_samples, min_votes)}
 
         # Build nodes for each concept
         # Strip chunk suffix from file_path to get original file node ID

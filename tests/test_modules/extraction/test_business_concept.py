@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -1024,3 +1025,46 @@ class TestMergeConceptProperties:
 
     def test_single_occurrence_gets_its_type_as_the_set(self):
         assert self._fold([self.DOC])["conceptTypes"] == ["actor"]
+
+
+class TestConceptVoting:
+    """Document concepts are kept when a majority of k identical-prompt answers contain them."""
+
+    def test_vote_keeps_concepts_found_in_min_votes_samples(self):
+        from deriva.modules.extraction.business_concept import vote_concepts
+
+        samples = [
+            [{"conceptName": "Order", "conceptType": "entity", "confidence": 0.9}, {"conceptName": "Rare", "conceptType": "entity", "confidence": 0.9}],
+            [{"conceptName": "Orders", "conceptType": "entity", "confidence": 0.7}],
+            [{"conceptName": "order", "conceptType": "process", "confidence": 0.8}],
+        ]
+
+        (order,) = vote_concepts(samples, min_votes=2)
+
+        assert order["conceptTypes"] == ["entity"]
+        assert order["conceptType"] == "entity"
+        assert order["confidence"] == 0.8  # median of 0.9, 0.7, 0.8
+
+    def test_single_sample_keeps_everything(self):
+        from deriva.modules.extraction.business_concept import vote_concepts
+
+        concepts = [{"conceptName": "Order", "conceptType": "entity", "confidence": 0.9}]
+
+        assert [c["conceptName"] for c in vote_concepts([concepts], min_votes=1)] == ["Order"]
+
+    def test_extraction_asks_k_times_with_one_prompt(self):
+        from deriva.modules.extraction.business_concept import extract_business_concepts
+
+        order = {"conceptName": "Order", "conceptType": "entity", "description": "d", "confidence": 0.9}
+        noise = {"conceptName": "Noise", "conceptType": "entity", "description": "d", "confidence": 0.9}
+        answers = iter([json.dumps({"concepts": c}) for c in ([order], [order, noise], [order])])
+        prompts = []
+
+        def llm(prompt, schema):
+            prompts.append(prompt)
+            return SimpleNamespace(content=next(answers), usage=None)
+
+        result = extract_business_concepts("docs/a.md", "text", "repo", llm, {"instruction": "I", "example": "{}", "params": {"samples": 3, "min_votes": 2}})
+
+        assert len(prompts) == 3 and len(set(prompts)) == 1
+        assert [n["properties"]["conceptName"] for n in result["data"]["nodes"]] == ["Order"]

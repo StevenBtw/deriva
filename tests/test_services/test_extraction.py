@@ -1867,3 +1867,16 @@ class TestLLMExtractionLabels:
 
         assert labels == ["BusinessConcept", "Technology"]
         assert get.call_args.kwargs["enabled_only"] is True
+
+
+def test_concept_node_keeps_the_voted_types():
+    """The types a concept got by majority vote survive into the graph node."""
+    from deriva.services.extraction import _create_node_from_data
+
+    node = _create_node_from_data(
+        "BusinessConcept",
+        {"properties": {"conceptName": "User", "conceptType": "entity", "conceptTypes": ["actor", "entity"], "description": "d", "originSource": "a.md"}},
+        "repo",
+    )
+
+    assert node.to_dict()["conceptTypes"] == ["actor", "entity"]

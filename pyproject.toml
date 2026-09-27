@@ -34,54 +34,55 @@ classifiers = [
 
 dependencies = [
     # Core
-    "pydantic>=2.12",
-    "pydantic-settings>=2.13",
+    "pydantic>=2",
+    "pydantic-settings>=2",
     "python-dotenv>=1.2",
     "pyyaml>=6.0",
-    "rich>=14.3",
-    "lxml>=6.0",
+    "rich>=15",
+    "lxml>=6",
     # Databases
     "duckdb>=1.5",
-    "grafeo>=0.5.33",
-    "sqlglot>=29",
+    "grafeo>=0.5.43",
+    "sqlglot>=30",
     # UI
-    "marimo>=0.20",
-    "anywidget-graph>=0.2",
+    "marimo>=0.25",
+    "anywidget-graph>=0.3",
     # Code Analysis (tree-sitter)
-    "tree-sitter>=0.24.6",
+    "tree-sitter>=0.26",
     "tree-sitter-python>=0.23.0",
     "tree-sitter-javascript>=0.23.0",
     "tree-sitter-java>=0.23.0",
-    "tree-sitter-c-sharp>=0.23.0",
+    "tree-sitter-c-sharp>=0.23",
     # Document Parsing
-    "pypdf>=6.8",
+    "pypdf>=6",
     "python-docx>=1.2",
     # Graph Algorithms
     "solvor>=0.6",
     # LLM
     "backoff>=2.2.1",
-    "pydantic-ai>=1",
+    "pydantic-ai>=2",
     # Utilities
-    "authlib>=1.6.9",
+    "authlib>=1.8.0",
     # CVE-2026-27962, CVE-2026-28490 fix (transitive via fastmcp)
-    "pyasn1>=0.6.3",
+    "pyasn1>=0.6.4",
     # CVE-2026-30922 fix (transitive via google-auth/rsa)
-    "pyjwt>=2.12",
+    "pyjwt>=2.15",
     # CVE-2026-32597 fix (transitive via mcp)
     "diskcache>=5.6.3",
     "nest-asyncio>=1.6.0",
-    "structlog>=24.0",
-    "typer>=0.24",
-    "prek>=0.3",
+    "structlog>=26.1.0",
+    "typer>=0.27",
+    "prek>=0.5",
     "httpx>=0.28.1",
+    "pydantic-ai-slim[mistral]>=2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pip-audit>=2",
-    "pytest>=9.0",
+    "pytest>=9",
     "pytest-cov>=7",
-    "ruff>=0.15",
+    "ruff>=0.16",
     "ty>=0.0",
     "types-lxml>=2026.2",
 ]
@@ -205,8 +206,7 @@ exclude_lines = [
 [tool.ty.environment]
 python-version = "3.14"
 
-# Local release builds of the engines Deriva 0.7.0 ships with (grafeo release/0.5.43,
-# solvor 0.6.2). Replace with version pins once both are published.
+# Local release build of solvor 0.6.2 (the version Deriva 0.7.0 ships with).
+# Replace with a version pin once it is published.
 [tool.uv.sources]
-grafeo = { path = "../../GrafeoDB/grafeo/crates/bindings/python" }
 solvor = { path = "../../solvOR/solvOR" }

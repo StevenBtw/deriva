@@ -31,7 +31,7 @@ class TestDirectoryClassificationSchema:
         required_fields = items["required"]
 
         assert "directoryName" in required_fields
-        assert "conceptName" in required_fields
+        assert "conceptName" not in required_fields  # names come from the directory
         assert "classification" in required_fields
         assert "conceptType" in required_fields
         assert "description" in required_fields
@@ -125,7 +125,7 @@ class TestBuildBusinessConceptNode:
         node = build_business_concept_node(classification, "dir_orders", "myrepo")
 
         props = node["properties"]
-        assert props["conceptName"] == "OrderManagement"
+        assert props["conceptName"] == "Orders"  # from the directory, not the LLM
         assert props["conceptType"] == "entity"
         assert props["description"] == "Manages orders"
         assert props["confidence"] == 0.9
@@ -145,10 +145,10 @@ class TestBuildBusinessConceptNode:
 
         node = build_business_concept_node(classification, "dir_customers", "testrepo")
 
-        assert node["id"] == "concept::testrepo::customermanagement"
+        assert node["id"] == "concept::testrepo::customers"
 
-    def test_handles_spaces_in_concept_name(self):
-        """Should convert spaces to underscores in ID."""
+    def test_separators_in_directory_name(self):
+        """Directory 'user_management' becomes concept 'UserManagement'."""
         classification = {
             "directoryName": "user_management",
             "conceptName": "User Management",
@@ -159,7 +159,8 @@ class TestBuildBusinessConceptNode:
 
         node = build_business_concept_node(classification, "dir_users", "repo")
 
-        assert node["id"] == "concept::repo::user_management"
+        assert node["id"] == "concept::repo::usermanagement"
+        assert node["properties"]["conceptName"] == "UserManagement"
 
 
 class TestBuildTechnologyNode:
@@ -528,3 +529,49 @@ class TestClassifyDirectories:
 
         assert result["success"] is False
         assert "Network error" in result["errors"][0]
+
+
+class TestDirectoryClassificationVoting:
+    """The LLM only classifies directories (k samples, majority); names come from the directory."""
+
+    def test_vote_takes_the_majority_classification(self):
+        from deriva.modules.extraction.directory_classification import vote_directory_classifications
+
+        samples = [
+            [{"directoryName": "claims_handling", "classification": "business", "conceptType": "process", "confidence": 0.9, "description": "a"}],
+            [{"directoryName": "claims_handling", "classification": "business", "conceptType": "process", "confidence": 0.8, "description": "b"}],
+            [{"directoryName": "claims_handling", "classification": "skip", "conceptType": "", "confidence": 0.9, "description": "c"}],
+        ]
+
+        (winner,) = vote_directory_classifications(samples, min_votes=2)
+
+        assert (winner["classification"], winner["conceptType"]) == ("business", "process")
+        assert winner["confidence"] == 0.85
+
+    def test_no_majority_means_skip(self):
+        from deriva.modules.extraction.directory_classification import vote_directory_classifications
+
+        samples = [
+            [{"directoryName": "x", "classification": "business", "conceptType": "entity", "confidence": 0.9, "description": ""}],
+            [{"directoryName": "x", "classification": "technology", "conceptType": "framework", "confidence": 0.9, "description": ""}],
+            [{"directoryName": "x", "classification": "skip", "conceptType": "", "confidence": 0.9, "description": ""}],
+        ]
+
+        assert vote_directory_classifications(samples, min_votes=2) == []
+
+    def test_names_come_from_the_directory(self):
+        from deriva.modules.extraction.directory_classification import build_business_concept_node, build_technology_node
+
+        concept = build_business_concept_node({"directoryName": "claims_handling", "conceptType": "process"}, "dir::r::claims_handling", "r")
+        tech = build_technology_node({"directoryName": "kafka", "conceptType": "infrastructure"}, "dir::r::kafka", "r")
+
+        assert (concept["properties"]["conceptName"], concept["id"]) == ("ClaimsHandling", "concept::r::claimshandling")
+        assert tech["properties"]["technologyName"] == "Kafka"
+
+    def test_module_schema_matches_the_enforced_model(self):
+        from deriva.adapters.llm.schemas import DirectoryClassificationItem
+        from deriva.modules.extraction.directory_classification import DIRECTORY_CLASSIFICATION_SCHEMA
+
+        items = DIRECTORY_CLASSIFICATION_SCHEMA["schema"]["properties"]["classifications"]["items"]["properties"]
+        assert set(items) == set(DirectoryClassificationItem.model_fields)
+        assert "conceptName" not in items

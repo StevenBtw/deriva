@@ -2245,9 +2245,20 @@ def build_naming_prompt(
 Return {{"name": "..."}}."""
 
 
+def canonical_name(name: str) -> str:
+    """Formatting-independent form of an LLM name: quotes trimmed, camel humps split, spacing normalized.
+
+    Splits only at a lowercase-to-uppercase boundary ("EntityProcessor" ->
+    "Entity Processor"), so acronyms and forms like "OAuth" or "REST API" stay.
+    """
+    name = name.strip().strip("\"'`").strip()
+    return " ".join(re.sub(r"(?<=[a-z])(?=[A-Z])", " ", word) for word in name.split())
+
+
 def choose_name(samples: list[str | None]) -> str | None:
-    """Majority name over samples (case- and whitespace-insensitive), ties broken deterministically."""
-    names = [" ".join(s.split()) for s in samples if s and s.strip()]
+    """Majority name over canonicalized samples (case-insensitive), ties broken deterministically."""
+    names = [canonical_name(s) for s in samples if s and s.strip()]
+    names = [n for n in names if n]
     if not names:
         return None
     groups: dict[str, list[str]] = {}

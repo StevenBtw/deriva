@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Collection
+from collections.abc import Callable, Collection
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any
 
@@ -321,6 +322,27 @@ def is_excluded_path(rel_path: str, excluded_dirs: Collection[str]) -> bool:
     system setting (dependency and tool directories such as ``node_modules``).
     """
     return any(part in excluded_dirs for part in rel_path.replace("\\", "/").split("/"))
+
+
+def sample_llm(
+    llm_query_fn: Callable[..., Any], prompt: str, schema: dict[str, Any], samples: int
+) -> list[Any]:
+    """Ask the same prompt ``samples`` times (in parallel) and return the answers in call order.
+
+    Used to stabilize open LLM extraction by majority vote. A call that raises
+    yields ``None`` so one failed sample does not lose the others.
+    """
+    if samples <= 1:
+        return [llm_query_fn(prompt, schema)]
+
+    def _call() -> Any:
+        try:
+            return llm_query_fn(prompt, schema)
+        except Exception:  # noqa: BLE001 - a failed sample is simply not counted
+            return None
+
+    with ThreadPoolExecutor(max_workers=samples) as pool:
+        return list(pool.map(lambda _: _call(), range(samples)))
 
 
 def parse_input_sources(input_sources_json: str | None) -> dict[str, Any]:

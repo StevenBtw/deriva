@@ -14,10 +14,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from deriva.modules.derivation.base import name_from_source
+
 from .base import (
     create_empty_llm_details,
     current_timestamp,
     parse_json_response,
+    sample_llm,
 )
 
 
@@ -36,10 +39,6 @@ DIRECTORY_CLASSIFICATION_SCHEMA = {
                         "directoryName": {
                             "type": "string",
                             "description": "Original directory name",
-                        },
-                        "conceptName": {
-                            "type": "string",
-                            "description": "PascalCase concept name (e.g., CustomerManagement)",
                         },
                         "classification": {
                             "type": "string",
@@ -61,7 +60,6 @@ DIRECTORY_CLASSIFICATION_SCHEMA = {
                     },
                     "required": [
                         "directoryName",
-                        "conceptName",
                         "classification",
                         "conceptType",
                         "description",
@@ -152,8 +150,12 @@ def build_business_concept_node(
     source_dir_id: str,
     repo_name: str,
 ) -> dict[str, Any]:
-    """Build a BusinessConcept node from classification result."""
-    concept_name = classification["conceptName"]
+    """Build a BusinessConcept node from classification result.
+
+    The name comes from the directory itself (``claims_handling`` ->
+    ``ClaimsHandling``); the LLM only classified the directory.
+    """
+    concept_name = name_from_source(classification["directoryName"]).replace(" ", "")
     node_id = f"concept::{repo_name}::{concept_name.lower().replace(' ', '_')}"
 
     return {
@@ -177,8 +179,8 @@ def build_technology_node(
     source_dir_id: str,
     repo_name: str,
 ) -> dict[str, Any]:
-    """Build a Technology node from classification result."""
-    concept_name = classification["conceptName"]
+    """Build a Technology node from classification result (name from the directory)."""
+    concept_name = name_from_source(classification["directoryName"])
     node_id = f"tech::{repo_name}::{concept_name.lower().replace(' ', '_')}"
 
     return {
@@ -195,6 +197,61 @@ def build_technology_node(
             "extracted_at": current_timestamp(),
         },
     }
+
+
+def vote_directory_classifications(
+    samples: list[list[dict[str, Any]]], min_votes: int
+) -> list[dict[str, Any]]:
+    """Per directory, the (classification, type) given by at least ``min_votes`` samples.
+
+    Samples are answers to the same prompt. The winner has the most votes (ties
+    broken by name); directories without such a majority are left out, which
+    means skipped. Confidence is the median of the winning votes.
+    """
+    votes: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = {}
+    for classifications in samples:
+        seen: set[str] = set()
+        for c in classifications:
+            directory = str(c.get("directoryName", ""))
+            if not directory or directory in seen:
+                continue
+            seen.add(directory)
+            key = (
+                str(c.get("classification", "skip")),
+                str(c.get("conceptType", "")).lower(),
+            )
+            votes.setdefault(directory, {}).setdefault(key, []).append(c)
+
+    winners: list[dict[str, Any]] = []
+    for directory in sorted(votes):
+        options = votes[directory]
+        key = min(options, key=lambda k: (-len(options[k]), k))
+        backing = options[key]
+        if len(backing) < min_votes:
+            continue
+        confidences = sorted(float(c.get("confidence", 0.0)) for c in backing)
+        middle = len(confidences) // 2
+        median = (
+            confidences[middle]
+            if len(confidences) % 2
+            else (confidences[middle - 1] + confidences[middle]) / 2
+        )
+        best = min(
+            backing,
+            key=lambda c: (
+                -float(c.get("confidence", 0.0)),
+                str(c.get("description", "")),
+            ),
+        )
+        winners.append(
+            {
+                **best,
+                "classification": key[0],
+                "conceptType": key[1],
+                "confidence": round(median, 4),
+            }
+        )
+    return winners
 
 
 def classify_directories(
@@ -242,8 +299,24 @@ def classify_directories(
         )
         llm_details["prompt"] = prompt
 
-        # Call LLM
-        response = llm_query_fn(prompt, DIRECTORY_CLASSIFICATION_SCHEMA)
+        # Call LLM: k answers to the same prompt, combined by majority (params.samples / min_votes)
+        params = config.get("params") or {}
+        responses = sample_llm(
+            llm_query_fn,
+            prompt,
+            DIRECTORY_CLASSIFICATION_SCHEMA,
+            int(params.get("samples", 1)),
+        )
+        min_votes = int(params.get("min_votes", 1))
+        response = next((r for r in responses if r is not None), None)
+        if response is None:
+            return {
+                "success": False,
+                "data": {"nodes": [], "edges": []},
+                "errors": ["LLM error: every sample failed"],
+                "stats": {},
+                "llm_details": llm_details,
+            }
 
         # Extract LLM details from response
         if hasattr(response, "content"):
@@ -266,18 +339,29 @@ def classify_directories(
                 "llm_details": llm_details,
             }
 
-        # Parse response
-        parse_result = parse_json_response(response.content, "classifications")
-        if not parse_result["success"]:
+        # Parse every sample, then take the per-directory majority
+        parsed_samples = []
+        parse_errors: list[str] = []
+        for sample in responses:
+            if sample is None or getattr(sample, "error", None):
+                continue
+            sample_result = parse_json_response(sample.content, "classifications")
+            if sample_result["success"]:
+                parsed_samples.append(sample_result["data"])
+            else:
+                parse_errors.extend(sample_result.get("errors", []))
+        if not parsed_samples:
             return {
                 "success": False,
                 "data": {"nodes": [], "edges": []},
-                "errors": parse_result.get("errors", ["Failed to parse LLM response"]),
+                "errors": parse_errors or ["Failed to parse LLM response"],
                 "stats": {},
                 "llm_details": llm_details,
             }
 
-        parsed = {"classifications": parse_result["data"]}
+        parsed = {
+            "classifications": vote_directory_classifications(parsed_samples, min_votes)
+        }
 
         # Build nodes from classifications
         nodes = []

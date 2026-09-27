@@ -1643,6 +1643,7 @@ def _create_node_from_data(node_type: str, node_data: dict, repo_name: str, extr
             repository_name=repo_name,
             confidence=props.get("confidence", 0.8),
             extraction_method=extraction_method,
+            concept_types=props.get("conceptTypes"),
         )
     elif node_type == "TypeDefinition":
         return TypeDefinitionNode(

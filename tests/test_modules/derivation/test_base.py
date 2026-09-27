@@ -2255,3 +2255,28 @@ class TestIsolatedNaming:
         from deriva.modules.derivation.base import choose_name
 
         assert choose_name(samples) == expected
+
+
+class TestCanonicalName:
+    """LLM names are canonicalized before voting, so formatting variants count as one name."""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("EntityProcessor", "Entity Processor"),
+            ("  Entity   Processor ", "Entity Processor"),
+            ("REST API", "REST API"),
+            ("OAuth Provider", "OAuth Provider"),
+            ("Metadata REST", "Metadata REST"),
+            ('"Order Service"', "Order Service"),
+        ],
+    )
+    def test_canonical_name(self, raw, expected):
+        from deriva.modules.derivation.base import canonical_name
+
+        assert canonical_name(raw) == expected
+
+    def test_formatting_variants_vote_together(self):
+        from deriva.modules.derivation.base import choose_name
+
+        assert choose_name(["EntityProcessor", "Entity Processor", "Entity Handler"]) == "Entity Processor"
