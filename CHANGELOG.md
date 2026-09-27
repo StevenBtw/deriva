@@ -20,6 +20,22 @@ Replaced Neo4j (Docker container) with grafeo, an embedded Rust graph database. 
 - **Faster graph access**: property indexes on `id` and `identifier`; enrichment write-back and `graph_relationships` use index lookups and Python joins instead of unindexed Cypher joins
 - **Observability**: real step durations in benchmark event logs, extraction events, LLM latency/rate-limit wait/requests/tokens per call, slow-query warnings (`GRAFEO_SLOW_QUERY_MS`) and a `timings.json` summary per benchmark session
 - **Removed Neo4j**: Deleted `deriva/adapters/neo4j/` and all Neo4j driver dependencies
+- **Dependency directories are excluded from extraction**: one `excluded_directories` system setting (default `.git`, `__pycache__`, `node_modules`, `bower_components`, `vendor`, `.venv`, `venv`, `site-packages`, matched as whole path segments) now applies to every repository walk, so third-party code no longer becomes Directory/File nodes or derivation candidates; it replaces five inconsistent hardcoded lists. New `config setting show|set` CLI command; the setting is part of the extraction fingerprint
+- **TypeDefinition LLM fallback limited to code**: TypeDefinition input sources list programming-language subtypes only, so markup, stylesheets, templates and shell/batch scripts are no longer sent to the LLM
+- **LLM timeouts and retries**: `LLM_TIMEOUT` now bounds every LLM call (a stalled request used to hang the run), and timeouts, connection errors, rate limits and 5xx responses are retried up to `LLM_MAX_RETRIES` with exponential backoff (honouring Retry-After); other errors fail at once
+
+### Prompts in Versioned Config
+
+- **Relationship prompt rules are config**: the ArchiMate conventions and rules of the LLM relationship pass, and its confidence cutoff, come from the `relationship` phase row `GlobalRelationships` (`instruction`, `params.min_confidence`). Disabling that row skips the LLM relationship pass (graph-derived relationships still run)
+- **Per-candidate naming is config**: switched on per element type with `params.per_candidate` (`min_pool`, `rules`) instead of class constants
+- **Extraction steps have versioned params**: `extraction_config.params` (JSON, added by a migration that runs automatically when a session connects), set with `config update extraction <step> -p/--params-file`. The Technology prompt headings and closing instruction live in `params.prompt`
+- **Business concepts keep every type**: when files classify the same concept differently (for example entity in one document, actor in another), the concept node keeps all types (`conceptTypes`) instead of the last file's, so extraction results no longer depend on file order; derivation queries match on the set
+- **Fixed: LLM-extracted technologies were silently dropped**: the enforced output schema names fields `technologyName`/`technologyType` while the Technology module read `techName`/`techCategory`; the module now matches the enforced schema
+- **Technology extraction reads dependency manifests and build files**, and its instruction covers the runtime a manifest implies and the system a client library connects to
+- **BusinessConcept system prompt is config**: the extraction instruction is the whole system prompt, sent verbatim
+- Prompts are byte-identical to before the move (same cache keys, identical models)
+- Removed unused relationship prompt builders: `build_relationship_prompt`, `build_element_relationship_prompt`, `build_per_element_relationship_prompt`, `derive_element_relationships`
+- **LLM cache key covers every response-shaping input**: the key now includes the system prompt and the effective temperature and max_tokens, so changing any of them is never answered from a cache entry made with other settings (existing cache entries are invalidated once)
 
 ### Breaking Changes
 
