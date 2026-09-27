@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from deriva.services.config import (
     DerivationConfig,
     ExtractionConfig,
@@ -146,10 +148,10 @@ class TestGetExtractionConfigs:
         """Should return all active extraction configs."""
         engine = MagicMock()
         # Columns: node_type, sequence, enabled, input_sources, instruction, example,
-        #          extraction_method, temperature, max_tokens, batch_size
+        #          extraction_method, temperature, max_tokens, batch_size, params
         engine.execute.return_value.fetchall.return_value = [
-            ("BusinessConcept", 1, True, '{"files": []}', "instruction1", "example1", "llm", None, None, 1),
-            ("TypeDefinition", 2, True, '{"files": []}', "instruction2", "example2", "ast", 0.5, 2000, 5),
+            ("BusinessConcept", 1, True, '{"files": []}', "instruction1", "example1", "llm", None, None, 1, None),
+            ("TypeDefinition", 2, True, '{"files": []}', "instruction2", "example2", "ast", 0.5, 2000, 5, None),
         ]
 
         configs = get_extraction_configs(engine)
@@ -169,7 +171,7 @@ class TestGetExtractionConfigs:
         """Should filter to enabled configs when requested."""
         engine = MagicMock()
         engine.execute.return_value.fetchall.return_value = [
-            ("BusinessConcept", 1, True, None, None, None, "llm", None, None, 1),
+            ("BusinessConcept", 1, True, None, None, None, "llm", None, None, 1, None),
         ]
 
         configs = get_extraction_configs(engine, enabled_only=True)
@@ -192,7 +194,7 @@ class TestGetExtractionConfigs:
         """Should default extraction_method to llm when None."""
         engine = MagicMock()
         engine.execute.return_value.fetchall.return_value = [
-            ("BusinessConcept", 1, True, None, None, None, None, None, None, None),
+            ("BusinessConcept", 1, True, None, None, None, None, None, None, None, None),
         ]
 
         configs = get_extraction_configs(engine)
@@ -208,8 +210,8 @@ class TestGetExtractionConfig:
         """Should return config when found."""
         engine = MagicMock()
         # Columns: node_type, sequence, enabled, input_sources, instruction, example,
-        #          extraction_method, temperature, max_tokens, batch_size
-        engine.execute.return_value.fetchone.return_value = ("BusinessConcept", 1, True, '{"files": []}', "instruction", "example", "llm", 0.7, 4096, 3)
+        #          extraction_method, temperature, max_tokens, batch_size, params
+        engine.execute.return_value.fetchone.return_value = ("BusinessConcept", 1, True, '{"files": []}', "instruction", "example", "llm", 0.7, 4096, 3, None)
 
         config = get_extraction_config(engine, "BusinessConcept")
 
@@ -236,7 +238,7 @@ class TestUpdateExtractionConfig:
     def test_updates_enabled_field(self):
         """Should update enabled field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_extraction_config(engine, "BusinessConcept", enabled=False)
 
@@ -247,7 +249,7 @@ class TestUpdateExtractionConfig:
     def test_updates_multiple_fields(self):
         """Should update multiple fields at once."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_extraction_config(
             engine,
@@ -390,7 +392,7 @@ class TestUpdateDerivationConfig:
     def test_updates_enabled_field(self):
         """Should update enabled field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_derivation_config(engine, "ApplicationComponent", enabled=False)
 
@@ -399,7 +401,7 @@ class TestUpdateDerivationConfig:
     def test_updates_multiple_fields(self):
         """Should update multiple fields."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_derivation_config(
             engine,
@@ -509,18 +511,9 @@ class TestUpdateFileType:
     def test_updates_existing_file_type(self):
         """Should update existing file type."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_file_type(engine, ".py", "source", "python3")
-
-        assert result is True
-
-    def test_returns_true_without_rowcount(self):
-        """Should return True when rowcount not available."""
-        engine = MagicMock()
-        del engine.execute.return_value.rowcount
-
-        result = update_file_type(engine, ".py", "source", "python")
 
         assert result is True
 
@@ -531,7 +524,7 @@ class TestDeleteFileType:
     def test_deletes_file_type(self):
         """Should delete file type."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = delete_file_type(engine, ".py")
 
@@ -542,7 +535,7 @@ class TestDeleteFileType:
     def test_returns_false_when_not_found(self):
         """Should return False when file type not found."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 0
+        engine.execute.return_value.fetchone.return_value = (0,)
 
         result = delete_file_type(engine, ".xyz")
 
@@ -608,6 +601,13 @@ class TestSetSetting:
         insert_call = [c for c in calls if "INSERT" in str(c)]
         assert len(insert_call) > 0
 
+    def test_rejects_invalid_excluded_directories_without_writing(self):
+        engine = MagicMock()
+
+        with pytest.raises(ValueError, match="excluded_directories"):
+            set_setting(engine, "excluded_directories", "node_modules")
+        engine.execute.assert_not_called()
+
 
 class TestEnableStep:
     """Tests for enable_step function."""
@@ -615,7 +615,7 @@ class TestEnableStep:
     def test_enables_extraction_step(self):
         """Should enable extraction step."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = enable_step(engine, "extraction", "BusinessConcept")
 
@@ -624,7 +624,7 @@ class TestEnableStep:
     def test_enables_derivation_step(self):
         """Should enable derivation step."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = enable_step(engine, "derivation", "ApplicationComponent")
 
@@ -645,7 +645,7 @@ class TestDisableStep:
     def test_disables_extraction_step(self):
         """Should disable extraction step."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = disable_step(engine, "extraction", "BusinessConcept")
 
@@ -654,7 +654,7 @@ class TestDisableStep:
     def test_disables_derivation_step(self):
         """Should disable derivation step."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = disable_step(engine, "derivation", "ApplicationComponent")
 
@@ -675,7 +675,7 @@ class TestUpdateExtractionConfigExtended:
     def test_updates_example_field(self):
         """Should update example field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_extraction_config(
             engine,
@@ -690,7 +690,7 @@ class TestUpdateExtractionConfigExtended:
     def test_updates_input_sources_field(self):
         """Should update input_sources field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_extraction_config(
             engine,
@@ -702,15 +702,6 @@ class TestUpdateExtractionConfigExtended:
         call_args = engine.execute.call_args[0][0]
         assert "input_sources = ?" in call_args
 
-    def test_returns_true_without_rowcount(self):
-        """Should return True when rowcount not available."""
-        engine = MagicMock()
-        del engine.execute.return_value.rowcount
-
-        result = update_extraction_config(engine, "BusinessConcept", enabled=True)
-
-        assert result is True
-
 
 class TestUpdateDerivationConfigExtended:
     """Additional tests for update_derivation_config edge cases."""
@@ -718,7 +709,7 @@ class TestUpdateDerivationConfigExtended:
     def test_updates_input_graph_query(self):
         """Should update input_graph_query field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_derivation_config(
             engine,
@@ -733,7 +724,7 @@ class TestUpdateDerivationConfigExtended:
     def test_updates_params_field(self):
         """Should update params field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_derivation_config(
             engine,
@@ -748,7 +739,7 @@ class TestUpdateDerivationConfigExtended:
     def test_updates_example_field(self):
         """Should update example field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_derivation_config(
             engine,
@@ -897,7 +888,7 @@ class TestUpdateExtractionConfigTemperatureAndTokens:
     def test_updates_temperature_field(self):
         """Should update temperature field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_extraction_config(engine, "BusinessConcept", temperature=0.7)
 
@@ -908,7 +899,7 @@ class TestUpdateExtractionConfigTemperatureAndTokens:
     def test_updates_max_tokens_field(self):
         """Should update max_tokens field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_extraction_config(engine, "BusinessConcept", max_tokens=4096)
 
@@ -923,7 +914,7 @@ class TestUpdateDerivationConfigTemperatureAndTokens:
     def test_updates_input_model_query(self):
         """Should update input_model_query field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_derivation_config(
             engine,
@@ -938,7 +929,7 @@ class TestUpdateDerivationConfigTemperatureAndTokens:
     def test_updates_temperature_field(self):
         """Should update temperature field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_derivation_config(
             engine,
@@ -953,7 +944,7 @@ class TestUpdateDerivationConfigTemperatureAndTokens:
     def test_updates_max_tokens_field(self):
         """Should update max_tokens field."""
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_derivation_config(
             engine,
@@ -974,9 +965,9 @@ class TestCreateDerivationConfigVersion:
         from deriva.services.config import create_derivation_config_version
 
         engine = MagicMock()
-        # Current config: (id, version, phase, sequence, enabled, llm, graph_query, model_query, instruction, example, params, temperature, max_tokens)
+        # Current config: (id, version, phase, sequence, enabled, llm, graph_query, model_query, instruction, example, params, temperature, max_tokens, batch_size, max_candidates)
         engine.execute.return_value.fetchone.side_effect = [
-            (1, 1, "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None, 0.7, 4096),  # Current config
+            (1, 1, "generate", 1, True, True, "MATCH (n)", None, "instruction", "example", None, 0.7, 4096, 10, 30),  # Current config
             (2,),  # Next ID
         ]
 
@@ -1009,7 +1000,7 @@ class TestCreateDerivationConfigVersion:
 
         engine = MagicMock()
         engine.execute.return_value.fetchone.side_effect = [
-            (1, 1, "generate", 5, True, True, "OLD_QUERY", "OLD_MODEL", "old_instruction", "old_example", '{"key": "value"}', 0.5, 2000),
+            (1, 1, "generate", 5, True, True, "OLD_QUERY", "OLD_MODEL", "old_instruction", "old_example", '{"key": "value"}', 0.5, 2000, 10, 30),
             (2,),
         ]
 
@@ -1035,7 +1026,7 @@ class TestCreateExtractionConfigVersion:
         engine = MagicMock()
         # Current config: (id, version, sequence, enabled, input_sources, instruction, example, temperature, max_tokens, batch_size, extraction_method)
         engine.execute.return_value.fetchone.side_effect = [
-            (1, 1, 1, True, '{"files": []}', "instruction", "example", 0.7, 4096, 1, "llm"),
+            (1, 1, 1, True, '{"files": []}', "instruction", "example", 0.7, 4096, 1, "llm", None),
             (2,),  # Next ID
         ]
 
@@ -1231,7 +1222,7 @@ class TestUpdateDerivationPatterns:
         from deriva.services.config import update_derivation_patterns
 
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 1
+        engine.execute.return_value.fetchone.return_value = (1,)
 
         result = update_derivation_patterns(
             engine,
@@ -1248,8 +1239,8 @@ class TestUpdateDerivationPatterns:
         from deriva.services.config import update_derivation_patterns
 
         engine = MagicMock()
-        engine.execute.return_value.rowcount = 0
-        engine.execute.return_value.fetchone.return_value = (1,)
+        # UPDATE affects 0 rows, then MAX(id) + 1 = 1
+        engine.execute.return_value.fetchone.side_effect = [(0,), (1,)]
 
         result = update_derivation_patterns(
             engine,
@@ -1260,6 +1251,7 @@ class TestUpdateDerivationPatterns:
         )
 
         assert result is True
+        assert any("INSERT" in str(c.args[0]) for c in engine.execute.call_args_list)
 
 
 class TestThresholdHelpers:
@@ -1652,3 +1644,169 @@ class TestAlgorithmSettingsHelpers:
             result = get_louvain_config(engine)
 
         assert result["resolution"] == 1.0
+
+
+class TestAffectedRowsWithRealDuckDB:
+    """Update/delete helpers must report affected rows correctly on a real DuckDB.
+
+    DuckDB cursors report rowcount -1 for UPDATE/DELETE, so success must come
+    from the returned count row, not from rowcount.
+    """
+
+    @pytest.fixture
+    def engine(self):
+        import duckdb
+
+        con = duckdb.connect()
+        con.execute("CREATE TABLE derivation_config (step_name VARCHAR, enabled BOOLEAN, sequence INTEGER, phase VARCHAR, is_active BOOLEAN)")
+        con.execute("INSERT INTO derivation_config VALUES ('pagerank', TRUE, 1, 'prep', TRUE)")
+        con.execute("CREATE TABLE extraction_config (node_type VARCHAR, enabled BOOLEAN, is_active BOOLEAN)")
+        con.execute("INSERT INTO extraction_config VALUES ('BusinessConcept', TRUE, TRUE)")
+        con.execute("CREATE TABLE file_type_registry (extension VARCHAR, file_type VARCHAR, subtype VARCHAR)")
+        con.execute("INSERT INTO file_type_registry VALUES ('.py', 'source', 'python')")
+        con.execute("CREATE TABLE derivation_patterns (id INTEGER, step_name VARCHAR, pattern_type VARCHAR, pattern_category VARCHAR, patterns VARCHAR, is_active BOOLEAN)")
+        con.execute("INSERT INTO derivation_patterns VALUES (1, 'Node', 'include', 'names', '[]', TRUE)")
+        yield con
+        con.close()
+
+    def test_disable_existing_derivation_step_reports_success(self, engine):
+        assert disable_step(engine, "derivation", "pagerank") is True
+        assert engine.execute("SELECT enabled FROM derivation_config").fetchone()[0] is False
+
+    def test_disable_unknown_derivation_step_reports_failure(self, engine):
+        assert disable_step(engine, "derivation", "missing") is False
+
+    def test_update_existing_extraction_step_reports_success(self, engine):
+        assert update_extraction_config(engine, "BusinessConcept", enabled=False) is True
+
+    def test_update_unknown_extraction_step_reports_failure(self, engine):
+        assert update_extraction_config(engine, "Missing", enabled=False) is False
+
+    def test_update_derivation_sequence_counts_existing_steps(self, engine):
+        from deriva.services.config import update_derivation_sequence
+
+        result = update_derivation_sequence(engine, ["pagerank", "missing"])
+        assert result["total_updated"] == 1
+        assert result["errors"] == ["Step 'missing' not found or not active"]
+
+    def test_update_and_delete_file_type_report_affected_rows(self, engine):
+        assert update_file_type(engine, ".py", "source", "python3") is True
+        assert update_file_type(engine, ".zz", "source", "x") is False
+        assert delete_file_type(engine, ".py") is True
+        assert delete_file_type(engine, ".py") is False
+
+    def test_update_existing_patterns_does_not_insert_duplicate(self, engine):
+        from deriva.services.config import update_derivation_patterns
+
+        assert update_derivation_patterns(engine, "Node", "include", "names", ["a"]) is True
+        assert engine.execute("SELECT count(*) FROM derivation_patterns").fetchone()[0] == 1
+
+
+class TestAddDerivationStep:
+    @pytest.fixture
+    def engine(self):
+        import duckdb
+
+        con = duckdb.connect()
+        con.execute(
+            "CREATE TABLE derivation_config (id INTEGER, step_name VARCHAR, phase VARCHAR, version INTEGER, "
+            "sequence INTEGER, enabled BOOLEAN, llm BOOLEAN, params VARCHAR, is_active BOOLEAN, "
+            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+        )
+        con.execute(
+            "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, llm, is_active) VALUES (7, 'graph_relationships', 'refine', 1, 4, TRUE, FALSE, TRUE)"
+        )
+        yield con
+        con.close()
+
+    def test_adds_disabled_versioned_step(self, engine):
+        from deriva.services.config import add_derivation_step
+
+        assert add_derivation_step(engine, "joint_consistency", "refine", 4, params='{"dry_run": true}') is True
+        row = engine.execute("SELECT id, phase, version, sequence, enabled, llm, params, is_active FROM derivation_config WHERE step_name = 'joint_consistency'").fetchone()
+        assert row == (8, "refine", 1, 4, False, False, '{"dry_run": true}', True)
+
+    def test_refuses_existing_step(self, engine):
+        from deriva.services.config import add_derivation_step
+
+        assert add_derivation_step(engine, "graph_relationships", "refine", 4) is False
+
+    @pytest.mark.parametrize(
+        ("phase", "sequence", "params", "message"),
+        [
+            ("refnie", 4, None, "phase"),
+            ("refine", -1, None, "sequence"),
+            ("refine", 4, "{not json", "params"),
+        ],
+    )
+    def test_rejects_invalid_values_without_inserting(self, engine, phase, sequence, params, message):
+        from deriva.services.config import add_derivation_step
+
+        with pytest.raises(ValueError, match=message):
+            add_derivation_step(engine, "new_step", phase, sequence, params=params)
+        assert engine.execute("SELECT count(*) FROM derivation_config WHERE step_name = 'new_step'").fetchone()[0] == 0
+
+
+class TestExcludedDirectories:
+    """Dependency directories skipped by every repository walk (system setting `excluded_directories`)."""
+
+    def test_default_when_not_configured(self):
+        from deriva.services.config import DEFAULT_EXCLUDED_DIRECTORIES, get_excluded_directories
+
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.return_value = None
+
+        assert get_excluded_directories(engine) == DEFAULT_EXCLUDED_DIRECTORIES
+        assert {"node_modules", "bower_components", "vendor", ".git"} <= set(DEFAULT_EXCLUDED_DIRECTORIES)
+
+    def test_configured_json_list(self):
+        from deriva.services.config import get_excluded_directories
+
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.return_value = ('[".git", "third_party"]',)
+
+        assert get_excluded_directories(engine) == [".git", "third_party"]
+
+    def test_invalid_value_is_an_error(self):
+        from deriva.services.config import get_excluded_directories
+
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.return_value = ("node_modules",)
+
+        with pytest.raises(ValueError, match="excluded_directories"):
+            get_excluded_directories(engine)
+
+
+class TestExtractionConfigParams:
+    """Extraction steps carry versioned params (prompt texts, switches), like derivation steps."""
+
+    @staticmethod
+    def _engine():
+        import duckdb
+
+        from deriva.adapters.database.manager import SCRIPTS_DIR
+
+        engine = duckdb.connect(":memory:")
+        engine.execute((SCRIPTS_DIR / "schema.sql").read_text(encoding="utf-8"))
+        engine.execute(
+            "INSERT INTO extraction_config (id, node_type, version, sequence, enabled, instruction, example, is_active) VALUES (1, 'Technology', 1, 1, TRUE, 'i', 'e', TRUE)"
+        )
+        return engine
+
+    def test_new_version_stores_params(self):
+        from deriva.services.config import create_extraction_config_version, get_extraction_config
+
+        engine = self._engine()
+        result = create_extraction_config_version(engine, "Technology", params='{"prompt": {"closing_instruction": "x"}}')
+
+        assert result["new_version"] == 2
+        assert get_extraction_config(engine, "Technology").params == '{"prompt": {"closing_instruction": "x"}}'
+
+    def test_params_are_kept_when_other_fields_change(self):
+        from deriva.services.config import create_extraction_config_version, get_extraction_config
+
+        engine = self._engine()
+        create_extraction_config_version(engine, "Technology", params='{"a": 1}')
+        create_extraction_config_version(engine, "Technology", instruction="new")
+
+        assert get_extraction_config(engine, "Technology").params == '{"a": 1}'

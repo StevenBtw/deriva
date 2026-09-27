@@ -162,7 +162,7 @@ result = llm.query(
 ## Caching
 
 - Responses cached to `workspace/cache/` by default
-- Cache key = SHA256(prompt + model + schema)
+- Cache key = SHA256(prompt + model + schema + system prompt + effective temperature + max_tokens), so changing any of them never returns an answer cached for other settings
 - Disable with `LLM_NOCACHE=true` in `.env`
 - Use `cached_llm_call` decorator for custom caching
 

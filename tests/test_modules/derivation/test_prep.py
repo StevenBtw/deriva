@@ -538,3 +538,44 @@ class TestEnrichGraphLegacy:
         assert isinstance(result, dict)
         assert "A" in result
         assert "pagerank" in result["A"]
+
+
+class TestDeterminism:
+    """Enrichments must not depend on input order or Python's per-process hash seed."""
+
+    def test_tied_float_values_get_the_same_percentile(self):
+        result = prep.normalize_to_percentiles({"a": 0.1, "b": 0.1, "c": 0.5})
+        assert result == {"a": 25.0, "b": 25.0, "c": 100.0}
+
+    def test_percentiles_do_not_depend_on_insertion_order(self):
+        forward = prep.normalize_to_percentiles({"a": 0.2, "b": 0.2, "c": 0.2, "d": 0.9})
+        backward = prep.normalize_to_percentiles({"d": 0.9, "c": 0.2, "b": 0.2, "a": 0.2})
+        assert forward == backward
+
+    SCRIPT = """
+import hashlib, json, random
+from deriva.modules.derivation import prep
+rng = random.Random(7)
+nodes = [f"n{i}" for i in range(300)]
+edges = [{"source": rng.choice(nodes), "target": rng.choice(nodes)} for _ in range(900)]
+edges = [e for e in edges if e["source"] != e["target"]]
+r = prep.enrich_graph(edges=edges, algorithms=["pagerank", "louvain"], params={}, include_percentiles=True)
+print(hashlib.sha256(json.dumps(r.enrichments, sort_keys=True).encode()).hexdigest())
+"""
+
+    def test_pagerank_and_louvain_identical_for_different_hash_seeds(self):
+        import os
+        import subprocess
+        import sys
+
+        digests = {
+            subprocess.run(
+                [sys.executable, "-c", self.SCRIPT],
+                env={**os.environ, "PYTHONHASHSEED": seed},
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            for seed in ("1", "2", "3")
+        }
+        assert len(digests) == 1

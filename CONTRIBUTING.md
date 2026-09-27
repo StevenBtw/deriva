@@ -828,7 +828,7 @@ All queries return one of three Pydantic response types:
 ### Caching
 
 - Responses are cached to `workspace/cache/` by default
-- Cache key = SHA256(prompt + model + schema)
+- Cache key = SHA256(prompt + model + schema + system prompt + effective temperature + max_tokens), so changing any of them never returns an answer cached for other settings; benchmark runs also add a per-run `bench_hash` so each run gets its own entries
 - Disable with `LLM_NOCACHE=true` or `use_cache=False`
 - Errors are also cached to prevent retry storms
 
@@ -1131,7 +1131,6 @@ def extract_{node_type}s(...) -> Dict[str, Any]:
 
 ```python
 # Each LLM module exports:
-def build_system_prompt(instruction: str) -> str  # Static role/guidelines (cached)
 def build_user_prompt(file_content: str, file_path: str, example: str, ...) -> str  # Dynamic content
 def build_extraction_prompt(...) -> str  # Legacy combined format for backward compatibility
 def parse_llm_response(response: str) -> List[Dict]
@@ -1147,7 +1146,7 @@ def extract_{type}s_multi(files: List[Dict], repo_name, llm_query_fn, config) ->
 
 **Token Efficiency Patterns:**
 
-- **System/User Prompt Separation**: `build_system_prompt()` returns static instructions (role, guidelines), `build_user_prompt()` returns dynamic file-specific content. This allows system prompts to be cached by providers.
+- **System/User Prompt Separation** (BusinessConcept multi-file extraction): the step's config instruction is the static system prompt (role, guidelines), sent verbatim; `build_user_prompt()` returns the dynamic file-specific content. This allows system prompts to be cached by providers. The other extractors still embed the instruction in a single prompt.
 - **Compact JSON**: Use `json.dumps(..., separators=(",", ":"))` for context data to minimize tokens.
 - **Multi-file Batching**: The `batch_size` config column (in `extraction_config` table) controls how many files are processed per LLM call. When `batch_size > 1`, the service uses `extract_{type}s_multi()` for batched extraction.
 
@@ -1244,7 +1243,7 @@ from deriva.modules.derivation import (
     query_candidates,       # Execute Cypher and return enriched candidates
     batch_candidates,       # Split candidates into batches for LLM
     build_derivation_prompt,    # Build LLM prompt for elements
-    build_relationship_prompt,  # Build LLM prompt for relationships
+    build_unified_relationship_prompt,  # Build LLM prompt for relationships
     parse_derivation_response,  # Parse LLM element response
     build_element,              # Build ArchiMate element from LLM output
     DERIVATION_SCHEMA,          # JSON schema for element derivation
@@ -1340,7 +1339,7 @@ Deriva splits configuration by **ownership** - who needs to change it and why:
 
 ### Environment Variables
 
-- Naming: `{MANAGER}_{CATEGORY}_{SETTING}` (e.g., `GRAFEO_DB_PATH`)
+- Naming: `{MANAGER}_{CATEGORY}_{SETTING}` (e.g., `GRAFEO_DB_DIR`)
 - Provide **sensible defaults** in code if env var missing
 - Comma-separated for lists (e.g., `ARCHIMATE_ELEMENT_TYPES=Component,Service`)
 - Boolean as string: `true`/`false` (case-insensitive)
@@ -1383,6 +1382,17 @@ deriva config versions
 ```
 
 **Never update configs by editing JSON and importing.** The `db_tool import` command is for **backup restoration only** - it overwrites the database including version history. This defeats the purpose of versioning and makes rollback impossible.
+
+### Prompts and LLM Calls
+
+Prompt text is configuration, not code: a run must be fully described by its config versions.
+
+- **Text that steers the LLM lives in the database.** Persona, instructions, rules, conventions, naming guidance, examples and thresholds told to the model belong in the step's `instruction`, `example` or `params`, changed with `deriva config update`. The relationship prompt rules live in the `relationship` phase row (`GlobalRelationships`: `instruction` plus `params.min_confidence`; disabling it skips the LLM relationship pass). Per-candidate naming is switched on per element with `params.per_candidate` (`min_pool`, `rules`).
+- **Prompt builders hold only structure.** `build_*prompt*` functions in `modules/` contain section order and headings, serialisation of input data (candidates, elements, metamodel rules from `OUTBOUND_RULES`/`INBOUND_RULES`) and the output contract that matches the schema. Do not add rules, examples or domain words there. This is the target for every builder; some older builders (for example in `modules/extraction/method.py` and `modules/derivation/base.py`) still embed role text and are being migrated.
+- **Settings that change results** (cutoffs, mode switches) go in `params` or `system_settings`, not in class constants or literals.
+- **Where the text goes:** `instruction` and `example` for the main prompt, `params` (JSON, both extraction and derivation steps) for extra prompt texts and switches, e.g. `params.prompt` for the Technology headings.
+- **Every LLM call has a config row.** Services load the row and pass the text in; modules stay pure and only call the `llm_query_fn` they receive.
+- **Moving text between code and config must not change the prompt.** Pin the exact prompt with a test before the move, and check that a cached benchmark run hits the cache for every call and yields an identical model. Changing text is a result change: new config version, benchmark before and after.
 
 See [BENCHMARKS.md](BENCHMARKS.md) for running benchmarks and [OPTIMIZATION.md](OPTIMIZATION.md) for the recommended config optimization workflow.
 

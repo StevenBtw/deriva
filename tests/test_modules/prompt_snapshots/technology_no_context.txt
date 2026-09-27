@@ -1,0 +1,11 @@
+INSTRUCTION TEXT
+
+File: setup.py
+```
+content here
+```
+
+Example output format:
+EXAMPLE
+
+Extract infrastructure technologies from this file. Return JSON matching the schema.

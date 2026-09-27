@@ -8,19 +8,58 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.7.x is all about stability, portability, user experience, documentation and clean architecture/code standards.
 
-## v0.7.0 - Grafeo Migration (Unreleased)
+## v0.7.0 - Grafeo Migration (September 27, 2026)
 
 Replaced Neo4j (Docker container) with grafeo, an embedded Rust graph database. Removes the external Docker dependency entirely and the graph database now runs in-process. (500-1000x speedup yah!)
 
 ### Infrastructure
 
 - **Grafeo adapter**: New `deriva/adapters/grafeo/` with `GrafeoConnection`, a drop-in replacement for the old `Neo4jConnection`, using a shared `GrafeoDB` singleton with namespace isolation
-- **No Docker required**: Graph database is embedded (in-memory by default, persistent via `GRAFEO_DB_PATH` env var)
+- **No Docker required**: Graph database is embedded (in-memory by default, persistent via `GRAFEO_DB_DIR`)
+- **One graph database per repository**: `GRAFEO_DB_DIR` holds a `<repository>.grafeo` file per repository (combined benchmark runs use the joined repository names, commands without `--repo` use `default.grafeo`). Benchmark runs are isolated per repository; `run`, `export`, `clear` and `status` accept `--repo`
+- **Faster graph access**: property indexes on `id` and `identifier`; enrichment write-back and `graph_relationships` use index lookups and Python joins instead of unindexed Cypher joins
+- **Observability**: real step durations in benchmark event logs, extraction events, LLM latency/rate-limit wait/requests/tokens per call, slow-query warnings (`GRAFEO_SLOW_QUERY_MS`) and a `timings.json` summary per benchmark session
 - **Removed Neo4j**: Deleted `deriva/adapters/neo4j/` and all Neo4j driver dependencies
+- **Dependency directories are excluded from extraction**: one `excluded_directories` system setting (default `.git`, `__pycache__`, `node_modules`, `bower_components`, `vendor`, `.venv`, `venv`, `site-packages`, matched as whole path segments) now applies to every repository walk, so third-party code no longer becomes Directory/File nodes or derivation candidates; it replaces five inconsistent hardcoded lists. New `config setting show|set` CLI command; the setting is part of the extraction fingerprint
+- **TypeDefinition LLM fallback limited to code**: TypeDefinition input sources list programming-language subtypes only, so markup, stylesheets, templates and shell/batch scripts are no longer sent to the LLM
+- **pydantic-ai 2**: the Mistral provider is now a declared extra (`pydantic-ai-slim[mistral]`); LLM agents are kept per thread so parallel calls do not share an HTTP client across event loops; token usage is read from pydantic-ai 2's `usage` property
+- **LLM timeouts and retries**: `LLM_TIMEOUT` now bounds every LLM call (a stalled request used to hang the run), and timeouts, connection errors, rate limits and 5xx responses are retried up to `LLM_MAX_RETRIES` with exponential backoff (honouring Retry-After); other errors fail at once
+- **grafeo and solvor from PyPI**: grafeo 0.5.43 and solvor 0.6.2 are regular PyPI dependencies again, no local builds needed
+- **Security**: locked dependencies with known vulnerabilities upgraded (among others cryptography, pypdf, requests and urllib3); the CI dependency audit skips Deriva itself, which is not published on PyPI
+- **Fixed: migrations could skip statements**: a comment line directly above a statement in a migration script hid that statement from the migration runner
+
+### Derivation
+
+- **Joint consistency refine step (experimental, disabled by default)**: `joint_consistency` selects relationships and duplicate-element merges together in one exact optimization (solvor MILP) under metamodel constraints: at most one relationship per ordered element pair, a single parent for single-parent relationship types, no cycles in acyclic relationship types, and no merge of two related elements. Stronger evidence tiers are optimized first. With `dry_run` (the default) it only writes a report
+- **`config add derivation`**: new CLI command to add a derivation step (created disabled) with `--phase`, `--sequence`, `-p/--params`, `--temperature` and `--max-candidates`
+
+### Benchmarking
+
+- **Consistency snapshots**: every benchmark run writes a JSON file next to its exported model with each element (identifier, type, name, source node), each relationship (with origin and confidence) and the LLM-extracted graph nodes (business concepts with their types, technologies), so runs can be compared on names and on source nodes
+- **`--no-cache` covers extraction**: with `--no-cache` the extraction steps also bypass the LLM cache, so a no-cache benchmark measures the whole pipeline
+
+### Prompts in Versioned Config
+
+- **Relationship prompt rules are config**: the ArchiMate conventions and rules of the LLM relationship pass, and its confidence cutoff, come from the `relationship` phase row `GlobalRelationships` (`instruction`, `params.min_confidence`). Disabling that row skips the LLM relationship pass (graph-derived relationships still run)
+- **Per-candidate naming is config**: switched on per element type with `params.per_candidate` (`min_pool`, `rules`) instead of class constants
+- **Extraction steps have versioned params**: `extraction_config.params` (JSON, added by a migration that runs automatically when a session connects), set with `config update extraction <step> -p/--params-file`. The Technology prompt headings and closing instruction live in `params.prompt`
+- **Fixed: business concept names lost their word boundaries**: name normalization lowercased everything after the first letter (`RealTimeDataStreaming` became `Realtimedatastreaming`) and singularized words such as "analysis"; it now keeps the original casing and only singularizes real plurals
+- **Fixed: derivation ran at the default temperature**: element steps kept their intended temperature in `params`, which was never read; the temperature now lives in the step's `temperature` column (new `config update --temperature`), and the relationship row's temperature applies to the consolidated relationship pass
+- **Stable business concept extraction**: directory classification only classifies (business, technology or skip, plus a type); the concept or technology name comes from the directory name. Document concept extraction asks the same prompt several times and keeps only concepts found by a majority (`params.samples`, `params.min_votes` on the extraction step); samples run in parallel
+- **Isolated element naming**: element names come from a separate naming call whose prompt depends only on the element's source node, its type and a configurable naming convention (`params.naming` on each element step); a majority of several answers wins, with the name from the code structure as fallback
+- **Element names come from the code structure**: an element's name and identifier are derived from its source node (directory, file, type, concept or technology name), so the same source always yields the same element; the LLM decides whether to keep a candidate and writes its documentation (its proposed name is kept as `llm_name`)
+- **Business concepts keep every type**: when files classify the same concept differently (for example entity in one document, actor in another), the concept node keeps all types (`conceptTypes`) instead of the last file's, so extraction results no longer depend on file order; derivation queries match on the set
+- **Fixed: LLM-extracted technologies were silently dropped**: the enforced output schema names fields `technologyName`/`technologyType` while the Technology module read `techName`/`techCategory`; the module now matches the enforced schema
+- **Technology extraction reads dependency manifests and build files**, and its instruction covers the runtime a manifest implies and the system a client library connects to
+- **BusinessConcept system prompt is config**: the extraction instruction is the whole system prompt, sent verbatim
+- Prompts are byte-identical to before the move (identical models)
+- Removed unused relationship prompt builders: `build_relationship_prompt`, `build_element_relationship_prompt`, `build_per_element_relationship_prompt`, `derive_element_relationships`
+- **LLM cache key covers every response-shaping input**: the key now includes the system prompt and the effective temperature and max_tokens, so changing any of them is never answered from a cache entry made with other settings (existing cache entries are invalidated once)
 
 ### Breaking Changes
 
 - `Neo4jSettings` → `GrafeoSettings` (env prefix: `GRAFEO_`)
+- `GRAFEO_DB_PATH` (single file) → `GRAFEO_DB_DIR` (directory, one database per repository); a set `GRAFEO_DB_PATH` now raises an error
 - `NEO4J_GRAPH_NAMESPACE` → `GRAPH_NAMESPACE`, `NEO4J_NAMESPACE_ARCHIMATE` → `ARCHIMATE_NAMESPACE`
 - `session.start_neo4j()` / `stop_neo4j()` → `start_graph_db()` / `stop_graph_db()`
 - `get_enrichments_from_neo4j()` → `get_enrichments_from_graph()`
@@ -764,12 +803,13 @@ Initial release with pipeline architecture, LLM client (OpenAI), Neo4j storage, 
 
 | Era | Dates | Key Event | Architecture |
 |-----|-------|-----------|--------------|
-| **0.1.x** | Feb 22-25 | Initial development | Monolithic pipeline + JSON configs |
-| **0.2.x** | Feb 26-Apr 15 | First Purge | FastAPI/Streamlit/Services/Strategies |
-| **0.3.x** | Apr 15-25 | Second Purge | UV/Extraction functions/File types |
-| **0.4.x** | Jun-Jul | Web UI prototype | FastAPI/Jinja2 |
-| **0.5.x** | Aug-Nov | Final development | Managers/Modules/Marimo/DuckDB |
-| **0.6.x** | Dec-Jan | AutoMate renamed to Deriva | Focus on benchmark and optimization |
+| **0.1.x** | Feb 22-25 '25 | Initial development | Monolithic pipeline + JSON configs |
+| **0.2.x** | Feb 26-Apr 15 '25 | First Purge | FastAPI/Streamlit/Services/Strategies |
+| **0.3.x** | Apr 15-25 '25 | Second Purge | UV/Extraction functions/File types |
+| **0.4.x** | Jun-Jul '25 | Web UI prototype | FastAPI/Jinja2 |
+| **0.5.x** | Aug-Nov '25 | Final development | Managers/Modules/Marimo/DuckDB |
+| **0.6.x** | Dec '25-Jan '26| AutoMate renamed to Deriva | Focus on benchmark and optimization |
+| **0.7.x** | Mar '26- | Grafeo migration | Embedded graph, prompts in versioned config, consistency |
 
 ---
 

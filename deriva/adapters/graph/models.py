@@ -198,6 +198,8 @@ class BusinessConceptNode:
     repository_name: str
     confidence: float = 1.0
     extraction_method: str = "llm"  # structural, ast, or llm
+    # Every type any file gave this concept (default: [concept_type])
+    concept_types: list[str] | None = None
 
     def __post_init__(self):
         """Validate concept_type is one of the allowed values."""
@@ -231,6 +233,7 @@ class BusinessConceptNode:
         return {
             "conceptName": self.name,
             "conceptType": self.concept_type,
+            "conceptTypes": sorted(self.concept_types or [self.concept_type]),
             "description": self.description,
             "originSource": normalize_path(self.origin_source, self.repository_name),
             "confidence": self.confidence,

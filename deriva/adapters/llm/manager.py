@@ -34,14 +34,19 @@ from __future__ import annotations
 
 import logging
 import os
+import random
+import threading
+import time
 from pathlib import Path
 from typing import Any, TypeVar, cast, overload
 
 import asyncio
 import concurrent.futures
+import httpx
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
 
 from deriva.common.exceptions import CircuitOpenError
@@ -73,6 +78,19 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
             max_workers=4, thread_name_prefix="llm_"
         )
     return _llm_executor
+
+
+def _is_retriable(error: Exception) -> bool:
+    """Timeouts, connection errors, rate limits and 5xx are worth another try; other errors are not.
+
+    Output validation retries are handled by the pydantic-ai agent itself.
+    """
+    if isinstance(error, (httpx.TransportError, TimeoutError, ConnectionError)):
+        return True
+    return isinstance(error, ModelHTTPError) and classify_exception(error)[0] in (
+        "rate_limited",
+        "transient",
+    )
 
 
 def _is_event_loop_running() -> bool:
@@ -532,6 +550,86 @@ class LLMManager:
         bench_hash: str | None = None,
     ) -> LLMResponse: ...
 
+    @property
+    def last_call(self) -> dict[str, Any] | None:
+        """Metrics of the latest query() on the current thread.
+
+        Keys: cache_key, cache_hit, latency_ms, wait_ms, requests, input_tokens,
+        output_tokens, error_type.
+        """
+        return getattr(self._call_store(), "call", None)
+
+    def _run_agent(
+        self, agent: Agent[None, Any], prompt: str, settings: ModelSettings
+    ) -> tuple[Any, int]:
+        """Run one agent call with retries; returns the result and the number of failed attempts."""
+        if _is_event_loop_running():
+            # Running inside an async context (marimo/Jupyter): run the whole retry loop
+            # in the thread pool, so backoff waits do not block the event loop
+            return (
+                _get_executor()
+                .submit(self._run_with_retries, agent, prompt, settings)
+                .result()
+            )
+        return self._run_with_retries(agent, prompt, settings)
+
+    def _run_with_retries(
+        self, agent: Agent[None, Any], prompt: str, settings: ModelSettings
+    ) -> tuple[Any, int]:
+        """Retry transient failures with jittered exponential backoff.
+
+        A stalled request is bounded by the timeout in ``settings``; timeouts,
+        connection errors, rate limits and 5xx responses are retried up to
+        ``max_retries`` times (honouring Retry-After), anything else is raised at once.
+        The circuit breaker and throttle count the query once, in ``query()``.
+        """
+        base_delay = self.config.get("retry_base_delay", 2.0)
+        max_delay = self.config.get("retry_max_delay", 60.0)
+        for attempt in range(self.max_retries + 1):
+            try:
+                return agent.run_sync(prompt, model_settings=settings), attempt
+            except Exception as e:
+                if attempt == self.max_retries or not _is_retriable(e):
+                    raise
+                _, retry_after = classify_exception(e)
+                if retry_after:
+                    delay = min(retry_after, max_delay)
+                else:
+                    delay = random.uniform(0, min(base_delay * 2**attempt, max_delay))
+                logger.warning(
+                    "LLM call failed (%s: %s), retry %d/%d in %.1fs",
+                    type(e).__name__,
+                    e,
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+        raise AssertionError("unreachable")
+
+    def _agent(self, output_type: Any, system_prompt: str) -> Agent[None, Any]:
+        """Reusable agent for this output type and system prompt, per thread (created lazily).
+
+        An agent's HTTP client belongs to the event loop of the thread that used it
+        first; sharing one agent across threads (parallel samples) made calls hang
+        until the timeout. Each thread therefore gets its own agents.
+        """
+        agents = self.__dict__.setdefault("_agents", {})
+        key = (output_type, system_prompt, self.max_retries, threading.get_ident())
+        if key not in agents:
+            agents[key] = Agent(
+                model=self._pydantic_model,
+                output_type=output_type,
+                system_prompt=system_prompt,
+                retries=self.max_retries,
+            )
+        return agents[key]
+
+    def _call_store(self) -> threading.local:
+        if "_calls" not in self.__dict__:
+            self.__dict__["_calls"] = threading.local()
+        return self.__dict__["_calls"]
+
     def query(
         self,
         prompt: str,
@@ -572,10 +670,26 @@ class LLMManager:
             self.model,
             response_model.model_json_schema() if response_model else schema,
             bench_hash=bench_hash,
+            system_prompt=system_prompt,
+            temperature=effective_temperature,
+            max_tokens=effective_max_tokens,
         )
 
         read_cache = use_cache and not self.nocache
         write_cache = use_cache
+
+        # Filled in along the way so every return path leaves complete metrics
+        call: dict[str, Any] = {
+            "cache_key": cache_key,
+            "cache_hit": False,
+            "latency_ms": 0.0,
+            "wait_ms": 0.0,
+            "requests": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "error_type": None,
+        }
+        self._call_store().call = call
 
         try:
             # Validate prompt
@@ -590,10 +704,13 @@ class LLMManager:
                     if content and content.strip():
                         if response_model:
                             try:
-                                return response_model.model_validate_json(content)
+                                validated = response_model.model_validate_json(content)
+                                call["cache_hit"] = True
+                                return validated
                             except Exception:
                                 pass  # Cache miss, continue to API call
                         else:
+                            call["cache_hit"] = True
                             return CachedResponse(
                                 prompt=cached["prompt"],
                                 model=cached["model"],
@@ -603,7 +720,7 @@ class LLMManager:
                             )
 
             # Rate limit
-            self._rate_limiter.wait_if_needed()
+            call["wait_ms"] = round(self._rate_limiter.wait_if_needed() * 1000, 1)
 
             # Resolve output type:
             # 1. Use explicit response_model if provided
@@ -615,16 +732,15 @@ class LLMManager:
             # Track if we're using schema-resolved model (for response handling)
             using_schema_model = resolved_model is not None and response_model is None
 
-            # Create PydanticAI agent
-            agent: Agent[None, Any] = Agent(
-                model=self._pydantic_model,
-                output_type=output_type,
-                system_prompt=system_prompt or "",
-                retries=self.max_retries,
-            )
+            # One PydanticAI agent per output type and system prompt (building one costs ~0.2 s)
+            agent = self._agent(output_type, system_prompt or "")
 
             # Run query
-            settings: ModelSettings = {"temperature": effective_temperature}
+            settings: ModelSettings = {
+                "temperature": effective_temperature,
+                # pydantic-ai's Mistral model only accepts a float timeout
+                "timeout": float(self.config.get("timeout", 60)),
+            }
             if effective_max_tokens is not None:
                 settings["max_tokens"] = effective_max_tokens
 
@@ -632,49 +748,50 @@ class LLMManager:
             # pydantic_ai's run_sync() uses run_until_complete() which fails
             # if there's already a running event loop. In that case, we run
             # the LLM call in a separate thread.
-            if _is_event_loop_running():
-                # Running inside an async context (marimo/Jupyter) - use thread pool
-                def _run_in_thread() -> Any:
-                    return agent.run_sync(prompt, model_settings=settings)
-
-                future = _get_executor().submit(_run_in_thread)
-                result = future.result()
-            else:
-                # No event loop conflict - use run_sync directly
-                result = agent.run_sync(
-                    prompt,
-                    model_settings=settings,
-                )
-
+            started = time.perf_counter()
+            try:
+                result, failed_attempts = self._run_agent(agent, prompt, settings)
+            finally:
+                call["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
             self._rate_limiter.record_success()
 
-            # Extract usage
+            # Extract usage (pydantic-ai: result.usage() returns RunUsage)
             usage = None
-            if hasattr(result, "usage") and result.usage:
+            # pydantic-ai 2: result.usage is a property; 1.x: a method
+            usage_attr = getattr(result, "usage", None)
+            run_usage = usage_attr() if callable(usage_attr) else usage_attr
+            if run_usage is not None:
+                call["requests"] = run_usage.requests + failed_attempts
+                call["input_tokens"] = run_usage.input_tokens
+                call["output_tokens"] = run_usage.output_tokens
                 usage = {
-                    "prompt_tokens": getattr(result.usage, "request_tokens", 0) or 0,
-                    "completion_tokens": getattr(result.usage, "response_tokens", 0)
-                    or 0,
-                    "total_tokens": getattr(result.usage, "total_tokens", 0) or 0,
+                    "prompt_tokens": run_usage.input_tokens,
+                    "completion_tokens": run_usage.output_tokens,
+                    "total_tokens": run_usage.input_tokens + run_usage.output_tokens,
                 }
 
             # Handle response
             output: Any = result.output
-            if response_model:
-                # Explicit response_model: return the Pydantic instance
-                if write_cache:
-                    content = _serialize_output(output)
+
+            def _try_cache_write(content: str) -> None:
+                """Cache-write is best-effort; disk-full must not fail the call."""
+                try:
                     self.cache.set_response(
                         cache_key, content, prompt, self.model, usage
                     )
+                except Exception as cache_err:
+                    logger.warning("LLM cache write failed (non-fatal): %s", cache_err)
+
+            if response_model:
+                # Explicit response_model: return the Pydantic instance
+                if write_cache:
+                    _try_cache_write(_serialize_output(output))
                 return cast(T, output)
             elif using_schema_model:
                 # Schema-resolved model: serialize to JSON for backwards compatibility
                 content = _serialize_output(output)
                 if write_cache:
-                    self.cache.set_response(
-                        cache_key, content, prompt, self.model, usage
-                    )
+                    _try_cache_write(content)
                 return LiveResponse(
                     prompt=prompt,
                     model=self.model,
@@ -686,9 +803,7 @@ class LLMManager:
                 # Unstructured string output
                 content = str(result.output) if result.output else ""
                 if write_cache:
-                    self.cache.set_response(
-                        cache_key, content, prompt, self.model, usage
-                    )
+                    _try_cache_write(content)
                 return LiveResponse(
                     prompt=prompt,
                     model=self.model,
@@ -698,6 +813,7 @@ class LLMManager:
                 )
 
         except CircuitOpenError as e:
+            call["error_type"] = "CircuitOpenError"
             # Circuit breaker is open - fail fast without attempting request
             logger.warning(
                 "LLM query blocked by circuit breaker: %s",
@@ -711,6 +827,7 @@ class LLMManager:
             )
 
         except ValidationError as e:
+            call["error_type"] = "ValidationError"
             logger.warning("LLM query failed with ValidationError: %s", e)
             return FailedResponse(
                 prompt=prompt,
@@ -720,6 +837,7 @@ class LLMManager:
             )
 
         except Exception as e:
+            call["error_type"] = type(e).__name__
             # Classify the error and update rate limiter state
             category, retry_after = classify_exception(e)
 

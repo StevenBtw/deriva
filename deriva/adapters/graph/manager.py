@@ -243,35 +243,17 @@ class GraphManager:
                 flat_props["repository_name"] = repo_name
 
         try:
-            # Build SET clause for flat properties
-            set_clauses = ["n.label = $label", "n.properties_json = $properties_json"]
-            params = {
-                "id": node_id,
-                "label": node_label,
-                "properties_json": properties_json,
-            }
-
-            for key, value in flat_props.items():
-                param_name = f"prop_{key}"
-                set_clauses.append(f"n.{key} = ${param_name}")
-                params[param_name] = value
-
-            # Use two separate labels: namespace (Graph) + type (Directory)
-            # This allows queries like MATCH (d:Directory) to work
-            # while still having namespace isolation via the Graph label
-            query = f"""
-                MERGE (n:`{self.namespace}`:`{node_label}` {{id: $id}})
-                SET {", ".join(set_clauses)}
-                RETURN n.id as id
-            """
-
-            result = self.db.execute_write(query, params)
-
-            if result:
-                logger.debug(f"Added node: {node_id} ({node_label})")
-                return result[0]["id"]
-            else:
-                raise RuntimeError("Failed to add node")
+            # Two labels: namespace (Graph) + type (Directory), so MATCH (d:Directory)
+            # works with namespace isolation. Found through the id index; a MERGE
+            # would scan every node with the namespace label.
+            self.db.merge_node(
+                "id",
+                node_id,
+                [self.namespace, node_label],
+                {"label": node_label, "properties_json": properties_json, **flat_props},
+            )
+            logger.debug(f"Added node: {node_id} ({node_label})")
+            return node_id
 
         except Exception as e:
             logger.error(f"Failed to add node {node_id}: {e}")
@@ -310,34 +292,16 @@ class GraphManager:
         properties_json = json.dumps(properties) if properties else None
 
         try:
-            # Use relationship type as the label (e.g., Graph:CONTAINS)
+            # Relationship type as the label (e.g., Graph:CONTAINS); endpoints are
+            # found through the id index (a second MATCH clause would scan all nodes)
             edge_label = self.db.get_label(relationship)
-
-            query = f"""
-                MATCH (src) WHERE src.id = $src_id
-                MATCH (dst) WHERE dst.id = $dst_id
-                MERGE (src)-[r:`{edge_label}` {{id: $edge_id}}]->(dst)
-                SET r.properties_json = $properties_json
-                RETURN r.id as id
-            """
-
-            result = self.db.execute_write(
-                query,
-                {
-                    "src_id": src_id,
-                    "dst_id": dst_id,
-                    "edge_id": edge_id,
-                    "properties_json": properties_json,
-                },
-            )
-
-            if result:
-                logger.debug(f"Added edge: {src_id} -{relationship}-> {dst_id}")
-                return result[0]["id"]
-            else:
+            props = {"properties_json": properties_json} if properties_json else {}
+            if not self.db.merge_edge("id", src_id, dst_id, edge_label, edge_id, props):
                 raise RuntimeError(
                     f"Failed to add edge. Make sure nodes {src_id} and {dst_id} exist."
                 )
+            logger.debug(f"Added edge: {src_id} -{relationship}-> {dst_id}")
+            return edge_id
 
         except Exception as e:
             # Log at debug level - edge failures are expected when targets don't exist yet
@@ -425,7 +389,7 @@ class GraphManager:
         """Batch update multiple properties on multiple nodes.
 
         Used by enrichment to write algorithm results (pagerank, community, etc.)
-        to graph nodes efficiently in a single transaction.
+        to graph nodes via index lookups on the node id.
 
         Args:
             updates: Dict mapping node_id to property dict
@@ -444,27 +408,11 @@ class GraphManager:
             return 0
 
         try:
-            # Use UNWIND for efficient batch update
-            query = """
-                UNWIND $updates AS update
-                MATCH (n {id: update.node_id})
-                SET n += update.properties
-                RETURN count(n) as updated
-            """
-
-            # Convert to list format for UNWIND
-            update_list = [
-                {"node_id": node_id, "properties": props}
-                for node_id, props in updates.items()
-            ]
-
-            result = self.db.execute_write(query, {"updates": update_list})
-
-            if result:
-                count = result[0]["updated"]
-                logger.debug(f"Batch updated properties on {count} nodes")
-                return count
-            return 0
+            # Index lookups via the grafeo API: an UNWIND ... MATCH (n {id: ...}) write
+            # does not use the property index and scans all nodes per row.
+            count = self.db.set_node_properties("id", updates)
+            logger.debug(f"Batch updated properties on {count} nodes")
+            return count
 
         except Exception as e:
             logger.error(f"Failed to batch update properties: {e}")
@@ -689,6 +637,60 @@ class GraphManager:
 
         except Exception as e:
             logger.error("Failed to clear graph for repo '%s': %s", repo_name, e)
+            raise
+
+    def clear_nodes_by_labels(self, repo_name: str, labels: list[str]) -> int:
+        """Clear nodes with specific labels for a repository.
+
+        Deletes nodes matching ANY of the given labels where repository_name matches.
+        Edges connected to deleted nodes are also removed (DETACH DELETE).
+
+        Args:
+            repo_name: Repository name to clear
+            labels: Node labels to clear (e.g., ["BusinessConcept", "Technology"])
+
+        Returns:
+            Number of nodes deleted
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        if not labels:
+            return 0
+
+        try:
+            ns = self.namespace
+            # Nodes carry the namespace and their type as separate labels (see add_node)
+            label_conditions = " OR ".join(f"n:`{ns}`:`{label}`" for label in labels)
+
+            count_query = f"""
+                MATCH (n:`{ns}`)
+                WHERE n.repository_name = $repo_name AND ({label_conditions})
+                RETURN count(n) as cnt
+            """
+            count_result = self.db.execute_read(count_query, {"repo_name": repo_name})
+            count = count_result[0]["cnt"] if count_result else 0
+
+            if count > 0:
+                delete_query = f"""
+                    MATCH (n:`{ns}`)
+                    WHERE n.repository_name = $repo_name AND ({label_conditions})
+                    DETACH DELETE n
+                """
+                self.db.execute_write(delete_query, {"repo_name": repo_name})
+
+            logger.info(
+                "Cleared %d nodes with labels %s for repo '%s'",
+                count,
+                labels,
+                repo_name,
+            )
+            return count
+
+        except Exception as e:
+            logger.error(
+                "Failed to clear nodes by labels for repo '%s': %s", repo_name, e
+            )
             raise
 
     def has_extraction(self, repo_name: str) -> bool:

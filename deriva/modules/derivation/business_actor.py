@@ -114,14 +114,15 @@ class BusinessActorDerivation(HybridDerivation):
             rel_type="Assignment",
             description="Business actors perform business functions",
         ),
+    ]
+
+    INBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
             target_type="ApplicationInterface",
             rel_type="Serving",
-            description="Business actors use application interfaces",
+            description="Application interfaces serve business actors",
         ),
     ]
-
-    INBOUND_RULES: list[RelationshipRule] = []
 
     def filter_candidates(
         self,

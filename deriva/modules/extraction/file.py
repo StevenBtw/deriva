@@ -10,10 +10,16 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
-from .base import current_timestamp, generate_edge_id, validate_required_fields
+from .base import (
+    current_timestamp,
+    generate_edge_id,
+    is_excluded_path,
+    validate_required_fields,
+)
 
 
 def build_file_node(file_metadata: dict[str, Any], repo_name: str) -> dict[str, Any]:
@@ -152,12 +158,13 @@ def extract_files(
     repo_path: str,
     repo_name: str,
     classification_lookup: dict[str, dict[str, str]] | None = None,
+    excluded_dirs: Collection[str] = (".git",),
 ) -> dict[str, Any]:
     """
     Extract all files from a repository path.
 
     Scans the repository filesystem and builds File nodes for each file
-    found (excluding .git directories). Also creates CONTAINS relationships
+    found outside excluded directories (dependency and tool directories). Also creates CONTAINS relationships
     and optionally TESTS edges for test files.
 
     Args:
@@ -165,6 +172,7 @@ def extract_files(
         repo_name: Repository name for node ID generation
         classification_lookup: Optional dict mapping file paths to classification
             info (file_type, subtype). If provided, adds classification data to nodes.
+        excluded_dirs: Directory names whose contents are skipped (whole path segments)
 
     Returns:
         Dictionary with:
@@ -193,7 +201,9 @@ def extract_files(
 
         # First pass: collect all file paths for test matching
         for file_path in repo_path_obj.rglob("*"):
-            if file_path.is_dir() or ".git" in file_path.parts:
+            if file_path.is_dir() or is_excluded_path(
+                file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs
+            ):
                 continue
             rel_path = file_path.relative_to(repo_path_obj)
             file_paths_set.add(str(rel_path).replace("\\", "/"))
@@ -202,7 +212,9 @@ def extract_files(
         test_edges: list[dict[str, Any]] = []
 
         for file_path in repo_path_obj.rglob("*"):
-            if file_path.is_dir() or ".git" in file_path.parts:
+            if file_path.is_dir() or is_excluded_path(
+                file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs
+            ):
                 continue
 
             try:

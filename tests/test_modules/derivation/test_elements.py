@@ -163,7 +163,8 @@ class TestGenerateMethod:
                 {{
                     "identifier": "test_{element_type.lower()}_1",
                     "name": "Test {element_type}",
-                    "documentation": "Test documentation"
+                    "documentation": "Test documentation",
+                    "source": "node_1"
                 }}
             ]
         }}"""

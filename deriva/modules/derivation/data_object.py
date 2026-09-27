@@ -21,7 +21,6 @@ LLM role:
 - Write documentation describing the data purpose
 
 Relationships:
-- OUTBOUND: DataObject -> TechnologyService (Realization) - config realizes tech
 - INBOUND: TechnologyService -> DataObject (Access) - tech accesses data
 - INBOUND: ApplicationService -> DataObject (Access) - app services access data
 - INBOUND: BusinessProcess -> DataObject (Access) - processes access data
@@ -56,13 +55,7 @@ class DataObjectDerivation(HybridDerivation):
     MIN_PAGERANK = None  # Config files have low pagerank but are important for cross-layer connections
     USE_COMMUNITY_ROOTS = False  # Data files don't form communities
 
-    OUTBOUND_RULES = [
-        RelationshipRule(
-            target_type="TechnologyService",
-            rel_type="Realization",
-            description="Data objects (config/requirements) realize technology services",
-        ),
-    ]
+    OUTBOUND_RULES = []
 
     INBOUND_RULES = [
         RelationshipRule(

@@ -38,6 +38,7 @@ Analysis Usage:
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -49,12 +50,13 @@ from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 
 if TYPE_CHECKING:
     from deriva.common.types import BenchmarkProgressReporter, RunLoggerProtocol
+from deriva.adapters.grafeo import use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.llm import LLMManager
-from deriva.adapters.llm.cache import CacheManager
 from deriva.adapters.llm.manager import load_benchmark_models
 from deriva.adapters.llm.models import BenchmarkModelConfig
-from deriva.common.ocel import OCELLog, create_run_id, hash_content
+from deriva.common.ocel import OCELLog, create_run_id, hash_content, load_benchmark_ocel
+from deriva.common.timing import query_stats, summarize_run_events
 from deriva.services import config as config_service
 from deriva.services import derivation, extraction
 
@@ -80,12 +82,14 @@ class OCELRunLogger:
         session_id: str,
         model: str,
         repo: str,
+        verbose: bool = False,
     ):
         self.ocel_log = ocel_log
         self.run_id = run_id
         self.session_id = session_id
         self.model = model
         self.repo = repo
+        self.verbose = verbose  # print one line per completed step
         self._current_phase: str | None = None
         self._current_config: str | None = None  # Current config being executed
         self._step_sequence: int = 0
@@ -164,6 +168,7 @@ class OCELRunLogger:
         if relationships_created:
             objects_dict["Relationship"] = relationships_created
 
+        _stats = stats or {}
         self.ocel_log.create_event(
             activity=activity,
             objects=objects_dict,
@@ -172,9 +177,26 @@ class OCELRunLogger:
             objects_created=len(objects_created),
             edges_created=len(edges_created) if edges_created else 0,
             relationships_created=len(relationships_created) if relationships_created else 0,
-            stats=stats or {},
+            duration_seconds=_stats.get("duration_seconds", 0),
+            stats=_stats,
             errors=errors or [],
         )
+
+
+def _print_timings(timings: dict[str, Any]) -> None:
+    """Print the slowest steps, LLM totals and slowest graph queries per run."""
+    print("TIMINGS (full detail in timings.json)")
+    for item in timings["extraction"]:
+        print(f"  extraction {item['repository']}: {item['seconds']}s ({'cached' if item['cached'] else 'extracted'})")
+    for run_id, run in timings["runs"].items():
+        llm = run["llm"]
+        print(f"  {run_id}: {run['run_seconds']}s")
+        for step in run["steps"][:5]:
+            print(f"    {step['seconds']:>8}s  {step['step']}")
+        if llm.get("calls"):
+            print(f"    LLM: {llm['calls']} calls ({llm['cache_hits']} cached), {llm['latency_seconds']}s latency, {llm['wait_seconds']}s rate-limit wait, {llm['errors']} errors")
+    for q in timings["top_queries"][:5]:
+        print(f"  query {q['total_ms'] / 1000:.1f}s x{q['count']}: {q['query'][:100]}")
 
 
 class OCELStepContext:
@@ -192,6 +214,8 @@ class OCELStepContext:
         self._created_objects: list[str] = []
         self._created_edges: list[str] = []  # Edge IDs for extraction
         self._created_relationships: list[str] = []  # Relationship IDs for derivation
+        # Started here, not in __enter__: pipelines call step_start() without `with`.
+        self._start_time = time.perf_counter()
 
     def __enter__(self) -> OCELStepContext:
         return self
@@ -214,9 +238,14 @@ class OCELStepContext:
         """Track a created relationship ID for OCEL logging (derivation)."""
         self._created_relationships.append(relationship_id)
 
+    def _elapsed_seconds(self) -> float:
+        return round(time.perf_counter() - self._start_time, 2)
+
     def complete(self, message: str = "") -> None:
         """Mark step as completed and log to OCEL."""
         self._completed = True
+        if self.logger.verbose:
+            print(f"    {self.step}: {self._elapsed_seconds()}s, {self.items_created} created")
         config_type = "extraction" if self.logger._current_phase == "extraction" else "derivation"
         self.logger.log_config_result(
             config_type=config_type,
@@ -224,13 +253,15 @@ class OCELStepContext:
             objects_created=self._created_objects,
             edges_created=self._created_edges if self._created_edges else None,
             relationships_created=self._created_relationships if self._created_relationships else None,
-            stats={"items_created": self.items_created, "items_processed": self.items_processed},
+            stats={"items_created": self.items_created, "items_processed": self.items_processed, "duration_seconds": self._elapsed_seconds()},
             errors=[],
         )
 
     def error(self, error: str, message: str = "") -> None:
         """Mark step as errored."""
         self._completed = True
+        if self.logger.verbose:
+            print(f"    {self.step}: {self._elapsed_seconds()}s, ERROR {error[:120]}")
         config_type = "extraction" if self.logger._current_phase == "extraction" else "derivation"
         self.logger.log_config_result(
             config_type=config_type,
@@ -238,7 +269,7 @@ class OCELStepContext:
             objects_created=self._created_objects,
             edges_created=self._created_edges if self._created_edges else None,
             relationships_created=self._created_relationships if self._created_relationships else None,
-            stats={"items_created": self.items_created, "items_failed": self.items_failed},
+            stats={"items_created": self.items_created, "items_failed": self.items_failed, "duration_seconds": self._elapsed_seconds()},
             errors=[error],
         )
 
@@ -262,6 +293,9 @@ class BenchmarkConfig:
     # Enrichment cache settings (mirrors LLM cache patterns)
     use_enrichment_cache: bool = True  # Global enrichment cache setting
     nocache_enrichment_configs: list[str] = field(default_factory=list)  # Configs to skip enrichment cache
+    # Extraction cache settings
+    no_cache_extraction: bool = False  # Force full re-extraction (ignore fingerprint)
+    no_cache_extraction_llm: bool = False  # Re-run LLM extraction steps only (keep structural/AST)
 
     def total_runs(self) -> int:
         """Calculate total number of runs in the matrix.
@@ -423,16 +457,57 @@ class BenchmarkOrchestrator:
 
         return errors
 
-    def _ensure_extraction(self, verbose: bool = False) -> list[str]:
+    def _make_extraction_llm_fn(self, run_logger: OCELRunLogger) -> Any:
+        """LLM query function for extraction steps, logged like derivation calls."""
+        model_config = self._model_configs[self.config.models[0]]
+        # --no-cache must reach extraction too, or extraction variance is never measured
+        llm_manager = LLMManager.from_config(model_config, nocache=not self.config.use_cache)
+        # Configs listed in nocache_configs always get a live call
+        nocache_manager = LLMManager.from_config(model_config, nocache=True) if self.config.use_cache else llm_manager
+        return self._create_logging_query_fn(llm_manager, nocache_manager, run_logger)
+
+    def _extract_repo(
+        self,
+        repo_name: str,
+        config_versions: dict[str, dict[str, int]] | None,
+        extraction_methods: list[str] | None = None,
+        verbose: bool = False,
+    ) -> dict[str, Any]:
+        """Run extraction for one repo, logging its steps and LLM calls to the event log."""
+        model = self._model_configs[self.config.models[0]].model
+        run_logger = OCELRunLogger(
+            ocel_log=self.ocel_log,
+            run_id=f"{self.session_id}:extraction:{repo_name}",
+            session_id=self.session_id or "",
+            model=model,
+            repo=repo_name,
+            verbose=verbose,
+        )
+        previous_run_id, self._current_run_id = self._current_run_id, run_logger.run_id
+        previous_model, self._current_model = self._current_model, self.config.models[0]
+        try:
+            return extraction.run_extraction(
+                engine=self.engine,
+                graph_manager=self.graph_manager,
+                llm_query_fn=self._make_extraction_llm_fn(run_logger),
+                repo_name=repo_name,
+                verbose=False,
+                run_logger=cast("RunLoggerProtocol", run_logger),
+                config_versions=config_versions,
+                model=model,
+                extraction_methods=extraction_methods,
+            )
+        finally:
+            self._current_run_id = previous_run_id
+            self._current_model = previous_model
+
+    def _ensure_extraction(self, verbose: bool = False, repositories: list[str] | None = None) -> list[str]:
         """Ensure extraction data exists for all benchmark repositories.
 
-        For each repository, checks the extraction fingerprint (hash of
-        extraction config versions + repo commit). If the fingerprint matches,
-        extraction is skipped. Otherwise, clears that repo's graph data and
-        re-extracts.
-
-        This runs once before the benchmark loop so that derivation iterations
-        don't pay the extraction cost repeatedly.
+        Supports three cache modes:
+        - Default: fingerprint-based caching (skip if configs+repo unchanged)
+        - no_cache_extraction: force full re-extraction
+        - no_cache_extraction_llm: keep structural/AST data, re-run LLM steps only
 
         Args:
             verbose: Print progress to stdout
@@ -446,69 +521,60 @@ class BenchmarkOrchestrator:
         if verbose:
             print("\n--- Ensuring extraction data ---")
 
-        for repo_name in self.config.repositories:
+        for repo_name in repositories if repositories is not None else self.config.repositories:
+            start = time.perf_counter()
+            result: dict[str, Any] | None = None
+            mode = "fingerprint"
+            failure: str | None = None
             try:
-                # Compute expected fingerprint
                 current_fp = extraction.compute_extraction_fingerprint(self.engine, repo_name, config_versions)
-
-                # Check if extraction is current
                 stored_fp = self.graph_manager.get_extraction_fingerprint(repo_name)
+                fp_match = stored_fp == current_fp
 
-                if stored_fp == current_fp:
+                if self.config.no_cache_extraction:
+                    # Mode: Force full re-extraction
+                    mode = "forced"
+                    if verbose:
+                        print(f"  {repo_name}: extracting (forced by --no-cache-extraction)")
+                    self.graph_manager.clear_graph_for_repo(repo_name)
+                    result = self._extract_repo(repo_name, config_versions, verbose=verbose)
+
+                elif self.config.no_cache_extraction_llm:
+                    # Mode: Keep structural/AST, re-run LLM extraction only
+                    mode = "llm_only"
+                    has_data = self.graph_manager.has_extraction(repo_name)
+
+                    if has_data:
+                        # Structural/AST data exists; clear only LLM nodes and re-run LLM steps
+                        # Clear exactly what the LLM steps re-create
+                        llm_labels = extraction.llm_extraction_labels(self.engine, config_versions)
+                        cleared = self.graph_manager.clear_nodes_by_labels(repo_name, llm_labels)
+                        if verbose:
+                            print(f"  {repo_name}: cleared {cleared} LLM nodes, re-running LLM extraction steps")
+                        result = self._extract_repo(repo_name, config_versions, extraction_methods=["llm"], verbose=verbose)
+                    else:
+                        # No data at all; do full extraction first
+                        if verbose:
+                            print(f"  {repo_name}: no cached data, running full extraction")
+                        result = self._extract_repo(repo_name, config_versions, verbose=verbose)
+
+                elif fp_match:
+                    # Default mode: fingerprint-based caching
                     if verbose:
                         print(f"  {repo_name}: extraction cached (fingerprint match)")
-                    continue
 
-                # Need to (re-)extract
-                if stored_fp:
-                    reason = "fingerprint mismatch (configs or repo changed)"
                 else:
-                    reason = "no cached extraction"
+                    reason = "fingerprint mismatch (configs or repo changed)" if stored_fp else "no cached extraction"
+                    if verbose:
+                        print(f"  {repo_name}: extracting ({reason})")
+                    self.graph_manager.clear_graph_for_repo(repo_name)
+                    result = self._extract_repo(repo_name, config_versions, verbose=verbose)
 
-                if verbose:
-                    print(f"  {repo_name}: extracting ({reason})")
-
-                # Clear only this repo's data, not the whole graph
-                self.graph_manager.clear_graph_for_repo(repo_name)
-
-                # Use first model's LLM for extraction (extraction is model-independent
-                # for deterministic steps; LLM steps use cache anyway)
-                first_model = self.config.models[0]
-                model_config = self._model_configs[first_model]
-                llm_manager = LLMManager.from_config(model_config, nocache=False)
-
-                def llm_query_fn(
-                    prompt: str,
-                    schema: dict | None = None,
-                    temperature: float | None = None,
-                    max_tokens: int | None = None,
-                    system_prompt: str | None = None,
-                    response_model: type | None = None,
-                ) -> Any:
-                    return llm_manager.query(  # type: ignore[call-overload]
-                        prompt,
-                        schema=schema,
-                        response_model=response_model,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        system_prompt=system_prompt,
-                    )
-
-                result = extraction.run_extraction(
-                    engine=self.engine,
-                    graph_manager=self.graph_manager,
-                    llm_query_fn=llm_query_fn,
-                    repo_name=repo_name,
-                    verbose=False,
-                    config_versions=config_versions,
-                    model=model_config.model,
-                )
-
-                if result.get("success"):
+                if result is not None and result.get("success"):
                     if verbose:
                         s = result.get("stats", {})
                         print(f"  {repo_name}: extracted {s.get('nodes_created', 0)} nodes, {s.get('edges_created', 0)} edges")
-                else:
+                elif result is not None:
                     repo_errors = result.get("errors", [])
                     errors.extend(repo_errors)
                     if verbose:
@@ -516,9 +582,23 @@ class BenchmarkOrchestrator:
 
             except Exception as e:
                 error_msg = f"Extraction failed for {repo_name}: {e}"
+                failure = error_msg
                 errors.append(error_msg)
                 if verbose:
                     print(f"  {repo_name}: ERROR: {e}")
+
+            stats = (result or {}).get("stats", {})
+            self.ocel_log.create_event(
+                activity="EnsureExtraction",
+                objects={"BenchmarkSession": [self.session_id or ""], "Repository": [repo_name]},
+                repository=repo_name,
+                mode=mode,
+                cached=result is None and failure is None,
+                duration_seconds=round(time.perf_counter() - start, 2),
+                nodes_created=stats.get("nodes_created", 0),
+                edges_created=stats.get("edges_created", 0),
+                errors=(result or {}).get("errors", []) + ([failure] if failure else []),
+            )
 
         if verbose:
             print("--- Extraction phase complete ---\n")
@@ -542,6 +622,7 @@ class BenchmarkOrchestrator:
         """
         self.session_start = datetime.now()
         self.session_id = f"bench_{self.session_start.strftime('%Y%m%d_%H%M%S')}"
+        query_stats.reset()
 
         errors: list[str] = []
         runs_completed = 0
@@ -602,13 +683,13 @@ class BenchmarkOrchestrator:
             print(f"Total runs: {self.config.total_runs()}")
             print(f"{'=' * 60}\n")
 
-        # Pre-extract: ensure extraction data exists for all repos
-        # This runs extraction once per repo (or skips if cached),
-        # so the benchmark loop only needs to re-derive.
-        if "extraction" in self.config.stages:
-            extraction_errors = self._ensure_extraction(verbose=verbose)
-            if extraction_errors:
-                errors.extend(extraction_errors)
+        # Each repo (per-repo mode) or the repo set (combined mode) has its own graph
+        # database. Extraction runs once per database (or is skipped if cached), so
+        # the benchmark loop only needs to re-derive.
+        if not self.config.per_repo:
+            use_database(self.config.get_combined_repo_name())
+            if "extraction" in self.config.stages:
+                errors.extend(self._ensure_extraction(verbose=verbose, repositories=self.config.repositories))
 
         run_number = 0
         total_runs = self.config.total_runs()
@@ -617,6 +698,9 @@ class BenchmarkOrchestrator:
             # Per-repo mode: each repo gets its own benchmark runs
             # Iterate: repo → iteration → model
             for repo_name in self.config.repositories:
+                use_database(repo_name)
+                if "extraction" in self.config.stages:
+                    errors.extend(self._ensure_extraction(verbose=verbose, repositories=[repo_name]))
                 for iteration in range(1, self.config.runs_per_combination + 1):
                     for model_name in self.config.models:
                         run_number += 1
@@ -760,6 +844,7 @@ class BenchmarkOrchestrator:
             print(f"Duration: {duration:.1f}s")
             print(f"OCEL log: {ocel_path}")
             print(f"{'=' * 60}\n")
+            _print_timings(self._timings())
 
         return BenchmarkResult(
             session_id=self.session_id,
@@ -850,6 +935,7 @@ class BenchmarkOrchestrator:
                 session_id=session_id,
                 model=model_name,
                 repo=combined_repo_name,
+                verbose=verbose,
             )
 
             # Build bench_hash if enabled
@@ -1002,17 +1088,6 @@ class BenchmarkOrchestrator:
             # Select appropriate LLM manager
             llm = nocache_llm if skip_cache else cached_llm
 
-            # Generate cache key for tracking (uses same logic as CacheManager)
-            model_schema_fn = getattr(response_model, "model_json_schema", None)
-            effective_schema = model_schema_fn() if model_schema_fn else schema
-            cache_key = CacheManager.generate_cache_key(
-                prompt=prompt,
-                model=llm.model,
-                schema=effective_schema,
-                bench_hash=bench_hash,
-            )
-            used_cache_keys.append(cache_key)
-
             # Call the actual LLM with optional parameters
             # Pass bench_hash for per-run cache isolation if enabled
             kwargs: dict[str, Any] = {
@@ -1026,10 +1101,12 @@ class BenchmarkOrchestrator:
                 kwargs["response_model"] = response_model
             response = llm.query(prompt, **kwargs)
 
-            # Log the query as an OCEL event (metadata only)
-            usage = getattr(response, "usage", None) or {}
+            # Per-call metrics recorded by the manager (cache key, latency, waits, tokens)
+            call = llm.last_call or {}
+            cache_key = call.get("cache_key")
+            if cache_key:
+                used_cache_keys.append(cache_key)
             content = getattr(response, "content", "")
-            cache_hit = getattr(response, "response_type", None) == "cached"
 
             current_run_id = self._current_run_id or ""
             current_model = self._current_model or ""
@@ -1042,11 +1119,15 @@ class BenchmarkOrchestrator:
                     "Config": [current_config] if current_config else [],
                 },
                 config_id=current_config,
-                cache_key=cache_key,  # NEW: For audit trail / cache file lookup
-                tokens_in=usage.get("prompt_tokens", 0),
-                tokens_out=usage.get("completion_tokens", 0),
-                cache_hit=cache_hit,
+                cache_key=cache_key,
+                tokens_in=call.get("input_tokens", 0),
+                tokens_out=call.get("output_tokens", 0),
+                cache_hit=call.get("cache_hit", False),
                 cache_skipped=skip_cache,
+                latency_ms=call.get("latency_ms", 0.0),
+                wait_ms=call.get("wait_ms", 0.0),
+                requests=call.get("requests", 0),
+                error_type=call.get("error_type"),
                 response_hash=hash_content(content) if content else None,
             )
 
@@ -1147,6 +1228,31 @@ class BenchmarkOrchestrator:
                 output_path=str(output_path),
                 model_name=model_display_name,
             )
+
+            # JSON snapshot for consistency analysis: the XML carries no properties,
+            # but identity by source node and relationship provenance need them
+            snapshot = {
+                "elements": [{"identifier": e.identifier, "type": e.element_type, "name": e.name, "source": (e.properties or {}).get("source")} for e in elements],
+                "relationships": [
+                    {
+                        "source": r.source,
+                        "target": r.target,
+                        "type": r.relationship_type,
+                        "derived_from": (r.properties or {}).get("derived_from"),
+                        "confidence": (r.properties or {}).get("confidence"),
+                    }
+                    for r in relationships
+                ],
+                # LLM-created graph nodes, so extraction consistency can be measured on its own
+                "graph": {
+                    "concepts": sorted(
+                        [row["id"], sorted(row.get("types") or [])]
+                        for row in self.graph_manager.query("MATCH (n:Graph:BusinessConcept) RETURN n.id AS id, n.conceptTypes AS types")
+                    ),
+                    "technologies": sorted(row["id"] for row in self.graph_manager.query("MATCH (n:Graph:Technology) RETURN n.id AS id")),
+                },
+            }
+            output_path.with_suffix(".json").write_text(json.dumps(snapshot, indent=1), encoding="utf-8")
 
             return str(output_path)
 
@@ -1282,7 +1388,23 @@ class BenchmarkOrchestrator:
         with open(output_dir / "session_metadata.json", "w") as f:
             json.dump(summary, f, indent=2)
 
+        with open(output_dir / "timings.json", "w") as f:
+            json.dump(self._timings(), f, indent=2)
+
         return str(ocel_json_path)
+
+    def _timings(self) -> dict[str, Any]:
+        """Timing summary: extraction per repo, per-run steps and LLM totals, slowest queries."""
+        by_run: dict[str, list[Any]] = {}
+        for event in self.ocel_log.events:
+            for run_id in event.objects.get("BenchmarkRun", []):
+                by_run.setdefault(run_id, []).append(event)
+        return {
+            "session_id": self.session_id,
+            "extraction": summarize_run_events([e for e in self.ocel_log.events if e.activity == "EnsureExtraction"])["extraction"],
+            "runs": {run_id: summarize_run_events(events) for run_id, events in by_run.items()},
+            "top_queries": query_stats.top(15),
+        }
 
     def _copy_used_cache_entries(
         self,
@@ -1711,18 +1833,7 @@ class BenchmarkAnalyzer:
 
     def _load_ocel(self) -> OCELLog:
         """Load OCEL log from file."""
-        ocel_path = Path("workspace/benchmarks") / self.session_id / "events.ocel.json"
-
-        if ocel_path.exists():
-            return OCELLog.from_json(ocel_path)
-
-        # Try JSONL format
-        jsonl_path = Path("workspace/benchmarks") / self.session_id / "events.jsonl"
-        if jsonl_path.exists():
-            return OCELLog.from_jsonl(jsonl_path)
-
-        # Return empty log if files not found
-        return OCELLog()
+        return load_benchmark_ocel("workspace/benchmarks", self.session_id)
 
     # =========================================================================
     # INTRA-MODEL CONSISTENCY

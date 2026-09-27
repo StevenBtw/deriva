@@ -145,20 +145,12 @@ class ArchimateManager:
                 element.properties.get("source") if element.properties else None
             )
 
-            query = f"""
-                MERGE (e:`{self.namespace}`:`{element.element_type}` {{identifier: $identifier}})
-                SET e.name = $name,
-                    e.documentation = $documentation,
-                    e.properties_json = $properties_json,
-                    e.enabled = $enabled,
-                    e.source_identifier = $source_identifier
-                RETURN e.identifier as identifier
-            """
-
-            result = self.db.execute_write(
-                query,
+            # Found through the identifier index; a MERGE would scan the namespace label
+            self.db.merge_node(
+                "identifier",
+                element.identifier,
+                [self.namespace, element.element_type],
                 {
-                    "identifier": element.identifier,
                     "name": element.name,
                     "documentation": element.documentation,
                     "properties_json": properties_json,
@@ -166,14 +158,10 @@ class ArchimateManager:
                     "source_identifier": source_identifier,
                 },
             )
-
-            if result:
-                logger.debug(
-                    f"Added element: {element.identifier} ({element.element_type})"
-                )
-                return result[0]["identifier"]
-            else:
-                raise RuntimeError("Failed to add element")
+            logger.debug(
+                f"Added element: {element.identifier} ({element.element_type})"
+            )
+            return element.identifier
 
         except Exception as e:
             logger.error(f"Failed to add element {element.identifier}: {e}")
@@ -565,6 +553,26 @@ class ArchimateManager:
             logger.error(f"Failed to disable element {identifier}: {e}")
             raise
 
+    def enable_element(self, identifier: str) -> bool:
+        """Re-enable a disabled element and clear its disabled reason.
+
+        Returns:
+            True if the element was enabled, False if not found
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        result = self.db.execute_write(
+            f"""
+                MATCH (e:`{self.namespace}` {{identifier: $identifier}})
+                SET e.enabled = true,
+                    e.disabled_reason = null
+                RETURN e.identifier as identifier
+            """,
+            {"identifier": identifier},
+        )
+        return bool(result)
+
     def disable_elements(
         self, identifiers: list[str], reason: str | None = None
     ) -> int:
@@ -633,6 +641,28 @@ class ArchimateManager:
         except Exception as e:
             logger.error(f"Failed to delete relationship {identifier}: {e}")
             raise
+
+    def redirect_relationship(
+        self, identifier: str, new_source: str, new_target: str
+    ) -> str:
+        """Replace a relationship by one with new endpoints; returns the new identifier."""
+        old = next(
+            (r for r in self.get_relationships() if r.identifier == identifier), None
+        )
+        if old is None:
+            raise ValueError(f"Relationship not found: {identifier}")
+        new_id = self.add_relationship(
+            Relationship(
+                source=new_source,
+                target=new_target,
+                relationship_type=old.relationship_type,
+                name=old.name,
+                documentation=old.documentation,
+                properties={**old.properties, "redirected_from": identifier},
+            )
+        )
+        self.delete_relationship(identifier)
+        return new_id
 
     def delete_relationships(self, identifiers: list[str]) -> int:
         """Delete multiple relationships by identifier.

@@ -21,28 +21,36 @@ Refine Step Name: "graph_relationships"
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from deriva.adapters.archimate.models import (
     RELATIONSHIP_TYPES,
     Relationship,
+    validate_relationship_rule,
 )
 
 from .base import RefineResult, register_refine_step
 
 if TYPE_CHECKING:
     from deriva.adapters.archimate import ArchimateManager
+    from deriva.adapters.archimate.models import Element
     from deriva.adapters.graph import GraphManager
 
 logger = logging.getLogger(__name__)
 
 # Graph edge type → ArchiMate relationship type mapping
 # Based on ArchiMate semantics and graph_ideas.md research
+#
+# NOTE: CONTAINS and DECLARES are excluded. These edges exist between
+# File->File, Directory->Directory, and TypeDefinition->TypeDefinition
+# (10,000+ edges). Mapping them all to Composition creates an explosion
+# of 100+ relationships. Composition between ArchiMate elements is
+# handled by the per-element-type relationship rules instead.
 EDGE_TO_RELATIONSHIP: dict[str, str] = {
-    "CONTAINS": "Composition",  # Structural containment
-    "DECLARES": "Composition",  # Type declares member
     "IMPLEMENTS": "Realization",  # Interface realization
     "USES": "Serving",  # Uses external dependency
     "CALLS": "Flow",  # Call between behaviors
@@ -77,6 +85,107 @@ def get_valid_element_combos(rel_type: str) -> dict[str, set[str] | None]:
         "sources": rel_def.allowed_sources if rel_def.allowed_sources else None,
         "targets": rel_def.allowed_targets if rel_def.allowed_targets else None,
     }
+
+
+def _graph_edges(
+    graph_manager: GraphManager, graph_ns: str, edge_type: str
+) -> list[tuple[str, str]]:
+    """Distinct (source id, target id) pairs of an edge type between active nodes."""
+    rows = graph_manager.query(
+        f"MATCH (a)-[:`{graph_ns}:{edge_type}`]->(b) "
+        "WHERE a.active = true AND b.active = true "
+        "RETURN a.id AS source, b.id AS target"
+    )
+    return sorted(
+        {
+            (r["source"], r["target"])
+            for r in rows
+            if r.get("source") and r.get("target")
+        }
+    )
+
+
+def find_relationship_candidates(
+    edges: list[tuple[str, str]],
+    elements: list[Element],
+    existing: set[tuple[str, str, str]],
+    rel_type: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Element pairs whose source graph nodes are connected by one of ``edges``.
+
+    Elements are linked to graph nodes by ``properties["source"]``. Pairs that
+    already have a relationship of ``rel_type`` are skipped, as are element types
+    the metamodel does not allow for ``rel_type``. If no element is linked this
+    way, falls back to elements whose properties mention the graph node id and
+    skips pairs that already have any relationship.
+    """
+    valid_combos = get_valid_element_combos(rel_type)
+    valid_sources = valid_combos.get("sources")
+    valid_targets = valid_combos.get("targets")
+
+    def allowed(src: Element, tgt: Element) -> bool:
+        # Each type may be a valid source and target on its own while the pair is
+        # not; check the exact pair so rejected pairs never take a slot under limit
+        return (
+            src.identifier != tgt.identifier
+            and (not valid_sources or src.element_type in valid_sources)
+            and (not valid_targets or tgt.element_type in valid_targets)
+            and (
+                rel_type not in RELATIONSHIP_TYPES
+                or validate_relationship_rule(
+                    src.element_type, rel_type, tgt.element_type
+                )[0]
+            )
+        )
+
+    def row(src: Element, tgt: Element) -> dict[str, Any]:
+        return {
+            "source_id": src.identifier,
+            "source_name": src.name,
+            "target_id": tgt.identifier,
+            "target_name": tgt.name,
+        }
+
+    by_source: dict[str, list[Element]] = defaultdict(list)
+    for e in elements:
+        if e.properties.get("source"):
+            by_source[e.properties["source"]].append(e)
+
+    rows: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for graph_source, graph_target in edges:
+        for src in by_source.get(graph_source, []):
+            for tgt in by_source.get(graph_target, []):
+                if (
+                    allowed(src, tgt)
+                    and (src.identifier, tgt.identifier, rel_type) not in existing
+                ):
+                    rows[
+                        (graph_source, graph_target, src.identifier, tgt.identifier)
+                    ] = {
+                        **row(src, tgt),
+                        "graph_source": graph_source,
+                        "graph_target": graph_target,
+                    }
+    if rows:
+        return [rows[k] for k in sorted(rows)][:limit]
+
+    # Fallback: elements whose serialized properties mention the graph node id
+    serialized = [(e, json.dumps(e.properties)) for e in elements if e.properties]
+    mentions: dict[str, list[Element]] = {}
+    for node_id in sorted({n for pair in edges for n in pair}):
+        mentions[node_id] = [e for e, text in serialized if node_id in text]
+    related = {(source, target) for source, target, _ in existing}
+    pairs: dict[tuple[str, str], dict[str, Any]] = {}
+    for graph_source, graph_target in edges:
+        for src in mentions[graph_source]:
+            for tgt in mentions[graph_target]:
+                if (
+                    allowed(src, tgt)
+                    and (src.identifier, tgt.identifier) not in related
+                ):
+                    pairs[(src.identifier, tgt.identifier)] = row(src, tgt)
+    return [pairs[k] for k in sorted(pairs)][:limit]
 
 
 @register_refine_step("graph_relationships")
@@ -138,8 +247,14 @@ class GraphRelationshipsStep:
             return result
 
         try:
-            model_ns = archimate_manager.namespace
             graph_ns = graph_manager.namespace
+            # Read the model once; candidates are joined in Python (a Cypher join of
+            # graph edges x model element pairs does not use indexes and is very slow).
+            elements = archimate_manager.get_elements(enabled_only=True)
+            existing = {
+                (r.source, r.target, r.relationship_type)
+                for r in archimate_manager.get_relationships()
+            }
 
             total_created = 0
 
@@ -151,13 +266,11 @@ class GraphRelationshipsStep:
                 rel_type = EDGE_TO_RELATIONSHIP[edge_type]
 
                 # Find graph edges and corresponding model elements
-                candidates = self._find_relationship_candidates(
-                    archimate_manager,
-                    graph_manager,
-                    edge_type,
+                candidates = find_relationship_candidates(
+                    _graph_edges(graph_manager, graph_ns, edge_type),
+                    elements,
+                    existing,
                     rel_type,
-                    model_ns,
-                    graph_ns,
                     max_relationships - total_created,
                 )
 
@@ -197,6 +310,13 @@ class GraphRelationshipsStep:
                             edge_type,
                         )
                         if created:
+                            existing.add(
+                                (
+                                    candidate["source_id"],
+                                    candidate["target_id"],
+                                    rel_type,
+                                )
+                            )
                             result.relationships_created += 1
                             total_created += 1
                             result.details.append(
@@ -223,211 +343,6 @@ class GraphRelationshipsStep:
             result.errors.append(str(e))
 
         return result
-
-    def _find_relationship_candidates(
-        self,
-        archimate_manager: ArchimateManager,
-        graph_manager: GraphManager,
-        edge_type: str,
-        rel_type: str,
-        model_ns: str,
-        graph_ns: str,
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        """Find graph edges that should become ArchiMate relationships.
-
-        Queries for graph edges where:
-        1. Both source and target nodes have a corresponding Model element
-           (tracked via source_identifier property)
-        2. No relationship of this type already exists between the elements
-        3. Element types are valid for the relationship type
-
-        Args:
-            archimate_manager: ArchiMate manager
-            graph_manager: Graph manager
-            edge_type: Graph edge type (e.g., "CONTAINS")
-            rel_type: ArchiMate relationship type (e.g., "Composition")
-            model_ns: Model namespace
-            graph_ns: Graph namespace
-            limit: Maximum candidates to return
-
-        Returns:
-            List of candidate dicts with source_id, target_id, names
-        """
-        # Build element type filter using canonical metamodel from models.py
-        valid_combos = get_valid_element_combos(rel_type)
-        valid_sources = valid_combos.get("sources")
-        valid_targets = valid_combos.get("targets")
-
-        source_filter = ""
-        target_filter = ""
-        circular_filter = ""
-
-        if valid_sources:
-            source_types = ", ".join(f"'{t}'" for t in valid_sources)
-            source_filter = f"""
-                AND any(lbl IN labels(model_src) WHERE lbl IN [{source_types}])
-            """
-
-        if valid_targets:
-            target_types = ", ".join(f"'{t}'" for t in valid_targets)
-            target_filter = f"""
-                AND any(lbl IN labels(model_tgt) WHERE lbl IN [{target_types}])
-            """
-
-        # For Composition relationships, prevent circular containment (A→B AND B→A)
-        if rel_type == "Composition":
-            circular_filter = f"""
-              // Prevent circular Composition: skip if reverse relationship exists
-              AND NOT EXISTS {{
-                  (model_tgt)-[reverse:`{model_ns}:Composition`]->(model_src)
-              }}
-            """
-
-        # Query: find graph edges → model elements without existing relationships
-        # Uses source_identifier property to link graph nodes to model elements
-        query = f"""
-            // Find graph edges of the specified type
-            MATCH (graph_src)-[edge:`{graph_ns}:{edge_type}`]->(graph_tgt)
-            WHERE graph_src.active = true AND graph_tgt.active = true
-
-            // Find model elements that were derived from these graph nodes
-            // Elements store their source graph node ID in source_identifier
-            MATCH (model_src:{model_ns}), (model_tgt:{model_ns})
-            WHERE model_src.enabled = true AND model_tgt.enabled = true
-              AND model_src.source_identifier = graph_src.id
-              AND model_tgt.source_identifier = graph_tgt.id
-              AND model_src.identifier <> model_tgt.identifier  // Prevent self-loops
-              {source_filter}
-              {target_filter}
-              // Exclude if relationship already exists
-              AND NOT EXISTS {{
-                  (model_src)-[existing]->(model_tgt)
-                  WHERE type(existing) = '{model_ns}:{rel_type}'
-              }}
-              {circular_filter}
-
-            RETURN DISTINCT
-                model_src.identifier AS source_id,
-                model_src.name AS source_name,
-                model_tgt.identifier AS target_id,
-                model_tgt.name AS target_name,
-                graph_src.id AS graph_source,
-                graph_tgt.id AS graph_target
-            LIMIT {limit}
-        """
-
-        try:
-            results = archimate_manager.query(query)
-            if results:
-                return results
-            # Primary query returned no results, try fallback
-            logger.debug(
-                "Primary query for %s returned no results, trying fallback",
-                edge_type,
-            )
-            return self._find_candidates_fallback(
-                archimate_manager,
-                graph_manager,
-                edge_type,
-                rel_type,
-                model_ns,
-                graph_ns,
-                limit,
-            )
-        except Exception as e:
-            logger.warning("Query for %s edges failed: %s", edge_type, e)
-            # Try fallback query using properties_json CONTAINS
-            return self._find_candidates_fallback(
-                archimate_manager,
-                graph_manager,
-                edge_type,
-                rel_type,
-                model_ns,
-                graph_ns,
-                limit,
-            )
-
-    def _find_candidates_fallback(
-        self,
-        archimate_manager: ArchimateManager,
-        graph_manager: GraphManager,
-        edge_type: str,
-        rel_type: str,
-        model_ns: str,
-        graph_ns: str,
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        """Fallback candidate finding using properties_json.
-
-        Used when source_identifier property is not available.
-        Searches for graph node IDs in the properties_json field.
-        """
-        # Build element type filters using canonical metamodel from models.py
-        valid_combos = get_valid_element_combos(rel_type)
-        valid_sources = valid_combos.get("sources")
-        valid_targets = valid_combos.get("targets")
-
-        source_filter = ""
-        target_filter = ""
-        circular_filter = ""
-
-        if valid_sources:
-            source_types = ", ".join(f"'{t}'" for t in valid_sources)
-            source_filter = f"""
-                AND any(lbl IN labels(model_src) WHERE lbl IN [{source_types}])
-            """
-
-        if valid_targets:
-            target_types = ", ".join(f"'{t}'" for t in valid_targets)
-            target_filter = f"""
-                AND any(lbl IN labels(model_tgt) WHERE lbl IN [{target_types}])
-            """
-
-        # Prevent circular Composition relationships
-        if rel_type == "Composition":
-            circular_filter = f"""
-              AND NOT EXISTS {{
-                  (model_tgt)-[reverse:`{model_ns}:Composition`]->(model_src)
-              }}
-            """
-
-        query = f"""
-            // Find graph edges of the specified type
-            MATCH (graph_src)-[edge:`{graph_ns}:{edge_type}`]->(graph_tgt)
-            WHERE graph_src.active = true AND graph_tgt.active = true
-
-            WITH graph_src.id as src_id, graph_tgt.id as tgt_id
-
-            // Find model elements that reference these graph nodes in properties
-            MATCH (model_src:{model_ns}), (model_tgt:{model_ns})
-            WHERE model_src.enabled = true AND model_tgt.enabled = true
-              AND model_src.properties_json CONTAINS src_id
-              AND model_tgt.properties_json CONTAINS tgt_id
-              AND model_src.identifier <> model_tgt.identifier  // Prevent self-loops
-              {source_filter}
-              {target_filter}
-              // Exclude if relationship already exists
-              AND NOT EXISTS {{
-                  (model_src)-[existing]->(model_tgt)
-                  WHERE type(existing) STARTS WITH '{model_ns}:'
-              }}
-              {circular_filter}
-
-            RETURN DISTINCT
-                model_src.identifier AS source_id,
-                model_src.name AS source_name,
-                model_tgt.identifier AS target_id,
-                model_tgt.name AS target_name
-            LIMIT {limit}
-        """
-
-        try:
-            results = archimate_manager.query(query)
-            return results if results else []
-        except Exception as e:
-            logger.warning(f"Fallback query for {edge_type} edges also failed: {e}")
-            return []
 
     def _create_relationship(
         self,

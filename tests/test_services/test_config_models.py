@@ -32,15 +32,15 @@ class TestGrafeoSettings:
     def test_default_values(self):
         """Should have sensible defaults."""
         settings = _GrafeoSettings(_env_file=None)
-        assert settings.db_path == ""
+        assert settings.db_dir == ""
         assert settings.log_queries is False
 
     def test_loads_from_env(self, monkeypatch):
         """Should load values from environment."""
-        monkeypatch.setenv("GRAFEO_DB_PATH", "/tmp/test.db")
+        monkeypatch.setenv("GRAFEO_DB_DIR", "/tmp/graphs")
         monkeypatch.setenv("GRAFEO_LOG_QUERIES", "true")
         settings = _GrafeoSettings(_env_file=None)
-        assert settings.db_path == "/tmp/test.db"
+        assert settings.db_dir == "/tmp/graphs"
         assert settings.log_queries is True
 
 
@@ -84,10 +84,10 @@ class TestDerivaSettings:
         Nested settings properties create fresh instances that read .env,
         so we must clear the env var to isolate the test.
         """
-        monkeypatch.delenv("GRAFEO_DB_PATH", raising=False)
+        monkeypatch.delenv("GRAFEO_DB_DIR", raising=False)
         monkeypatch.setattr(GrafeoSettings, "model_config", SettingsConfigDict(env_prefix="GRAFEO_", env_file=None, extra="ignore"))
         settings = _DerivaSettings(_env_file=None)
-        assert settings.grafeo.db_path == ""
+        assert settings.grafeo.db_dir == ""
         assert settings.llm.temperature == 0.6
         assert settings.graph.namespace == "Graph"
 

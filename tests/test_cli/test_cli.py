@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from deriva.cli.cli import app, main
@@ -245,6 +246,19 @@ class TestMain:
             mock_app.side_effect = SystemExit(1)
             result = main()
         assert result == 1
+
+    def test_main_makes_stdout_line_buffered(self):
+        """Progress lines must appear live, also when stdout is piped to a file."""
+        with patch("deriva.cli.cli.app"), patch("deriva.cli.cli.sys.stdout") as stdout:
+            main()
+        stdout.reconfigure.assert_called_once_with(line_buffering=True)
+
+    def test_main_runs_with_a_stdout_that_cannot_reconfigure(self):
+        """Redirected streams such as io.StringIO have no reconfigure()."""
+        import io
+
+        with patch("deriva.cli.cli.app"), patch("deriva.cli.cli.sys.stdout", io.StringIO()):
+            assert main() == 0
 
 
 class TestConfigListCommand:
@@ -1255,8 +1269,8 @@ class TestRunCommandOnlyStep:
 
         assert result.exit_code == 0
         assert "Enabling only extraction step: BusinessConcept" in result.stdout
-        mock_session.enable_step.assert_called_with("extraction", "BusinessConcept")
-        mock_session.disable_step.assert_called_with("extraction", "TypeDefinition")
+        mock_session.only_step.assert_called_once_with("extraction", "BusinessConcept")
+        mock_session.only_step.return_value.__exit__.assert_called_once()
 
     @patch("deriva.cli.cli.create_progress_reporter")
     @patch("deriva.cli.cli.PipelineSession")
@@ -1283,8 +1297,21 @@ class TestRunCommandOnlyStep:
 
         assert result.exit_code == 0
         assert "Enabling only derivation step: ApplicationComponent" in result.stdout
-        mock_session.enable_step.assert_called_with("derivation", "ApplicationComponent")
-        mock_session.disable_step.assert_called_with("derivation", "BusinessProcess")
+        mock_session.only_step.assert_called_once_with("derivation", "ApplicationComponent")
+        mock_session.only_step.return_value.__exit__.assert_called_once()
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_run_with_unknown_only_step_exits_with_error(self, mock_session_class):
+        """Should exit 1 without running when the step name is unknown."""
+        mock_session = MagicMock()
+        mock_session.only_step.side_effect = ValueError("Unknown extraction step: Typo")
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["run", "extraction", "--only-step", "Typo"])
+
+        assert result.exit_code == 1
+        assert "Unknown extraction step: Typo" in result.output
+        mock_session.run_extraction.assert_not_called()
 
 
 class TestRunCommandDerivationSuccess:
@@ -2801,6 +2828,18 @@ class TestConfigUpdateFileOptions:
 
     @patch("deriva.cli.commands.config.config")
     @patch("deriva.cli.commands.config.PipelineSession")
+    def test_update_extraction_with_params(self, mock_session_class, mock_config):
+        """Extraction steps take versioned params too."""
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+        mock_config.create_extraction_config_version.return_value = {"success": True, "old_version": 1, "new_version": 2}
+
+        result = runner.invoke(app, ["config", "update", "extraction", "Technology", "-p", '{"prompt": {}}'])
+
+        assert result.exit_code == 0
+        assert mock_config.create_extraction_config_version.call_args.kwargs["params"] == '{"prompt": {}}'
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
     def test_update_extraction_with_sources(self, mock_session_class, mock_config):
         """Should update extraction with sources option."""
         mock_session = MagicMock()
@@ -3688,3 +3727,129 @@ class TestRunAppVerboseQuiet:
         runner.invoke(run_app, ["-q", "extraction"])
 
         mock_progress.assert_called_once_with(quiet=True)
+
+
+class TestConfigAddCommand:
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_adds_step(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.add_derivation_step.return_value = True
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "add", "derivation", "joint_consistency", "--phase", "refine", "--sequence", "4", "--params", '{"dry_run": true}'])
+
+        assert result.exit_code == 0
+        mock_session.add_derivation_step.assert_called_once_with("joint_consistency", "refine", 4, params='{"dry_run": true}')
+        assert "Added derivation step: joint_consistency (disabled)" in result.stdout
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_existing_step_exits_1(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.add_derivation_step.return_value = False
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "add", "derivation", "graph_relationships", "--phase", "refine", "--sequence", "4"])
+
+        assert result.exit_code == 1
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_invalid_values_exit_1_with_the_reason(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.add_derivation_step.side_effect = ValueError("phase must be one of prep, generate, refine, relationship")
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "add", "derivation", "x", "--phase", "refnie", "--sequence", "4"])
+
+        assert result.exit_code == 1
+        assert "phase must be one of" in result.output
+
+
+class TestRepositoryDatabaseSelection:
+    """Commands with --repo work in that repository's graph database."""
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_run_opens_repo_database(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.run_extraction.return_value = {"success": True, "stats": {}}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        runner.invoke(app, ["run", "extraction", "--repo", "bigdata", "-q"])
+
+        assert mock_session_class.call_args.kwargs["repository"] == "bigdata"
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_export_and_clear_open_repo_database(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.export_model.return_value = {"success": True, "elements_exported": 0, "relationships_exported": 0, "output_path": "x"}
+        mock_session.clear_model.return_value = {"success": True}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        runner.invoke(app, ["export", "--repo", "bigdata", "-o", "x.xml"])
+        runner.invoke(app, ["clear", "model", "--repo", "lightblue"])
+
+        assert [c.kwargs["repository"] for c in mock_session_class.call_args_list] == ["bigdata", "lightblue"]
+
+
+class TestSettingCommands:
+    """`config setting show|set` read and write system settings through the session."""
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_setting_show(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.get_setting.return_value = '[".git", "node_modules"]'
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "setting", "show", "excluded_directories"])
+
+        assert result.exit_code == 0
+        assert "node_modules" in result.stdout
+        mock_session.get_setting.assert_called_once_with("excluded_directories")
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_setting_show_missing(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.get_setting.return_value = None
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "setting", "show", "nope"])
+
+        assert result.exit_code == 1
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_setting_set(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "setting", "set", "excluded_directories", '[".git"]'])
+
+        assert result.exit_code == 0
+        mock_session.set_setting.assert_called_once_with("excluded_directories", '[".git"]')
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_setting_set_invalid_value_exits_1(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.set_setting.side_effect = ValueError("excluded_directories must be a JSON list of directory names")
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "setting", "set", "excluded_directories", "node_modules"])
+
+        assert result.exit_code == 1
+        assert "JSON list" in result.output
+
+
+class TestUpdateTemperature:
+    """The LLM temperature of a step is a versioned column, settable from the CLI."""
+
+    @pytest.mark.parametrize("step_type", ["derivation", "extraction"])
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_temperature_is_passed_to_the_new_version(self, mock_session_class, mock_config, step_type):
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+        for fn in (mock_config.create_derivation_config_version, mock_config.create_extraction_config_version):
+            fn.return_value = {"success": True, "old_version": 1, "new_version": 2}
+
+        result = runner.invoke(app, ["config", "update", step_type, "Step", "--temperature", "0"])
+
+        assert result.exit_code == 0
+        fn = mock_config.create_derivation_config_version if step_type == "derivation" else mock_config.create_extraction_config_version
+        assert fn.call_args.kwargs["temperature"] == 0.0

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -958,3 +960,111 @@ class TestExtractBusinessConceptsBatch:
 
         # Should have errors from both files
         assert len(result["errors"]) >= 2
+
+
+class TestSystemPromptFromConfig:
+    """The system prompt is the versioned config instruction, used verbatim (no text added in code)."""
+
+    def test_multi_file_system_prompt_is_the_config_instruction(self):
+        from unittest.mock import MagicMock
+
+        from deriva.modules.extraction.business_concept import extract_business_concepts_multi
+
+        llm = MagicMock(return_value=MagicMock(content='{"concepts": []}', usage=None))
+
+        extract_business_concepts_multi(
+            files=[{"path": "docs/a.md", "content": "text"}],
+            repo_name="repo",
+            llm_query_fn=llm,
+            config={"instruction": "SYSTEM FROM CONFIG", "example": "{}"},
+        )
+
+        assert llm.call_args.args[2] == "SYSTEM FROM CONFIG"
+
+    def test_single_file_prompt_starts_with_the_config_instruction(self):
+        from deriva.modules.extraction.business_concept import build_extraction_prompt
+
+        prompt = build_extraction_prompt("text", "docs/a.md", "SYSTEM FROM CONFIG", "{}")
+
+        assert prompt.startswith("SYSTEM FROM CONFIG\n\n")
+
+
+class TestMergeConceptProperties:
+    """One concept seen in several files: the combined node must not depend on file order."""
+
+    README = {"conceptName": "User", "conceptType": "entity", "confidence": 0.9, "description": "from readme", "originSource": "README.md"}
+    RTF = {"conceptName": "User", "conceptType": "actor", "confidence": 0.9, "description": "from requirements", "originSource": "docs/requirements.rtf"}
+    DOC = {"conceptName": "User", "conceptType": "actor", "confidence": 0.7, "description": "weak", "originSource": "docs/a.md"}
+
+    @staticmethod
+    def _fold(occurrences):
+        from deriva.modules.extraction.business_concept import merge_concept_properties
+
+        merged = None
+        for o in occurrences:
+            merged = merge_concept_properties(merged, o)
+        return merged
+
+    def test_all_types_are_kept(self):
+        merged = self._fold([self.README, self.RTF])
+
+        assert merged["conceptTypes"] == ["actor", "entity"]
+        assert merged["confidence"] == 0.9
+
+    def test_result_is_independent_of_order(self):
+        import itertools
+
+        results = {json.dumps(self._fold(p), sort_keys=True) for p in itertools.permutations([self.README, self.RTF, self.DOC])}
+
+        assert len(results) == 1
+
+    def test_primary_fields_come_from_the_strongest_occurrence(self):
+        merged = self._fold([self.DOC, self.README])
+
+        assert (merged["conceptType"], merged["description"], merged["originSource"]) == ("entity", "from readme", "README.md")
+
+    def test_single_occurrence_gets_its_type_as_the_set(self):
+        assert self._fold([self.DOC])["conceptTypes"] == ["actor"]
+
+
+class TestConceptVoting:
+    """Document concepts are kept when a majority of k identical-prompt answers contain them."""
+
+    def test_vote_keeps_concepts_found_in_min_votes_samples(self):
+        from deriva.modules.extraction.business_concept import vote_concepts
+
+        samples = [
+            [{"conceptName": "Order", "conceptType": "entity", "confidence": 0.9}, {"conceptName": "Rare", "conceptType": "entity", "confidence": 0.9}],
+            [{"conceptName": "Orders", "conceptType": "entity", "confidence": 0.7}],
+            [{"conceptName": "order", "conceptType": "process", "confidence": 0.8}],
+        ]
+
+        (order,) = vote_concepts(samples, min_votes=2)
+
+        assert order["conceptTypes"] == ["entity"]
+        assert order["conceptType"] == "entity"
+        assert order["confidence"] == 0.8  # median of 0.9, 0.7, 0.8
+
+    def test_single_sample_keeps_everything(self):
+        from deriva.modules.extraction.business_concept import vote_concepts
+
+        concepts = [{"conceptName": "Order", "conceptType": "entity", "confidence": 0.9}]
+
+        assert [c["conceptName"] for c in vote_concepts([concepts], min_votes=1)] == ["Order"]
+
+    def test_extraction_asks_k_times_with_one_prompt(self):
+        from deriva.modules.extraction.business_concept import extract_business_concepts
+
+        order = {"conceptName": "Order", "conceptType": "entity", "description": "d", "confidence": 0.9}
+        noise = {"conceptName": "Noise", "conceptType": "entity", "description": "d", "confidence": 0.9}
+        answers = iter([json.dumps({"concepts": c}) for c in ([order], [order, noise], [order])])
+        prompts = []
+
+        def llm(prompt, schema):
+            prompts.append(prompt)
+            return SimpleNamespace(content=next(answers), usage=None)
+
+        result = extract_business_concepts("docs/a.md", "text", "repo", llm, {"instruction": "I", "example": "{}", "params": {"samples": 3, "min_votes": 2}})
+
+        assert len(prompts) == 3 and len(set(prompts)) == 1
+        assert [n["properties"]["conceptName"] for n in result["data"]["nodes"]] == ["Order"]

@@ -34,6 +34,7 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 from collections.abc import Callable, Iterator
@@ -51,7 +52,7 @@ from deriva.modules.derivation import prep
 from deriva.modules.derivation.application_component import ApplicationComponentDerivation
 from deriva.modules.derivation.application_interface import ApplicationInterfaceDerivation
 from deriva.modules.derivation.application_service import ApplicationServiceDerivation
-from deriva.modules.derivation.base import derive_consolidated_relationships
+from deriva.modules.derivation.base import NamingConfig, PerCandidateConfig, RelationshipLLMConfig, derive_consolidated_relationships
 from deriva.modules.derivation.business_actor import BusinessActorDerivation
 from deriva.modules.derivation.business_event import BusinessEventDerivation
 from deriva.modules.derivation.business_function import BusinessFunctionDerivation
@@ -109,6 +110,57 @@ def _collect_relationship_rules() -> dict[str, tuple[list[Any], list[Any]]]:
     return rules
 
 
+def _relationship_llm_config(configs: list[Any]) -> RelationshipLLMConfig | None:
+    """Build the LLM relationship settings from the enabled relationship-phase row.
+
+    The relationship prompt rules and the confidence cutoff are versioned config.
+    No enabled row means relationships come from the graph tiers only.
+    """
+    if not configs:
+        return None
+    if len(configs) > 1:
+        raise ValueError(f"Only one relationship config may be enabled, found: {', '.join(c.step_name for c in configs)}")
+    cfg = configs[0]
+    params = json.loads(cfg.params) if cfg.params else {}
+    if not cfg.instruction:
+        raise ValueError(f"Relationship config {cfg.step_name} has no instruction")
+    if "min_confidence" not in params:
+        raise ValueError(f"Relationship config {cfg.step_name} needs params.min_confidence")
+    return RelationshipLLMConfig(
+        instruction=cfg.instruction,
+        min_confidence=float(params["min_confidence"]),
+        temperature=getattr(cfg, "temperature", None),
+    )
+
+
+def _per_candidate_config(params: str | None) -> PerCandidateConfig | None:
+    """Read per-candidate naming mode from an element config's params.
+
+    ``{"per_candidate": {"min_pool": 6, "rules": "..."}}`` switches it on; without
+    the key the element type is derived in batch mode.
+    """
+    settings = json.loads(params).get("per_candidate") if params else None
+    if settings is None:
+        return None
+    if "min_pool" not in settings or not settings.get("rules"):
+        raise ValueError("params.per_candidate needs min_pool and rules")
+    return PerCandidateConfig(min_pool=int(settings["min_pool"]), rules=settings["rules"])
+
+
+def _naming_config(params: str | None) -> NamingConfig | None:
+    """Read the isolated naming step from an element config's params.
+
+    ``{"naming": {"instruction": "...", "samples": 3}}`` switches it on; without
+    the key elements keep their structure names.
+    """
+    settings = json.loads(params).get("naming") if params else None
+    if settings is None:
+        return None
+    if not settings.get("instruction"):
+        raise ValueError("params.naming needs an instruction")
+    return NamingConfig(instruction=settings["instruction"], samples=int(settings.get("samples", 3)))
+
+
 def _get_element_props(elements: list[dict[str, Any]], identifier: str) -> dict[str, Any]:
     """Get properties for an element by identifier.
 
@@ -136,6 +188,9 @@ def generate_element(
     max_tokens: int | None = None,
     defer_relationships: bool = True,
     cache_manager: EnrichmentCacheManager | None = None,
+    relationship_config: RelationshipLLMConfig | None = None,
+    per_candidate: PerCandidateConfig | None = None,
+    naming: NamingConfig | None = None,
 ) -> dict[str, Any]:
     """
     Generate ArchiMate elements of a specific type (and optionally their relationships).
@@ -162,6 +217,9 @@ def generate_element(
         max_tokens: Optional LLM max_tokens override
         defer_relationships: If True, skip relationship derivation (for separated phases mode)
         cache_manager: Optional EnrichmentCacheManager for controlled caching
+        relationship_config: Relationship config row settings (None skips the LLM relationship pass)
+        per_candidate: Per-candidate naming mode from the element config (None uses batch mode)
+        naming: Isolated naming step from the element config (None keeps structure names)
 
     Returns:
         Dict with success, elements_created, relationships_created, created_elements, errors
@@ -192,6 +250,9 @@ def generate_element(
             max_tokens=max_tokens,
             defer_relationships=defer_relationships,
             cache_manager=cache_manager,
+            relationship_config=relationship_config,
+            per_candidate=per_candidate,
+            naming=naming,
         )
         return {
             "success": result.success,
@@ -434,10 +495,12 @@ def run_derivation(
         prep_configs = config.get_derivation_configs_by_version(engine, version_map, enabled_only=enabled_only, phase="prep")
         gen_configs = config.get_derivation_configs_by_version(engine, version_map, enabled_only=enabled_only, phase="generate")
         refine_configs = config.get_derivation_configs_by_version(engine, version_map, enabled_only=enabled_only, phase="refine")
+        relationship_configs = config.get_derivation_configs_by_version(engine, version_map, enabled_only=enabled_only, phase="relationship")
     else:
         prep_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="prep")
         gen_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="generate")
         refine_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="refine")
+        relationship_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="relationship")
     total_steps = 0
     if "prep" in phases:
         total_steps += len(prep_configs)
@@ -496,6 +559,10 @@ def run_derivation(
                 if "top_nodes" in prep_stats:
                     top_names = [n["id"].split("_")[-1] for n in prep_stats["top_nodes"][:3]]
                     print(f"    Top nodes: {top_names}")
+
+    # Relationship pass settings: used by generate and by the deferred relationship pass,
+    # read on first use so runs that derive no relationships never parse the row
+    relationship_config = functools.cache(lambda: _relationship_llm_config(relationship_configs))
 
     # Run generate phase
     if "generate" in phases:
@@ -571,6 +638,9 @@ def run_derivation(
                     existing_elements=all_created_elements,  # Pass accumulated elements
                     defer_relationships=defer_relationships,
                     cache_manager=enrichment_cache,
+                    relationship_config=relationship_config(),
+                    per_candidate=_per_candidate_config(cfg.params),
+                    naming=_naming_config(cfg.params),
                 )
 
                 elements_created = step_result.get("elements_created", 0)
@@ -656,6 +726,7 @@ def run_derivation(
         # Start progress tracking
         if progress:
             progress.start_step("ConsolidatedRelationships")
+        rel_ctx = run_logger.step_start("ConsolidatedRelationships", "Deriving relationships") if run_logger else None
 
         try:
             relationship_rules = _collect_relationship_rules()
@@ -664,6 +735,8 @@ def run_derivation(
                 relationship_rules=relationship_rules,
                 llm_query_fn=llm_query_fn,
                 graph_manager=graph_manager,
+                llm_config=relationship_config(),
+                temperature=getattr(relationship_config(), "temperature", None),
             )
 
             # Persist relationships to archimate model with graph metadata for stability analysis
@@ -677,6 +750,7 @@ def run_derivation(
                     relationship_type=rel_data["relationship_type"],
                     properties={
                         "confidence": rel_data.get("confidence", 0.5),
+                        "derived_from": rel_data.get("derived_from"),
                         "source_pagerank": source_props.get("source_pagerank"),
                         "source_kcore": source_props.get("source_kcore_level"),
                         "source_community": source_props.get("source_louvain_community"),
@@ -694,10 +768,15 @@ def run_derivation(
                 print(f"    + {rel_count} consolidated relationships")
             if progress:
                 progress.complete_step(f"{rel_count} relationships")
+            if rel_ctx:
+                rel_ctx.items_created = rel_count
+                rel_ctx.complete()
 
         except Exception as e:
             error_msg = f"Error in consolidated relationships: {str(e)}"
             errors.append(error_msg)
+            if rel_ctx:
+                rel_ctx.error(error_msg)
             if progress:
                 progress.log(error_msg, level="error")
                 progress.complete_step()
@@ -735,11 +814,15 @@ def run_derivation(
                     refine_params["graph_metadata"] = graph_metadata
 
                 # Run the refine step
+                # Skip LLM for duplicate_elements: Tier 2 fuzzy matching is
+                # sufficient; Tier 3 semantic LLM checks add up to 10 calls
+                # per run with marginal deduplication benefit.
+                use_llm = cfg.llm and cfg.step_name != "duplicate_elements"
                 refine_result = run_refine_step(
                     step_name=cfg.step_name,
                     archimate_manager=archimate_manager,
                     graph_manager=graph_manager,
-                    llm_query_fn=llm_query_fn if cfg.llm else None,
+                    llm_query_fn=llm_query_fn if use_llm else None,
                     params=refine_params,
                 )
 
@@ -867,6 +950,7 @@ def run_derivation_iter(
     prep_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="prep")
     gen_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="generate")
     refine_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="refine")
+    relationship_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="relationship")
     total_steps = 0
     if "prep" in phases:
         total_steps += len(prep_configs)
@@ -910,6 +994,10 @@ def run_derivation_iter(
                 message="prep complete",
                 stats={"prep": True},
             )
+
+    # Relationship pass settings: used by generate and by the deferred relationship pass,
+    # read on first use so runs that derive no relationships never parse the row
+    relationship_config = functools.cache(lambda: _relationship_llm_config(relationship_configs))
 
     # Run generate phase
     if "generate" in phases:
@@ -980,6 +1068,9 @@ def run_derivation_iter(
                     existing_elements=all_created_elements,
                     defer_relationships=defer_relationships,
                     cache_manager=enrichment_cache,
+                    relationship_config=relationship_config(),
+                    per_candidate=_per_candidate_config(cfg.params),
+                    naming=_naming_config(cfg.params),
                 )
 
                 elements_created = step_result.get("elements_created", 0)
@@ -1054,6 +1145,8 @@ def run_derivation_iter(
                 relationship_rules=relationship_rules,
                 llm_query_fn=llm_query_fn,
                 graph_manager=graph_manager,
+                llm_config=relationship_config(),
+                temperature=getattr(relationship_config(), "temperature", None),
             )
 
             # Persist relationships to archimate model
@@ -1067,6 +1160,7 @@ def run_derivation_iter(
                     relationship_type=rel_data["relationship_type"],
                     properties={
                         "confidence": rel_data.get("confidence", 0.5),
+                        "derived_from": rel_data.get("derived_from"),
                         "source_pagerank": source_props.get("source_pagerank"),
                         "source_kcore": source_props.get("source_kcore_level"),
                         "source_community": source_props.get("source_louvain_community"),
@@ -1123,11 +1217,15 @@ def run_derivation_iter(
                         pass
 
                 # Run the refine step
+                # Skip LLM for duplicate_elements: Tier 2 fuzzy matching is
+                # sufficient; Tier 3 semantic LLM checks add up to 10 calls
+                # per run with marginal deduplication benefit.
+                use_llm = cfg.llm and cfg.step_name != "duplicate_elements"
                 refine_result = run_refine_step(
                     step_name=cfg.step_name,
                     archimate_manager=archimate_manager,
                     graph_manager=graph_manager,
-                    llm_query_fn=llm_query_fn if cfg.llm else None,
+                    llm_query_fn=llm_query_fn if use_llm else None,
                     params=refine_params,
                 )
 

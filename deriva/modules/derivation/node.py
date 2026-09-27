@@ -50,6 +50,7 @@ class NodeDerivation(HybridDerivation):
 
     ELEMENT_TYPE = "Node"
     MIN_PAGERANK = None  # Infrastructure files have low pagerank but are important
+    MIN_KCORE_PERCENTILE = 30.0  # Top 70% by k-core (scale-independent)
     USE_COMMUNITY_ROOTS = False
 
     OUTBOUND_RULES: list[RelationshipRule] = [
@@ -67,6 +68,16 @@ class NodeDerivation(HybridDerivation):
             target_type="ApplicationComponent",
             rel_type="Serving",
             description="Nodes serve application components",
+        ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Realization",
+            description="Technology nodes realize business processes",
+        ),
+        RelationshipRule(
+            target_type="SystemSoftware",
+            rel_type="Aggregation",
+            description="Nodes aggregate system software",
         ),
     ]
 

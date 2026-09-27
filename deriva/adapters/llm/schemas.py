@@ -258,9 +258,6 @@ class DirectoryClassificationItem(BaseModel):
     """Classification for a single directory."""
 
     directoryName: str = Field(description="Original directory name")
-    conceptName: str = Field(
-        description="PascalCase concept name (e.g., CustomerManagement)"
-    )
     classification: Literal["business", "technology", "skip"] = Field(
         description="Classification type"
     )

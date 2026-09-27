@@ -41,6 +41,15 @@ from deriva.modules.extraction.type_definition import (
     extract_types_from_python,
 )
 
+# Technology prompt texts as stored in the step config (params.prompt)
+TECH_PARAMS = {
+    "prompt": {
+        "existing_dependencies_heading": "Known dependencies:",
+        "existing_technologies_heading": "Known technologies:",
+        "closing_instruction": "Return JSON matching the schema.",
+    }
+}
+
 
 class TestBusinessConceptModule:
     """Tests for business_concept extraction module."""
@@ -276,6 +285,7 @@ class TestTechnologyModule:
             file_path="app/main.py",
             instruction="Extract technology references",
             example='{"technologies": []}',
+            texts=TECH_PARAMS["prompt"],
         )
 
         assert "app/main.py" in prompt
@@ -583,10 +593,9 @@ class TestExtractBusinessConcepts:
             config={},
         )
 
-        # Should succeed with partial results
+        # A concept without a name cannot vote; the named one is kept
         assert result["success"] is True
         assert len(result["data"]["nodes"]) == 1
-        assert len(result["errors"]) > 0  # Errors from failed node
 
     def test_extract_success(self):
         """Should extract concepts successfully with mocked LLM."""
@@ -778,8 +787,8 @@ class TestExtractTechnologies:
             {
                 "technologies": [
                     {
-                        "techName": "Redis",
-                        "techCategory": "system_software",
+                        "technologyName": "Redis",
+                        "technologyType": "system_software",
                         "description": "Cache",
                         "version": "7.0",
                     }
@@ -795,7 +804,7 @@ class TestExtractTechnologies:
             file_content="import redis",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": TECH_PARAMS},
         )
 
         assert result["success"] is True
@@ -810,7 +819,7 @@ class TestExtractTechnologies:
             file_content="code",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": TECH_PARAMS},
         )
 
         assert result["success"] is False
@@ -1890,7 +1899,7 @@ class TestExtractTechnologyEdgeCases:
             file_content="code",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": TECH_PARAMS},
         )
 
         # Empty content parses to empty list, success with 0 nodes
@@ -1907,7 +1916,7 @@ class TestExtractTechnologyEdgeCases:
             file_content="code",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": TECH_PARAMS},
         )
 
         # No "technologies" key, parse returns empty list
@@ -1920,12 +1929,12 @@ class TestExtractTechnologyEdgeCases:
             {
                 "technologies": [
                     {
-                        "techName": "Valid",
-                        "techCategory": "service",
+                        "technologyName": "Valid",
+                        "technologyType": "service",
                         "description": "OK",
                     },
                     {
-                        "techCategory": "service",  # Missing techName
+                        "technologyType": "service",  # Missing technologyName
                         "description": "Missing name",
                     },
                 ]
@@ -1939,7 +1948,7 @@ class TestExtractTechnologyEdgeCases:
             file_content="code",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": TECH_PARAMS},
         )
 
         assert result["success"] is True
@@ -2017,3 +2026,106 @@ class TestExtractTestsEdgeCases:
         assert result["success"] is True
         assert len(result["data"]["nodes"]) == 1
         assert len(result["errors"]) > 0
+
+
+class TestExcludedDirectories:
+    """Dependency directories (a configurable list) never become graph nodes."""
+
+    EXCLUDED = (".git", "node_modules", "vendor")
+
+    @staticmethod
+    def _repo(tmpdir):
+        root = Path(tmpdir)
+        (root / "src").mkdir()
+        (root / "src" / "app.py").write_text("x = 1")
+        (root / "node_modules" / "pkg" / "lib").mkdir(parents=True)
+        (root / "node_modules" / "pkg" / "lib" / "client.js").write_text("x")
+        (root / "web" / "vendor").mkdir(parents=True)
+        (root / "web" / "vendor" / "lib.js").write_text("x")
+        (root / "web" / "main.js").write_text("x")
+        (root / "vendored_notes.md").write_text("x")  # name only contains a segment: kept
+        return root
+
+    def test_is_excluded_path_matches_whole_segments(self):
+        from deriva.modules.extraction.base import is_excluded_path
+
+        assert is_excluded_path("node_modules/pkg/index.js", self.EXCLUDED)
+        assert is_excluded_path("web/vendor", self.EXCLUDED)
+        assert not is_excluded_path("web/vendored_notes.md", self.EXCLUDED)
+        assert not is_excluded_path("src/app.py", self.EXCLUDED)
+
+    def test_directories_skip_excluded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._repo(tmpdir)
+
+            result = extract_directories(tmpdir, "myrepo", excluded_dirs=self.EXCLUDED)
+
+        paths = sorted(n["properties"]["path"] for n in result["data"]["nodes"])
+        assert paths == ["src", "web"]
+
+    def test_files_skip_excluded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._repo(tmpdir)
+
+            result = extract_files(tmpdir, "myrepo", excluded_dirs=self.EXCLUDED)
+
+        paths = sorted(n["properties"]["path"] for n in result["data"]["nodes"])
+        assert paths == ["src/app.py", "vendored_notes.md", "web/main.js"]
+
+    def test_directory_stats_ignore_excluded_content(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._repo(tmpdir)
+
+            result = extract_directories(tmpdir, "myrepo", excluded_dirs=self.EXCLUDED)
+
+        web = next(n for n in result["data"]["nodes"] if n["properties"]["path"] == "web")
+        assert web["properties"]["subdirectory_count"] == 0
+
+
+class TestTechnologyPromptTextsFromConfig:
+    """The Technology prompt texts come from the step's versioned params."""
+
+    TEXTS = {"existing_dependencies_heading": "DEPS:", "existing_technologies_heading": "TECHS:", "closing_instruction": "CLOSE FROM CONFIG"}
+
+    def test_prompt_uses_config_texts(self):
+        from deriva.modules.extraction.technology import extract_technologies
+
+        llm = MagicMock(return_value=MagicMock(content='{"technologies": []}'))
+
+        extract_technologies("setup.py", "x", "repo", llm, {"instruction": "I", "example": "{}", "params": {"prompt": self.TEXTS}}, existing_dependencies=[{"name": "lib"}])
+
+        prompt = llm.call_args.args[0]
+        assert "DEPS:\nlib" in prompt and prompt.endswith("CLOSE FROM CONFIG")
+
+    def test_missing_texts_is_an_error(self):
+        from deriva.modules.extraction.technology import extract_technologies
+
+        llm = MagicMock()
+
+        result = extract_technologies("setup.py", "x", "repo", llm, {"instruction": "I", "example": "{}"})
+
+        assert result["success"] is False
+        assert "params.prompt" in result["errors"][0]
+        llm.assert_not_called()
+
+
+class TestTechnologyLLMFieldNames:
+    """The LLM answers with the enforced schema's field names (technologyName, technologyType)."""
+
+    def test_enforced_field_names_become_technology_nodes(self):
+        from deriva.modules.extraction.technology import extract_technologies
+
+        answer = {"technologies": [{"technologyName": "Runtime X", "technologyType": "platform", "description": "d", "version": None, "confidence": 0.8}]}
+        llm = MagicMock(return_value=MockLLMResponse(answer))
+
+        result = extract_technologies("setup.py", "x", "repo", llm, {"instruction": "I", "example": "{}", "params": TECH_PARAMS})
+
+        (node,) = result["data"]["nodes"]
+        assert (node["properties"]["techName"], node["properties"]["techCategory"]) == ("Runtime X", "platform")
+
+    def test_module_schema_matches_the_enforced_model(self):
+        from deriva.adapters.llm.schemas import TechnologyItem
+        from deriva.modules.extraction.technology import TECHNOLOGY_SCHEMA
+
+        items = TECHNOLOGY_SCHEMA["schema"]["properties"]["technologies"]["items"]["properties"]
+        assert set(items) == set(TechnologyItem.model_fields)

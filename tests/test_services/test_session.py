@@ -47,6 +47,35 @@ class TestPipelineSessionLifecycle:
             mock_graph.return_value.connect.assert_called_once()
             mock_archimate.return_value.connect.assert_called_once()
 
+    def test_connect_opens_the_repository_database(self):
+        """A session for a repository works in that repository's own graph database."""
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.use_database") as use_database,
+        ):
+            PipelineSession(repository="bigdata").connect()
+            PipelineSession().connect()
+
+        assert [c.args[0] for c in use_database.call_args_list] == ["bigdata", "default"]
+
+    def test_use_repository_switches_database(self):
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.use_database") as use_database,
+        ):
+            session = PipelineSession()
+            session.connect()
+            session.use_repository("lightblue")
+
+        assert use_database.call_args.args[0] == "lightblue"
+        assert session.repository == "lightblue"
+
     def test_connect_idempotent(self):
         """Connect should be idempotent."""
         with (
@@ -141,7 +170,7 @@ class TestPipelineSessionQueries:
 
     def test_get_graph_stats(self, connected_session):
         """Should aggregate node counts by type."""
-        connected_session._mock_graph.get_nodes_by_type.side_effect = lambda t: ([{"id": "1"}] if t == "Repository" else [])
+        connected_session._mock_graph.get_nodes_by_type.side_effect = lambda t: [{"id": "1"}] if t == "Repository" else []
 
         stats = connected_session.get_graph_stats()
 
@@ -830,6 +859,18 @@ class TestPipelineSessionConfigMethods:
 
         assert result["extraction"]["BusinessConcept"] == 1
         assert result["derivation"]["ApplicationComponent"] == 2
+
+    def test_get_setting(self, connected_session):
+        """Should delegate to config service."""
+        connected_session._mock_config.get_setting.return_value = '[".git"]'
+
+        assert connected_session.get_setting("excluded_directories") == '[".git"]'
+
+    def test_set_setting(self, connected_session):
+        """Should delegate to config service."""
+        connected_session.set_setting("excluded_directories", '[".git"]')
+
+        connected_session._mock_config.set_setting.assert_called_once_with(connected_session._engine, "excluded_directories", '[".git"]')
 
     def test_add_file_type(self, connected_session):
         """Should delegate to config service."""
@@ -1765,3 +1806,73 @@ class TestPipelineSessionFileTypesEdgeCases:
 
             assert len(result) == 1
             assert result[0]["value"] == "simple_value"
+
+
+class TestOnlyStep:
+    """session.only_step enables a single step for a block and restores the exact prior state."""
+
+    @staticmethod
+    def _session_with(step_type: str, states: dict[str, bool]) -> PipelineSession:
+        session = PipelineSession()
+        key = "node_type" if step_type == "extraction" else "element_type"
+        getter = "get_extraction_configs" if step_type == "extraction" else "get_derivation_configs"
+        setattr(session, getter, lambda enabled_only=False: [{key: n, "enabled": e} for n, e in states.items()])
+        session.enable_step = lambda t, n: states.__setitem__(n, True) or True  # type: ignore[method-assign]
+        session.disable_step = lambda t, n: states.__setitem__(n, False) or True  # type: ignore[method-assign]
+        return session
+
+    def test_enables_only_target_inside_block_and_restores_after(self):
+        states = {"File": True, "BusinessConcept": True, "Technology": True, "Test": False}
+        session = self._session_with("extraction", states)
+        with session.only_step("extraction", "BusinessConcept"):
+            assert states == {"File": False, "BusinessConcept": True, "Technology": False, "Test": False}
+        assert states == {"File": True, "BusinessConcept": True, "Technology": True, "Test": False}
+
+    def test_restores_when_block_raises(self):
+        states = {"pagerank": True, "ApplicationComponent": True, "Completeness": False}
+        session = self._session_with("derivation", states)
+        with pytest.raises(RuntimeError), session.only_step("derivation", "ApplicationComponent"):
+            raise RuntimeError("boom")
+        assert states == {"pagerank": True, "ApplicationComponent": True, "Completeness": False}
+
+    def test_derivation_matches_on_element_type(self):
+        states = {"pagerank": True, "Node": False}
+        session = self._session_with("derivation", states)
+        with session.only_step("derivation", "Node"):
+            assert states == {"pagerank": False, "Node": True}
+
+    def test_unknown_step_raises_without_changing_anything(self):
+        states = {"File": True, "Technology": True}
+        session = self._session_with("extraction", states)
+        with pytest.raises(ValueError, match="Unknown extraction step"):
+            with session.only_step("extraction", "Typo"):
+                pass
+        assert states == {"File": True, "Technology": True}
+
+    def test_unknown_step_type_raises_without_changing_anything(self):
+        states = {"pagerank": True, "Node": False}
+        session = self._session_with("derivation", states)
+        with pytest.raises(ValueError, match="step_type"):
+            with session.only_step("derivations", "Node"):
+                pass
+        assert states == {"pagerank": True, "Node": False}
+
+
+def test_connect_applies_pending_migrations():
+    """Opening a session brings an older config database up to the current schema."""
+    from unittest.mock import MagicMock, patch
+
+    from deriva.services.session import PipelineSession
+
+    engine = MagicMock()
+    with (
+        patch("deriva.services.session.get_connection", return_value=engine),
+        patch("deriva.services.session.run_migrations") as migrate,
+        patch("deriva.services.session.use_database"),
+        patch("deriva.services.session.GraphManager"),
+        patch("deriva.services.session.ArchimateManager"),
+        patch("deriva.services.session.RepoManager"),
+    ):
+        PipelineSession(auto_connect=True)
+
+    migrate.assert_called_once_with(engine)

@@ -7,10 +7,11 @@ repos:
   # Built-in prek hooks
   - repo: builtin
     hooks:
+      # Prompt snapshots are byte-exact copies of prompt text; never rewrite them
       - id: trailing-whitespace
-        exclude: '\.md$'
+        exclude: '\.md$|^tests/test_modules/prompt_snapshots/'
       - id: end-of-file-fixer
-        exclude: '\.md$'
+        exclude: '\.md$|^tests/test_modules/prompt_snapshots/'
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict

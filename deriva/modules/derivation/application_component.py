@@ -48,9 +48,10 @@ class ApplicationComponentDerivation(HybridDerivation):
     ELEMENT_TYPE = "ApplicationComponent"
 
     # Graph filtering configuration - prioritize community roots
+    # Loosened from 0.001/0.6 to capture more components (ref models have 14-21)
     USE_COMMUNITY_ROOTS = True
-    COMMUNITY_ROOT_RATIO = 0.6  # 60% community roots
-    MIN_PAGERANK = 0.001
+    COMMUNITY_ROOT_RATIO = 0.3  # 30% community roots, 70% by PageRank
+    MIN_PAGERANK = 0.0001
 
     OUTBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
@@ -59,9 +60,14 @@ class ApplicationComponentDerivation(HybridDerivation):
             description="Application components contain other application components",
         ),
         RelationshipRule(
+            target_type="ApplicationComponent",
+            rel_type="Aggregation",
+            description="Application components aggregate related application components",
+        ),
+        RelationshipRule(
             target_type="ApplicationService",
-            rel_type="Composition",
-            description="Application components contain application services",
+            rel_type="Assignment",
+            description="Application components perform application services",
         ),
         RelationshipRule(
             target_type="DataObject",
@@ -78,13 +84,23 @@ class ApplicationComponentDerivation(HybridDerivation):
             rel_type="Realization",
             description="Application components realize business functions",
         ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Realization",
+            description="Application components realize business processes",
+        ),
+        RelationshipRule(
+            target_type="ApplicationService",
+            rel_type="Realization",
+            description="Application components realize application services",
+        ),
     ]
 
     INBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
             target_type="TechnologyService",
-            rel_type="Realization",
-            description="Technology services realize application components",
+            rel_type="Serving",
+            description="Technology services serve application components",
         ),
         RelationshipRule(
             target_type="Node",

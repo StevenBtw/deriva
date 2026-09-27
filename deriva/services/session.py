@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 from deriva.common.types import ProgressUpdate
@@ -33,8 +34,8 @@ logger = logging.getLogger(__name__)
 
 from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
-from deriva.adapters.database import get_connection
-from deriva.adapters.grafeo import close_database
+from deriva.adapters.database import get_connection, run_migrations
+from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
 from deriva.common.logging import RunLogger
@@ -59,6 +60,7 @@ class PipelineSession:
         db_path: str | None = None,
         auto_connect: bool = False,
         workspace_dir: str | None = None,
+        repository: str | None = None,
     ):
         """Initialize session.
 
@@ -66,8 +68,11 @@ class PipelineSession:
             db_path: Path to DuckDB database (default: deriva/adapters/database/sql.db)
             auto_connect: If True, connect immediately (useful for Marimo)
             workspace_dir: Repository workspace directory (default: from env)
+            repository: Graph database to work in: a repository name, or the joined
+                names of a combined run (default: the shared "default" database)
         """
         self._db_path = db_path
+        self.repository = repository or DEFAULT_DATABASE
         self._workspace_dir = workspace_dir or os.getenv("REPOSITORY_WORKSPACE_DIR", "workspace/repositories")
 
         # Managers (created on connect)
@@ -102,10 +107,12 @@ class PipelineSession:
         if self._connected:
             return
 
-        # Database (get_connection uses DB_PATH from env)
+        # Database (get_connection uses DB_PATH from env); bring older schemas up to date
         self._engine = get_connection()
+        run_migrations(self._engine)
 
-        # Graph managers (grafeo embedded)
+        # Graph managers (grafeo embedded), in the session's repository database
+        use_database(self.repository)
         self._graph_manager = GraphManager()
         self._graph_manager.connect()
 
@@ -116,6 +123,11 @@ class PipelineSession:
         self._repo_manager = RepoManager(workspace_dir=self._workspace_dir)
 
         self._connected = True
+
+    def use_repository(self, repository: str) -> None:
+        """Switch the graph and model managers to another repository's database."""
+        self.repository = repository
+        use_database(repository)
 
     def disconnect(self) -> None:
         """Disconnect all managers."""
@@ -668,6 +680,33 @@ class PipelineSession:
         assert self._engine is not None
         return config.disable_step(self._engine, step_type, name)
 
+    @contextmanager
+    def only_step(self, step_type: str, name: str) -> Iterator[None]:
+        """Enable only `name` for the duration of the block, then restore the exact prior state."""
+        if step_type == "extraction":
+            configs, key = self.get_extraction_configs(), "node_type"
+        elif step_type == "derivation":
+            configs, key = self.get_derivation_configs(), "element_type"
+        else:
+            raise ValueError(f"step_type must be 'extraction' or 'derivation', got {step_type!r}")
+        names = [c[key] for c in configs if c.get(key)]
+        if name not in names:
+            raise ValueError(f"Unknown {step_type} step: {name}")
+        enabled_before = {c[key] for c in configs if c.get(key) and c.get("enabled")}
+        try:
+            for n in names:
+                if n == name:
+                    self.enable_step(step_type, n)
+                else:
+                    self.disable_step(step_type, n)
+            yield
+        finally:
+            for n in names:
+                if n in enabled_before:
+                    self.enable_step(step_type, n)
+                else:
+                    self.disable_step(step_type, n)
+
     def get_file_types(self) -> list[dict]:
         """Get file type registry."""
         self._ensure_connected()
@@ -903,6 +942,12 @@ class PipelineSession:
             example=example,
         )
 
+    def add_derivation_step(self, step_name: str, phase: str, sequence: int, params: str | None = None) -> bool:
+        """Add a new derivation step (disabled, version 1)."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.add_derivation_step(self._engine, step_name, phase, sequence, params=params)
+
     def save_derivation_config(
         self,
         element_type: str,
@@ -927,6 +972,18 @@ class PipelineSession:
         self._ensure_connected()
         assert self._engine is not None
         return config.get_active_config_versions(self._engine)
+
+    def get_setting(self, key: str) -> str | None:
+        """Get a system setting value (None when not set)."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.get_setting(self._engine, key)
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Set a system setting value."""
+        self._ensure_connected()
+        assert self._engine is not None
+        config.set_setting(self._engine, key, value)
 
     def add_file_type(self, extension: str, file_type: str, subtype: str) -> bool:
         """Add a file type to the registry."""
@@ -1036,6 +1093,8 @@ class PipelineSession:
         per_repo: bool = False,
         use_enrichment_cache: bool = True,
         nocache_enrichment_configs: list[str] | None = None,
+        no_cache_extraction: bool = False,
+        no_cache_extraction_llm: bool = False,
     ) -> benchmarking.BenchmarkResult:
         """
         Run a full benchmark matrix.
@@ -1092,6 +1151,8 @@ class PipelineSession:
             per_repo=per_repo,
             use_enrichment_cache=use_enrichment_cache,
             nocache_enrichment_configs=nocache_enrichment_configs or [],
+            no_cache_extraction=no_cache_extraction,
+            no_cache_extraction_llm=no_cache_extraction_llm,
         )
 
         orchestrator = benchmarking.BenchmarkOrchestrator(

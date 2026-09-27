@@ -368,13 +368,13 @@ TECHNOLOGY_SCHEMA = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "techName": {"type": "string"},
-                        "techCategory": {"type": "string"},
+                        "technologyName": {"type": "string"},
+                        "technologyType": {"type": "string"},
                         "description": {"type": "string"},
                         "version": {"type": ["string", "null"]},
                         "confidence": {"type": "number"},
                     },
-                    "required": ["techName", "techCategory", "description"],
+                    "required": ["technologyName", "technologyType", "description"],
                     "additionalProperties": False,
                 },
             }
@@ -392,8 +392,13 @@ def build_extraction_prompt(
     example: str,
     existing_dependencies: list[dict[str, str]] | None = None,
     existing_technologies: list[dict[str, str]] | None = None,
+    *,
+    texts: dict[str, str],
 ) -> str:
     """Build the LLM prompt for Technology extraction.
+
+    The headings and the closing instruction come from the step config
+    (``params.prompt``); this function only assembles the sections.
 
     Args:
         file_content: Content of the file to analyze
@@ -402,6 +407,8 @@ def build_extraction_prompt(
         example: Example output from config
         existing_dependencies: List of ExternalDependency nodes (to avoid overlap)
         existing_technologies: List of existing Technology nodes (to avoid duplicates)
+        texts: ``existing_dependencies_heading``, ``existing_technologies_heading``
+            and ``closing_instruction`` from the step config
 
     Returns:
         Formatted prompt string
@@ -419,16 +426,14 @@ def build_extraction_prompt(
     # Add existing dependencies context (so LLM knows what NOT to extract)
     if existing_dependencies:
         dep_names = [d.get("name", "") for d in existing_dependencies[:30]]
-        prompt_parts.append(
-            "ALREADY EXTRACTED as ExternalDependency (do NOT re-extract as Technology):"
-        )
+        prompt_parts.append(texts["existing_dependencies_heading"])
         prompt_parts.append(", ".join(dep_names))
         prompt_parts.append("")
 
     # Add existing technologies context (to avoid duplicates)
     if existing_technologies:
         tech_names = [t.get("name", "") for t in existing_technologies[:20]]
-        prompt_parts.append("ALREADY EXTRACTED Technologies (do NOT duplicate):")
+        prompt_parts.append(texts["existing_technologies_heading"])
         prompt_parts.append(", ".join(tech_names))
         prompt_parts.append("")
 
@@ -437,7 +442,7 @@ def build_extraction_prompt(
             "Example output format:",
             example,
             "",
-            "Extract infrastructure technologies from this file. Return JSON matching the schema.",
+            texts["closing_instruction"],
         ]
     )
 
@@ -544,6 +549,22 @@ def extract_technologies(
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
 
+    texts = (config.get("params") or {}).get("prompt")
+    required = (
+        "existing_dependencies_heading",
+        "existing_technologies_heading",
+        "closing_instruction",
+    )
+    if not texts or any(k not in texts for k in required):
+        return {
+            "success": False,
+            "data": {"nodes": [], "edges": []},
+            "errors": [
+                f"Technology config needs params.prompt with {', '.join(required)}"
+            ],
+            "stats": {"total_nodes": 0, "total_edges": 0},
+        }
+
     try:
         # Build the prompt
         instruction = config.get("instruction", "")
@@ -556,6 +577,7 @@ def extract_technologies(
             example=example,
             existing_dependencies=existing_dependencies,
             existing_technologies=existing_technologies,
+            texts=texts,
         )
 
         # Call LLM
@@ -582,9 +604,15 @@ def extract_technologies(
                 )
                 existing_tech_names.add(name)
 
-        # Build nodes and edges
-        for tech_data in technologies:
-            tech_name = tech_data.get("techName", "")
+        # Build nodes and edges. The LLM answers with the enforced schema's names
+        # (technologyName, technologyType); nodes use techName/techCategory.
+        for item in technologies:
+            tech_data = {
+                **item,
+                "techName": item.get("technologyName", ""),
+                "techCategory": item.get("technologyType", "service"),
+            }
+            tech_name = tech_data["techName"]
 
             # Skip if empty name
             if not tech_name or not tech_name.strip():

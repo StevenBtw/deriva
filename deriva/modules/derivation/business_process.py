@@ -66,6 +66,7 @@ class BusinessProcessDerivation(HybridDerivation):
 
     # Graph filtering configuration
     MIN_PAGERANK = 0.0005
+    MIN_PAGERANK_PERCENTILE = 40.0  # Top 60% by PageRank (scale-independent)
     MIN_ORCHESTRATOR_CALLS = 3  # Methods calling 3+ others are likely processes
 
     OUTBOUND_RULES = [
@@ -79,6 +80,21 @@ class BusinessProcessDerivation(HybridDerivation):
             rel_type="Access",
             description="Business processes access data objects",
         ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Triggering",
+            description="Business processes trigger other business processes",
+        ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Flow",
+            description="Data or control flow between business processes",
+        ),
+        RelationshipRule(
+            target_type="BusinessProcess",
+            rel_type="Aggregation",
+            description="Business processes aggregate sub-processes",
+        ),
     ]
 
     INBOUND_RULES: list[RelationshipRule] = [
@@ -86,6 +102,26 @@ class BusinessProcessDerivation(HybridDerivation):
             target_type="ApplicationService",
             rel_type="Serving",
             description="Application services serve business processes",
+        ),
+        RelationshipRule(
+            target_type="BusinessEvent",
+            rel_type="Triggering",
+            description="Business events trigger business processes",
+        ),
+        RelationshipRule(
+            target_type="BusinessActor",
+            rel_type="Assignment",
+            description="Business actors are assigned to business processes",
+        ),
+        RelationshipRule(
+            target_type="ApplicationComponent",
+            rel_type="Realization",
+            description="Application components realize business processes",
+        ),
+        RelationshipRule(
+            target_type="Node",
+            rel_type="Realization",
+            description="Nodes realize business processes",
         ),
     ]
 

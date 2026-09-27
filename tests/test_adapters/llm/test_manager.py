@@ -706,3 +706,292 @@ class TestUtilityMethods:
         assert "LLMManager" in repr_str
         assert "ollama" in repr_str
         assert "llama3" in repr_str
+
+
+class TestLastCall:
+    """Per-call metrics for observability: latency, rate-limit wait, requests, tokens, cache, errors."""
+
+    ENV = {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true"}
+
+    def _manager(self, tmp_path):
+        with patch("deriva.adapters.llm.manager.load_dotenv"):
+            with patch.dict("os.environ", {**self.ENV, "LLM_CACHE_DIR": str(tmp_path / "cache")}, clear=True):
+                return LLMManager()
+
+    def test_live_call_records_latency_wait_requests_and_tokens(self, tmp_path):
+        from pydantic_ai.usage import RunUsage
+
+        manager = self._manager(tmp_path)
+        manager._rate_limiter.wait_if_needed = MagicMock(return_value=0.25)  # type: ignore[method-assign]
+        mock_result = MagicMock()
+        mock_result.output = "ok"
+        mock_result.usage = MagicMock(return_value=RunUsage(input_tokens=11, output_tokens=7, requests=2))
+
+        with patch("deriva.adapters.llm.manager.Agent") as mock_agent_class:
+            mock_agent_class.return_value.run_sync.return_value = mock_result
+            response = manager.query("Hello")
+
+        call = manager.last_call
+        assert call["cache_hit"] is False and call["error_type"] is None
+        assert call["wait_ms"] == 250.0
+        assert call["latency_ms"] >= 0
+        assert (call["requests"], call["input_tokens"], call["output_tokens"]) == (2, 11, 7)
+        assert call["cache_key"]
+        assert response.usage == {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+
+    @pytest.mark.parametrize(
+        "change",
+        [{"system_prompt": "other system"}, {"temperature": 0.9}, {"max_tokens": 123}],
+    )
+    def test_cache_key_changes_with_response_shaping_inputs(self, tmp_path, change):
+        manager = self._manager(tmp_path)
+        base = {"system_prompt": "system", "temperature": 0.1, "max_tokens": 100}
+
+        def key(**kwargs):
+            with patch("deriva.adapters.llm.manager.Agent") as mock_agent_class:
+                mock_agent_class.return_value.run_sync.return_value = MagicMock(output="ok")
+                manager.query("Hello", **kwargs)
+            return manager.last_call["cache_key"]
+
+        assert key(**base) == key(**base)
+        assert key(**base) != key(**{**base, **change})
+
+    def test_model_default_temperature_is_part_of_the_key(self, tmp_path):
+        manager = self._manager(tmp_path)
+
+        def key():
+            with patch("deriva.adapters.llm.manager.Agent") as mock_agent_class:
+                mock_agent_class.return_value.run_sync.return_value = MagicMock(output="ok")
+                manager.query("Hello")
+            return manager.last_call["cache_key"]
+
+        first = key()
+        manager.temperature = manager.temperature + 0.5
+        assert key() != first
+
+    def test_cache_hit_is_recorded(self, tmp_path):
+        manager = self._manager(tmp_path)
+        manager.nocache = False
+        manager.cache.get = MagicMock(  # type: ignore[method-assign]
+            return_value={"prompt": "p", "model": "m", "content": "c", "cache_key": "k", "cached_at": "t"}
+        )
+
+        manager.query("Hello")
+
+        assert manager.last_call["cache_hit"] is True and manager.last_call["requests"] == 0
+
+    def test_error_type_is_recorded(self, tmp_path):
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as mock_agent_class:
+            mock_agent_class.return_value.run_sync.side_effect = RuntimeError("boom")
+            manager.query("Hello")
+
+        assert manager.last_call["error_type"] == "RuntimeError"
+
+
+class TestAgentReuse:
+    """Building a pydantic-ai Agent costs ~0.2 s; one agent per output type and system prompt."""
+
+    def test_agent_is_built_once_per_output_type_and_system_prompt(self, tmp_path):
+        with patch("deriva.adapters.llm.manager.load_dotenv"):
+            with patch.dict(
+                "os.environ",
+                {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
+                clear=True,
+            ):
+                manager = LLMManager()
+        result = MagicMock(output="ok", usage=MagicMock(return_value=None))
+
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+            agent_class.return_value.run_sync.return_value = result
+            manager.query("one", system_prompt="s")
+            manager.query("two", system_prompt="s")
+            manager.query("three", system_prompt="other")
+
+        assert agent_class.call_count == 2
+
+    def test_structured_output_gets_its_own_agent(self, tmp_path):
+        from pydantic import BaseModel
+
+        class Answer(BaseModel):
+            text: str
+
+        with patch("deriva.adapters.llm.manager.load_dotenv"):
+            with patch.dict(
+                "os.environ",
+                {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
+                clear=True,
+            ):
+                manager = LLMManager()
+
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+            agent_class.return_value.run_sync.return_value = MagicMock(output=Answer(text="ok"), usage=MagicMock(return_value=None))
+            manager.query("one", system_prompt="s")
+            manager.query("two", system_prompt="s", response_model=Answer)
+            manager.query("three", system_prompt="s", response_model=Answer)
+
+        assert agent_class.call_count == 2
+        assert [c.kwargs["output_type"] for c in agent_class.call_args_list] == [str, Answer]
+
+
+class TestTimeoutAndRetry:
+    """LLM_TIMEOUT bounds every call; transient failures are retried with backoff, others fail at once."""
+
+    ENV = {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_TIMEOUT": "7", "LLM_MAX_RETRIES": "2"}
+
+    def _manager(self, tmp_path):
+        with patch("deriva.adapters.llm.manager.load_dotenv"):
+            with patch.dict("os.environ", {**self.ENV, "LLM_CACHE_DIR": str(tmp_path / "cache")}, clear=True):
+                return LLMManager()
+
+    def _query(self, manager, side_effect):
+        with (
+            patch("deriva.adapters.llm.manager.Agent") as mock_agent_class,
+            patch("deriva.adapters.llm.manager.time.sleep") as sleep,
+        ):
+            run = mock_agent_class.return_value.run_sync
+            run.side_effect = side_effect
+            response = manager.query("Hello")
+        return response, run, sleep
+
+    def test_timeout_is_applied_as_float_seconds(self, tmp_path):
+        _, run, _ = self._query(self._manager(tmp_path), [MagicMock(output="ok")])
+
+        timeout = run.call_args.kwargs["model_settings"]["timeout"]
+        assert timeout == 7.0 and isinstance(timeout, float)
+
+    def test_timeout_is_retried_then_succeeds(self, tmp_path):
+        import httpx
+
+        response, run, sleep = self._query(self._manager(tmp_path), [httpx.ReadTimeout("slow"), MagicMock(output="ok")])
+
+        assert run.call_count == 2
+        assert sleep.call_count == 1
+        assert response.content == "ok"
+
+    def test_rate_limit_is_retried(self, tmp_path):
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        _, run, _ = self._query(self._manager(tmp_path), [ModelHTTPError(status_code=429, model_name="m"), MagicMock(output="ok")])
+
+        assert run.call_count == 2
+
+    def test_gives_up_after_max_retries(self, tmp_path):
+        import httpx
+
+        manager = self._manager(tmp_path)
+        response, run, _ = self._query(manager, httpx.ReadTimeout("slow"))
+
+        assert run.call_count == 3  # first try + LLM_MAX_RETRIES
+        assert isinstance(response, FailedResponse)
+        assert manager.last_call["error_type"] == "ReadTimeout"
+
+    def test_permanent_error_is_not_retried(self, tmp_path):
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        response, run, sleep = self._query(self._manager(tmp_path), ModelHTTPError(status_code=400, model_name="m"))
+
+        assert run.call_count == 1 and sleep.call_count == 0
+        assert isinstance(response, FailedResponse)
+
+    def test_a_failed_query_counts_once_for_the_circuit_breaker(self, tmp_path):
+        import httpx
+
+        manager = self._manager(tmp_path)
+        self._query(manager, httpx.ReadTimeout("slow"))
+
+        assert manager._rate_limiter.get_stats()["consecutive_failures"] == 1
+
+    def test_backoff_is_jittered(self, tmp_path):
+        import httpx
+
+        with patch("deriva.adapters.llm.manager.random.uniform", return_value=0.25) as uniform:
+            _, _, sleep = self._query(self._manager(tmp_path), [httpx.ReadTimeout("slow"), MagicMock(output="ok")])
+
+        uniform.assert_called_once_with(0, 2.0)
+        sleep.assert_called_once_with(0.25)
+
+    def test_latency_is_recorded_for_failed_calls(self, tmp_path):
+        import itertools
+
+        import httpx
+
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.time.perf_counter", side_effect=itertools.count(0, 1.0)):
+            self._query(manager, httpx.ReadTimeout("slow"))
+
+        assert manager.last_call["latency_ms"] >= 1000
+
+    def test_requests_include_failed_attempts(self, tmp_path):
+        import httpx
+
+        manager = self._manager(tmp_path)
+        result = MagicMock(output="ok")
+        result.usage.return_value = MagicMock(requests=1, input_tokens=3, output_tokens=2)
+        self._query(manager, [httpx.ReadTimeout("slow"), result])
+
+        assert manager.last_call["requests"] == 2
+
+    def test_backoff_does_not_sleep_on_the_event_loop_thread(self, tmp_path):
+        import threading
+
+        import httpx
+
+        sleeping_threads = []
+        with (
+            patch("deriva.adapters.llm.manager._is_event_loop_running", return_value=True),
+            patch("deriva.adapters.llm.manager.Agent") as agent_class,
+            patch("deriva.adapters.llm.manager.time.sleep", side_effect=lambda _: sleeping_threads.append(threading.current_thread())),
+        ):
+            agent_class.return_value.run_sync.side_effect = [httpx.ReadTimeout("slow"), MagicMock(output="ok")]
+            self._manager(tmp_path).query("Hello")
+
+        assert sleeping_threads and threading.main_thread() not in sleeping_threads
+
+
+class TestAgentPerThread:
+    """pydantic-ai agents hold an async HTTP client bound to one event loop; each thread gets its own agent."""
+
+    def test_threads_get_separate_agents_and_reuse_their_own(self, tmp_path):
+        import threading
+
+        with patch("deriva.adapters.llm.manager.load_dotenv"):
+            with patch.dict(
+                "os.environ",
+                {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
+                clear=True,
+            ):
+                manager = LLMManager()
+
+        with patch("deriva.adapters.llm.manager.Agent", side_effect=lambda **kw: object()):
+            main_first = manager._agent(str, "s")
+            main_again = manager._agent(str, "s")
+            other: list[object] = []
+            worker = threading.Thread(target=lambda: other.append(manager._agent(str, "s")))
+            worker.start()
+            worker.join()
+
+        assert main_first is main_again
+        assert other[0] is not main_first
+
+
+def test_usage_as_property_is_recorded(tmp_path):
+    """pydantic-ai 2 exposes result.usage as a property (1.x: a method); both give token counts."""
+    from types import SimpleNamespace
+
+    from pydantic_ai.usage import RunUsage
+
+    with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch.dict(
+            "os.environ",
+            {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
+            clear=True,
+        ):
+            manager = LLMManager()
+
+    result = SimpleNamespace(output="ok", usage=RunUsage(input_tokens=11, output_tokens=7, requests=1))
+    with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+        agent_class.return_value.run_sync.return_value = result
+        manager.query("Hello")
+
+    assert (manager.last_call["input_tokens"], manager.last_call["output_tokens"]) == (11, 7)

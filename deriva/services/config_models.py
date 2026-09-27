@@ -21,7 +21,7 @@ class GrafeoSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="GRAFEO_", env_file=".env", extra="ignore")
 
-    db_path: str = ""  # Empty = in-memory, path = persistent
+    db_dir: str = ""  # Empty = in-memory, directory = one <repository>.grafeo file per repository
     log_queries: bool = False
 
 
@@ -97,7 +97,7 @@ class DerivaSettings(BaseSettings):
 
     Usage:
         settings = DerivaSettings()
-        print(settings.grafeo.db_path)
+        print(settings.grafeo.db_dir)
         print(settings.llm.temperature)
     """
 

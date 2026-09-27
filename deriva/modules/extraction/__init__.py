@@ -67,6 +67,7 @@ from .base import (
     has_file_sources,
     has_node_sources,
     # File type utilities
+    is_excluded_path,
     is_python_file,
     matches_file_spec,
     normalize_concept_name,
@@ -90,6 +91,7 @@ from .business_concept import (
     extract_business_concepts,
     extract_business_concepts_batch,
     extract_business_concepts_multi,
+    merge_concept_properties,
 )
 from .business_concept import (
     build_extraction_prompt as build_business_concept_prompt,
@@ -217,6 +219,7 @@ __all__ = [
     "singularize",
     "PACKAGE_CANONICAL_NAMES",
     # File type utilities
+    "is_excluded_path",
     "is_python_file",
     # Repository
     "build_repository_node",
@@ -232,6 +235,7 @@ __all__ = [
     "extract_business_concepts",
     "extract_business_concepts_batch",
     "extract_business_concepts_multi",
+    "merge_concept_properties",
     "build_business_concept_prompt",
     "parse_business_concept_response",
     "BUSINESS_CONCEPT_SCHEMA",

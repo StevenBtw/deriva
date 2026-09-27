@@ -16,6 +16,38 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
 # =============================================================================
+# Safety: tests never touch a persistent graph database
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _in_memory_graph_database(monkeypatch):
+    """Force in-memory grafeo; .env's GRAFEO_DB_DIR must never reach a test.
+
+    load_dotenv() does not override variables that are already set, so an empty
+    value here wins over .env. LLMManager reloads .env with override=True, so its
+    load_dotenv re-clears both after loading. Tests that need files set
+    GRAFEO_DB_DIR to tmp_path.
+    """
+    import os
+
+    from deriva.adapters.llm import manager as llm_manager
+
+    monkeypatch.setenv("GRAFEO_DB_DIR", "")
+    monkeypatch.setenv("GRAFEO_DB_PATH", "")
+
+    real_load_dotenv = llm_manager.load_dotenv
+
+    def load_dotenv_keeping_memory_graph(*args, **kwargs):
+        loaded = real_load_dotenv(*args, **kwargs)
+        os.environ["GRAFEO_DB_DIR"] = ""
+        os.environ["GRAFEO_DB_PATH"] = ""
+        return loaded
+
+    monkeypatch.setattr(llm_manager, "load_dotenv", load_dotenv_keeping_memory_graph)
+
+
+# =============================================================================
 # Sample Data Fixtures
 # =============================================================================
 

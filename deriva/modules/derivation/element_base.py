@@ -29,6 +29,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Callable
@@ -38,13 +39,22 @@ from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
     Candidate,
     CandidateDecision,
+    NAMING_SCHEMA,
     GenerationResult,
+    NamingConfig,
+    PerCandidateConfig,
+    RelationshipLLMConfig,
     RelationshipRule,
     batch_candidates,
     build_derivation_prompt,
     build_element,
+    build_naming_prompt,
+    build_single_candidate_prompt,
+    choose_name,
+    compute_candidate_strength,
     derive_batch_relationships,
     extract_response_content,
+    naming_source,
     get_enrichments_from_graph,
     parse_derivation_response,
     query_candidates,
@@ -96,6 +106,9 @@ class ElementDerivationBase(ABC):
     ELEMENT_TYPE: str
     OUTBOUND_RULES: list[RelationshipRule]
     INBOUND_RULES: list[RelationshipRule]
+
+    # Confidence gate: elements below this threshold are not created
+    MIN_ELEMENT_CONFIDENCE: float = 0.5
 
     def __init__(self) -> None:
         """Initialize the derivation class."""
@@ -221,6 +234,86 @@ class ElementDerivationBase(ABC):
 
         return filtered
 
+    def _consolidate_near_duplicates(
+        self,
+        candidates: list[Candidate],
+        threshold: float = 0.85,
+    ) -> list[Candidate]:
+        """Merge near-duplicate candidates before sending to LLM.
+
+        Groups candidates with similar normalized names and keeps only the
+        highest-PageRank representative from each group. This prevents the
+        LLM from seeing "rollback", "execute_rollback", and "perform_rollback"
+        as three separate candidates.
+
+        Uses the same normalize_name() and similarity_ratio() as the existing
+        duplicate_elements refine step (270+ synonym mappings built in).
+
+        Args:
+            candidates: Filtered candidates (post graph filtering)
+            threshold: Similarity threshold for grouping (default 0.85)
+
+        Returns:
+            Consolidated candidates with near-duplicates merged
+        """
+        if len(candidates) <= 1:
+            return candidates
+
+        # Normalize all names upfront
+        norms = [(c, normalize_name(c.name)) for c in candidates]
+
+        # Union-Find grouping
+        parent: dict[int, int] = {i: i for i in range(len(norms))}
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for i in range(len(norms)):
+            for j in range(i + 1, len(norms)):
+                if similarity_ratio(norms[i][1], norms[j][1]) >= threshold:
+                    union(i, j)
+
+        # Group by root
+        groups: dict[int, list[Candidate]] = {}
+        for i, (c, _) in enumerate(norms):
+            root = find(i)
+            groups.setdefault(root, []).append(c)
+
+        # From each group, keep highest pagerank (tiebreaker: alphabetical node_id)
+        result = []
+        for group in groups.values():
+            survivor = max(
+                group,
+                key=lambda c: (c.pagerank or 0, c.node_id),
+            )
+            result.append(survivor)
+            if len(group) > 1:
+                merged_names = [c.name for c in group if c is not survivor]
+                self.logger.debug(
+                    "Consolidated near-duplicates for %s: kept '%s', merged %s",
+                    self.ELEMENT_TYPE,
+                    survivor.name,
+                    merged_names,
+                )
+
+        if len(result) < len(candidates):
+            self.logger.info(
+                "Near-duplicate consolidation: %d -> %d candidates for %s",
+                len(candidates),
+                len(result),
+                self.ELEMENT_TYPE,
+            )
+
+        return result
+
     def generate(
         self,
         graph_manager: "GraphManager",
@@ -237,6 +330,9 @@ class ElementDerivationBase(ABC):
         max_tokens: int | None = None,
         defer_relationships: bool = False,
         cache_manager: "EnrichmentCacheManager | None" = None,
+        relationship_config: RelationshipLLMConfig | None = None,
+        per_candidate: PerCandidateConfig | None = None,
+        naming: NamingConfig | None = None,
     ) -> GenerationResult:
         """
         Generate elements of this type.
@@ -264,6 +360,12 @@ class ElementDerivationBase(ABC):
             max_tokens: Optional LLM max_tokens override
             defer_relationships: If True, skip relationship derivation
             cache_manager: Optional EnrichmentCacheManager for controlled caching
+            relationship_config: Relationship config row settings for the LLM
+                relationship pass (None skips that pass)
+            per_candidate: Per-candidate naming mode from the element config
+                (None uses batch mode)
+            naming: Isolated naming step from the element config (None keeps the
+                structure name)
 
         Returns:
             GenerationResult with success status, counts, and any errors
@@ -378,8 +480,33 @@ class ElementDerivationBase(ABC):
             )
             return result
 
+        # Consolidate near-duplicate candidate names before LLM
+        consolidated = self._consolidate_near_duplicates(filtered)
+        kept_ids = {c.node_id for c in consolidated}
+        for c in filtered:
+            if c.node_id not in kept_ids:
+                result.candidate_decisions.append(
+                    CandidateDecision(
+                        node_id=c.node_id,
+                        name=c.name,
+                        element_type=self.ELEMENT_TYPE,
+                        pagerank=c.pagerank,
+                        kcore_level=c.kcore_level,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                        confidence=c.properties.get("confidence"),
+                        stage="duplicate_removed",
+                        became_element=False,
+                    )
+                )
+        filtered = consolidated
+
         # Track candidates sent to LLM
         result.candidates_to_llm = len(filtered)
+
+        # Compute abstention strength signal from the filtered set.
+        # Shared across batches so the LLM sees one consistent view.
+        strength = compute_candidate_strength(filtered)
 
         # Batch and process
         batches = batch_candidates(filtered, batch_size)
@@ -390,12 +517,11 @@ class ElementDerivationBase(ABC):
         if max_tokens is not None:
             llm_kwargs["max_tokens"] = max_tokens
 
-        for batch_num, batch in enumerate(batches, 1):
-            self._process_batch(
-                batch_num=batch_num,
-                batch=batch,
+        if per_candidate is not None and len(filtered) >= per_candidate.min_pool:
+            self._process_per_candidate(
+                filtered=filtered,
                 instruction=instruction,
-                example=example,
+                rules=per_candidate.rules,
                 llm_query_fn=llm_query_fn,
                 llm_kwargs=llm_kwargs,
                 archimate_manager=archimate_manager,
@@ -405,7 +531,29 @@ class ElementDerivationBase(ABC):
                 max_tokens=max_tokens,
                 defer_relationships=defer_relationships,
                 result=result,
+                relationship_config=relationship_config,
+                naming=naming,
             )
+        else:
+            for batch_num, batch in enumerate(batches, 1):
+                self._process_batch(
+                    batch_num=batch_num,
+                    batch=batch,
+                    instruction=instruction,
+                    example=example,
+                    llm_query_fn=llm_query_fn,
+                    llm_kwargs=llm_kwargs,
+                    strength=strength,
+                    archimate_manager=archimate_manager,
+                    graph_manager=graph_manager,
+                    existing_elements=existing_elements,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    defer_relationships=defer_relationships,
+                    result=result,
+                    relationship_config=relationship_config,
+                    naming=naming,
+                )
 
         self.logger.info(
             "Created %d %s elements and %d relationships",
@@ -414,6 +562,59 @@ class ElementDerivationBase(ABC):
             result.relationships_created,
         )
         return result
+
+    def _apply_naming(
+        self,
+        element_data: dict[str, Any],
+        candidate: Candidate,
+        naming: NamingConfig,
+        llm_query_fn: Callable[..., Any],
+        llm_kwargs: dict[str, Any],
+        repo_name: str,
+        taken: list[str],
+    ) -> None:
+        """Name an element with the isolated naming step, in place.
+
+        The prompt holds only the candidate's structural description, the type
+        and the configured convention, so the same source gets the same prompt in
+        every run; ``naming.samples`` answers are combined by majority. Without a
+        usable answer, or when a sibling already has the name, the structure name
+        stays.
+        """
+        from deriva.modules.derivation.refine.normalization import strip_repo_prefix
+
+        prompt = build_naming_prompt(
+            naming_source(candidate), self.ELEMENT_TYPE, naming.instruction
+        )
+        answers: list[str | None] = []
+        for _ in range(naming.samples):
+            try:
+                content, error = extract_response_content(
+                    llm_query_fn(prompt, NAMING_SCHEMA, **llm_kwargs)
+                )
+                if error:
+                    continue
+                text = (
+                    content.strip()
+                    .removeprefix("```json")
+                    .removeprefix("```")
+                    .removesuffix("```")
+                    .strip()
+                )
+                answers.append(json.loads(text).get("name"))
+            except (ValueError, AttributeError) as e:
+                self.logger.debug(
+                    "Unusable naming answer for %s: %s", candidate.node_id, e
+                )
+        name = choose_name(answers)
+        # No type-suffix stripping here: the configured convention governs suffixes,
+        # and words like "Service" or "API" are often part of the right name
+        if name and repo_name:
+            name = strip_repo_prefix(name, repo_name)
+        norm_taken = {" ".join(n.lower().split()) for n in taken}
+        if name and " ".join(name.lower().split()) not in norm_taken:
+            element_data["properties"]["structure_name"] = element_data["name"]
+            element_data["name"] = name
 
     def _process_batch(
         self,
@@ -430,6 +631,9 @@ class ElementDerivationBase(ABC):
         max_tokens: int | None,
         defer_relationships: bool,
         result: GenerationResult,
+        strength: dict[str, Any] | None = None,
+        relationship_config: RelationshipLLMConfig | None = None,
+        naming: NamingConfig | None = None,
     ) -> None:
         """
         Process a single batch of candidates.
@@ -451,6 +655,7 @@ class ElementDerivationBase(ABC):
             max_tokens: LLM max tokens
             defer_relationships: Skip relationship derivation if True
             result: GenerationResult to update with counts and errors
+            relationship_config: Relationship config row settings (None skips the LLM pass)
         """
         # Build prompt
         prompt = build_derivation_prompt(
@@ -458,6 +663,7 @@ class ElementDerivationBase(ABC):
             instruction=instruction,
             example=example,
             element_type=self.ELEMENT_TYPE,
+            strength=strength,
         )
 
         # Call LLM
@@ -495,13 +701,35 @@ class ElementDerivationBase(ABC):
             for c in batch
         }
 
+        # Read active repo name once for name normalization at build time.
+        # Stripping the repo prefix prevents cross-run flutter like
+        # "<Repo> Client Interaction" vs "Client Interaction".
+        repo_name = ""
+        try:
+            rows = graph_manager.query(
+                "MATCH (r:Graph:Repository) WHERE r.active = true "
+                "RETURN r.repository_name as name LIMIT 1"
+            )
+            if rows and rows[0].get("name"):
+                repo_name = rows[0]["name"]
+        except Exception as e:
+            self.logger.debug("Could not read active repository name: %s", e)
+
         # Create elements
         batch_elements: list[dict[str, Any]] = []
         created_source_ids: set[str] = set()
 
+        # Element names come from the candidates' own names (structure), not the LLM
+        source_names = {c.node_id: c.name for c in batch}
+        candidates_by_id = {c.node_id: c for c in batch}
+        batch_names: list[str] = []
         for derived in parse_result.get("data", []):
             element_result = build_element(
-                derived, self.ELEMENT_TYPE, batch_enrichments
+                derived,
+                self.ELEMENT_TYPE,
+                batch_enrichments,
+                repo_name=repo_name,
+                source_names=source_names,
             )
 
             if not element_result["success"]:
@@ -509,6 +737,29 @@ class ElementDerivationBase(ABC):
                 continue
 
             element_data = element_result["data"]
+
+            # Confidence gate: skip elements the LLM flagged as poor matches
+            confidence = element_data.get("properties", {}).get("confidence", 1.0)
+            if confidence < self.MIN_ELEMENT_CONFIDENCE:
+                self.logger.debug(
+                    "Skipping low-confidence element %s (%.2f < %.2f)",
+                    element_data.get("name", "?"),
+                    confidence,
+                    self.MIN_ELEMENT_CONFIDENCE,
+                )
+                continue
+
+            if naming is not None:
+                self._apply_naming(
+                    element_data,
+                    candidates_by_id[element_data["properties"]["source"]],
+                    naming,
+                    llm_query_fn,
+                    llm_kwargs,
+                    repo_name,
+                    batch_names,
+                )
+            batch_names.append(element_data["name"])
 
             try:
                 element = Element(
@@ -589,6 +840,191 @@ class ElementDerivationBase(ABC):
                 graph_manager=graph_manager,
                 archimate_manager=archimate_manager,
                 result=result,
+                relationship_config=relationship_config,
+            )
+
+    def _process_per_candidate(
+        self,
+        filtered: list[Candidate],
+        instruction: str,
+        rules: str,
+        llm_query_fn: Callable[..., Any],
+        llm_kwargs: dict[str, Any],
+        archimate_manager: "ArchimateManager",
+        graph_manager: "GraphManager",
+        existing_elements: list[dict[str, Any]],
+        temperature: float | None,
+        max_tokens: int | None,
+        defer_relationships: bool,
+        result: GenerationResult,
+        relationship_config: RelationshipLLMConfig | None = None,
+        naming: NamingConfig | None = None,
+    ) -> None:
+        """Derive elements one candidate per LLM call, then batch relationships.
+
+        Each LLM call sees a single candidate and returns zero or one element.
+        This isolates keep/name/doc decisions so one candidate cannot perturb
+        the naming of another.
+        """
+        enrichments = {
+            c.node_id: {
+                "pagerank": c.pagerank,
+                "louvain_community": c.louvain_community,
+            }
+            for c in filtered
+        }
+
+        repo_name = ""
+        try:
+            rows = graph_manager.query(
+                "MATCH (r:Graph:Repository) WHERE r.active = true "
+                "RETURN r.repository_name as name LIMIT 1"
+            )
+            if rows and rows[0].get("name"):
+                repo_name = rows[0]["name"]
+        except Exception as e:
+            self.logger.debug("Could not read active repository name: %s", e)
+
+        created_elements: list[dict[str, Any]] = []
+        created_by_source: dict[str, dict[str, Any]] = {}
+        # Track names already chosen this batch to avoid sibling collisions
+        # (per-candidate prompts otherwise can't see each other).
+        names_so_far: list[str] = []
+
+        for cand in filtered:
+            existing_summary: dict[str, list[str]] | None = None
+            if names_so_far:
+                existing_summary = {self.ELEMENT_TYPE: sorted(names_so_far)}
+            prompt = build_single_candidate_prompt(
+                candidate=cand,
+                instruction=instruction,
+                element_type=self.ELEMENT_TYPE,
+                existing_elements_summary=existing_summary,
+                rules=rules,
+            )
+            try:
+                response = llm_query_fn(prompt, DERIVATION_SCHEMA, **llm_kwargs)
+                response_content, error = extract_response_content(response)
+                if error:
+                    result.errors.append(
+                        f"LLM error ({self.ELEMENT_TYPE}/{cand.node_id}): {error}"
+                    )
+                    continue
+            except Exception as e:
+                result.errors.append(
+                    f"LLM error ({self.ELEMENT_TYPE}/{cand.node_id}): {e}"
+                )
+                continue
+
+            parse_result = parse_derivation_response(response_content)
+            if not parse_result["success"]:
+                result.errors.extend(
+                    [
+                        f"{self.ELEMENT_TYPE}/{cand.node_id}: {e}"
+                        for e in parse_result.get("errors", [])
+                    ]
+                )
+                continue
+
+            derived_list = parse_result.get("data", [])
+            if not derived_list:
+                continue
+
+            # The prompt holds this one candidate, so the element is its element
+            derived = {**derived_list[0], "source": cand.node_id}
+            element_result = build_element(
+                derived,
+                self.ELEMENT_TYPE,
+                enrichments,
+                repo_name=repo_name,
+                source_names={cand.node_id: cand.name},
+            )
+            if not element_result["success"]:
+                result.errors.extend(element_result.get("errors", []))
+                continue
+
+            element_data = element_result["data"]
+            confidence = element_data.get("properties", {}).get("confidence", 1.0)
+            if confidence < self.MIN_ELEMENT_CONFIDENCE:
+                continue
+
+            if naming is not None:
+                self._apply_naming(
+                    element_data,
+                    cand,
+                    naming,
+                    llm_query_fn,
+                    llm_kwargs,
+                    repo_name,
+                    names_so_far,
+                )
+
+            # Two candidates can have the same graph name (e.g. equally named
+            # directories); keep the first so names stay unique within the type.
+            # Candidates arrive in a deterministic order, so the choice is stable.
+            if " ".join(element_data["name"].lower().split()) in {
+                " ".join(n.lower().split()) for n in names_so_far
+            }:
+                self.logger.debug(
+                    "Skipping duplicate name '%s' on %s (%s)",
+                    element_data["name"],
+                    self.ELEMENT_TYPE,
+                    cand.node_id,
+                )
+                continue
+
+            try:
+                element = Element(
+                    name=element_data["name"],
+                    element_type=element_data["element_type"],
+                    identifier=element_data["identifier"],
+                    documentation=element_data.get("documentation"),
+                    properties=element_data.get("properties", {}),
+                )
+                archimate_manager.add_element(element)
+                result.elements_created += 1
+                result.created_elements.append(element_data)
+                created_elements.append(element_data)
+                created_by_source[cand.node_id] = element_data
+                names_so_far.append(element_data["name"])
+            except Exception as e:
+                result.errors.append(
+                    f"Failed to create {self.ELEMENT_TYPE} element "
+                    f"{element_data.get('identifier', 'unknown')}: {e}"
+                )
+
+        for c in filtered:
+            created = created_by_source.get(c.node_id)
+            result.candidate_decisions.append(
+                CandidateDecision(
+                    node_id=c.node_id,
+                    name=c.name,
+                    element_type=self.ELEMENT_TYPE,
+                    pagerank=c.pagerank,
+                    kcore_level=c.kcore_level,
+                    in_degree=c.in_degree,
+                    out_degree=c.out_degree,
+                    confidence=c.properties.get("confidence"),
+                    stage="created" if created else "llm_rejected",
+                    became_element=created is not None,
+                    element_id=created["identifier"] if created else None,
+                    element_confidence=created.get("properties", {}).get("confidence")
+                    if created
+                    else None,
+                )
+            )
+
+        if created_elements and existing_elements and not defer_relationships:
+            self._derive_relationships(
+                batch_elements=created_elements,
+                existing_elements=existing_elements,
+                llm_query_fn=llm_query_fn,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                graph_manager=graph_manager,
+                archimate_manager=archimate_manager,
+                result=result,
+                relationship_config=relationship_config,
             )
 
     def _derive_relationships(
@@ -601,6 +1037,7 @@ class ElementDerivationBase(ABC):
         graph_manager: "GraphManager",
         archimate_manager: "ArchimateManager",
         result: GenerationResult,
+        relationship_config: RelationshipLLMConfig | None = None,
     ) -> None:
         """
         Derive relationships for newly created elements.
@@ -614,6 +1051,7 @@ class ElementDerivationBase(ABC):
             graph_manager: For graph-based relationship derivation
             archimate_manager: For creating relationships
             result: GenerationResult to update
+            relationship_config: Relationship config row settings (None skips the LLM pass)
         """
         relationships = derive_batch_relationships(
             new_elements=batch_elements,
@@ -625,6 +1063,7 @@ class ElementDerivationBase(ABC):
             temperature=temperature,
             max_tokens=max_tokens,
             graph_manager=graph_manager,
+            llm_config=relationship_config,
         )
 
         for rel_data in relationships:
@@ -643,6 +1082,7 @@ class ElementDerivationBase(ABC):
                     relationship_type=rel_data["relationship_type"],
                     properties={
                         "confidence": rel_data.get("confidence", 0.5),
+                        "derived_from": rel_data.get("derived_from"),
                         "source_pagerank": source_props.get("source_pagerank"),
                         "source_kcore": source_props.get("source_kcore_level"),
                         "source_community": source_props.get(
@@ -763,6 +1203,10 @@ class HybridFilteringMixin:
 
     # Graph filtering constants - override in subclass as needed
     MIN_PAGERANK: float | None = None
+    MIN_PAGERANK_PERCENTILE: float | None = (
+        None  # Scale-independent (e.g., 40.0 = top 60%)
+    )
+    MIN_KCORE_PERCENTILE: float | None = None
     USE_COMMUNITY_ROOTS: bool = False
     USE_ARTICULATION_POINTS: bool = False
     COMMUNITY_ROOT_RATIO: float = (
@@ -798,9 +1242,26 @@ class HybridFilteringMixin:
 
         filtered = list(candidates)
 
-        # Filter by minimum PageRank
+        # Filter by minimum PageRank (absolute threshold)
         if self.MIN_PAGERANK is not None:
             filtered = [c for c in filtered if (c.pagerank or 0) >= self.MIN_PAGERANK]
+
+        # Filter by percentile thresholds (scale-independent)
+        # Only apply when percentile data is available (None means prep did not compute it)
+        if self.MIN_PAGERANK_PERCENTILE is not None:
+            filtered = [
+                c
+                for c in filtered
+                if c.pagerank_percentile is None
+                or c.pagerank_percentile >= self.MIN_PAGERANK_PERCENTILE
+            ]
+        if self.MIN_KCORE_PERCENTILE is not None:
+            filtered = [
+                c
+                for c in filtered
+                if c.kcore_percentile is None
+                or c.kcore_percentile >= self.MIN_KCORE_PERCENTILE
+            ]
 
         if not filtered:
             return []

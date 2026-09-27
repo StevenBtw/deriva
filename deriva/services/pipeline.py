@@ -184,11 +184,8 @@ def run_classification(
         repo_path = Path(str(repo.path))
         stats["repos_processed"] += 1
 
-        # Get all files
-        file_paths = []
-        for f in repo_path.rglob("*"):
-            if f.is_file() and not any(x in str(f) for x in [".git", "__pycache__", ".pyc"]):
-                file_paths.append(str(f.relative_to(repo_path)))
+        # Get all files (outside excluded dependency directories)
+        file_paths = extraction.list_repo_files(repo_path, config.get_excluded_directories(engine))
 
         # Classify files
         result = classification.classify_files(file_paths, registry_list)

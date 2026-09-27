@@ -19,6 +19,10 @@ app = typer.Typer(name="config", help="Manage pipeline configurations")
 # Filetype subapp
 filetype_app = typer.Typer(name="filetype", help="Manage file type registry")
 app.add_typer(filetype_app)
+setting_app = typer.Typer(
+    name="setting", help="Manage system settings (e.g. excluded_directories)"
+)
+app.add_typer(setting_app)
 
 
 # =============================================================================
@@ -142,6 +146,37 @@ def config_disable(
             raise typer.Exit(1)
 
 
+@app.command("add")
+def config_add(
+    step_type: Annotated[
+        str, typer.Argument(help="Type of configuration (derivation)")
+    ],
+    name: Annotated[str, typer.Argument(help="Step name")],
+    phase: Annotated[str, typer.Option("--phase", help="prep, generate or refine")],
+    sequence: Annotated[
+        int, typer.Option("--sequence", help="Execution order within the phase")
+    ],
+    params: Annotated[
+        str | None, typer.Option("--params", "-p", help="Params JSON")
+    ] = None,
+) -> None:
+    """Add a new derivation step (created disabled; enable with 'config enable')."""
+    if step_type != "derivation":
+        typer.echo("Error: only 'derivation' steps can be added", err=True)
+        raise typer.Exit(1)
+    with PipelineSession() as session:
+        try:
+            added = session.add_derivation_step(name, phase, sequence, params=params)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+        if added:
+            typer.echo(f"Added derivation step: {name} (disabled)")
+        else:
+            typer.echo(f"Step already exists: {step_type}/{name}")
+            raise typer.Exit(1)
+
+
 @app.command("update")
 def config_update(
     step_type: Annotated[str, typer.Argument(help="Type of configuration to update")],
@@ -169,16 +204,24 @@ def config_update(
     ] = None,
     params: Annotated[
         str | None,
-        typer.Option("-p", "--params", help="New params JSON (derivation only)"),
+        typer.Option("-p", "--params", help="New params JSON"),
     ] = None,
     params_file: Annotated[
         str | None, typer.Option("--params-file", help="Read params JSON from file")
+    ] = None,
+    temperature: Annotated[
+        float | None,
+        typer.Option("--temperature", help="LLM temperature for this step"),
     ] = None,
     batch_size: Annotated[
         int | None,
         typer.Option(
             "--batch-size", help="Files per LLM call for extraction (1=no batching)"
         ),
+    ] = None,
+    max_candidates: Annotated[
+        int | None,
+        typer.Option("--max-candidates", help="Maximum candidates for derivation"),
     ] = None,
 ) -> None:
     """Update a configuration with versioning."""
@@ -230,6 +273,9 @@ def config_update(
                 example=example,
                 input_graph_query=query,
                 params=params,
+                batch_size=batch_size,
+                max_candidates=max_candidates,
+                temperature=temperature,
             )
         elif step_type == "extraction":
             result = config.create_extraction_config_version(
@@ -239,6 +285,8 @@ def config_update(
                 example=example,
                 input_sources=sources,
                 batch_size=batch_size,
+                params=params,
+                temperature=temperature,
             )
         else:
             typer.echo(f"Versioned updates not yet supported for: {step_type}")
@@ -538,3 +586,36 @@ def filetype_stats() -> None:
             typer.echo(f"  {ft_type:<20} {count}")
 
         typer.echo(f"\n  {'Total':<20} {sum(stats.values())}")
+
+
+@setting_app.command("show")
+def setting_show(
+    key: Annotated[
+        str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")
+    ],
+) -> None:
+    """Show a system setting."""
+    with PipelineSession() as session:
+        value = session.get_setting(key)
+
+        if value is None:
+            typer.echo(f"Setting not set: {key}", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"{key} = {value}")
+
+
+@setting_app.command("set")
+def setting_set(
+    key: Annotated[
+        str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")
+    ],
+    value: Annotated[str, typer.Argument(help="New value (JSON for list settings)")],
+) -> None:
+    """Set a system setting."""
+    with PipelineSession() as session:
+        try:
+            session.set_setting(key, value)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+        typer.echo(f"Set {key} = {value}")

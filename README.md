@@ -188,7 +188,7 @@ All configuration lives in `.env`. Key settings:
 
 ```bash
 # Graph database (grafeo embedded)
-GRAFEO_DB_PATH=          # Empty = in-memory, path = persistent file
+GRAFEO_DB_DIR=           # Empty = in-memory; directory = one <repo>.grafeo database per repository
 
 # LLM Provider (mistral, openai, azure, anthropic, ollama, lmstudio)
 LLM_MISTRAL_DEVSTRAL_PROVIDER=mistral
@@ -276,6 +276,13 @@ deriva config filetype stats
 ```
 
 > **Note:** Files with unrecognized extensions are automatically classified as `file_type="unknown"` with their extension as the subtype. This ensures all files get proper classification even without explicit registry entries.
+
+**Excluded directories:** dependency and tool directories are skipped by every repository walk (no Directory or File nodes, no LLM calls), matched as whole path segments. The list is the `excluded_directories` system setting (JSON list); by default `.git`, `__pycache__`, `node_modules`, `bower_components`, `vendor`, `.venv`, `venv` and `site-packages`. Changing it triggers re-extraction.
+
+```bash
+deriva config setting show excluded_directories
+deriva config setting set excluded_directories '[".git", "node_modules", "third_party"]'
+```
 
 ### Updating Configurations (Versioning)
 
@@ -381,10 +388,18 @@ deriva config list extraction
 deriva config show extraction BusinessConcept
 deriva status
 
+# Add a derivation step (created disabled, then enable it); a refine step
+# must also be implemented and registered in code under the same name
+deriva config add derivation my_refine_step --phase refine --sequence 4 --params '{"dry_run": true}'
+deriva config enable derivation my_refine_step
+
 # Manage file types
 deriva config filetype list
 deriva config filetype add ".lock" dependency lock
 deriva config filetype stats
+
+# System settings (e.g. directories skipped during extraction)
+deriva config setting show excluded_directories
 
 # Run pipeline stages
 deriva run extraction --repo flask_invoice_generator -v

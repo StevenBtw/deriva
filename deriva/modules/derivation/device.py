@@ -57,6 +57,11 @@ class DeviceDerivation(HybridDerivation):
             rel_type="Composition",
             description="Devices contain system software",
         ),
+        RelationshipRule(
+            target_type="TechnologyService",
+            rel_type="Realization",
+            description="Devices realize technology services",
+        ),
     ]
 
     INBOUND_RULES: list[RelationshipRule] = [

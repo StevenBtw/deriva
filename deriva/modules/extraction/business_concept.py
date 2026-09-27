@@ -19,7 +19,9 @@ from typing import Any
 from .base import (
     create_empty_llm_details,
     current_timestamp,
+    normalize_concept_name,
     parse_json_response,
+    sample_llm,
     strip_chunk_suffix,
 )
 
@@ -281,46 +283,6 @@ BUSINESS_CONCEPT_MULTI_SCHEMA = {
 }
 
 
-def build_system_prompt(instruction: str) -> str:
-    """
-    Build system prompt with static instructions for business concept extraction.
-
-    This separates static role/guideline content (sent once) from dynamic
-    file-specific content (sent per file), reducing token usage.
-
-    Args:
-        instruction: Additional extraction instruction from config
-
-    Returns:
-        System prompt string
-    """
-    return f"""You are an expert at extracting business domain concepts from code documentation.
-
-## What ARE Business Concepts (extract these):
-- **Actors**: People/roles (Customer, Admin, User, Manager)
-- **Entities**: Things the system manages (Invoice, Order, Product, Process)
-- **Processes**: Business operations (Checkout, Approval, Registration, Execution)
-- **Events**: Business happenings (OrderPlaced, PaymentReceived)
-- **Rules/Goals**: Policies and objectives (DiscountPolicy, Compliance)
-
-## What are NOT Business Concepts (skip these):
-- Technical infrastructure (Kafka, Docker, Gateway, REST API)
-- Code structure (Utils, Service, Controller, Repository pattern)
-- Framework/library names (Spring, React, MongoDB)
-
-## Confidence Scoring:
-- 0.9-1.0: Core business concept, central to the domain
-- 0.8-0.9: Clear business concept
-- 0.7-0.8: Likely business-relevant
-- 0.6-0.7: Borderline, might be technical
-
-Only return concepts with confidence >= 0.6
-
-{instruction}
-
-IMPORTANT: Output stable, deterministic results. Always use the same naming conventions."""
-
-
 def build_user_prompt(
     file_content: str,
     file_path: str,
@@ -331,7 +293,7 @@ def build_user_prompt(
     Build user prompt with dynamic file-specific content only.
 
     This contains the file content and context that changes per extraction call.
-    Used together with build_system_prompt() for token-efficient extraction.
+    The config instruction is the system prompt, used verbatim.
 
     Args:
         file_content: Content of the file to analyze
@@ -393,8 +355,8 @@ def build_extraction_prompt(
     This combines system and user prompts for backward compatibility with
     callers that don't support separate system prompts.
 
-    For token-efficient extraction, use build_system_prompt() and build_user_prompt()
-    separately with an LLM that supports system prompts.
+    For token-efficient extraction, send the config instruction as the system prompt
+    and build_user_prompt() as the user prompt.
 
     Args:
         file_content: Content of the file to analyze
@@ -406,9 +368,8 @@ def build_extraction_prompt(
     Returns:
         Combined prompt string (system + user content)
     """
-    system = build_system_prompt(instruction)
     user = build_user_prompt(file_content, file_path, example, existing_concepts)
-    return f"{system}\n\n{user}"
+    return f"{instruction}\n\n{user}"
 
 
 def build_multi_file_user_prompt(
@@ -472,6 +433,95 @@ def build_multi_file_user_prompt(
 
 Return JSON with a "results" array. Each result must have "file_path" and "concepts" array.
 Example format for a single file's concepts: {example}"""
+
+
+def merge_concept_properties(
+    existing: dict[str, Any] | None, new: dict[str, Any]
+) -> dict[str, Any]:
+    """Combine two occurrences of the same concept, independent of file order.
+
+    Files can classify one concept differently (a README calls "User" an
+    entity, a requirements document an actor). Every type is kept in
+    ``conceptTypes`` (sorted union) and ``confidence`` is the highest seen.
+    The single-valued fields (``conceptType``, description, origin) come from
+    the strongest occurrence: highest confidence, ties broken by origin path,
+    type and description, so any processing order gives the same node.
+    """
+
+    def types(props: dict[str, Any]) -> set[str]:
+        return set(props.get("conceptTypes") or [props.get("conceptType", "other")])
+
+    def strength(props: dict[str, Any]) -> tuple[float, str, str, str]:
+        return (
+            -float(props.get("confidence", 0.0)),
+            str(props.get("originSource", "")),
+            str(props.get("conceptType", "")),
+            str(props.get("description", "")),
+        )
+
+    occurrences = [new] if existing is None else [existing, new]
+    best = min(occurrences, key=strength)
+    return {
+        **best,
+        "conceptTypes": sorted(set().union(*(types(o) for o in occurrences))),
+        "confidence": max(float(o.get("confidence", 0.0)) for o in occurrences),
+    }
+
+
+def vote_concepts(
+    samples: list[list[dict[str, Any]]], min_votes: int
+) -> list[dict[str, Any]]:
+    """Concepts named in at least ``min_votes`` of the samples (open extraction made stable).
+
+    Samples are answers to the same prompt. Concepts are matched on their
+    normalized name; the kept concept gets the types given by at least
+    ``min_votes`` samples (else the most frequent type), the median confidence,
+    and the name and description of its strongest occurrence.
+    """
+    groups: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    for index, concepts in enumerate(samples):
+        for concept in concepts:
+            name = str(concept.get("conceptName", "")).strip()
+            if name:
+                groups.setdefault(normalize_concept_name(name).lower(), []).append(
+                    (index, concept)
+                )
+
+    kept: list[dict[str, Any]] = []
+    for key in sorted(groups):
+        group = groups[key]
+        if len({index for index, _ in group}) < min_votes:
+            continue
+        type_votes: dict[str, int] = {}
+        for _, concept in group:
+            ctype = str(concept.get("conceptType", "other")).lower()
+            type_votes[ctype] = type_votes.get(ctype, 0) + 1
+        ranked = sorted(type_votes, key=lambda t: (-type_votes[t], t))
+        types = sorted(t for t in ranked if type_votes[t] >= min_votes) or ranked[:1]
+        confidences = sorted(float(c.get("confidence", 0.8)) for _, c in group)
+        middle = len(confidences) // 2
+        median = (
+            confidences[middle]
+            if len(confidences) % 2
+            else (confidences[middle - 1] + confidences[middle]) / 2
+        )
+        best = min(
+            (c for _, c in group),
+            key=lambda c: (
+                -float(c.get("confidence", 0.8)),
+                str(c.get("conceptName")),
+                str(c.get("description", "")),
+            ),
+        )
+        kept.append(
+            {
+                **best,
+                "conceptType": ranked[0],
+                "conceptTypes": types,
+                "confidence": round(median, 4),
+            }
+        )
+    return kept
 
 
 def build_business_concept_node(
@@ -540,6 +590,9 @@ def build_business_concept_node(
         "properties": {
             "conceptName": concept_data["conceptName"],
             "conceptType": concept_type,
+            "conceptTypes": sorted(
+                {t.lower() for t in concept_data.get("conceptTypes") or [concept_type]}
+            ),
             "description": concept_data["description"],
             "originSource": origin_source,
             "confidence": concept_data.get("confidence", 0.8),
@@ -632,8 +685,20 @@ def extract_business_concepts(
         )
         llm_details["prompt"] = prompt
 
-        # Call LLM
-        response = llm_query_fn(prompt, BUSINESS_CONCEPT_SCHEMA)
+        # Call LLM: k answers to the same prompt, combined by majority (params.samples / min_votes)
+        params = config.get("params") or {}
+        samples = int(params.get("samples", 1))
+        min_votes = int(params.get("min_votes", 1))
+        responses = sample_llm(llm_query_fn, prompt, BUSINESS_CONCEPT_SCHEMA, samples)
+        response = next((r for r in responses if r is not None), None)
+        if response is None:
+            return {
+                "success": False,
+                "data": {"nodes": [], "edges": []},
+                "errors": ["LLM error: every sample failed"],
+                "stats": {"total_nodes": 0, "total_edges": 0, "llm_error": True},
+                "llm_details": llm_details,
+            }
 
         # Extract LLM details from response
         if hasattr(response, "content"):
@@ -656,11 +721,18 @@ def extract_business_concepts(
                 "llm_details": llm_details,
             }
 
-        # Parse the response
-        parse_result = parse_llm_response(response.content)
+        # Parse every sample; unparsable samples do not vote
+        parsed_samples = []
+        for sample in responses:
+            if sample is None or getattr(sample, "error", None):
+                continue
+            sample_result = parse_llm_response(sample.content)
+            if sample_result["success"]:
+                parsed_samples.append(sample_result["data"])
+            else:
+                errors.extend(sample_result["errors"])
 
-        if not parse_result["success"]:
-            errors.extend(parse_result["errors"])
+        if not parsed_samples:
             return {
                 "success": False,
                 "data": {"nodes": [], "edges": []},
@@ -668,6 +740,7 @@ def extract_business_concepts(
                 "stats": {"total_nodes": 0, "total_edges": 0, "parse_error": True},
                 "llm_details": llm_details,
             }
+        parse_result = {"data": vote_concepts(parsed_samples, min_votes)}
 
         # Build nodes for each concept
         # Strip chunk suffix from file_path to get original file node ID
@@ -757,8 +830,8 @@ def extract_business_concepts_multi(
         instruction = config.get("instruction", "")
         example = config.get("example", "{}")
 
-        # Build prompts
-        system_prompt = build_system_prompt(instruction)
+        # The versioned config instruction is the whole system prompt
+        system_prompt = instruction
         user_prompt = build_multi_file_user_prompt(files, example, existing_concepts)
 
         llm_details["prompt"] = f"{system_prompt}\n\n{user_prompt}"

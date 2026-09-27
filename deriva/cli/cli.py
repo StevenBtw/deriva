@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import sys
+from contextlib import ExitStack
 from typing import Annotated
 
 import typer
@@ -125,30 +126,19 @@ def run_stage(
     if phase:
         typer.echo(f"Phase: {phase}")
 
-    with PipelineSession() as session:
+    with PipelineSession(repository=repo) as session, ExitStack() as step_scope:
         typer.echo("Connected to grafeo")
 
-        # Handle --only-step option
         if only_step:
             step_type = "extraction" if stage in ("extraction", "all") else "derivation"
-            typer.echo(f"Enabling only {step_type} step: {only_step}")
-
-            if step_type == "extraction":
-                extraction_configs = session.get_extraction_configs()
-                for cfg in extraction_configs:
-                    name = cfg.get("node_type", cfg.get("name", ""))
-                    if name == only_step:
-                        session.enable_step("extraction", name)
-                    else:
-                        session.disable_step("extraction", name)
-            else:
-                derivation_configs = session.get_derivation_configs()
-                for cfg in derivation_configs:
-                    name = cfg.get("step_name", cfg.get("name", ""))
-                    if name == only_step:
-                        session.enable_step("derivation", name)
-                    else:
-                        session.disable_step("derivation", name)
+            typer.echo(
+                f"Enabling only {step_type} step: {only_step} (restored afterwards)"
+            )
+            try:
+                step_scope.enter_context(session.only_step(step_type, only_step))
+            except ValueError as e:
+                typer.echo(f"Error: {e}", err=True)
+                raise typer.Exit(1) from e
 
         # Show LLM status
         llm_info = session.llm_info
@@ -231,9 +221,16 @@ def run_stage(
 
 
 @app.command("status")
-def status() -> None:
+def status(
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo", help="Repository whose graph database to use (default: shared)"
+        ),
+    ] = None,
+) -> None:
     """Show current pipeline status."""
-    with PipelineSession() as session:
+    with PipelineSession(repository=repo) as session:
         typer.echo("\nDERIVA STATUS")
         typer.echo("=" * 60)
 
@@ -280,6 +277,12 @@ def export(
     verbose: Annotated[
         bool, typer.Option("-v", "--verbose", help="Print detailed progress")
     ] = False,
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo", help="Repository whose graph database to use (default: shared)"
+        ),
+    ] = None,
 ) -> None:
     """Export ArchiMate model to file."""
     model_name = name or "Deriva Model"
@@ -288,7 +291,7 @@ def export(
     typer.echo("DERIVA - Exporting ArchiMate Model")
     typer.echo(f"{'=' * 60}")
 
-    with PipelineSession() as session:
+    with PipelineSession(repository=repo) as session:
         if verbose:
             typer.echo("Connected to grafeo")
 
@@ -314,6 +317,12 @@ def export(
 @app.command("clear")
 def clear(
     target: Annotated[str, typer.Argument(help="Data layer to clear (graph, model)")],
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo", help="Repository whose graph database to use (default: shared)"
+        ),
+    ] = None,
 ) -> None:
     """Clear graph or model data."""
     if target not in ("graph", "model"):
@@ -326,7 +335,7 @@ def clear(
     typer.echo(f"DERIVA - Clearing {target.upper()}")
     typer.echo(f"{'=' * 60}")
 
-    with PipelineSession() as session:
+    with PipelineSession(repository=repo) as session:
         if target == "graph":
             result = session.clear_graph()
         elif target == "model":
@@ -349,6 +358,10 @@ def clear(
 
 def main() -> int:
     """Main entry point."""
+    # Line-buffer stdout so progress appears live, also when piped to a file
+    # (redirected streams such as io.StringIO have no reconfigure)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
     try:
         app()
         return 0
