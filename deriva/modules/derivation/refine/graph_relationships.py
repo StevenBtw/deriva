@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 from deriva.adapters.archimate.models import (
     RELATIONSHIP_TYPES,
     Relationship,
+    validate_relationship_rule,
 )
 
 from .base import RefineResult, register_refine_step
@@ -124,10 +125,18 @@ def find_relationship_candidates(
     valid_targets = valid_combos.get("targets")
 
     def allowed(src: Element, tgt: Element) -> bool:
+        # Each type may be a valid source and target on its own while the pair is
+        # not; check the exact pair so rejected pairs never take a slot under limit
         return (
             src.identifier != tgt.identifier
             and (not valid_sources or src.element_type in valid_sources)
             and (not valid_targets or tgt.element_type in valid_targets)
+            and (
+                rel_type not in RELATIONSHIP_TYPES
+                or validate_relationship_rule(
+                    src.element_type, rel_type, tgt.element_type
+                )[0]
+            )
         )
 
     def row(src: Element, tgt: Element) -> dict[str, Any]:

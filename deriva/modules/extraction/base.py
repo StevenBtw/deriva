@@ -597,6 +597,10 @@ def singularize(word: str) -> str:
         if lower_word.endswith(("ses", "xes", "zes", "ches", "shes")):
             return word[:-2]
 
+    # Words that only look plural: analysis, basis, status, bus
+    if lower_word.endswith(("sis", "us")):
+        return word
+
     if lower_word.endswith("s") and not lower_word.endswith("ss"):
         # Simple plural - remove s
         if len(lower_word) > 2:
@@ -659,16 +663,20 @@ def normalize_concept_name(name: str) -> str:
         return name
 
     # Split on underscores and spaces
-    parts = re.split(r"[_\s]+", name)
+    parts = [p for p in re.split(r"[_\s]+", name) if p]
 
-    # Singularize the last word (usually the noun)
+    # Singularize the last word (usually the noun); for PascalCase input that
+    # is the last camel-case word ("DataSources" -> "DataSource")
     if parts:
-        parts[-1] = singularize(parts[-1])
+        words = re.findall(
+            r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+", parts[-1]
+        ) or [parts[-1]]
+        words[-1] = singularize(words[-1])
+        parts[-1] = "".join(words)
 
-    # Convert to CamelCase
-    result = "".join(part.capitalize() for part in parts if part)
-
-    return result
+    # Convert to CamelCase, keeping the case of the rest of each part so existing
+    # word boundaries survive ("RealTimeDataStreaming" stays as it is)
+    return "".join(part[:1].upper() + part[1:] for part in parts)
 
 
 def normalize_technology_name(name: str) -> str:

@@ -1,5 +1,7 @@
 """Tests for modules.derivation.base module."""
 
+import pytest
+
 from deriva.adapters.llm.models import ResponseType
 from deriva.common import current_timestamp, extract_llm_details
 from deriva.modules.derivation.base import (
@@ -81,39 +83,25 @@ class TestBuildElement:
     """Tests for build_element function."""
 
     def test_valid_element(self):
-        """Should build element from valid data.
-
-        ArchiMate type suffixes are stripped from names for display stability,
-        so 'Auth Component' becomes 'Auth'.
-        """
-        derived = {"identifier": "app:auth", "name": "Auth Component", "confidence": 0.9, "source": "Directory:src/auth"}
-        result = build_element(derived, "ApplicationComponent")
+        """Name from the source node, with ArchiMate type suffixes stripped ('auth_component' -> 'Auth')."""
+        derived = {"identifier": "app:auth", "name": "LLM name", "confidence": 0.9, "source": "dir::repo::src_auth"}
+        result = build_element(derived, "ApplicationComponent", source_names={"dir::repo::src_auth": "auth_component"})
 
         assert result["success"] is True
         assert result["data"]["name"] == "Auth"
         assert result["data"]["element_type"] == "ApplicationComponent"
         assert result["data"]["properties"]["confidence"] == 0.9
 
-    def test_missing_identifier(self):
-        """Should fail when identifier is missing."""
-        derived = {"name": "Auth Component"}
-        result = build_element(derived, "ApplicationComponent")
+    def test_missing_source(self):
+        """An element without a source cannot be tied to the structure."""
+        result = build_element({"identifier": "app:auth", "name": "Auth"}, "ApplicationComponent", source_names={})
 
         assert result["success"] is False
-        assert any("identifier" in e or "name" in e for e in result["errors"])
-
-    def test_missing_name(self):
-        """Should fail when name is missing."""
-        derived = {"identifier": "app:auth"}
-        result = build_element(derived, "ApplicationComponent")
-
-        assert result["success"] is False
-        assert any("identifier" in e or "name" in e for e in result["errors"])
 
     def test_uses_documentation(self):
-        """Should use documentation field."""
-        derived = {"identifier": "app:auth", "name": "Auth", "documentation": "Auth docs"}
-        result = build_element(derived, "ApplicationComponent")
+        """Documentation still comes from the LLM."""
+        derived = {"name": "Auth", "documentation": "Auth docs", "source": "dir::repo::auth"}
+        result = build_element(derived, "ApplicationComponent", source_names={"dir::repo::auth": "auth"})
         assert result["data"]["documentation"] == "Auth docs"
 
 
@@ -1142,15 +1130,6 @@ class TestDeriveBatchRelationships:
         rels = [self._rel("new_a", "old_svc", "Serving"), self._rel("new_a", "old_ac", "Composition"), self._rel("new_b", "old_svc", "Serving")]
 
         assert not self._with_deterministic(rels, ["new_a", "new_b"]).called
-
-    def test_llm_still_runs_for_new_elements_without_graph_relationships(self):
-        rels = [self._rel("new_a", "old_svc", "Serving"), self._rel("new_a", "old_ac", "Composition"), self._rel("old_ac", "new_a", "Serving")]
-
-        llm = self._with_deterministic(rels, ["new_a", "new_b"])
-
-        llm.assert_called_once()
-        prompt = llm.call_args[0][0]
-        assert "new_b" in prompt and "new_a" not in prompt
 
     def test_one_whole_part_relationship_per_pair(self):
         """Composition and Aggregation for the same pair contradict each other; the first rule wins."""
@@ -2188,3 +2167,91 @@ class TestConsolidatedRelationshipsDedup:
             )
 
         assert len(result) == 1
+
+
+class TestNamesFromStructure:
+    """Element names come from the source node's own name, not from the LLM."""
+
+    @pytest.mark.parametrize(
+        ("source_name", "is_file", "expected"),
+        [
+            ("big_data_kafka", False, "Big Data Kafka"),
+            ("ClaimsManagement", False, "Claims Management"),
+            ("consume_likes", False, "Consume Likes"),
+            ("getUserById", False, "Get User By Id"),
+            ("HTTPServer", False, "HTTP Server"),
+            ("data_unit_schema.avsc", True, "Data Unit Schema"),
+            ("docker-compose.yml", True, "Docker Compose"),
+            ("Node.js", False, "Node.js"),
+            ("Apache Kafka", False, "Apache Kafka"),
+            ("web-app", False, "Web App"),
+        ],
+    )
+    def test_name_from_source(self, source_name, is_file, expected):
+        from deriva.modules.derivation.base import name_from_source
+
+        assert name_from_source(source_name, strip_extension=is_file) == expected
+
+    def test_build_element_ignores_the_llm_name(self):
+        derived = {"identifier": "whatever_llm", "name": "Some LLM Name", "source": "dir::repo::big_data_kafka", "confidence": 0.9, "documentation": "d"}
+
+        result = build_element(derived, "ApplicationComponent", source_names={"dir::repo::big_data_kafka": "big_data_kafka"})
+
+        data = result["data"]
+        assert (data["name"], data["identifier"]) == ("Big Data Kafka", "ac_big_data_kafka")
+        assert data["properties"]["llm_name"] == "Some LLM Name"
+        assert data["documentation"] == "d"
+
+    def test_same_source_gives_same_element_whatever_the_llm_says(self):
+        names = {"concept::r::user": "User"}
+        a = build_element({"identifier": "x", "name": "Customer", "source": "concept::r::user"}, "BusinessObject", source_names=names)
+        b = build_element({"identifier": "y", "name": "Client Account", "source": "concept::r::user"}, "BusinessObject", source_names=names)
+
+        assert (a["data"]["name"], a["data"]["identifier"]) == (b["data"]["name"], b["data"]["identifier"]) == ("User", "bo_user")
+
+    def test_source_that_is_not_a_candidate_is_rejected(self):
+        result = build_element({"identifier": "x", "name": "Invented", "source": "concept::r::nope"}, "BusinessObject", source_names={"concept::r::user": "User"})
+
+        assert result["success"] is False
+        assert "not a candidate" in result["errors"][0]
+
+
+class TestIsolatedNaming:
+    """Naming is a separate LLM call whose prompt depends only on the element's source node."""
+
+    def test_naming_source_keeps_only_stable_structural_fields(self):
+        from deriva.modules.derivation.base import Candidate, naming_source
+
+        cand = Candidate(
+            node_id="method::r::a.py::X::run",
+            name="run",
+            labels=["Graph", "Method"],
+            properties={"methodName": "run", "filePath": "r/a.py", "typeName": "X", "pagerank": 0.3, "description": "varies", "startLine": 3},
+        )
+
+        assert naming_source(cand) == {"kind": "Method", "name": "run", "path": "r/a.py", "type": "X"}
+
+    def test_prompt_depends_only_on_source_type_and_instruction(self):
+        from deriva.modules.derivation.base import build_naming_prompt
+
+        source = {"kind": "Directory", "name": "crud", "path": "repo/crud"}
+        a = build_naming_prompt(source, "ApplicationComponent", "NAMING RULES")
+        b = build_naming_prompt(dict(reversed(list(source.items()))), "ApplicationComponent", "NAMING RULES")
+
+        assert a == b
+        assert "NAMING RULES" in a and "ApplicationComponent" in a and '"crud"' in a
+
+    @pytest.mark.parametrize(
+        ("samples", "expected"),
+        [
+            (["CRUD Service", "CRUD Service", "Crud Operations"], "CRUD Service"),
+            (["Crud Service", "CRUD service", "Crud Operations"], "CRUD service"),
+            (["B Name", "A Name", "C Name"], "A Name"),
+            (["", None, "Only"], "Only"),
+            (["", None], None),
+        ],
+    )
+    def test_choose_name_is_majority_then_deterministic(self, samples, expected):
+        from deriva.modules.derivation.base import choose_name
+
+        assert choose_name(samples) == expected

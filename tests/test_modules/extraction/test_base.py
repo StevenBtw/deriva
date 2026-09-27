@@ -363,6 +363,21 @@ class TestNormalizeConceptName:
         """Should return empty for empty input."""
         assert normalize_concept_name("") == ""
 
+    def test_keeps_camel_case_word_boundaries(self):
+        """PascalCase from the LLM keeps its words (was squashed to 'Realtimedatastreaming')."""
+        assert normalize_concept_name("RealTimeDataStreaming") == "RealTimeDataStreaming"
+        assert normalize_concept_name("FacebookLike") == "FacebookLike"
+
+    def test_singularizes_the_last_camel_case_word(self):
+        assert normalize_concept_name("DataSources") == "DataSource"
+        assert normalize_concept_name("order_items") == "OrderItem"
+
+    def test_keeps_words_that_only_look_plural(self):
+        """'Analysis', 'Status' and the like are not plurals (was 'PopularityAnalysi')."""
+        assert normalize_concept_name("PopularityAnalysis") == "PopularityAnalysis"
+        assert normalize_concept_name("OrderStatus") == "OrderStatus"
+        assert normalize_concept_name("Business") == "Business"
+
 
 class TestNormalizeTechnologyName:
     """Tests for normalize_technology_name function."""

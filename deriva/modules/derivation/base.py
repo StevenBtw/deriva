@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -167,10 +168,12 @@ class Candidate:
 
     # Graph enrichment data (populated from DuckDB)
     pagerank: float = 0.0
-    pagerank_percentile: float = 0.0
+    pagerank_percentile: float | None = (
+        None  # None: not computed (0.0 is the bottom rank)
+    )
     louvain_community: str | None = None
     kcore_level: int = 0
-    kcore_percentile: float = 0.0
+    kcore_percentile: float | None = None
     is_articulation_point: bool = False
     in_degree: int = 0
     out_degree: int = 0
@@ -220,6 +223,9 @@ class RelationshipLLMConfig:
 
     instruction: str  # Conventions and rules inserted into the relationship prompt
     min_confidence: float  # LLM relationships below this confidence are dropped
+    temperature: float | None = (
+        None  # Temperature of the consolidated relationship pass (row column)
+    )
 
 
 @dataclass(frozen=True)
@@ -379,10 +385,10 @@ def get_enrichments_from_graph(
         enrichments = {
             row["node_id"]: {
                 "pagerank": row.get("pagerank") or 0.0,
-                "pagerank_percentile": row.get("pagerank_percentile") or 0.0,
+                "pagerank_percentile": row.get("pagerank_percentile"),
                 "louvain_community": row.get("louvain_community"),
                 "kcore_level": row.get("kcore_level") or 0,
-                "kcore_percentile": row.get("kcore_percentile") or 0.0,
+                "kcore_percentile": row.get("kcore_percentile"),
                 "is_articulation_point": row.get("is_articulation_point") or False,
                 "in_degree": row.get("in_degree") or 0,
                 "out_degree": row.get("out_degree") or 0,
@@ -435,10 +441,10 @@ def enrich_candidate(
     """Add enrichment data to a candidate in-place."""
     data = enrichments.get(candidate.node_id, {})
     candidate.pagerank = data.get("pagerank", 0.0)
-    candidate.pagerank_percentile = data.get("pagerank_percentile", 0.0)
+    candidate.pagerank_percentile = data.get("pagerank_percentile")
     candidate.louvain_community = data.get("louvain_community")
     candidate.kcore_level = data.get("kcore_level", 0)
-    candidate.kcore_percentile = data.get("kcore_percentile", 0.0)
+    candidate.kcore_percentile = data.get("kcore_percentile")
     candidate.is_articulation_point = data.get("is_articulation_point", False)
     candidate.in_degree = data.get("in_degree", 0)
     candidate.out_degree = data.get("out_degree", 0)
@@ -851,6 +857,11 @@ def get_community_from_element(element: dict[str, Any]) -> str | None:
     return props.get("source_community")
 
 
+# Sharing a community shows that elements belong together, not that data flows
+# between them, that one triggers the other, or that one aggregates the other
+_NOT_FROM_CO_MEMBERSHIP = frozenset({"Flow", "Triggering", "Aggregation"})
+
+
 def derive_community_relationships(
     new_elements: list[dict[str, Any]],
     existing_elements: list[dict[str, Any]],
@@ -897,6 +908,8 @@ def derive_community_relationships(
         # Process OUTBOUND rules (FROM new TO existing in same community)
         new_type = new_elem.get("element_type", "")
         for rule in outbound_rules:
+            if rule.rel_type in _NOT_FROM_CO_MEMBERSHIP:
+                continue
             # Validate rule against ArchiMate metamodel
             is_valid, msg = validate_relationship_rule(
                 new_type, rule.rel_type, rule.target_type
@@ -942,6 +955,8 @@ def derive_community_relationships(
 
         # Process INBOUND rules (FROM existing in same community TO new)
         for rule in inbound_rules:
+            if rule.rel_type in _NOT_FROM_CO_MEMBERSHIP:
+                continue
             # Validate rule against ArchiMate metamodel
             # For INBOUND: source=rule.target_type, target=new_type
             is_valid, msg = validate_relationship_rule(
@@ -1831,8 +1846,8 @@ def compute_candidate_strength(candidates: list[Candidate]) -> dict[str, Any]:
         }
 
     n = len(candidates)
-    avg_pr_pct = sum(c.pagerank_percentile for c in candidates) / n
-    avg_kcore_pct = sum(c.kcore_percentile for c in candidates) / n
+    avg_pr_pct = sum(c.pagerank_percentile or 0.0 for c in candidates) / n
+    avg_kcore_pct = sum(c.kcore_percentile or 0.0 for c in candidates) / n
 
     # Label buckets. Thresholds tuned to the observed cross-repo baseline:
     # - "minimal": so few or so weak that abstention should be strongly considered
@@ -2140,22 +2155,139 @@ def clamp_confidence(value: Any, default: float = 0.5) -> float:
         return default
 
 
+_WORD = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+[A-Za-z]*")
+
+
+def name_from_source(source_name: str, strip_extension: bool = False) -> str:
+    """Human-readable element name derived from a source node's own name.
+
+    Names come from structure, not from the LLM, so the same source node always
+    yields the same element name. Splits snake_case, kebab-case and camelCase,
+    keeps acronyms, title-cases words and, for file sources, drops the extension
+    (``data_unit_schema.avsc`` -> ``Data Unit Schema``). Names that already
+    contain spaces or dots in a product name (``Node.js``) are kept as written.
+    """
+    base = source_name.strip().replace("\\", "/").rstrip("/").split("/")[-1]
+    if strip_extension:
+        stem, dot, ext = base.rpartition(".")
+        if dot and stem and ext.isalnum():
+            base = stem
+    if " " in base or ("." in base and not strip_extension):
+        return " ".join(base.split())
+    words = []
+    for chunk in re.split(r"[_\-.]+", base.lstrip(".")):
+        for part in _WORD.findall(chunk):
+            words.append(
+                part
+                if len(part) > 1 and part.isupper()
+                else part[:1].upper() + part[1:]
+            )
+    return " ".join(words)
+
+
+@dataclass(frozen=True)
+class NamingConfig:
+    """Isolated naming step for an element type (element config ``params.naming``).
+
+    The name is asked in a prompt that depends only on the element's source node,
+    its ArchiMate type and this instruction, so the same source gets the same
+    prompt in every run. ``samples`` answers are combined by majority.
+    """
+
+    instruction: str  # Naming convention for the element type
+    samples: int = 3  # Answers per element, combined by majority
+
+
+# Structural source fields that are the same in every run (no LLM-written text)
+_NAMING_FIELDS = (
+    ("path", "path"),
+    ("filePath", "path"),
+    ("typeName", "type"),
+    ("category", "category"),
+    ("conceptTypes", "concept_types"),
+)
+
+NAMING_SCHEMA: dict[str, Any] = {
+    "name": "element_naming",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "additionalProperties": False,
+    },
+}
+
+
+def naming_source(candidate: Candidate) -> dict[str, Any]:
+    """The stable, structural description of a candidate used for naming."""
+    kind = next((label for label in candidate.labels if label != "Graph"), "Node")
+    source: dict[str, Any] = {"kind": kind, "name": candidate.name}
+    for prop, key in _NAMING_FIELDS:
+        value = candidate.properties.get(prop)
+        if value not in (None, "", [], "None") and key not in source:
+            source[key] = value
+    return source
+
+
+def build_naming_prompt(
+    source: dict[str, Any], element_type: str, instruction: str
+) -> str:
+    """Prompt for naming one element; depends only on its source, type and instruction."""
+    source_json = json.dumps(source, sort_keys=True, separators=(",", ":"), default=str)
+    return f"""{instruction}
+
+## ArchiMate {element_type} derived from this source
+```json
+{source_json}
+```
+
+Return {{"name": "..."}}."""
+
+
+def choose_name(samples: list[str | None]) -> str | None:
+    """Majority name over samples (case- and whitespace-insensitive), ties broken deterministically."""
+    names = [" ".join(s.split()) for s in samples if s and s.strip()]
+    if not names:
+        return None
+    groups: dict[str, list[str]] = {}
+    for n in names:
+        groups.setdefault(n.lower(), []).append(n)
+    best = min(groups, key=lambda k: (-len(groups[k]), k))
+    forms = groups[best]
+    return min(forms, key=lambda f: (-forms.count(f), f))
+
+
+def element_identifier(element_type: str, source_id: str) -> str:
+    """Stable element identifier from its type and source node (``ac_big_data_kafka``)."""
+    prefix = "".join(c for c in element_type if c.isupper()).lower()
+    parts = source_id.split("::")
+    tail = "::".join(parts[2:]) if len(parts) >= 3 else source_id
+    return sanitize_identifier(f"{prefix}_{tail}")
+
+
 def build_element(
     derived: dict[str, Any],
     element_type: str,
     candidate_enrichments: dict[str, dict[str, Any]] | None = None,
     repo_name: str = "",
+    *,
+    source_names: dict[str, str],
 ) -> dict[str, Any]:
     """Build ArchiMate element dict from LLM output.
 
+    Structure decides the element: its name and identifier come from the source
+    node (a candidate), the LLM contributes the keep decision, confidence and
+    documentation. An element whose source is not a candidate is rejected.
+
     Args:
-        derived: LLM-derived element data with source, name, etc.
+        derived: LLM-derived element data with source, documentation, confidence
         element_type: The ArchiMate element type
         candidate_enrichments: Optional mapping of node_id -> enrichment data
             (pagerank, louvain_community, etc.) to add to properties
         repo_name: Active repo name. When non-empty, the leading repo token
-            is stripped from the element name for cross-run stability
-            (e.g., "<Repo> Client Interaction" -> "Client Interaction").
+            is stripped from the element name (e.g., "<Repo> Client" -> "Client").
+        source_names: Candidate node id -> the node's own name
 
     Returns:
         Dict with success flag and element data
@@ -2165,32 +2297,36 @@ def build_element(
         strip_repo_prefix,
     )
 
-    identifier = derived.get("identifier")
-    name = derived.get("name")
+    source_id = derived.get("source")
+    if not source_id or source_id not in source_names:
+        return {
+            "success": False,
+            "errors": [f"Element source {source_id!r} is not a candidate"],
+        }
 
-    if not identifier or not name:
-        return {"success": False, "errors": ["Missing identifier or name"]}
-
-    # Strip trailing ArchiMate type suffix for display stability. The prompt
-    # instructs the LLM to avoid suffixes but compliance varies across runs;
-    # this guarantees consistent names regardless of LLM variance.
-    name = strip_archimate_suffix(name)
+    name = strip_archimate_suffix(
+        name_from_source(
+            source_names[source_id], strip_extension=source_id.startswith("file::")
+        )
+    )
     if repo_name:
         name = strip_repo_prefix(name, repo_name)
+    if not name:
+        return {"success": False, "errors": [f"Empty name for source {source_id!r}"]}
 
-    identifier = sanitize_identifier(identifier)
+    identifier = element_identifier(element_type, source_id)
     # Clamp confidence to [0.0, 1.0] range (LLM may return out-of-range values)
     confidence = clamp_confidence(derived.get("confidence"))
 
     properties: dict[str, Any] = {
-        "source": derived.get("source"),
+        "source": source_id,
         "confidence": confidence,
         "derived_at": current_timestamp(),
+        "llm_name": derived.get("name"),
     }
 
     # Add enrichment data if available (for graph-aware relationship derivation and stability analysis)
-    source_id = derived.get("source")
-    if candidate_enrichments and source_id:
+    if candidate_enrichments:
         enrichment = candidate_enrichments.get(source_id, {})
         for key in [
             "pagerank",
@@ -2318,6 +2454,29 @@ def build_unified_relationship_prompt(
 Return {{"relationships": []}} with source, target, relationship_type, confidence for each.
 """
     return prompt
+
+
+# Whole-part relationships: at most one per ordered pair (Composition and
+# Aggregation between the same two elements contradict each other)
+_WHOLE_PART_TYPES = frozenset({"Composition", "Aggregation"})
+
+
+def dedupe_relationships(relationships: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop exact duplicates and all but the first whole-part relationship per pair, keeping order."""
+    seen: set[tuple[str, str, str]] = set()
+    whole_part: set[tuple[str, str]] = set()
+    kept = []
+    for rel in relationships:
+        key = (rel["source"], rel["target"], rel["relationship_type"])
+        if key in seen:
+            continue
+        if rel["relationship_type"] in _WHOLE_PART_TYPES:
+            if (rel["source"], rel["target"]) in whole_part:
+                continue
+            whole_part.add((rel["source"], rel["target"]))
+        seen.add(key)
+        kept.append(rel)
+    return kept
 
 
 def derive_batch_relationships(
@@ -2504,6 +2663,8 @@ def derive_batch_relationships(
         if key not in created_pairs:
             all_relationships.append(rel)
             created_pairs.add(key)
+
+    all_relationships = dedupe_relationships(all_relationships)
 
     # Log deterministic results
     logger.info(
@@ -2720,7 +2881,7 @@ def derive_batch_relationships(
         + len(deterministic_rels),
         len(llm_relationships),
     )
-    return all_relationships
+    return dedupe_relationships(all_relationships)
 
 
 # =============================================================================
@@ -2812,6 +2973,8 @@ def derive_consolidated_relationships(
             len(type_elements),
         )
 
+    # Both endpoint types' passes can derive the same relationship
+    all_relationships = dedupe_relationships(all_relationships)
     logger.info("Total relationships derived: %d", len(all_relationships))
     return all_relationships
 

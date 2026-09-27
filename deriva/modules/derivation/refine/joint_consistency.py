@@ -125,7 +125,9 @@ class JointConsistencyStep:
         result = RefineResult(success=True, step_name="joint_consistency")
 
         try:
-            revived = _duplicate_disabled_ids(archimate_manager) if dry_run else set()
+            # Earlier duplicate merges are re-decided here, in dry run and apply alike,
+            # so the report describes exactly what an apply run does
+            revived = _duplicate_disabled_ids(archimate_manager)
             elements = [
                 e
                 for e in archimate_manager.get_elements(enabled_only=False)
@@ -221,6 +223,8 @@ class JointConsistencyStep:
             for rel_id in decision.dropped:
                 archimate_manager.delete_relationship(rel_id)
                 result.relationships_deleted += 1
+            for identifier in sorted(revived - set(decision.merges)):
+                archimate_manager.enable_element(identifier)
             result.issues_fixed = result.issues_found
         except Exception as e:
             logger.exception("joint_consistency failed")

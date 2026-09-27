@@ -29,6 +29,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Callable
@@ -38,17 +39,22 @@ from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
     Candidate,
     CandidateDecision,
+    NAMING_SCHEMA,
     GenerationResult,
+    NamingConfig,
     PerCandidateConfig,
     RelationshipLLMConfig,
     RelationshipRule,
     batch_candidates,
     build_derivation_prompt,
     build_element,
+    build_naming_prompt,
     build_single_candidate_prompt,
+    choose_name,
     compute_candidate_strength,
     derive_batch_relationships,
     extract_response_content,
+    naming_source,
     get_enrichments_from_graph,
     parse_derivation_response,
     query_candidates,
@@ -326,6 +332,7 @@ class ElementDerivationBase(ABC):
         cache_manager: "EnrichmentCacheManager | None" = None,
         relationship_config: RelationshipLLMConfig | None = None,
         per_candidate: PerCandidateConfig | None = None,
+        naming: NamingConfig | None = None,
     ) -> GenerationResult:
         """
         Generate elements of this type.
@@ -357,6 +364,8 @@ class ElementDerivationBase(ABC):
                 relationship pass (None skips that pass)
             per_candidate: Per-candidate naming mode from the element config
                 (None uses batch mode)
+            naming: Isolated naming step from the element config (None keeps the
+                structure name)
 
         Returns:
             GenerationResult with success status, counts, and any errors
@@ -523,6 +532,7 @@ class ElementDerivationBase(ABC):
                 defer_relationships=defer_relationships,
                 result=result,
                 relationship_config=relationship_config,
+                naming=naming,
             )
         else:
             for batch_num, batch in enumerate(batches, 1):
@@ -542,6 +552,7 @@ class ElementDerivationBase(ABC):
                     defer_relationships=defer_relationships,
                     result=result,
                     relationship_config=relationship_config,
+                    naming=naming,
                 )
 
         self.logger.info(
@@ -551,6 +562,59 @@ class ElementDerivationBase(ABC):
             result.relationships_created,
         )
         return result
+
+    def _apply_naming(
+        self,
+        element_data: dict[str, Any],
+        candidate: Candidate,
+        naming: NamingConfig,
+        llm_query_fn: Callable[..., Any],
+        llm_kwargs: dict[str, Any],
+        repo_name: str,
+        taken: list[str],
+    ) -> None:
+        """Name an element with the isolated naming step, in place.
+
+        The prompt holds only the candidate's structural description, the type
+        and the configured convention, so the same source gets the same prompt in
+        every run; ``naming.samples`` answers are combined by majority. Without a
+        usable answer, or when a sibling already has the name, the structure name
+        stays.
+        """
+        from deriva.modules.derivation.refine.normalization import strip_repo_prefix
+
+        prompt = build_naming_prompt(
+            naming_source(candidate), self.ELEMENT_TYPE, naming.instruction
+        )
+        answers: list[str | None] = []
+        for _ in range(naming.samples):
+            try:
+                content, error = extract_response_content(
+                    llm_query_fn(prompt, NAMING_SCHEMA, **llm_kwargs)
+                )
+                if error:
+                    continue
+                text = (
+                    content.strip()
+                    .removeprefix("```json")
+                    .removeprefix("```")
+                    .removesuffix("```")
+                    .strip()
+                )
+                answers.append(json.loads(text).get("name"))
+            except (ValueError, AttributeError) as e:
+                self.logger.debug(
+                    "Unusable naming answer for %s: %s", candidate.node_id, e
+                )
+        name = choose_name(answers)
+        # No type-suffix stripping here: the configured convention governs suffixes,
+        # and words like "Service" or "API" are often part of the right name
+        if name and repo_name:
+            name = strip_repo_prefix(name, repo_name)
+        norm_taken = {" ".join(n.lower().split()) for n in taken}
+        if name and " ".join(name.lower().split()) not in norm_taken:
+            element_data["properties"]["structure_name"] = element_data["name"]
+            element_data["name"] = name
 
     def _process_batch(
         self,
@@ -569,6 +633,7 @@ class ElementDerivationBase(ABC):
         result: GenerationResult,
         strength: dict[str, Any] | None = None,
         relationship_config: RelationshipLLMConfig | None = None,
+        naming: NamingConfig | None = None,
     ) -> None:
         """
         Process a single batch of candidates.
@@ -654,9 +719,17 @@ class ElementDerivationBase(ABC):
         batch_elements: list[dict[str, Any]] = []
         created_source_ids: set[str] = set()
 
+        # Element names come from the candidates' own names (structure), not the LLM
+        source_names = {c.node_id: c.name for c in batch}
+        candidates_by_id = {c.node_id: c for c in batch}
+        batch_names: list[str] = []
         for derived in parse_result.get("data", []):
             element_result = build_element(
-                derived, self.ELEMENT_TYPE, batch_enrichments, repo_name=repo_name
+                derived,
+                self.ELEMENT_TYPE,
+                batch_enrichments,
+                repo_name=repo_name,
+                source_names=source_names,
             )
 
             if not element_result["success"]:
@@ -675,6 +748,18 @@ class ElementDerivationBase(ABC):
                     self.MIN_ELEMENT_CONFIDENCE,
                 )
                 continue
+
+            if naming is not None:
+                self._apply_naming(
+                    element_data,
+                    candidates_by_id[element_data["properties"]["source"]],
+                    naming,
+                    llm_query_fn,
+                    llm_kwargs,
+                    repo_name,
+                    batch_names,
+                )
+            batch_names.append(element_data["name"])
 
             try:
                 element = Element(
@@ -773,6 +858,7 @@ class ElementDerivationBase(ABC):
         defer_relationships: bool,
         result: GenerationResult,
         relationship_config: RelationshipLLMConfig | None = None,
+        naming: NamingConfig | None = None,
     ) -> None:
         """Derive elements one candidate per LLM call, then batch relationships.
 
@@ -844,9 +930,14 @@ class ElementDerivationBase(ABC):
             if not derived_list:
                 continue
 
-            derived = derived_list[0]
+            # The prompt holds this one candidate, so the element is its element
+            derived = {**derived_list[0], "source": cand.node_id}
             element_result = build_element(
-                derived, self.ELEMENT_TYPE, enrichments, repo_name=repo_name
+                derived,
+                self.ELEMENT_TYPE,
+                enrichments,
+                repo_name=repo_name,
+                source_names={cand.node_id: cand.name},
             )
             if not element_result["success"]:
                 result.errors.extend(element_result.get("errors", []))
@@ -857,21 +948,26 @@ class ElementDerivationBase(ABC):
             if confidence < self.MIN_ELEMENT_CONFIDENCE:
                 continue
 
-            # Enforce sibling-name uniqueness at the data layer. The prompt
-            # asks for distinct names, but the LLM ignores the rule sometimes;
-            # a duplicate name on a different identifier collapses two distinct
-            # candidates in any name-based view (including consistency metrics).
-            # Compare case-insensitively with whitespace normalized so subtle
-            # variants ("Foo" vs "foo " vs "FOO") don't slip through.
-            proposed_name = element_data["name"]
+            if naming is not None:
+                self._apply_naming(
+                    element_data,
+                    cand,
+                    naming,
+                    llm_query_fn,
+                    llm_kwargs,
+                    repo_name,
+                    names_so_far,
+                )
 
-            def _norm(n: str) -> str:
-                return " ".join(n.lower().split())
-
-            if _norm(proposed_name) in {_norm(n) for n in names_so_far}:
+            # Two candidates can have the same graph name (e.g. equally named
+            # directories); keep the first so names stay unique within the type.
+            # Candidates arrive in a deterministic order, so the choice is stable.
+            if " ".join(element_data["name"].lower().split()) in {
+                " ".join(n.lower().split()) for n in names_so_far
+            }:
                 self.logger.debug(
-                    "Skipping LLM-proposed duplicate name '%s' on %s (%s)",
-                    proposed_name,
+                    "Skipping duplicate name '%s' on %s (%s)",
+                    element_data["name"],
                     self.ELEMENT_TYPE,
                     cand.node_id,
                 )
@@ -1151,19 +1247,19 @@ class HybridFilteringMixin:
             filtered = [c for c in filtered if (c.pagerank or 0) >= self.MIN_PAGERANK]
 
         # Filter by percentile thresholds (scale-independent)
-        # Only apply when percentile data is available (> 0 means prep phase computed it)
+        # Only apply when percentile data is available (None means prep did not compute it)
         if self.MIN_PAGERANK_PERCENTILE is not None:
             filtered = [
                 c
                 for c in filtered
-                if c.pagerank_percentile == 0
+                if c.pagerank_percentile is None
                 or c.pagerank_percentile >= self.MIN_PAGERANK_PERCENTILE
             ]
         if self.MIN_KCORE_PERCENTILE is not None:
             filtered = [
                 c
                 for c in filtered
-                if c.kcore_percentile == 0
+                if c.kcore_percentile is None
                 or c.kcore_percentile >= self.MIN_KCORE_PERCENTILE
             ]
 

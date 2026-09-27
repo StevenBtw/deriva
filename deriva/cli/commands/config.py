@@ -209,6 +209,10 @@ def config_update(
     params_file: Annotated[
         str | None, typer.Option("--params-file", help="Read params JSON from file")
     ] = None,
+    temperature: Annotated[
+        float | None,
+        typer.Option("--temperature", help="LLM temperature for this step"),
+    ] = None,
     batch_size: Annotated[
         int | None,
         typer.Option(
@@ -271,6 +275,7 @@ def config_update(
                 params=params,
                 batch_size=batch_size,
                 max_candidates=max_candidates,
+                temperature=temperature,
             )
         elif step_type == "extraction":
             result = config.create_extraction_config_version(
@@ -281,6 +286,7 @@ def config_update(
                 input_sources=sources,
                 batch_size=batch_size,
                 params=params,
+                temperature=temperature,
             )
         else:
             typer.echo(f"Versioned updates not yet supported for: {step_type}")

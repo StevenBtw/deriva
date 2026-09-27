@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from deriva.cli.cli import app, main
@@ -3834,3 +3835,21 @@ class TestSettingCommands:
 
         assert result.exit_code == 1
         assert "JSON list" in result.output
+
+
+class TestUpdateTemperature:
+    """The LLM temperature of a step is a versioned column, settable from the CLI."""
+
+    @pytest.mark.parametrize("step_type", ["derivation", "extraction"])
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_temperature_is_passed_to_the_new_version(self, mock_session_class, mock_config, step_type):
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+        for fn in (mock_config.create_derivation_config_version, mock_config.create_extraction_config_version):
+            fn.return_value = {"success": True, "old_version": 1, "new_version": 2}
+
+        result = runner.invoke(app, ["config", "update", step_type, "Step", "--temperature", "0"])
+
+        assert result.exit_code == 0
+        fn = mock_config.create_derivation_config_version if step_type == "derivation" else mock_config.create_extraction_config_version
+        assert fn.call_args.kwargs["temperature"] == 0.0

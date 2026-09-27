@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -600,7 +601,7 @@ class TestPercentileFiltering:
     def _filter(cls, candidates):
         from deriva.modules.derivation.element_base import HybridFilteringMixin
 
-        filt = type("F", (HybridFilteringMixin, cls.Filter), {})()
+        filt = type("F", (cls.Filter, HybridFilteringMixin), {})()
         return {c.node_id for c in filt.apply_graph_filtering(candidates, {}, 10)}
 
     def test_bottom_ranked_candidate_is_filtered(self):
@@ -655,7 +656,7 @@ class TestPerCandidateIdentity:
 
         assert element["properties"]["source"] == "n1"
 
-    def test_sibling_name_collision_keeps_the_candidate_under_its_graph_name(self):
+    def test_names_come_from_the_graph_not_the_llm(self):
         response = '{"elements": [{"identifier": "te_x", "name": "X", "documentation": "d", "source": "n", "confidence": 0.9}]}'
         candidates = [
             Candidate(node_id="n1", name="first", labels=["Node"], properties={}),
@@ -664,5 +665,84 @@ class TestPerCandidateIdentity:
 
         created = self._created(candidates, response)
 
-        assert [(e["name"], e["properties"]["source"]) for e in created] == [("X", "n1"), ("second", "n2")]
+        assert [(e["name"], e["properties"]["source"]) for e in created] == [("First", "n1"), ("Second", "n2")]
         assert len({e["identifier"] for e in created}) == 2
+
+    def test_equal_graph_names_keep_one_element(self):
+        response = '{"elements": [{"identifier": "te_x", "name": "X", "documentation": "d", "source": "n", "confidence": 0.9}]}'
+        candidates = [
+            Candidate(node_id="n1", name="shared", labels=["Node"], properties={}),
+            Candidate(node_id="n2", name="shared", labels=["Node"], properties={}),
+        ]
+
+        created = self._created(candidates, response)
+
+        assert [e["name"] for e in created] == ["Shared"]
+
+
+class TestIsolatedNamingStep:
+    """With params.naming, each kept element is named by a separate call about its source only."""
+
+    ELEMENTS = '{"elements": [{"identifier": "x", "name": "In-batch LLM name", "documentation": "d", "source": "%s", "confidence": 0.9}]}'
+
+    def _created(self, candidates, naming_answers, per_candidate=True):
+        from deriva.modules.derivation.base import NamingConfig
+
+        answers = iter(naming_answers)
+        prompts: list[str] = []
+
+        def llm(prompt, schema, **kwargs):
+            prompts.append(prompt)
+            if schema.get("name") == "element_naming":
+                return SimpleNamespace(content=json.dumps({"name": next(answers)}))
+            source = next(c.node_id for c in candidates if f'"{c.node_id}"' in prompt)
+            return SimpleNamespace(content=self.ELEMENTS % source)
+
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            result = ConcreteDerivation().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                per_candidate=PerCandidateConfig(min_pool=1, rules="R") if per_candidate else None,
+                naming=NamingConfig(instruction="NAMING RULES", samples=3),
+            )
+        return result.created_elements, prompts
+
+    def test_majority_of_naming_answers_is_the_name(self):
+        candidate = Candidate(node_id="n1", name="crud", labels=["Directory"], properties={"path": "r/crud"})
+        created, prompts = self._created([candidate], ["CRUD Service", "Crud Operations", "CRUD Service"])
+
+        assert [e["name"] for e in created] == ["CRUD Service"]
+        naming_prompts = [p for p in prompts if "NAMING RULES" in p]
+        assert len(naming_prompts) == 3 and len(set(naming_prompts)) == 1
+        assert created[0]["identifier"] == "te_n1"  # identity still from structure
+
+    def test_no_usable_answer_falls_back_to_the_structure_name(self):
+        created, _ = self._created([Candidate(node_id="n1", name="crud", labels=["Directory"], properties={})], ["", "", ""])
+
+        assert [e["name"] for e in created] == ["Crud"]
+
+    def test_name_taken_by_a_sibling_falls_back_to_the_structure_name(self):
+        candidates = [
+            Candidate(node_id="n1", name="alpha", labels=["Directory"], properties={}),
+            Candidate(node_id="n2", name="beta", labels=["Directory"], properties={}),
+        ]
+        created, _ = self._created(candidates, ["Shared"] * 6)
+
+        names = {e["name"] for e in created}
+        assert "Shared" in names and len(names) == 2 and names - {"Shared"} <= {"Alpha", "Beta"}
+
+    def test_batch_mode_names_the_same_way(self):
+        created, _ = self._created([Candidate(node_id="n1", name="crud", labels=["Directory"], properties={})], ["CRUD Service"] * 3, per_candidate=False)
+
+        assert [e["name"] for e in created] == ["CRUD Service"]

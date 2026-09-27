@@ -2016,3 +2016,84 @@ class TestPerCandidateConfig:
             )
 
         assert gen.call_args.kwargs["per_candidate"] == PerCandidateConfig(min_pool=6, rules="R")
+
+
+class TestNamingConfig:
+    """The isolated naming step comes from the element row's params.naming."""
+
+    def test_no_naming_key_keeps_structure_names(self):
+        assert derivation._naming_config(None) is None
+        assert derivation._naming_config('{"temperature": 0.0}') is None
+
+    def test_params_supply_instruction_and_samples(self):
+        from deriva.modules.derivation.base import NamingConfig
+
+        assert derivation._naming_config('{"naming": {"instruction": "N", "samples": 5}}') == NamingConfig(instruction="N", samples=5)
+        assert derivation._naming_config('{"naming": {"instruction": "N"}}') == NamingConfig(instruction="N", samples=3)
+
+    def test_naming_without_instruction_is_an_error(self):
+        with pytest.raises(ValueError, match="naming"):
+            derivation._naming_config('{"naming": {"samples": 3}}')
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_it(self, runner):
+        from deriva.modules.derivation.base import NamingConfig
+
+        cfg = SimpleNamespace(
+            step_name="ApplicationComponent",
+            element_type="ApplicationComponent",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"naming": {"instruction": "N", "samples": 3}}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["naming"] == NamingConfig(instruction="N", samples=3)
+
+
+class TestRelationshipTemperature:
+    """The relationship row's temperature column sets the consolidated relationship pass temperature."""
+
+    def test_row_temperature_is_part_of_the_config(self):
+        row = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6}', temperature=0.0)
+
+        assert derivation._relationship_llm_config([row]).temperature == 0.0
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_consolidated_pass_uses_it(self, runner):
+        gen_cfg = SimpleNamespace(
+            step_name="ApplicationComponent",
+            element_type="ApplicationComponent",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params=None,
+        )
+        rel = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6}', temperature=0.0)
+        generated = {"success": True, "elements_created": 1, "relationships_created": 0, "created_elements": [{"identifier": "e1"}], "errors": []}
+        with (
+            patch.object(
+                derivation.config,
+                "get_derivation_configs",
+                side_effect=lambda engine, enabled_only, phase: {"generate": [gen_cfg], "relationship": [rel]}.get(phase, []),
+            ),
+            patch.object(derivation, "generate_element", return_value=generated),
+            patch.object(derivation, "derive_consolidated_relationships", return_value=[]) as consolidated,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=True, phases=["generate"])
+
+        assert consolidated.call_args.kwargs["temperature"] == 0.0
