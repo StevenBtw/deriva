@@ -239,10 +239,14 @@ class TestAddEdge:
     def test_endpoints_are_found_by_index_not_by_a_second_match(self, graph_manager):
         src, dst = self._nodes(graph_manager)
 
-        with patch.object(graph_manager.db, "execute_write", wraps=graph_manager.db.execute_write) as write:
+        with (
+            patch.object(graph_manager.db, "execute", wraps=graph_manager.db.execute) as execute,
+            patch.object(graph_manager.db, "_find_nodes", wraps=graph_manager.db._find_nodes) as find_nodes,
+        ):
             graph_manager.add_edge(src, dst, "CONTAINS")
 
-        assert not [c for c in write.call_args_list if "MATCH (dst)" in c.args[0]]
+        assert [c.args for c in find_nodes.call_args_list] == [("id", src), ("id", dst)]
+        assert not [c for c in execute.call_args_list if "MATCH (dst)" in c.args[0]]
 
 
 class TestAddNode:

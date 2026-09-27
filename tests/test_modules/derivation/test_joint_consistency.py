@@ -34,6 +34,9 @@ class TestMergeCandidates:
         far = merge_candidates(pair, self.ctx, set(), 0.85)
         assert near[0].tier == 2 and far[0].tier == 3
 
+    def test_empty_names_are_never_candidates(self):
+        assert merge_candidates([element("a", ""), element("b", "")], self.ctx, set(), 0.85) == []
+
     def test_different_types_never_candidates(self):
         assert merge_candidates([element("a", "Claims"), element("b", "Claims", element_type="ApplicationService")], self.ctx, set(), 0.85) == []
 
@@ -81,6 +84,29 @@ class TestStep:
         am.redirect_relationship.assert_called_once_with("r1", "a", "x")
         am.delete_relationship.assert_called_once_with("loop")
         assert result.elements_merged == 1 and result.relationships_deleted == 2 and result.relationships_created == 1
+
+    @staticmethod
+    def _with_disabled_duplicate(dup):
+        dup.enabled = False
+        elements = [element("a", "Claims", pagerank=0.9), dup]
+        am, gm = managers(elements, [])
+        am.query.return_value = [{"id": dup.identifier}]
+        return am, gm
+
+    def test_apply_plans_over_the_same_elements_as_the_dry_run(self):
+        am, gm = self._with_disabled_duplicate(element("b", "Claims Component"))
+
+        JointConsistencyStep().run(am, gm, params={"dry_run": False})
+
+        am.disable_element.assert_called_once_with("b", reason="duplicate_of:a:joint:normalized_name")
+
+    def test_apply_re_enables_a_disabled_duplicate_it_keeps_separate(self):
+        am, gm = self._with_disabled_duplicate(element("y", "Portal"))
+
+        result = JointConsistencyStep().run(am, gm, params={"dry_run": False})
+
+        am.enable_element.assert_called_once_with("y")
+        assert result.success
 
     def test_solver_failure_applies_nothing_and_reports_error(self, monkeypatch):
         from deriva.modules.derivation.refine import joint_consistency

@@ -68,3 +68,28 @@ class TestRunSecondsFallback:
         log.create_event(activity="CompleteRun", objects={}, duration_seconds=4.031446)
 
         assert summarize_run_events(log.events)["run_seconds"] == 4.03
+
+
+def test_top_reports_a_consistent_snapshot():
+    """A record() landing right after top() releases the lock must not change its result."""
+    from deriva.common.timing import QueryStats
+
+    stats = QueryStats()
+    stats.record("MATCH (n)", 5.0)
+
+    class RecordOnRelease:
+        """Stands in for the lock; simulates another thread recording as soon as it is free."""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            entry = stats._stats.get("MATCH (n)")
+            if entry is not None:
+                entry[0] += 1
+                entry[1] += 1000.0
+
+    stats._lock = RecordOnRelease()  # type: ignore[assignment]
+
+    (row,) = stats.top()
+    assert (row["count"], row["total_ms"]) == (1, 5.0)

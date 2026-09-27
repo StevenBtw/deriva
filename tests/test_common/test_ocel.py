@@ -554,9 +554,16 @@ class TestLoadBenchmarkOcel:
 
         monkeypatch.chdir(tmp_path)
         self._write(tmp_path / "workspace" / "benchmarks" / "s1" / "ocel" / "benchmark_events.jsonl", "Current")
-        with patch("deriva.services.benchmarking.get_benchmark_session", return_value={"session_id": "s1"}), patch(
-            "deriva.services.benchmarking.get_benchmark_runs", return_value=[]
+        with (
+            patch("deriva.services.benchmarking.get_benchmark_session", return_value={"session_id": "s1"}),
+            patch("deriva.services.benchmarking.get_benchmark_runs", return_value=[]),
         ):
             analyzer = BenchmarkAnalyzer("s1", MagicMock())
 
         assert [e.activity for e in analyzer.ocel_log.events] == ["Current"]
+
+
+def test_benchmark_loader_is_exported():
+    from deriva.common import ocel
+
+    assert "load_benchmark_ocel" in ocel.__all__

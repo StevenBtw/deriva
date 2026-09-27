@@ -40,7 +40,27 @@ def test_adding_the_same_element_twice_updates_it(am):
 
 
 def test_element_writes_use_the_index_not_merge(am):
-    with patch.object(am.db, "execute_write", wraps=am.db.execute_write) as write:
+    # execute is what every Cypher write goes through (execute_write delegates to it)
+    with (
+        patch.object(am.db, "execute", wraps=am.db.execute) as execute,
+        patch.object(am.db, "merge_node", wraps=am.db.merge_node) as merge_node,
+    ):
         am.add_element(Element(name="Claims", element_type="ApplicationComponent", identifier="ac_claims"))
 
-    assert not [c for c in write.call_args_list if "MERGE" in c.args[0]]
+    merge_node.assert_called_once()
+    assert not [c for c in execute.call_args_list if "MERGE" in c.args[0]]
+
+
+def test_disabled_element_can_be_enabled_again(am):
+    am.add_element(Element(name="Claims", element_type="ApplicationComponent", identifier="ac_claims"))
+    am.disable_element("ac_claims", reason="duplicate_of:ac_other")
+
+    assert am.enable_element("ac_claims") is True
+
+    (element,) = am.get_elements(enabled_only=True)
+    assert element.identifier == "ac_claims"
+    assert am.query("MATCH (e:Model {identifier: 'ac_claims'}) RETURN e.disabled_reason AS r") == [{"r": None}]
+
+
+def test_enabling_an_unknown_element_returns_false(am):
+    assert am.enable_element("nope") is False

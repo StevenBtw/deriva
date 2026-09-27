@@ -128,15 +128,18 @@ def solve(
 
     rows = _build_rows(valid, merges, metamodel.single_parent_types)
     cuts: list[_Row] = []
-    for _ in range(MAX_CYCLE_ROUNDS):
+    for round_ in range(MAX_CYCLE_ROUNDS + 1):
         solution = _lexicographic(len(tiers), tiers, rows + cuts)
         if solution is None:
             return JointDecision(status="solver_failed", dropped=dropped)
         chosen = {i for i, v in enumerate(solution) if v == 1}
-        cycle = _find_cycle(valid, merges, chosen, metamodel.acyclic_types)
-        if cycle is None:
+        cycles = _find_cycles(valid, merges, chosen, metamodel.acyclic_types)
+        if not cycles:
             return _decision(elements, valid, merges, rows + cuts, chosen, dropped)
-        cuts.append(_Row("H3", {i: 1.0 for i in cycle}, float(len(cycle) - 1)))
+        if round_ == MAX_CYCLE_ROUNDS:
+            break
+        # One cut per cycle in the selection, so independent cycles cost one round
+        cuts += [_Row("H3", {i: 1.0 for i in c}, float(len(c) - 1)) for c in cycles]
     return JointDecision(status="cycle_limit", dropped=dropped)
 
 
@@ -281,6 +284,21 @@ def _representatives(merges: list[MergeCandidate]) -> dict[str, str]:
         if ra != rb:
             parent[max(ra, rb)] = min(ra, rb)
     return {x: find(x) for x in parent}
+
+
+def _find_cycles(
+    props: list[Proposal],
+    merges: list[MergeCandidate],
+    chosen: set[int],
+    acyclic: frozenset[str],
+) -> list[list[int]]:
+    """Cycles in the selection: each found cycle's relationships are set aside before the next search."""
+    cycles: list[list[int]] = []
+    remaining = set(chosen)
+    while (cycle := _find_cycle(props, merges, remaining, acyclic)) is not None:
+        cycles.append(cycle)
+        remaining -= {i for i in cycle if i < len(props)}
+    return cycles
 
 
 def _find_cycle(

@@ -828,7 +828,7 @@ All queries return one of three Pydantic response types:
 ### Caching
 
 - Responses are cached to `workspace/cache/` by default
-- Cache key = SHA256(prompt + model + schema + system prompt + effective temperature + max_tokens), so changing any of them never returns an answer cached for other settings
+- Cache key = SHA256(prompt + model + schema + system prompt + effective temperature + max_tokens), so changing any of them never returns an answer cached for other settings; benchmark runs also add a per-run `bench_hash` so each run gets its own entries
 - Disable with `LLM_NOCACHE=true` or `use_cache=False`
 - Errors are also cached to prevent retry storms
 
@@ -1146,7 +1146,7 @@ def extract_{type}s_multi(files: List[Dict], repo_name, llm_query_fn, config) ->
 
 **Token Efficiency Patterns:**
 
-- **System/User Prompt Separation**: the step's config instruction is the static system prompt (role, guidelines), sent verbatim; `build_user_prompt()` returns the dynamic file-specific content. This allows system prompts to be cached by providers.
+- **System/User Prompt Separation** (BusinessConcept multi-file extraction): the step's config instruction is the static system prompt (role, guidelines), sent verbatim; `build_user_prompt()` returns the dynamic file-specific content. This allows system prompts to be cached by providers. The other extractors still embed the instruction in a single prompt.
 - **Compact JSON**: Use `json.dumps(..., separators=(",", ":"))` for context data to minimize tokens.
 - **Multi-file Batching**: The `batch_size` config column (in `extraction_config` table) controls how many files are processed per LLM call. When `batch_size > 1`, the service uses `extract_{type}s_multi()` for batched extraction.
 
@@ -1388,7 +1388,7 @@ deriva config versions
 Prompt text is configuration, not code: a run must be fully described by its config versions.
 
 - **Text that steers the LLM lives in the database.** Persona, instructions, rules, conventions, naming guidance, examples and thresholds told to the model belong in the step's `instruction`, `example` or `params`, changed with `deriva config update`. The relationship prompt rules live in the `relationship` phase row (`GlobalRelationships`: `instruction` plus `params.min_confidence`; disabling it skips the LLM relationship pass). Per-candidate naming is switched on per element with `params.per_candidate` (`min_pool`, `rules`).
-- **Prompt builders hold only structure.** `build_*prompt*` functions in `modules/` contain section order and headings, serialisation of input data (candidates, elements, metamodel rules from `OUTBOUND_RULES`/`INBOUND_RULES`) and the output contract that matches the schema. Do not add rules, examples or domain words there.
+- **Prompt builders hold only structure.** `build_*prompt*` functions in `modules/` contain section order and headings, serialisation of input data (candidates, elements, metamodel rules from `OUTBOUND_RULES`/`INBOUND_RULES`) and the output contract that matches the schema. Do not add rules, examples or domain words there. This is the target for every builder; some older builders (for example in `modules/extraction/method.py` and `modules/derivation/base.py`) still embed role text and are being migrated.
 - **Settings that change results** (cutoffs, mode switches) go in `params` or `system_settings`, not in class constants or literals.
 - **Where the text goes:** `instruction` and `example` for the main prompt, `params` (JSON, both extraction and derivation steps) for extra prompt texts and switches, e.g. `params.prompt` for the Technology headings.
 - **Every LLM call has a config row.** Services load the row and pass the text in; modules stay pure and only call the `llm_query_fn` they receive.

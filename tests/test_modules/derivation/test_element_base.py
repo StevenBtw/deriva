@@ -539,3 +539,130 @@ class TestDeriveRelationships:
 
         assert len(result.errors) > 0
         assert "Failed to create" in result.errors[0]
+
+
+class TestCandidateDecisions:
+    """Every filtered candidate gets a decision record, and created ones name their element."""
+
+    @staticmethod
+    def _generate(candidates, response, per_candidate=None):
+        llm = MagicMock(return_value=SimpleNamespace(content=response))
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            return ConcreteDerivation().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                per_candidate=per_candidate,
+            )
+
+    def test_per_candidate_created_decision_names_the_element(self):
+        response = '{"elements": [{"identifier": "te_x", "name": "X", "documentation": "d", "source": "1", "confidence": 0.9}]}'
+
+        result = self._generate([Candidate(node_id="1", name="x", labels=["Node"], properties={})], response, PerCandidateConfig(min_pool=1, rules="R"))
+
+        (decision,) = [d for d in result.candidate_decisions if d.stage == "created"]
+        assert decision.element_id == result.created_elements[0]["identifier"]
+        assert decision.element_confidence == 0.9
+
+    def test_consolidated_candidates_are_recorded(self):
+        candidates = [
+            Candidate(node_id="1", name="Order", labels=["Node"], properties={}, pagerank=0.9),
+            Candidate(node_id="2", name="Orders", labels=["Node"], properties={}, pagerank=0.1),
+        ]
+
+        result = self._generate(candidates, '{"elements": []}')
+
+        stages = {d.node_id: d.stage for d in result.candidate_decisions}
+        assert stages["2"] == "duplicate_removed"
+
+
+class TestPercentileFiltering:
+    """A computed percentile of 0.0 is the bottom rank; only absent data is exempt from the cutoff."""
+
+    class Filter:
+        MIN_PAGERANK = None
+        MIN_PAGERANK_PERCENTILE = 40.0
+        MIN_KCORE_PERCENTILE = 30.0
+        USE_COMMUNITY_ROOTS = False
+        USE_ARTICULATION_POINTS = False
+
+    @classmethod
+    def _filter(cls, candidates):
+        from deriva.modules.derivation.element_base import HybridFilteringMixin
+
+        filt = type("F", (HybridFilteringMixin, cls.Filter), {})()
+        return {c.node_id for c in filt.apply_graph_filtering(candidates, {}, 10)}
+
+    def test_bottom_ranked_candidate_is_filtered(self):
+        bottom = Candidate(node_id="bottom", name="b", pagerank_percentile=0.0, kcore_percentile=50.0)
+        top = Candidate(node_id="top", name="t", pagerank_percentile=90.0, kcore_percentile=90.0)
+
+        assert self._filter([bottom, top]) == {"top"}
+
+    def test_candidate_without_percentile_data_passes(self):
+        unknown = Candidate(node_id="unknown", name="u", pagerank_percentile=None, kcore_percentile=None)
+
+        assert self._filter([unknown]) == {"unknown"}
+
+    def test_missing_enrichment_leaves_percentiles_unset(self):
+        from deriva.modules.derivation.base import enrich_candidate
+
+        candidate = Candidate(node_id="n", name="n")
+        enrich_candidate(candidate, {})
+
+        assert (candidate.pagerank_percentile, candidate.kcore_percentile) == (None, None)
+
+
+class TestPerCandidateIdentity:
+    """In per-candidate mode the prompt holds one candidate, so the element belongs to it."""
+
+    @staticmethod
+    def _created(candidates, response):
+        archimate_manager = MagicMock()
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            result = ConcreteDerivation().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=archimate_manager,
+                engine=MagicMock(),
+                llm_query_fn=MagicMock(return_value=SimpleNamespace(content=response)),
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                per_candidate=PerCandidateConfig(min_pool=1, rules="R"),
+            )
+        return result.created_elements
+
+    def test_element_source_is_the_candidate(self):
+        response = '{"elements": [{"identifier": "te_x", "name": "X", "documentation": "d", "source": "somewhere_else", "confidence": 0.9}]}'
+
+        (element,) = self._created([Candidate(node_id="n1", name="x", labels=["Node"], properties={})], response)
+
+        assert element["properties"]["source"] == "n1"
+
+    def test_sibling_name_collision_keeps_the_candidate_under_its_graph_name(self):
+        response = '{"elements": [{"identifier": "te_x", "name": "X", "documentation": "d", "source": "n", "confidence": 0.9}]}'
+        candidates = [
+            Candidate(node_id="n1", name="first", labels=["Node"], properties={}),
+            Candidate(node_id="n2", name="second", labels=["Node"], properties={}),
+        ]
+
+        created = self._created(candidates, response)
+
+        assert [(e["name"], e["properties"]["source"]) for e in created] == [("X", "n1"), ("second", "n2")]
+        assert len({e["identifier"] for e in created}) == 2

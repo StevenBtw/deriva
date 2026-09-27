@@ -158,7 +158,9 @@ class ArchimateManager:
                     "source_identifier": source_identifier,
                 },
             )
-            logger.debug(f"Added element: {element.identifier} ({element.element_type})")
+            logger.debug(
+                f"Added element: {element.identifier} ({element.element_type})"
+            )
             return element.identifier
 
         except Exception as e:
@@ -550,6 +552,26 @@ class ArchimateManager:
         except Exception as e:
             logger.error(f"Failed to disable element {identifier}: {e}")
             raise
+
+    def enable_element(self, identifier: str) -> bool:
+        """Re-enable a disabled element and clear its disabled reason.
+
+        Returns:
+            True if the element was enabled, False if not found
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        result = self.db.execute_write(
+            f"""
+                MATCH (e:`{self.namespace}` {{identifier: $identifier}})
+                SET e.enabled = true,
+                    e.disabled_reason = null
+                RETURN e.identifier as identifier
+            """,
+            {"identifier": identifier},
+        )
+        return bool(result)
 
     def disable_elements(
         self, identifiers: list[str], reason: str | None = None

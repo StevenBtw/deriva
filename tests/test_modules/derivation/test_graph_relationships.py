@@ -164,3 +164,19 @@ class TestPerformanceShape:
             run(gm, am)
 
         model_query.assert_not_called()
+
+
+def test_pairs_the_metamodel_rejects_do_not_take_candidate_slots():
+    """Each type may appear in Composition, but not every source/target pair; check the pair before the limit."""
+    from deriva.modules.derivation.refine.graph_relationships import find_relationship_candidates
+
+    elements = [
+        Element(name="Proc", element_type="BusinessProcess", identifier="bp", properties={"source": "a1"}),
+        Element(name="Comp", element_type="ApplicationComponent", identifier="ac", properties={"source": "a2"}),
+        Element(name="Outer", element_type="ApplicationComponent", identifier="ac_outer", properties={"source": "b1"}),
+        Element(name="Inner", element_type="ApplicationComponent", identifier="ac_inner", properties={"source": "b2"}),
+    ]
+
+    rows = find_relationship_candidates([("a1", "a2"), ("b1", "b2")], elements, set(), "Composition", limit=1)
+
+    assert [(r["source_id"], r["target_id"]) for r in rows] == [("ac_outer", "ac_inner")]

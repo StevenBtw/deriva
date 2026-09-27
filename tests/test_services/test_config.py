@@ -148,7 +148,7 @@ class TestGetExtractionConfigs:
         """Should return all active extraction configs."""
         engine = MagicMock()
         # Columns: node_type, sequence, enabled, input_sources, instruction, example,
-        #          extraction_method, temperature, max_tokens, batch_size
+        #          extraction_method, temperature, max_tokens, batch_size, params
         engine.execute.return_value.fetchall.return_value = [
             ("BusinessConcept", 1, True, '{"files": []}', "instruction1", "example1", "llm", None, None, 1, None),
             ("TypeDefinition", 2, True, '{"files": []}', "instruction2", "example2", "ast", 0.5, 2000, 5, None),
@@ -210,7 +210,7 @@ class TestGetExtractionConfig:
         """Should return config when found."""
         engine = MagicMock()
         # Columns: node_type, sequence, enabled, input_sources, instruction, example,
-        #          extraction_method, temperature, max_tokens, batch_size
+        #          extraction_method, temperature, max_tokens, batch_size, params
         engine.execute.return_value.fetchone.return_value = ("BusinessConcept", 1, True, '{"files": []}', "instruction", "example", "llm", 0.7, 4096, 3, None)
 
         config = get_extraction_config(engine, "BusinessConcept")
@@ -1239,8 +1239,8 @@ class TestUpdateDerivationPatterns:
         from deriva.services.config import update_derivation_patterns
 
         engine = MagicMock()
-        engine.execute.return_value.fetchone.return_value = (0,)
-        engine.execute.return_value.fetchone.return_value = (1,)
+        # UPDATE affects 0 rows, then MAX(id) + 1 = 1
+        engine.execute.return_value.fetchone.side_effect = [(0,), (1,)]
 
         result = update_derivation_patterns(
             engine,
@@ -1251,6 +1251,7 @@ class TestUpdateDerivationPatterns:
         )
 
         assert result is True
+        assert any("INSERT" in str(c.args[0]) for c in engine.execute.call_args_list)
 
 
 class TestThresholdHelpers:

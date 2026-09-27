@@ -63,7 +63,9 @@ def test_any_model_relationship_counts_as_preserved(managers):
     element(am, "a", source="dir::p"), element(am, "b", source="dir::c")
     am.add_relationship(Relationship(source="a", target="b", relationship_type="Serving"))
 
-    assert flagged(run(gm, am)) == set()
+    result = run(gm, am)
+    assert result.success
+    assert flagged(result) == set()
 
 
 def test_disabled_elements_and_inactive_nodes_are_ignored(managers):
@@ -74,7 +76,9 @@ def test_disabled_elements_and_inactive_nodes_are_ignored(managers):
     element(am, "x", source="dir::q"), element(am, "y", source="dir::d")
     am.disable_element("b", reason="test")
 
-    assert flagged(run(gm, am)) == set()
+    result = run(gm, am)
+    assert result.success
+    assert flagged(result) == set()
 
 
 def test_graph_id_mentioned_anywhere_in_properties_matches(managers):
@@ -91,7 +95,19 @@ def test_no_cypher_join_against_the_model(managers):
     contains(gm, "dir::p", "dir::c")
     element(am, "a", source="dir::p"), element(am, "b", source="dir::c")
 
-    with patch.object(am, "query", wraps=am.query) as model_query:
-        run(gm, am)
+    from deriva.adapters.grafeo.manager import GrafeoConnection
 
-    assert not [c for c in model_query.call_args_list if "Graph:CONTAINS" in c.args[0]]
+    queries: list[str] = []
+    real_execute = GrafeoConnection.execute
+
+    def record(conn, query, parameters=None, database=None):
+        queries.append(query)
+        return real_execute(conn, query, parameters, database)
+
+    # Every Cypher query of both namespaces goes through GrafeoConnection.execute
+    with patch.object(GrafeoConnection, "execute", record):
+        result = run(gm, am)
+
+    assert result.success
+    assert any("Graph:CONTAINS" in q for q in queries)
+    assert not [q for q in queries if "Graph:CONTAINS" in q and "Model" in q]

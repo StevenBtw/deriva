@@ -138,6 +138,19 @@ def test_tests_never_use_a_persistent_database():
     assert os.environ.get("GRAFEO_DB_DIR") == ""
 
 
+def test_llm_manager_dotenv_cannot_restore_the_database_dir(tmp_path):
+    """LLMManager reloads .env with override=True; that must not undo the in-memory guard."""
+    import os
+
+    from deriva.adapters.llm import manager
+
+    env = tmp_path / ".env"
+    env.write_text("GRAFEO_DB_DIR=workspace/graphs", encoding="utf-8")
+    manager.load_dotenv(env, override=True)
+
+    assert os.environ.get("GRAFEO_DB_DIR") == ""
+
+
 class TestMergeEdge:
     """Edge upserts without a per-edge Cypher lookup; existing-edge keys are cached per type."""
 

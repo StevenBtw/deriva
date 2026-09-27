@@ -810,6 +810,29 @@ class TestAgentReuse:
 
         assert agent_class.call_count == 2
 
+    def test_structured_output_gets_its_own_agent(self, tmp_path):
+        from pydantic import BaseModel
+
+        class Answer(BaseModel):
+            text: str
+
+        with patch("deriva.adapters.llm.manager.load_dotenv"):
+            with patch.dict(
+                "os.environ",
+                {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
+                clear=True,
+            ):
+                manager = LLMManager()
+
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+            agent_class.return_value.run_sync.return_value = MagicMock(output=Answer(text="ok"), usage=MagicMock(return_value=None))
+            manager.query("one", system_prompt="s")
+            manager.query("two", system_prompt="s", response_model=Answer)
+            manager.query("three", system_prompt="s", response_model=Answer)
+
+        assert agent_class.call_count == 2
+        assert [c.kwargs["output_type"] for c in agent_class.call_args_list] == [str, Answer]
+
 
 class TestTimeoutAndRetry:
     """LLM_TIMEOUT bounds every call; transient failures are retried with backoff, others fail at once."""

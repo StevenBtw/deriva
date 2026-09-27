@@ -42,6 +42,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -115,7 +116,7 @@ class EnrichmentResult:
 # =============================================================================
 
 
-def normalize_to_percentiles(values: dict[str, float | int]) -> dict[str, float]:
+def normalize_to_percentiles(values: Mapping[str, float]) -> dict[str, float]:
     """
     Convert absolute values to percentile ranks (0-100).
 
@@ -147,7 +148,7 @@ def normalize_to_percentiles(values: dict[str, float | int]) -> dict[str, float]
 
 
 def normalize_to_percentiles_int(
-    values: dict[str, int] | dict[str, float],
+    values: Mapping[str, float],
 ) -> dict[str, float]:
     """
     Convert integer values to percentile ranks, handling ties.

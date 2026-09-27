@@ -33,7 +33,7 @@ Replaced Neo4j (Docker container) with grafeo, an embedded Rust graph database. 
 - **Fixed: LLM-extracted technologies were silently dropped**: the enforced output schema names fields `technologyName`/`technologyType` while the Technology module read `techName`/`techCategory`; the module now matches the enforced schema
 - **Technology extraction reads dependency manifests and build files**, and its instruction covers the runtime a manifest implies and the system a client library connects to
 - **BusinessConcept system prompt is config**: the extraction instruction is the whole system prompt, sent verbatim
-- Prompts are byte-identical to before the move (same cache keys, identical models)
+- Prompts are byte-identical to before the move (identical models)
 - Removed unused relationship prompt builders: `build_relationship_prompt`, `build_element_relationship_prompt`, `build_per_element_relationship_prompt`, `derive_element_relationships`
 - **LLM cache key covers every response-shaping input**: the key now includes the system prompt and the effective temperature and max_tokens, so changing any of them is never answered from a cache entry made with other settings (existing cache entries are invalidated once)
 

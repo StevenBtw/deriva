@@ -24,7 +24,7 @@ LLM role:
 Relationships:
 - OUTBOUND: TechnologyService -> DataObject (Access) - access databases/files
 - OUTBOUND: TechnologyService -> ApplicationService (Serving) - serve app services
-- INBOUND: DataObject -> TechnologyService (Realization) - config realizes tech
+- INBOUND: Device -> TechnologyService (Realization) - devices realize tech services
 
 ArchiMate Layer: Technology Layer
 ArchiMate Type: TechnologyService

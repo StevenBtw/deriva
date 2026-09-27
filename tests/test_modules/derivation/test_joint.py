@@ -204,6 +204,24 @@ class TestCyclesAndFailures:
         assert sorted(decision.kept) == ["ab", "bc"]
         assert decision.dropped["ca"] == "H3:ab,bc"
 
+    def test_more_independent_cycles_than_rounds_are_all_broken(self):
+        from deriva.modules.derivation.refine.joint import MAX_CYCLE_ROUNDS
+
+        elements, proposals = [], []
+        for i in range(MAX_CYCLE_ROUNDS + 1):
+            a, b, c = f"a{i}", f"b{i}", f"c{i}"
+            elements += [el(a), el(b), el(c)]
+            proposals += [
+                rel(f"{a}{b}", a, b, "Composition", tier=2, confidence=0.9),
+                rel(f"{b}{c}", b, c, "Composition", tier=2, confidence=0.8),
+                rel(f"{c}{a}", c, a, "Composition", tier=2, confidence=0.7),
+            ]
+
+        decision = run(elements, proposals, [])
+
+        assert decision.status == "optimal"
+        assert len(decision.kept) == 2 * (MAX_CYCLE_ROUNDS + 1)
+
     def test_cycle_created_by_a_merge_is_prevented(self):
         decision = run(
             [el("a", pagerank=0.9), el("b"), el("c")],

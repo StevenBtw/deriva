@@ -472,7 +472,25 @@ class ElementDerivationBase(ABC):
             return result
 
         # Consolidate near-duplicate candidate names before LLM
-        filtered = self._consolidate_near_duplicates(filtered)
+        consolidated = self._consolidate_near_duplicates(filtered)
+        kept_ids = {c.node_id for c in consolidated}
+        for c in filtered:
+            if c.node_id not in kept_ids:
+                result.candidate_decisions.append(
+                    CandidateDecision(
+                        node_id=c.node_id,
+                        name=c.name,
+                        element_type=self.ELEMENT_TYPE,
+                        pagerank=c.pagerank,
+                        kcore_level=c.kcore_level,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                        confidence=c.properties.get("confidence"),
+                        stage="duplicate_removed",
+                        became_element=False,
+                    )
+                )
+        filtered = consolidated
 
         # Track candidates sent to LLM
         result.candidates_to_llm = len(filtered)
@@ -782,8 +800,7 @@ class ElementDerivationBase(ABC):
             self.logger.debug("Could not read active repository name: %s", e)
 
         created_elements: list[dict[str, Any]] = []
-        created_source_ids: set[str] = set()
-        rejected_source_ids: set[str] = set()
+        created_by_source: dict[str, dict[str, Any]] = {}
         # Track names already chosen this batch to avoid sibling collisions
         # (per-candidate prompts otherwise can't see each other).
         names_so_far: list[str] = []
@@ -806,13 +823,11 @@ class ElementDerivationBase(ABC):
                     result.errors.append(
                         f"LLM error ({self.ELEMENT_TYPE}/{cand.node_id}): {error}"
                     )
-                    rejected_source_ids.add(cand.node_id)
                     continue
             except Exception as e:
                 result.errors.append(
                     f"LLM error ({self.ELEMENT_TYPE}/{cand.node_id}): {e}"
                 )
-                rejected_source_ids.add(cand.node_id)
                 continue
 
             parse_result = parse_derivation_response(response_content)
@@ -823,12 +838,10 @@ class ElementDerivationBase(ABC):
                         for e in parse_result.get("errors", [])
                     ]
                 )
-                rejected_source_ids.add(cand.node_id)
                 continue
 
             derived_list = parse_result.get("data", [])
             if not derived_list:
-                rejected_source_ids.add(cand.node_id)
                 continue
 
             derived = derived_list[0]
@@ -837,13 +850,11 @@ class ElementDerivationBase(ABC):
             )
             if not element_result["success"]:
                 result.errors.extend(element_result.get("errors", []))
-                rejected_source_ids.add(cand.node_id)
                 continue
 
             element_data = element_result["data"]
             confidence = element_data.get("properties", {}).get("confidence", 1.0)
             if confidence < self.MIN_ELEMENT_CONFIDENCE:
-                rejected_source_ids.add(cand.node_id)
                 continue
 
             # Enforce sibling-name uniqueness at the data layer. The prompt
@@ -864,7 +875,6 @@ class ElementDerivationBase(ABC):
                     self.ELEMENT_TYPE,
                     cand.node_id,
                 )
-                rejected_source_ids.add(cand.node_id)
                 continue
 
             try:
@@ -879,17 +889,16 @@ class ElementDerivationBase(ABC):
                 result.elements_created += 1
                 result.created_elements.append(element_data)
                 created_elements.append(element_data)
-                created_source_ids.add(cand.node_id)
+                created_by_source[cand.node_id] = element_data
                 names_so_far.append(element_data["name"])
             except Exception as e:
                 result.errors.append(
                     f"Failed to create {self.ELEMENT_TYPE} element "
                     f"{element_data.get('identifier', 'unknown')}: {e}"
                 )
-                rejected_source_ids.add(cand.node_id)
 
         for c in filtered:
-            stage = "created" if c.node_id in created_source_ids else "llm_rejected"
+            created = created_by_source.get(c.node_id)
             result.candidate_decisions.append(
                 CandidateDecision(
                     node_id=c.node_id,
@@ -900,8 +909,12 @@ class ElementDerivationBase(ABC):
                     in_degree=c.in_degree,
                     out_degree=c.out_degree,
                     confidence=c.properties.get("confidence"),
-                    stage=stage,
-                    became_element=(c.node_id in created_source_ids),
+                    stage="created" if created else "llm_rejected",
+                    became_element=created is not None,
+                    element_id=created["identifier"] if created else None,
+                    element_confidence=created.get("properties", {}).get("confidence")
+                    if created
+                    else None,
                 )
             )
 

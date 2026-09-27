@@ -1108,6 +1108,72 @@ class TestDeriveBatchRelationships:
 
         assert result[0]["derived_from"] == "llm"
 
+    @staticmethod
+    def _with_deterministic(rels, new_ids):
+        from unittest.mock import MagicMock, patch
+
+        from deriva.modules.derivation.base import RelationshipRule, derive_batch_relationships
+
+        mock_llm = MagicMock()
+        mock_llm.return_value.content = '{"relationships": []}'
+        with patch("deriva.modules.derivation.base.derive_community_relationships", return_value=rels):
+            derive_batch_relationships(
+                new_elements=[{"identifier": i, "element_type": "ApplicationComponent"} for i in new_ids],
+                existing_elements=[
+                    {"identifier": "old_svc", "element_type": "ApplicationService"},
+                    {"identifier": "old_ac", "element_type": "ApplicationComponent"},
+                ],
+                element_type="ApplicationComponent",
+                outbound_rules=[
+                    RelationshipRule(target_type="ApplicationService", rel_type="Serving"),
+                    RelationshipRule(target_type="ApplicationComponent", rel_type="Composition"),
+                ],
+                inbound_rules=[],
+                llm_query_fn=mock_llm,
+                llm_config=REL_CFG,
+            )
+        return mock_llm
+
+    @staticmethod
+    def _rel(source, target, rel_type):
+        return {"source": source, "target": target, "relationship_type": rel_type, "confidence": 0.9}
+
+    def test_llm_is_skipped_when_every_new_element_has_diverse_graph_relationships(self):
+        rels = [self._rel("new_a", "old_svc", "Serving"), self._rel("new_a", "old_ac", "Composition"), self._rel("new_b", "old_svc", "Serving")]
+
+        assert not self._with_deterministic(rels, ["new_a", "new_b"]).called
+
+    def test_llm_still_runs_for_new_elements_without_graph_relationships(self):
+        rels = [self._rel("new_a", "old_svc", "Serving"), self._rel("new_a", "old_ac", "Composition"), self._rel("old_ac", "new_a", "Serving")]
+
+        llm = self._with_deterministic(rels, ["new_a", "new_b"])
+
+        llm.assert_called_once()
+        prompt = llm.call_args[0][0]
+        assert "new_b" in prompt and "new_a" not in prompt
+
+    def test_one_whole_part_relationship_per_pair(self):
+        """Composition and Aggregation for the same pair contradict each other; the first rule wins."""
+        from unittest.mock import MagicMock, patch
+
+        from deriva.modules.derivation.base import RelationshipRule, derive_batch_relationships
+
+        rels = [self._rel("new_node", "old_sw", "Composition"), self._rel("new_node", "old_sw", "Aggregation")]
+        with patch("deriva.modules.derivation.base.derive_community_relationships", return_value=rels):
+            result = derive_batch_relationships(
+                new_elements=[{"identifier": "new_node", "element_type": "Node"}],
+                existing_elements=[{"identifier": "old_sw", "element_type": "SystemSoftware"}],
+                element_type="Node",
+                outbound_rules=[
+                    RelationshipRule(target_type="SystemSoftware", rel_type="Composition"),
+                    RelationshipRule(target_type="SystemSoftware", rel_type="Aggregation"),
+                ],
+                inbound_rules=[],
+                llm_query_fn=MagicMock(),
+            )
+
+        assert [r["relationship_type"] for r in result] == ["Composition"]
+
     def test_returns_empty_for_no_new_elements(self):
         """Should return empty list when no new elements."""
         from unittest.mock import MagicMock
@@ -2013,6 +2079,28 @@ class TestDeriveCommunityRelationships:
         assert result[0]["confidence"] == 0.95
         assert result[0]["derived_from"] == "community"
 
+    def test_co_membership_is_no_evidence_for_flow_triggering_or_aggregation(self):
+        """Sharing a community does not show a flow, a trigger or a whole-part hierarchy."""
+        from deriva.modules.derivation.base import RelationshipRule, derive_community_relationships
+
+        new_elements = [
+            {"identifier": "new_svc", "element_type": "ApplicationService", "properties": {"source_community": "comm_1"}},
+        ]
+        existing_elements = [
+            {"identifier": "old_svc", "element_type": "ApplicationService", "properties": {"source_community": "comm_1"}},
+            {"identifier": "old_proc", "element_type": "BusinessProcess", "properties": {"source_community": "comm_1"}},
+        ]
+        outbound_rules = [
+            RelationshipRule(target_type="ApplicationService", rel_type="Flow"),
+            RelationshipRule(target_type="ApplicationService", rel_type="Aggregation"),
+            RelationshipRule(target_type="BusinessProcess", rel_type="Triggering"),
+            RelationshipRule(target_type="BusinessProcess", rel_type="Serving"),
+        ]
+
+        result = derive_community_relationships(new_elements, existing_elements, outbound_rules, [])
+
+        assert [(r["target"], r["relationship_type"]) for r in result] == [("old_proc", "Serving")]
+
     def test_skips_different_communities(self):
         """Should not create relationships across different communities."""
         from deriva.modules.derivation.base import RelationshipRule, derive_community_relationships
@@ -2074,3 +2162,29 @@ class TestDeriveDeterministicRelationships:
 
         # Should find relationship based on "Invoice" word overlap
         assert len(result) >= 0  # Depends on threshold, verify no crash
+
+
+class TestConsolidatedRelationshipsDedup:
+    """A pair found by both endpoint types' passes is persisted once."""
+
+    def test_same_relationship_from_two_type_passes_is_kept_once(self):
+        from unittest.mock import MagicMock, patch
+
+        from deriva.modules.derivation.base import RelationshipRule, derive_consolidated_relationships
+
+        rel = {"source": "dev", "target": "ts", "relationship_type": "Realization", "confidence": 0.9}
+        rules = {
+            "Device": ([RelationshipRule(target_type="TechnologyService", rel_type="Realization")], []),
+            "TechnologyService": ([], [RelationshipRule(target_type="Device", rel_type="Realization")]),
+        }
+        with patch("deriva.modules.derivation.base.derive_batch_relationships", side_effect=lambda **kw: [dict(rel)]):
+            result = derive_consolidated_relationships(
+                all_elements=[
+                    {"identifier": "dev", "element_type": "Device"},
+                    {"identifier": "ts", "element_type": "TechnologyService"},
+                ],
+                relationship_rules=rules,
+                llm_query_fn=MagicMock(),
+            )
+
+        assert len(result) == 1

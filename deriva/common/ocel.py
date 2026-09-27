@@ -44,6 +44,7 @@ __all__ = [
     "create_run_id",
     "create_edge_id",
     "parse_run_id",
+    "load_benchmark_ocel",
 ]
 
 

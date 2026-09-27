@@ -60,6 +60,8 @@ def merge_candidates(
                         )
                     )
                     continue
+                if not (canon_a and canon_b):
+                    continue  # an empty name is no evidence (similarity("", "") is 1.0)
                 score = similarity_ratio(
                     normalize_name(canon_a), normalize_name(canon_b)
                 )

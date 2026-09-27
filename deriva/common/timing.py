@@ -29,15 +29,16 @@ class QueryStats:
         """Queries with the highest total time, highest first."""
         with self._lock:
             rows = sorted(self._stats.items(), key=lambda kv: -kv[1][1])[:limit]
-        return [
-            {
-                "query": q,
-                "count": int(c),
-                "total_ms": round(t, 1),
-                "max_ms": round(m, 1),
-            }
-            for q, (c, t, m) in rows
-        ]
+            # Build the result while holding the lock: the lists keep changing after it
+            return [
+                {
+                    "query": q,
+                    "count": int(c),
+                    "total_ms": round(t, 1),
+                    "max_ms": round(m, 1),
+                }
+                for q, (c, t, m) in rows
+            ]
 
     def reset(self) -> None:
         with self._lock:

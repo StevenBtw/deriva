@@ -21,7 +21,6 @@ LLM role:
 - Write documentation describing the data purpose
 
 Relationships:
-- OUTBOUND: DataObject -> TechnologyService (Realization) - config realizes tech
 - INBOUND: TechnologyService -> DataObject (Access) - tech accesses data
 - INBOUND: ApplicationService -> DataObject (Access) - app services access data
 - INBOUND: BusinessProcess -> DataObject (Access) - processes access data
