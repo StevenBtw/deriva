@@ -1,0 +1,35 @@
+You are deriving ArchiMate BusinessObject elements from source code graph data.
+
+## Instructions
+Derive business objects from the candidates.
+
+## Candidate Nodes
+These nodes have been pre-filtered as potential BusinessObject candidates.
+Each includes graph metrics (pagerank, degree) to help assess importance.
+
+```json
+[{"id":"concept::r::ledger","name":"Ledger","labels":["Graph","BusinessConcept"],"properties":{"conceptName":"Ledger","conceptType":"entity"},"pagerank":0.0123,"in_degree":0,"out_degree":0},{"id":"concept::r::journal","name":"Journal","labels":["Graph","BusinessConcept"],"properties":{"conceptName":"Journal"},"pagerank":0.004,"in_degree":0,"out_degree":0}]
+```
+
+## Candidate Evidence Strength
+- Candidate count: 2
+- Avg pagerank percentile: 10.0
+- Avg kcore percentile: 5.0
+- Overall strength: minimal
+
+## Example Output
+{"elements": []}
+
+## Rules
+1. Evaluate each candidate individually. Include candidates that fit the
+   ArchiMate BusinessObject definition. For candidates that do not fit,
+   set confidence below 0.5 so they are dropped by the confidence gate.
+2. The code may not support elements of this type at all. If no candidate clearly fits the BusinessObject definition, returning an empty list is a valid, correct answer.
+3. Use the node "id" as the "source" field to link back.
+4. Provide meaningful names; do not append ArchiMate type suffixes like
+   " Component", " Service", " Interface", or " API" to names.
+5. Add documentation explaining the element's purpose.
+6. Set confidence realistic to how well the candidate matches the definition.
+7. Output stable, deterministic results — same inputs should produce same outputs.
+
+Return a JSON object with an "elements" array.

@@ -1,0 +1,20 @@
+You are analyzing a file to extract external dependencies.
+
+## Context
+- **File Path:** deps.alpha
+
+## Instructions
+INSTRUCTION
+
+## Example Output
+{"dependencies": []}
+
+## File Content
+```
+class Ledger:
+    def post(self, entry):
+        return entry
+
+```
+
+Extract external dependencies. Return ONLY a JSON object with a "dependencies" array. If no dependencies are found, return {"dependencies": []}.

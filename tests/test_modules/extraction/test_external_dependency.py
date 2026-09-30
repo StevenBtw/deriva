@@ -12,14 +12,16 @@ from deriva.modules.extraction.external_dependency import (
     _extract_from_package_json,
     _extract_from_pyproject_toml,
     _extract_from_requirements_txt,
-    _parse_requirement_line,
     build_external_dependency_node,
     build_extraction_prompt,
     extract_external_dependencies,
     extract_external_dependencies_batch,
     get_extraction_method,
     parse_llm_response,
+    parse_requirement_line,
 )
+
+PROMPT_TEXTS = {"persona": "Analyze the source.", "task": "Extract the items."}
 
 # =============================================================================
 # Schema Tests
@@ -131,23 +133,23 @@ class TestGetExtractionMethod:
 
 
 # =============================================================================
-# _parse_requirement_line Tests
+# parse_requirement_line Tests
 # =============================================================================
 
 
 class TestParseRequirementLine:
-    """Tests for _parse_requirement_line function."""
+    """Tests for parse_requirement_line function."""
 
     def test_parses_simple_requirement(self):
         """Should parse simple package name."""
-        result = _parse_requirement_line("flask")
+        result = parse_requirement_line("flask")
         assert result is not None
         assert result["name"] == "flask"
         assert result["version"] is None
 
     def test_parses_requirement_with_version(self):
         """Should parse package with version constraint."""
-        result = _parse_requirement_line("flask>=2.0.0")
+        result = parse_requirement_line("flask>=2.0.0")
         assert result is not None
         assert result["name"] == "flask"
         assert result["version"] is not None
@@ -155,31 +157,31 @@ class TestParseRequirementLine:
 
     def test_parses_requirement_with_extras(self):
         """Should parse package with extras."""
-        result = _parse_requirement_line("flask[async]>=2.0")
+        result = parse_requirement_line("flask[async]>=2.0")
         assert result is not None
         assert result["name"] == "flask"
 
     def test_parses_url_based_requirement(self):
         """Should parse URL-based requirements."""
-        result = _parse_requirement_line("package @ https://example.com/package.tar.gz")
+        result = parse_requirement_line("package @ https://example.com/package.tar.gz")
         assert result is not None
         assert result["name"] == "package"
         assert result["version"] is None
 
     def test_parses_requirement_with_environment_marker(self):
         """Should parse requirement with environment marker."""
-        result = _parse_requirement_line("pywin32; sys_platform == 'win32'")
+        result = parse_requirement_line("pywin32; sys_platform == 'win32'")
         assert result is not None
         assert result["name"] == "pywin32"
 
     def test_returns_none_for_empty_line(self):
         """Should return None for empty lines."""
-        assert _parse_requirement_line("") is None
-        assert _parse_requirement_line("   ") is None
+        assert parse_requirement_line("") is None
+        assert parse_requirement_line("   ") is None
 
     def test_returns_none_for_invalid_line(self):
         """Should return None for invalid package name format."""
-        assert _parse_requirement_line("!!!invalid") is None
+        assert parse_requirement_line("!!!invalid") is None
 
 
 # =============================================================================
@@ -428,19 +430,19 @@ class TestBuildExtractionPrompt:
 
     def test_includes_file_path(self):
         """Should include file path in prompt."""
-        prompt = build_extraction_prompt("content", "src/app.py", "instruction", "{}")
+        prompt = build_extraction_prompt("content", "src/app.py", "instruction", "{}", PROMPT_TEXTS)
 
         assert "src/app.py" in prompt
 
     def test_includes_file_content(self):
         """Should include file content in prompt."""
-        prompt = build_extraction_prompt("import flask", "app.py", "instr", "{}")
+        prompt = build_extraction_prompt("import flask", "app.py", "instr", "{}", PROMPT_TEXTS)
 
         assert "import flask" in prompt
 
     def test_includes_instruction(self):
         """Should include instruction in prompt."""
-        prompt = build_extraction_prompt("content", "app.py", "Find dependencies", "{}")
+        prompt = build_extraction_prompt("content", "app.py", "Find dependencies", "{}", PROMPT_TEXTS)
 
         assert "Find dependencies" in prompt
 
@@ -570,7 +572,7 @@ class TestExtractExternalDependencies:
             repo_name="test-repo",
             subtype=None,
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -584,7 +586,7 @@ class TestExtractExternalDependencies:
             repo_name="test-repo",
             subtype=None,
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -598,7 +600,7 @@ class TestExtractExternalDependencies:
             repo_name="test-repo",
             subtype="python",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -612,7 +614,7 @@ class TestExtractExternalDependencies:
             repo_name="test-repo",
             subtype="python",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         # Only flask should be extracted (os and sys are stdlib)
@@ -639,7 +641,7 @@ class TestExtractExternalDependenciesBatch:
             files=files,
             repo_name="test-repo",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["stats"]["files_processed"] == 2
@@ -661,7 +663,7 @@ class TestExtractExternalDependenciesBatch:
             files=files,
             repo_name="test-repo",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
             progress_callback=callback,
         )
 
@@ -678,7 +680,7 @@ class TestExtractExternalDependenciesBatch:
             files=files,
             repo_name="test-repo",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["stats"]["total_nodes"] >= 2

@@ -7,6 +7,7 @@ from deriva.common import current_timestamp, extract_llm_details
 from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
     RELATIONSHIP_SCHEMA,
+    ElementPrompt,
     RelationshipLLMConfig,
     build_derivation_prompt,
     build_element,
@@ -15,31 +16,33 @@ from deriva.modules.derivation.base import (
     parse_relationship_response,
 )
 
-REL_CFG = RelationshipLLMConfig(instruction="Relationship rules.", min_confidence=0.6)
+REL_CFG = RelationshipLLMConfig(instruction="Relationship rules.", min_confidence=0.6, persona="P")
 
 
 class TestBuildDerivationPrompt:
     """Tests for build_derivation_prompt function."""
 
+    PROMPT = ElementPrompt(persona="Persona for services", candidates="Note", rules="{abstention}Rules", abstention="")
+
     def test_includes_graph_results(self):
         """Should include graph results in prompt."""
         candidates = [{"name": "auth", "path": "src/auth"}]
-        prompt = build_derivation_prompt(candidates=candidates, instruction="Group directories", example='{"identifier": "app:auth"}', element_type="ApplicationComponent")
+        prompt = build_derivation_prompt(candidates=candidates, instruction="Group directories", example='{"identifier": "app:auth"}', prompt=self.PROMPT)
 
         assert "auth" in prompt
         assert "src/auth" in prompt
 
     def test_includes_instruction(self):
         """Should include instruction in prompt."""
-        prompt = build_derivation_prompt(candidates=[], instruction="Group top-level directories into components", example="{}", element_type="ApplicationComponent")
+        prompt = build_derivation_prompt(candidates=[], instruction="Group top-level directories into components", example="{}", prompt=self.PROMPT)
 
         assert "Group top-level directories" in prompt
 
-    def test_includes_element_type(self):
-        """Should reference element type in prompt."""
-        prompt = build_derivation_prompt(candidates=[], instruction="Test", example="{}", element_type="ApplicationService")
+    def test_includes_the_configured_texts(self):
+        prompt = build_derivation_prompt(candidates=[], instruction="Test", example="{}", prompt=self.PROMPT)
 
-        assert "ApplicationService" in prompt
+        assert prompt.startswith("Persona for services")
+        assert "## Rules\nRules\n" in prompt
 
 
 class TestParseDerivationResponse:
@@ -782,7 +785,7 @@ class TestBuildDerivationPromptWithCandidates:
             candidates=candidates,
             instruction="Test instruction",
             example="{}",
-            element_type="ApplicationInterface",
+            prompt=ElementPrompt(persona="P", candidates="C", rules="{abstention}R", abstention=""),
         )
 
         assert "test_1" in prompt
@@ -909,6 +912,7 @@ class TestBuildUnifiedRelationshipPrompt:
             outbound_rules=[],
             inbound_rules=[],
             instruction="Relationship rules.",
+            persona="You are deriving relationships for {element_type} elements.",
         )
 
         assert prompt == ""
@@ -924,6 +928,7 @@ class TestBuildUnifiedRelationshipPrompt:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             instruction="Relationship rules.",
+            persona="You are deriving relationships for {element_type} elements.",
         )
 
         assert "new_app" in prompt
@@ -944,6 +949,7 @@ class TestBuildUnifiedRelationshipPrompt:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             instruction="Relationship rules.",
+            persona="You are deriving relationships for {element_type} elements.",
         )
 
         assert "old_svc" in prompt
@@ -961,6 +967,7 @@ class TestBuildUnifiedRelationshipPrompt:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving", description="serves")],
             inbound_rules=[],
             instruction="Relationship rules.",
+            persona="You are deriving relationships for {element_type} elements.",
         )
 
         assert "OUTBOUND" in prompt
@@ -978,6 +985,7 @@ class TestBuildUnifiedRelationshipPrompt:
             outbound_rules=[],
             inbound_rules=[RelationshipRule(target_type="ApplicationComponent", rel_type="Serving", description="served by")],
             instruction="Relationship rules.",
+            persona="You are deriving relationships for {element_type} elements.",
         )
 
         assert "INBOUND" in prompt
@@ -997,6 +1005,7 @@ class TestBuildUnifiedRelationshipPrompt:
             outbound_rules=[],
             inbound_rules=[],
             instruction="Relationship rules.",
+            persona="You are deriving relationships for {element_type} elements.",
         )
 
         # Identifiers should appear in the element JSON (no separate list)
@@ -1047,7 +1056,7 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
-            llm_config=RelationshipLLMConfig(instruction="CUSTOM RULES FROM CONFIG", min_confidence=0.6),
+            llm_config=RelationshipLLMConfig(instruction="CUSTOM RULES FROM CONFIG", min_confidence=0.6, persona="P"),
         )
 
         assert "CUSTOM RULES FROM CONFIG" in mock_llm.call_args[0][0]
@@ -1069,7 +1078,7 @@ class TestDeriveBatchRelationships:
                 outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
                 inbound_rules=[],
                 llm_query_fn=mock_llm,
-                llm_config=RelationshipLLMConfig(instruction="rules", min_confidence=min_confidence),
+                llm_config=RelationshipLLMConfig(instruction="rules", min_confidence=min_confidence, persona="P"),
             )
 
         assert len(run(0.65)) == 1
@@ -1411,7 +1420,6 @@ class TestSharedGenerateBehavior:
                 result = derivation.generate(
                     graph_manager=MagicMock(),
                     archimate_manager=MagicMock(),
-                    engine=MagicMock(),
                     llm_query_fn=Mock(),
                     query="MATCH (n) RETURN n",
                     instruction="test",
@@ -1436,7 +1444,6 @@ class TestSharedGenerateBehavior:
                 result = derivation.generate(
                     graph_manager=MagicMock(),
                     archimate_manager=MagicMock(),
-                    engine=MagicMock(),
                     llm_query_fn=Mock(),
                     query="MATCH (n) RETURN n",
                     instruction="test",
@@ -1462,7 +1469,6 @@ class TestSharedGenerateBehavior:
                 result = derivation.generate(
                     graph_manager=MagicMock(),
                     archimate_manager=MagicMock(),
-                    engine=MagicMock(),
                     llm_query_fn=Mock(),
                     query="MATCH (n) RETURN n",
                     instruction="test",
@@ -1821,6 +1827,19 @@ class TestStratifiedSampleElements:
         assert "ApplicationComponent" in types
         assert "ApplicationService" in types
         assert len(result) == 2
+
+    def test_ranks_by_structure_not_llm_confidence(self):
+        """The relationship prompt's sample depends on the graph (pagerank), not on LLM-written confidence."""
+        from deriva.modules.derivation.base import stratified_sample_elements
+
+        elements = [
+            {"identifier": "llm_favourite", "element_type": "ApplicationComponent", "properties": {"confidence": 0.99, "pagerank": 0.1}},
+            {"identifier": "graph_central", "element_type": "ApplicationComponent", "properties": {"confidence": 0.51, "pagerank": 0.9}},
+        ]
+
+        result = stratified_sample_elements(elements, max_per_type=1)
+
+        assert [e["identifier"] for e in result] == ["graph_central"]
 
     def test_limits_per_type(self):
         """Should limit elements per type."""
@@ -2192,6 +2211,20 @@ class TestNamesFromStructure:
 
         assert name_from_source(source_name, strip_extension=is_file) == expected
 
+    @pytest.mark.parametrize(
+        ("source_id", "source_name", "repo_name", "expected"),
+        [
+            ("dir::r::alpha_beta", "alpha_beta", "", "Alpha Beta"),
+            ("file::r::a/alpha_beta.avsc", "alpha_beta.avsc", "", "Alpha Beta"),
+            ("dir::r::gamma-delta", "gamma-delta", "gamma", "Delta"),
+            ("dir::r::delta_component", "delta_component", "", "Delta"),
+        ],
+    )
+    def test_structure_element_name(self, source_id, source_name, repo_name, expected):
+        from deriva.modules.derivation.base import structure_element_name
+
+        assert structure_element_name(source_id, source_name, repo_name) == expected
+
     def test_build_element_ignores_the_llm_name(self):
         derived = {"identifier": "whatever_llm", "name": "Some LLM Name", "source": "dir::repo::big_data_kafka", "confidence": 0.9, "documentation": "d"}
 
@@ -2280,3 +2313,9 @@ class TestCanonicalName:
         from deriva.modules.derivation.base import choose_name
 
         assert choose_name(["EntityProcessor", "Entity Processor", "Entity Handler"]) == "Entity Processor"
+
+    def test_choose_name_votes_spacing_variants_together(self):
+        """ "HTTPServer" and "HTTP Server" are one name for the vote (acronyms are not split, so "OAuth" stays)."""
+        from deriva.modules.derivation.base import choose_name
+
+        assert choose_name(["HTTPServer", "HTTP Server", "Api Server"]) == "HTTP Server"

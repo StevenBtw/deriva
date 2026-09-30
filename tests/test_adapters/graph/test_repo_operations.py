@@ -297,3 +297,17 @@ class TestGraphHash:
         graph_manager.add_edge("dir::repo_a::src", "file::repo_a::src/main.py", "CONTAINS")
 
         assert compute_graph_hash(graph_manager) == compute_graph_hash(graph_manager)
+
+
+class TestEdgeReAdd:
+    """Re-adding an edge replaces its properties, including when the new edge has none."""
+
+    def test_readd_without_properties_clears_the_old_ones(self, graph_manager):
+        _add_repo(graph_manager, "r")
+        src, dst = "repo::r", "dir::r::src"
+        graph_manager.add_edge(src, dst, "USES", properties={"weight": 2})
+        graph_manager.add_edge(src, dst, "USES")
+
+        rows = graph_manager.query("MATCH (a)-[r]->(b) WHERE a.id = $s AND b.id = $d AND type(r) CONTAINS 'USES' RETURN r.properties_json AS p", {"s": src, "d": dst})
+
+        assert rows == [{"p": None}]

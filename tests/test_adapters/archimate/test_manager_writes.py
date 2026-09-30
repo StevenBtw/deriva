@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from deriva.adapters.archimate import ArchimateManager
-from deriva.adapters.archimate.models import Element
+from deriva.adapters.archimate.models import Element, Relationship
 
 
 @pytest.fixture
@@ -64,3 +64,34 @@ def test_disabled_element_can_be_enabled_again(am):
 
 def test_enabling_an_unknown_element_returns_false(am):
     assert am.enable_element("nope") is False
+
+
+def test_a_relationship_can_be_retyped_keeping_its_identity_and_data(am):
+    am.add_element(Element(name="Service", element_type="ApplicationService", identifier="as_1"))
+    am.add_element(Element(name="Data", element_type="DataObject", identifier="do_1"))
+    flow = Relationship(source="as_1", target="do_1", relationship_type="Flow", identifier="rel_1", name="writes", documentation="d", properties={"confidence": 0.8})
+    am.add_relationship(flow, validate=False)
+
+    assert am.retype_relationship("rel_1", "Access") == "rel_1"
+
+    (relationship,) = am.get_relationships()
+    assert (relationship.identifier, relationship.relationship_type, relationship.source, relationship.target) == ("rel_1", "Access", "as_1", "do_1")
+    assert (relationship.name, relationship.documentation, relationship.properties) == ("writes", "d", {"confidence": 0.8})
+
+
+def test_retyping_a_missing_relationship_is_an_error(am):
+    with pytest.raises(ValueError, match="not found"):
+        am.retype_relationship("missing", "Access")
+
+
+def test_orphan_elements_are_enabled_elements_without_relationships(am):
+    for identifier in ("ac_d", "ac_c", "ac_b", "ac_a"):
+        am.add_element(Element(name=identifier, element_type="ApplicationComponent", identifier=identifier, properties={"source": f"src::{identifier}"}))
+    am.add_element(Element(name="data", element_type="DataObject", identifier="do_e"))
+    am.add_relationship(Relationship(source="ac_a", target="ac_b", relationship_type="Serving", identifier="rel_1"))
+    am.disable_element("ac_d", reason="test")
+
+    orphans = am.get_orphan_elements()
+
+    # Sorted by identifier, with type and properties
+    assert [(e.identifier, e.element_type, e.properties) for e in orphans] == [("ac_c", "ApplicationComponent", {"source": "src::ac_c"}), ("do_e", "DataObject", {})]
