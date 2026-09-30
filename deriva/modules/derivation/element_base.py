@@ -805,7 +805,10 @@ stage="nested_removed",
             }
             # The step's naming call may rename a candidate's element (the usual uniqueness rules apply)
             if roles.naming_call and naming is not None and roles.element_per == "candidate":
-                self._apply_naming(element_data, source, naming, llm_query_fn, llm_kwargs, repo_name, taken, structure_names or {})
+                try:
+                    self._apply_naming(element_data, source, naming, llm_query_fn, llm_kwargs, repo_name, taken, structure_names or {})
+                except Exception as e:
+                    self.logger.warning("Naming failed for %s: %s", source.node_id, e)
             try:
                 archimate_manager.add_element(
                     Element(
