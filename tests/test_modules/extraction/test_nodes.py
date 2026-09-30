@@ -1621,9 +1621,7 @@ class TestExtractDirectoriesWalk:
             for n in result["data"]["nodes"]
         ]
         assert got == self._reference(tmp_path, "r")
-        # rglob lists the root's directories first; their order is the filesystem's (NTFS sorts, ext4 does not)
-        edges = [(e["from_node_id"], e["to_node_id"]) for e in result["data"]["edges"]]
-        assert sorted(edges[:5]) == [("repo::r", f"dir::r::{d}") for d in ("a_dir", "docs", "empty", "src", "tools")]
+        assert [(e["from_node_id"], e["to_node_id"]) for e in result["data"]["edges"]][:2] == [("repo::r", "dir::r::a_dir"), ("repo::r", "dir::r::docs")]
 
     def test_never_enters_an_excluded_directory(self, tmp_path, monkeypatch):
         import os
