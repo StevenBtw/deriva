@@ -332,6 +332,28 @@ class TestRepoManagerClone:
             assert result.name == "test-repo"
             assert mock_run.called
 
+    def test_overwrite_removes_read_only_files(self, tmp_path):
+        """Git keeps its pack files read-only; overwriting an existing clone must still remove them (Windows)."""
+        import stat
+
+        manager = RepoManager(workspace_dir=tmp_path)
+        pack = tmp_path / "old-repo" / ".git" / "objects" / "pack" / "pack-1.idx"
+        pack.parent.mkdir(parents=True)
+        pack.write_text("x")
+        pack.chmod(stat.S_IREAD)
+
+        def handle_subprocess(*args, **kwargs):
+            cmd = args[0]
+            if cmd[0] == "git" and "clone" in cmd:
+                (Path(cmd[-1]) / ".git").mkdir(parents=True)
+            return MagicMock(stdout="main", stderr="")
+
+        with patch("deriva.adapters.repository.manager.subprocess.run", side_effect=handle_subprocess):
+            result = manager.clone_repository("https://github.com/user/old-repo.git", overwrite=True)
+
+        assert result.name == "old-repo"
+        assert not pack.exists()
+
     def test_clone_existing_without_overwrite(self, tmp_path):
         """Should fail when directory exists and overwrite=False."""
         manager = RepoManager(workspace_dir=tmp_path)

@@ -600,7 +600,7 @@ class RepoManager:
         if target_path.exists():
             if overwrite:
                 try:
-                    shutil.rmtree(target_path)
+                    _force_remove_directory(target_path)
                 except Exception as e:
                     raise CloneError(f"Failed to remove existing directory: {e}")
             else:
