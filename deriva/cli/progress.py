@@ -159,9 +159,7 @@ if RICH_AVAILABLE:
                 console=self.console,
                 expand=False,
             )
-            self._live = Live(
-                self._progress, console=self.console, refresh_per_second=10
-            )
+            self._live = Live(self._progress, console=self.console, refresh_per_second=10)
             self._live.__enter__()
             return self
 
@@ -371,9 +369,7 @@ if RICH_AVAILABLE:
 
             content = Group(info, "", self._progress)
 
-            title = (
-                f"BENCHMARK: {self._session_id}" if self._session_id else "BENCHMARK"
-            )
+            title = f"BENCHMARK: {self._session_id}" if self._session_id else "BENCHMARK"
             return Panel(
                 content,
                 title=f"[bold blue]{title}[/bold blue]",
@@ -419,9 +415,7 @@ if RICH_AVAILABLE:
             self._current_iteration = iteration
             self._refresh_display()
 
-        def complete_run(
-            self, status: str, stats: dict[str, Any] | None = None
-        ) -> None:
+        def complete_run(self, status: str, stats: dict[str, Any] | None = None) -> None:
             """Complete a benchmark run."""
             if self._progress and self._benchmark_task is not None:
                 self._progress.advance(self._benchmark_task, 1)
@@ -446,11 +440,7 @@ if RICH_AVAILABLE:
             self._refresh_display()
             status = "SUCCESS" if runs_failed == 0 else "COMPLETED WITH FAILURES"
             color = "green" if runs_failed == 0 else "yellow"
-            self.console.print(
-                f"\n[bold {color}]{status}[/bold {color}]: "
-                f"{runs_completed} completed, {runs_failed} failed "
-                f"in {duration_seconds:.1f}s"
-            )
+            self.console.print(f"\n[bold {color}]{status}[/bold {color}]: {runs_completed} completed, {runs_failed} failed in {duration_seconds:.1f}s")
 
         def start_phase(self, name: str, total_steps: int) -> None:
             """Start a new phase within the current run."""

@@ -52,7 +52,7 @@ from deriva.modules.derivation import prep
 from deriva.modules.derivation.application_component import ApplicationComponentDerivation
 from deriva.modules.derivation.application_interface import ApplicationInterfaceDerivation
 from deriva.modules.derivation.application_service import ApplicationServiceDerivation
-from deriva.modules.derivation.base import NamingConfig, PerCandidateConfig, RelationshipLLMConfig, derive_consolidated_relationships
+from deriva.modules.derivation.base import ElementPrompt, GraphFilter, NamingConfig, PerCandidateConfig, RelationshipLLMConfig, RoleConfig, derive_consolidated_relationships
 from deriva.modules.derivation.business_actor import BusinessActorDerivation
 from deriva.modules.derivation.business_event import BusinessEventDerivation
 from deriva.modules.derivation.business_function import BusinessFunctionDerivation
@@ -124,11 +124,13 @@ def _relationship_llm_config(configs: list[Any]) -> RelationshipLLMConfig | None
     params = json.loads(cfg.params) if cfg.params else {}
     if not cfg.instruction:
         raise ValueError(f"Relationship config {cfg.step_name} has no instruction")
-    if "min_confidence" not in params:
-        raise ValueError(f"Relationship config {cfg.step_name} needs params.min_confidence")
+    missing = [name for name in ("min_confidence", "persona") if name not in params]
+    if missing:
+        raise ValueError(f"Relationship config {cfg.step_name} needs params.{' and params.'.join(missing)}")
     return RelationshipLLMConfig(
         instruction=cfg.instruction,
         min_confidence=float(params["min_confidence"]),
+        persona=params["persona"],
         temperature=getattr(cfg, "temperature", None),
     )
 
@@ -142,15 +144,15 @@ def _per_candidate_config(params: str | None) -> PerCandidateConfig | None:
     settings = json.loads(params).get("per_candidate") if params else None
     if settings is None:
         return None
-    if "min_pool" not in settings or not settings.get("rules"):
-        raise ValueError("params.per_candidate needs min_pool and rules")
-    return PerCandidateConfig(min_pool=int(settings["min_pool"]), rules=settings["rules"])
+    if "min_pool" not in settings or not settings.get("rules") or not settings.get("persona"):
+        raise ValueError("params.per_candidate needs min_pool, rules and persona")
+    return PerCandidateConfig(min_pool=int(settings["min_pool"]), rules=settings["rules"], persona=settings["persona"])
 
 
 def _naming_config(params: str | None) -> NamingConfig | None:
     """Read the isolated naming step from an element config's params.
 
-    ``{"naming": {"instruction": "...", "samples": 3}}`` switches it on; without
+    ``{"naming": {"instruction": "...", "samples": 1}}`` switches it on; without
     the key elements keep their structure names.
     """
     settings = json.loads(params).get("naming") if params else None
@@ -158,7 +160,111 @@ def _naming_config(params: str | None) -> NamingConfig | None:
         return None
     if not settings.get("instruction"):
         raise ValueError("params.naming needs an instruction")
-    return NamingConfig(instruction=settings["instruction"], samples=int(settings.get("samples", 3)))
+    return NamingConfig(instruction=settings["instruction"], samples=int(settings.get("samples", 1)))
+
+
+def _element_prompt(params: str | None) -> ElementPrompt | None:
+    """Read the texts of the batch element prompt from an element config's params (``params.prompt``).
+
+    ``{"prompt": {"persona": ..., "candidates": ..., "rules": ..., "abstention": ...}}``; without the
+    key the step has no batch prompt (an error once candidates are derived in batches).
+    """
+    texts = json.loads(params).get("prompt") if params else None
+    if texts is None:
+        return None
+    missing = [name for name in ("persona", "candidates", "rules", "abstention") if name not in texts]
+    if missing:
+        raise ValueError(f"params.prompt needs {', '.join(missing)}")
+    return ElementPrompt(persona=texts["persona"], candidates=texts["candidates"], rules=texts["rules"], abstention=texts["abstention"])
+
+
+def _role_config(params: str | None) -> RoleConfig | None:
+    """Read the role classification from an element config's params (``params.roles``).
+
+    ``{"roles": {"labels": [...], "instruction": "...", "names": {key: name}}}`` switches it on
+    (optional ``documentation`` template, ``missing_retries`` and ``element_per``: "role" or
+    "candidate"; with "candidate" also ``name_template``, ``container_type`` and
+    ``show_path``); without the key every candidate takes the keep and naming path.
+    """
+    settings = json.loads(params).get("roles") if params else None
+    if settings is None:
+        return None
+    if not settings.get("labels") or not settings.get("instruction") or not settings.get("names"):
+        raise ValueError("params.roles needs labels, instruction and names")
+    element_per = settings.get("element_per", "role")
+    if element_per not in ("role", "candidate"):
+        raise ValueError(f"params.roles.element_per must be 'role' or 'candidate', not {element_per!r}")
+    name_template = settings.get("name_template", "")
+    container_type = settings.get("container_type", "")
+    show_path = settings.get("show_path", False)
+    if not isinstance(name_template, str) or not isinstance(container_type, str) or not isinstance(show_path, bool):
+        raise ValueError("params.roles name_template and container_type must be text, show_path true or false")
+    if name_template and element_per != "candidate":
+        raise ValueError("params.roles.name_template names one element per candidate: it needs element_per 'candidate'")
+    return RoleConfig(
+        labels=frozenset(settings["labels"]),
+        instruction=settings["instruction"],
+        names=dict(settings["names"]),
+        documentation=settings.get("documentation", ""),
+        missing_retries=int(settings.get("missing_retries", 0)),
+        element_per=element_per,
+        name_template=name_template,
+        container_type=container_type,
+        show_path=show_path,
+    )
+
+
+def _skip_when_directory_is(params: str | None) -> frozenset[str] | None:
+    """Element types whose sources take a directory's candidates out (``params.skip_when_directory_is``).
+
+    One structural source, one element: a candidate that a directory represents is left out
+    when that directory is already the source of an element of one of these types. Without
+    the key nothing is left out this way.
+    """
+    types = json.loads(params).get("skip_when_directory_is") if params else None
+    return frozenset(types) if types is not None else None
+
+
+def _pattern_labels(params: str | None) -> frozenset[str] | None:
+    """Graph labels of the candidates the step's name patterns filter (``params.pattern_labels``).
+
+    Candidates with none of these labels were chosen by the query on structure (for example a
+    technology by its category) and are not filtered by name. Without the key the patterns
+    filter every candidate.
+    """
+    labels = json.loads(params).get("pattern_labels") if params else None
+    return frozenset(labels) if labels is not None else None
+
+
+def _skip_subtypes(params: str | None) -> bool:
+    """Whether candidate types that inherit from another candidate type are left out (``params.skip_subtypes``).
+
+    One element per contract: the base type represents its subtypes (implementations,
+    subclasses). Without the key no candidate is left out this way.
+    """
+    value = json.loads(params).get("skip_subtypes", False) if params else False
+    if not isinstance(value, bool):
+        raise ValueError(f"params.skip_subtypes must be true or false, got {value!r}")
+    return value
+
+
+def _graph_filter(params: str | None) -> GraphFilter | None:
+    """The step's k-core threshold and the labels it applies to (``params.graph_filter``).
+
+    ``{"min_kcore_percentile": 30, "labels": ["File"]}`` leaves out candidates with the
+    label File below the 30th k-core percentile; candidates without one of the labels pass.
+    Without ``labels`` the threshold applies to every candidate; without the key there is none.
+    """
+    settings = json.loads(params).get("graph_filter") if params else None
+    if settings is None:
+        return None
+    threshold = settings.get("min_kcore_percentile") if isinstance(settings, dict) else None
+    labels = settings.get("labels") if isinstance(settings, dict) else None
+    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+        raise ValueError(f"params.graph_filter needs a numeric min_kcore_percentile, got {settings!r}")
+    if labels is not None and (not isinstance(labels, list) or not all(isinstance(label, str) for label in labels)):
+        raise ValueError(f"params.graph_filter labels must be a list of graph labels, got {labels!r}")
+    return GraphFilter(min_kcore_percentile=float(threshold), labels=frozenset(labels) if labels is not None else None)
 
 
 def _get_element_props(elements: list[dict[str, Any]], identifier: str) -> dict[str, Any]:
@@ -191,6 +297,12 @@ def generate_element(
     relationship_config: RelationshipLLMConfig | None = None,
     per_candidate: PerCandidateConfig | None = None,
     naming: NamingConfig | None = None,
+    pattern_labels: frozenset[str] | None = None,
+    roles: RoleConfig | None = None,
+    skip_when_directory_is: frozenset[str] | None = None,
+    prompt: ElementPrompt | None = None,
+    graph_filter: GraphFilter | None = None,
+    skip_subtypes: bool = False,
 ) -> dict[str, Any]:
     """
     Generate ArchiMate elements of a specific type (and optionally their relationships).
@@ -220,6 +332,12 @@ def generate_element(
         relationship_config: Relationship config row settings (None skips the LLM relationship pass)
         per_candidate: Per-candidate naming mode from the element config (None uses batch mode)
         naming: Isolated naming step from the element config (None keeps structure names)
+        pattern_labels: Labels of the candidates the name patterns filter (None: every candidate)
+        roles: Candidates classified into roles, one element per role (None: no role path)
+        skip_when_directory_is: Element types whose sources take a directory's candidates out
+        prompt: The texts of the batch element prompt (``params.prompt``)
+        graph_filter: The step's k-core threshold (``params.graph_filter``; None: none)
+        skip_subtypes: Leave out candidate types that inherit from another candidate (``params.skip_subtypes``)
 
     Returns:
         Dict with success, elements_created, relationships_created, created_elements, errors
@@ -234,11 +352,19 @@ def generate_element(
             "errors": [f"No derivation class for element type: {element_type}"],
         }
 
+    # Include/exclude patterns of the step (pattern-based modules filter on them)
+    try:
+        patterns = config.get_derivation_patterns(engine, element_type)
+    except ValueError:
+        logger.debug("No derivation patterns found for %s, using empty sets", element_type)
+        patterns = {}
+    if pattern_labels is not None:
+        patterns = {**patterns, "labels": set(pattern_labels)}
+
     try:
         result = derivation.generate(
             graph_manager=graph_manager,
             archimate_manager=archimate_manager,
-            engine=engine,
             llm_query_fn=llm_query_fn,
             query=query,
             instruction=instruction,
@@ -253,6 +379,12 @@ def generate_element(
             relationship_config=relationship_config,
             per_candidate=per_candidate,
             naming=naming,
+            patterns=patterns,
+            roles=roles,
+            skip_when_directory_is=skip_when_directory_is,
+            prompt=prompt,
+            graph_filter=graph_filter,
+            skip_subtypes=skip_subtypes,
         )
         return {
             "success": result.success,
@@ -277,6 +409,9 @@ def generate_element(
 
 
 logger = logging.getLogger(__name__)
+
+# Step name of the consolidated relationship pass in ``run_derivation(steps=...)``
+RELATIONSHIP_STEP = "ConsolidatedRelationships"
 
 
 # =============================================================================
@@ -425,6 +560,7 @@ def run_derivation(
     enabled_only: bool = True,
     verbose: bool = False,
     phases: list[str] | None = None,
+    steps: list[str] | None = None,
     run_logger: RunLoggerProtocol | None = None,
     progress: ProgressReporter | None = None,
     defer_relationships: bool = True,
@@ -448,6 +584,9 @@ def run_derivation(
         enabled_only: Only run enabled derivation steps
         verbose: Print progress to stdout
         phases: List of phases to run ("prep", "generate", "refine").
+        steps: Only these steps (config step names, ``RELATIONSHIP_STEP`` for the consolidated
+            relationship pass); None runs every step of the phases. A step run alone works on the
+            model its input already holds, as it would in a full run.
         run_logger: Optional RunLogger for structured logging
         progress: Optional progress reporter for visual feedback
         defer_relationships: If True, skip per-batch relationship derivation.
@@ -501,6 +640,11 @@ def run_derivation(
         gen_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="generate")
         refine_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="refine")
         relationship_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="relationship")
+    if steps is not None:
+        prep_configs = [c for c in prep_configs if c.step_name in steps]
+        gen_configs = [c for c in gen_configs if c.step_name in steps]
+        refine_configs = [c for c in refine_configs if c.step_name in steps]
+    relationship_pass = defer_relationships and (steps is None or RELATIONSHIP_STEP in steps)
     total_steps = 0
     if "prep" in phases:
         total_steps += len(prep_configs)
@@ -641,6 +785,12 @@ def run_derivation(
                     relationship_config=relationship_config(),
                     per_candidate=_per_candidate_config(cfg.params),
                     naming=_naming_config(cfg.params),
+                    pattern_labels=_pattern_labels(cfg.params),
+                    roles=_role_config(cfg.params),
+                    skip_when_directory_is=_skip_when_directory_is(cfg.params),
+                    prompt=_element_prompt(cfg.params),
+                    graph_filter=_graph_filter(cfg.params),
+                    skip_subtypes=_skip_subtypes(cfg.params),
                 )
 
                 elements_created = step_result.get("elements_created", 0)
@@ -703,7 +853,7 @@ def run_derivation(
     # Run consolidated relationship derivation if deferred
     # If no elements were created in this run, use existing elements from the model
     elements_for_relationships = all_created_elements
-    if defer_relationships and not all_created_elements:
+    if relationship_pass and not all_created_elements:
         # Fetch existing elements from the model for relationship derivation
         existing_elements = archimate_manager.get_elements(enabled_only=True)
         if existing_elements:
@@ -719,14 +869,14 @@ def run_derivation(
             if verbose:
                 print(f"  Using {len(elements_for_relationships)} existing elements for relationship derivation...")
 
-    if defer_relationships and elements_for_relationships:
+    if relationship_pass and elements_for_relationships:
         if verbose and all_created_elements:
             print(f"  Deriving relationships for {len(elements_for_relationships)} elements...")
 
         # Start progress tracking
         if progress:
-            progress.start_step("ConsolidatedRelationships")
-        rel_ctx = run_logger.step_start("ConsolidatedRelationships", "Deriving relationships") if run_logger else None
+            progress.start_step(RELATIONSHIP_STEP)
+        rel_ctx = run_logger.step_start(RELATIONSHIP_STEP, "Deriving relationships") if run_logger else None
 
         try:
             relationship_rules = _collect_relationship_rules()
@@ -814,15 +964,11 @@ def run_derivation(
                     refine_params["graph_metadata"] = graph_metadata
 
                 # Run the refine step
-                # Skip LLM for duplicate_elements: Tier 2 fuzzy matching is
-                # sufficient; Tier 3 semantic LLM checks add up to 10 calls
-                # per run with marginal deduplication benefit.
-                use_llm = cfg.llm and cfg.step_name != "duplicate_elements"
                 refine_result = run_refine_step(
                     step_name=cfg.step_name,
                     archimate_manager=archimate_manager,
                     graph_manager=graph_manager,
-                    llm_query_fn=llm_query_fn if use_llm else None,
+                    llm_query_fn=llm_query_fn if cfg.llm else None,
                     params=refine_params,
                 )
 
@@ -1071,6 +1217,12 @@ def run_derivation_iter(
                     relationship_config=relationship_config(),
                     per_candidate=_per_candidate_config(cfg.params),
                     naming=_naming_config(cfg.params),
+                    pattern_labels=_pattern_labels(cfg.params),
+                    roles=_role_config(cfg.params),
+                    skip_when_directory_is=_skip_when_directory_is(cfg.params),
+                    prompt=_element_prompt(cfg.params),
+                    graph_filter=_graph_filter(cfg.params),
+                    skip_subtypes=_skip_subtypes(cfg.params),
                 )
 
                 elements_created = step_result.get("elements_created", 0)
@@ -1176,7 +1328,7 @@ def run_derivation_iter(
 
             yield ProgressUpdate(
                 phase="derivation",
-                step="ConsolidatedRelationships",
+                step=RELATIONSHIP_STEP,
                 status="complete",
                 current=current_step,
                 total=total_steps,
@@ -1190,7 +1342,7 @@ def run_derivation_iter(
 
             yield ProgressUpdate(
                 phase="derivation",
-                step="ConsolidatedRelationships",
+                step=RELATIONSHIP_STEP,
                 status="error",
                 current=current_step,
                 total=total_steps,
@@ -1217,15 +1369,11 @@ def run_derivation_iter(
                         pass
 
                 # Run the refine step
-                # Skip LLM for duplicate_elements: Tier 2 fuzzy matching is
-                # sufficient; Tier 3 semantic LLM checks add up to 10 calls
-                # per run with marginal deduplication benefit.
-                use_llm = cfg.llm and cfg.step_name != "duplicate_elements"
                 refine_result = run_refine_step(
                     step_name=cfg.step_name,
                     archimate_manager=archimate_manager,
                     graph_manager=graph_manager,
-                    llm_query_fn=llm_query_fn if use_llm else None,
+                    llm_query_fn=llm_query_fn if cfg.llm else None,
                     params=refine_params,
                 )
 

@@ -32,10 +32,13 @@ from .deviation import (
     generate_recommendations,
     group_objects_by_config,
 )
+from .stability_analysis import compare_step_outputs, compute_answer_stability, decision_content, decision_stability
 from .types import (
+    AnswerStability,
     BenchmarkReport,
     ConfigDeviation,
     CrossRepoComparison,
+    DecisionStability,
     DeviationReport,
     FitAnalysis,
     InconsistencyInfo,
@@ -47,6 +50,7 @@ from .types import (
     SemanticMatch,
     SemanticMatchReport,
     StabilityBreakdown,
+    StepConsistency,
 )
 
 __all__ = [
@@ -57,6 +61,9 @@ __all__ = [
     "IntraModelMetrics",
     "InterModelMetrics",
     # Comprehensive analysis types
+    "AnswerStability",
+    "DecisionStability",
+    "StepConsistency",
     "StabilityBreakdown",
     "PhaseStabilityReport",
     "ReferenceElement",
@@ -80,4 +87,9 @@ __all__ = [
     "extract_element_type",
     "generate_recommendations",
     "build_deviation_report",
+    # Stability functions
+    "compute_answer_stability",
+    "decision_content",
+    "decision_stability",
+    "compare_step_outputs",
 ]

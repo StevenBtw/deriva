@@ -10,9 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import deriva.services.config as config_module
-from deriva.modules.derivation.base import clear_enrichment_cache
+from deriva.modules.derivation.base import ElementPrompt, clear_enrichment_cache
 from deriva.services.derivation import DERIVATION_REGISTRY
+
+TEST_PROMPT = ElementPrompt(persona="Derive elements.", candidates="Candidates.", rules="{abstention}Rules.", abstention="")
 
 
 @pytest.fixture(autouse=True)
@@ -76,7 +77,6 @@ class TestGenerateMethod:
         result = derivation.generate(
             graph_manager=mock_manager,
             archimate_manager=MagicMock(),
-            engine=MagicMock(),
             llm_query_fn=MagicMock(),
             query="MATCH (n) RETURN n",
             instruction="Test instruction",
@@ -84,6 +84,7 @@ class TestGenerateMethod:
             max_candidates=10,
             batch_size=5,
             existing_elements=[],
+            prompt=TEST_PROMPT,
         )
 
         assert isinstance(result, GenerationResult)
@@ -103,7 +104,6 @@ class TestGenerateMethod:
         result = derivation.generate(
             graph_manager=failing_manager,
             archimate_manager=MagicMock(),
-            engine=MagicMock(),
             llm_query_fn=MagicMock(),
             query="MATCH (n) RETURN n",
             instruction="Test",
@@ -111,6 +111,7 @@ class TestGenerateMethod:
             max_candidates=10,
             batch_size=5,
             existing_elements=[],
+            prompt=TEST_PROMPT,
         )
 
         assert result.success is False
@@ -118,16 +119,12 @@ class TestGenerateMethod:
         assert any("error" in e.lower() or "failed" in e.lower() for e in result.errors)
 
     @pytest.mark.parametrize("element_type", DERIVATION_ELEMENT_TYPES)
-    def test_creates_elements_with_valid_llm_response(self, element_type, monkeypatch):
+    def test_creates_elements_with_valid_llm_response(self, element_type):
         """All derivation classes should create elements when LLM returns valid response."""
         derivation = get_derivation(element_type)
 
-        # Mock config.get_derivation_patterns to return patterns matching "TestElement"
-        # This ensures PatternBasedDerivation modules don't filter out all candidates
-        def mock_patterns(_engine, _element_type):
-            return {"include": {"test"}, "exclude": set()}
-
-        monkeypatch.setattr(config_module, "get_derivation_patterns", mock_patterns)
+        # Patterns matching "TestElement", so PatternBasedDerivation modules keep the candidates
+        patterns = {"include": {"test"}, "exclude": set()}
 
         # Setup graph manager with stats, enrichment and candidate results
         mock_manager = MagicMock()
@@ -175,7 +172,7 @@ class TestGenerateMethod:
         result = derivation.generate(
             graph_manager=mock_manager,
             archimate_manager=mock_archimate,
-            engine=MagicMock(),
+            patterns=patterns,
             llm_query_fn=mock_llm,
             query="MATCH (n) RETURN n",
             instruction="Test instruction",
@@ -183,6 +180,7 @@ class TestGenerateMethod:
             max_candidates=10,
             batch_size=5,
             existing_elements=[],
+            prompt=TEST_PROMPT,
         )
 
         # Should create at least one element
@@ -191,16 +189,12 @@ class TestGenerateMethod:
         assert mock_archimate.add_element.called
 
     @pytest.mark.parametrize("element_type", DERIVATION_ELEMENT_TYPES)
-    def test_handles_llm_exception(self, element_type, monkeypatch):
+    def test_handles_llm_exception(self, element_type):
         """All derivation classes should handle LLM exceptions gracefully."""
         derivation = get_derivation(element_type)
 
-        # Mock config.get_derivation_patterns to return patterns matching "Test"
-        # This ensures PatternBasedDerivation modules don't filter out all candidates
-        def mock_patterns(_engine, _element_type):
-            return {"include": {"test"}, "exclude": set()}
-
-        monkeypatch.setattr(config_module, "get_derivation_patterns", mock_patterns)
+        # Patterns matching "Test", so PatternBasedDerivation modules keep the candidates
+        patterns = {"include": {"test"}, "exclude": set()}
 
         # Setup graph manager with valid results
         mock_manager = MagicMock()
@@ -228,7 +222,7 @@ class TestGenerateMethod:
         result = derivation.generate(
             graph_manager=mock_manager,
             archimate_manager=MagicMock(),
-            engine=MagicMock(),
+            patterns=patterns,
             llm_query_fn=failing_llm,
             query="MATCH (n) RETURN n",
             instruction="Test",
@@ -236,6 +230,7 @@ class TestGenerateMethod:
             max_candidates=10,
             batch_size=5,
             existing_elements=[],
+            prompt=TEST_PROMPT,
         )
 
         # Should either have errors (if LLM was called) or success with no elements
@@ -248,16 +243,12 @@ class TestGenerateMethod:
             assert result.elements_created == 0
 
     @pytest.mark.parametrize("element_type", DERIVATION_ELEMENT_TYPES)
-    def test_handles_invalid_llm_json(self, element_type, monkeypatch):
+    def test_handles_invalid_llm_json(self, element_type):
         """All derivation classes should handle invalid JSON from LLM."""
         derivation = get_derivation(element_type)
 
-        # Mock config.get_derivation_patterns to return patterns matching "Test"
-        # This ensures PatternBasedDerivation modules don't filter out all candidates
-        def mock_patterns(_engine, _element_type):
-            return {"include": {"test"}, "exclude": set()}
-
-        monkeypatch.setattr(config_module, "get_derivation_patterns", mock_patterns)
+        # Patterns matching "Test", so PatternBasedDerivation modules keep the candidates
+        patterns = {"include": {"test"}, "exclude": set()}
 
         # Setup graph manager
         mock_manager = MagicMock()
@@ -287,7 +278,7 @@ class TestGenerateMethod:
         result = derivation.generate(
             graph_manager=mock_manager,
             archimate_manager=MagicMock(),
-            engine=MagicMock(),
+            patterns=patterns,
             llm_query_fn=invalid_llm,
             query="MATCH (n) RETURN n",
             instruction="Test",
@@ -295,6 +286,7 @@ class TestGenerateMethod:
             max_candidates=10,
             batch_size=5,
             existing_elements=[],
+            prompt=TEST_PROMPT,
         )
 
         # Should have parse errors (if LLM was called) or success with no elements

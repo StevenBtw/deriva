@@ -217,9 +217,7 @@ class BaseDiskCache:
         """
         return self.get(cache_key)
 
-    def set(
-        self, cache_key: str, data: dict[str, Any], expire: float | None = None
-    ) -> None:
+    def set(self, cache_key: str, data: dict[str, Any], expire: float | None = None) -> None:
         """
         Store data in cache.
 
@@ -310,9 +308,7 @@ class BaseDiskCache:
         """
         return list(self._cache.iterkeys())
 
-    def export_to_json(
-        self, output_path: str | Path, include_values: bool = True
-    ) -> int:
+    def export_to_json(self, output_path: str | Path, include_values: bool = True) -> int:
         """
         Export cache contents to JSON for auditing.
 

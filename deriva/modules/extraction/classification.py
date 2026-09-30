@@ -5,6 +5,7 @@ This module provides simple, lightweight functions for classifying files
 in repositories based on file extensions, patterns, and paths.
 
 Classification priority order:
+0. Excluded extensions (file type 'exclude', any length, e.g. '.archimate'): never an input, wherever the file lives
 1. Path patterns (e.g., 'path:**/tests/**' matches any file in tests directory)
 2. Full filename match (e.g., 'requirements.txt', 'Makefile')
 3. Wildcard pattern match (e.g., 'test_*.py', '*.config.js')
@@ -72,9 +73,7 @@ def _match_path_pattern(file_path: str, pattern: str) -> bool:
         return fnmatch.fnmatch(normalized_path, pattern)
 
 
-def classify_files(
-    file_paths: list[str], file_type_registry: list[dict[str, str]]
-) -> dict[str, Any]:
+def classify_files(file_paths: list[str], file_type_registry: list[dict[str, str]]) -> dict[str, Any]:
     """
     Classify files based on file type registry.
 
@@ -114,6 +113,8 @@ def classify_files(
     filename_map: dict[str, dict[str, str]] = {}
     wildcard_patterns: list[tuple[str, dict[str, str]]] = []
     extension_map: dict[str, dict[str, str]] = {}
+    # Excluded file types by extension (any length): checked before the path patterns
+    excluded_extensions: dict[str, dict[str, str]] = {}
 
     for entry in file_type_registry:
         if "extension" not in entry or "file_type" not in entry:
@@ -124,6 +125,9 @@ def classify_files(
             "file_type": entry["file_type"],
             "subtype": entry.get("subtype", ""),
         }
+
+        if entry["file_type"] == "exclude" and key.startswith(".") and "." not in key[1:]:
+            excluded_extensions[key] = type_info
 
         # Categorize by pattern type
         if key.startswith("path:"):
@@ -147,6 +151,12 @@ def classify_files(
             path = Path(file_path)
             filename = path.name.lower()
             extension = path.suffix.lower()
+
+            # Priority 0: excluded file types are never an input, wherever they live
+            if extension in excluded_extensions:
+                type_info = excluded_extensions[extension]
+                classified.append({"path": file_path, "extension": extension, "file_type": type_info["file_type"], "subtype": type_info["subtype"]})
+                continue
 
             # Priority 1: Check path patterns (e.g., **/tests/**)
             matched_path = None
@@ -202,9 +212,7 @@ def classify_files(
             # Priority 4: Check extension match
             if not extension:
                 # Files without extension (but not matched by filename or pattern)
-                undefined.append(
-                    {"path": file_path, "extension": "", "reason": "no_extension"}
-                )
+                undefined.append({"path": file_path, "extension": "", "reason": "no_extension"})
                 continue
 
             if extension in extension_map:
@@ -265,9 +273,7 @@ def get_undefined_extensions(undefined_files: list[dict]) -> list[str]:
     return sorted(list(extensions))
 
 
-def build_registry_update_list(
-    undefined_extensions: list[str], default_type: str = "Undefined"
-) -> list[dict[str, str]]:
+def build_registry_update_list(undefined_extensions: list[str], default_type: str = "Undefined") -> list[dict[str, str]]:
     """
     Build a list of new registry entries for undefined extensions.
 
@@ -280,6 +286,4 @@ def build_registry_update_list(
     Returns:
         List of dicts with 'extension' and 'file_type' keys
     """
-    return [
-        {"extension": ext, "file_type": default_type} for ext in undefined_extensions
-    ]
+    return [{"extension": ext, "file_type": default_type} for ext in undefined_extensions]

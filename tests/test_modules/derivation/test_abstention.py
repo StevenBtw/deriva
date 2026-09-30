@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from deriva.modules.derivation.base import (
     Candidate,
+    ElementPrompt,
     build_derivation_prompt,
     compute_candidate_strength,
 )
+
+PROMPT = ElementPrompt(persona="PERSONA", candidates="CANDIDATES NOTE", rules="1. FIRST\n{abstention}3. THIRD", abstention="2. ABSTAIN\n")
 
 
 def _make_candidate(
@@ -60,74 +63,44 @@ class TestComputeCandidateStrength:
 
 
 class TestAbstentionPrompt:
+    """The builder places the step's configured texts (params.prompt); the abstention text only when the evidence is minimal."""
+
     def test_strength_section_included_when_provided(self):
         cs = [_make_candidate(f"n{i}", pagerank_percentile=30, kcore_percentile=30) for i in range(5)]
-        strength = compute_candidate_strength(cs)
-        prompt = build_derivation_prompt(
-            candidates=cs,
-            instruction="do things",
-            example="{}",
-            element_type="BusinessFunction",
-            strength=strength,
-        )
+        prompt = build_derivation_prompt(candidates=cs, instruction="do things", example="{}", prompt=PROMPT, strength=compute_candidate_strength(cs))
+
         assert "Candidate Evidence Strength" in prompt
         assert "weak" in prompt
 
     def test_strength_section_omitted_when_absent(self):
-        prompt = build_derivation_prompt(
-            candidates=[_make_candidate()],
-            instruction="do things",
-            example="{}",
-            element_type="BusinessFunction",
-            strength=None,
-        )
+        prompt = build_derivation_prompt(candidates=[_make_candidate()], instruction="do things", example="{}", prompt=PROMPT, strength=None)
+
         assert "Candidate Evidence Strength" not in prompt
 
-    def test_prompt_permits_empty_output_when_minimal(self):
-        # Minimal-strength candidates must trigger the abstention rule.
+    def test_the_abstention_text_fills_its_slot_when_minimal(self):
         cs = [_make_candidate("n1", pagerank_percentile=5, kcore_percentile=5)]
-        prompt = build_derivation_prompt(
-            candidates=cs,
-            instruction="do things",
-            example="{}",
-            element_type="BusinessFunction",
-            strength=compute_candidate_strength(cs),
-        )
-        assert "empty list" in prompt.lower()
+        prompt = build_derivation_prompt(candidates=cs, instruction="do things", example="{}", prompt=PROMPT, strength=compute_candidate_strength(cs))
 
-    def test_prompt_omits_abstention_rule_when_strong(self):
-        # Strong-strength candidates must NOT carry the "empty list" valve —
-        # otherwise the LLM over-abstains on repos with many noisy candidates.
+        assert "1. FIRST\n2. ABSTAIN\n3. THIRD" in prompt
+
+    def test_the_slot_stays_empty_when_the_evidence_is_strong(self):
+        # Otherwise the LLM over-abstains on repos with many noisy candidates
         cs = [_make_candidate(f"n{i}", pagerank_percentile=90, kcore_percentile=90) for i in range(20)]
-        prompt = build_derivation_prompt(
-            candidates=cs,
-            instruction="do things",
-            example="{}",
-            element_type="ApplicationComponent",
-            strength=compute_candidate_strength(cs),
-        )
-        assert "empty list is a valid" not in prompt.lower()
+        prompt = build_derivation_prompt(candidates=cs, instruction="do things", example="{}", prompt=PROMPT, strength=compute_candidate_strength(cs))
 
-    def test_prompt_forbids_type_suffix_in_names(self):
-        prompt = build_derivation_prompt(
-            candidates=[_make_candidate()],
-            instruction="do things",
-            example="{}",
-            element_type="ApplicationComponent",
-        )
-        # Suffix ban must be stated, naming names of the generic ArchiMate suffixes.
-        assert '" Component"' in prompt
-        assert '" Service"' in prompt
+        assert "1. FIRST\n3. THIRD" in prompt
+        assert "ABSTAIN" not in prompt
+
+    def test_the_configured_texts_are_placed(self):
+        prompt = build_derivation_prompt(candidates=[_make_candidate()], instruction="do things", example="{}", prompt=PROMPT)
+
+        assert prompt.startswith("PERSONA\n\n## Instructions\ndo things")
+        assert "## Candidate Nodes\nCANDIDATES NOTE\n" in prompt
 
     def test_no_repo_specific_leakage(self):
         """The prompt builder must not contain repo or product names."""
-        # Run with generic inputs; none of the benchmark-repo names should leak.
         prompt = build_derivation_prompt(
-            candidates=[_make_candidate()],
-            instruction="do things",
-            example="{}",
-            element_type="ApplicationComponent",
-            strength=compute_candidate_strength([_make_candidate()]),
+            candidates=[_make_candidate()], instruction="do things", example="{}", prompt=PROMPT, strength=compute_candidate_strength([_make_candidate()])
         )
         for forbidden in ("lightblue", "bigdata", "cloudbased"):
             assert forbidden.lower() not in prompt.lower()

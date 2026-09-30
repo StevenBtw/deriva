@@ -29,8 +29,8 @@ from typing import TYPE_CHECKING, Any
 from .base import RefineResult, register_refine_step
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +115,7 @@ class RelationshipConsolidationStep:
                 logger.info("No relationships found to consolidate")
                 return result
 
-            logger.info(
-                f"Analyzing {len(relationships)} relationships for consolidation"
-            )
+            logger.info(f"Analyzing {len(relationships)} relationships for consolidation")
 
             # Step 2: Group relationships by source-target pair
             rel_groups: dict[tuple[str, str], list[dict]] = {}
@@ -128,9 +126,7 @@ class RelationshipConsolidationStep:
                 rel_groups[key].append(rel)
 
             # Step 3: Process each group
-            relationships_to_boost: list[
-                tuple[str, float, str]
-            ] = []  # (id, new_confidence, reason)
+            relationships_to_boost: list[tuple[str, float, str]] = []  # (id, new_confidence, reason)
             relationships_to_prune: list[tuple[str, str]] = []  # (id, reason)
 
             for (source_id, target_id), rels in rel_groups.items():
@@ -146,9 +142,7 @@ class RelationshipConsolidationStep:
                     new_conf = min(1.0, current_conf + boost)
 
                     if boost > 0:
-                        relationships_to_boost.append(
-                            (rel["identifier"], new_conf, boost_reason)
-                        )
+                        relationships_to_boost.append((rel["identifier"], new_conf, boost_reason))
                         result.details.append(
                             {
                                 "action": "boosted",
@@ -176,9 +170,7 @@ class RelationshipConsolidationStep:
                         result.issues_found += 1
                         result.details.append(
                             {
-                                "action": "flagged_for_prune"
-                                if not auto_prune
-                                else "pruned",
+                                "action": "flagged_for_prune" if not auto_prune else "pruned",
                                 "relationship_id": rel["identifier"],
                                 "source": rel["source_name"],
                                 "target": rel["target_name"],
@@ -195,9 +187,7 @@ class RelationshipConsolidationStep:
                     WHERE r.identifier = $identifier
                     SET r.confidence = $confidence, r.consolidated = true
                 """
-                archimate_manager.query(
-                    update_query, {"identifier": rel_id, "confidence": new_conf}
-                )
+                archimate_manager.query(update_query, {"identifier": rel_id, "confidence": new_conf})
 
             # Step 5: Prune low-confidence relationships (if auto_prune enabled)
             if auto_prune and relationships_to_prune:
@@ -207,16 +197,9 @@ class RelationshipConsolidationStep:
                 result.issues_fixed = deleted
                 logger.info(f"Pruned {deleted} low-confidence relationships")
             elif relationships_to_prune:
-                logger.info(
-                    f"Found {len(relationships_to_prune)} relationships below confidence threshold "
-                    f"(set auto_prune=true to remove)"
-                )
+                logger.info(f"Found {len(relationships_to_prune)} relationships below confidence threshold (set auto_prune=true to remove)")
 
-            logger.info(
-                f"Relationship consolidation complete: "
-                f"{len(relationships_to_boost)} boosted, "
-                f"{len(relationships_to_prune)} flagged for pruning"
-            )
+            logger.info(f"Relationship consolidation complete: {len(relationships_to_boost)} boosted, {len(relationships_to_prune)} flagged for pruning")
 
         except Exception as e:
             logger.exception(f"Error in relationship consolidation: {e}")
@@ -311,9 +294,6 @@ class RelationshipConsolidationStep:
         # Check for corroboration requirement
         if require_corroboration and confidence < corroboration_threshold:
             if len(signals) < 2:
-                return True, (
-                    f"confidence {confidence:.2f} below {corroboration_threshold} "
-                    f"with only {len(signals)} signal(s)"
-                )
+                return True, (f"confidence {confidence:.2f} below {corroboration_threshold} with only {len(signals)} signal(s)")
 
         return False, ""

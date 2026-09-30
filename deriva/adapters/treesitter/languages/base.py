@@ -38,9 +38,7 @@ class LanguageExtractor(ABC):
         """
 
     @abstractmethod
-    def extract_types(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedType]:
+    def extract_types(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedType]:
         """Extract type definitions from parsed tree.
 
         Args:
@@ -52,9 +50,7 @@ class LanguageExtractor(ABC):
         """
 
     @abstractmethod
-    def extract_methods(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedMethod]:
+    def extract_methods(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedMethod]:
         """Extract methods/functions from parsed tree.
 
         Args:
@@ -66,9 +62,7 @@ class LanguageExtractor(ABC):
         """
 
     @abstractmethod
-    def extract_imports(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedImport]:
+    def extract_imports(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedImport]:
         """Extract import statements from parsed tree.
 
         Args:
@@ -79,9 +73,7 @@ class LanguageExtractor(ABC):
             List of ExtractedImport objects
         """
 
-    def extract_calls(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedCall]:
+    def extract_calls(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedCall]:
         """Extract function/method calls from parsed tree.
 
         This is optional - languages can override to provide call extraction.
@@ -131,9 +123,7 @@ class LanguageExtractor(ABC):
         """Get 1-indexed line number where node ends."""
         return node.end_point[0] + 1
 
-    def find_child_by_type(
-        self, node: tree_sitter.Node, type_name: str
-    ) -> tree_sitter.Node | None:
+    def find_child_by_type(self, node: tree_sitter.Node, type_name: str) -> tree_sitter.Node | None:
         """Find first child node with given type.
 
         Args:
@@ -148,9 +138,7 @@ class LanguageExtractor(ABC):
                 return child
         return None
 
-    def find_children_by_type(
-        self, node: tree_sitter.Node, type_name: str
-    ) -> list[tree_sitter.Node]:
+    def find_children_by_type(self, node: tree_sitter.Node, type_name: str) -> list[tree_sitter.Node]:
         """Find all child nodes with given type.
 
         Args:
@@ -162,9 +150,7 @@ class LanguageExtractor(ABC):
         """
         return [child for child in node.children if child.type == type_name]
 
-    def find_child_by_field(
-        self, node: tree_sitter.Node, field_name: str
-    ) -> tree_sitter.Node | None:
+    def find_child_by_field(self, node: tree_sitter.Node, field_name: str) -> tree_sitter.Node | None:
         """Find child node by field name.
 
         Args:
@@ -176,9 +162,7 @@ class LanguageExtractor(ABC):
         """
         return node.child_by_field_name(field_name)
 
-    def walk_tree(
-        self, node: tree_sitter.Node, type_names: set[str]
-    ) -> list[tree_sitter.Node]:
+    def walk_tree(self, node: tree_sitter.Node, type_names: set[str]) -> list[tree_sitter.Node]:
         """Walk tree and collect nodes matching type names.
 
         Args:

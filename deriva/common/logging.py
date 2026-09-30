@@ -43,7 +43,7 @@ class LogLevel(int, Enum):
     DETAIL = 3  # Item-level: each file, node, edge
 
 
-class LogStatus(str, Enum):
+class LogStatus(str, Enum):  # noqa: UP042 - StrEnum would change str() of members, which callers compare
     """Status values for log entries."""
 
     STARTED = "started"
@@ -254,9 +254,7 @@ class RunLogger:
         )
         self._write_entry(entry)
 
-    def phase_complete(
-        self, phase: str, message: str = "", stats: dict[str, Any] | None = None
-    ) -> None:
+    def phase_complete(self, phase: str, message: str = "", stats: dict[str, Any] | None = None) -> None:
         """
         Log the completion of a phase (Level 1).
 
@@ -460,9 +458,7 @@ class RunLogger:
 
     # ==================== Level 3: Detail Logging ====================
 
-    def detail_file_classified(
-        self, file_path: str, file_type: str, subtype: str, extension: str
-    ) -> None:
+    def detail_file_classified(self, file_path: str, file_type: str, subtype: str, extension: str) -> None:
         """Log a successfully classified file (Level 3)."""
         entry = LogEntry(
             level=LogLevel.DETAIL,
@@ -554,9 +550,7 @@ class RunLogger:
         )
         self._write_entry(entry)
 
-    def detail_edge_created(
-        self, edge_id: str, relationship_type: str, from_node: str, to_node: str
-    ) -> None:
+    def detail_edge_created(self, edge_id: str, relationship_type: str, from_node: str, to_node: str) -> None:
         """Log an edge creation detail (Level 3)."""
         entry = LogEntry(
             level=LogLevel.DETAIL,
@@ -800,9 +794,7 @@ class StepContext:
         self._edge_ids.append(edge_id)
 
 
-def get_logger_for_active_run(
-    engine, logs_dir: str = "workspace/logs"
-) -> RunLogger | None:
+def get_logger_for_active_run(engine, logs_dir: str = "workspace/logs") -> RunLogger | None:
     """
     Get a logger for the currently active run.
 
@@ -819,9 +811,7 @@ def get_logger_for_active_run(
     return None
 
 
-def read_run_logs(
-    run_id: int, logs_dir: str = "workspace/logs", level: int | None = None
-) -> list[dict[str, Any]]:
+def read_run_logs(run_id: int, logs_dir: str = "workspace/logs", level: int | None = None) -> list[dict[str, Any]]:
     """
     Read logs for a specific run.
 
@@ -949,9 +939,7 @@ def setup_logging_bridge(
     return handler
 
 
-def teardown_logging_bridge(
-    handler: RunLoggerHandler, logger_names: list[str] | None = None
-) -> None:
+def teardown_logging_bridge(handler: RunLoggerHandler, logger_names: list[str] | None = None) -> None:
     """
     Remove a previously set up logging bridge.
 

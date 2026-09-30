@@ -2,7 +2,12 @@
 # Common is the base layer and can only import from stdlib and third-party packages.
 # It must NOT import from any internal layers: adapters, modules, services, or cli.
 
+# Inherit the project rules (select, line length, per-file ignores); the ban table
+# below replaces the root one, so it repeats the root 'deriva.cli' ban.
+extend = "../../pyproject.toml"
+
 [lint.flake8-tidy-imports.banned-api]
+"deriva.cli" = { msg = "Architecture violation: cli is a top-level entry point and should not be imported" }
 "deriva.adapters" = { msg = "Architecture violation: common cannot import from adapters (common is the base layer)" }
 "deriva.modules" = { msg = "Architecture violation: common cannot import from modules (common is the base layer)" }
 "deriva.services" = { msg = "Architecture violation: common cannot import from services (common is the base layer)" }

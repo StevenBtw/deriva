@@ -57,6 +57,7 @@ from deriva.adapters.llm.manager import load_benchmark_models
 from deriva.adapters.llm.models import BenchmarkModelConfig
 from deriva.common.ocel import OCELLog, create_run_id, hash_content, load_benchmark_ocel
 from deriva.common.timing import query_stats, summarize_run_events
+from deriva.modules.analysis import decision_content
 from deriva.services import config as config_service
 from deriva.services import derivation, extraction
 
@@ -183,6 +184,38 @@ class OCELRunLogger:
         )
 
 
+# Incoming edge type -> the extraction route that created the node
+_ROUTE_BY_EDGE = {"REPRESENTS": "directory", "REFERENCES": "document"}
+
+
+def _node_routes(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """The extraction routes that produced each node, read from its incoming edges.
+
+    Directory classification links a concept or technology with REPRESENTS and
+    document extraction with REFERENCES. Technology edges (CONFIGURES) carry their
+    route (``structural`` or ``llm``); edges written before that stamp count as ``file``.
+
+    Args:
+        rows: One row per incoming edge: node ``id``, edge type ``rel``, edge ``props`` (JSON)
+    """
+    routes: dict[str, set[str]] = {}
+    for row in rows:
+        rel = str(row.get("rel") or "").rsplit(":", 1)[-1]
+        route = json.loads(row.get("props") or "{}").get("route", "file") if rel == "CONFIGURES" else _ROUTE_BY_EDGE.get(rel)
+        if route:
+            routes.setdefault(row["id"], set()).add(route)
+    return {node: sorted(found) for node, found in sorted(routes.items())}
+
+
+def _incoming_routes(graph_manager: GraphManager, label: str) -> dict[str, list[str]]:
+    """The extraction routes of every ``Graph:<label>`` node (see ``_node_routes``).
+
+    The labelled node starts the pattern: as the target of an expand, grafeo applies
+    only its first label (``Graph``) and would return every graph node.
+    """
+    return _node_routes(graph_manager.query(f"MATCH (n:Graph:{label})<-[r]-() RETURN n.id AS id, type(r) AS rel, r.properties_json AS props"))
+
+
 def _print_timings(timings: dict[str, Any]) -> None:
     """Print the slowest steps, LLM totals and slowest graph queries per run."""
     print("TIMINGS (full detail in timings.json)")
@@ -253,7 +286,7 @@ class OCELStepContext:
             objects_created=self._created_objects,
             edges_created=self._created_edges if self._created_edges else None,
             relationships_created=self._created_relationships if self._created_relationships else None,
-            stats={"items_created": self.items_created, "items_processed": self.items_processed, "duration_seconds": self._elapsed_seconds()},
+            stats={**(self.stats or {}), "items_created": self.items_created, "items_processed": self.items_processed, "duration_seconds": self._elapsed_seconds()},
             errors=[],
         )
 
@@ -404,6 +437,8 @@ class BenchmarkOrchestrator:
 
         # Current context for OCEL events
         self._current_run_id: str | None = None
+        # LLM answers per decision per step, recorded in the session metadata
+        self._llm_samples: dict[str, int] = {}
         self._current_model: str | None = None
         self._current_repo: str | None = None
 
@@ -472,12 +507,18 @@ class BenchmarkOrchestrator:
         config_versions: dict[str, dict[str, int]] | None,
         extraction_methods: list[str] | None = None,
         verbose: bool = False,
+        steps: list[str] | None = None,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
-        """Run extraction for one repo, logging its steps and LLM calls to the event log."""
+        """Run extraction for one repo, logging its steps and LLM calls to the event log.
+
+        ``steps`` limits the run to those steps; ``run_id`` names it in the event log
+        (default: the session's extraction run of the repo).
+        """
         model = self._model_configs[self.config.models[0]].model
         run_logger = OCELRunLogger(
             ocel_log=self.ocel_log,
-            run_id=f"{self.session_id}:extraction:{repo_name}",
+            run_id=run_id or f"{self.session_id}:extraction:{repo_name}",
             session_id=self.session_id or "",
             model=model,
             repo=repo_name,
@@ -496,6 +537,7 @@ class BenchmarkOrchestrator:
                 config_versions=config_versions,
                 model=model,
                 extraction_methods=extraction_methods,
+                steps=steps,
             )
         finally:
             self._current_run_id = previous_run_id
@@ -984,7 +1026,7 @@ class BenchmarkOrchestrator:
             if self.config.export_models and "derivation" in stages:
                 if verbose:
                     print("  Exporting combined model...")
-                model_path = self._export_run_model(combined_repo_name, model_name, iteration)
+                model_path = self._export_run_model(combined_repo_name, model_name, iteration, candidate_decisions=result.get("candidate_decisions", []))
                 if model_path:
                     stats["model_file"] = model_path
 
@@ -1129,6 +1171,9 @@ class BenchmarkOrchestrator:
                 requests=call.get("requests", 0),
                 error_type=call.get("error_type"),
                 response_hash=hash_content(content) if content else None,
+                decision_hash=hash_content(decision_content(content)) if content else None,
+                # keep / naming / relationship / extraction call, from the output schema's name
+                call_kind=(schema or {}).get("name"),
             )
 
             return response
@@ -1181,6 +1226,7 @@ class BenchmarkOrchestrator:
         repo_name: str,
         model_name: str,
         iteration: int,
+        candidate_decisions: list[dict[str, Any]] | None = None,
     ) -> str | None:
         """
         Export ArchiMate model to file after a benchmark run.
@@ -1191,6 +1237,7 @@ class BenchmarkOrchestrator:
             repo_name: Repository name
             model_name: Model config name
             iteration: Run iteration number (1-based)
+            candidate_decisions: The run's candidate decisions (recorded in the JSON snapshot)
 
         Returns:
             Path to exported file, or None if export failed
@@ -1231,6 +1278,10 @@ class BenchmarkOrchestrator:
 
             # JSON snapshot for consistency analysis: the XML carries no properties,
             # but identity by source node and relationship provenance need them
+            concept_rows = self.graph_manager.query("MATCH (n:Graph:BusinessConcept) RETURN n.id AS id, n.conceptTypes AS types, n.conceptName AS name")
+            technology_rows = self.graph_manager.query("MATCH (n:Graph:Technology) RETURN n.id AS id, n.techName AS name")
+            concept_routes = _incoming_routes(self.graph_manager, "BusinessConcept")
+            technology_routes = _incoming_routes(self.graph_manager, "Technology")
             snapshot = {
                 "elements": [{"identifier": e.identifier, "type": e.element_type, "name": e.name, "source": (e.properties or {}).get("source")} for e in elements],
                 "relationships": [
@@ -1243,14 +1294,22 @@ class BenchmarkOrchestrator:
                     }
                     for r in relationships
                 ],
-                # LLM-created graph nodes, so extraction consistency can be measured on its own
+                # LLM-created graph nodes, so extraction consistency can be measured on its own;
+                # display names keep the word boundaries the ids lost (name normalization analysis)
                 "graph": {
-                    "concepts": sorted(
-                        [row["id"], sorted(row.get("types") or [])]
-                        for row in self.graph_manager.query("MATCH (n:Graph:BusinessConcept) RETURN n.id AS id, n.conceptTypes AS types")
-                    ),
-                    "technologies": sorted(row["id"] for row in self.graph_manager.query("MATCH (n:Graph:Technology) RETURN n.id AS id")),
+                    "concepts": sorted([row["id"], sorted(row.get("types") or [])] for row in concept_rows),
+                    "technologies": sorted(row["id"] for row in technology_rows),
+                    "concept_names": dict(sorted((row["id"], row.get("name")) for row in concept_rows)),
+                    "technology_names": dict(sorted((row["id"], row.get("name")) for row in technology_rows)),
+                    # The extraction routes that produced each node, so stability can be measured per route
+                    "concept_routes": concept_routes,
+                    "technology_routes": technology_routes,
                 },
+                # Every candidate's fate per element type (created, llm_rejected, filtered_out, ...), for keep rates
+                "candidates": sorted(
+                    ({"type": d.get("element_type"), "source": d.get("node_id"), "stage": d.get("stage")} for d in candidate_decisions or []),
+                    key=lambda c: (str(c["type"]), str(c["source"]), str(c["stage"])),
+                ),
             }
             output_path.with_suffix(".json").write_text(json.dumps(snapshot, indent=1), encoding="utf-8")
 
@@ -1271,6 +1330,7 @@ class BenchmarkOrchestrator:
 
         # Capture current config versions as snapshot for consistency during benchmark
         self._config_versions_snapshot = config_service.get_active_config_versions(self.engine)
+        self._llm_samples = config_service.llm_samples_per_step(self.engine)
 
         self.engine.execute(
             """
@@ -1384,6 +1444,8 @@ class BenchmarkOrchestrator:
             "completed_at": datetime.now().isoformat(),
             "total_events": len(self.ocel_log.events),
             "object_types": list(self.ocel_log.object_types),
+            # Above 1 means majority voting: consistency is then not single-call behaviour
+            "llm_samples": self._llm_samples,
         }
         with open(output_dir / "session_metadata.json", "w") as f:
             json.dump(summary, f, indent=2)

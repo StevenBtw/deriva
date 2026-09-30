@@ -1,0 +1,3 @@
+extend = "../../pyproject.toml"
+# The tool runs on Python 3.12 (spaCy and CTranslate2), not the project's 3.14
+target-version = "py312"

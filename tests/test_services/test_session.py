@@ -1310,6 +1310,18 @@ class TestPipelineSessionBenchmarking:
             assert config_call.kwargs["runs_per_combination"] == 5
             assert config_call.kwargs["use_cache"] is False
 
+    def test_run_step_benchmark(self, connected_session):
+        """One step, repeated per repository with one model."""
+        with patch("deriva.services.step_benchmark.StepBenchmark") as step_benchmark:
+            step_benchmark.return_value.run_step.return_value = "result"
+
+            result = connected_session.run_step_benchmark("BusinessConcept", repositories=["repo1", "repo2"], model="model1", runs=3, verbose=True)
+
+        config = step_benchmark.call_args.kwargs["config"]
+        assert (config.repositories, config.models, config.runs_per_combination) == (["repo1", "repo2"], ["model1"], 3)
+        step_benchmark.return_value.run_step.assert_called_once_with("BusinessConcept", verbose=True)
+        assert result == "result"
+
     def test_analyze_benchmark(self, connected_session):
         """Should create and return BenchmarkAnalyzer."""
         with patch("deriva.services.session.benchmarking") as mock_bench:

@@ -5,10 +5,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from deriva.adapters.llm.manager import (
     LLMManager,
+    _resolve_schema_to_model,
     _serialize_output,
     load_benchmark_models,
 )
@@ -19,6 +20,24 @@ from deriva.adapters.llm.models import (
     FailedResponse,
     LiveResponse,
 )
+
+
+class TestSchemaRegistry:
+    """Schemas the modules send by name are enforced as structured output."""
+
+    def test_the_concept_classification_answer_is_closed(self):
+        from deriva.modules.extraction.concept_candidates import CLASSIFICATION_SCHEMA, LABELS
+
+        model = _resolve_schema_to_model(CLASSIFICATION_SCHEMA)
+
+        assert model is not None
+        answer = model.model_validate({"classifications": [{"term": "Ledger", "label": "business_object"}]})
+        assert answer.model_dump() == {"classifications": [{"term": "Ledger", "label": "business_object"}]}
+        (item,) = model.model_json_schema()["$defs"].values()
+        assert item["properties"]["label"]["enum"] == list(LABELS)
+        with pytest.raises(ValidationError):
+            model.model_validate({"classifications": [{"term": "Ledger", "label": "thing"}]})
+
 
 # =============================================================================
 # _serialize_output() Tests
@@ -875,6 +894,26 @@ class TestTimeoutAndRetry:
         _, run, _ = self._query(self._manager(tmp_path), [ModelHTTPError(status_code=429, model_name="m"), MagicMock(output="ok")])
 
         assert run.call_count == 2
+
+    def test_rate_limit_that_succeeds_on_retry_still_slows_the_limiter(self, tmp_path):
+        """The adaptive throttle must see a 429 even when the retry then succeeds."""
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        manager = self._manager(tmp_path)
+        with patch.object(manager._rate_limiter, "record_rate_limit") as record:
+            self._query(manager, [ModelHTTPError(status_code=429, model_name="m"), MagicMock(output="ok")])
+
+        record.assert_called_once()
+
+    def test_final_rate_limit_is_recorded_once(self, tmp_path):
+        """The last failed attempt is recorded by query(), not again by the retry loop."""
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        manager = self._manager(tmp_path)
+        with patch.object(manager._rate_limiter, "record_rate_limit") as record:
+            self._query(manager, ModelHTTPError(status_code=429, model_name="m"))
+
+        assert record.call_count == 3  # two retried attempts + the final failure
 
     def test_gives_up_after_max_retries(self, tmp_path):
         import httpx

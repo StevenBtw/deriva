@@ -35,6 +35,7 @@ __all__ = [
     "ConfigDeviationAnalyzer",
     "analyze_config_deviations",
     "export_config_deviations",
+    "generate_recommendations",
 ]
 
 

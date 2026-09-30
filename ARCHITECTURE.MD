@@ -106,8 +106,11 @@ External system integrations:
 | `graph/` | Graph operations (nodes, edges) in "Graph" namespace |
 | `archimate/` | ArchiMate model operations in "Model" namespace |
 | `llm/` | Multi-provider LLM abstraction with caching |
+| `nlp/` | Runs the NLP tool (`tools/nlp`) for candidate terms in documentation |
 | `repository/` | Git operations and file system access |
 | `treesitter/` | Multi-language AST parsing (Python, JS, Java, C#) |
+
+The NLP tool is a separate uv project (`tools/nlp`, Python 3.12) with pinned spaCy pipelines (English, German, French) and pinned translation models. The `nlp` adapter runs it as a subprocess and exchanges JSON files with it, so its dependencies never enter Deriva's environment; the tool reports its versions, which are recorded with each run.
 
 ### Modules Layer
 
@@ -161,7 +164,7 @@ Deriva uses **per-directory ruff.toml files** to enforce layer separation at lin
 
 ### Enforcement via ruff.toml
 
-Each layer has a `ruff.toml` file enforcing boundaries:
+Each layer has a `ruff.toml` file that extends the project configuration (`extend = "../../pyproject.toml"`, so the project rules apply everywhere) and adds the layer's banned imports. The layer's ban table replaces the project one, so the adapters, common and modules files repeat the project's `deriva.cli` ban:
 
 **deriva/cli/ruff.toml:**
 
@@ -196,6 +199,10 @@ Each layer has a `ruff.toml` file enforcing boundaries:
 "deriva.modules" = { msg = "Architecture violation: common cannot import from modules" }
 "deriva.services" = { msg = "Architecture violation: common cannot import from services" }
 ```
+
+### Known exception
+
+The derivation and extraction modules still import manager and model types from adapters (ArchiMate, graph, LLM, tree-sitter). These imports are marked `# noqa: TID251` as a known exception, so any new boundary violation still fails `ruff check`. Removing them means injecting those types from the services layer, which is a larger refactor.
 
 ## Data Flow
 

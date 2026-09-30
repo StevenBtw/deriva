@@ -147,19 +147,14 @@ class BusinessProcessDerivation(HybridDerivation):
             enrich_candidate(c, enrichments)
 
         # Check if candidates are BusinessConcept (have conceptType property)
-        is_business_concept = any(
-            "BusinessConcept" in c.labels or c.properties.get("conceptType")
-            for c in candidates
-        )
+        is_business_concept = any("BusinessConcept" in c.labels or c.properties.get("conceptType") for c in candidates)
 
         if is_business_concept:
             # BusinessConcept source: filter by confidence, skip graph metrics
             return self._filter_business_concepts(candidates, max_candidates)
 
         # Method source: original orchestrator-based filtering
-        return self._filter_method_candidates(
-            candidates, enrichments, max_candidates, include_patterns, exclude_patterns
-        )
+        return self._filter_method_candidates(candidates, enrichments, max_candidates, include_patterns, exclude_patterns)
 
     def _filter_business_concepts(
         self,
@@ -223,24 +218,12 @@ class BusinessProcessDerivation(HybridDerivation):
                 non_orchestrators.append(c)
 
         # Apply pattern matching
-        likely_processes = [
-            c
-            for c in non_orchestrators
-            if self.matches_patterns(c.name, include_patterns, exclude_patterns)
-        ]
-        others = [
-            c
-            for c in non_orchestrators
-            if not self.matches_patterns(c.name, include_patterns, exclude_patterns)
-        ]
+        likely_processes = [c for c in non_orchestrators if self.matches_patterns(c.name, include_patterns, exclude_patterns)]
+        others = [c for c in non_orchestrators if not self.matches_patterns(c.name, include_patterns, exclude_patterns)]
 
         # Apply graph filtering to each group
-        orchestrators = self.apply_graph_filtering(
-            orchestrators, enrichments, max_candidates // 3
-        )
-        likely_processes = self.apply_graph_filtering(
-            likely_processes, enrichments, max_candidates // 3
-        )
+        orchestrators = self.apply_graph_filtering(orchestrators, enrichments, max_candidates // 3)
+        likely_processes = self.apply_graph_filtering(likely_processes, enrichments, max_candidates // 3)
 
         # Combine: orchestrators first, then pattern-matched, then others
         combined = orchestrators + likely_processes

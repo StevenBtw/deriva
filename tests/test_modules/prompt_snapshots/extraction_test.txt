@@ -1,0 +1,20 @@
+You are analyzing a test file to extract test definitions.
+
+## Context
+- **File Path:** tests/test_ledger.alpha
+
+## Instructions
+INSTRUCTION
+
+## Example Output
+{"tests": []}
+
+## File Content (with line numbers)
+```
+   1 | class Ledger:
+   2 |     def post(self, entry):
+   3 |         return entry
+   4 | 
+```
+
+Extract all test definitions from this file. Return ONLY a JSON object with a "tests" array. If no tests are found, return {"tests": []}.

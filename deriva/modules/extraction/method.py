@@ -13,13 +13,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from deriva.adapters.treesitter import TreeSitterManager, ExtractedMethod
+from deriva.adapters.treesitter import ExtractedMethod, TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 from .base import (
     create_empty_llm_details,
     current_timestamp,
     generate_edge_id,
     parse_json_response,
+    prompt_texts,
     strip_chunk_suffix,
 )
 
@@ -106,6 +107,7 @@ def build_extraction_prompt(
     file_path: str,
     instruction: str,
     example: str,
+    texts: dict[str, str],
 ) -> str:
     """
     Build the LLM prompt for method extraction from a TypeDefinition code snippet.
@@ -117,15 +119,19 @@ def build_extraction_prompt(
         file_path: Path to the file where the type is defined
         instruction: Extraction instruction from config
         example: Example output from config
+        texts: The step's prompt texts (``params.prompt``: persona and task; ``{type_category}``
+            in them is the type's category)
 
     Returns:
         Formatted prompt string
     """
+    persona = texts["persona"].replace("{type_category}", type_category)
+    task = texts["task"].replace("{type_category}", type_category)
     # Add line numbers to the code snippet for accurate line references
     lines = code_snippet.split("\n")
     numbered_content = "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(lines))
 
-    prompt = f"""You are analyzing a {type_category} definition to extract its methods.
+    prompt = f"""{persona}
 
 ## Context
 - **Type Name:** {type_name}
@@ -143,7 +149,7 @@ def build_extraction_prompt(
 {numbered_content}
 ```
 
-Extract all methods and functions from this {type_category}. Return ONLY a JSON object with a "methods" array. If no methods are found, return {{"methods": []}}.
+{task} Return ONLY a JSON object with a "methods" array. If no methods are found, return {{"methods": []}}.
 """
     return prompt
 
@@ -202,9 +208,7 @@ def build_method_node(
     method_name_slug = method_data["methodName"].replace(" ", "_").replace("-", "_")
     type_name_slug = type_name.replace(" ", "_").replace("-", "_")
     file_path_slug = file_path.replace("/", "_").replace("\\", "_")
-    node_id = (
-        f"method::{repo_name}::{file_path_slug}::{type_name_slug}::{method_name_slug}"
-    )
+    node_id = f"method::{repo_name}::{file_path_slug}::{type_name_slug}::{method_name_slug}"
 
     # Build the node structure
     node_data = {
@@ -259,9 +263,7 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
     return parse_json_response(response_content, "methods")
 
 
-def extract_methods(
-    type_node: dict[str, Any], repo_name: str, llm_query_fn, config: dict[str, Any]
-) -> dict[str, Any]:
+def extract_methods(type_node: dict[str, Any], repo_name: str, llm_query_fn, config: dict[str, Any]) -> dict[str, Any]:
     """
     Extract methods from a single TypeDefinition node using LLM.
 
@@ -324,6 +326,7 @@ def extract_methods(
             file_path=file_path,
             instruction=instruction,
             example=example,
+            texts=prompt_texts(config, "Method"),
         )
         llm_details["prompt"] = prompt
 
@@ -337,9 +340,7 @@ def extract_methods(
             llm_details["tokens_in"] = response.usage.get("prompt_tokens", 0)
             llm_details["tokens_out"] = response.usage.get("completion_tokens", 0)
         if hasattr(response, "response_type"):
-            llm_details["cache_used"] = (
-                str(response.response_type) == "ResponseType.CACHED"
-            )
+            llm_details["cache_used"] = str(response.response_type) == "ResponseType.CACHED"
 
         # Check for failed response
         if hasattr(response, "error"):
@@ -532,22 +533,16 @@ def extract_methods_from_source(
         file_node_id = f"file::{repo_name}::{safe_path}"
 
         for ext_method in extracted_methods:
-            node_data = _build_method_node_from_treesitter(
-                ext_method, file_path, repo_name
-            )
+            node_data = _build_method_node_from_treesitter(ext_method, file_path, repo_name)
             nodes.append(node_data)
 
             # Create edge based on whether method belongs to a class or is top-level
             if ext_method.class_name:
                 # Method belongs to class - edge from TypeDefinition to Method
-                type_name_slug = ext_method.class_name.replace(" ", "_").replace(
-                    "-", "_"
-                )
+                type_name_slug = ext_method.class_name.replace(" ", "_").replace("-", "_")
                 type_node_id = f"typedef::{repo_name}::{safe_path}::{type_name_slug}"
                 edge = {
-                    "edge_id": generate_edge_id(
-                        type_node_id, node_data["node_id"], "CONTAINS"
-                    ),
+                    "edge_id": generate_edge_id(type_node_id, node_data["node_id"], "CONTAINS"),
                     "from_node_id": type_node_id,
                     "to_node_id": node_data["node_id"],
                     "relationship_type": "CONTAINS",
@@ -556,9 +551,7 @@ def extract_methods_from_source(
             else:
                 # Top-level function - edge from File to Method
                 edge = {
-                    "edge_id": generate_edge_id(
-                        file_node_id, node_data["node_id"], "CONTAINS"
-                    ),
+                    "edge_id": generate_edge_id(file_node_id, node_data["node_id"], "CONTAINS"),
                     "from_node_id": file_node_id,
                     "to_node_id": node_data["node_id"],
                     "relationship_type": "CONTAINS",
@@ -633,13 +626,9 @@ def _build_method_node_from_treesitter(
 
     # Generate node ID using :: separator to avoid repo name conflicts
     method_name_slug = ext_method.name.replace(" ", "_").replace("-", "_")
-    type_name_slug = (
-        (ext_method.class_name or "module").replace(" ", "_").replace("-", "_")
-    )
+    type_name_slug = (ext_method.class_name or "module").replace(" ", "_").replace("-", "_")
     file_path_slug = file_path.replace("/", "_").replace("\\", "_")
-    node_id = (
-        f"method::{repo_name}::{file_path_slug}::{type_name_slug}::{method_name_slug}"
-    )
+    node_id = f"method::{repo_name}::{file_path_slug}::{type_name_slug}::{method_name_slug}"
 
     return {
         "node_id": node_id,

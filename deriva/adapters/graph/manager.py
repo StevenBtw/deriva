@@ -29,9 +29,8 @@ import logging
 import os
 from typing import Any
 
-from dotenv import load_dotenv
-
 from deriva.adapters.grafeo import GrafeoConnection
+from dotenv import load_dotenv
 
 from .models import (
     BusinessConceptNode,
@@ -170,9 +169,7 @@ class GraphManager:
             self.db = GrafeoConnection(namespace=self.namespace)
             self.db.connect()
 
-            logger.info(
-                f"Successfully connected to grafeo with namespace '{self.namespace}'"
-            )
+            logger.info(f"Successfully connected to grafeo with namespace '{self.namespace}'")
 
         except Exception as e:
             logger.error(f"Failed to connect to grafeo: {e}")
@@ -190,9 +187,7 @@ class GraphManager:
         self.connect()
         return self
 
-    def __exit__(
-        self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any
-    ) -> None:
+    def __exit__(self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any) -> None:
         """Context manager exit."""
         self.disconnect()
 
@@ -228,9 +223,7 @@ class GraphManager:
         for key, value in properties.items():
             if isinstance(value, (str, int, float, bool)) or value is None:
                 flat_props[key] = value
-            elif isinstance(value, list) and all(
-                isinstance(v, (str, int, float, bool)) for v in value
-            ):
+            elif isinstance(value, list) and all(isinstance(v, (str, int, float, bool)) for v in value):
                 flat_props[key] = value
 
         # Add active flag for prep phase filtering (default true)
@@ -295,11 +288,10 @@ class GraphManager:
             # Relationship type as the label (e.g., Graph:CONTAINS); endpoints are
             # found through the id index (a second MATCH clause would scan all nodes)
             edge_label = self.db.get_label(relationship)
-            props = {"properties_json": properties_json} if properties_json else {}
+            # Always set (None without properties), so a re-added edge replaces the old ones
+            props = {"properties_json": properties_json}
             if not self.db.merge_edge("id", src_id, dst_id, edge_label, edge_id, props):
-                raise RuntimeError(
-                    f"Failed to add edge. Make sure nodes {src_id} and {dst_id} exist."
-                )
+                raise RuntimeError(f"Failed to add edge. Make sure nodes {src_id} and {dst_id} exist.")
             logger.debug(f"Added edge: {src_id} -{relationship}-> {dst_id}")
             return edge_id
 
@@ -308,9 +300,7 @@ class GraphManager:
             logger.debug(f"Failed to add edge {edge_id}: {e}")
             raise
 
-    def update_node_property(
-        self, node_id: str, property_name: str, value: Any
-    ) -> bool:
+    def update_node_property(self, node_id: str, property_name: str, value: Any) -> bool:
         """Update a single property on a node.
 
         Used by prep steps to write scores, flags, etc.
@@ -344,9 +334,7 @@ class GraphManager:
             logger.error(f"Failed to update property on {node_id}: {e}")
             raise
 
-    def update_nodes_property(
-        self, node_ids: list[str], property_name: str, value: Any
-    ) -> int:
+    def update_nodes_property(self, node_ids: list[str], property_name: str, value: Any) -> int:
         """Update a property on multiple nodes.
 
         Args:
@@ -371,9 +359,7 @@ class GraphManager:
                 RETURN count(n) as updated
             """
 
-            result = self.db.execute_write(
-                query, {"node_ids": node_ids, "value": value}
-            )
+            result = self.db.execute_write(query, {"node_ids": node_ids, "value": value})
 
             if result:
                 count = result[0]["updated"]
@@ -444,11 +430,7 @@ class GraphManager:
             if result:
                 data = result[0]
                 # Parse JSON properties back to dict
-                properties = (
-                    json.loads(data["properties_json"])
-                    if data.get("properties_json")
-                    else {}
-                )
+                properties = json.loads(data["properties_json"]) if data.get("properties_json") else {}
                 return {
                     "id": data["id"],
                     "label": data["label"],
@@ -512,14 +494,8 @@ class GraphManager:
             nodes = []
             for data in result:
                 # Parse JSON properties back to dict
-                properties = (
-                    json.loads(data["properties_json"])
-                    if data.get("properties_json")
-                    else {}
-                )
-                nodes.append(
-                    {"id": data["id"], "label": data["label"], "properties": properties}
-                )
+                properties = json.loads(data["properties_json"]) if data.get("properties_json") else {}
+                nodes.append({"id": data["id"], "label": data["label"], "properties": properties})
 
             return nodes
 
@@ -557,9 +533,7 @@ class GraphManager:
             logger.error(f"Failed to delete node {node_id}: {e}")
             raise
 
-    def query(
-        self, cypher_query: str, params: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]:
+    def query(self, cypher_query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Execute a Cypher query.
 
         Args:
@@ -688,9 +662,7 @@ class GraphManager:
             return count
 
         except Exception as e:
-            logger.error(
-                "Failed to clear nodes by labels for repo '%s': %s", repo_name, e
-            )
+            logger.error("Failed to clear nodes by labels for repo '%s': %s", repo_name, e)
             raise
 
     def has_extraction(self, repo_name: str) -> bool:
@@ -774,9 +746,7 @@ class GraphManager:
                 SET n.extraction_fingerprint = $fingerprint
                 RETURN n.id as id
             """
-            result = self.db.execute_write(
-                query, {"repo_name": repo_name, "fingerprint": fingerprint}
-            )
+            result = self.db.execute_write(query, {"repo_name": repo_name, "fingerprint": fingerprint})
             if result:
                 logger.info(
                     "Set extraction fingerprint for '%s': %s...",

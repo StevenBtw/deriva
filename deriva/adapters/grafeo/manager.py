@@ -32,9 +32,8 @@ import weakref
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
-
 from deriva.common.timing import query_stats
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +43,7 @@ def _record_query(label: str, started: float) -> None:
     elapsed_ms = (time.perf_counter() - started) * 1000
     query_stats.record(label, elapsed_ms)
     if elapsed_ms > float(os.getenv("GRAFEO_SLOW_QUERY_MS", "1000")):
-        logger.warning(
-            "Slow graph query (%.0f ms): %s", elapsed_ms, " ".join(label.split())[:300]
-        )
+        logger.warning("Slow graph query (%.0f ms): %s", elapsed_ms, " ".join(label.split())[:300])
 
 
 # ---------------------------------------------------------------------------
@@ -64,17 +61,14 @@ _connections: weakref.WeakSet[GrafeoConnection] = weakref.WeakSet()
 _edge_keys: dict[str, set[tuple[int, int, Any]]] = {}
 
 
-def _database_file(key: str) -> str | None:
+def database_file(key: str) -> str | None:
     """Path of the key's database file, or None for in-memory.
 
     GRAFEO_DB_DIR (e.g. ``workspace/graphs``) holds one ``<key>.grafeo`` file per
     workspace key; empty or unset means in-memory.
     """
     if os.getenv("GRAFEO_DB_PATH"):
-        raise RuntimeError(
-            "GRAFEO_DB_PATH is no longer supported: set GRAFEO_DB_DIR to a directory "
-            "(one <repository>.grafeo database per repository) and remove GRAFEO_DB_PATH."
-        )
+        raise RuntimeError("GRAFEO_DB_PATH is no longer supported: set GRAFEO_DB_DIR to a directory (one <repository>.grafeo database per repository) and remove GRAFEO_DB_PATH.")
     directory = os.getenv("GRAFEO_DB_DIR", "")
     if not directory:
         return None
@@ -95,8 +89,15 @@ def get_database() -> Any:
         from grafeo import GrafeoDB
 
         load_dotenv()
-        path = _database_file(_db_key)
+        path = database_file(_db_key)
         _db = GrafeoDB(path)
+        # Every query is Cypher; a grafeo build without it (a narrow local build) fails here, not at the first query
+        if not hasattr(_db, "execute_cypher"):
+            _db.close()
+            _db = None
+            raise RuntimeError(
+                "This grafeo build has no Cypher support, which Deriva uses for every query: install the released wheel, or build the Python binding with its default features"
+            )
         # Node lookups by id (Graph) and identifier (Model) must use an index
         for key in ("id", "identifier"):
             if not _db.has_property_index(key):
@@ -113,6 +114,8 @@ def use_database(key: str) -> None:
     global _db_key
     if key == _db_key and (_db is not None or not _connections):
         return
+    # Check the key before closing, so an invalid key leaves the active database in place
+    database_file(key)
     close_database()
     _db_key = key
     if _connections:
@@ -194,9 +197,7 @@ class GrafeoConnection:
         self.connect()
         return self
 
-    def __exit__(
-        self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any
-    ) -> None:
+    def __exit__(self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any) -> None:
         """Context manager exit."""
         self.disconnect()
 
@@ -221,10 +222,7 @@ class GrafeoConnection:
             List of result records as dictionaries.
         """
         if self.db is None:
-            raise RuntimeError(
-                f"Not connected to grafeo. Call connect() first. "
-                f"(Namespace: {self.namespace})"
-            )
+            raise RuntimeError(f"Not connected to grafeo. Call connect() first. (Namespace: {self.namespace})")
 
         if self._log_queries:
             logger.debug("Executing query: %s", query)
@@ -304,21 +302,11 @@ class GrafeoConnection:
         return count
 
     def _find_nodes(self, key: str, value: Any) -> list[int]:
-        """Live nodes with ``key`` = ``value`` via the property index.
-
-        grafeo's property index still returns deleted nodes (their labels are None),
-        so those are skipped (see the grafeo todo).
-        """
+        """Nodes with ``key`` = ``value`` via the property index (deleted nodes are not returned)."""
         assert self.db is not None
-        return [
-            node
-            for node in self.db.find_nodes_by_property(key, value)
-            if self.db.get_node_labels(node) is not None
-        ]
+        return list(self.db.find_nodes_by_property(key, value))
 
-    def merge_node(
-        self, key: str, value: Any, labels: list[str], properties: dict[str, Any]
-    ) -> None:
+    def merge_node(self, key: str, value: Any, labels: list[str], properties: dict[str, Any]) -> None:
         """Set ``properties`` on the node with ``key`` = ``value`` and all ``labels``, or create it.
 
         Same semantics as ``MERGE (n:L1:L2 {key: value}) SET n += properties``, but
@@ -329,11 +317,7 @@ class GrafeoConnection:
 
         started = time.perf_counter()
         wanted = set(labels)
-        matches = [
-            node
-            for node in self._find_nodes(key, value)
-            if wanted <= set(self.db.get_node_labels(node) or [])
-        ]
+        matches = [node for node in self._find_nodes(key, value) if wanted <= set(self.db.get_node_labels(node) or [])]
         for node in matches:
             for name, prop in properties.items():
                 self.db.set_node_property(node, name, prop)
@@ -367,15 +351,10 @@ class GrafeoConnection:
 
         existing = _edge_keys.get(edge_type)
         if existing is None:
-            # One scan per edge type instead of a lookup per edge (grafeo has no
-            # cheap per-node edge lookup, and filters on an edge property named
-            # `id` never match, so the id is compared in Python)
-            existing = {
-                (row["s"], row["d"], row["id"])
-                for row in self.execute(
-                    f"MATCH (s)-[r:`{edge_type}`]->(d) RETURN id(s) AS s, id(d) AS d, r.id AS id"
-                )
-            }
+            # One scan per edge type instead of a lookup per edge: a lookup by endpoint
+            # ids scans every edge of the type (3.45 ms per call at 10,000 edges on
+            # grafeo 0.5.43, against about 11 ms for this whole scan)
+            existing = {(row["s"], row["d"], row["id"]) for row in self.execute(f"MATCH (s)-[r:`{edge_type}`]->(d) RETURN id(s) AS s, id(d) AS d, r.id AS id")}
             _edge_keys[edge_type] = existing
             started = time.perf_counter()
 
@@ -383,8 +362,7 @@ class GrafeoConnection:
             for dst in targets:
                 if (src, dst, edge_id) in existing:
                     rows = self.db.execute_cypher(
-                        f"MATCH (s)-[r:`{edge_type}`]->(d) WHERE id(s) = $s AND id(d) = $d "
-                        "RETURN id(r) AS eid, r.id AS id",
+                        f"MATCH (s)-[r:`{edge_type}`]->(d) WHERE id(s) = $s AND id(d) = $d RETURN id(r) AS eid, r.id AS id",
                         {"s": src, "d": dst},
                     ).to_list()
                     for row in rows:
@@ -392,9 +370,7 @@ class GrafeoConnection:
                             for name, value in properties.items():
                                 self.db.set_edge_property(row["eid"], name, value)
                 else:
-                    self.db.create_edge(
-                        src, dst, edge_type, {"id": edge_id, **properties}
-                    )
+                    self.db.create_edge(src, dst, edge_type, {"id": edge_id, **properties})
                     existing.add((src, dst, edge_id))
         _record_query(f"merge_edge({edge_type})", started)
         return True
@@ -421,9 +397,7 @@ class GrafeoConnection:
 
         try:
             self.execute(
-                "MATCH (n) "
-                "WHERE any(label IN labels(n) WHERE label STARTS WITH $namespace) "
-                "DETACH DELETE n",
+                "MATCH (n) WHERE any(label IN labels(n) WHERE label STARTS WITH $namespace) DETACH DELETE n",
                 {"namespace": self.namespace},
             )
             logger.info("Cleared all data for namespace: %s", self.namespace)
@@ -431,27 +405,3 @@ class GrafeoConnection:
         except Exception as e:
             logger.error("Failed to clear namespace %s: %s", self.namespace, e)
             raise
-
-    # ------------------------------------------------------------------
-    # Schema (no-ops for embedded grafeo)
-    # ------------------------------------------------------------------
-
-    def create_constraint(
-        self, label: str, property_key: str, constraint_name: str | None = None
-    ) -> None:
-        """Create a uniqueness constraint (no-op in grafeo)."""
-        logger.debug(
-            "create_constraint is a no-op in grafeo (label=%s, property=%s)",
-            label,
-            property_key,
-        )
-
-    def create_index(
-        self, label: str, property_key: str, index_name: str | None = None
-    ) -> None:
-        """Create an index (no-op in grafeo)."""
-        logger.debug(
-            "create_index is a no-op in grafeo (label=%s, property=%s)",
-            label,
-            property_key,
-        )

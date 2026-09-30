@@ -31,8 +31,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from deriva.adapters.treesitter import TreeSitterManager
-from deriva.adapters.treesitter.models import (
+from deriva.adapters.treesitter import TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+from deriva.adapters.treesitter.models import (  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
     ExtractedCall,
     ExtractedImport,
     ExtractedMethod,
@@ -52,7 +52,7 @@ from .base import (
 # =============================================================================
 
 
-class EdgeType(str, Enum):
+class EdgeType(str, Enum):  # noqa: UP042 - StrEnum would change str() of members, which callers compare
     """Types of edges that can be extracted from source code."""
 
     IMPORTS = "IMPORTS"  # File → File (internal imports)
@@ -628,11 +628,7 @@ def extract_edges_batch(
     all_file_paths = {f["path"] for f in files}
 
     # Filter to only source files that Tree-sitter can parse
-    source_files = [
-        f
-        for f in files
-        if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES
-    ]
+    source_files = [f for f in files if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES]
 
     total = len(source_files)
 
@@ -733,9 +729,7 @@ def _extract_import_edges(
     stats = {"internal": 0, "external": 0, "unresolved": 0}
 
     # Use language-specific stdlib or fall back to Python stdlib
-    stdlib_modules = (
-        filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
-    )
+    stdlib_modules = filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
 
     source_file_id = generate_file_node_id(repo_name, file_path)
 
@@ -952,9 +946,7 @@ def _extract_call_edges(
     stats = {"total": 0, "resolved": 0, "unresolved": 0, "cross_file": 0}
 
     # Use language-specific builtins or fall back to Python builtins
-    builtin_functions = (
-        filter_constants.builtin_functions if filter_constants else PYTHON_BUILTINS
-    )
+    builtin_functions = filter_constants.builtin_functions if filter_constants else PYTHON_BUILTINS
 
     for call in calls:
         stats["total"] += 1
@@ -1089,16 +1081,12 @@ def _resolve_caller(
     candidates = method_lookup[caller_name]
 
     if len(candidates) == 1:
-        return generate_method_node_id(
-            repo_name, file_path, caller_name, candidates[0]["class_name"]
-        )
+        return generate_method_node_id(repo_name, file_path, caller_name, candidates[0]["class_name"])
 
     if caller_class:
         for c in candidates:
             if c["class_name"] == caller_class:
-                return generate_method_node_id(
-                    repo_name, file_path, caller_name, caller_class
-                )
+                return generate_method_node_id(repo_name, file_path, caller_name, caller_class)
 
     for c in candidates:
         if c["class_name"] is None:
@@ -1138,15 +1126,11 @@ def _resolve_callee(
     if is_method_call and callee_qualifier in ("self", "cls") and caller_class:
         for c in candidates:
             if c["class_name"] == caller_class:
-                return generate_method_node_id(
-                    repo_name, file_path, callee_name, caller_class
-                )
+                return generate_method_node_id(repo_name, file_path, callee_name, caller_class)
         return None
 
     if len(candidates) == 1:
-        return generate_method_node_id(
-            repo_name, file_path, callee_name, candidates[0]["class_name"]
-        )
+        return generate_method_node_id(repo_name, file_path, callee_name, candidates[0]["class_name"])
 
     for c in candidates:
         if c["class_name"] is None:
@@ -1176,11 +1160,7 @@ def _extract_decorator_edges(
     stats = {"total": 0, "resolved": 0, "builtin": 0, "unresolved": 0, "cross_file": 0}
 
     # Use language-specific builtin decorators or fall back to Python
-    builtin_decorators = (
-        filter_constants.builtin_decorators
-        if filter_constants
-        else PYTHON_DECORATOR_BUILTINS
-    )
+    builtin_decorators = filter_constants.builtin_decorators if filter_constants else PYTHON_DECORATOR_BUILTINS
 
     # Build local lookup for within-file decorators
     local_func_lookup = {m.name: m for m in methods if not m.class_name}
@@ -1192,9 +1172,7 @@ def _extract_decorator_edges(
         if not method.decorators:
             continue
 
-        decorated_id = generate_method_node_id(
-            repo_name, file_path, method.name, method.class_name
-        )
+        decorated_id = generate_method_node_id(repo_name, file_path, method.name, method.class_name)
 
         for decorator in method.decorators:
             stats["total"] += 1
@@ -1229,9 +1207,7 @@ def _extract_decorator_edges(
             if not decorator_id:
                 decorator_method = local_func_lookup.get(dec_name)
                 if decorator_method:
-                    decorator_id = generate_method_node_id(
-                        repo_name, file_path, decorator_method.name, None
-                    )
+                    decorator_id = generate_method_node_id(repo_name, file_path, decorator_method.name, None)
 
             if not decorator_id:
                 stats["unresolved"] += 1
@@ -1287,17 +1263,11 @@ def _extract_reference_edges(
     }
 
     # Use language-specific builtin types or fall back to Python
-    builtin_types = (
-        filter_constants.builtin_types if filter_constants else PYTHON_BUILTIN_TYPES
-    )
-    generic_containers = (
-        filter_constants.generic_containers if filter_constants else GENERIC_CONTAINERS
-    )
+    builtin_types = filter_constants.builtin_types if filter_constants else PYTHON_BUILTIN_TYPES
+    generic_containers = filter_constants.generic_containers if filter_constants else GENERIC_CONTAINERS
 
     for method in methods:
-        method_id = generate_method_node_id(
-            repo_name, file_path, method.name, method.class_name
-        )
+        method_id = generate_method_node_id(repo_name, file_path, method.name, method.class_name)
 
         referenced_types: set[str] = set()
 
@@ -1312,9 +1282,7 @@ def _extract_reference_edges(
         # Extract type names from return annotation
         if method.return_annotation:
             stats["total_annotations"] += 1
-            type_names = _extract_type_names(
-                method.return_annotation, generic_containers
-            )
+            type_names = _extract_type_names(method.return_annotation, generic_containers)
             referenced_types.update(type_names)
 
         # Create edges for each referenced type

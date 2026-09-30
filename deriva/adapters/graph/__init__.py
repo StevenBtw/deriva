@@ -6,6 +6,12 @@ to store and query repository structure, dependencies, and relationships.
 
 from __future__ import annotations
 
+from .cache import (
+    EnrichmentCache,
+    QueryCache,
+    compute_graph_hash,
+)
+from .manager import GraphManager
 from .models import (
     CONTAINS,
     DECLARES,
@@ -27,12 +33,6 @@ from .models import (
     TechnologyNode,
     TestNode,
     TypeDefinitionNode,
-)
-from .manager import GraphManager
-from .cache import (
-    EnrichmentCache,
-    QueryCache,
-    compute_graph_hash,
 )
 
 __version__ = "1.0.0"

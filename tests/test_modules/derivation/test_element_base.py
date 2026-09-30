@@ -6,8 +6,11 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from deriva.modules.derivation.base import (
     Candidate,
+    ElementPrompt,
     GenerationResult,
     PerCandidateConfig,
     RelationshipLLMConfig,
@@ -17,6 +20,8 @@ from deriva.modules.derivation.element_base import (
     ElementDerivationBase,
     PatternBasedDerivation,
 )
+
+TEST_PROMPT = ElementPrompt(persona="Derive elements.", candidates="Candidates.", rules="{abstention}Rules.", abstention="")
 
 
 class ConcreteDerivation(ElementDerivationBase):
@@ -69,7 +74,7 @@ class TestElementDerivationBase:
     def test_get_filter_kwargs_returns_empty_dict(self):
         """Default get_filter_kwargs should return empty dict."""
         derivation = ConcreteDerivation()
-        result = derivation.get_filter_kwargs(MagicMock())
+        result = derivation.get_filter_kwargs({})
         assert result == {}
 
     def test_generate_returns_result_for_empty_candidates(self):
@@ -82,7 +87,6 @@ class TestElementDerivationBase:
         result = derivation.generate(
             graph_manager=mock_graph,
             archimate_manager=MagicMock(),
-            engine=MagicMock(),
             llm_query_fn=MagicMock(),
             query="MATCH (n) RETURN n",
             instruction="Test",
@@ -90,6 +94,7 @@ class TestElementDerivationBase:
             max_candidates=10,
             batch_size=5,
             existing_elements=[],
+            prompt=TEST_PROMPT,
         )
 
         assert isinstance(result, GenerationResult)
@@ -107,7 +112,6 @@ class TestElementDerivationBase:
         result = derivation.generate(
             graph_manager=mock_graph,
             archimate_manager=MagicMock(),
-            engine=MagicMock(),
             llm_query_fn=MagicMock(),
             query="MATCH (n) RETURN n",
             instruction="Test",
@@ -115,6 +119,7 @@ class TestElementDerivationBase:
             max_candidates=10,
             batch_size=5,
             existing_elements=[],
+            prompt=TEST_PROMPT,
         )
 
         assert result.success is False
@@ -151,7 +156,6 @@ class TestElementDerivationBase:
             result = derivation.generate(
                 graph_manager=mock_graph,
                 archimate_manager=MagicMock(),
-                engine=MagicMock(),
                 llm_query_fn=MagicMock(),
                 query="MATCH (n) RETURN n",
                 instruction="Test",
@@ -159,6 +163,7 @@ class TestElementDerivationBase:
                 max_candidates=10,
                 batch_size=5,
                 existing_elements=[],
+                prompt=TEST_PROMPT,
             )
 
         assert result.success is True
@@ -184,7 +189,6 @@ class TestRelationshipConfigThreading:
             derivation.generate(
                 graph_manager=MagicMock(query=MagicMock(return_value=[])),
                 archimate_manager=MagicMock(),
-                engine=MagicMock(),
                 llm_query_fn=llm,
                 query="MATCH (n) RETURN n",
                 instruction="Test",
@@ -194,20 +198,21 @@ class TestRelationshipConfigThreading:
                 existing_elements=[{"identifier": "other", "name": "Other", "element_type": "Other"}],
                 relationship_config=relationship_config,
                 per_candidate=per_candidate,
+                prompt=TEST_PROMPT,
             )
         return derive
 
     def test_batch_mode_passes_relationship_config(self):
-        config = RelationshipLLMConfig(instruction="rules", min_confidence=0.6)
+        config = RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
 
         derive = self._generate(ConcreteDerivation(), config)
 
         assert derive.call_args.kwargs["llm_config"] is config
 
     def test_per_candidate_mode_passes_relationship_config(self):
-        config = RelationshipLLMConfig(instruction="rules", min_confidence=0.6)
+        config = RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
 
-        derive = self._generate(ConcreteDerivation(), config, PerCandidateConfig(min_pool=1, rules="R"))
+        derive = self._generate(ConcreteDerivation(), config, PerCandidateConfig(min_pool=1, rules="R", persona="P"))
 
         assert derive.call_args.kwargs["llm_config"] is config
 
@@ -227,7 +232,6 @@ class TestPerCandidateMode:
             ConcreteDerivation().generate(
                 graph_manager=MagicMock(query=MagicMock(return_value=[])),
                 archimate_manager=MagicMock(),
-                engine=MagicMock(),
                 llm_query_fn=llm,
                 query="MATCH (n) RETURN n",
                 instruction="Test",
@@ -235,18 +239,19 @@ class TestPerCandidateMode:
                 max_candidates=10,
                 batch_size=5,
                 existing_elements=[],
+                prompt=TEST_PROMPT,
                 per_candidate=per_candidate,
             )
         return [c.args[0] for c in llm.call_args_list]
 
     def test_config_rules_go_into_one_prompt_per_candidate(self):
-        prompts = self._prompts(PerCandidateConfig(min_pool=2, rules="CONFIG NAMING RULES"))
+        prompts = self._prompts(PerCandidateConfig(min_pool=2, rules="CONFIG NAMING RULES", persona="P"))
 
         assert len(prompts) == 2
         assert all("CONFIG NAMING RULES" in p for p in prompts)
 
     def test_pool_below_min_pool_uses_batch_mode(self):
-        prompts = self._prompts(PerCandidateConfig(min_pool=3, rules="CONFIG NAMING RULES"))
+        prompts = self._prompts(PerCandidateConfig(min_pool=3, rules="CONFIG NAMING RULES", persona="P"))
 
         assert len(prompts) == 1
         assert "CONFIG NAMING RULES" not in prompts[0]
@@ -330,34 +335,49 @@ class TestPatternBasedDerivation:
 
         assert result is False
 
-    def test_get_filter_kwargs_loads_patterns(self):
-        """Should load patterns from config."""
+    def test_get_filter_kwargs_uses_given_patterns(self):
+        """Patterns come from the caller (the service loads them from config)."""
         derivation = ConcretePatternDerivation()
 
-        with patch("deriva.services.config.get_derivation_patterns") as mock_get:
-            mock_get.return_value = {
-                "include": {"service", "manager"},
-                "exclude": {"test", "mock"},
-            }
+        result = derivation.get_filter_kwargs({"include": {"service", "manager"}, "exclude": {"test", "mock"}})
 
-            result = derivation.get_filter_kwargs(MagicMock())
+        assert result == {
+            "include_patterns": {"service", "manager"},
+            "exclude_patterns": {"test", "mock"},
+        }
 
-            assert "include_patterns" in result
-            assert "exclude_patterns" in result
-            assert "service" in result["include_patterns"]
-            assert "test" in result["exclude_patterns"]
+    def test_get_filter_kwargs_without_patterns(self):
+        """Should return empty sets when no patterns are configured."""
+        result = ConcretePatternDerivation().get_filter_kwargs({})
 
-    def test_get_filter_kwargs_handles_missing_patterns(self):
-        """Should return empty sets when no patterns configured."""
-        derivation = ConcretePatternDerivation()
+        assert result == {"include_patterns": set(), "exclude_patterns": set()}
 
-        with patch("deriva.services.config.get_derivation_patterns") as mock_get:
-            mock_get.side_effect = ValueError("Not found")
+    def test_get_filter_kwargs_passes_the_pattern_labels_when_configured(self):
+        result = ConcretePatternDerivation().get_filter_kwargs({"include": {"docker"}, "exclude": set(), "labels": {"File"}})
 
-            result = derivation.get_filter_kwargs(MagicMock())
+        assert result == {"include_patterns": {"docker"}, "exclude_patterns": set(), "pattern_labels": {"File"}}
 
-            assert result["include_patterns"] == set()
-            assert result["exclude_patterns"] == set()
+
+class TestPatternLabels:
+    """Name patterns can be scoped to candidates with given graph labels (the step's params.pattern_labels)."""
+
+    CANDIDATES = [
+        Candidate(node_id="tech", name="Alpha", labels=["Graph", "Technology"], properties={}),
+        Candidate(node_id="file_plain", name="alpha.txt", labels=["Graph", "File"], properties={}),
+        Candidate(node_id="file_match", name="gamma.docker", labels=["Graph", "File"], properties={}),
+    ]
+
+    def _kept(self, **kwargs):
+        from deriva.modules.derivation.node import NodeDerivation
+
+        kept = NodeDerivation().filter_candidates(self.CANDIDATES, {}, 10, include_patterns={"docker"}, exclude_patterns=set(), **kwargs)
+        return {c.node_id for c in kept}
+
+    def test_candidates_without_a_pattern_label_are_not_matched_by_name(self):
+        assert self._kept(pattern_labels={"File"}) == {"tech", "file_match"}
+
+    def test_without_pattern_labels_every_candidate_is_matched_by_name(self):
+        assert self._kept() == {"file_match"}
 
 
 class TestPatternMatchDefault:
@@ -421,6 +441,10 @@ class TestProcessBatch:
             max_tokens=None,
             defer_relationships=False,
             result=result,
+            repo_name="",
+            structure_names={},
+            taken=[],
+            element_prompt=TEST_PROMPT,
         )
 
         assert len(result.errors) > 0
@@ -464,6 +488,10 @@ class TestProcessBatch:
                 max_tokens=None,
                 defer_relationships=False,
                 result=result,
+                repo_name="",
+                structure_names={},
+                taken=[],
+                element_prompt=TEST_PROMPT,
             )
 
         # Should have parse errors
@@ -555,7 +583,6 @@ class TestCandidateDecisions:
             return ConcreteDerivation().generate(
                 graph_manager=MagicMock(query=MagicMock(return_value=[])),
                 archimate_manager=MagicMock(),
-                engine=MagicMock(),
                 llm_query_fn=llm,
                 query="MATCH (n) RETURN n",
                 instruction="Test",
@@ -563,22 +590,83 @@ class TestCandidateDecisions:
                 max_candidates=10,
                 batch_size=5,
                 existing_elements=[],
+                prompt=TEST_PROMPT,
                 per_candidate=per_candidate,
             )
 
     def test_per_candidate_created_decision_names_the_element(self):
         response = '{"elements": [{"identifier": "te_x", "name": "X", "documentation": "d", "source": "1", "confidence": 0.9}]}'
 
-        result = self._generate([Candidate(node_id="1", name="x", labels=["Node"], properties={})], response, PerCandidateConfig(min_pool=1, rules="R"))
+        result = self._generate([Candidate(node_id="1", name="x", labels=["Node"], properties={})], response, PerCandidateConfig(min_pool=1, rules="R", persona="P"))
 
         (decision,) = [d for d in result.candidate_decisions if d.stage == "created"]
         assert decision.element_id == result.created_elements[0]["identifier"]
         assert decision.element_confidence == 0.9
 
+    def test_batch_mode_without_prompt_texts_is_an_error(self):
+        """The batch prompt's texts come from the step's params.prompt; there is no default in code."""
+        llm = MagicMock()
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=[Candidate(node_id="1", name="x", labels=["Node"], properties={})]),
+        ):
+            result = ConcreteDerivation().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+            )
+
+        assert result.success is False
+        assert "params.prompt" in result.errors[0]
+        llm.assert_not_called()
+
+    def test_batch_created_decision_names_the_element(self):
+        """The decision names the element actually created, not the identifier the LLM proposed."""
+        response = '{"elements": [{"identifier": "llm_proposed", "name": "X", "documentation": "d", "source": "1", "confidence": 0.9}]}'
+
+        result = self._generate([Candidate(node_id="1", name="x", labels=["Node"], properties={})], response)
+
+        (decision,) = [d for d in result.candidate_decisions if d.stage == "created"]
+        assert decision.element_id == result.created_elements[0]["identifier"] != "llm_proposed"
+        assert decision.element_confidence == 0.9
+
+    def test_per_candidate_prompts_do_not_carry_earlier_answers(self):
+        """Each candidate's prompt depends on its structure only, so one LLM drift cannot cascade."""
+        response = '{"elements": [{"identifier": "te_x", "name": "Chosen Name", "documentation": "d", "source": "1", "confidence": 0.9}]}'
+        llm = MagicMock(return_value=SimpleNamespace(content=response))
+        candidates = [Candidate(node_id=str(i), name=f"cand{i}", labels=["Node"], properties={}) for i in (1, 2)]
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            ConcreteDerivation().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                prompt=TEST_PROMPT,
+                per_candidate=PerCandidateConfig(min_pool=1, rules="R", persona="P"),
+            )
+
+        prompts = [c.args[0] for c in llm.call_args_list]
+        assert len(prompts) == 2
+        assert not any("Existing Elements" in p or "cand1" in p for p in prompts[1:])
+
     def test_consolidated_candidates_are_recorded(self):
         candidates = [
-            Candidate(node_id="1", name="Order", labels=["Node"], properties={}, pagerank=0.9),
-            Candidate(node_id="2", name="Orders", labels=["Node"], properties={}, pagerank=0.1),
+            Candidate(node_id="1", name="Record", labels=["Node"], properties={}, pagerank=0.9),
+            Candidate(node_id="2", name="Records", labels=["Node"], properties={}, pagerank=0.1),
         ]
 
         result = self._generate(candidates, '{"elements": []}')
@@ -593,16 +681,16 @@ class TestPercentileFiltering:
     class Filter:
         MIN_PAGERANK = None
         MIN_PAGERANK_PERCENTILE = 40.0
-        MIN_KCORE_PERCENTILE = 30.0
         USE_COMMUNITY_ROOTS = False
         USE_ARTICULATION_POINTS = False
 
     @classmethod
     def _filter(cls, candidates):
+        from deriva.modules.derivation.base import GraphFilter
         from deriva.modules.derivation.element_base import HybridFilteringMixin
 
         filt = type("F", (cls.Filter, HybridFilteringMixin), {})()
-        return {c.node_id for c in filt.apply_graph_filtering(candidates, {}, 10)}
+        return {c.node_id for c in filt.apply_graph_filtering(candidates, {}, 10, GraphFilter(min_kcore_percentile=30.0))}
 
     def test_bottom_ranked_candidate_is_filtered(self):
         bottom = Candidate(node_id="bottom", name="b", pagerank_percentile=0.0, kcore_percentile=50.0)
@@ -624,6 +712,58 @@ class TestPercentileFiltering:
         assert (candidate.pagerank_percentile, candidate.kcore_percentile) == (None, None)
 
 
+class TestGraphFilter:
+    """The step's k-core threshold (params.graph_filter) applies to the candidates with one of its labels."""
+
+    @staticmethod
+    def _mixin():
+        from deriva.modules.derivation.element_base import HybridFilteringMixin
+
+        class Filter:
+            MIN_PAGERANK = None
+            MIN_PAGERANK_PERCENTILE = None
+            USE_COMMUNITY_ROOTS = False
+            USE_ARTICULATION_POINTS = False
+
+        return type("F", (Filter, HybridFilteringMixin), {})()
+
+    def test_the_threshold_leaves_out_low_kcore_candidates(self):
+        from deriva.modules.derivation.base import GraphFilter
+
+        low = Candidate(node_id="low", name="l", labels=["File"], kcore_percentile=20.0)
+        high = Candidate(node_id="high", name="h", labels=["File"], kcore_percentile=80.0)
+
+        kept = self._mixin().apply_graph_filtering([low, high], {}, 10, GraphFilter(min_kcore_percentile=30.0))
+
+        assert [c.node_id for c in kept] == ["high"]
+
+    def test_candidates_without_one_of_its_labels_pass(self):
+        from deriva.modules.derivation.base import GraphFilter
+
+        technology = Candidate(node_id="tech", name="t", labels=["Technology"], kcore_percentile=20.0)
+        file = Candidate(node_id="file", name="f", labels=["File"], kcore_percentile=20.0)
+
+        kept = self._mixin().apply_graph_filtering([technology, file], {}, 10, GraphFilter(min_kcore_percentile=30.0, labels=frozenset({"File"})))
+
+        assert [c.node_id for c in kept] == ["tech"]
+
+    def test_without_a_graph_filter_no_candidate_is_left_out_by_kcore(self):
+        low = Candidate(node_id="low", name="l", labels=["File"], kcore_percentile=1.0)
+
+        assert [c.node_id for c in self._mixin().apply_graph_filtering([low], {}, 10)] == ["low"]
+
+    def test_filter_candidates_passes_it_on(self):
+        from deriva.modules.derivation.base import GraphFilter
+        from deriva.modules.derivation.node import NodeDerivation
+
+        technology = Candidate(node_id="tech", name="Runtime", labels=["Technology"], kcore_percentile=20.0)
+        file = Candidate(node_id="file", name="Dockerfile", labels=["File"], kcore_percentile=20.0)
+
+        kept = NodeDerivation().filter_candidates([technology, file], {}, 10, graph_filter=GraphFilter(min_kcore_percentile=30.0, labels=frozenset({"File"})))
+
+        assert [c.node_id for c in kept] == ["tech"]
+
+
 class TestPerCandidateIdentity:
     """In per-candidate mode the prompt holds one candidate, so the element belongs to it."""
 
@@ -637,7 +777,6 @@ class TestPerCandidateIdentity:
             result = ConcreteDerivation().generate(
                 graph_manager=MagicMock(query=MagicMock(return_value=[])),
                 archimate_manager=archimate_manager,
-                engine=MagicMock(),
                 llm_query_fn=MagicMock(return_value=SimpleNamespace(content=response)),
                 query="MATCH (n) RETURN n",
                 instruction="Test",
@@ -645,7 +784,8 @@ class TestPerCandidateIdentity:
                 max_candidates=10,
                 batch_size=5,
                 existing_elements=[],
-                per_candidate=PerCandidateConfig(min_pool=1, rules="R"),
+                prompt=TEST_PROMPT,
+                per_candidate=PerCandidateConfig(min_pool=1, rules="R", persona="P"),
             )
         return result.created_elements
 
@@ -705,7 +845,6 @@ class TestIsolatedNamingStep:
             result = ConcreteDerivation().generate(
                 graph_manager=MagicMock(query=MagicMock(return_value=[])),
                 archimate_manager=MagicMock(),
-                engine=MagicMock(),
                 llm_query_fn=llm,
                 query="MATCH (n) RETURN n",
                 instruction="Test",
@@ -713,7 +852,8 @@ class TestIsolatedNamingStep:
                 max_candidates=10,
                 batch_size=5,
                 existing_elements=[],
-                per_candidate=PerCandidateConfig(min_pool=1, rules="R") if per_candidate else None,
+                prompt=TEST_PROMPT,
+                per_candidate=PerCandidateConfig(min_pool=1, rules="R", persona="P") if per_candidate else None,
                 naming=NamingConfig(instruction="NAMING RULES", samples=3),
             )
         return result.created_elements, prompts
@@ -746,3 +886,88 @@ class TestIsolatedNamingStep:
         created, _ = self._created([Candidate(node_id="n1", name="crud", labels=["Directory"], properties={})], ["CRUD Service"] * 3, per_candidate=False)
 
         assert [e["name"] for e in created] == ["CRUD Service"]
+
+
+class TestStructureDecidesUniqueness:
+    """Which candidates become elements is decided by structure: an LLM name never removes one."""
+
+    @staticmethod
+    def _generate(candidates, naming_answers, per_candidate=True, repo="", batch_size=5):
+        from deriva.modules.derivation.base import NamingConfig
+
+        answers = iter(naming_answers)
+        prompts: list[str] = []
+
+        def llm(prompt, schema, **kwargs):
+            prompts.append(prompt)
+            if schema.get("name") == "element_naming":
+                return SimpleNamespace(content=json.dumps({"name": next(answers)}))
+            sources = [c.node_id for c in candidates if f'"{c.node_id}"' in prompt]
+            elements = [{"identifier": "x", "name": "n", "documentation": "d", "source": s, "confidence": 0.9} for s in sources]
+            return SimpleNamespace(content=json.dumps({"elements": elements}))
+
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            result = ConcreteDerivation().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[{"name": repo}] if repo else [])),
+                archimate_manager=MagicMock(),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=batch_size,
+                existing_elements=[],
+                prompt=TEST_PROMPT,
+                per_candidate=PerCandidateConfig(min_pool=1, rules="R", persona="P") if per_candidate else None,
+                naming=NamingConfig(instruction="NAMING RULES", samples=1),
+            )
+        return result, prompts
+
+    @pytest.mark.parametrize("per_candidate", [True, False])
+    def test_a_name_that_is_another_candidates_structure_name_is_not_taken(self, per_candidate):
+        """The first candidate's LLM name is the second one's structure name: the first keeps its own."""
+        candidates = [
+            Candidate(node_id="dir_inner", name="ledger", labels=["Directory"], properties={}),
+            Candidate(node_id="dir_outer", name="ExternalLedger", labels=["Directory"], properties={}),
+        ]
+
+        result, _ = self._generate(candidates, ["External Ledger", "External Ledger"], per_candidate=per_candidate)
+
+        assert {e["properties"]["source"]: e["name"] for e in result.created_elements} == {"dir_inner": "Ledger", "dir_outer": "External Ledger"}
+
+    @pytest.mark.parametrize("per_candidate", [True, False])
+    def test_a_repeated_structure_name_is_left_out_before_the_llm(self, per_candidate):
+        """Structure names can repeat once the repository prefix is stripped: the later candidate is left out."""
+        candidates = [
+            Candidate(node_id="dir_first", name="gamma-delta", labels=["Directory"], properties={}),
+            Candidate(node_id="dir_second", name="delta", labels=["Directory"], properties={}),
+        ]
+
+        result, prompts = self._generate(candidates, ["Alpha", "Beta"], per_candidate=per_candidate, repo="gamma")
+
+        assert [e["properties"]["source"] for e in result.created_elements] == ["dir_first"]
+        assert {d.node_id: d.stage for d in result.candidate_decisions}["dir_second"] == "duplicate_removed"
+        assert not any('"dir_second"' in p for p in prompts)
+
+    def test_the_structure_name_is_recorded_only_when_the_name_changes(self):
+        candidates = [
+            Candidate(node_id="dir_a", name="alpha", labels=["Directory"], properties={}),
+            Candidate(node_id="dir_b", name="beta", labels=["Directory"], properties={}),
+        ]
+
+        result, _ = self._generate(candidates, ["Alpha", "Beta Store"])
+
+        assert {e["properties"]["source"]: e["properties"].get("structure_name") for e in result.created_elements} == {"dir_a": None, "dir_b": "Beta"}
+
+    def test_names_are_unique_across_batches(self):
+        candidates = [
+            Candidate(node_id="dir_a", name="alpha", labels=["Directory"], properties={}),
+            Candidate(node_id="dir_b", name="beta", labels=["Directory"], properties={}),
+        ]
+
+        result, _ = self._generate(candidates, ["Shared", "Shared"], per_candidate=False, batch_size=1)
+
+        assert [e["name"] for e in result.created_elements] == ["Shared", "Beta"]

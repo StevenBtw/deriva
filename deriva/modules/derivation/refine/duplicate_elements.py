@@ -4,7 +4,8 @@ Duplicate Elements Detection - Refine Step.
 Finds and handles duplicate ArchiMate elements:
 - Tier 1: Exact name + type matches (auto-merge)
 - Tier 2: Near-duplicates via fuzzy matching (flag/auto-merge based on threshold)
-- Tier 3: Semantic duplicates via LLM (only merge with confidence > 0.95)
+
+The step makes no LLM call.
 
 Merge strategy:
 - Keep element with higher source pagerank (if available)
@@ -20,10 +21,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
-
-from deriva.adapters.llm import FailedResponse
-
 from .base import (
     RefineResult,
     normalize_name,
@@ -32,26 +29,14 @@ from .base import (
 )
 from .normalization import RepoContext, normalize_for_dedup
 
-
-class DuplicateCheckResult(BaseModel):
-    """LLM response model for semantic duplicate checking."""
-
-    is_duplicate: bool = Field(description="True if elements represent the same thing")
-    confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence level (0.0 to 1.0)"
-    )
-    reasoning: str | None = Field(default=None, description="Brief explanation")
-
-
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 logger = logging.getLogger(__name__)
 
 # Default thresholds
 FUZZY_MATCH_THRESHOLD = 0.85  # Similarity ratio for Tier 2
-SEMANTIC_CONFIDENCE_THRESHOLD = 0.95  # LLM confidence for Tier 3
 
 
 @register_refine_step("duplicate_elements")
@@ -70,10 +55,9 @@ class DuplicateElementsStep:
         Args:
             archimate_manager: Manager for ArchiMate model operations
             graph_manager: Optional manager for source graph (for pagerank lookup)
-            llm_query_fn: Optional LLM function for semantic deduplication
+            llm_query_fn: Unused (the step makes no LLM call; part of the refine step interface)
             params: Optional parameters:
                 - fuzzy_threshold: Similarity threshold for Tier 2 (default: 0.85)
-                - semantic_threshold: Confidence threshold for Tier 3 (default: 0.95)
                 - auto_merge_tier2: Whether to auto-merge Tier 2 matches (default: False)
                 - extra_synonyms: Dict of additional synonym mappings {"from": "to"}
                 - use_lemmatization: Apply lemmatization before matching (default: False)
@@ -83,16 +67,9 @@ class DuplicateElementsStep:
         """
         params = params or {}
         fuzzy_threshold = params.get("fuzzy_threshold", FUZZY_MATCH_THRESHOLD)
-        semantic_threshold = params.get(
-            "semantic_threshold", SEMANTIC_CONFIDENCE_THRESHOLD
-        )
         auto_merge_tier2 = params.get("auto_merge_tier2", False)
-        extra_synonyms = params.get(
-            "extra_synonyms", None
-        )  # Additional synonym mappings
-        use_lemmatization = params.get(
-            "use_lemmatization", False
-        )  # Apply lemmatization
+        extra_synonyms = params.get("extra_synonyms", None)  # Additional synonym mappings
+        use_lemmatization = params.get("use_lemmatization", False)  # Apply lemmatization
 
         result = RefineResult(
             success=True,
@@ -107,7 +84,7 @@ class DuplicateElementsStep:
                 logger.info("No elements found for duplicate detection")
                 return result
 
-            repo_ctx = _build_repo_context(graph_manager, archimate_manager)
+            repo_ctx = _build_repo_context(graph_manager)
 
             # Group elements by type for comparison
             by_type: dict[str, list] = {}
@@ -122,7 +99,6 @@ class DuplicateElementsStep:
             # Find duplicates within each type
             tier1_duplicates = []  # Exact matches (including after canonicalization)
             tier2_duplicates = []  # Fuzzy matches
-            tier3_candidates = []  # Semantic candidates (for LLM)
 
             for elem_type, elems in by_type.items():
                 if len(elems) < 2:
@@ -143,26 +119,17 @@ class DuplicateElementsStep:
                             continue
 
                         # Tier 2: Fuzzy match on canonical + generic-normalized names.
-                        norm_a = normalize_name(
-                            canon_a, extra_synonyms, use_lemmatization
-                        )
-                        norm_b = normalize_name(
-                            canon_b, extra_synonyms, use_lemmatization
-                        )
+                        norm_a = normalize_name(canon_a, extra_synonyms, use_lemmatization)
+                        norm_b = normalize_name(canon_b, extra_synonyms, use_lemmatization)
                         similarity = similarity_ratio(norm_a, norm_b)
 
                         if similarity >= fuzzy_threshold:
                             tier2_duplicates.append((elem_a, elem_b, similarity))
-                        elif llm_query_fn and similarity >= 0.5:
-                            # Potential semantic duplicate - add to LLM candidates
-                            tier3_candidates.append((elem_a, elem_b))
 
             # Process Tier 1: Auto-merge exact duplicates
             for elem_a, elem_b in tier1_duplicates:
                 survivor, duplicate = self._select_survivor(elem_a, elem_b)
-                self._merge_elements(
-                    archimate_manager, survivor, duplicate, "exact_name_match"
-                )
+                self._merge_elements(archimate_manager, survivor, duplicate, "exact_name_match")
                 result.elements_merged += 1
                 result.elements_disabled += 1
                 result.details.append(
@@ -214,53 +181,7 @@ class DuplicateElementsStep:
                         }
                     )
 
-            # Process Tier 3: Semantic duplicates via LLM
-            if llm_query_fn and tier3_candidates:
-                for elem_a, elem_b in tier3_candidates[:10]:  # Limit LLM calls
-                    is_duplicate, confidence = self._check_semantic_duplicate(
-                        llm_query_fn, elem_a, elem_b
-                    )
-
-                    if is_duplicate and confidence >= semantic_threshold:
-                        survivor, duplicate = self._select_survivor(elem_a, elem_b)
-                        self._merge_elements(
-                            archimate_manager,
-                            survivor,
-                            duplicate,
-                            f"semantic_match_{confidence:.2f}",
-                        )
-                        result.elements_merged += 1
-                        result.elements_disabled += 1
-                        result.details.append(
-                            {
-                                "tier": 3,
-                                "action": "merged",
-                                "survivor": survivor.identifier,
-                                "duplicate": duplicate.identifier,
-                                "confidence": confidence,
-                                "reason": "semantic_match",
-                            }
-                        )
-                    elif is_duplicate:
-                        # Flag for review (confidence not high enough)
-                        result.issues_found += 1
-                        result.details.append(
-                            {
-                                "tier": 3,
-                                "action": "flagged",
-                                "element_a": elem_a.identifier,
-                                "element_b": elem_b.identifier,
-                                "name_a": elem_a.name,
-                                "name_b": elem_b.name,
-                                "confidence": confidence,
-                                "reason": "potential_semantic_duplicate",
-                            }
-                        )
-
-            logger.info(
-                f"Duplicate detection complete: {result.elements_merged} merged, "
-                f"{result.issues_found} flagged"
-            )
+            logger.info(f"Duplicate detection complete: {result.elements_merged} merged, {result.issues_found} flagged")
 
         except Exception as e:
             logger.exception(f"Error in duplicate element detection: {e}")
@@ -320,81 +241,24 @@ class DuplicateElementsStep:
                 pass
 
         # Disable the duplicate
-        archimate_manager.disable_element(
-            duplicate.identifier, reason=f"duplicate_of:{survivor.identifier}:{reason}"
-        )
+        archimate_manager.disable_element(duplicate.identifier, reason=f"duplicate_of:{survivor.identifier}:{reason}")
 
-        logger.debug(
-            f"Merged {duplicate.identifier} into {survivor.identifier} ({reason})"
-        )
-
-    def _check_semantic_duplicate(
-        self, llm_query_fn, elem_a, elem_b
-    ) -> tuple[bool, float]:
-        """Use LLM to check if two elements are semantically the same.
-
-        Returns:
-            Tuple of (is_duplicate, confidence)
-        """
-        prompt = f"""Are these two ArchiMate elements semantically the same thing?
-
-Element A:
-- Name: {elem_a.name}
-- Type: {elem_a.element_type}
-- Documentation: {elem_a.documentation or "N/A"}
-
-Element B:
-- Name: {elem_b.name}
-- Type: {elem_b.element_type}
-- Documentation: {elem_b.documentation or "N/A"}
-
-Consider if they represent the same concept, entity, or component in the architecture.
-"""
-
-        try:
-            # Use Pydantic model for structured output
-            response = llm_query_fn(prompt, response_model=DuplicateCheckResult)
-
-            # Handle failed responses
-            if isinstance(response, FailedResponse):
-                logger.warning(f"LLM semantic check failed: {response.error}")
-                return False, 0.0
-
-            # response is a DuplicateCheckResult instance
-            return response.is_duplicate, response.confidence
-        except Exception as e:
-            logger.warning(f"LLM semantic check failed: {e}")
-            return False, 0.0
+        logger.debug(f"Merged {duplicate.identifier} into {survivor.identifier} ({reason})")
 
 
-def _build_repo_context(
-    graph_manager: GraphManager | None,
-    archimate_manager: ArchimateManager,
-) -> RepoContext:
+def _build_repo_context(graph_manager: GraphManager | None) -> RepoContext:
     """Build normalization context from runtime graph state.
 
-    Repo name is read from the active Repository node. BusinessObjects are
-    read from already-derived elements for entity-suffix collapse. Both are
-    optional; an empty context makes the repo-specific rules no-ops.
+    The repo name is read from the active Repository node. It is optional; an
+    empty context makes the repo-specific rules no-ops.
     """
     repo_name = ""
     if graph_manager is not None:
         try:
-            rows = graph_manager.query(
-                "MATCH (r:Graph:Repository) WHERE r.active = true "
-                "RETURN r.repository_name as name LIMIT 1"
-            )
+            rows = graph_manager.query("MATCH (r:Graph:Repository) WHERE r.active = true RETURN r.repository_name as name LIMIT 1")
             if rows and rows[0].get("name"):
                 repo_name = rows[0]["name"]
         except Exception as e:
             logger.debug(f"Could not read active repository name: {e}")
 
-    business_objects: list[str] = []
-    try:
-        for elem in archimate_manager.get_elements(enabled_only=True):
-            if elem.element_type == "BusinessObject":
-                business_objects.append(elem.name)
-    except Exception as e:
-        logger.debug(f"Could not read BusinessObjects for dedup context: {e}")
-
-    return RepoContext(repo_name=repo_name, business_objects=business_objects)
+    return RepoContext(repo_name=repo_name)

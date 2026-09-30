@@ -5,12 +5,12 @@ These models are used with PydanticAI to enforce structured output from LLMs.
 They correspond to the extraction and derivation step outputs.
 
 Usage:
-    from deriva.adapters.llm.schemas import BusinessConceptResponse
+    from deriva.adapters.llm.schemas import TypeDefinitionResponse
 
     llm = LLMManager()
-    result = llm.query(prompt, response_model=BusinessConceptResponse)
-    for concept in result.concepts:
-        print(concept.conceptName)
+    result = llm.query(prompt, response_model=TypeDefinitionResponse)
+    for type_definition in result.types:
+        print(type_definition.typeName)
 """
 
 from __future__ import annotations
@@ -19,68 +19,41 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 # =============================================================================
 # Extraction Schemas
 # =============================================================================
 
 
-class BusinessConceptItem(BaseModel):
-    """A single business concept extracted from documentation."""
+class TermLabel(BaseModel):
+    """Label for one candidate term: decisions only (the name comes from the candidate list)."""
 
-    conceptName: str = Field(description="Name of the business concept")
-    conceptType: Literal[
-        "actor",
-        "service",
-        "process",
-        "entity",
-        "event",
-        "rule",
-        "goal",
-        "channel",
-        "product",
-        "capability",
-        "other",
-    ] = Field(description="Type of business concept")
-    description: str = Field(description="Brief description of the concept")
-    confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0"
-    )
+    term: str = Field(description="The term, copied exactly")
+    label: Literal[
+        "business_object",
+        "business_process",
+        "business_function",
+        "business_actor",
+        "business_role",
+        "business_event",
+        "business_service",
+        "technical",
+        "attribute",
+        "quality",
+        "generic",
+        "documentation",
+    ] = Field(description="One business label or one reject label")
 
 
-class BusinessConceptResponse(BaseModel):
-    """Response containing extracted business concepts."""
+class BusinessConceptClassificationResponse(BaseModel):
+    """Labels for every candidate term of a batch."""
 
-    concepts: list[BusinessConceptItem] = Field(
-        default_factory=list, description="List of extracted business concepts"
-    )
-
-
-class BusinessConceptMultiFileResult(BaseModel):
-    """Result for a single file in multi-file extraction."""
-
-    file_path: str = Field(
-        description="Path of the file these concepts were extracted from"
-    )
-    concepts: list[BusinessConceptItem] = Field(
-        default_factory=list, description="Concepts extracted from this file"
-    )
-
-
-class BusinessConceptMultiResponse(BaseModel):
-    """Response containing extracted business concepts from multiple files."""
-
-    results: list[BusinessConceptMultiFileResult] = Field(
-        default_factory=list, description="Results per file"
-    )
+    classifications: list[TermLabel] = Field(default_factory=list, description="One label per term, in the given order")
 
 
 class TypeDefinitionItem(BaseModel):
     """A single type definition extracted from source code."""
 
-    typeName: str = Field(
-        description="Name of the type (class, interface, function, etc.)"
-    )
+    typeName: str = Field(description="Name of the type (class, interface, function, etc.)")
     category: Literal[
         "class",
         "interface",
@@ -104,55 +77,37 @@ class TypeDefinitionItem(BaseModel):
         default="none",
         description="Type of interface this definition exposes, or 'none' if not an interface",
     )
-    startLine: int = Field(
-        ge=1, description="Line number where the type definition starts (1-indexed)"
-    )
-    endLine: int = Field(
-        ge=1, description="Line number where the type definition ends (1-indexed)"
-    )
-    confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0"
-    )
+    startLine: int = Field(ge=1, description="Line number where the type definition starts (1-indexed)")
+    endLine: int = Field(ge=1, description="Line number where the type definition ends (1-indexed)")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0")
 
 
 class TypeDefinitionResponse(BaseModel):
     """Response containing extracted type definitions."""
 
-    types: list[TypeDefinitionItem] = Field(
-        default_factory=list, description="List of extracted type definitions"
-    )
+    types: list[TypeDefinitionItem] = Field(default_factory=list, description="List of extracted type definitions")
 
 
-class TechnologyItem(BaseModel):
-    """A single technology extracted from code."""
+class TechnologyLabel(BaseModel):
+    """Label for one candidate item: decisions only (the item comes from structure)."""
 
-    technologyName: str = Field(description="Name of the technology")
-    technologyType: Literal[
-        "service",
+    item: str = Field(description="The item, copied exactly")
+    category: Literal[
         "system_software",
+        "service",
         "infrastructure",
         "platform",
         "network",
         "security",
-        "other",
-    ] = Field(description="Category of technology")
-    description: str = Field(
-        description="Brief description of how the technology is used"
-    )
-    version: str | None = Field(
-        default=None, description="Version of the technology if known"
-    )
-    confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0"
-    )
+        "none",
+    ] = Field(description="Kind of infrastructure the item runs or connects to, or none")
+    system: str = Field(description="Official name of that infrastructure; empty when the category is none")
 
 
-class TechnologyResponse(BaseModel):
-    """Response containing extracted technologies."""
+class TechnologyClassificationResponse(BaseModel):
+    """Labels for every candidate item of a batch."""
 
-    technologies: list[TechnologyItem] = Field(
-        default_factory=list, description="List of extracted technologies"
-    )
+    items: list[TechnologyLabel] = Field(default_factory=list, description="One label per item")
 
 
 class ExternalDependencyItem(BaseModel):
@@ -168,20 +123,14 @@ class ExternalDependencyItem(BaseModel):
     ] = Field(description="Category of dependency")
     description: str = Field(description="Brief description of the dependency")
     version: str | None = Field(default=None, description="Version if known")
-    ecosystem: str | None = Field(
-        default=None, description="Package ecosystem (pypi, npm, maven, etc.)"
-    )
-    confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0"
-    )
+    ecosystem: str | None = Field(default=None, description="Package ecosystem (pypi, npm, maven, etc.)")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0")
 
 
 class ExternalDependencyResponse(BaseModel):
     """Response containing extracted external dependencies."""
 
-    dependencies: list[ExternalDependencyItem] = Field(
-        default_factory=list, description="List of extracted external dependencies"
-    )
+    dependencies: list[ExternalDependencyItem] = Field(default_factory=list, description="List of extracted external dependencies")
 
 
 class TestItem(BaseModel):
@@ -198,29 +147,17 @@ class TestItem(BaseModel):
         "other",
     ] = Field(description="Type of test")
     description: str = Field(description="Brief description of what the test verifies")
-    testedElement: str | None = Field(
-        default=None, description="What is being tested (class, function, feature)"
-    )
-    framework: str | None = Field(
-        default=None, description="Test framework (pytest, jest, unittest)"
-    )
-    startLine: int = Field(
-        ge=1, description="Line number where the test starts (1-indexed)"
-    )
-    endLine: int = Field(
-        ge=1, description="Line number where the test ends (1-indexed)"
-    )
-    confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0"
-    )
+    testedElement: str | None = Field(default=None, description="What is being tested (class, function, feature)")
+    framework: str | None = Field(default=None, description="Test framework (pytest, jest, unittest)")
+    startLine: int = Field(ge=1, description="Line number where the test starts (1-indexed)")
+    endLine: int = Field(ge=1, description="Line number where the test ends (1-indexed)")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0")
 
 
 class TestResponse(BaseModel):
     """Response containing extracted tests."""
 
-    tests: list[TestItem] = Field(
-        default_factory=list, description="List of extracted tests"
-    )
+    tests: list[TestItem] = Field(default_factory=list, description="List of extracted tests")
 
 
 class MethodItem(BaseModel):
@@ -228,54 +165,36 @@ class MethodItem(BaseModel):
 
     methodName: str = Field(description="Name of the method/function")
     returnType: str = Field(description="Return type of the method")
-    visibility: Literal["public", "private", "protected", "internal"] = Field(
-        default="public", description="Visibility modifier"
-    )
+    visibility: Literal["public", "private", "protected", "internal"] = Field(default="public", description="Visibility modifier")
     description: str = Field(description="Brief description of what the method does")
     parameters: str | None = Field(default=None, description="Parameter signature")
     isStatic: bool = Field(default=False, description="Whether it's a static method")
     isAsync: bool = Field(default=False, description="Whether it's an async method")
-    startLine: int = Field(
-        ge=1, description="Line number where the method starts (1-indexed)"
-    )
-    endLine: int = Field(
-        ge=1, description="Line number where the method ends (1-indexed)"
-    )
-    confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0"
-    )
+    startLine: int = Field(ge=1, description="Line number where the method starts (1-indexed)")
+    endLine: int = Field(ge=1, description="Line number where the method ends (1-indexed)")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0")
 
 
 class MethodResponse(BaseModel):
     """Response containing extracted methods."""
 
-    methods: list[MethodItem] = Field(
-        default_factory=list, description="List of extracted methods"
-    )
+    methods: list[MethodItem] = Field(default_factory=list, description="List of extracted methods")
 
 
 class DirectoryClassificationItem(BaseModel):
-    """Classification for a single directory."""
+    """Classification for a single directory: decisions only (the name comes from the directory)."""
 
     directoryName: str = Field(description="Original directory name")
-    classification: Literal["business", "technology", "skip"] = Field(
-        description="Classification type"
-    )
-    conceptType: str = Field(
-        description="Specific type (for business: actor/entity/process; for technology: infrastructure/framework/tool)"
-    )
-    description: str = Field(description="Brief description of what this represents")
-    confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence score between 0.0 and 1.0"
+    classification: Literal["business", "technology", "skip"] = Field(description="Classification type")
+    conceptType: Literal["entity", "process", "actor", "capability", "infrastructure", "framework", "none"] = Field(
+        description="Business: entity, process, actor or capability; technology: infrastructure or framework; skip: none"
     )
 
 
 class DirectoryClassificationResponse(BaseModel):
     """Response containing directory classifications."""
 
-    classifications: list[DirectoryClassificationItem] = Field(
-        default_factory=list, description="List of directory classifications"
-    )
+    classifications: list[DirectoryClassificationItem] = Field(default_factory=list, description="List of directory classifications")
 
 
 # =============================================================================
@@ -288,24 +207,18 @@ class DerivedElementItem(BaseModel):
 
     name: str = Field(description="Name of the element")
     description: str = Field(description="Description of the element")
-    documentation: str | None = Field(
-        default=None, description="Additional documentation"
-    )
+    documentation: str | None = Field(default=None, description="Additional documentation")
     sourceNodes: list[str] = Field(
         default_factory=list,
         description="IDs of source nodes this element was derived from",
     )
-    confidence: float = Field(
-        ge=0.0, le=1.0, default=0.8, description="Confidence score"
-    )
+    confidence: float = Field(ge=0.0, le=1.0, default=0.8, description="Confidence score")
 
 
 class DerivedElementResponse(BaseModel):
     """Response containing derived ArchiMate elements."""
 
-    elements: list[DerivedElementItem] = Field(
-        default_factory=list, description="List of derived elements"
-    )
+    elements: list[DerivedElementItem] = Field(default_factory=list, description="List of derived elements")
 
 
 class DerivedRelationshipItem(BaseModel):
@@ -323,17 +236,13 @@ class DerivedRelationshipItem(BaseModel):
         "Flow",
         "Triggering",
     ] = Field(description="Type of ArchiMate relationship")
-    description: str | None = Field(
-        default=None, description="Description of the relationship"
-    )
+    description: str | None = Field(default=None, description="Description of the relationship")
 
 
 class DerivedRelationshipResponse(BaseModel):
     """Response containing derived ArchiMate relationships."""
 
-    relationships: list[DerivedRelationshipItem] = Field(
-        default_factory=list, description="List of derived relationships"
-    )
+    relationships: list[DerivedRelationshipItem] = Field(default_factory=list, description="List of derived relationships")
 
 
 # =============================================================================
@@ -341,10 +250,9 @@ class DerivedRelationshipResponse(BaseModel):
 # =============================================================================
 
 EXTRACTION_SCHEMAS: dict[str, type[BaseModel]] = {
-    "BusinessConcept": BusinessConceptResponse,
-    "BusinessConceptMulti": BusinessConceptMultiResponse,
+    "BusinessConcept": BusinessConceptClassificationResponse,
     "TypeDefinition": TypeDefinitionResponse,
-    "Technology": TechnologyResponse,
+    "Technology": TechnologyClassificationResponse,
     "ExternalDependency": ExternalDependencyResponse,
     "Test": TestResponse,
     "Method": MethodResponse,
@@ -369,14 +277,12 @@ def get_derivation_schema(schema_type: str) -> type[BaseModel] | None:
 
 __all__ = [
     # Extraction schemas
-    "BusinessConceptItem",
-    "BusinessConceptResponse",
-    "BusinessConceptMultiFileResult",
-    "BusinessConceptMultiResponse",
+    "TermLabel",
+    "BusinessConceptClassificationResponse",
     "TypeDefinitionItem",
     "TypeDefinitionResponse",
-    "TechnologyItem",
-    "TechnologyResponse",
+    "TechnologyLabel",
+    "TechnologyClassificationResponse",
     "ExternalDependencyItem",
     "ExternalDependencyResponse",
     "TestItem",
