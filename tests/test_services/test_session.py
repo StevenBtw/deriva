@@ -1281,6 +1281,20 @@ class TestPipelineSessionBenchmarking:
             mock_config.assert_called_once()
             assert result.session_id == "bench_123"
 
+    def test_run_benchmark_returns_to_the_session_database(self, connected_session):
+        """The benchmark switches to each repository's database; the session gets its own back, also after an error."""
+        with (
+            patch("deriva.services.benchmarking.BenchmarkConfig"),
+            patch("deriva.services.benchmarking.BenchmarkOrchestrator") as orchestrator,
+            patch("deriva.services.session.use_database") as use_database,
+        ):
+            orchestrator.return_value.run.side_effect = RuntimeError("boom")
+
+            with pytest.raises(RuntimeError, match="boom"):
+                connected_session.run_benchmark(repositories=["repo1"], models=["model1"])
+
+        use_database.assert_called_once_with(connected_session.repository)
+
     def test_run_benchmark_with_all_options(self, connected_session):
         """Should pass all options to benchmark config."""
         with patch("deriva.services.benchmarking.BenchmarkConfig") as mock_config, patch("deriva.services.benchmarking.BenchmarkOrchestrator") as mock_orch:

@@ -2169,6 +2169,9 @@ class RoleConfig:
     name_template: str = ""
     container_type: str = ""  # Element type whose source directory holds a candidate ({container})
     show_path: bool = False  # Show each candidate's path in the classification prompt
+    # element_per "candidate" only: the step's naming call (params.naming) may rename each element,
+    # starting from its template name, under the usual uniqueness rules
+    naming_call: bool = False
 
 
 ROLE_SCHEMA: dict[str, Any] = {

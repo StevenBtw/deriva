@@ -29,6 +29,10 @@ class Settings:
     # Context snippet around an occurrence, at most this many characters
     snippet_chars: int = 200
 
+    def __post_init__(self) -> None:
+        if self.dedup_shingle < 1:
+            raise ValueError(f"dedup_shingle must be at least 1 word, got {self.dedup_shingle}")
+
     @classmethod
     def from_dict(cls, values: dict[str, Any]) -> Settings:
         """Settings from a JSON object; unknown names are an error, so a typo never falls back to a default."""

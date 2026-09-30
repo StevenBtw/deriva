@@ -611,7 +611,9 @@ class ElementDerivationBase(ABC):
             role_candidates = [c for c in filtered if roles.labels.intersection(c.labels)]
             filtered = [c for c in filtered if not roles.labels.intersection(c.labels)]
             if role_candidates:
-                self._process_roles(role_candidates, roles, llm_query_fn, llm_kwargs, graph_manager, archimate_manager, repo_name, batch_size, result, taken)
+                self._process_roles(
+                    role_candidates, roles, llm_query_fn, llm_kwargs, graph_manager, archimate_manager, repo_name, batch_size, result, taken, naming, structure_names
+                )
 
         # Compute abstention strength signal from the filtered set.
         # Shared across batches so the LLM sees one consistent view.
@@ -689,6 +691,8 @@ class ElementDerivationBase(ABC):
         batch_size: int,
         result: GenerationResult,
         taken: list[str],
+        naming: NamingConfig | None = None,
+        structure_names: dict[str, str] | None = None,
     ) -> None:
         """Classify candidates into the configured roles and create one element per chosen role.
 
@@ -762,10 +766,13 @@ class ElementDerivationBase(ABC):
                 ),
                 "properties": properties,
             }
+            # The step's naming call may rename a candidate's element (the usual uniqueness rules apply)
+            if roles.naming_call and naming is not None and roles.element_per == "candidate":
+                self._apply_naming(element_data, source, naming, llm_query_fn, llm_kwargs, repo_name, taken, structure_names or {})
             try:
                 archimate_manager.add_element(
                     Element(
-                        name=name,
+                        name=element_data["name"],
                         element_type=self.ELEMENT_TYPE,
                         identifier=element_data["identifier"],
                         documentation=element_data["documentation"],
@@ -777,7 +784,7 @@ class ElementDerivationBase(ABC):
                 continue
             result.elements_created += 1
             result.created_elements.append(element_data)
-            taken.append(name)
+            taken.append(element_data["name"])
             for c in group:
                 element_of[c.node_id] = element_data["identifier"]
 

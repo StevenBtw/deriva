@@ -38,7 +38,8 @@ def test_extract_runs_in_process_with_the_given_settings(tmp_path, monkeypatch):
     result = NlpTool(models_dir=tmp_path).extract(documents, {"snippet_chars": 80}, ["data"])
 
     assert result["settings"]["snippet_chars"] == 80
-    assert {(c["language"], c["term"]): c["english"] for c in result["candidates"]}[("en", "Invoice")] == "invoice"
+    english = {(c["language"], c["term"]): c["english"] for c in result["candidates"]}
+    assert english.get(("en", "Invoice")) == "invoice", english  # a failure shows what the pinned models produced
     assert result["tool"]["spacy"]
 
 

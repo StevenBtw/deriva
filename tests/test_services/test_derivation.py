@@ -2485,6 +2485,23 @@ class TestRoleConfig:
 
         assert (roles.name_template, roles.container_type, roles.show_path) == ("{container} {subject} {role}", "ApplicationComponent", True)
 
+    def test_params_can_name_role_elements_with_the_naming_call(self):
+        params = {"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate", "naming_call": True}, "naming": {"instruction": "N"}}
+
+        assert derivation._role_config(json.dumps(params)).naming_call is True
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate", "naming_call": "yes"}, "naming": {"instruction": "N"}},
+            {"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "role", "naming_call": True}, "naming": {"instruction": "N"}},
+            {"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate", "naming_call": True}},
+        ],
+    )
+    def test_invalid_naming_call_settings_are_an_error(self, params):
+        with pytest.raises(ValueError, match="naming"):
+            derivation._role_config(json.dumps(params))
+
     @pytest.mark.parametrize(
         "extra",
         [

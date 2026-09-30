@@ -1163,7 +1163,11 @@ class PipelineSession:
             config=bench_config,
         )
 
-        return orchestrator.run(verbose=verbose, progress=progress)
+        try:
+            return orchestrator.run(verbose=verbose, progress=progress)
+        finally:
+            # The benchmark switched to each repository's database
+            use_database(self.repository)
 
     def run_step_benchmark(self, step: str, repositories: list[str], model: str, runs: int = 3, verbose: bool = False) -> step_benchmark.StepBenchmarkResult:
         """Repeat one extraction step on a fixed input per repository and compare its outputs.

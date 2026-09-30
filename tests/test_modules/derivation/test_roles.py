@@ -327,3 +327,86 @@ class TestRoleNameTemplate:
         assert '"path":"shop/src/WidgetClient.java"' in prompts[0]
         # The container's name can be an LLM-written element name: it never goes into a prompt
         assert "Shop" not in prompts[0]
+
+
+class TestRoleNamingCall:
+    """With naming_call, each element of the role path starts from its structure name and the step's naming call may rename it."""
+
+    ROLES = RoleConfig(
+        labels=frozenset({"BusinessConcept"}),
+        instruction="KIND INSTRUCTION",
+        names={"kind": "Kind"},
+        element_per="candidate",
+        name_template="{subject}",
+        naming_call=True,
+    )
+
+    @staticmethod
+    def _concept(node_id, name):
+        return Candidate(node_id=node_id, name=name, labels=["Graph", "BusinessConcept"], properties={"confidence": 0.9})
+
+    @classmethod
+    def _generate(cls, candidates, kinds, names):
+        """``kinds``: the role per candidate id; ``names``: the naming answer per candidate name (None: no usable answer)."""
+        prompts: list[str] = []
+
+        def llm(prompt, schema, **kwargs):
+            prompts.append(prompt)
+            if schema.get("name") == "role_classification":
+                items = [{"id": c.node_id, "role": kinds[c.node_id]} for c in candidates if f'"{c.node_id}"' in prompt]
+                return SimpleNamespace(content=json.dumps({"items": items}))
+            (candidate,) = [c for c in candidates if f'"name":"{c.name}"' in prompt]
+            return SimpleNamespace(content=json.dumps({"name": names[candidate.name]}))
+
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            result = Derivation().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(get_elements=MagicMock(return_value=[])),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                prompt=TEST_PROMPT,
+                naming=NamingConfig(instruction="NAMING GUIDE", samples=1),
+                roles=cls.ROLES,
+            )
+        return {e["properties"]["source"]: e for e in result.created_elements}, prompts
+
+    def test_the_naming_call_renames_the_element(self):
+        alpha = self._concept("concept::r::alpha", "Alpha")
+
+        elements, prompts = self._generate([alpha], {alpha.node_id: "kind"}, {"Alpha": "Alpha Handling"})
+
+        element = elements[alpha.node_id]
+        assert element["name"] == "Alpha Handling"
+        assert element["properties"]["structure_name"] == "Alpha"
+        assert len(prompts) == 2  # one classification call, one naming call
+        assert "NAMING GUIDE" in prompts[1]
+
+    def test_no_naming_call_for_candidates_without_a_role(self):
+        alpha, beta = self._concept("concept::r::alpha", "Alpha"), self._concept("concept::r::beta", "Beta")
+
+        elements, prompts = self._generate([alpha, beta], {alpha.node_id: "kind", beta.node_id: "none"}, {"Alpha": "Alpha Handling", "Beta": "Beta Handling"})
+
+        assert list(elements) == [alpha.node_id]
+        assert len(prompts) == 2
+
+    def test_a_name_another_element_already_has_keeps_the_structure_name(self):
+        alpha, beta = self._concept("concept::r::alpha", "Alpha"), self._concept("concept::r::beta", "Beta")
+
+        elements, _ = self._generate([alpha, beta], {alpha.node_id: "kind", beta.node_id: "kind"}, {"Alpha": "Shared Name", "Beta": "Shared Name"})
+
+        assert (elements[alpha.node_id]["name"], elements[beta.node_id]["name"]) == ("Shared Name", "Beta")
+
+    def test_without_a_usable_answer_the_structure_name_stays(self):
+        alpha = self._concept("concept::r::alpha", "Alpha")
+
+        elements, _ = self._generate([alpha], {alpha.node_id: "kind"}, {"Alpha": None})
+
+        assert elements[alpha.node_id]["name"] == "Alpha"

@@ -201,6 +201,11 @@ def _role_config(params: str | None) -> RoleConfig | None:
         raise ValueError("params.roles name_template and container_type must be text, show_path true or false")
     if name_template and element_per != "candidate":
         raise ValueError("params.roles.name_template names one element per candidate: it needs element_per 'candidate'")
+    naming_call = settings.get("naming_call", False)
+    if not isinstance(naming_call, bool):
+        raise ValueError(f"params.roles.naming_call must be true or false, got {naming_call!r}")
+    if naming_call and (element_per != "candidate" or not json.loads(params or "{}").get("naming")):
+        raise ValueError("params.roles.naming_call renames one element per candidate with the step's naming call: it needs element_per 'candidate' and params.naming")
     return RoleConfig(
         labels=frozenset(settings["labels"]),
         instruction=settings["instruction"],
@@ -211,6 +216,7 @@ def _role_config(params: str | None) -> RoleConfig | None:
         name_template=name_template,
         container_type=container_type,
         show_path=show_path,
+        naming_call=naming_call,
     )
 
 
