@@ -9,8 +9,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel
-
 # Re-export exceptions for backwards compatibility
 from deriva.common.exceptions import APIError as APIError
 from deriva.common.exceptions import CacheError as CacheError
@@ -20,6 +18,7 @@ from deriva.common.exceptions import LLMError as LLMError
 from deriva.common.exceptions import RateLimitError as RateLimitError
 from deriva.common.exceptions import TransientError as TransientError
 from deriva.common.exceptions import ValidationError as ValidationError
+from pydantic import BaseModel
 
 from .model_registry import VALID_PROVIDERS
 
@@ -73,9 +72,7 @@ class BenchmarkModelConfig:
     def __post_init__(self):
         """Validate provider."""
         if self.provider not in VALID_PROVIDERS:
-            raise ValueError(
-                f"Invalid provider: {self.provider}. Must be one of {VALID_PROVIDERS}"
-            )
+            raise ValueError(f"Invalid provider: {self.provider}. Must be one of {VALID_PROVIDERS}")
 
     def get_api_key(self) -> str | None:
         """Get API key from direct value or environment variable."""
@@ -100,7 +97,7 @@ class BenchmarkModelConfig:
         return defaults.get(self.provider, "")
 
 
-class ResponseType(str, Enum):
+class ResponseType(str, Enum):  # noqa: UP042 - StrEnum would change str() of members, which callers compare
     """Type of LLM response."""
 
     LIVE = "live"

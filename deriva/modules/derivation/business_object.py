@@ -121,9 +121,7 @@ class BusinessObjectDerivation(HybridDerivation):
                 type_definitions.append(c)
 
         # Filter each group appropriately
-        filtered_concepts = self._filter_business_concepts(
-            business_concepts, max_candidates
-        )
+        filtered_concepts = self._filter_business_concepts(business_concepts, max_candidates)
         filtered_types = self._filter_typedef_candidates(
             type_definitions,
             enrichments,
@@ -190,26 +188,16 @@ class BusinessObjectDerivation(HybridDerivation):
         filtered = [c for c in candidates if c.name]
 
         # Separate likely business objects from others
-        likely_business = [
-            c
-            for c in filtered
-            if self._is_likely_business_object(
-                c.name, include_patterns, exclude_patterns
-            )
-        ]
+        likely_business = [c for c in filtered if self._is_likely_business_object(c.name, include_patterns, exclude_patterns)]
         others = [c for c in filtered if c not in likely_business]
 
         # Apply graph filtering to likely business objects
-        likely_filtered = self.apply_graph_filtering(
-            likely_business, enrichments, max_candidates // 2
-        )
+        likely_filtered = self.apply_graph_filtering(likely_business, enrichments, max_candidates // 2)
 
         # Fill remaining slots with other candidates
         remaining_slots = max_candidates - len(likely_filtered)
         if remaining_slots > 0 and others:
-            others_filtered = self.apply_graph_filtering(
-                others, enrichments, remaining_slots
-            )
+            others_filtered = self.apply_graph_filtering(others, enrichments, remaining_slots)
             likely_filtered.extend(others_filtered)
 
         self.logger.debug(
@@ -221,9 +209,7 @@ class BusinessObjectDerivation(HybridDerivation):
 
         return likely_filtered[:max_candidates]
 
-    def _is_likely_business_object(
-        self, name: str, include_patterns: set[str], exclude_patterns: set[str]
-    ) -> bool:
+    def _is_likely_business_object(self, name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
         """Check if a type name suggests a business object."""
         if not name:
             return False

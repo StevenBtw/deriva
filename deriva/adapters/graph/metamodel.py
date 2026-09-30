@@ -5,6 +5,7 @@ and extract the metamodel structure for UI display and validation.
 """
 
 from __future__ import annotations
+
 import inspect
 from dataclasses import fields
 from typing import Any
@@ -55,11 +56,7 @@ def get_relationship_types() -> list[str]:
     """
     relationships = []
     for name, value in inspect.getmembers(models):
-        if (
-            isinstance(value, str)
-            and name.isupper()
-            and name not in ["Optional", "List"]
-        ):
+        if isinstance(value, str) and name.isupper() and name not in ["Optional", "List"]:
             relationships.append(value)
     return sorted(relationships)
 

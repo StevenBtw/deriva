@@ -29,9 +29,11 @@ from deriva.modules.analysis.semantic_matching import (
 )
 from deriva.modules.analysis.stability_analysis import (
     aggregate_stability_metrics,
+    compute_answer_stability,
     compute_phase_stability,
 )
 from deriva.modules.analysis.types import (
+    AnswerStability,
     BenchmarkReport,
     CrossRepoComparison,
     FitAnalysis,
@@ -116,12 +118,13 @@ class BenchmarkAnalyzer:
         return load_benchmark_ocel("workspace/benchmarks", session_id)
 
     def _load_session_info(self, session_id: str) -> dict:
-        """Load session summary from file."""
-        summary_path = Path("workspace/benchmarks") / session_id / "summary.json"
-
-        if summary_path.exists():
-            with open(summary_path) as f:
-                return json.load(f)
+        """Load session metadata from file (``summary.json`` in sessions before the rename)."""
+        session_dir = Path("workspace/benchmarks") / session_id
+        for name in ("session_metadata.json", "summary.json"):
+            path = session_dir / name
+            if path.exists():
+                with open(path, encoding="utf-8") as f:
+                    return json.load(f)
 
         return {}
 
@@ -277,6 +280,35 @@ class BenchmarkAnalyzer:
 
         return self._stability_reports
 
+    def analyze_answer_stability(self) -> dict[str, list[AnswerStability]]:
+        """Raw LLM answer stability per repository: the same prompt answered identically in every run.
+
+        Answers are compared on their decisions (``decision_hash``); sessions recorded
+        before that have only the full response hash.
+
+        Extraction runs (``session:extraction:repo``) and derivation runs
+        (``session:repo:model:iteration``) are compared separately, since their prompts differ.
+        """
+        answers: dict[str, dict[str, dict[str, dict[tuple[str, str], list[str | None]]]]] = {}
+        for ocel in self.ocel_logs.values():
+            for event in ocel.events:
+                step, key = event.attributes.get("config_id"), event.attributes.get("cache_key")
+                if event.activity != "LLMQuery" or not step or not key:
+                    continue
+                for run_id in event.objects.get("BenchmarkRun", []):
+                    parts = run_id.split(":")
+                    if len(parts) == 3 and parts[1] == "extraction":
+                        family, repo = "extraction", parts[2]
+                    elif len(parts) >= 2:
+                        family, repo = "derivation", parts[1]
+                    else:
+                        continue
+                    runs = answers.setdefault(repo, {}).setdefault(family, {})
+                    runs.setdefault(run_id, {}).setdefault((step, key), []).append(event.attributes.get("decision_hash") or event.attributes.get("response_hash"))
+        return {
+            repo: [s for family in ("extraction", "derivation") for s in compute_answer_stability(answers[repo].get(family, {}))] for repo in self.repositories if repo in answers
+        }
+
     def analyze_semantic_match(self) -> dict[str, SemanticMatchReport]:
         """
         Compare derived models against reference models.
@@ -402,6 +434,7 @@ class BenchmarkAnalyzer:
 
         # Run all analyses
         stability = self.analyze_stability()
+        answer_stability = self.analyze_answer_stability()
         semantic = self.analyze_semantic_match()
         fit = self.analyze_fit()
         cross_repo = self.analyze_cross_repo()
@@ -428,6 +461,7 @@ class BenchmarkAnalyzer:
             models=self.models,
             generated_at=datetime.now().isoformat(),
             stability_reports=stability,
+            answer_stability=answer_stability,
             semantic_reports=semantic,
             fit_analyses=fit,
             cross_repo=cross_repo,

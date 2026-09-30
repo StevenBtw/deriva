@@ -30,13 +30,6 @@ Usage:
         print(f"Available: {step_name}")
 """
 
-from .base import (
-    REFINE_STEPS,
-    RefineResult,
-    RefineStep,
-    run_refine_step,
-)
-
 # Import modules to trigger registration
 from . import (
     circular_relationships,
@@ -48,6 +41,12 @@ from . import (
     orphan_elements,
     relationship_consolidation,
     structural_consistency,
+)
+from .base import (
+    REFINE_STEPS,
+    RefineResult,
+    RefineStep,
+    run_refine_step,
 )
 
 __all__ = [

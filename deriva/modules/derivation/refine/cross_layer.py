@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING, Any
 from .base import RefineResult, register_refine_step
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 logger = logging.getLogger(__name__)
 
@@ -133,9 +133,7 @@ class CrossLayerCoherenceStep:
                 ns=ns,
             )
 
-            logger.info(
-                f"Cross-layer coherence check complete: {result.issues_found} issues found"
-            )
+            logger.info(f"Cross-layer coherence check complete: {result.issues_found} issues found")
 
         except Exception as e:
             logger.exception(f"Error in cross-layer coherence check: {e}")
@@ -179,10 +177,7 @@ class CrossLayerCoherenceStep:
         disconnected = archimate_manager.query(query)
 
         if disconnected:
-            logger.info(
-                f"Found {len(disconnected)} {source_layer} elements without "
-                f"{target_layer} connections"
-            )
+            logger.info(f"Found {len(disconnected)} {source_layer} elements without {target_layer} connections")
 
             for elem in disconnected:
                 element_type = elem["label"] if elem["label"] else "Unknown"
@@ -234,9 +229,7 @@ class CrossLayerCoherenceStep:
         floating = archimate_manager.query(query)
 
         if floating:
-            logger.info(
-                f"Found {len(floating)} {layer} elements not connected to {connected_to}"
-            )
+            logger.info(f"Found {len(floating)} {layer} elements not connected to {connected_to}")
 
             for elem in floating:
                 element_type = elem["label"] if elem["label"] else "Unknown"

@@ -204,25 +204,13 @@ def extract_node_type(node_id: str) -> str:
 def extract_element_type(element_id: str) -> str:
     """Extract element type from element ID."""
     lower_id = element_id.lower()
-    if (
-        "component" in lower_id
-        or lower_id.startswith("ac_")
-        or lower_id.startswith("ac::")
-    ):
+    if "component" in lower_id or lower_id.startswith("ac_") or lower_id.startswith("ac::"):
         return "ApplicationComponent"
-    if (
-        "service" in lower_id
-        or lower_id.startswith("as_")
-        or lower_id.startswith("as::")
-    ):
+    if "service" in lower_id or lower_id.startswith("as_") or lower_id.startswith("as::"):
         return "ApplicationService"
     if "data" in lower_id or lower_id.startswith("do_") or lower_id.startswith("do::"):
         return "DataObject"
-    if (
-        "artifact" in lower_id
-        or lower_id.startswith("art_")
-        or lower_id.startswith("art::")
-    ):
+    if "artifact" in lower_id or lower_id.startswith("art_") or lower_id.startswith("art::"):
         return "Artifact"
     # Handle both formats
     if "::" in element_id:
@@ -259,9 +247,7 @@ def generate_recommendations(deviations: list[ConfigDeviation]) -> list[str]:
             )
 
     if not recommendations:
-        recommendations.append(
-            "All configs show good consistency (>80%). No immediate action needed."
-        )
+        recommendations.append("All configs show good consistency (>80%). No immediate action needed.")
 
     return recommendations
 
@@ -285,15 +271,11 @@ def build_deviation_report(
         Complete DeviationReport
     """
     # Sort by deviation count (highest first)
-    sorted_deviations = sorted(
-        config_deviations, key=lambda x: x.deviation_count, reverse=True
-    )
+    sorted_deviations = sorted(config_deviations, key=lambda x: x.deviation_count, reverse=True)
 
     total_deviations = sum(cd.deviation_count for cd in config_deviations)
     total_objects = sum(cd.total_objects for cd in config_deviations)
-    overall_consistency = (
-        (total_objects - total_deviations) / total_objects if total_objects > 0 else 1.0
-    )
+    overall_consistency = (total_objects - total_deviations) / total_objects if total_objects > 0 else 1.0
 
     return DeviationReport(
         session_id=session_id,

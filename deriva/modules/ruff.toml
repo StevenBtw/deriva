@@ -2,6 +2,11 @@
 # Modules is the business logic layer and can only import from common.
 # It must NOT import from peer or higher layers: adapters, services, or cli.
 
+# Inherit the project rules (select, line length, per-file ignores); the ban table
+# below replaces the root one, so it repeats the root 'deriva.cli' ban.
+extend = "../../pyproject.toml"
+
 [lint.flake8-tidy-imports.banned-api]
+"deriva.cli" = { msg = "Architecture violation: cli is a top-level entry point and should not be imported" }
 "deriva.adapters" = { msg = "Architecture violation: modules cannot import from adapters (use common layer for shared types)" }
 "deriva.services" = { msg = "Architecture violation: modules cannot import from services (modules is a lower layer)" }

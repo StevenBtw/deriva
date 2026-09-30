@@ -10,16 +10,18 @@ It identifies classes, interfaces, structs, enums, functions, and other type def
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
-from deriva.adapters.treesitter import TreeSitterManager, ExtractedType
+from deriva.adapters.treesitter import ExtractedType, TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 from .base import (
     create_empty_llm_details,
     current_timestamp,
     generate_edge_id,
     parse_json_response,
+    prompt_texts,
     strip_chunk_suffix,
 )
 
@@ -102,9 +104,7 @@ TYPE_DEFINITION_SCHEMA = {
 }
 
 
-def build_extraction_prompt(
-    file_content: str, file_path: str, instruction: str, example: str
-) -> str:
+def build_extraction_prompt(file_content: str, file_path: str, instruction: str, example: str, texts: dict[str, str]) -> str:
     """
     Build the LLM prompt for type definition extraction.
 
@@ -113,6 +113,7 @@ def build_extraction_prompt(
         file_path: Path to the file being analyzed
         instruction: Extraction instruction from config
         example: Example output from config
+        texts: The step's prompt texts (``params.prompt``: persona and task)
 
     Returns:
         Formatted prompt string
@@ -121,7 +122,7 @@ def build_extraction_prompt(
     lines = file_content.split("\n")
     numbered_content = "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(lines))
 
-    prompt = f"""You are analyzing a source code file to extract type definitions.
+    prompt = f"""{texts["persona"]}
 
 ## Context
 - **File Path:** {file_path}
@@ -137,14 +138,12 @@ def build_extraction_prompt(
 {numbered_content}
 ```
 
-Extract all type definitions from this file. Return ONLY a JSON object with a "types" array. If no type definitions are found, return {{"types": []}}.
+{texts["task"]} Return ONLY a JSON object with a "types" array. If no type definitions are found, return {{"types": []}}.
 """
     return prompt
 
 
-def build_type_definition_node(
-    type_data: dict[str, Any], file_path: str, repo_name: str, file_content: str = ""
-) -> dict[str, Any]:
+def build_type_definition_node(type_data: dict[str, Any], file_path: str, repo_name: str, file_content: str = "") -> dict[str, Any]:
     """
     Build a TypeDefinition graph node from extracted type data.
 
@@ -322,6 +321,7 @@ def extract_type_definitions(
             file_path=file_path,
             instruction=instruction,
             example=example,
+            texts=prompt_texts(config, "TypeDefinition"),
         )
         llm_details["prompt"] = prompt
 
@@ -335,9 +335,7 @@ def extract_type_definitions(
             llm_details["tokens_in"] = response.usage.get("prompt_tokens", 0)
             llm_details["tokens_out"] = response.usage.get("completion_tokens", 0)
         if hasattr(response, "response_type"):
-            llm_details["cache_used"] = (
-                str(response.response_type) == "ResponseType.CACHED"
-            )
+            llm_details["cache_used"] = str(response.response_type) == "ResponseType.CACHED"
 
         # Check for failed response
         if hasattr(response, "error"):
@@ -534,16 +532,12 @@ def extract_types_from_source(
         file_node_id = f"file::{repo_name}::{safe_path}"
 
         for ext_type in extracted_types:
-            node_data = _build_type_node_from_treesitter(
-                ext_type, file_path, file_content, repo_name
-            )
+            node_data = _build_type_node_from_treesitter(ext_type, file_path, file_content, repo_name)
             nodes.append(node_data)
 
             # Create CONTAINS edge: File -> TypeDefinition
             edge = {
-                "edge_id": generate_edge_id(
-                    file_node_id, node_data["node_id"], "CONTAINS"
-                ),
+                "edge_id": generate_edge_id(file_node_id, node_data["node_id"], "CONTAINS"),
                 "from_node_id": file_node_id,
                 "to_node_id": node_data["node_id"],
                 "relationship_type": "CONTAINS",
@@ -557,14 +551,10 @@ def extract_types_from_source(
                 if base_name in ("object", "Exception", "BaseException", "type"):
                     continue
                 # Create target node ID for the base class (same file assumption)
-                base_slug = (
-                    base_name.replace(" ", "_").replace("-", "_").replace(".", "_")
-                )
+                base_slug = base_name.replace(" ", "_").replace("-", "_").replace(".", "_")
                 base_node_id = f"typedef::{repo_name}::{safe_path}::{base_slug}"
                 inherits_edge = {
-                    "edge_id": generate_edge_id(
-                        node_data["node_id"], base_node_id, "INHERITS"
-                    ),
+                    "edge_id": generate_edge_id(node_data["node_id"], base_node_id, "INHERITS"),
                     "from_node_id": node_data["node_id"],
                     "to_node_id": base_node_id,
                     "relationship_type": "INHERITS",
@@ -664,6 +654,34 @@ def _build_type_node_from_treesitter(
 extract_types_from_python = extract_types_from_source
 
 
+def base_type_name(base_name: str) -> str | None:
+    """The name an inheritance reference gives its base type, without type arguments.
+
+    ``Renderer<T>`` and ``Generic[T]`` name ``Renderer`` and ``Generic``. A qualified name
+    (``pkg.Base``) names a type in one specific module or package and has no name here: its
+    last part alone must not match a type of the repository.
+    """
+    name = re.split(r"[<\[]", base_name, maxsplit=1)[0].strip()
+    if not name or "." in name:
+        return None
+    return name
+
+
+def resolve_base_type(base_name: str, definitions: dict[str, list[str]], source_id: str) -> str | None:
+    """The id of the repository's own type that an inheritance reference names, decided by structure.
+
+    ``definitions`` maps each type name defined in the repository to the ids of its definitions.
+    The reference resolves when exactly one definition has the base type's name and it is not the
+    extending type itself; with none (an external type) or several (ambiguous) it stays unresolved
+    and the caller keeps a placeholder.
+    """
+    name = base_type_name(base_name)
+    ids = definitions.get(name, []) if name else []
+    if len(ids) != 1 or ids[0] == source_id:
+        return None
+    return ids[0]
+
+
 __all__ = [
     # Schema
     "TYPE_DEFINITION_SCHEMA",
@@ -676,4 +694,7 @@ __all__ = [
     # Tree-sitter extraction
     "extract_types_from_source",
     "extract_types_from_python",  # Alias for backwards compatibility
+    # Inheritance references
+    "base_type_name",
+    "resolve_base_type",
 ]

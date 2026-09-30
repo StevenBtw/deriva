@@ -3,7 +3,7 @@ Extraction module - Pure functions for building graph nodes from repository data
 
 This package provides extraction functions for different node types:
 - Structural: repository, directory, file (filesystem-based, no LLM)
-- Semantic: business_concept, type_definition, method, technology, etc. (LLM/AST)
+- Semantic: concept_candidates, type_definition, method, technology, etc. (NLP/LLM/AST)
 
 Architecture:
 - base.py: Shared utilities for all extraction modules
@@ -70,12 +70,10 @@ from .base import (
     is_excluded_path,
     is_python_file,
     matches_file_spec,
-    normalize_concept_name,
     normalize_node,
     normalize_nodes,
     # Normalization
     normalize_package_name,
-    normalize_technology_name,
     # Input sources
     parse_input_sources,
     parse_json_response,
@@ -86,18 +84,8 @@ from .base import (
 
 # LLM/AST-based extractors
 from .business_concept import (
-    BUSINESS_CONCEPT_SCHEMA,
-    build_business_concept_node,
-    extract_business_concepts,
-    extract_business_concepts_batch,
-    extract_business_concepts_multi,
+    concept_node_id,
     merge_concept_properties,
-)
-from .business_concept import (
-    build_extraction_prompt as build_business_concept_prompt,
-)
-from .business_concept import (
-    parse_llm_response as parse_business_concept_response,
 )
 from .directory import (
     build_directory_node,
@@ -150,18 +138,6 @@ from .repository import (
     build_repository_node,
     extract_repository,
 )
-from .technology import (
-    TECHNOLOGY_SCHEMA,
-    build_technology_node,
-    extract_technologies,
-    extract_technologies_batch,
-)
-from .technology import (
-    build_extraction_prompt as build_technology_prompt,
-)
-from .technology import (
-    parse_llm_response as parse_technology_response,
-)
 from .test import (
     TEST_SCHEMA,
     build_test_node,
@@ -182,6 +158,7 @@ from .type_definition import (
     # AST extraction (both names for compatibility)
     extract_types_from_python,
     extract_types_from_source,
+    resolve_base_type,
 )
 from .type_definition import (
     build_extraction_prompt as build_type_definition_prompt,
@@ -211,8 +188,6 @@ __all__ = [
     "has_node_sources",
     # Normalization
     "normalize_package_name",
-    "normalize_concept_name",
-    "normalize_technology_name",
     "normalize_node",
     "normalize_nodes",
     "deduplicate_by_normalized_name",
@@ -231,14 +206,8 @@ __all__ = [
     "build_file_node",
     "extract_files",
     # Business Concept
-    "build_business_concept_node",
-    "extract_business_concepts",
-    "extract_business_concepts_batch",
-    "extract_business_concepts_multi",
+    "concept_node_id",
     "merge_concept_properties",
-    "build_business_concept_prompt",
-    "parse_business_concept_response",
-    "BUSINESS_CONCEPT_SCHEMA",
     # Type Definition (LLM + AST)
     "build_type_definition_node",
     "extract_type_definitions",
@@ -248,6 +217,7 @@ __all__ = [
     "TYPE_DEFINITION_SCHEMA",
     "extract_types_from_python",
     "extract_types_from_source",
+    "resolve_base_type",
     # Method (LLM + AST)
     "build_method_node",
     "extract_methods",
@@ -257,13 +227,6 @@ __all__ = [
     "METHOD_SCHEMA",
     "extract_methods_from_python",
     "extract_methods_from_source",
-    # Technology
-    "build_technology_node",
-    "extract_technologies",
-    "extract_technologies_batch",
-    "build_technology_prompt",
-    "parse_technology_response",
-    "TECHNOLOGY_SCHEMA",
     # External Dependency
     "build_external_dependency_node",
     "extract_external_dependencies",

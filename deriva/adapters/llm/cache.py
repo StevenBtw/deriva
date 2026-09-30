@@ -192,9 +192,7 @@ def cached_llm_call(cache_manager: CacheManager):
             # Call function and cache result
             result = func(prompt, model, schema_dict)
             if result and "content" in result:
-                cache_manager.set_response(
-                    cache_key, result["content"], prompt, model, result.get("usage")
-                )
+                cache_manager.set_response(cache_key, result["content"], prompt, model, result.get("usage"))
 
             return result
 

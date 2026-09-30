@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Any
 from .base import RefineResult, register_refine_step
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 logger = logging.getLogger(__name__)
 
@@ -108,10 +108,7 @@ class DuplicateRelationshipsStep:
             if check_redundant:
                 self._check_redundant_relationships(archimate_manager, result)
 
-            logger.info(
-                f"Duplicate relationship detection complete: "
-                f"{result.relationships_deleted} deleted"
-            )
+            logger.info(f"Duplicate relationship detection complete: {result.relationships_deleted} deleted")
 
         except Exception as e:
             logger.exception(f"Error in duplicate relationship detection: {e}")
@@ -152,9 +149,7 @@ class DuplicateRelationshipsStep:
         if not multi_rels:
             return
 
-        logger.info(
-            f"Found {len(multi_rels)} element pairs with multiple relationships"
-        )
+        logger.info(f"Found {len(multi_rels)} element pairs with multiple relationships")
 
         # Redundancy rules: which relationship types are redundant together
         redundant_pairs = {

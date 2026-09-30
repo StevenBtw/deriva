@@ -136,24 +136,12 @@ class BusinessEventDerivation(HybridDerivation):
                 non_decorator.append(c)
 
         # Apply pattern matching to non-decorator candidates
-        likely_events = [
-            c
-            for c in non_decorator
-            if self.matches_patterns(c.name, include_patterns, exclude_patterns)
-        ]
-        others = [
-            c
-            for c in non_decorator
-            if not self.matches_patterns(c.name, include_patterns, exclude_patterns)
-        ]
+        likely_events = [c for c in non_decorator if self.matches_patterns(c.name, include_patterns, exclude_patterns)]
+        others = [c for c in non_decorator if not self.matches_patterns(c.name, include_patterns, exclude_patterns)]
 
         # Apply graph filtering to each group
-        decorator_handlers = self.apply_graph_filtering(
-            decorator_handlers, enrichments, max_candidates // 3
-        )
-        likely_events = self.apply_graph_filtering(
-            likely_events, enrichments, max_candidates // 3
-        )
+        decorator_handlers = self.apply_graph_filtering(decorator_handlers, enrichments, max_candidates // 3)
+        likely_events = self.apply_graph_filtering(likely_events, enrichments, max_candidates // 3)
 
         # Combine: decorator handlers first, then pattern-matched, then others
         combined = decorator_handlers + likely_events

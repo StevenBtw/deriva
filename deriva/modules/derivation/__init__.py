@@ -36,7 +36,7 @@ Usage:
     batches = batch_candidates(candidates, batch_size=15, group_by_community=True)
 
     # Derive elements with LLM
-    prompt = build_derivation_prompt(batch, instruction, example, "BusinessObject")
+    prompt = build_derivation_prompt(batch, instruction, example, element_prompt)  # texts from params.prompt
     response = llm_query_fn(prompt, DERIVATION_SCHEMA)
 
 Three-Tier Relationship Derivation:
@@ -49,6 +49,9 @@ Three-Tier Relationship Derivation:
 
 from __future__ import annotations
 
+# Prep module (submodule, not re-exported at top level)
+from . import prep
+
 # Base utilities
 from .base import (
     DERIVATION_SCHEMA,
@@ -60,17 +63,14 @@ from .base import (
     build_derivation_prompt,
     build_element,
     build_unified_relationship_prompt,
-    create_result,
     clear_enrichment_cache,
+    create_result,
     derive_batch_relationships,
     get_enrichments_from_graph,
     parse_derivation_response,
     parse_relationship_response,
     query_candidates,
 )
-
-# Prep module (submodule, not re-exported at top level)
-from . import prep
 
 __all__ = [
     # Base

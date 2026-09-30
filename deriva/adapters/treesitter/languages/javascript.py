@@ -468,9 +468,7 @@ class JavaScriptExtractor(LanguageExtractor):
 
         return tree_sitter_javascript.language()
 
-    def extract_types(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedType]:
+    def extract_types(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedType]:
         """Extract type definitions (classes, top-level functions)."""
         types: list[ExtractedType] = []
         root = tree.root_node
@@ -494,24 +492,16 @@ class JavaScriptExtractor(LanguageExtractor):
         # Extract top-level arrow functions assigned to const/let/var
         for node in root.children:
             if node.type in ("lexical_declaration", "variable_declaration"):
-                for declarator in self.find_children_by_type(
-                    node, "variable_declarator"
-                ):
+                for declarator in self.find_children_by_type(node, "variable_declarator"):
                     value = self.find_child_by_field(declarator, "value")
                     if value and value.type == "arrow_function":
                         name_node = self.find_child_by_field(declarator, "name")
                         if name_node:
-                            types.append(
-                                self._extract_arrow_function_as_type(
-                                    node, name_node, value, source
-                                )
-                            )
+                            types.append(self._extract_arrow_function_as_type(node, name_node, value, source))
 
         return types
 
-    def extract_methods(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedMethod]:
+    def extract_methods(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedMethod]:
         """Extract methods and functions."""
         methods: list[ExtractedMethod] = []
         root = tree.root_node
@@ -530,11 +520,7 @@ class JavaScriptExtractor(LanguageExtractor):
                         if value and value.type == "arrow_function":
                             name_node = self.find_child_by_field(item, "property")
                             if name_node:
-                                methods.append(
-                                    self._extract_arrow_method(
-                                        item, name_node, value, source, class_name
-                                    )
-                                )
+                                methods.append(self._extract_arrow_method(item, name_node, value, source, class_name))
 
         # Extract top-level functions
         for node in root.children:
@@ -548,24 +534,16 @@ class JavaScriptExtractor(LanguageExtractor):
         # Extract top-level arrow functions
         for node in root.children:
             if node.type in ("lexical_declaration", "variable_declaration"):
-                for declarator in self.find_children_by_type(
-                    node, "variable_declarator"
-                ):
+                for declarator in self.find_children_by_type(node, "variable_declarator"):
                     value = self.find_child_by_field(declarator, "value")
                     if value and value.type == "arrow_function":
                         name_node = self.find_child_by_field(declarator, "name")
                         if name_node:
-                            methods.append(
-                                self._extract_arrow_function(
-                                    node, name_node, value, source
-                                )
-                            )
+                            methods.append(self._extract_arrow_function(node, name_node, value, source))
 
         return methods
 
-    def extract_imports(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedImport]:
+    def extract_imports(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedImport]:
         """Extract import statements."""
         imports: list[ExtractedImport] = []
         root = tree.root_node
@@ -575,9 +553,7 @@ class JavaScriptExtractor(LanguageExtractor):
                 imports.append(self._extract_es6_import(node, source))
             elif node.type in ("lexical_declaration", "variable_declaration"):
                 # Handle require() calls
-                for declarator in self.find_children_by_type(
-                    node, "variable_declarator"
-                ):
+                for declarator in self.find_children_by_type(node, "variable_declarator"):
                     value = self.find_child_by_field(declarator, "value")
                     if value and value.type == "call_expression":
                         func = self.find_child_by_field(value, "function")
@@ -588,9 +564,7 @@ class JavaScriptExtractor(LanguageExtractor):
 
         return imports
 
-    def extract_calls(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedCall]:
+    def extract_calls(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedCall]:
         """Extract function and method calls from JavaScript source code."""
         calls: list[ExtractedCall] = []
         root = tree.root_node
@@ -603,11 +577,7 @@ class JavaScriptExtractor(LanguageExtractor):
                 for item in body.children:
                     if item.type == "method_definition":
                         method_name = self._get_method_name(item, source)
-                        calls.extend(
-                            self._extract_calls_from_body(
-                                item, source, method_name, class_name
-                            )
-                        )
+                        calls.extend(self._extract_calls_from_body(item, source, method_name, class_name))
                     elif item.type == "field_definition":
                         # Arrow function field
                         value = self.find_child_by_field(item, "value")
@@ -615,45 +585,29 @@ class JavaScriptExtractor(LanguageExtractor):
                             name_node = self.find_child_by_field(item, "property")
                             if name_node:
                                 method_name = self.get_node_text(name_node, source)
-                                calls.extend(
-                                    self._extract_calls_from_arrow(
-                                        value, source, method_name, class_name
-                                    )
-                                )
+                                calls.extend(self._extract_calls_from_arrow(value, source, method_name, class_name))
 
         # Extract calls from top-level functions
         for node in root.children:
             if node.type == "function_declaration":
                 func_name = self._get_function_name(node, source)
-                calls.extend(
-                    self._extract_calls_from_body(node, source, func_name, None)
-                )
+                calls.extend(self._extract_calls_from_body(node, source, func_name, None))
             elif node.type == "export_statement":
                 for child in node.children:
                     if child.type == "function_declaration":
                         func_name = self._get_function_name(child, source)
-                        calls.extend(
-                            self._extract_calls_from_body(
-                                child, source, func_name, None
-                            )
-                        )
+                        calls.extend(self._extract_calls_from_body(child, source, func_name, None))
 
         # Extract calls from top-level arrow functions
         for node in root.children:
             if node.type in ("lexical_declaration", "variable_declaration"):
-                for declarator in self.find_children_by_type(
-                    node, "variable_declarator"
-                ):
+                for declarator in self.find_children_by_type(node, "variable_declarator"):
                     value = self.find_child_by_field(declarator, "value")
                     if value and value.type == "arrow_function":
                         name_node = self.find_child_by_field(declarator, "name")
                         if name_node:
                             func_name = self.get_node_text(name_node, source)
-                            calls.extend(
-                                self._extract_calls_from_arrow(
-                                    value, source, func_name, None
-                                )
-                            )
+                            calls.extend(self._extract_calls_from_arrow(value, source, func_name, None))
 
         return calls
 
@@ -673,9 +627,7 @@ class JavaScriptExtractor(LanguageExtractor):
         # Find all call_expression and new_expression nodes
         call_types = {"call_expression", "new_expression"}
         for call_node in self.walk_tree(body, call_types):
-            call = self._extract_single_call(
-                call_node, source, caller_name, caller_class
-            )
+            call = self._extract_single_call(call_node, source, caller_name, caller_class)
             if call:
                 calls.append(call)
 
@@ -697,9 +649,7 @@ class JavaScriptExtractor(LanguageExtractor):
         # Arrow function body can be expression or statement_block
         call_types = {"call_expression", "new_expression"}
         for call_node in self.walk_tree(body, call_types):
-            call = self._extract_single_call(
-                call_node, source, caller_name, caller_class
-            )
+            call = self._extract_single_call(call_node, source, caller_name, caller_class)
             if call:
                 calls.append(call)
 
@@ -788,17 +738,12 @@ class JavaScriptExtractor(LanguageExtractor):
             is_async=False,
         )
 
-    def _extract_function_as_type(
-        self, node: tree_sitter.Node, source: bytes
-    ) -> ExtractedType:
+    def _extract_function_as_type(self, node: tree_sitter.Node, source: bytes) -> ExtractedType:
         """Extract a function declaration as a type."""
         name_node = self.find_child_by_field(node, "name")
         name = self.get_node_text(name_node, source) if name_node else ""
 
-        is_async = any(
-            child.type == "async" or self.get_node_text(child, source) == "async"
-            for child in node.children
-        )
+        is_async = any(child.type == "async" or self.get_node_text(child, source) == "async" for child in node.children)
 
         return ExtractedType(
             name=name,
@@ -821,10 +766,7 @@ class JavaScriptExtractor(LanguageExtractor):
         """Extract an arrow function assigned to a variable as a type."""
         name = self.get_node_text(name_node, source)
 
-        is_async = any(
-            child.type == "async" or self.get_node_text(child, source) == "async"
-            for child in arrow_node.children
-        )
+        is_async = any(child.type == "async" or self.get_node_text(child, source) == "async" for child in arrow_node.children)
 
         return ExtractedType(
             name=name,
@@ -837,27 +779,17 @@ class JavaScriptExtractor(LanguageExtractor):
             is_async=is_async,
         )
 
-    def _extract_method(
-        self, node: tree_sitter.Node, source: bytes, class_name: str
-    ) -> ExtractedMethod:
+    def _extract_method(self, node: tree_sitter.Node, source: bytes, class_name: str) -> ExtractedMethod:
         """Extract a class method."""
         name_node = self.find_child_by_field(node, "name")
         name = self.get_node_text(name_node, source) if name_node else ""
 
-        is_async = any(
-            child.type == "async" or self.get_node_text(child, source) == "async"
-            for child in node.children
-        )
+        is_async = any(child.type == "async" or self.get_node_text(child, source) == "async" for child in node.children)
 
-        is_static = any(
-            self.get_node_text(child, source) == "static" for child in node.children
-        )
+        is_static = any(self.get_node_text(child, source) == "static" for child in node.children)
 
         # Check for getter/setter
-        is_property = any(
-            self.get_node_text(child, source) in ("get", "set")
-            for child in node.children
-        )
+        is_property = any(self.get_node_text(child, source) in ("get", "set") for child in node.children)
 
         parameters = self._extract_parameters(node, source)
 
@@ -887,15 +819,9 @@ class JavaScriptExtractor(LanguageExtractor):
         """Extract an arrow function class field as a method."""
         name = self.get_node_text(name_node, source)
 
-        is_async = any(
-            child.type == "async" or self.get_node_text(child, source) == "async"
-            for child in arrow_node.children
-        )
+        is_async = any(child.type == "async" or self.get_node_text(child, source) == "async" for child in arrow_node.children)
 
-        is_static = any(
-            self.get_node_text(child, source) == "static"
-            for child in field_node.children
-        )
+        is_static = any(self.get_node_text(child, source) == "static" for child in field_node.children)
 
         parameters = self._extract_arrow_parameters(arrow_node, source)
 
@@ -914,17 +840,12 @@ class JavaScriptExtractor(LanguageExtractor):
             is_property=False,
         )
 
-    def _extract_function(
-        self, node: tree_sitter.Node, source: bytes
-    ) -> ExtractedMethod:
+    def _extract_function(self, node: tree_sitter.Node, source: bytes) -> ExtractedMethod:
         """Extract a standalone function."""
         name_node = self.find_child_by_field(node, "name")
         name = self.get_node_text(name_node, source) if name_node else ""
 
-        is_async = any(
-            child.type == "async" or self.get_node_text(child, source) == "async"
-            for child in node.children
-        )
+        is_async = any(child.type == "async" or self.get_node_text(child, source) == "async" for child in node.children)
 
         parameters = self._extract_parameters(node, source)
 
@@ -953,10 +874,7 @@ class JavaScriptExtractor(LanguageExtractor):
         """Extract an arrow function assigned to a variable."""
         name = self.get_node_text(name_node, source)
 
-        is_async = any(
-            child.type == "async" or self.get_node_text(child, source) == "async"
-            for child in arrow_node.children
-        )
+        is_async = any(child.type == "async" or self.get_node_text(child, source) == "async" for child in arrow_node.children)
 
         parameters = self._extract_arrow_parameters(arrow_node, source)
 
@@ -975,9 +893,7 @@ class JavaScriptExtractor(LanguageExtractor):
             is_property=False,
         )
 
-    def _extract_es6_import(
-        self, node: tree_sitter.Node, source: bytes
-    ) -> ExtractedImport:
+    def _extract_es6_import(self, node: tree_sitter.Node, source: bytes) -> ExtractedImport:
         """Extract ES6 import statement."""
         # Get the module/source
         source_node = self.find_child_by_field(node, "source")
@@ -1088,9 +1004,7 @@ class JavaScriptExtractor(LanguageExtractor):
 
         return bases
 
-    def _extract_parameters(
-        self, node: tree_sitter.Node, source: bytes
-    ) -> list[dict[str, Any]]:
+    def _extract_parameters(self, node: tree_sitter.Node, source: bytes) -> list[dict[str, Any]]:
         """Extract function parameters."""
         params: list[dict[str, Any]] = []
 
@@ -1150,9 +1064,7 @@ class JavaScriptExtractor(LanguageExtractor):
 
         return params
 
-    def _extract_arrow_parameters(
-        self, arrow_node: tree_sitter.Node, source: bytes
-    ) -> list[dict[str, Any]]:
+    def _extract_arrow_parameters(self, arrow_node: tree_sitter.Node, source: bytes) -> list[dict[str, Any]]:
         """Extract parameters from arrow function."""
         params: list[dict[str, Any]] = []
 
@@ -1174,9 +1086,7 @@ class JavaScriptExtractor(LanguageExtractor):
 
         return params
 
-    def _extract_parameters_from_formal(
-        self, params_node: tree_sitter.Node, source: bytes
-    ) -> list[dict[str, Any]]:
+    def _extract_parameters_from_formal(self, params_node: tree_sitter.Node, source: bytes) -> list[dict[str, Any]]:
         """Extract parameters from formal_parameters node."""
         params: list[dict[str, Any]] = []
 

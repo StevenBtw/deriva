@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def compute_graph_hash(graph_manager: "GraphManager") -> str:
+def compute_graph_hash(graph_manager: GraphManager) -> str:
     """
     Compute a hash representing the current graph state.
 
@@ -56,10 +56,7 @@ def compute_graph_hash(graph_manager: "GraphManager") -> str:
         """
         results = graph_manager.query(stats_query)
         # Serialize the per-repo counts deterministically.
-        scope_signature = ";".join(
-            f"{row.get('repo', '_')}:{row.get('c', 0)}:{row.get('e', 0)}"
-            for row in results
-        )
+        scope_signature = ";".join(f"{row.get('repo', '_')}:{row.get('c', 0)}:{row.get('e', 0)}" for row in results)
 
         # Include namespace in hash.
         namespace = getattr(graph_manager, "namespace", "Graph")
@@ -121,9 +118,7 @@ class EnrichmentCache(BaseDiskCache):
         logger.debug(f"Enrichment cache MISS for graph hash {graph_hash[:8]}...")
         return None
 
-    def set_enrichments(
-        self, graph_hash: str, enrichments: dict[str, dict[str, Any]]
-    ) -> None:
+    def set_enrichments(self, graph_hash: str, enrichments: dict[str, dict[str, Any]]) -> None:
         """
         Cache enrichments for a graph state.
 
@@ -132,9 +127,7 @@ class EnrichmentCache(BaseDiskCache):
             enrichments: Dict mapping node_id to enrichment data
         """
         self.set(graph_hash, {"enrichments": enrichments, "graph_hash": graph_hash})
-        logger.debug(
-            f"Cached {len(enrichments)} enrichments for graph hash {graph_hash[:8]}..."
-        )
+        logger.debug(f"Cached {len(enrichments)} enrichments for graph hash {graph_hash[:8]}...")
 
 
 class EnrichmentCacheManager:
@@ -222,7 +215,7 @@ class EnrichmentCacheManager:
 
     def get_enrichments(
         self,
-        graph_manager: "GraphManager",
+        graph_manager: GraphManager,
         config_name: str | None = None,
     ) -> dict[str, dict[str, Any]] | None:
         """
@@ -248,7 +241,7 @@ class EnrichmentCacheManager:
 
     def set_enrichments(
         self,
-        graph_manager: "GraphManager",
+        graph_manager: GraphManager,
         enrichments: dict[str, dict[str, Any]],
         config_name: str | None = None,
     ) -> None:
@@ -362,9 +355,7 @@ class QueryCache(BaseDiskCache):
             return cached.get("results")
         return None
 
-    def set_results(
-        self, query: str, graph_hash: str, results: list[dict[str, Any]]
-    ) -> None:
+    def set_results(self, query: str, graph_hash: str, results: list[dict[str, Any]]) -> None:
         """
         Cache query results.
 

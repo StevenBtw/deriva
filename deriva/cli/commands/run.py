@@ -103,24 +103,12 @@ def _print_pipeline_result(result: dict) -> None:
 @app.callback(invoke_without_command=True)
 def run_stage(
     ctx: typer.Context,
-    stage: Annotated[
-        str, typer.Argument(help="Pipeline stage to run (extraction, derivation, all)")
-    ],
-    repo: Annotated[
-        str | None, typer.Option("--repo", help="Specific repository to process")
-    ] = None,
-    phase: Annotated[
-        str | None, typer.Option("--phase", help="Run specific phase")
-    ] = None,
-    verbose: Annotated[
-        bool, typer.Option("-v", "--verbose", help="Print detailed progress")
-    ] = False,
-    quiet: Annotated[
-        bool, typer.Option("-q", "--quiet", help="Disable progress bar")
-    ] = False,
-    no_llm: Annotated[
-        bool, typer.Option("--no-llm", help="Skip LLM-based steps")
-    ] = False,
+    stage: Annotated[str, typer.Argument(help="Pipeline stage to run (extraction, derivation, all)")],
+    repo: Annotated[str | None, typer.Option("--repo", help="Specific repository to process")] = None,
+    phase: Annotated[str | None, typer.Option("--phase", help="Run specific phase")] = None,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
+    quiet: Annotated[bool, typer.Option("-q", "--quiet", help="Disable progress bar")] = False,
+    no_llm: Annotated[bool, typer.Option("--no-llm", help="Skip LLM-based steps")] = False,
     only_step: Annotated[
         str | None,
         typer.Option(
@@ -150,15 +138,11 @@ def run_stage(
     if phase:
         if stage == "extraction" and phase not in extraction_phases:
             typer.echo(f"Error: Phase '{phase}' is not valid for extraction.", err=True)
-            typer.echo(
-                f"Valid extraction phases: {', '.join(sorted(extraction_phases))}"
-            )
+            typer.echo(f"Valid extraction phases: {', '.join(sorted(extraction_phases))}")
             raise typer.Exit(1)
         if stage == "derivation" and phase not in derivation_phases:
             typer.echo(f"Error: Phase '{phase}' is not valid for derivation.", err=True)
-            typer.echo(
-                f"Valid derivation phases: {', '.join(sorted(derivation_phases))}"
-            )
+            typer.echo(f"Valid derivation phases: {', '.join(sorted(derivation_phases))}")
             raise typer.Exit(1)
 
     typer.echo(f"\n{'=' * 60}")
@@ -189,11 +173,7 @@ def run_stage(
             else:
                 derivation_configs = session.get_derivation_configs()
                 for cfg in derivation_configs:
-                    name = (
-                        cfg.get("element_type", "")
-                        or cfg.get("step_name", "")
-                        or cfg.get("name", "")
-                    )
+                    name = cfg.get("element_type", "") or cfg.get("step_name", "") or cfg.get("name", "")
                     if name == only_step:
                         session.enable_step("derivation", name)
                     else:
@@ -256,9 +236,7 @@ def run_stage(
                 with open(output_path, "w") as f:
                     json.dump(candidate_data, f, indent=2)
 
-                typer.echo(
-                    f"\nExported {len(result['candidate_decisions'])} candidate decisions to {output_path}"
-                )
+                typer.echo(f"\nExported {len(result['candidate_decisions'])} candidate decisions to {output_path}")
 
         elif stage == "all":
             with progress_reporter:

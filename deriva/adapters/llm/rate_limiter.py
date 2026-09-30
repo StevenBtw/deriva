@@ -195,9 +195,7 @@ class RateLimiter:
                 # Failure in half-open means we need to reopen
                 self._circuit_state = CircuitState.OPEN
                 self._circuit_opened_at = time.time()
-                logger.warning(
-                    "Circuit breaker reopened after failure in half-open state"
-                )
+                logger.warning("Circuit breaker reopened after failure in half-open state")
 
             elif self._circuit_state == CircuitState.CLOSED:
                 if self._consecutive_failures >= self.config.circuit_failure_threshold:
@@ -232,9 +230,7 @@ class RateLimiter:
                 "Rate limit hit (%d consecutive). Throttle reduced to %.0f%% of RPM.%s",
                 self._consecutive_rate_limits,
                 self._throttle_factor * 100,
-                f" Server suggests retry after {retry_after:.1f}s"
-                if retry_after
-                else "",
+                f" Server suggests retry after {retry_after:.1f}s" if retry_after else "",
             )
 
     def _check_circuit(self) -> None:
@@ -292,10 +288,7 @@ class RateLimiter:
 
             # Only try recovery if enough time has passed since last rate limit
             # and since last recovery attempt
-            if (
-                time_since_rate_limit >= self.config.throttle_recovery_time
-                and time_since_recovery >= self.config.throttle_recovery_time
-            ):
+            if time_since_rate_limit >= self.config.throttle_recovery_time and time_since_recovery >= self.config.throttle_recovery_time:
                 # Increase throttle by 25% (multiplicative recovery)
                 old_factor = self._throttle_factor
                 self._throttle_factor = min(self._throttle_factor * 1.25, 1.0)
@@ -355,11 +348,7 @@ class RateLimiter:
                 self._request_times.popleft()
             recent_requests = len(self._request_times)
 
-            effective_rpm = (
-                max(1, int(self.config.requests_per_minute * self._throttle_factor))
-                if self.config.requests_per_minute > 0
-                else 0
-            )
+            effective_rpm = max(1, int(self.config.requests_per_minute * self._throttle_factor)) if self.config.requests_per_minute > 0 else 0
 
             return {
                 # Basic stats

@@ -29,6 +29,7 @@ from deriva.common.types import ProgressUpdate
 
 if TYPE_CHECKING:
     from deriva.common.types import BenchmarkProgressReporter, ProgressReporter
+    from deriva.services import step_benchmark
 
 logger = logging.getLogger(__name__)
 
@@ -1163,6 +1164,27 @@ class PipelineSession:
         )
 
         return orchestrator.run(verbose=verbose, progress=progress)
+
+    def run_step_benchmark(self, step: str, repositories: list[str], model: str, runs: int = 3, verbose: bool = False) -> step_benchmark.StepBenchmarkResult:
+        """Repeat one extraction step on a fixed input per repository and compare its outputs.
+
+        The input is built once from the LLM cache; each run starts from a copy of it and
+        calls the LLM for the step without the cache (see ``services.step_benchmark``).
+        """
+        self._ensure_connected()
+        assert self._engine is not None
+        assert self._graph_manager is not None
+        assert self._archimate_manager is not None
+
+        from deriva.services import step_benchmark
+
+        benchmark = step_benchmark.StepBenchmark(
+            engine=self._engine,
+            graph_manager=self._graph_manager,
+            archimate_manager=self._archimate_manager,
+            config=benchmarking.BenchmarkConfig(repositories=repositories, models=[model], runs_per_combination=runs, per_repo=True),
+        )
+        return benchmark.run_step(step, verbose=verbose)
 
     def analyze_benchmark(self, session_id: str) -> benchmarking.BenchmarkAnalyzer:
         """
