@@ -203,7 +203,7 @@ deriva benchmark step DataObject --repos my-repo --model openai-gptx -n 3 -v
 ```
 
 - The step is an extraction step, a derivation step (an element type, `ConsolidatedRelationships` for the relationship pass, or a refine step), or `prep` for the whole prep phase (graph algorithms). Steps follow the pipeline order: extraction, prep, element steps, the relationship pass, refine.
-- The step's input (every earlier step) is built once, with LLM answers from the cache, and saved in the session folder (`steps/<repo>_input.grafeo`, graph and model).
+- The step's input (every earlier step) is built once, with LLM answers from the cache (a prompt the cache does not have calls the LLM), and saved in the session folder (`steps/<repo>_input.grafeo`, graph and model).
 - Each run copies that input into a separate work database (the repository's own graph is not touched) and calls the LLM for the step without the cache.
 - The output of a run is every node and edge the step added, changed or removed, with its properties (timestamps left out). For derivation steps it also holds the model's elements (by identifier, disabled ones included) and relationships (by type, source and target, since relationship identifiers differ per run).
 - **Presence** counts the objects produced in every run. **Exact** also requires the same properties, and the report names the properties that differ.

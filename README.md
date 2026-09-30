@@ -78,15 +78,9 @@ source .venv/bin/activate
 uv sync
 ```
 
-### 5. Set Up the NLP Tool (Business Concepts)
+### 5. NLP Models (Business Concepts)
 
-The business concept step finds candidate terms in the documentation with a separate tool in `tools/nlp`. It is its own uv project on Python 3.12 (spaCy and the translation runtime need it); uv installs it, and Python 3.12 if needed, on first use. The pinned translation models (German and French to English, checked by SHA-256) are downloaded once:
-
-```bash
-uv run --project tools/nlp --python 3.12 deriva-nlp models --models-dir workspace/cache/nlp
-```
-
-The step also downloads missing models on its first run. `DERIVA_NLP_PROJECT` and `DERIVA_NLP_MODELS_DIR` in `.env` move the tool or the model folder.
+The business concept step finds candidate terms in the documentation with pinned spaCy pipelines (English, German, French), which `uv sync` installs with the other dependencies. It gives German and French terms an English form with pinned translation models, which the step downloads into `workspace/cache/nlp` on its first run and checks by SHA-256. `DERIVA_NLP_MODELS_DIR` in `.env` moves that folder.
 
 ### 6. Launch Deriva
 
@@ -211,8 +205,7 @@ LLM_MISTRAL_DEVSTRAL_STRUCTURED_OUTPUT=true
 GRAPH_NAMESPACE=Graph
 ARCHIMATE_NAMESPACE=Model
 
-# NLP tool for business concepts (defaults shown)
-DERIVA_NLP_PROJECT=tools/nlp
+# NLP translation models for business concepts (default shown)
 DERIVA_NLP_MODELS_DIR=workspace/cache/nlp
 ```
 
@@ -298,7 +291,7 @@ deriva config setting show excluded_directories
 deriva config setting set excluded_directories '[".git", "node_modules", "third_party"]'
 ```
 
-**Derivation name patterns:** some derivation steps filter their candidates by name: a candidate is kept when its name contains an include pattern and none of the exclude patterns (a step can limit the patterns to candidates with given graph labels with its `pattern_labels` param). Patterns are stored per step, type and category.
+**Derivation name patterns:** some derivation steps filter their candidates by name: a name that contains an exclude pattern is rejected, a name that contains an include pattern is kept, and a name that matches neither follows the step's default (rejected by most steps, kept by BusinessFunction, ApplicationInterface, SystemSoftware and TechnologyService). A step can limit the patterns to candidates with given graph labels with its `pattern_labels` param. Patterns are stored per step, type and category.
 
 ```bash
 deriva config pattern list Node
@@ -504,9 +497,9 @@ OCEL files can be analyzed with process mining tools like PM4Py, Celonis, or cus
 
 ## Troubleshooting
 
-### NLP Tool Issues
+### NLP Model Issues
 
-The business concept step reports `deriva-nlp ... failed:` followed by the tool's own message. Run the models command from the setup once more (it verifies the downloaded models), and check that uv can install Python 3.12.
+The business concept step downloads its translation models on the first run. If the download fails, check that the machine can reach the model host and run the step again; a model folder that was not verified is replaced. A SHA-256 mismatch means the published model changed, and the step refuses it.
 
 ### Marimo Issues
 
