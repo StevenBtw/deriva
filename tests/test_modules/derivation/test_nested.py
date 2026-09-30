@@ -75,14 +75,14 @@ class TestNestedDirectoriesLeaveTheList:
         result = self._generate(self.CANDIDATES, self.CONTAINS, self.FILES, SOURCE)
 
         stages = {d.node_id: d.stage for d in result.candidate_decisions}
-        assert stages[GUI_SRC] == "duplicate_removed"
+        assert stages[GUI_SRC] == "nested_removed"
         # A package holding a part of its module stays, and so do the modules
         assert {stages[n] for n in (GUI, CORE, CORE_CRUD, UTIL)} == {"llm_rejected"}
 
     def test_without_the_param_every_candidate_stays(self):
         result = self._generate(self.CANDIDATES, self.CONTAINS, self.FILES, None)
 
-        assert "duplicate_removed" not in {d.stage for d in result.candidate_decisions}
+        assert "nested_removed" not in {d.stage for d in result.candidate_decisions}
 
     def test_the_nearest_kept_ancestor_decides(self):
         # core holds 100 files, crud half of them, and crud's own package nearly all of crud's
@@ -94,20 +94,20 @@ class TestNestedDirectoriesLeaveTheList:
 
         stages = {d.node_id: d.stage for d in result.candidate_decisions}
         assert stages[CORE_CRUD] == "llm_rejected"
-        assert stages[assoc] == "duplicate_removed"
+        assert stages[assoc] == "nested_removed"
 
     def test_a_left_out_directory_frees_no_place(self):
         # The cut already chose the candidates: the next one in rank does not move up
         result = self._generate([_dir(GUI), _dir(GUI_SRC), _dir(UTIL)], self.CONTAINS, self.FILES, SOURCE, max_candidates=2)
 
         stages = {d.node_id: d.stage for d in result.candidate_decisions}
-        assert stages[GUI_SRC] == "duplicate_removed"
+        assert stages[GUI_SRC] == "nested_removed"
         assert stages[UTIL] == "filtered_out"
 
     def test_an_ancestor_without_files_of_the_type_represents_nothing(self):
         result = self._generate([_dir(GUI), _dir(GUI_SRC)], self.CONTAINS, {}, SOURCE)
 
-        assert "duplicate_removed" not in {d.stage for d in result.candidate_decisions}
+        assert "nested_removed" not in {d.stage for d in result.candidate_decisions}
 
 
 class TestNestedQueries:
