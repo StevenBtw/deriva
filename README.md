@@ -291,7 +291,7 @@ deriva config setting show excluded_directories
 deriva config setting set excluded_directories '[".git", "node_modules", "third_party"]'
 ```
 
-**Derivation name patterns:** some derivation steps filter their candidates by name: a name that contains an exclude pattern is rejected, a name that contains an include pattern is kept, and a name that matches neither follows the step's default (rejected by most steps, kept by BusinessFunction, ApplicationInterface, SystemSoftware and TechnologyService). A step can limit the patterns to candidates with given graph labels with its `pattern_labels` param. Patterns are stored per step, type and category.
+**Derivation name patterns:** some derivation steps use include and exclude patterns on the names of their code candidates; business concepts are already classified and skip them. Most of these steps reject a name that contains an exclude pattern and keep one that contains an include pattern, and a name that matches neither follows the step's default (rejected by most steps, kept by BusinessFunction, ApplicationInterface, SystemSoftware and TechnologyService). BusinessObject (type definitions) and BusinessEvent (methods) use the patterns to rank candidates instead, and fill their remaining slots with names that did not match. A step can limit the patterns to candidates with given graph labels with its `pattern_labels` param. Patterns are stored per step, type and category.
 
 ```bash
 deriva config pattern list Node
@@ -499,7 +499,7 @@ OCEL files can be analyzed with process mining tools like PM4Py, Celonis, or cus
 
 ### NLP Model Issues
 
-The business concept step downloads its translation models on the first run. If the download fails, check that the machine can reach the model host and run the step again; a model folder that was not verified is replaced. A SHA-256 mismatch means the published model changed, and the step refuses it.
+The business concept step downloads its translation models on the first run. If the download fails, check that the machine can reach the model host and run the step again; a model folder that was not verified is replaced. A SHA-256 mismatch means the downloaded file is not the pinned model (a changed upload or a damaged download), and the step refuses it.
 
 ### Marimo Issues
 
