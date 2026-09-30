@@ -822,6 +822,44 @@ class TestBenchmarkAnalyzeCommand:
         assert result.exit_code == 0
         assert "INTRA-MODEL CONSISTENCY" in result.stdout
 
+    @patch("deriva.cli.commands.benchmark._get_run_stats_from_ocel")
+    @patch("deriva.cli.commands.benchmark.PipelineSession")
+    def test_analyze_shows_model_quality(self, mock_session_class, mock_get_stats):
+        """Should display the structural quality of each exported model."""
+        mock_session = MagicMock()
+        mock_analyzer = MagicMock()
+        mock_summary = MagicMock()
+        mock_summary.intra_model = []
+        mock_summary.inter_model = []
+        mock_summary.localization.hotspots = []
+        mock_summary.model_quality = [
+            {
+                "repository": "repo1",
+                "model": "gpt4",
+                "run": 1,
+                "elements": 30,
+                "relationships": 45,
+                "relationships_per_element": 1.5,
+                "orphan_share": 0.2,
+                "composition_violations": 2,
+                "duplicate_pairs": 1,
+                "chains": {"ApplicationService-ApplicationComponent": (3, 4)},
+                "reference": {"precision": 0.4, "recall": 0.6},
+            }
+        ]
+        mock_analyzer.compute_full_analysis.return_value = mock_summary
+        mock_analyzer.export_summary.return_value = "output.json"
+        mock_session.analyze_benchmark.return_value = mock_analyzer
+        mock_session_class.return_value.__enter__.return_value = mock_session
+        mock_get_stats.return_value = {}
+
+        result = runner.invoke(app, ["benchmark", "analyze", "session_123"])
+
+        assert result.exit_code == 0
+        assert "MODEL QUALITY" in result.stdout
+        assert "repo1" in result.stdout and "1.50" in result.stdout and "20%" in result.stdout
+        assert "ApplicationService-ApplicationComponent 3/4" in result.stdout
+
 
 class TestBenchmarkDeviationsCommand:
     """Tests for benchmark deviations command."""
@@ -2027,6 +2065,25 @@ class TestBenchmarkRunOptions:
         assert "Defer relationships: enabled" in result.stdout
         call_kwargs = mock_session.run_benchmark.call_args[1]
         assert call_kwargs["defer_relationships"] is True
+
+    @pytest.mark.parametrize("flags, deferred", [([], True), (["--no-defer-relationships"], False)])
+    @patch("deriva.cli.commands.benchmark.create_benchmark_progress_reporter")
+    @patch("deriva.cli.commands.benchmark.PipelineSession")
+    def test_relationships_are_deferred_by_default(self, mock_session_class, mock_progress, flags, deferred):
+        """The CLI follows the service default: elements first, then the relationship pass."""
+        mock_session = MagicMock()
+        mock_result = MagicMock(session_id="bench_123", runs_completed=1, runs_failed=0, duration_seconds=1.0, ocel_path="ocel.json", success=True, errors=[])
+        mock_session.run_benchmark.return_value = mock_result
+        mock_session_class.return_value.__enter__.return_value = mock_session
+        mock_reporter = MagicMock()
+        mock_progress.return_value = mock_reporter
+        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
+        mock_reporter.__exit__ = MagicMock(return_value=False)
+
+        result = runner.invoke(app, ["benchmark", "run", "--repos", "repo1", "--models", "gpt4", *flags])
+
+        assert result.exit_code == 0
+        assert mock_session.run_benchmark.call_args[1]["defer_relationships"] is deferred
 
     @patch("deriva.cli.commands.benchmark.create_benchmark_progress_reporter")
     @patch("deriva.cli.commands.benchmark.PipelineSession")

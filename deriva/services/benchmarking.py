@@ -58,6 +58,8 @@ from deriva.adapters.llm.models import BenchmarkModelConfig
 from deriva.common.ocel import OCELLog, create_run_id, hash_content, load_benchmark_ocel
 from deriva.common.timing import query_stats, summarize_run_events
 from deriva.modules.analysis import decision_content
+from deriva.modules.analysis.model_quality import compute_model_quality
+from deriva.modules.analysis.semantic_matching import match_elements, parse_archi_xml, parse_exchange_format_xml
 from deriva.services import config as config_service
 from deriva.services import derivation, extraction
 
@@ -1835,6 +1837,59 @@ class InconsistencyLocalization:
         return asdict(self)
 
 
+def model_quality_for_session(
+    session_dir: Path,
+    repositories: list[str],
+    models: list[str],
+    reference_models: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Structural quality of every model a benchmark session exported, one row per run.
+
+    Reads ``models/{repo}_{model}_run{N}.xml`` and adds, where a reference model exists,
+    precision and recall of the elements against it (indicative: the references are
+    hand-made and partly not derivable). Only a name match with the same type counts;
+    a match on the type alone does not.
+    """
+    if reference_models is None:
+        from deriva.services.analysis import REFERENCE_MODELS
+
+        reference_models = REFERENCE_MODELS
+    rows: list[dict[str, Any]] = []
+    models_dir = Path(session_dir) / "models"
+    for repo in repositories:
+        reference = _reference_elements(reference_models.get(repo))
+        for model in models:
+            prefix = f"{repo.replace('/', '_')}_{model.replace('/', '_')}_run"
+            files = sorted(models_dir.glob(f"{prefix}*.xml"), key=lambda f: int(f.stem[len(prefix) :]) if f.stem[len(prefix) :].isdigit() else 0)
+            for path in files:
+                run = path.stem[len(prefix) :]
+                if not run.isdigit():
+                    continue
+                elements, relationships = parse_exchange_format_xml(path)
+                row: dict[str, Any] = {"repository": repo, "model": model, "run": int(run), **compute_model_quality(elements, relationships).to_dict()}
+                row["reference"] = None
+                if reference:
+                    derived = [{"id": e.identifier, "name": e.name, "type": e.element_type} for e in elements]
+                    named = [m for m in match_elements(derived, reference) if m.match_type in NAME_MATCHES]
+                    precision = len(named) / len(derived) if derived else 0.0
+                    recall = len({m.reference_id for m in named}) / len(reference)
+                    row["reference"] = {"precision": round(precision, 3), "recall": round(recall, 3), "reference_elements": len(reference)}
+                rows.append(row)
+    return rows
+
+
+# Semantic matches that agree on the name and the type (a match on the type alone does not count)
+NAME_MATCHES = {"exact", "fuzzy_name"}
+
+
+def _reference_elements(path: str | None) -> list[Any]:
+    """Elements of a reference model (Archi format first, then the exchange format); none when missing."""
+    if not path or not Path(path).exists():
+        return []
+    elements, _ = parse_archi_xml(path)
+    return elements or parse_exchange_format_xml(path)[0]
+
+
 @dataclass
 class AnalysisSummary:
     """Complete analysis summary."""
@@ -1845,6 +1900,7 @@ class AnalysisSummary:
     inter_model: list[InterModelMetrics]
     localization: InconsistencyLocalization
     overall_consistency: float
+    model_quality: list[dict[str, Any]] = field(default_factory=list)  # one row per exported run model
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -1855,6 +1911,7 @@ class AnalysisSummary:
             "inter_model": [m.to_dict() for m in self.inter_model],
             "localization": self.localization.to_dict(),
             "overall_consistency": self.overall_consistency,
+            "model_quality": self.model_quality,
         }
 
 
@@ -2641,7 +2698,13 @@ class BenchmarkAnalyzer:
             inter_model=inter,
             localization=localization,
             overall_consistency=overall,
+            model_quality=self.compute_model_quality(),
         )
+
+    def compute_model_quality(self) -> list[dict[str, Any]]:
+        """Structural quality of every model the session exported (see ``model_quality_for_session``)."""
+        config = (self.session_info or {}).get("config", {})
+        return model_quality_for_session(Path("workspace/benchmarks") / self.session_id, config.get("repositories", []), config.get("models", []))
 
     def export_summary(self, path: str | None = None, format: str = "json") -> str:
         """
@@ -2704,6 +2767,28 @@ class BenchmarkAnalyzer:
 
         for inter_m in summary.inter_model:
             lines.append(f"| {inter_m.repository} | {', '.join(inter_m.models)} | {len(inter_m.overlap)} | {inter_m.jaccard_similarity:.2f} |")
+
+        if summary.model_quality:
+            lines.extend(
+                [
+                    "",
+                    "## Model Quality",
+                    "",
+                    "Structure of each exported model: relationships per element, elements in no relationship, parts composed into more than one whole,",
+                    "pairs with several relationship types, and element precision and recall against the reference model (indicative).",
+                    "",
+                    "| Repository | Model | Run | Elements | Relationships | Per element | Orphans | Composition violations | Double pairs | Reference P / R |",
+                    "|------------|-------|-----|----------|---------------|-------------|---------|------------------------|--------------|-----------------|",
+                ]
+            )
+            for q in summary.model_quality:
+                ref = q.get("reference")
+                ref_text = f"{ref['precision']:.2f} / {ref['recall']:.2f}" if ref else "-"
+                lines.append(
+                    f"| {q['repository']} | {q['model']} | {q['run']} | {q['elements']} | {q['relationships']} | {q['relationships_per_element']:.2f} | "
+                    f"{q['orphan_share']:.0%} | {q['composition_violations']} | {q['duplicate_pairs']} | {ref_text} |"
+                )
+            lines.append("")
 
         lines.extend(
             [

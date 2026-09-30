@@ -245,7 +245,9 @@ deriva benchmark step <step> --repos <repos> --model <model> [options]
 # List benchmark sessions
 deriva benchmark list
 
-# Analyze consistency across runs
+# Analyze consistency across runs, and the structure of every exported model
+# (relationships per element, orphans, composition into more than one whole,
+# cross-layer chains, precision and recall against the reference model)
 deriva benchmark analyze <session_id>
 
 # Analyze config deviations
@@ -361,8 +363,10 @@ Deriva supports a two-phase derivation architecture via the `defer_relationships
 
 | Mode               | Behavior                                                         | Use Case                              |
 |--------------------|------------------------------------------------------------------|---------------------------------------|
-| Legacy (`False`)   | Derive relationships after each element batch                    | Debugging, comparison                 |
+| Legacy (`False`)   | Derive relationships after each element batch                    | Debugging, comparison (`--no-defer-relationships`) |
 | Default (`True`)   | Create all elements first, then derive relationships in one pass | Recommended for all use cases         |
+
+`deriva benchmark run` uses the deferred mode by default, like the pipeline itself. In the legacy mode, elements that a step classifies into roles get no relationships at all.
 
 **Benefits of deferred mode:**
 

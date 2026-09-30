@@ -57,7 +57,9 @@ def benchmark_run(
     no_export_models: Annotated[bool, typer.Option("--no-export-models", help="Disable model export")] = False,
     no_clear: Annotated[bool, typer.Option("--no-clear", help="Don't clear graph between runs")] = False,
     bench_hash: Annotated[bool, typer.Option("--bench-hash", help="Per-run cache isolation")] = False,
-    defer_relationships: Annotated[bool, typer.Option("--defer-relationships", help="Two-phase derivation")] = False,
+    defer_relationships: Annotated[
+        bool, typer.Option("--defer-relationships/--no-defer-relationships", help="Two-phase derivation: elements first, then the relationship pass (default)")
+    ] = True,
     per_repo: Annotated[bool, typer.Option("--per-repo", help="Run each repo separately")] = False,
     no_enrichment_cache: Annotated[bool, typer.Option("--no-enrichment-cache", help="Disable enrichment caching")] = False,
     nocache_enrichment_configs: Annotated[
@@ -371,6 +373,23 @@ def benchmark_analyze(
             typer.echo("")
 
         # Hotspots
+        if summary.model_quality:
+            typer.echo("MODEL QUALITY (structure of each exported model)")
+            typer.echo("-" * 100)
+            typer.echo(f"{'Repository':<24} {'Model':<18} {'Run':>3} {'Elem':>5} {'Rel':>5} {'Per el':>6} {'Orphans':>7} {'Comp.viol':>9} {'Double':>6} {'Ref P / R':>11}")
+            typer.echo("-" * 100)
+            for q in summary.model_quality:
+                ref = q.get("reference")
+                ref_text = f"{ref['precision']:.2f} / {ref['recall']:.2f}" if ref else "-"
+                typer.echo(
+                    f"{q['repository'][:24]:<24} {q['model'][:18]:<18} {q['run']:>3} {q['elements']:>5} {q['relationships']:>5} "
+                    f"{q['relationships_per_element']:>6.2f} {q['orphan_share']:>7.0%} {q['composition_violations']:>9} {q['duplicate_pairs']:>6} {ref_text:>11}"
+                )
+                chains = ", ".join(f"{name} {linked}/{total}" for name, (linked, total) in q.get("chains", {}).items())
+                if chains:
+                    typer.echo(f"    chains: {chains}")
+            typer.echo("")
+
         if summary.localization.hotspots:
             typer.echo("INCONSISTENCY HOTSPOTS")
             typer.echo("-" * 50)
