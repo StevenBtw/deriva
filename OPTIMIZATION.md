@@ -936,6 +936,8 @@ After Phase 4 optimizations (5 runs, mistral-devstral2, flask_invoice_generator)
 
 ## Token Efficiency Optimizations (v0.6.9)
 
+Business concept extraction no longer works as shown in the examples below: since 0.7.1 the LLM only classifies candidate terms that a local NLP tool found (see CHANGELOG). The techniques still apply to the other LLM steps.
+
 Version 0.6.9 introduced several token efficiency improvements that reduce extraction costs by an estimated 40-60%.
 
 ### Compact JSON Serialization

@@ -193,6 +193,25 @@ deriva benchmark analyze bench_20260103_130000
 
 If consistency improved (e.g., 28% → 78%), the change helped.
 
+### Measure One Pipeline Step
+
+`benchmark step` repeats a single pipeline step on a fixed input and compares only what that step produces. Nothing before or after it varies, so a change to one step is measured without the noise of the rest of the pipeline.
+
+```bash
+deriva benchmark step BusinessConcept --repos my-repo --model openai-gptx -n 3 -v
+deriva benchmark step DataObject --repos my-repo --model openai-gptx -n 3 -v
+```
+
+- The step is an extraction step, a derivation step (an element type, `ConsolidatedRelationships` for the relationship pass, or a refine step), or `prep` for the whole prep phase (graph algorithms). Steps follow the pipeline order: extraction, prep, element steps, the relationship pass, refine.
+- The step's input (every earlier step) is built once, with LLM answers from the cache, and saved in the session folder (`steps/<repo>_input.grafeo`, graph and model).
+- Each run copies that input into a separate work database (the repository's own graph is not touched) and calls the LLM for the step without the cache.
+- The output of a run is every node and edge the step added, changed or removed, with its properties (timestamps left out). For derivation steps it also holds the model's elements (by identifier, disabled ones included) and relationships (by type, source and target, since relationship identifiers differ per run).
+- **Presence** counts the objects produced in every run. **Exact** also requires the same properties, and the report names the properties that differ.
+- For an element step, documentation, the LLM's own name for the element (`llm_name`) and its confidence are reported but not scored in exact: no later step reads them for identity. The report lists them as "Reported, not scored in exact".
+- The report also gives the live LLM calls per run and the step's answer stability. Results are written to `step_results.json`.
+- A step that classifies items in batches (BusinessConcept) also reports **decision stability**: the share of items with the same decision in every run. One changed label makes a whole batch answer differ, so this is the finer measure for such steps. Element steps report it per candidate: the stage the candidate reached (for example created, rejected, filtered out) and the element it became.
+- It needs `GRAFEO_DB_DIR` (the input is copied per run as a file).
+
 ---
 
 ## CLI Reference
@@ -215,6 +234,13 @@ deriva benchmark run --repos <repos> --models <models> [options]
   --per-repo                    Run each repo separatetely (default: combine all)
   -v, --verbose                 Show detailed text progress
   -q, --quiet                   Disable progress bar display
+
+# Repeat one pipeline step (extraction, derivation or prep) on a fixed input and compare its outputs
+deriva benchmark step <step> --repos <repos> --model <model> [options]
+  --repos                       Comma-separated repository names (required)
+  --model                       Model config name (required)
+  -n, --runs                    Runs per repository (default: 3)
+  -v, --verbose                 Show detailed text progress
 
 # List benchmark sessions
 deriva benchmark list

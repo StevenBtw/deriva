@@ -78,7 +78,17 @@ source .venv/bin/activate
 uv sync
 ```
 
-### 5. Launch Deriva
+### 5. Set Up the NLP Tool (Business Concepts)
+
+The business concept step finds candidate terms in the documentation with a separate tool in `tools/nlp`. It is its own uv project on Python 3.12 (spaCy and the translation runtime need it); uv installs it, and Python 3.12 if needed, on first use. The pinned translation models (German and French to English, checked by SHA-256) are downloaded once:
+
+```bash
+uv run --project tools/nlp --python 3.12 deriva-nlp models --models-dir workspace/cache/nlp
+```
+
+The step also downloads missing models on its first run. `DERIVA_NLP_PROJECT` and `DERIVA_NLP_MODELS_DIR` in `.env` move the tool or the model folder.
+
+### 6. Launch Deriva
 
 ```bash
 cd ../../..  # Back to Deriva root
@@ -115,7 +125,7 @@ Enable the extraction steps you need:
 | TypeDefinition | Extracts classes, functions (AST for Python) | Yes |
 | Method | Extracts methods from type definitions | Optional |
 | Edge | Extracts relationships (IMPORTS, USES, CALLS, DECORATED_BY, REFERENCES) | Yes |
-| Technology | Detects frameworks and libraries | Optional |
+| Technology | Finds infrastructure (runtimes, databases, brokers, container platforms) from manifests, build and container files | Optional |
 | ExternalDependency | Maps external dependencies | Optional |
 | Test | Extracts test definitions | Optional |
 
@@ -200,6 +210,10 @@ LLM_MISTRAL_DEVSTRAL_STRUCTURED_OUTPUT=true
 # Namespaces
 GRAPH_NAMESPACE=Graph
 ARCHIMATE_NAMESPACE=Model
+
+# NLP tool for business concepts (defaults shown)
+DERIVA_NLP_PROJECT=tools/nlp
+DERIVA_NLP_MODELS_DIR=workspace/cache/nlp
 ```
 
 See `.env.example` for all available options.
@@ -282,6 +296,14 @@ deriva config filetype stats
 ```bash
 deriva config setting show excluded_directories
 deriva config setting set excluded_directories '[".git", "node_modules", "third_party"]'
+```
+
+**Derivation name patterns:** some derivation steps filter their candidates by name: a candidate is kept when its name contains an include pattern and none of the exclude patterns (a step can limit the patterns to candidates with given graph labels with its `pattern_labels` param). Patterns are stored per step, type and category.
+
+```bash
+deriva config pattern list Node
+deriva config pattern add Node include deployment helm
+deriva config pattern delete Node include --category deployment helm   # a category left empty is deactivated
 ```
 
 ### Updating Configurations (Versioning)
@@ -401,6 +423,9 @@ deriva config filetype stats
 # System settings (e.g. directories skipped during extraction)
 deriva config setting show excluded_directories
 
+# Derivation name patterns (include and exclude, per step and category)
+deriva config pattern list SystemSoftware
+
 # Run pipeline stages
 deriva run extraction --repo flask_invoice_generator -v
 deriva run derivation -v
@@ -478,6 +503,10 @@ OCEL files can be analyzed with process mining tools like PM4Py, Celonis, or cus
 ---
 
 ## Troubleshooting
+
+### NLP Tool Issues
+
+The business concept step reports `deriva-nlp ... failed:` followed by the tool's own message. Run the models command from the setup once more (it verifies the downloaded models), and check that uv can install Python 3.12.
 
 ### Marimo Issues
 
