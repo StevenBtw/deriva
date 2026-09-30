@@ -73,6 +73,8 @@ spec:
         ),
         ("pyproject.toml", "dependency", "python", '[project]\ndependencies = ["alpha-client>=1", "beta"]\n', [("alpha-client", "python library"), ("beta", "python library")]),
         ("setup.py", "dependency", "python", 'setup(install_requires=["alpha-client>=1", "beta"])', [("alpha-client", "python library"), ("beta", "python library")]),
+        # Extras hold a "]" inside the list; the requirements after them still count
+        ("setup.py", "dependency", "python", 'setup(install_requires=["alpha-client[extra]>=1", "beta"])', [("alpha-client", "python library"), ("beta", "python library")]),
         (
             "go.mod",
             "dependency",

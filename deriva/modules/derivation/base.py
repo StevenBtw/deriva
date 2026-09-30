@@ -2146,6 +2146,18 @@ class GraphFilter:
 
 
 @dataclass(frozen=True)
+class NestedFilter:
+    """One module, one element (element config ``params.skip_nested``).
+
+    A selected directory that holds at least ``min_share`` of the files of ``file_type``
+    below its nearest selected ancestor directory is represented by that ancestor.
+    """
+
+    file_type: str
+    min_share: float
+
+
+@dataclass(frozen=True)
 class RoleConfig:
     """Candidates classified into a closed list of roles (element config ``params.roles``).
 

@@ -153,10 +153,15 @@ def _pyproject_items(content: str) -> list[tuple[str, str]]:
 
 
 def _setup_py_items(content: str) -> list[tuple[str, str]]:
-    match = re.search(r"install_requires\s*=\s*\[(.*?)\]", content, re.DOTALL)
-    if not match:
+    start = re.search(r"install_requires\s*=\s*\[", content)
+    if not start:
         return []
-    requirements = (parse_requirement_line(s) for s in re.findall(r"['\"]([^'\"]+)['\"]", match.group(1)))
+    # The list ends at its matching bracket: extras ("name[extra]") hold brackets of their own
+    depth, end = 1, start.end()
+    while end < len(content) and depth:
+        depth += {"[": 1, "]": -1}.get(content[end], 0)
+        end += 1
+    requirements = (parse_requirement_line(s) for s in re.findall(r"['\"]([^'\"]+)['\"]", content[start.end() : end]))
     return [(r["name"], "python library") for r in requirements if r]
 
 

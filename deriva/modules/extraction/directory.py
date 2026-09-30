@@ -89,8 +89,9 @@ def build_directory_node(dir_metadata: dict[str, Any], repo_name: str) -> dict[s
 def _walk_directories(root: Path, excluded_dirs: Collection[str]) -> dict[Path, tuple[int, int, int]]:
     """Every non-excluded directory below ``root`` with (file count, subdirectory count, total size).
 
-    Same directories in the same order as filtering ``root.rglob("*")``, but every
-    directory is scanned once and excluded directories are never entered. The file
+    Same directories in the same order as filtering ``root.rglob("*")`` on NTFS, whatever
+    the filesystem (names are sorted as NTFS lists them), but every directory is scanned
+    once and excluded directories are never entered. The file
     count covers the directory's own files; the total size covers its subtree without
     files on an excluded path. Like ``rglob``, symlinked directories are listed but
     not recursed into.
@@ -99,9 +100,20 @@ def _walk_directories(root: Path, excluded_dirs: Collection[str]) -> dict[Path, 
 
     def scan(directory: Path) -> list[os.DirEntry[str]]:
         if directory not in scans:
-            with os.scandir(directory) as entries:
-                scans[directory] = list(entries)
+            try:
+                # Sorted as NTFS lists names (by their upper case), so every filesystem gives the same order
+                with os.scandir(directory) as entries:
+                    scans[directory] = sorted(entries, key=lambda e: (e.name.upper(), e.name))
+            except OSError:
+                # Unreadable (permissions, removed meanwhile): listed, like rglob does, without contents
+                scans[directory] = []
         return scans[directory]
+
+    def file_size(entry: os.DirEntry[str]) -> int:
+        try:
+            return entry.stat().st_size
+        except OSError:
+            return 0
 
     def excluded(entry: os.DirEntry[str]) -> bool:
         return is_excluded_path(Path(entry.path).relative_to(root).as_posix(), excluded_dirs)
@@ -127,7 +139,7 @@ def _walk_directories(root: Path, excluded_dirs: Collection[str]) -> dict[Path, 
             for entry in scan(directory):
                 if entry.is_file():
                     if not excluded(entry):
-                        size += entry.stat().st_size
+                        size += file_size(entry)
                 elif entry.is_dir(follow_symlinks=False) and not excluded(entry):
                     size += total(Path(entry.path))
             totals[directory] = size

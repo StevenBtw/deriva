@@ -78,14 +78,14 @@ class TestRunDerivationStep:
         monkeypatch.setenv("GRAFEO_DB_DIR", str(tmp_path / "graphs"))
         return tmp_path
 
-    def _run(self, graph_manager, archimate_manager, step, fake_derivation=None, runs=3):
+    def _run(self, graph_manager, archimate_manager, step, fake_derivation=None, runs=3, defer_relationships=True):
         from deriva.services.step_benchmark import StepBenchmark
 
         benchmark = StepBenchmark(
             engine=MagicMock(),
             graph_manager=graph_manager,
             archimate_manager=archimate_manager,
-            config=BenchmarkConfig(repositories=["r"], models=["m"], runs_per_combination=runs),
+            config=BenchmarkConfig(repositories=["r"], models=["m"], runs_per_combination=runs, defer_relationships=defer_relationships),
         )
         fake = fake_derivation or (lambda benchmark, **kwargs: {"success": True, "stats": {}, "errors": []})
         with (
@@ -120,6 +120,15 @@ class TestRunDerivationStep:
 
         steps = [c.kwargs["steps"] for c in run_derivation.call_args_list]
         assert steps == [["pagerank", "k_core_filter", "ApplicationComponent", "DataObject", "BusinessObject"]] + [[RELATIONSHIP_STEP]] * 3
+
+    def test_the_relationship_pass_is_refused_when_relationships_are_not_deferred(self, workspace, graph_manager, archimate_manager):
+        from deriva.services.derivation import RELATIONSHIP_STEP
+
+        result, _, run_derivation = self._run(graph_manager, archimate_manager, RELATIONSHIP_STEP, defer_relationships=False)
+
+        # Derivation only runs the pass when relationships are deferred: every run would measure nothing
+        assert result.errors == [f"Unknown or disabled step: {RELATIONSHIP_STEP}"]
+        run_derivation.assert_not_called()
 
     def test_the_repeated_step_calls_the_llm_without_the_cache(self, workspace, graph_manager, archimate_manager):
         nocache = []

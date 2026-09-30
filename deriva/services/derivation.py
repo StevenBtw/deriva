@@ -52,7 +52,16 @@ from deriva.modules.derivation import prep
 from deriva.modules.derivation.application_component import ApplicationComponentDerivation
 from deriva.modules.derivation.application_interface import ApplicationInterfaceDerivation
 from deriva.modules.derivation.application_service import ApplicationServiceDerivation
-from deriva.modules.derivation.base import ElementPrompt, GraphFilter, NamingConfig, PerCandidateConfig, RelationshipLLMConfig, RoleConfig, derive_consolidated_relationships
+from deriva.modules.derivation.base import (
+    ElementPrompt,
+    GraphFilter,
+    NamingConfig,
+    NestedFilter,
+    PerCandidateConfig,
+    RelationshipLLMConfig,
+    RoleConfig,
+    derive_consolidated_relationships,
+)
 from deriva.modules.derivation.business_actor import BusinessActorDerivation
 from deriva.modules.derivation.business_event import BusinessEventDerivation
 from deriva.modules.derivation.business_function import BusinessFunctionDerivation
@@ -254,6 +263,25 @@ def _skip_subtypes(params: str | None) -> bool:
     return value
 
 
+def _skip_nested(params: str | None) -> NestedFilter | None:
+    """The file type and share that make a nested directory candidate leave (``params.skip_nested``).
+
+    ``{"file_type": "source", "min_share": 0.9}`` leaves out a selected directory that holds at
+    least 90% of the source files below its nearest selected ancestor directory, which represents
+    it. Without the key no candidate is left out this way.
+    """
+    settings = json.loads(params).get("skip_nested") if params else None
+    if settings is None:
+        return None
+    file_type = settings.get("file_type") if isinstance(settings, dict) else None
+    share = settings.get("min_share") if isinstance(settings, dict) else None
+    if not isinstance(file_type, str) or not file_type:
+        raise ValueError(f"params.skip_nested needs a file_type, got {settings!r}")
+    if isinstance(share, bool) or not isinstance(share, (int, float)) or not 0 < share <= 1:
+        raise ValueError(f"params.skip_nested needs a min_share above 0 and at most 1, got {settings!r}")
+    return NestedFilter(file_type=file_type, min_share=float(share))
+
+
 def _graph_filter(params: str | None) -> GraphFilter | None:
     """The step's k-core threshold and the labels it applies to (``params.graph_filter``).
 
@@ -309,6 +337,7 @@ def generate_element(
     prompt: ElementPrompt | None = None,
     graph_filter: GraphFilter | None = None,
     skip_subtypes: bool = False,
+    skip_nested: NestedFilter | None = None,
 ) -> dict[str, Any]:
     """
     Generate ArchiMate elements of a specific type (and optionally their relationships).
@@ -344,6 +373,7 @@ def generate_element(
         prompt: The texts of the batch element prompt (``params.prompt``)
         graph_filter: The step's k-core threshold (``params.graph_filter``; None: none)
         skip_subtypes: Leave out candidate types that inherit from another candidate (``params.skip_subtypes``)
+        skip_nested: Leave out directories nested in a selected ancestor that holds nearly the same files (``params.skip_nested``)
 
     Returns:
         Dict with success, elements_created, relationships_created, created_elements, errors
@@ -391,6 +421,7 @@ def generate_element(
             prompt=prompt,
             graph_filter=graph_filter,
             skip_subtypes=skip_subtypes,
+            skip_nested=skip_nested,
         )
         return {
             "success": result.success,
@@ -797,6 +828,7 @@ def run_derivation(
                     prompt=_element_prompt(cfg.params),
                     graph_filter=_graph_filter(cfg.params),
                     skip_subtypes=_skip_subtypes(cfg.params),
+                    skip_nested=_skip_nested(cfg.params),
                 )
 
                 elements_created = step_result.get("elements_created", 0)
@@ -1229,6 +1261,7 @@ def run_derivation_iter(
                     prompt=_element_prompt(cfg.params),
                     graph_filter=_graph_filter(cfg.params),
                     skip_subtypes=_skip_subtypes(cfg.params),
+                    skip_nested=_skip_nested(cfg.params),
                 )
 
                 elements_created = step_result.get("elements_created", 0)

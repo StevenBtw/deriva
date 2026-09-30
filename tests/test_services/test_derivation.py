@@ -2374,6 +2374,86 @@ class TestSkipSubtypesConfig:
         assert mock_get.return_value.generate.call_args.kwargs["skip_subtypes"] is True
 
 
+class TestSkipNestedConfig:
+    """One module, one element: params.skip_nested names the file type and the share a nested directory must hold."""
+
+    def test_without_the_key_no_candidate_is_left_out(self):
+        assert derivation._skip_nested(None) is None
+        assert derivation._skip_nested('{"temperature": 0.0}') is None
+
+    def test_params_set_the_file_type_and_the_share(self):
+        from deriva.modules.derivation.base import NestedFilter
+
+        assert derivation._skip_nested('{"skip_nested": {"file_type": "source", "min_share": 0.9}}') == NestedFilter(file_type="source", min_share=0.9)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            True,
+            {"min_share": 0.9},
+            {"file_type": "", "min_share": 0.9},
+            {"file_type": "source"},
+            {"file_type": "source", "min_share": "0.9"},
+            {"file_type": "source", "min_share": True},
+            {"file_type": "source", "min_share": 0},
+            {"file_type": "source", "min_share": 1.5},
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, value):
+        with pytest.raises(ValueError, match="skip_nested"):
+            derivation._skip_nested(json.dumps({"skip_nested": value}))
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_it(self, runner):
+        from deriva.modules.derivation.base import NestedFilter
+
+        cfg = SimpleNamespace(
+            step_name="ApplicationComponent",
+            element_type="ApplicationComponent",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"skip_nested": {"file_type": "source", "min_share": 0.9}}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["skip_nested"] == NestedFilter(file_type="source", min_share=0.9)
+
+    def test_generate_element_passes_it_to_the_module(self):
+        from deriva.modules.derivation.base import GenerationResult, NestedFilter
+
+        nested = NestedFilter(file_type="source", min_share=0.9)
+        with (
+            patch.object(derivation, "_get_derivation") as mock_get,
+            patch.object(derivation.config, "get_derivation_patterns", return_value={}),
+        ):
+            mock_get.return_value.generate.return_value = GenerationResult(success=True)
+            derivation.generate_element(
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=MagicMock(),
+                element_type="ApplicationComponent",
+                query="MATCH (n) RETURN n",
+                instruction="test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                skip_nested=nested,
+            )
+
+        assert mock_get.return_value.generate.call_args.kwargs["skip_nested"] == nested
+
+
 class TestGraphFilterConfig:
     """The step's k-core threshold and the candidates it applies to come from params.graph_filter."""
 

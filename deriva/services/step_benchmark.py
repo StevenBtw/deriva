@@ -204,7 +204,9 @@ class StepBenchmark(benchmarking.BenchmarkOrchestrator):
         phases = {phase: [c.step_name for c in config_service.get_derivation_configs(self.engine, enabled_only=True, phase=phase)] for phase in ("prep", "generate", "refine")}
         if step == "prep":
             return _Plan(extraction_steps, [], [], phases["prep"])
-        order = phases["prep"] + phases["generate"] + [derivation.RELATIONSHIP_STEP] + phases["refine"]
+        # The relationship pass only runs when relationships are deferred (run_derivation)
+        relationship_pass = [derivation.RELATIONSHIP_STEP] if self.config.defer_relationships else []
+        order = phases["prep"] + phases["generate"] + relationship_pass + phases["refine"]
         if step not in order:
             return None
         unscored = UNSCORED_ELEMENT_PROPERTIES if step in phases["generate"] else frozenset()

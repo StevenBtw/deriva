@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 from .models import ensure_all
 from .settings import Settings
 
@@ -18,6 +20,7 @@ class NlpTool:
     """The deterministic multilingual term extraction (output contract: `extract.extract`)."""
 
     def __init__(self, models_dir: Path | None = None):
+        load_dotenv()
         self.models_dir = models_dir or Path(os.getenv("DERIVA_NLP_MODELS_DIR", "workspace/cache/nlp"))
 
     def ensure_models(self) -> None:

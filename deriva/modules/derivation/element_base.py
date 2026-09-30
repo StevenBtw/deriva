@@ -47,6 +47,7 @@ from deriva.modules.derivation.base import (
     GenerationResult,
     GraphFilter,
     NamingConfig,
+    NestedFilter,
     PerCandidateConfig,
     RelationshipLLMConfig,
     RelationshipRule,
@@ -369,6 +370,7 @@ class ElementDerivationBase(ABC):
         prompt: ElementPrompt | None = None,
         graph_filter: GraphFilter | None = None,
         skip_subtypes: bool = False,
+        skip_nested: NestedFilter | None = None,
     ) -> GenerationResult:
         """
         Generate elements of this type.
@@ -412,6 +414,8 @@ class ElementDerivationBase(ABC):
                 k-core threshold)
             skip_subtypes: One element per contract: a candidate type that inherits from
                 another candidate type of the repository is left out before any ranking or cut
+            skip_nested: One module, one element: a selected directory holding nearly all of its
+                nearest selected ancestor's files of a type is left out after the cut (None: none)
 
         Returns:
             GenerationResult with success status, counts, and any errors
@@ -519,6 +523,28 @@ class ElementDerivationBase(ABC):
                         became_element=False,
                     )
                 )
+
+        # One module, one element: a directory holding nearly all of its nearest selected
+        # ancestor's files is represented by it; after the cut, so no place moves to the next candidate
+        if skip_nested is not None:
+            nested = self._nested_in_ancestors(filtered, skip_nested, graph_manager)
+            for c in filtered:
+                if c.node_id in nested:
+                    result.candidate_decisions.append(
+                        CandidateDecision(
+                            node_id=c.node_id,
+                            name=c.name,
+                            element_type=self.ELEMENT_TYPE,
+                            pagerank=c.pagerank,
+                            kcore_level=c.kcore_level,
+                            in_degree=c.in_degree,
+                            out_degree=c.out_degree,
+                            confidence=c.properties.get("confidence"),
+                            stage="duplicate_removed",
+                            became_element=False,
+                        )
+                    )
+            filtered = [c for c in filtered if c.node_id not in nested]
 
         # Pre-generation duplicate check - filter out candidates matching existing elements
         pre_dedup_ids = {c.node_id for c in filtered}
@@ -867,6 +893,39 @@ class ElementDerivationBase(ABC):
             {"ids": [c.node_id for c in candidates]},
         )
         return {row["id"] for row in rows}
+
+    def _nested_in_ancestors(self, candidates: list[Candidate], nested: NestedFilter, graph_manager: GraphManager) -> set[str]:
+        """Ids of the directory candidates that hold at least ``nested.min_share`` of their nearest kept ancestor's files.
+
+        Files of ``nested.file_type`` are counted below each directory through containment, over
+        any depth. Ancestors are decided top-down, so a left-out directory never represents another.
+        """
+        if len(candidates) < 2:
+            return set()
+        ids = [c.node_id for c in candidates]
+        pairs = graph_manager.query(
+            "MATCH (a:Graph:Directory)-[:`Graph:CONTAINS`*]->(b:Graph:Directory) WHERE a.id IN $ids AND b.id IN $ids RETURN a.id AS a, b.id AS b",
+            {"ids": ids},
+        )
+        ancestors: dict[str, set[str]] = {}
+        for row in pairs:
+            ancestors.setdefault(row["b"], set()).add(row["a"])
+        if not ancestors:
+            return set()
+        rows = graph_manager.query(
+            "MATCH (d:Graph:Directory)-[:`Graph:CONTAINS`*]->(f:Graph:File) WHERE d.id IN $ids AND f.active = true AND f.fileType = $file_type RETURN d.id AS id, count(f) AS n",
+            {"ids": ids, "file_type": nested.file_type},
+        )
+        files = {row["id"]: row["n"] for row in rows}
+        left_out: set[str] = set()
+        for node_id in sorted(ancestors, key=lambda d: len(ancestors[d])):
+            kept = ancestors[node_id] - left_out
+            if not kept:
+                continue
+            nearest = max(kept, key=lambda a: len(ancestors.get(a, ())))
+            if files.get(nearest, 0) and files.get(node_id, 0) / files[nearest] >= nested.min_share:
+                left_out.add(node_id)
+        return left_out
 
     def _active_repo_name(self, graph_manager: GraphManager) -> str:
         """The active repository's name ("" when unknown), stripped from element names as a leading token."""

@@ -7,6 +7,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from deriva.adapters.treesitter.models import ExtractedMethod, ExtractedType
 from deriva.modules.extraction import (
     external_dependency,
@@ -1596,7 +1598,7 @@ class TestExtractDirectoriesWalk:
         (root / "empty").mkdir()
 
     @classmethod
-    def _reference(cls, root, repo):
+    def _reference(cls, root):
         """The previous algorithm: rglob for the directories, rglob again per directory for its size."""
         from deriva.modules.extraction.base import is_excluded_path
 
@@ -1620,10 +1622,58 @@ class TestExtractDirectoriesWalk:
             (n["properties"]["path"], n["properties"]["name"], n["properties"]["file_count"], n["properties"]["subdirectory_count"], n["properties"]["total_size_bytes"])
             for n in result["data"]["nodes"]
         ]
-        assert got == self._reference(tmp_path, "r")
-        # rglob lists the root's directories first; their order is the filesystem's (NTFS sorts, ext4 does not)
+        # rglob's order is the filesystem's (NTFS sorts, ext4 does not); the walk's order is pinned below
+        assert sorted(got) == sorted(self._reference(tmp_path))
+
+    @pytest.mark.parametrize("listing", ["as the filesystem lists", "reversed"])
+    def test_the_order_does_not_depend_on_the_filesystem(self, tmp_path, monkeypatch, listing):
+        """rglob's order (a directory's children listed when it is found, last found scanned first) over
+        names sorted as NTFS lists them, so Windows keeps its order and every other system matches it."""
+        import os
+
+        self._tree(tmp_path)
+        if listing == "reversed":
+            real_scandir = os.scandir
+
+            class Reversed:
+                def __init__(self, path):
+                    with real_scandir(path) as it:
+                        self.entries = list(it)[::-1]
+
+                def __enter__(self):
+                    return iter(self.entries)
+
+                def __exit__(self, *exc):
+                    return False
+
+            monkeypatch.setattr(os, "scandir", Reversed)
+
+        result = extract_directories(str(tmp_path), "r", excluded_dirs=self.EXCLUDED)
+
+        assert [n["properties"]["path"] for n in result["data"]["nodes"]] == [
+            "a_dir", "docs", "empty", "src", "tools", "a_dir/b_dir", "docs/api", "src/lib", "src/lib/deep", "docs/api/v1"
+        ]  # fmt: skip
         edges = [(e["from_node_id"], e["to_node_id"]) for e in result["data"]["edges"]]
-        assert sorted(edges[:5]) == [("repo::r", f"dir::r::{d}") for d in ("a_dir", "docs", "empty", "src", "tools")]
+        assert edges[:5] == [("repo::r", f"dir::r::{d}") for d in ("a_dir", "docs", "empty", "src", "tools")]
+
+    def test_an_unreadable_directory_is_listed_without_its_contents(self, tmp_path, monkeypatch):
+        import os
+
+        self._tree(tmp_path)
+        real_scandir = os.scandir
+
+        def denying_scandir(path="."):
+            if os.fspath(path).endswith("docs"):
+                raise PermissionError(13, "Access is denied", os.fspath(path))
+            return real_scandir(path)
+
+        monkeypatch.setattr(os, "scandir", denying_scandir)
+        result = extract_directories(str(tmp_path), "r", excluded_dirs=self.EXCLUDED)
+
+        paths = {n["properties"]["path"]: n["properties"] for n in result["data"]["nodes"]}
+        assert result["success"]
+        assert (paths["docs"]["file_count"], paths["docs"]["total_size_bytes"]) == (0, 0)
+        assert "docs/api" not in paths and "src/lib/deep" in paths
 
     def test_never_enters_an_excluded_directory(self, tmp_path, monkeypatch):
         import os
