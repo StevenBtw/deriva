@@ -28,6 +28,32 @@ class TestClean:
     def test_rtf_control_words_go(self):
         assert clean("{\\rtf1\\ansi Hello {\\b world}}").split() == ["Hello", "world"]
 
+    def test_rtf_paragraphs_stay_separate_segments(self):
+        text = "{\\rtf1\\ansi\\pard First paragraph here.\\par\nSecond paragraph here.\\par\n}"
+
+        assert [s for s in segments(clean(text)) if s] == ["First paragraph here.", "Second paragraph here."]
+
+    def test_an_rtf_line_break_is_a_soft_wrap(self):
+        assert segments(clean("{\\rtf1 One line\\line and the next.}")) == ["One line and the next."]
+
+    def test_rtf_unicode_escapes_are_decoded_without_their_fallback(self):
+        assert clean("{\\rtf1 Gr\\u252\\'fc\\u223?e aus M\\u252?nchen}").split() == ["Grüße", "aus", "München"]
+
+    def test_comparisons_are_not_tags(self):
+        assert clean("keep a < b > c here").split() == ["keep", "a", "<", "b", ">", "c", "here"]
+
+    def test_tags_comments_and_declarations_go(self):
+        assert clean("<?xml version='1.0'?><!-- note --><p class='x'>Text</p>").split() == ["Text"]
+
+    def test_a_tag_whose_attribute_holds_a_comparison_goes_whole(self):
+        assert clean('<div show="items.length < 1 && size > 2">Text</div>').split() == ["Text"]
+
+    def test_a_tag_with_a_url_in_an_attribute_goes_whole(self):
+        assert clean('Host <input placeholder="http://host:8080/path" required> here').split() == ["Host", "here"]
+
+    def test_template_directives_go(self):
+        assert clean("<#if flag??>Text</#if><@macro/>").split() == ["Text"]
+
 
 class TestSegments:
     def test_blank_lines_headings_list_items_and_cells_start_segments(self):

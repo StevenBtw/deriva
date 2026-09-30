@@ -73,7 +73,7 @@ class TestNameKey:
         assert name_key("Cache Entries") == name_key("cache_entry") == "cacheentry"
 
     def test_parenthetical_asides_are_dropped(self):
-        assert name_key("Service Discovery (registry)") == name_key("Service Discovery")
+        assert name_key("Message Routing (registry)") == name_key("Message Routing")
 
     def test_letters_of_every_script_are_kept(self):
         assert name_key("Café") == "café"
@@ -88,3 +88,28 @@ class TestNameKey:
     def test_empty(self):
         assert name_key("") == ""
         assert name_key("  (aside) ") == ""
+
+    @pytest.mark.parametrize("name, key", [("AWS", "aws"), ("DNS", "dns"), ("AWS Lambda", "awslambda"), ("DNS Server", "dnsserver"), ("HTTPS", "https")])
+    def test_acronyms_are_not_singularized(self, name, key):
+        assert name_key(name) == key
+
+    def test_an_acronym_differs_from_its_shorter_spelling(self):
+        assert name_key("AWS") != name_key("AW")
+
+    @pytest.mark.parametrize("plural, singular", [("APIs", "API"), ("URLs", "URL"), ("IDs", "ID"), ("UIs", "UI"), ("REST APIs", "REST API"), ("ManageAPIs", "Manage API")])
+    def test_an_acronym_plural_shares_the_key_of_the_acronym(self, plural, singular):
+        assert name_key(plural) == name_key(singular)
+
+    def test_plus_and_hash_are_part_of_a_name(self):
+        assert len({name_key("C++"), name_key("C#"), name_key("C")}) == 3
+        assert name_key("C#") == name_key("c#")
+        assert name_key("Visual C++") == name_key("visual_c++") == "visualc++"
+
+    def test_a_plus_between_words_is_a_separator(self):
+        assert name_key("Search+Filter") == name_key("Search Filter")
+        assert name_key("Issue #12") == name_key("Issue 12")
+
+    def test_a_name_in_capitals_is_singularized_word_by_word(self):
+        # Several words in capitals are a constant or shouting, not acronyms
+        assert name_key("CLAIMS HANDLING") == name_key("Claims Handling")
+        assert name_key("MY_SERVICES") == name_key("MyServices")

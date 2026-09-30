@@ -123,12 +123,14 @@ class BusinessEventDerivation(HybridDerivation):
         for c in candidates:
             enrich_candidate(c, enrichments)
 
-        filtered = [c for c in candidates if c.name]
+        named = [c for c in candidates if c.name]
 
         # Business concepts were chosen by the query: no method patterns or pagerank threshold
-        # apply to them; they keep the query order up to the cap
-        if filtered and all("BusinessConcept" in c.labels for c in filtered):
-            return filtered[:max_candidates]
+        # apply to them; they keep the query order and come first. Other candidates take the method path
+        concepts = [c for c in named if "BusinessConcept" in c.labels]
+        filtered = [c for c in named if "BusinessConcept" not in c.labels]
+        if not filtered:
+            return concepts[:max_candidates]
 
         # Detect event handlers from decorators
         decorator_handlers = []
@@ -148,8 +150,8 @@ class BusinessEventDerivation(HybridDerivation):
         decorator_handlers = self.apply_graph_filtering(decorator_handlers, enrichments, max_candidates // 3)
         likely_events = self.apply_graph_filtering(likely_events, enrichments, max_candidates // 3)
 
-        # Combine: decorator handlers first, then pattern-matched, then others
-        combined = decorator_handlers + likely_events
+        # Combine: concepts first, then decorator handlers, then pattern-matched, then others
+        combined = concepts + decorator_handlers + likely_events
 
         remaining_slots = max_candidates - len(combined)
         if remaining_slots > 0 and others:

@@ -1832,14 +1832,28 @@ class TestStratifiedSampleElements:
         """The relationship prompt's sample depends on the graph (pagerank), not on LLM-written confidence."""
         from deriva.modules.derivation.base import stratified_sample_elements
 
+        # Elements carry their source node's pagerank as source_pagerank (build_element);
+        # identifier order is the reverse of graph order, so a fallback to identifiers shows
         elements = [
-            {"identifier": "llm_favourite", "element_type": "ApplicationComponent", "properties": {"confidence": 0.99, "pagerank": 0.1}},
-            {"identifier": "graph_central", "element_type": "ApplicationComponent", "properties": {"confidence": 0.51, "pagerank": 0.9}},
+            {"identifier": "a_llm_favourite", "element_type": "ApplicationComponent", "properties": {"confidence": 0.99, "source_pagerank": 0.1}},
+            {"identifier": "b_graph_central", "element_type": "ApplicationComponent", "properties": {"confidence": 0.51, "source_pagerank": 0.9}},
         ]
 
         result = stratified_sample_elements(elements, max_per_type=1)
 
-        assert [e["identifier"] for e in result] == ["graph_central"]
+        assert [e["identifier"] for e in result] == ["b_graph_central"]
+
+    def test_ranks_elements_as_build_element_writes_them(self):
+        from deriva.modules.derivation.base import build_element, stratified_sample_elements
+
+        # The low-ranked node sorts first by identifier
+        enrichments = {"n_a": {"pagerank": 0.1}, "n_z": {"pagerank": 0.9}}
+        names = {"n_a": "Alpha", "n_z": "Beta"}
+        elements = [build_element({"source": node_id, "confidence": 0.9}, "ApplicationComponent", enrichments, source_names=names)["data"] for node_id in ("n_a", "n_z")]
+
+        result = stratified_sample_elements(elements, max_per_type=1)
+
+        assert [e["name"] for e in result] == ["Beta"]
 
     def test_limits_per_type(self):
         """Should limit elements per type."""

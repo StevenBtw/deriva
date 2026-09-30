@@ -180,21 +180,35 @@ def singularize(word: str) -> str:
     return word
 
 
-# ASCII camel-case words, acronyms and numbers ("HTTPServer" -> HTTP, Server)
-_CAMEL_WORDS = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
+# ASCII camel-case words, acronym plurals, acronyms and numbers ("HTTPServer" -> HTTP, Server; "ManageAPIs" -> Manage, APIs)
+_CAMEL_WORDS = re.compile(r"[A-Z]{2,}s(?![a-z])|[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
+# A word with its trailing "+" or "#" ("C++", "C#"); a "+" or "#" before another word separates
+_CHUNKS = re.compile(r"[^\W_]+(?:[+#]+(?![^\W_]))?")
+_ACRONYM_PLURAL = re.compile(r"[A-Z]{2,}s")
 
 
 def _words(name: str) -> list[str]:
     """The words of a name: split at separators and camel-case boundaries, asides dropped."""
     name = re.sub(r"\([^)]*\)", " ", name)
     words: list[str] = []
-    for chunk in re.split(r"[\W_]+", name):
-        if not chunk:
-            continue
-        parts = _CAMEL_WORDS.findall(chunk)
+    for chunk in _CHUNKS.findall(name):
+        base = chunk.rstrip("+#")
+        parts = _CAMEL_WORDS.findall(base)
         # Chunks with characters the ASCII pattern does not cover (non-ASCII letters) stay whole
-        words.extend(parts if "".join(parts) == chunk else [chunk])
+        if "".join(parts) != base:
+            parts = [base]
+        parts[-1] += chunk[len(base) :]
+        words.extend(parts)
     return words
+
+
+def _key_word(word: str, acronyms: bool) -> str:
+    """One word of a name key: an acronym plural loses its "s", an acronym stays as written, other words are made singular."""
+    if _ACRONYM_PLURAL.fullmatch(word):
+        return word[:-1].casefold()
+    if acronyms and word.isupper():
+        return word.casefold()
+    return singularize(word).casefold()
 
 
 def name_key(name: str) -> str:
@@ -204,6 +218,12 @@ def name_key(name: str) -> str:
     acronym boundaries, parenthetical asides are dropped, every word is made
     singular ("LikesAggregation" / "Like Aggregation"), and the casefolded words
     are joined without separators, so compound spellings ("Realtime" /
-    "Real Time") share one key.
+    "Real Time") share one key. Acronyms are not made singular ("AWS", "DNS
+    Server"), an acronym plural meets its acronym ("APIs" / "API"), and a
+    trailing "+" or "#" belongs to its word ("C++", "C#"). A name written
+    entirely in capitals with several words (a constant) is made singular word
+    by word, as its words are not acronyms.
     """
-    return "".join(singularize(word).casefold() for word in _words(name))
+    words = _words(name)
+    acronyms = len(words) == 1 or any(ch.islower() for ch in name)
+    return "".join(_key_word(word, acronyms) for word in words)

@@ -24,18 +24,32 @@ def _rtf_hex(match: re.Match[str]) -> str:
     return bytes([int(match.group(1), 16)]).decode("cp1252", errors="replace")
 
 
+# A tag, comment, declaration or template directive: a name or one of ! ? # @ right after "<"
+# (so "a < b > c" stays text); quoted attribute values may hold "<" or ">"
+TAG = re.compile(r"""</?[A-Za-z!?#@][^<>"'\n]*(?:(?:"[^"\n]*"|'[^'\n]*')[^<>"'\n]*)*>""")
+
+
+def _rtf_unicode(match: re.Match[str]) -> str:
+    code = int(match.group(1))
+    return chr(code + 65536 if code < 0 else code)
+
+
 def clean(text: str) -> str:
     """Generic markup cleanup: Unicode normalization, RTF, Markdown code and links, URLs, tags, hyphenation."""
     text = unicodedata.normalize("NFKC", text).replace("\r\n", "\n").replace("\r", "\n")
     if text.lstrip().startswith("{\\rtf"):
         text = text.replace("\\\n", "\n")
+        text = re.sub(r"\\par\b ?", "\n\n", text)  # a paragraph ends a segment
+        text = re.sub(r"\\line\b ?", "\n", text)  # a line break is a soft wrap
+        # \uN is the character N (negative above 32767), followed by one fallback character for readers without Unicode
+        text = re.sub(r"\\u(-?\d+) ?(?:\\'[0-9a-fA-F]{2}|[^\\{}])?", _rtf_unicode, text)
         text = re.sub(r"\\'([0-9a-fA-F]{2})", _rtf_hex, text)
         text = re.sub(r"\\[a-zA-Z]+-?\d* ?|\\[^a-zA-Z\n]|[{}]", " ", text)
     text = re.sub(r"(?s)```.*?```|~~~.*?~~~", " ", text)  # fenced code
     text = re.sub(r"`[^`\n]*`", " ", text)  # inline code
     text = re.sub(r"!?\[([^\]\n]*)\]\([^)\n]*\)", r"\1", text)  # links and images keep their text
+    text = TAG.sub(" ", text)  # before URLs, which would take a quote of an attribute along
     text = re.sub(r"\b(?:https?|ftp|file)://\S+|\bwww\.\S+|\S+@\S+\.\w+", " ", text)
-    text = re.sub(r"<[^<>\n]{1,500}>", " ", text)  # HTML/XML tags
     text = re.sub(r"(\w)-\n\s*([a-zäöüßàâçéèêëîïôûùÿœ])", r"\1\2", text)  # line-end hyphenation
     return text.replace("**", "").replace("__", "")
 

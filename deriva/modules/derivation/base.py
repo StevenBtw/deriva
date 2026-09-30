@@ -654,13 +654,14 @@ def stratified_sample_elements(
                 by_type[etype] = []
             by_type[etype].append(elem)
 
-    # Take the top max_per_type of each type by graph importance (pagerank of the source
-    # node), then identifier: structure only, never the LLM-written confidence
+    # Take the top max_per_type of each type by graph importance (the pagerank of the source
+    # node, stored by build_element as source_pagerank), then identifier: structure only,
+    # never the LLM-written confidence
     sampled = []
     for etype in sorted(by_type):
         sorted_type = sorted(
             by_type[etype],
-            key=lambda e: (-(e.get("properties", {}).get("pagerank") or 0.0), e.get("identifier", "")),
+            key=lambda e: (-(e.get("properties", {}).get("source_pagerank") or 0.0), e.get("identifier", "")),
         )
         sampled.extend(sorted_type[:max_per_type])
 

@@ -37,7 +37,7 @@ class TestDirectoryAlreadyAnElement:
     """One structural source, one element: a candidate whose directory is already an element's source is left out."""
 
     @staticmethod
-    def _generate(candidates, represented, element_sources, skip_when_directory_is):
+    def _generate(candidates, represented, element_sources, skip_when_directory_is, max_candidates=10):
         """``represented``: directory id -> candidate id (REPRESENTS edges); ``element_sources``: sources of existing components."""
 
         def query(cypher, params=None):
@@ -60,7 +60,7 @@ class TestDirectoryAlreadyAnElement:
                 query="MATCH (n) RETURN n",
                 instruction="Test",
                 example="{}",
-                max_candidates=10,
+                max_candidates=max_candidates,
                 batch_size=5,
                 existing_elements=[],
                 prompt=TEST_PROMPT,
@@ -82,6 +82,14 @@ class TestDirectoryAlreadyAnElement:
         result = self._generate(self.CANDIDATES, self.REPRESENTED, ["dir::r::gamma_module"], None)
 
         assert "filtered_out" not in {d.stage for d in result.candidate_decisions}
+
+    def test_a_represented_candidate_leaves_before_the_cut(self):
+        # Two places: the represented candidate does not take one, so the next eligible candidate keeps its place
+        result = self._generate(self.CANDIDATES, self.REPRESENTED, ["dir::r::gamma_module"], frozenset({"ApplicationComponent"}), max_candidates=2)
+
+        stages = {d.node_id: d.stage for d in result.candidate_decisions}
+        assert stages["tech::r::gamma"] == "filtered_out"
+        assert stages["tech::r::delta"] != "filtered_out" and stages["tech::r::epsilon"] != "filtered_out"
 
 
 class TestRolePrompt:
@@ -246,8 +254,8 @@ class TestRoleNameTemplate:
         return Candidate(node_id=f"file::r::{path.replace('/', '_')}", name=name, labels=["Graph", "File"], properties={"path": path})
 
     @classmethod
-    def _generate(cls, candidates, answer, containers):
-        """``containers``: (directory id, directory path, element name) of the container elements."""
+    def _generate(cls, candidates, answer, containers, decisions=None):
+        """``containers``: (directory id, directory path, element name) of the container elements; ``decisions`` collects the stage per candidate."""
         prompts: list[str] = []
 
         def llm(prompt, schema, **kwargs):
@@ -282,6 +290,8 @@ class TestRoleNameTemplate:
                 prompt=TEST_PROMPT,
                 roles=cls.ROLES,
             )
+        if decisions is not None:
+            decisions.update({d.node_id: d.stage for d in result.candidate_decisions})
         return {e["properties"]["source"]: e for e in result.created_elements}, prompts
 
     def test_the_name_is_container_subject_and_role(self):
@@ -303,6 +313,18 @@ class TestRoleNameTemplate:
 
         assert elements[store.node_id]["name"] == "Widget Store HTTP API"
         assert elements[tool.node_id]["name"] == "Widget Store Cli"
+
+    def test_a_planned_name_given_before_leaves_the_candidate_out(self):
+        # Different structure names, one planned name: "Shop" + "Shop Widget" and "Shop" + "Widget"
+        first = self._file("ShopWidgetController.java", "shop/src/a/ShopWidgetController.java")
+        second = self._file("WidgetController.java", "shop/src/b/WidgetController.java")
+        decisions: dict[str, str] = {}
+
+        elements, _ = self._generate([first, second], {first.node_id: "http", second.node_id: "http"}, [("dir::r::shop", "shop", "Shop")], decisions)
+
+        assert [e["name"] for e in elements.values()] == ["Shop Widget HTTP API"]
+        assert decisions[first.node_id] == "created"
+        assert decisions[second.node_id] == "duplicate_removed"
 
     def test_the_nearest_container_names_it(self):
         admin = self._file("PanelController.java", "shop/admin/PanelController.java")

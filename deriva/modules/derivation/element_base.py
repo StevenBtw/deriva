@@ -473,13 +473,15 @@ class ElementDerivationBase(ABC):
                     )
             candidates = [c for c in candidates if c.node_id not in subtypes]
 
-        # Filter candidates (module-specific)
-        filtered = self.filter_candidates(candidates, enrichments, max_candidates, **filter_kwargs)
-
-        # One structural source, one element: a candidate whose directory already is an element's source is left out
+        # One structural source, one element: a candidate whose directory already is an element's
+        # source is left out before the ranking and cut, so it takes no place (recorded as filtered out)
+        eligible = candidates
         if skip_when_directory_is:
-            represented = self._represented_by_elements(filtered, skip_when_directory_is, graph_manager, archimate_manager)
-            filtered = [c for c in filtered if c.node_id not in represented]
+            represented = self._represented_by_elements(candidates, skip_when_directory_is, graph_manager, archimate_manager)
+            eligible = [c for c in candidates if c.node_id not in represented]
+
+        # Filter candidates (module-specific)
+        filtered = self.filter_candidates(eligible, enrichments, max_candidates, **filter_kwargs)
 
         if not filtered:
             self.logger.info("No candidates passed filtering for %s", self.ELEMENT_TYPE)
@@ -749,6 +751,7 @@ class ElementDerivationBase(ABC):
         # The elements: (identifier, name, members, role key)
         containers: dict[str, str] = {}
         subjects: dict[str, str] = {}
+        duplicates: set[str] = set()
         if roles.element_per == "candidate":
             chosen = [c for c in ordered if role_of.get(c.node_id) is not None]
             if roles.name_template:
@@ -762,7 +765,15 @@ class ElementDerivationBase(ABC):
             else:
                 # Named as the candidate is (as written)
                 names = {c.node_id: c.name for c in chosen}
-            planned = [(element_identifier(self.ELEMENT_TYPE, c.node_id), names[c.node_id], [c], role_of[c.node_id] or "") for c in chosen]
+            # Names are unique within the type: a candidate whose planned name repeats a name given
+            # before (earlier in the step or to an earlier candidate) is left out, as structure names are
+            seen = {_display_key(name) for name in taken}
+            for c in chosen:
+                key = _display_key(names[c.node_id])
+                if key in seen:
+                    duplicates.add(c.node_id)
+                seen.add(key)
+            planned = [(element_identifier(self.ELEMENT_TYPE, c.node_id), names[c.node_id], [c], role_of[c.node_id] or "") for c in chosen if c.node_id not in duplicates]
         else:
             members: dict[str, list[Candidate]] = {}
             for c in ordered:
@@ -826,7 +837,7 @@ class ElementDerivationBase(ABC):
                     in_degree=c.in_degree,
                     out_degree=c.out_degree,
                     confidence=c.properties.get("confidence"),
-                    stage="created" if c.node_id in element_of else ("llm_rejected" if answered else "llm_unanswered"),
+                    stage="created" if c.node_id in element_of else ("duplicate_removed" if c.node_id in duplicates else ("llm_rejected" if answered else "llm_unanswered")),
                     became_element=c.node_id in element_of,
                     element_id=element_of.get(c.node_id),
                 )

@@ -198,6 +198,18 @@ class TestConceptCandidates:
 
         assert result == []  # below the method pagerank threshold, matching no event pattern
 
+    def test_a_method_among_the_concepts_does_not_change_their_path(self):
+        concepts = [self._concept("c2", "Beta"), self._concept("c1", "Alpha")]
+        method = Candidate(node_id="m1", name="helper", labels=["Graph", "Method"], properties={})
+        low = {n: {"pagerank": 0.0001} for n in ("c1", "c2", "m1")}
+
+        candidates = [concepts[0], method, concepts[1]]
+
+        result = BusinessEventDerivation().filter_candidates(candidates=candidates, enrichments=low, max_candidates=10, include_patterns={"event"}, exclude_patterns=set())
+
+        # The concepts keep their query order; the method still meets the method threshold
+        assert [c.node_id for c in result] == ["c2", "c1"]
+
 
 class TestFilterCandidates:
     """Tests for filter_candidates method."""
