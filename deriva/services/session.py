@@ -1184,7 +1184,11 @@ class PipelineSession:
             archimate_manager=self._archimate_manager,
             config=benchmarking.BenchmarkConfig(repositories=repositories, models=[model], runs_per_combination=runs, per_repo=True),
         )
-        return benchmark.run_step(step, verbose=verbose)
+        try:
+            return benchmark.run_step(step, verbose=verbose)
+        finally:
+            # The benchmark switched to (and closed) its work databases
+            use_database(self.repository)
 
     def analyze_benchmark(self, session_id: str) -> benchmarking.BenchmarkAnalyzer:
         """

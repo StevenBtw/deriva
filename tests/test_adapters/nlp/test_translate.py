@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from deriva_nlp.settings import Settings
-from deriva_nlp.translate import english_words
+from deriva.adapters.nlp.settings import Settings
+from deriva.adapters.nlp.translate import english_words
 
 SETTINGS = Settings()
 
@@ -21,7 +21,7 @@ class TestEnglishWords:
         assert english_words("Step 2 review") == ["step", "review"]
 
 
-@pytest.mark.models
+@pytest.mark.integration
 class TestTranslators:
     def test_german_and_french_terms_become_english(self, translators):
         assert translators["de"].translate(["Rechnung"], SETTINGS)["Rechnung"].lower().strip(" .") == "invoice"

@@ -567,6 +567,20 @@ class TestStepOutputConsistency:
 
         assert result.property_differences == {"x": 1}
 
+    def test_a_property_set_to_none_differs_from_a_missing_one(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        result = compare_step_outputs([{("E", "a"): {"x": None}}, {("E", "a"): {}}])
+
+        assert result.property_differences == {"x": 1}
+
+    def test_equal_values_are_equal_whatever_their_key_order(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        result = compare_step_outputs([{("E", "a"): {"x": {"p": 1, "q": 2}}}, {("E", "a"): {"x": {"q": 2, "p": 1}}}])
+
+        assert (result.identical, result.property_differences) == (1, {})
+
     def test_groups_are_scored_separately(self):
         from deriva.modules.analysis import compare_step_outputs
 

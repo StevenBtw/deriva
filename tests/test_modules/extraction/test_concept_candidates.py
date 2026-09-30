@@ -159,6 +159,11 @@ class TestBatches:
         # Both lists use 2 buckets; old candidates keep their bucket, only new ones join
         assert all(small[k] <= grown[k] for k in small)
 
+    @pytest.mark.parametrize("batch_size", [0, -1])
+    def test_a_nonpositive_batch_size_is_a_config_error(self, batch_size):
+        with pytest.raises(ValueError, match="batch_size"):
+            cc.classification_batches(self._candidates(3), batch_size=batch_size)
+
 
 class TestPrompt:
     def test_terms_with_originals_and_context_lines(self):

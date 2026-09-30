@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 __all__ = [
+    "AnswerStability",
+    "DecisionStability",
     "StepConsistency",
     "ConfigDeviation",
     "DeviationReport",

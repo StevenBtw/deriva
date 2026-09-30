@@ -1521,7 +1521,7 @@ def remove_derivation_patterns(
             """
             UPDATE derivation_patterns
             SET patterns = ?, is_active = ?
-            WHERE step_name = ? AND pattern_type = ? AND pattern_category = ? AND is_active = TRUE
+            WHERE step_name = ? AND pattern_type = ? AND pattern_category IS NOT DISTINCT FROM ? AND is_active = TRUE
             """,
             [json.dumps(kept), bool(kept), step_name, pattern_type, row["pattern_category"]],
         )

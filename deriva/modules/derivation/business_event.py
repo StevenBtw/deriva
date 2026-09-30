@@ -125,6 +125,11 @@ class BusinessEventDerivation(HybridDerivation):
 
         filtered = [c for c in candidates if c.name]
 
+        # Business concepts were chosen by the query: no method patterns or pagerank threshold
+        # apply to them; they keep the query order up to the cap
+        if filtered and all("BusinessConcept" in c.labels for c in filtered):
+            return filtered[:max_candidates]
+
         # Detect event handlers from decorators
         decorator_handlers = []
         non_decorator = []

@@ -50,7 +50,7 @@ class FakeNlpTool:
 
     def extract(self, documents, settings, keep_surface):
         self.calls.append({"documents": documents, "settings": settings, "keep_surface": keep_surface})
-        return {"tool": {"deriva-nlp": "0.1.0"}, "settings": settings, "documents": [], "candidates": self.candidates}
+        return {"tool": {"spacy": "3.8.16"}, "settings": settings, "documents": [], "candidates": self.candidates}
 
 
 class FakeLlm:
@@ -142,6 +142,13 @@ class TestBusinessConceptStep:
         rows = graph.query("MATCH (n:Graph:BusinessConcept)<-[r]-(f) RETURN f.id AS src, type(r) AS rel")
         assert sorted((row["src"], row["rel"]) for row in rows) == [("file::r::docs_a.md", "Graph:REFERENCES"), ("file::r::docs_b.md", "Graph:REFERENCES")]
 
+    def test_the_ids_of_the_created_edges_are_reported_for_the_run_log(self, tmp_path, graph):
+        from deriva.common.ocel import create_edge_id
+
+        result = _run(tmp_path, graph, _ledger_tool(), FakeLlm({"Ledger": "business_object", "Data": "generic"}))
+
+        assert sorted(result["edge_ids"]) == sorted(create_edge_id(f"file::r::docs_{name}", "REFERENCES", "concept::r::ledger") for name in ("a.md", "b.md"))
+
     def test_the_classifier_gets_the_configured_instruction_and_the_closed_schema(self, tmp_path, graph):
         llm = FakeLlm({"Ledger": "business_object", "Data": "generic"})
 
@@ -216,7 +223,7 @@ class TestBusinessConceptStep:
         assert stats["selection"] == {"candidates": 2, "qualified": 2, "share_size": 2, "selected": 2, "capped": False}
         assert (stats["batches"], stats["labels"]) == (1, {"business_object": 1, "generic": 1})
         assert stats["issues"] == {"unmatched": 0, "duplicates": 0, "missing": 0}
-        assert stats["tool"] == {"deriva-nlp": "0.1.0"}
+        assert stats["tool"] == {"spacy": "3.8.16"}
         assert stats["decisions"] == {"data": "generic", "ledger": "business_object"}
         assert stats["retries"] == {"calls": 0, "recovered": 0}
         assert stats["phrases"] == 0

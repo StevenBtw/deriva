@@ -95,6 +95,14 @@ class TestTechnologyStep:
         file_id = generate_file_node_id("r", "app/package.json")
         assert _configures(graph) == [(file_id, "tech::r::runtimejs", "Graph:CONFIGURES"), (file_id, "tech::r::storealpha", "Graph:CONFIGURES")]
 
+    def test_the_ids_of_the_created_edges_are_reported_for_the_run_log(self, tmp_path, graph):
+        from deriva.common.ocel import create_edge_id
+
+        result = _run(tmp_path, graph, FakeLlm({"alpha-client": ("system_software", "Store Alpha")}))
+
+        file_id = generate_file_node_id("r", "app/package.json")
+        assert sorted(result["edge_ids"]) == sorted(create_edge_id(file_id, "CONFIGURES", tech) for tech in ("tech::r::runtimejs", "tech::r::storealpha"))
+
     def test_the_classifier_gets_the_configured_instruction_and_the_closed_schema(self, tmp_path, graph):
         llm = FakeLlm({})
 

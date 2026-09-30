@@ -619,7 +619,8 @@ def compare_step_outputs(runs: list[dict[tuple[str, str], dict[str, Any]]], unsc
         differences: dict[str, int] = defaultdict(int)
         for key in common:
             values = [output[key] for output in outputs]
-            differing = {name for name in set().union(*values) if len({repr(v.get(name)) for v in values}) > 1}
+            # Missing differs from None; values compare by equality, so dict key order does not count
+            differing = {name for name in set().union(*values) if any(name not in v or v[name] != values[0][name] for v in values)}
             identical += not (differing - unscored)
             for name in differing:
                 differences[name] += 1

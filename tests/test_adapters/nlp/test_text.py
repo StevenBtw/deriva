@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from deriva_nlp.settings import Settings
-from deriva_nlp.text import clean, duplicate_segments, is_binary, is_prose, segments
+from deriva.adapters.nlp.settings import Settings
+from deriva.adapters.nlp.text import clean, duplicate_segments, is_binary, is_prose, segments
 
 SETTINGS = Settings()
 

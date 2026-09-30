@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from deriva_nlp.language import detect_language
+from deriva.adapters.nlp.language import detect_language
 
 
 class TestDetectLanguage:

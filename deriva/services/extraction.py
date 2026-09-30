@@ -1412,11 +1412,11 @@ def _extract_business_concepts(
     nodes, edges = concept_candidates.concept_nodes_and_edges(labelled, repo.name, float(params["confidence"]))
     for node_data in nodes:
         _add_concept_node(graph_manager, _create_node_from_data("BusinessConcept", node_data, repo.name, "llm"), node_data["node_id"])
-    edges_created = 0
+    edge_ids: list[str] = []
     for edge in edges:
         if graph_manager.node_exists(edge["from_node_id"]):
             graph_manager.add_edge(src_id=edge["from_node_id"], dst_id=edge["to_node_id"], relationship=edge["relationship_type"], properties=edge["properties"])
-            edges_created += 1
+            edge_ids.append(create_edge_id(edge["from_node_id"], edge["relationship_type"], edge["to_node_id"]))
 
     stats = {
         "selection": selection,
@@ -1428,7 +1428,7 @@ def _extract_business_concepts(
         "tool": found["tool"],
         "decisions": decisions,
     }
-    return {"nodes_created": len(nodes), "edges_created": edges_created, "errors": errors, "stats": stats}
+    return {"nodes_created": len(nodes), "edges_created": len(edge_ids), "edge_ids": edge_ids, "errors": errors, "stats": stats}
 
 
 # Params the Technology step reads from its config row (every one of them changes results)
@@ -1492,11 +1492,11 @@ def _extract_technologies(
     nodes, edges = technology_candidates.technology_nodes_and_edges(labels, collected, repo.name, float(params["confidence"]), existing)
     for node_data in nodes:
         graph_manager.add_node(_create_node_from_data("Technology", node_data, repo.name, node_data["method"]), node_id=node_data["node_id"])
-    edges_created = 0
+    edge_ids: list[str] = []
     for edge in edges:
         if graph_manager.node_exists(edge["from_node_id"]):
             graph_manager.add_edge(src_id=edge["from_node_id"], dst_id=edge["to_node_id"], relationship=edge["relationship_type"], properties=edge["properties"])
-            edges_created += 1
+            edge_ids.append(create_edge_id(edge["from_node_id"], edge["relationship_type"], edge["to_node_id"]))
 
     stats = {
         "items": dict(sorted(Counter(item.kind.split(",")[0] for item in collected.items.values()).items())),
@@ -1507,7 +1507,7 @@ def _extract_technologies(
         "retries": retries,
         "decisions": decisions,
     }
-    return {"nodes_created": len(nodes), "edges_created": edges_created, "errors": errors, "stats": stats}
+    return {"nodes_created": len(nodes), "edges_created": len(edge_ids), "edge_ids": edge_ids, "errors": errors, "stats": stats}
 
 
 def _extract_file_content(

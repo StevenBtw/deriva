@@ -1752,6 +1752,14 @@ class TestPatternRows:
         assert remove_derivation_patterns(engine, "Alpha", "include") == 2
         assert get_derivation_patterns(engine, "Alpha") == {"include": set(), "exclude": {"d"}}
 
+    def test_a_row_without_a_category_is_removed_too(self, engine):
+        from deriva.services.config import list_derivation_patterns, remove_derivation_patterns
+
+        engine.execute("""INSERT INTO derivation_patterns VALUES (5, 'Gamma', 'exclude', NULL, '["f"]', TRUE)""")
+
+        assert remove_derivation_patterns(engine, "Gamma", "exclude") == 1
+        assert list_derivation_patterns(engine, "Gamma") == []
+
     def test_nothing_to_remove_changes_no_row(self, engine):
         from deriva.services.config import remove_derivation_patterns
 

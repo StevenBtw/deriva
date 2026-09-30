@@ -173,6 +173,28 @@ class TestHasEventDecorator:
         assert derivation._has_event_decorator(candidate) is True
 
 
+class TestConceptCandidates:
+    """Business concepts were chosen by the query: the method patterns and pagerank threshold do not apply to them."""
+
+    @staticmethod
+    def _concept(node_id, name, pagerank=0.0001):
+        return Candidate(node_id=node_id, name=name, labels=["Graph", "BusinessConcept"], properties={"conceptTypes": ["event"], "confidence": 0.9}, pagerank=pagerank)
+
+    def test_concepts_pass_in_query_order_up_to_the_cap(self):
+        concepts = [self._concept("c3", "Gamma"), self._concept("c1", "Alpha"), self._concept("c2", "Beta")]
+
+        result = BusinessEventDerivation().filter_candidates(candidates=concepts, enrichments={}, max_candidates=2, include_patterns={"event"}, exclude_patterns=set())
+
+        assert [c.node_id for c in result] == ["c3", "c1"]
+
+    def test_methods_keep_the_method_path(self):
+        method = Candidate(node_id="m1", name="helper", labels=["Graph", "Method"], properties={}, pagerank=0.0001)
+
+        result = BusinessEventDerivation().filter_candidates(candidates=[method], enrichments={}, max_candidates=10, include_patterns={"event"}, exclude_patterns=set())
+
+        assert result == []  # below the method pagerank threshold, matching no event pattern
+
+
 class TestFilterCandidates:
     """Tests for filter_candidates method."""
 

@@ -47,7 +47,7 @@ def _get_run_stats_from_ocel(analyzer: Any) -> dict[str, list[tuple[int, int]]]:
 def benchmark_run(
     repos: Annotated[str, typer.Option("--repos", help="Comma-separated list of repository names")],
     models: Annotated[str, typer.Option("--models", help="Comma-separated list of model config names")],
-    runs: Annotated[int, typer.Option("-n", "--runs", help="Number of runs per combination")] = 3,
+    runs: Annotated[int, typer.Option("-n", "--runs", help="Number of runs per combination", min=1)] = 3,
     stages: Annotated[str | None, typer.Option("--stages", help="Comma-separated list of stages")] = None,
     description: Annotated[str, typer.Option("-d", "--description", help="Session description")] = "",
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
@@ -223,7 +223,7 @@ def benchmark_step(
     ],
     repos: Annotated[str, typer.Option("--repos", help="Comma-separated list of repository names")],
     model: Annotated[str, typer.Option("--model", help="Model config name")],
-    runs: Annotated[int, typer.Option("-n", "--runs", help="Runs per repository")] = 3,
+    runs: Annotated[int, typer.Option("-n", "--runs", help="Runs per repository", min=1)] = 3,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
 ) -> None:
     """Repeat one step on a fixed input per repository and compare its outputs.

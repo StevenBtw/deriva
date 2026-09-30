@@ -3975,3 +3975,11 @@ class TestBenchmarkStepCommand:
 
         assert result.exit_code == 1
         assert "run 1 failed" in result.stdout
+
+    @pytest.mark.parametrize("command", [["step", "BusinessConcept", "--model", "m1"], ["run", "--models", "m1"]])
+    @patch("deriva.cli.commands.benchmark.PipelineSession")
+    def test_a_benchmark_needs_at_least_one_run(self, mock_session_class, command):
+        result = runner.invoke(app, ["benchmark", *command, "--repos", "repo1", "-n", "0"])
+
+        assert result.exit_code == 2  # usage error: an empty benchmark would report 100%
+        mock_session_class.assert_not_called()

@@ -6,10 +6,10 @@ import json
 
 import pytest
 
-from deriva_nlp.extract import extract
-from deriva_nlp.settings import Settings
+from deriva.adapters.nlp.extract import extract
+from deriva.adapters.nlp.settings import Settings
 
-pytestmark = pytest.mark.models
+pytestmark = pytest.mark.integration
 
 DOCUMENTS = [
     {"path": "docs/b_de.md", "text": "# Ablauf\n\nDer Mitarbeiter prüft den Antrag. Der Kunde bezahlt die Rechnung pünktlich."},

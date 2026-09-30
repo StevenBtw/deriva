@@ -306,6 +306,17 @@ class TestRunStep:
         assert not (workspace / "graphs" / "r.grafeo").exists()
         assert not (workspace / "graphs" / "r.step.grafeo").exists()
 
+    def test_a_failed_run_still_removes_the_work_database(self, workspace, graph_manager):
+        calls = iter([True, True, False])
+
+        def fake_extraction(benchmark, **kwargs):
+            return {"success": next(calls), "stats": {}, "errors": ["broken"]}
+
+        result, _ = self._run(graph_manager, "BusinessConcept", fake_extraction)
+
+        assert result.errors == ["r: run 2 failed: ['broken']"]
+        assert not (workspace / "graphs" / "r.step.grafeo").exists()
+
     def test_results_and_the_input_are_kept_in_the_session(self, workspace, graph_manager):
         def fake_extraction(benchmark, **kwargs):
             return {"success": True, "stats": {}, "errors": []}

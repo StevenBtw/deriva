@@ -20,7 +20,8 @@ class Translator:
 
     def __init__(self, package_dir: Path):
         self.pieces = sentencepiece.SentencePieceProcessor(model_file=str(package_dir / "sentencepiece.model"))
-        self.model = ctranslate2.Translator(str(package_dir / "model"), device="cpu", inter_threads=4, intra_threads=1)
+        # ctranslate2 imports its compiled classes inside a try block, which ty reads as possibly missing
+        self.model = ctranslate2.Translator(str(package_dir / "model"), device="cpu", inter_threads=4, intra_threads=1)  # ty: ignore[possibly-missing-attribute]
 
     def translate(self, texts: list[str], settings: Settings) -> dict[str, str]:
         """Each text on its own (batch size 1), so a translation never depends on the other texts."""

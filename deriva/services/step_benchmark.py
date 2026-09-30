@@ -233,47 +233,50 @@ class StepBenchmark(benchmarking.BenchmarkOrchestrator):
         # The input: every earlier step, answered from the LLM cache
         close_database()
         Path(work_file).unlink(missing_ok=True)
-        use_database(work_key)
-        self.config.nocache_configs = []
-        built = [self._extract_repo(repo, versions, steps=plan.extraction_input, verbose=verbose)] if plan.extraction_input else []
-        if plan.derivation_input:
-            built.append(self._derive_repo(repo, versions, steps=plan.derivation_input, verbose=verbose))
-        failed = [b.get("errors") for b in built if not b.get("success")]
-        if failed:
-            raise RuntimeError(f"building the input failed: {failed}")
-        before = self._outputs(plan)
-        close_database()
-        shutil.copyfile(work_file, input_file)
-
-        # The step alone, without the LLM cache, on a fresh copy of the input each run
-        self.config.nocache_configs = plan.extraction_step + plan.derivation_step
-        outputs = []
-        decisions: list[dict[str, Any] | None] = []
-        for run in range(1, self.config.runs_per_combination + 1):
-            close_database()
-            shutil.copyfile(input_file, work_file)
+        try:
             use_database(work_key)
-            run_id = self._run_id(repo, step, run)
-            if plan.extraction_step:
-                done = self._extract_repo(repo, versions, steps=plan.extraction_step, run_id=run_id, verbose=verbose)
-            else:
-                done = self._derive_repo(repo, versions, steps=plan.derivation_step, run_id=run_id, verbose=verbose)
-            if not done.get("success"):
-                raise RuntimeError(f"run {run} failed: {done.get('errors')}")
-            outputs.append(step_output(before, self._outputs(plan)))
-            if plan.extraction_step:
-                decisions.append((done.get("step_stats") or {}).get(repo, {}).get(step, {}).get("decisions"))
-            else:
-                # An element step decides per candidate: the stage it reached and the element it became
-                decisions.append({d["node_id"]: [d["stage"], d.get("element_id")] for d in done.get("candidate_decisions") or []} or None)
-            # Each run's output, for investigating what differs
-            objects = [{"type": group, "key": key, "properties": props} for (group, key), props in sorted(outputs[-1].items())]
-            (input_file.parent / f"{repo}_run{run}.json").write_text(json.dumps(objects, indent=1, default=str), encoding="utf-8")
-            self._export_ocel_incremental()
-            if verbose:
-                print(f"  {repo} run {run}/{self.config.runs_per_combination}: {len(outputs[-1])} objects")
-        close_database()
-        Path(work_file).unlink(missing_ok=True)
+            self.config.nocache_configs = []
+            built = [self._extract_repo(repo, versions, steps=plan.extraction_input, verbose=verbose)] if plan.extraction_input else []
+            if plan.derivation_input:
+                built.append(self._derive_repo(repo, versions, steps=plan.derivation_input, verbose=verbose))
+            failed = [b.get("errors") for b in built if not b.get("success")]
+            if failed:
+                raise RuntimeError(f"building the input failed: {failed}")
+            before = self._outputs(plan)
+            close_database()
+            shutil.copyfile(work_file, input_file)
+
+            # The step alone, without the LLM cache, on a fresh copy of the input each run
+            self.config.nocache_configs = plan.extraction_step + plan.derivation_step
+            outputs = []
+            decisions: list[dict[str, Any] | None] = []
+            for run in range(1, self.config.runs_per_combination + 1):
+                close_database()
+                shutil.copyfile(input_file, work_file)
+                use_database(work_key)
+                run_id = self._run_id(repo, step, run)
+                if plan.extraction_step:
+                    done = self._extract_repo(repo, versions, steps=plan.extraction_step, run_id=run_id, verbose=verbose)
+                else:
+                    done = self._derive_repo(repo, versions, steps=plan.derivation_step, run_id=run_id, verbose=verbose)
+                if not done.get("success"):
+                    raise RuntimeError(f"run {run} failed: {done.get('errors')}")
+                outputs.append(step_output(before, self._outputs(plan)))
+                if plan.extraction_step:
+                    decisions.append((done.get("step_stats") or {}).get(repo, {}).get(step, {}).get("decisions"))
+                else:
+                    # An element step decides per candidate: the stage it reached and the element it became
+                    decisions.append({d["node_id"]: [d["stage"], d.get("element_id")] for d in done.get("candidate_decisions") or []} or None)
+                # Each run's output, for investigating what differs
+                objects = [{"type": group, "key": key, "properties": props} for (group, key), props in sorted(outputs[-1].items())]
+                (input_file.parent / f"{repo}_run{run}.json").write_text(json.dumps(objects, indent=1, default=str), encoding="utf-8")
+                self._export_ocel_incremental()
+                if verbose:
+                    print(f"  {repo} run {run}/{self.config.runs_per_combination}: {len(outputs[-1])} objects")
+        finally:
+            # The work database goes, also when building the input or a run fails
+            close_database()
+            Path(work_file).unlink(missing_ok=True)
 
         consistency = compare_step_outputs(outputs, unscored=plan.unscored)
         if verbose:

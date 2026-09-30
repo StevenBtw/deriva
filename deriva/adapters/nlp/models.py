@@ -1,6 +1,6 @@
 """Translation model packages (Argos Translate, OPUS-MT based), pinned by name, URL and SHA-256.
 
-spaCy language models are ordinary pinned dependencies of this project; the translation
+spaCy language models are ordinary pinned dependencies of Deriva; the translation
 packages are too large for that and are downloaded once into a models directory.
 """
 
@@ -39,7 +39,7 @@ MT_PACKAGES = {
 
 def _download(url: str, target: Path) -> None:
     # The package host refuses requests without a user agent
-    request = urllib.request.Request(url, headers={"User-Agent": "deriva-nlp"})
+    request = urllib.request.Request(url, headers={"User-Agent": "deriva"})
     with urllib.request.urlopen(request, timeout=120) as response, open(target, "wb") as out:  # noqa: S310 - pinned https URL
         shutil.copyfileobj(response, out)
 
@@ -63,7 +63,7 @@ def ensure_package(package: MtPackage, models_dir: Path, download: bool = True) 
     if marker.exists() and marker.read_text(encoding="utf-8").strip() == package.sha256:
         return target
     if not download:
-        raise FileNotFoundError(f"Translation model {package.name} is missing in {models_dir}; run `deriva-nlp models` first")
+        raise FileNotFoundError(f"Translation model {package.name} is missing in {models_dir}; the business concept step downloads it")
     models_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=models_dir) as tmp:
         archive = Path(tmp) / f"{package.name}.argosmodel"

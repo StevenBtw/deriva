@@ -1,6 +1,6 @@
 """Business concepts from candidate terms (BusinessConcept v2): structure decides the candidates, the LLM classifies.
 
-The NLP tool (tools/nlp) gives candidate terms in their source language, each with an English form and
+The NLP adapter (adapters/nlp) gives candidate terms in their source language, each with an English form and
 its occurrences. This module merges them into one candidate per English identity (the canonical name
 key), marks structural support (type definition and directory names), keeps the candidates with evidence, sizes
 the list by the share of evidence it holds (with a budget cap), batches it by a stable hash, builds the
@@ -230,6 +230,8 @@ def classification_batches[K: Keyed](candidates: list[K], batch_size: int) -> li
     `batch_size`, so a candidate's bucket only changes when the list crosses a power of two (then
     each bucket splits in two). Batch sizes vary around the average.
     """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be at least 1, got {batch_size}")
     if not candidates:
         return []
     buckets = 1

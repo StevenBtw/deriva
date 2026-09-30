@@ -1322,6 +1322,16 @@ class TestPipelineSessionBenchmarking:
         step_benchmark.return_value.run_step.assert_called_once_with("BusinessConcept", verbose=True)
         assert result == "result"
 
+    def test_run_step_benchmark_returns_to_the_session_database(self, connected_session):
+        """The benchmark works in its own database; the session gets its repository's back, also after an error."""
+        with patch("deriva.services.step_benchmark.StepBenchmark") as step_benchmark, patch("deriva.services.session.use_database") as use_database:
+            step_benchmark.return_value.run_step.side_effect = RuntimeError("boom")
+
+            with pytest.raises(RuntimeError, match="boom"):
+                connected_session.run_step_benchmark("BusinessConcept", repositories=["repo1"], model="model1")
+
+        use_database.assert_called_once_with(connected_session.repository)
+
     def test_analyze_benchmark(self, connected_session):
         """Should create and return BenchmarkAnalyzer."""
         with patch("deriva.services.session.benchmarking") as mock_bench:

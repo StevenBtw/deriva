@@ -197,7 +197,7 @@ def prompt_texts(config: dict[str, Any], step: str) -> dict[str, str]:
     Text that steers the LLM lives in versioned config; a missing text is an error, not a default.
     """
     texts = (config.get("params") or {}).get("prompt") or {}
-    missing = [name for name in ("persona", "task") if name not in texts]
+    missing = [name for name in ("persona", "task") if not isinstance(texts.get(name), str) or not texts[name].strip()]
     if missing:
         raise ValueError(f"{step} params.prompt needs {', '.join(missing)}")
     return texts

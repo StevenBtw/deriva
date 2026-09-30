@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from deriva_nlp import models
-from deriva_nlp.models import MtPackage, ensure_package
+from deriva.adapters.nlp import models
+from deriva.adapters.nlp.models import MtPackage, ensure_package
 
 
 def _fake_package(tmp_path: Path, name: str) -> tuple[Path, str]:
@@ -54,7 +54,7 @@ class TestEnsurePackage:
     def test_no_download_allowed_raises_when_missing(self, tmp_path):
         package = MtPackage(name="translate-xx_en-1_0", url="https://example.invalid/x", sha256="0" * 64)
 
-        with pytest.raises(FileNotFoundError, match="deriva-nlp models"):
+        with pytest.raises(FileNotFoundError, match="is missing"):
             ensure_package(package, tmp_path / "models", download=False)
 
 

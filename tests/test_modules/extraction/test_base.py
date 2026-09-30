@@ -1,5 +1,7 @@
 """Tests for modules.extraction.extraction_base module."""
 
+import pytest
+
 from deriva.common.types import LLMDetails
 from deriva.modules.extraction.base import (
     create_empty_llm_details,
@@ -482,3 +484,28 @@ class TestSampleLLM:
         ]
 
         assert sample_usage(responses) == (20, 5)
+
+
+class TestPromptTexts:
+    """The step's prompt texts come from its config row; a missing or blank text is an error."""
+
+    def test_returns_the_configured_texts(self):
+        from deriva.modules.extraction.base import prompt_texts
+
+        texts = {"persona": "You read code.", "task": "List the types."}
+
+        assert prompt_texts({"params": {"prompt": texts}}, "Step") == texts
+
+    @pytest.mark.parametrize("config", [{}, {"params": None}, {"params": {"prompt": {"persona": "You read code."}}}])
+    def test_a_missing_text_is_an_error(self, config):
+        from deriva.modules.extraction.base import prompt_texts
+
+        with pytest.raises(ValueError, match="Step params.prompt needs"):
+            prompt_texts(config, "Step")
+
+    @pytest.mark.parametrize("task", ["", "   ", None])
+    def test_a_blank_text_is_an_error(self, task):
+        from deriva.modules.extraction.base import prompt_texts
+
+        with pytest.raises(ValueError, match="Step params.prompt needs task"):
+            prompt_texts({"params": {"prompt": {"persona": "You read code.", "task": task}}}, "Step")

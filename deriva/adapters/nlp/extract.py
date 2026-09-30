@@ -18,7 +18,6 @@ from .translate import Translator, english_words
 def tool_versions() -> dict[str, Any]:
     """Versions of everything that decides the output (recorded next to the results)."""
     return {
-        "deriva-nlp": version("deriva-nlp"),
         "spacy": version("spacy"),
         "pipelines": {lang: f"{name}-{version(name.replace('_', '-'))}" for lang, name in sorted(PIPELINES.items())},
         "translation": {lang: package.name for lang, package in sorted(MT_PACKAGES.items())},

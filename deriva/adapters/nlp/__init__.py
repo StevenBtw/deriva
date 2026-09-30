@@ -1,7 +1,7 @@
-"""NLP tool adapter: the deterministic multilingual term extraction in tools/nlp (its own Python environment)."""
+"""NLP adapter: the deterministic multilingual term extraction for business concept candidates."""
 
 from __future__ import annotations
 
-from .manager import NlpTool, NlpToolError
+from .manager import NlpTool
 
-__all__ = ["NlpTool", "NlpToolError"]
+__all__ = ["NlpTool"]

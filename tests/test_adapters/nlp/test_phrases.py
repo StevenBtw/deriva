@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
+from deriva.adapters.nlp.phrases import extract_occurrences
+from deriva.adapters.nlp.settings import Settings
 
-from deriva_nlp.phrases import extract_occurrences
-from deriva_nlp.settings import Settings
-
-pytestmark = pytest.mark.models
 SETTINGS = Settings()
 
 
