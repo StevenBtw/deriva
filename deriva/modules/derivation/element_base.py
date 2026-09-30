@@ -542,7 +542,7 @@ class ElementDerivationBase(ABC):
                             in_degree=c.in_degree,
                             out_degree=c.out_degree,
                             confidence=c.properties.get("confidence"),
-                            stage="duplicate_removed",
+stage="nested_removed",
                             became_element=False,
                         )
                     )
