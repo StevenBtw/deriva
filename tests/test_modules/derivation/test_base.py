@@ -1833,7 +1833,8 @@ class TestStratifiedSampleElements:
         from deriva.modules.derivation.base import stratified_sample_elements
 
         # Elements carry their source node's pagerank as source_pagerank (build_element);
-        # identifier order is the reverse of graph order, so a fallback to identifiers shows
+        # identifier order is the reverse of graph order, so a fallback to identifiers would
+        # pick the low-ranked node first (as would ranking by confidence).
         elements = [
             {"identifier": "a_llm_favourite", "element_type": "ApplicationComponent", "properties": {"confidence": 0.99, "source_pagerank": 0.1}},
             {"identifier": "b_graph_central", "element_type": "ApplicationComponent", "properties": {"confidence": 0.51, "source_pagerank": 0.9}},
