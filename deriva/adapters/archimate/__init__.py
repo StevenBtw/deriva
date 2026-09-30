@@ -30,8 +30,8 @@ Example:
 
 from __future__ import annotations
 
-from .models import ArchiMateMetamodel, Element, Relationship
 from .manager import ArchimateManager
+from .models import ArchiMateMetamodel, Element, Relationship
 from .validation import ArchiMateValidator, ValidationError
 from .xml_export import ArchiMateXMLExporter
 

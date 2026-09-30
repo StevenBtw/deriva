@@ -6,7 +6,6 @@ to the ArchiMate metamodel and best practices.
 
 from __future__ import annotations
 
-
 # Re-export for backwards compatibility
 from deriva.common.exceptions import ValidationError as ValidationError
 
@@ -75,12 +74,8 @@ class ArchiMateValidator:
         errors = []
 
         # Check relationship type is valid
-        if not self.metamodel.is_valid_relationship_type(
-            relationship.relationship_type
-        ):
-            errors.append(
-                f"Invalid relationship type: {relationship.relationship_type}"
-            )
+        if not self.metamodel.is_valid_relationship_type(relationship.relationship_type):
+            errors.append(f"Invalid relationship type: {relationship.relationship_type}")
 
         # Check source and target are not empty
         if not relationship.source:
@@ -90,9 +85,7 @@ class ArchiMateValidator:
 
         # Check source != target (no self-loops in strict mode)
         if self.strict_mode and relationship.source == relationship.target:
-            errors.append(
-                "Self-referencing relationships are not allowed in strict mode"
-            )
+            errors.append("Self-referencing relationships are not allowed in strict mode")
 
         # If elements provided, validate the relationship is allowed by metamodel
         if source_element and target_element:
@@ -106,9 +99,7 @@ class ArchiMateValidator:
 
         return len(errors) == 0, errors
 
-    def validate_model(
-        self, elements: list[Element], relationships: list[Relationship]
-    ) -> tuple[bool, list[str]]:
+    def validate_model(self, elements: list[Element], relationships: list[Relationship]) -> tuple[bool, list[str]]:
         """
         Validate an entire ArchiMate model.
 
@@ -137,33 +128,21 @@ class ArchiMateValidator:
         for relationship in relationships:
             # Check that source and target elements exist
             if relationship.source not in element_ids:
-                errors.append(
-                    f"Relationship references non-existent source: {relationship.source}"
-                )
+                errors.append(f"Relationship references non-existent source: {relationship.source}")
             if relationship.target not in element_ids:
-                errors.append(
-                    f"Relationship references non-existent target: {relationship.target}"
-                )
+                errors.append(f"Relationship references non-existent target: {relationship.target}")
 
             # Get source and target elements for validation
-            source_element = next(
-                (e for e in elements if e.identifier == relationship.source), None
-            )
-            target_element = next(
-                (e for e in elements if e.identifier == relationship.target), None
-            )
+            source_element = next((e for e in elements if e.identifier == relationship.source), None)
+            target_element = next((e for e in elements if e.identifier == relationship.target), None)
 
             # Validate relationship
-            is_valid, rel_errors = self.validate_relationship(
-                relationship, source_element, target_element
-            )
+            is_valid, rel_errors = self.validate_relationship(relationship, source_element, target_element)
             errors.extend(rel_errors)
 
         # Check for duplicate relationship identifiers
         rel_identifiers = [r.identifier for r in relationships]
-        rel_duplicates = set(
-            [x for x in rel_identifiers if rel_identifiers.count(x) > 1]
-        )
+        rel_duplicates = set([x for x in rel_identifiers if rel_identifiers.count(x) > 1])
         if rel_duplicates:
             errors.append(f"Duplicate relationship identifiers: {rel_duplicates}")
 
@@ -176,8 +155,6 @@ class ArchiMateValidator:
 
             orphaned = element_ids - connected_elements
             if orphaned:
-                errors.append(
-                    f"Orphaned elements (not connected to any relationship): {orphaned}"
-                )
+                errors.append(f"Orphaned elements (not connected to any relationship): {orphaned}")
 
         return len(errors) == 0, errors
