@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from deriva.adapters.treesitter import TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
@@ -67,6 +67,9 @@ ALL_EDGE_TYPES = set(EdgeType)
 
 # Supported languages for tree-sitter extraction
 SUPPORTED_LANGUAGES = ("python", "javascript", "typescript", "java", "csharp")
+
+# Extensions a relative JavaScript or TypeScript import may leave out
+SCRIPT_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 
 
 # =============================================================================
@@ -732,6 +735,7 @@ def _extract_import_edges(
     stdlib_modules = filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
 
     source_file_id = generate_file_node_id(repo_name, file_path)
+    java_files = _java_file_index(all_file_paths) if file_path.endswith(".java") and imports else None
 
     for imp in imports:
         resolved = _resolve_import(
@@ -740,6 +744,8 @@ def _extract_import_edges(
             all_file_paths=all_file_paths,
             external_packages=external_packages,
             stdlib_modules=stdlib_modules,
+            names=imp.names,
+            java_files=java_files,
         )
 
         if resolved["type"] == "internal" and EdgeType.IMPORTS in edge_types:
@@ -828,10 +834,21 @@ def _resolve_import(
     all_file_paths: set[str],
     external_packages: set[str],
     stdlib_modules: set[str] | None = None,
+    names: list[str] | None = None,
+    java_files: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Resolve an import to determine if it's internal or external."""
     # Use provided stdlib or fall back to Python stdlib
     stdlib = stdlib_modules if stdlib_modules else PYTHON_STDLIB
+
+    suffix = PurePosixPath(current_file).suffix.lower()
+    if suffix == ".java":
+        return _resolve_java_import(module, names or [], current_file, all_file_paths, stdlib_modules or set(), java_files)
+    if suffix in SCRIPT_EXTENSIONS and module.startswith("."):
+        script_target = _resolve_script_import(module, current_file, all_file_paths)
+        if script_target:
+            return {"type": "internal", "target_path": script_target}
+        return {"type": "unknown", "reason": "relative_not_found"}
 
     # Handle relative imports
     if module.startswith("."):
@@ -858,15 +875,82 @@ def _resolve_import(
     return {"type": "external", "package": top_level}
 
 
+def _java_file_index(all_file_paths: set[str]) -> dict[str, list[str]]:
+    """Java file name -> the repository paths with that name."""
+    index: dict[str, list[str]] = {}
+    for path in all_file_paths:
+        if path.endswith(".java"):
+            index.setdefault(PurePosixPath(path).name, []).append(path)
+    return index
+
+
+def _nearest(candidates: list[str], current_file: str) -> str:
+    """The candidate sharing the most leading directories with the importing file (ties by path)."""
+
+    def shared(path: str) -> int:
+        count = 0
+        for a, b in zip(path.split("/"), current_file.split("/"), strict=False):
+            if a != b:
+                break
+            count += 1
+        return count
+
+    return sorted(candidates, key=lambda path: (-shared(path), path))[0]
+
+
+def _resolve_java_import(
+    module: str,
+    names: list[str],
+    current_file: str,
+    all_file_paths: set[str],
+    stdlib_modules: set[str],
+    java_files: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
+    """A Java import: standard library, a class file of the repository, an own package, or external.
+
+    The class file is found by its package path under any source root; a nested class or a
+    static member lives in the file of its outer class. A class in several modules resolves
+    to the one nearest the importing file.
+    """
+    if any(module == s or module.startswith(s + ".") for s in stdlib_modules):
+        return {"type": "stdlib", "module": module}
+    if names == ["*"]:
+        package_dir = "/" + module.replace(".", "/") + "/"
+        if any(package_dir in "/" + path for path in all_file_paths if path.endswith(".java")):
+            return {"type": "package", "module": module}
+        return {"type": "external", "package": module.split(".")[0]}
+    index = java_files if java_files is not None else _java_file_index(all_file_paths)
+    segments = [*module.split("."), *names[:1]]
+    while len(segments) >= 2:
+        relative = "/".join(segments) + ".java"
+        candidates = [path for path in index.get(segments[-1] + ".java", []) if path == relative or path.endswith("/" + relative)]
+        if candidates:
+            return {"type": "internal", "target_path": _nearest(candidates, current_file)}
+        segments = segments[:-1]
+    return {"type": "external", "package": module.split(".")[0]}
+
+
+def _resolve_script_import(module: str, current_file: str, all_file_paths: set[str]) -> str | None:
+    """A relative JavaScript or TypeScript import: the file with any script extension, or the directory's index file."""
+    resolved = list(PurePosixPath(current_file).parent.parts)
+    for part in module.split("/"):
+        if part == "..":
+            resolved = resolved[:-1]
+        elif part not in (".", ""):
+            resolved.append(part)
+    base = "/".join(resolved)
+    for candidate in (base, *(base + ext for ext in SCRIPT_EXTENSIONS), *(f"{base}/index{ext}" for ext in SCRIPT_EXTENSIONS)):
+        if candidate in all_file_paths:
+            return candidate
+    return None
+
+
 def _resolve_relative_import(
     module: str,
     current_file: str,
     all_file_paths: set[str],
 ) -> str | None:
     """Resolve a relative import (e.g., '.models', '..utils') to a file path."""
-    # Use PurePosixPath to ensure consistent forward-slash handling across platforms
-    from pathlib import PurePosixPath
-
     current_dir = str(PurePosixPath(current_file).parent)
     if current_dir == ".":
         current_dir = ""

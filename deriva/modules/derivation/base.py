@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -200,6 +201,61 @@ class RelationshipRule:
     target_type: str  # For outbound: target element type. For inbound: source element type
     rel_type: str  # ArchiMate relationship type (Serving, Access, etc.)
     description: str = ""  # Human-readable description
+
+
+@dataclass(frozen=True)
+class ContainmentRule:
+    """Ownership decided by containment (relationship config ``params.containment``).
+
+    The nearest element of the container type whose source directory holds the source
+    of an element of the contained type is related to it with ``relationship``.
+    """
+
+    container: str  # e.g. ApplicationComponent
+    contained: str  # e.g. ApplicationInterface
+    relationship: str  # e.g. Composition
+
+
+@dataclass(frozen=True)
+class MembershipRule:
+    """Relationships from role membership (relationship config ``params.membership``).
+
+    An element of the group type lists its member technologies (``sources``); it is
+    related to each element of the member type whose source is one of them, from the
+    group to the member when ``from_group``, else from the member to the group.
+    """
+
+    group: str  # e.g. Node
+    member: str  # e.g. SystemSoftware
+    relationship: str  # e.g. Composition
+    from_group: bool = True
+
+
+@dataclass(frozen=True)
+class ConfigurationRule:
+    """Relationships from configuration files (relationship config ``params.configuration``).
+
+    A provider element serves the consumer element whose directory holds (nearest
+    enclosing) a file that configures one of the provider's technologies.
+    """
+
+    provider: str  # e.g. TechnologyService
+    consumer: str  # e.g. ApplicationComponent
+    relationship: str  # e.g. Serving
+
+
+@dataclass(frozen=True)
+class DependencyRule:
+    """Dependencies from file imports (relationship config ``params.dependency``).
+
+    The provider serves the consumer when a file of the consumer imports a file of the
+    provider, drawn between the two elements just below the deepest element that holds
+    both (siblings).
+    """
+
+    provider: str  # e.g. ApplicationComponent
+    consumer: str  # e.g. ApplicationComponent
+    relationship: str  # e.g. Serving
 
 
 @dataclass(frozen=True)
@@ -967,16 +1023,6 @@ def derive_community_relationships(
     return relationships
 
 
-# Rule triples (source_type, target_type, rel_type) whose semantic pairing is
-# reliable when source and target are graph-connected within 2 hops, but whose
-# LLM proposal is non-deterministic. Promoting these to the neighbor tier with
-# a wider radius reduces relationship variance without touching other rules.
-SEMANTIC_PAIR_RULES_2HOP: set[tuple[str, str, str]] = {
-    ("BusinessActor", "BusinessProcess", "Assignment"),
-    ("BusinessActor", "BusinessFunction", "Assignment"),
-}
-
-
 def derive_neighbor_relationships(
     new_elements: list[dict[str, Any]],
     existing_elements: list[dict[str, Any]],
@@ -986,7 +1032,7 @@ def derive_neighbor_relationships(
 ) -> list[dict[str, Any]]:
     """
     Create relationships between elements whose source nodes are direct
-    neighbors in the graph (1-hop), plus semantic-pair rules at 2-hop.
+    neighbors in the graph (1-hop).
 
     This is Tier 1b of the graph-first relationship derivation approach.
 
@@ -1085,64 +1131,6 @@ def derive_neighbor_relationships(
         except Exception as e:
             logger.warning("Error querying graph neighbors for %s: %s", source_id, e)
             continue
-
-    # 2-hop pass for semantic-pair rules: narrowly expands radius for rule
-    # triples known to have reliable semantic pairing but variable LLM output.
-    new_type_ref = new_elements[0].get("element_type", "") if new_elements else ""
-    semantic_outbound = [r for r in outbound_rules if (new_type_ref, r.target_type, r.rel_type) in SEMANTIC_PAIR_RULES_2HOP]
-    semantic_inbound = [r for r in inbound_rules if (r.target_type, new_type_ref, r.rel_type) in SEMANTIC_PAIR_RULES_2HOP]
-    if semantic_outbound or semantic_inbound:
-        for new_elem in new_elements:
-            new_id = new_elem.get("identifier", "")
-            source_id = new_elem.get("properties", {}).get("source")
-            if not new_id or not source_id:
-                continue
-            connected = get_connected_source_ids(graph_manager, [source_id], max_hops=2)
-            new_type = new_elem.get("element_type", "")
-            for neighbor_source_id in connected:
-                if neighbor_source_id == source_id:
-                    continue
-                existing = existing_by_source.get(neighbor_source_id)
-                if not existing:
-                    continue
-                existing_id = existing.get("identifier", "")
-                existing_type = existing.get("element_type", "")
-                for rule in semantic_outbound:
-                    if existing_type != rule.target_type:
-                        continue
-                    is_valid, _ = validate_relationship_rule(new_type, rule.rel_type, rule.target_type)
-                    if not is_valid:
-                        continue
-                    pair_key = (new_id, existing_id, rule.rel_type)
-                    if pair_key not in created_pairs:
-                        created_pairs.add(pair_key)
-                        relationships.append(
-                            {
-                                "source": new_id,
-                                "target": existing_id,
-                                "relationship_type": rule.rel_type,
-                                "confidence": 0.88,
-                                "derived_from": "graph_neighbor_2hop",
-                            }
-                        )
-                for rule in semantic_inbound:
-                    if existing_type != rule.target_type:
-                        continue
-                    is_valid, _ = validate_relationship_rule(rule.target_type, rule.rel_type, new_type)
-                    if not is_valid:
-                        continue
-                    pair_key = (existing_id, new_id, rule.rel_type)
-                    if pair_key not in created_pairs:
-                        created_pairs.add(pair_key)
-                        relationships.append(
-                            {
-                                "source": existing_id,
-                                "target": new_id,
-                                "relationship_type": rule.rel_type,
-                                "confidence": 0.88,
-                                "derived_from": "graph_neighbor_2hop",
-                            }
-                        )
 
     logger.debug("Graph neighbor derivation: %d relationships", len(relationships))
     return relationships
@@ -2475,6 +2463,46 @@ def dedupe_relationships(relationships: list[dict[str, Any]]) -> list[dict[str, 
     return kept
 
 
+# ArchiMate's structural relationships: a part or a realized element has one owner
+OWNERSHIP_RELATIONSHIPS = frozenset({"Composition", "Aggregation", "Assignment", "Realization"})
+
+
+def _left_to_containment(
+    relationship: dict[str, Any],
+    type_of: dict[str, str],
+    decided: dict[tuple[str, str], tuple[str, str, set[str], set[str] | None]],
+    owner_pairs: set[frozenset[str]],
+    owner_pair_only: bool = False,
+) -> bool:
+    """Whether structure already decided this relationship, so another tier may not add it.
+
+    Two elements that structure related get no other relationship. Unless
+    ``owner_pair_only``, for a type pair that structure decides (containment,
+    membership, configuration): a member that structure placed gets no further
+    ownership relationship of that pair nor another of the rule's type, and a member
+    it could not place gets only the rule's ownership type, from an element that
+    structure lets own (for membership: a group that lists member technologies).
+    """
+    source, target, kind = relationship["source"], relationship["target"], relationship["relationship_type"]
+    if frozenset((source, target)) in owner_pairs:
+        return True
+    if owner_pair_only:
+        return False
+    a, b = type_of.get(source, ""), type_of.get(target, "")
+    for (from_type, to_type), (rule_type, side, placed, owners) in decided.items():
+        if (a, b) == (from_type, to_type):
+            member, owner = (target, source) if side == "target" else (source, target)
+        elif (b, a) == (from_type, to_type):
+            member, owner = (source, target) if side == "target" else (target, source)
+        else:
+            continue
+        if member in placed and (kind in OWNERSHIP_RELATIONSHIPS or kind == rule_type):
+            return True
+        if member not in placed and kind in OWNERSHIP_RELATIONSHIPS and (kind != rule_type or (owners is not None and owner not in owners)):
+            return True
+    return False
+
+
 def derive_batch_relationships(
     new_elements: list[dict[str, Any]],
     existing_elements: list[dict[str, Any]],
@@ -2486,6 +2514,8 @@ def derive_batch_relationships(
     max_tokens: int | None = None,
     graph_manager: GraphManager | None = None,
     llm_config: RelationshipLLMConfig | None = None,
+    decided: dict[tuple[str, str], tuple[str, str, set[str], set[str] | None]] | None = None,
+    owner_pairs: set[frozenset[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for a batch of newly created elements.
@@ -2506,6 +2536,11 @@ def derive_batch_relationships(
                       those with graph proximity to new_elements.
         llm_config: Relationship config row settings. None (row disabled)
                     skips the LLM pass; graph tiers still run.
+        decided: (from type, to type) -> (relationship type, member side, placed
+                    members, possible owners) for the pairs structure decides (see
+                    _left_to_containment)
+        owner_pairs: Element pairs that structure already related: no tier adds
+                    another relationship between them.
 
     Returns:
         List of validated relationship dicts
@@ -2572,6 +2607,14 @@ def derive_batch_relationships(
     all_relationships: list[dict[str, Any]] = []
     created_pairs: set[tuple[str, str, str]] = set()
 
+    # What structure decided stays decided: see _left_to_containment
+    decided_pairs = decided or {}
+    related = owner_pairs or set()
+    type_of = {e.get("identifier", ""): e.get("element_type", "") for e in list(new_elements) + list(filtered_existing)}
+
+    def kept(relationships: list[dict[str, Any]], usage_only: bool = False) -> list[dict[str, Any]]:
+        return [r for r in relationships if not _left_to_containment(r, type_of, decided_pairs, related, owner_pair_only=usage_only)]
+
     # -------------------------------------------------------------------------
     # TIER 1a: Community-based relationships (same Louvain community = related)
     # -------------------------------------------------------------------------
@@ -2581,7 +2624,7 @@ def derive_batch_relationships(
         outbound_rules=outbound_rules,
         inbound_rules=inbound_rules,
     )
-    for rel in community_rels:
+    for rel in kept(community_rels):
         key = (rel["source"], rel["target"], rel["relationship_type"])
         if key not in created_pairs:
             all_relationships.append(rel)
@@ -2599,7 +2642,7 @@ def derive_batch_relationships(
             outbound_rules=outbound_rules,
             inbound_rules=inbound_rules,
         )
-        for rel in neighbor_rels:
+        for rel in kept(neighbor_rels):
             key = (rel["source"], rel["target"], rel["relationship_type"])
             if key not in created_pairs:
                 all_relationships.append(rel)
@@ -2618,7 +2661,7 @@ def derive_batch_relationships(
             outbound_rules=outbound_rules,
             inbound_rules=inbound_rules,
         )
-        for rel in edge_rels:
+        for rel in kept(edge_rels, usage_only=True):
             key = (rel["source"], rel["target"], rel["relationship_type"])
             if key not in created_pairs:
                 all_relationships.append(rel)
@@ -2634,7 +2677,7 @@ def derive_batch_relationships(
         outbound_rules=outbound_rules,
         inbound_rules=inbound_rules,
     )
-    for rel in deterministic_rels:
+    for rel in kept(deterministic_rels):
         key = (rel["source"], rel["target"], rel["relationship_type"])
         if key not in created_pairs:
             all_relationships.append(rel)
@@ -2724,8 +2767,8 @@ def derive_batch_relationships(
     existing_ids = {e.get("identifier", "") for e in filtered_existing}
     all_ids = new_ids | existing_ids
 
-    # Build valid relationship type set
-    valid_types = {r.rel_type for r in outbound_rules} | {r.rel_type for r in inbound_rules}
+    # A proposal must match a rule: its source type, target type and relationship type
+    allowed = {(element_type, r.target_type, r.rel_type) for r in outbound_rules} | {(r.target_type, element_type, r.rel_type) for r in inbound_rules}
 
     llm_relationships = []
     for rel_data in parse_result.get("data", []):
@@ -2762,9 +2805,11 @@ def derive_batch_relationships(
             logger.debug("Skipping relationship: neither endpoint is new element")
             continue
 
-        # Validate relationship type
-        if rel_type not in valid_types:
-            logger.debug("Skipping relationship: invalid type %s", rel_type)
+        # Validate the type pair and relationship type against the rules
+        if (type_of.get(source), type_of.get(target), rel_type) not in allowed:
+            logger.debug("Skipping relationship: no rule for %s -[%s]-> %s", type_of.get(source), rel_type, type_of.get(target))
+            continue
+        if _left_to_containment({"source": source, "target": target, "relationship_type": rel_type}, type_of, decided_pairs, related):
             continue
 
         # Prevent circular Composition relationships
@@ -2853,6 +2898,173 @@ def derive_batch_relationships(
 # =============================================================================
 
 
+def element_source_paths(graph_manager: GraphManager, elements: list[dict[str, Any]]) -> dict[str, str]:
+    """Repository path of each element's source node: a directory's path, a file's, type's or method's file path."""
+    ids = sorted({src for e in elements if (src := (e.get("properties") or {}).get("source"))})
+    if not ids:
+        return {}
+    rows = graph_manager.query("MATCH (n) WHERE n.id IN $ids RETURN n.id AS id, n.path AS path, n.filePath AS file_path", {"ids": ids})
+    paths: dict[str, str] = {}
+    for row in rows:
+        path = row.get("file_path") or row.get("path")
+        if row.get("id") and path:
+            paths[row["id"]] = str(path).replace(chr(92), "/").rstrip("/")
+    return paths
+
+
+def derive_containment_relationships(
+    elements: list[dict[str, Any]],
+    source_paths: dict[str, str],
+    rules: list[ContainmentRule],
+) -> list[dict[str, Any]]:
+    """Relationships from containment: the nearest enclosing container owns each element.
+
+    An element of a contained type is related to the container element whose source
+    directory holds its source most closely (only that one, so composition stays
+    exclusive). Elements without a source path, or outside every container, stay unlinked.
+    """
+    if not rules:
+        return []
+    container_types = {r.container for r in rules}
+    containers: dict[str, list[tuple[str, str]]] = defaultdict(list)  # type -> [(directory path, id)]
+    for e in elements:
+        path = source_paths.get((e.get("properties") or {}).get("source", ""))
+        if path and e.get("element_type") in container_types:
+            containers[e["element_type"]].append((path, e["identifier"]))
+
+    relationships: list[dict[str, Any]] = []
+    for e in sorted(elements, key=lambda x: x.get("identifier", "")):
+        path = source_paths.get((e.get("properties") or {}).get("source", ""))
+        if not path:
+            continue
+        for rule in rules:
+            if e.get("element_type") != rule.contained:
+                continue
+            owners = [(p, cid) for p, cid in containers.get(rule.container, []) if cid != e["identifier"] and path.startswith(p + "/")]
+            if not owners:
+                continue
+            _, owner = max(owners, key=lambda o: len(o[0]))
+            relationships.append({"source": owner, "target": e["identifier"], "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "containment"})
+    return relationships
+
+
+def _member_technologies(element: dict[str, Any]) -> list[str]:
+    """The technologies an element stands for: its listed ``sources``, else its source."""
+    props = element.get("properties") or {}
+    return list(props.get("sources") or ([props["source"]] if props.get("source") else []))
+
+
+def derive_membership_relationships(elements: list[dict[str, Any]], rules: list[MembershipRule]) -> list[dict[str, Any]]:
+    """Relationships between a role element and the elements of its member technologies.
+
+    Only elements that list member technologies (``sources``, as role elements do) are
+    groups; an element made from a single file or candidate groups nothing.
+    """
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        members: dict[str, list[str]] = defaultdict(list)
+        for e in elements:
+            source = (e.get("properties") or {}).get("source")
+            if e.get("element_type") == rule.member and source:
+                members[source].append(e["identifier"])
+        for group in sorted((e for e in elements if e.get("element_type") == rule.group), key=lambda x: x.get("identifier", "")):
+            for tech in (group.get("properties") or {}).get("sources") or []:
+                for member in sorted(members.get(tech, [])):
+                    if member == group["identifier"]:
+                        continue
+                    source, target = (group["identifier"], member) if rule.from_group else (member, group["identifier"])
+                    relationships.append({"source": source, "target": target, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "membership"})
+    return dedupe_relationships(relationships)
+
+
+def configured_technologies(graph_manager: GraphManager) -> dict[str, set[str]]:
+    """File path -> the technologies the file configures (CONFIGURES edges from manifests, build and container files)."""
+    rows = graph_manager.query("MATCH (f:Graph:File)-[r:`Graph:CONFIGURES`]->(t:Graph:Technology) RETURN f.filePath AS file, t.id AS tech")
+    configured: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        if row.get("file") and row.get("tech"):
+            configured[str(row["file"]).replace(chr(92), "/")].add(row["tech"])
+    return dict(configured)
+
+
+def derive_configuration_relationships(
+    elements: list[dict[str, Any]],
+    source_paths: dict[str, str],
+    configured: dict[str, set[str]],
+    rules: list[ConfigurationRule],
+) -> list[dict[str, Any]]:
+    """A provider serves the consumer whose directory (nearest enclosing) holds a file configuring one of its technologies."""
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        consumers = [
+            (source_paths[src], e["identifier"]) for e in elements if e.get("element_type") == rule.consumer and (src := (e.get("properties") or {}).get("source")) in source_paths
+        ]
+        providers = [(e["identifier"], set(_member_technologies(e))) for e in elements if e.get("element_type") == rule.provider]
+        used: dict[str, set[str]] = defaultdict(set)  # consumer id -> configured technologies
+        for path, techs in configured.items():
+            owners = [(p, cid) for p, cid in consumers if path.startswith(p + "/")]
+            if owners:
+                used[max(owners, key=lambda o: len(o[0]))[1]].update(techs)
+        for consumer in sorted(used):
+            for provider, techs in sorted(providers):
+                if techs & used[consumer]:
+                    relationships.append({"source": provider, "target": consumer, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "configuration"})
+    return relationships
+
+
+def file_imports(graph_manager: GraphManager) -> list[tuple[str, str]]:
+    """(importing file path, imported file path) for every import between files of the repository."""
+    rows = graph_manager.query("MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(b:Graph:File) RETURN a.filePath AS a, b.filePath AS b")
+    return sorted({(str(r["a"]).replace(chr(92), "/"), str(r["b"]).replace(chr(92), "/")) for r in rows if r.get("a") and r.get("b")})
+
+
+def derive_dependency_relationships(
+    elements: list[dict[str, Any]],
+    source_paths: dict[str, str],
+    imports: list[tuple[str, str]],
+    rules: list[DependencyRule],
+) -> list[dict[str, Any]]:
+    """The provider serves the consumer whose files import its files, drawn between siblings.
+
+    Each file belongs to its nearest enclosing element. A dependency between two elements
+    is lifted to the two elements just below the deepest element holding both, so a part
+    that uses a part of another element shows as a dependency between those elements, and
+    imports within one element or between an element and its own parts add nothing.
+    """
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        holders = sorted(
+            (source_paths[src], e["identifier"])
+            for e in elements
+            if e.get("element_type") in (rule.consumer, rule.provider) and (src := (e.get("properties") or {}).get("source")) in source_paths
+        )
+        type_of = {e["identifier"]: e.get("element_type") for e in elements}
+
+        def within(path: str, holder: str) -> bool:
+            return path == holder or path.startswith(holder + "/")
+
+        def nearest(path: str, element_type: str) -> tuple[str, str] | None:
+            owners = [h for h in holders if path.startswith(h[0] + "/") and type_of[h[1]] == element_type]
+            return max(owners, key=lambda h: len(h[0])) if owners else None
+
+        def lift(owner: tuple[str, str], parent: str | None) -> str:
+            """The outermost element holding ``owner`` below ``parent`` (anywhere when None)."""
+            chain = [h for h in holders if within(owner[0], h[0]) and (parent is None or h[0].startswith(parent + "/"))]
+            return min(chain, key=lambda h: len(h[0]))[1]
+
+        pairs: set[tuple[str, str]] = set()
+        for importer, imported in imports:
+            consumer, provider = nearest(importer, rule.consumer), nearest(imported, rule.provider)
+            if not consumer or not provider or within(consumer[0], provider[0]) or within(provider[0], consumer[0]):
+                continue
+            shared = [h[0] for h in holders if consumer[0].startswith(h[0] + "/") and provider[0].startswith(h[0] + "/")]
+            parent = max(shared, key=lambda p: len(p)) if shared else None
+            pairs.add((lift(provider, parent), lift(consumer, parent)))
+        for provider_id, consumer_id in sorted(pairs):
+            relationships.append({"source": provider_id, "target": consumer_id, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "dependency"})
+    return relationships
+
+
 def derive_consolidated_relationships(
     all_elements: list[dict[str, Any]],
     relationship_rules: dict[str, tuple[list[RelationshipRule], list[RelationshipRule]]],
@@ -2861,6 +3073,10 @@ def derive_consolidated_relationships(
     temperature: float | None = None,
     max_tokens: int | None = None,
     llm_config: RelationshipLLMConfig | None = None,
+    containment: list[ContainmentRule] | None = None,
+    membership: list[MembershipRule] | None = None,
+    configuration: list[ConfigurationRule] | None = None,
+    dependency: list[DependencyRule] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for all elements in a single consolidated pass.
@@ -2877,6 +3093,18 @@ def derive_consolidated_relationships(
         temperature: Optional temperature override
         max_tokens: Optional max_tokens override
         llm_config: Relationship config row settings (None skips the LLM pass)
+        containment: Ownership decided by containment (relationship config
+            ``params.containment``). For an element that containment places under an
+            owner, the other tiers add no ownership relationship of those type pairs and
+            nothing between it and its owner; usage to other elements stays. None: no
+            containment tier
+        membership: Relationships from role membership (``params.membership``), decided
+            the same way. None: no membership tier
+        configuration: Relationships from configuration files (``params.configuration``),
+            decided the same way. None: no configuration tier
+        dependency: Dependencies from file imports between siblings (``params.dependency``);
+            usage, so no tier adds another relationship between the two. None: no
+            dependency tier
 
     Returns:
         List of all derived relationship dicts
@@ -2885,6 +3113,44 @@ def derive_consolidated_relationships(
         return []
 
     all_relationships = []
+    type_of = {e.get("identifier", ""): e.get("element_type", "") for e in all_elements}
+    # (from type, to type) -> (relationship type, member side, members placed by structure,
+    # elements that may own a member; None: any)
+    decided: dict[tuple[str, str], tuple[str, str, set[str], set[str] | None]] = {}
+    structural: list[dict[str, Any]] = []
+
+    def decide(rels: list[dict[str, Any]], from_type: str, to_type: str, kind: str, side: str, owners: set[str] | None = None) -> None:
+        mine = [r for r in rels if (type_of.get(r["source"]), type_of.get(r["target"]), r["relationship_type"]) == (from_type, to_type, kind)]
+        placed = {r[side] for r in mine}
+        if (from_type, to_type) in decided:
+            placed |= decided[(from_type, to_type)][2]
+        decided[(from_type, to_type)] = (kind, side, placed, owners)
+
+    paths = element_source_paths(graph_manager, all_elements) if graph_manager and (containment or configuration or dependency) else {}
+    if containment:
+        rels = derive_containment_relationships(all_elements, paths, containment)
+        structural.extend(rels)
+        for rule in containment:
+            decide(rels, rule.container, rule.contained, rule.relationship, "target")
+    if membership:
+        rels = derive_membership_relationships(all_elements, membership)
+        structural.extend(rels)
+        for rule in membership:
+            # A group that lists no member technologies (a node made from one file) owns nothing
+            groups = {e["identifier"] for e in all_elements if e.get("element_type") == rule.group and (e.get("properties") or {}).get("sources")}
+            if rule.from_group:
+                decide(rels, rule.group, rule.member, rule.relationship, "target", groups)
+            else:
+                decide(rels, rule.member, rule.group, rule.relationship, "source", groups)
+    if configuration and graph_manager:
+        rels = derive_configuration_relationships(all_elements, paths, configured_technologies(graph_manager), configuration)
+        structural.extend(rels)
+        for rule in configuration:
+            decide(rels, rule.provider, rule.consumer, rule.relationship, "target")
+    if dependency and graph_manager:
+        structural.extend(derive_dependency_relationships(all_elements, paths, file_imports(graph_manager), dependency))
+    all_relationships.extend(structural)
+    owner_pairs = {frozenset((r["source"], r["target"])) for r in structural}
 
     # Group elements by type
     by_type: dict[str, list[dict[str, Any]]] = {}
@@ -2923,6 +3189,8 @@ def derive_consolidated_relationships(
             max_tokens=max_tokens,
             graph_manager=graph_manager,
             llm_config=llm_config,
+            decided=decided,
+            owner_pairs=owner_pairs,
         )
 
         all_relationships.extend(relationships)

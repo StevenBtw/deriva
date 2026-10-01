@@ -570,6 +570,17 @@ class TestCreateNodeFromData:
         assert node is not None
         assert node.extraction_method == "ast"
 
+    def test_annotations_of_types_and_methods_are_kept(self):
+        """Annotations and decorators are structure later steps select on (an endpoint marker, a route)."""
+        type_props = {"typeName": "OrderController", "category": "class", "filePath": "a.java", "decorators": ["RestController"]}
+        method_props = {"methodName": "find", "typeName": "OrderController", "filePath": "a.java", "decorators": ['GetMapping("orders")']}
+        type_node = _create_node_from_data("TypeDefinition", {"properties": type_props}, "r", extraction_method="ast")
+        method_node = _create_node_from_data("Method", {"properties": method_props}, "r", extraction_method="ast")
+
+        assert type_node.to_dict()["decorators"] == ["RestController"]
+        assert method_node.to_dict()["decorators"] == ['GetMapping("orders")']
+        assert _create_node_from_data("TypeDefinition", {"properties": {"typeName": "Plain"}}, "r").to_dict()["decorators"] == []
+
     def test_creates_method_node(self):
         """Should create MethodNode from data."""
         node_data = {

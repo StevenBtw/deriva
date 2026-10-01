@@ -25,12 +25,12 @@ from solvor import solve_milp
 from solvor.types import Status
 
 MAX_CYCLE_ROUNDS = 20
-_TIER2_ORIGINS = frozenset({"graph_neighbor", "graph_neighbor_2hop", "community", "rule"})
+_TIER2_ORIGINS = frozenset({"graph_neighbor", "community", "rule"})
 
 
 def origin_tier(derived_from: str | None) -> int:
     """Evidence tier of a relationship from its `derived_from` origin tag."""
-    if derived_from and (derived_from.startswith("Graph:") or derived_from.endswith("_edge")):
+    if derived_from and (derived_from == "containment" or derived_from.startswith("Graph:") or derived_from.endswith("_edge")):
         return 1
     if derived_from in _TIER2_ORIGINS:
         return 2

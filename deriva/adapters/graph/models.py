@@ -7,7 +7,7 @@ repository structure in the graph database.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -298,6 +298,7 @@ class TypeDefinitionNode:
     code_snippet: str | None = None  # The actual code of the type definition
     confidence: float = 1.0
     extraction_method: str = "ast"  # structural, ast, or llm
+    decorators: list[str] = field(default_factory=list)  # Annotations or decorators, as written (e.g. RestController)
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -316,6 +317,7 @@ class TypeDefinitionNode:
             "codeSnippet": self.code_snippet,
             "confidence": self.confidence,
             "extractionMethod": self.extraction_method,
+            "decorators": list(self.decorators),
             "type": "TypeDefinition",
         }
 
@@ -338,6 +340,7 @@ class MethodNode:
     end_line: int = 0  # Line number where method ends (relative to type, 1-indexed)
     confidence: float = 1.0
     extraction_method: str = "ast"  # structural, ast, or llm
+    decorators: list[str] = field(default_factory=list)  # Annotations or decorators, as written (e.g. GetMapping("orders"))
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -359,6 +362,7 @@ class MethodNode:
             "endLine": self.end_line,
             "confidence": self.confidence,
             "extractionMethod": self.extraction_method,
+            "decorators": list(self.decorators),
             "type": "Method",
         }
 

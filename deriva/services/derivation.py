@@ -41,7 +41,7 @@ from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from deriva.adapters.archimate import ArchimateManager
-from deriva.adapters.archimate.models import Relationship
+from deriva.adapters.archimate.models import Relationship, validate_relationship_rule
 from deriva.common.types import PipelineResult, ProgressUpdate
 
 if TYPE_CHECKING:
@@ -53,8 +53,12 @@ from deriva.modules.derivation.application_component import ApplicationComponent
 from deriva.modules.derivation.application_interface import ApplicationInterfaceDerivation
 from deriva.modules.derivation.application_service import ApplicationServiceDerivation
 from deriva.modules.derivation.base import (
+    ConfigurationRule,
+    ContainmentRule,
+    DependencyRule,
     ElementPrompt,
     GraphFilter,
+    MembershipRule,
     NamingConfig,
     NestedFilter,
     PerCandidateConfig,
@@ -123,7 +127,8 @@ def _relationship_llm_config(configs: list[Any]) -> RelationshipLLMConfig | None
     """Build the LLM relationship settings from the enabled relationship-phase row.
 
     The relationship prompt rules and the confidence cutoff are versioned config.
-    No enabled row means relationships come from the graph tiers only.
+    No enabled row, or ``params.llm_proposals`` false, means relationships come from
+    the graph tiers only.
     """
     if not configs:
         return None
@@ -131,6 +136,11 @@ def _relationship_llm_config(configs: list[Any]) -> RelationshipLLMConfig | None
         raise ValueError(f"Only one relationship config may be enabled, found: {', '.join(c.step_name for c in configs)}")
     cfg = configs[0]
     params = json.loads(cfg.params) if cfg.params else {}
+    proposals = params.get("llm_proposals", True)
+    if not isinstance(proposals, bool):
+        raise ValueError(f"Relationship config {cfg.step_name}: params.llm_proposals must be true or false, got {proposals!r}")
+    if not proposals:
+        return None
     if not cfg.instruction:
         raise ValueError(f"Relationship config {cfg.step_name} has no instruction")
     missing = [name for name in ("min_confidence", "persona") if name not in params]
@@ -142,6 +152,87 @@ def _relationship_llm_config(configs: list[Any]) -> RelationshipLLMConfig | None
         persona=params["persona"],
         temperature=getattr(cfg, "temperature", None),
     )
+
+
+def _structural_items(configs: list[Any], key: str, fields: tuple[str, ...]) -> list[dict[str, str]]:
+    """The rule items under ``params.<key>`` of the enabled relationship row, each with the given string fields."""
+    if not configs:
+        return []
+    params = json.loads(configs[0].params) if configs[0].params else {}
+    settings = params.get(key)
+    if settings is None:
+        return []
+    if not isinstance(settings, list):
+        raise ValueError(f"params.{key} must be a list of rules, got {settings!r}")
+    for item in settings:
+        if not isinstance(item, dict) or not all(isinstance(item.get(k), str) and item.get(k) for k in fields):
+            raise ValueError(f"params.{key} rules need {', '.join(fields)}, got {item!r}")
+    return settings
+
+
+def _check_rule(key: str, item: dict[str, str], source: str, relationship: str, target: str) -> None:
+    is_valid, message = validate_relationship_rule(source, relationship, target)
+    if not is_valid:
+        raise ValueError(f"params.{key} rule {item!r} is not valid: {message}")
+
+
+def _containment_rules(configs: list[Any]) -> list[ContainmentRule]:
+    """Type pairs that containment decides, from the enabled relationship row (``params.containment``).
+
+    ``[{"container": "ApplicationComponent", "contained": "ApplicationInterface", "relationship": "Composition"}]``:
+    the nearest enclosing component composes each interface. Every rule must be a valid
+    relationship in the metamodel. No row or no key: no containment tier.
+    """
+    rules: list[ContainmentRule] = []
+    for item in _structural_items(configs, "containment", ("container", "contained", "relationship")):
+        _check_rule("containment", item, item["container"], item["relationship"], item["contained"])
+        rules.append(ContainmentRule(container=item["container"], contained=item["contained"], relationship=item["relationship"]))
+    return rules
+
+
+def _membership_rules(configs: list[Any]) -> list[MembershipRule]:
+    """Relationships from role membership (``params.membership``).
+
+    ``[{"group": "Node", "member": "SystemSoftware", "relationship": "Composition", "from": "group"}]``:
+    a role node composes the system software of its member technologies; ``"from": "member"``
+    turns the direction around (system software realizes the technology service of its kind).
+    """
+    rules: list[MembershipRule] = []
+    for item in _structural_items(configs, "membership", ("group", "member", "relationship", "from")):
+        if item["from"] not in ("group", "member"):
+            raise ValueError(f"params.membership rule {item!r}: from must be group or member")
+        from_group = item["from"] == "group"
+        source, target = (item["group"], item["member"]) if from_group else (item["member"], item["group"])
+        _check_rule("membership", item, source, item["relationship"], target)
+        rules.append(MembershipRule(group=item["group"], member=item["member"], relationship=item["relationship"], from_group=from_group))
+    return rules
+
+
+def _configuration_rules(configs: list[Any]) -> list[ConfigurationRule]:
+    """Relationships from configuration files (``params.configuration``).
+
+    ``[{"provider": "TechnologyService", "consumer": "ApplicationComponent", "relationship": "Serving"}]``:
+    a technology service serves the component whose directory holds a file configuring one
+    of its technologies.
+    """
+    rules: list[ConfigurationRule] = []
+    for item in _structural_items(configs, "configuration", ("provider", "consumer", "relationship")):
+        _check_rule("configuration", item, item["provider"], item["relationship"], item["consumer"])
+        rules.append(ConfigurationRule(provider=item["provider"], consumer=item["consumer"], relationship=item["relationship"]))
+    return rules
+
+
+def _dependency_rules(configs: list[Any]) -> list[DependencyRule]:
+    """Dependencies from file imports (``params.dependency``).
+
+    ``[{"provider": "ApplicationComponent", "consumer": "ApplicationComponent", "relationship": "Serving"}]``:
+    a component serves the sibling component whose files import its files.
+    """
+    rules: list[DependencyRule] = []
+    for item in _structural_items(configs, "dependency", ("provider", "consumer", "relationship")):
+        _check_rule("dependency", item, item["provider"], item["relationship"], item["consumer"])
+        rules.append(DependencyRule(provider=item["provider"], consumer=item["consumer"], relationship=item["relationship"]))
+    return rules
 
 
 def _per_candidate_config(params: str | None) -> PerCandidateConfig | None:
@@ -929,6 +1020,10 @@ def run_derivation(
                 graph_manager=graph_manager,
                 llm_config=relationship_config(),
                 temperature=getattr(relationship_config(), "temperature", None),
+                containment=_containment_rules(relationship_configs),
+                membership=_membership_rules(relationship_configs),
+                configuration=_configuration_rules(relationship_configs),
+                dependency=_dependency_rules(relationship_configs),
             )
 
             # Persist relationships to archimate model with graph metadata for stability analysis
@@ -1342,6 +1437,10 @@ def run_derivation_iter(
                 graph_manager=graph_manager,
                 llm_config=relationship_config(),
                 temperature=getattr(relationship_config(), "temperature", None),
+                containment=_containment_rules(relationship_configs),
+                membership=_membership_rules(relationship_configs),
+                configuration=_configuration_rules(relationship_configs),
+                dependency=_dependency_rules(relationship_configs),
             )
 
             # Persist relationships to archimate model

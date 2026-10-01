@@ -1664,6 +1664,7 @@ def _create_node_from_data(node_type: str, node_data: dict, repo_name: str, extr
             code_snippet=props.get("codeSnippet", props.get("code_snippet")),
             confidence=props.get("confidence", 0.8),
             extraction_method=extraction_method,
+            decorators=list(props.get("decorators") or []),
         )
     elif node_type == "Method":
         return MethodNode(
@@ -1681,6 +1682,7 @@ def _create_node_from_data(node_type: str, node_data: dict, repo_name: str, extr
             end_line=props.get("endLine", props.get("end_line", 0)),
             confidence=props.get("confidence", 0.8),
             extraction_method=extraction_method,
+            decorators=list(props.get("decorators") or []),
         )
     elif node_type == "Technology":
         return TechnologyNode(

@@ -36,12 +36,13 @@ def rel(identifier: str, source: str, target: str, rel_type: str = "Serving", ti
 
 
 class TestOriginTier:
-    def test_graph_edges_are_tier_1(self):
+    def test_graph_edges_and_containment_are_tier_1(self):
         assert origin_tier("Graph:CALLS") == 1
         assert origin_tier("calls_edge") == 1
+        assert origin_tier("containment") == 1
 
     def test_structural_rules_are_tier_2(self):
-        for origin in ("graph_neighbor", "graph_neighbor_2hop", "community", "rule"):
+        for origin in ("graph_neighbor", "community", "rule"):
             assert origin_tier(origin) == 2
 
     def test_llm_and_unknown_are_tier_3(self):

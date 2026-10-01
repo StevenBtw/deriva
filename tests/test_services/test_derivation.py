@@ -425,6 +425,174 @@ class TestRunDerivationSteps:
         assert [e["identifier"] for e in call.kwargs["all_elements"]] == ["e9"]
 
 
+class TestContainmentConfig:
+    """The relationship row's params.containment: which type pairs containment decides, checked against the metamodel."""
+
+    @staticmethod
+    def _row(containment):
+        params = {"min_confidence": 0.6, "persona": "P"}
+        if containment is not None:
+            params["containment"] = containment
+        return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
+
+    def test_without_a_row_or_the_key_there_is_no_containment(self):
+        assert derivation._containment_rules([]) == []
+        assert derivation._containment_rules([self._row(None)]) == []
+
+    def test_rules_come_from_params(self):
+        from deriva.modules.derivation.base import ContainmentRule
+
+        row = self._row([{"container": "ApplicationComponent", "contained": "ApplicationInterface", "relationship": "Composition"}])
+
+        assert derivation._containment_rules([row]) == [ContainmentRule(container="ApplicationComponent", contained="ApplicationInterface", relationship="Composition")]
+
+    @pytest.mark.parametrize(
+        "containment",
+        [
+            {"container": "ApplicationComponent"},
+            [{"container": "ApplicationComponent", "contained": "DataObject"}],
+            [{"container": "ApplicationComponent", "contained": "DataObject", "relationship": "Composition"}],
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, containment):
+        with pytest.raises(ValueError, match="containment"):
+            derivation._containment_rules([self._row(containment)])
+
+    def test_the_relationship_pass_receives_the_rules(self):
+        from deriva.modules.derivation.base import ContainmentRule
+
+        row = self._row([{"container": "ApplicationComponent", "contained": "ApplicationService", "relationship": "Realization"}])
+        element = SimpleNamespace(identifier="e9", name="Ledger", element_type="BusinessObject", properties={})
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [element]
+        configs = {"relationship": [row]}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: configs.get(phase, [])),
+            patch.object(derivation, "derive_consolidated_relationships", return_value=[]) as relationships,
+        ):
+            derivation.run_derivation(
+                engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, llm_query_fn=MagicMock(), steps=[derivation.RELATIONSHIP_STEP]
+            )
+
+        assert relationships.call_args.kwargs["containment"] == [ContainmentRule(container="ApplicationComponent", contained="ApplicationService", relationship="Realization")]
+
+
+class TestDependencyConfig:
+    """The relationship row's params.dependency, checked against the metamodel."""
+
+    @staticmethod
+    def _row(**structure):
+        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
+
+    def test_without_the_key_there_are_no_rules(self):
+        assert derivation._dependency_rules([self._row()]) == []
+
+    def test_dependency_rules_come_from_params(self):
+        from deriva.modules.derivation.base import DependencyRule
+
+        row = self._row(dependency=[{"provider": "ApplicationComponent", "consumer": "ApplicationComponent", "relationship": "Serving"}])
+
+        assert derivation._dependency_rules([row]) == [DependencyRule(provider="ApplicationComponent", consumer="ApplicationComponent", relationship="Serving")]
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            {"provider": "ApplicationComponent", "consumer": "ApplicationComponent"},
+            {"provider": "ApplicationComponent", "consumer": "ApplicationComponent", "relationship": "Access"},
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, item):
+        with pytest.raises(ValueError, match="dependency"):
+            derivation._dependency_rules([self._row(dependency=[item])])
+
+    def test_the_relationship_pass_receives_the_rules(self):
+        row = self._row(dependency=[{"provider": "ApplicationComponent", "consumer": "ApplicationComponent", "relationship": "Serving"}])
+        element = SimpleNamespace(identifier="e9", name="Ledger", element_type="BusinessObject", properties={})
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [element]
+        configs = {"relationship": [row]}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: configs.get(phase, [])),
+            patch.object(derivation, "derive_consolidated_relationships", return_value=[]) as relationships,
+        ):
+            derivation.run_derivation(
+                engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, llm_query_fn=MagicMock(), steps=[derivation.RELATIONSHIP_STEP]
+            )
+
+        assert [r.provider for r in relationships.call_args.kwargs["dependency"]] == ["ApplicationComponent"]
+
+
+class TestTechnologyStructureConfig:
+    """The relationship row's params.membership and params.configuration, checked against the metamodel."""
+
+    @staticmethod
+    def _row(**structure):
+        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
+
+    def test_without_the_keys_there_are_no_rules(self):
+        assert derivation._membership_rules([self._row()]) == []
+        assert derivation._configuration_rules([]) == []
+
+    def test_membership_rules_come_from_params(self):
+        from deriva.modules.derivation.base import MembershipRule
+
+        row = self._row(
+            membership=[
+                {"group": "Node", "member": "SystemSoftware", "relationship": "Composition", "from": "group"},
+                {"group": "TechnologyService", "member": "SystemSoftware", "relationship": "Realization", "from": "member"},
+            ]
+        )
+
+        assert derivation._membership_rules([row]) == [
+            MembershipRule(group="Node", member="SystemSoftware", relationship="Composition", from_group=True),
+            MembershipRule(group="TechnologyService", member="SystemSoftware", relationship="Realization", from_group=False),
+        ]
+
+    def test_configuration_rules_come_from_params(self):
+        from deriva.modules.derivation.base import ConfigurationRule
+
+        row = self._row(configuration=[{"provider": "TechnologyService", "consumer": "ApplicationComponent", "relationship": "Serving"}])
+
+        assert derivation._configuration_rules([row]) == [ConfigurationRule(provider="TechnologyService", consumer="ApplicationComponent", relationship="Serving")]
+
+    @pytest.mark.parametrize(
+        "structure",
+        [
+            {"membership": [{"group": "Node", "member": "SystemSoftware", "relationship": "Composition", "from": "elsewhere"}]},
+            {"membership": [{"group": "Node", "member": "SystemSoftware", "relationship": "Access", "from": "group"}]},
+            {"configuration": [{"provider": "TechnologyService", "consumer": "ApplicationComponent"}]},
+            {"configuration": [{"provider": "TechnologyService", "consumer": "ApplicationComponent", "relationship": "Composition"}]},
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, structure):
+        key = next(iter(structure))
+        with pytest.raises(ValueError, match=key):
+            (derivation._membership_rules if key == "membership" else derivation._configuration_rules)([self._row(**structure)])
+
+    def test_the_relationship_pass_receives_the_rules(self):
+        row = self._row(
+            membership=[{"group": "Node", "member": "SystemSoftware", "relationship": "Composition", "from": "group"}],
+            configuration=[{"provider": "TechnologyService", "consumer": "ApplicationComponent", "relationship": "Serving"}],
+        )
+        element = SimpleNamespace(identifier="e9", name="Ledger", element_type="BusinessObject", properties={})
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [element]
+        configs = {"relationship": [row]}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: configs.get(phase, [])),
+            patch.object(derivation, "derive_consolidated_relationships", return_value=[]) as relationships,
+        ):
+            derivation.run_derivation(
+                engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, llm_query_fn=MagicMock(), steps=[derivation.RELATIONSHIP_STEP]
+            )
+
+        kwargs = relationships.call_args.kwargs
+        assert [r.group for r in kwargs["membership"]] == ["Node"]
+        assert [r.provider for r in kwargs["configuration"]] == ["TechnologyService"]
+
+
 class TestRunDerivationWithConfigs:
     """Tests for run_derivation with actual mock configs."""
 
@@ -1994,6 +2162,20 @@ class TestRelationshipLLMConfig:
     def test_row_without_min_confidence_is_an_error(self):
         with pytest.raises(ValueError, match="min_confidence"):
             derivation._relationship_llm_config([self._row(params='{"temperature": 0.0}')])
+
+    def test_llm_proposals_off_leaves_relationships_to_structure(self):
+        row = self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": false}')
+
+        assert derivation._relationship_llm_config([row]) is None
+
+    def test_llm_proposals_on_keeps_the_llm_pass(self):
+        row = self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": true}')
+
+        assert derivation._relationship_llm_config([row]) == RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+
+    def test_llm_proposals_must_be_a_boolean(self):
+        with pytest.raises(ValueError, match="llm_proposals"):
+            derivation._relationship_llm_config([self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": "no"}')])
 
     @pytest.mark.parametrize("runner", ["run_derivation", "run_derivation_iter"])
     def test_runs_that_never_derive_relationships_do_not_read_the_row(self, runner):
