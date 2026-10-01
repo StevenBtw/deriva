@@ -18,13 +18,13 @@ import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
-from deriva.adapters.archimate.models import BEHAVIOR_ELEMENTS, PASSIVE_ELEMENTS
+from deriva.adapters.archimate.models import BEHAVIOR_ELEMENTS, PASSIVE_ELEMENTS  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 from .base import RefineResult, register_refine_step
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +92,7 @@ class StructuralConsistencyStep:
         )
 
         if graph_manager is None:
-            logger.warning(
-                "Graph manager not provided, skipping structural consistency check"
-            )
+            logger.warning("Graph manager not provided, skipping structural consistency check")
             result.details.append(
                 {
                     "action": "skipped",
@@ -108,25 +106,17 @@ class StructuralConsistencyStep:
 
             # Check containment preservation
             if check_containment:
-                self._check_containment_preservation(
-                    graph_manager, archimate_manager, result, model_ns
-                )
+                self._check_containment_preservation(graph_manager, archimate_manager, result, model_ns)
 
             # Check call relationship preservation
             if check_calls:
-                self._check_call_preservation(
-                    graph_manager, archimate_manager, result, model_ns
-                )
+                self._check_call_preservation(graph_manager, archimate_manager, result, model_ns)
 
             # Check ArchiMate aspect constraints (Flow/Triggering/Access)
             if check_aspect_constraints:
-                self._check_aspect_constraints(
-                    archimate_manager, result, model_ns, fix_aspect_violations
-                )
+                self._check_aspect_constraints(archimate_manager, result, model_ns, fix_aspect_violations)
 
-            logger.info(
-                f"Structural consistency check complete: {result.issues_found} issues found"
-            )
+            logger.info(f"Structural consistency check complete: {result.issues_found} issues found")
 
         except Exception as e:
             logger.exception(f"Error in structural consistency check: {e}")
@@ -151,16 +141,8 @@ class StructuralConsistencyStep:
         node id. Model rows are read once and joined in Python (a Cypher join of edges
         x element pairs does not use indexes).
         """
-        edges = graph_manager.query(
-            "MATCH (p:Graph)-[:`Graph:CONTAINS`]->(c:Graph) "
-            "WHERE p.active = true AND c.active = true "
-            "RETURN p.id AS parent, c.id AS child"
-        )
-        elements = [
-            (e, json.dumps(e.properties))
-            for e in archimate_manager.get_elements(enabled_only=True)
-            if e.properties
-        ]
+        edges = graph_manager.query("MATCH (p:Graph)-[:`Graph:CONTAINS`]->(c:Graph) WHERE p.active = true AND c.active = true RETURN p.id AS parent, c.id AS child")
+        elements = [(e, json.dumps(e.properties)) for e in archimate_manager.get_elements(enabled_only=True) if e.properties]
         rel_types: dict[tuple[str, str], list[str]] = defaultdict(list)
         for r in archimate_manager.get_relationships():
             rel_types[(r.source, r.target)].append(r.relationship_type)
@@ -171,17 +153,11 @@ class StructuralConsistencyStep:
             parent_source, child_source = edge["parent"], edge["child"]
             for node_id in (parent_source, child_source):
                 if node_id not in mentions:
-                    mentions[node_id] = [
-                        e for e, text in elements if node_id and node_id in text
-                    ]
+                    mentions[node_id] = [e for e, text in elements if node_id and node_id in text]
             for parent in mentions[parent_source]:
                 for child in mentions[child_source]:
-                    types = rel_types.get((parent.identifier, child.identifier)) or [
-                        None
-                    ]
-                    rows.extend(
-                        (parent_source, child_source, parent, child, t) for t in types
-                    )
+                    types = rel_types.get((parent.identifier, child.identifier)) or [None]
+                    rows.extend((parent_source, child_source, parent, child, t) for t in types)
 
         for parent_source, child_source, parent, child, rel_type in rows[:100]:
             if rel_type is None:
@@ -236,27 +212,6 @@ class StructuralConsistencyStep:
                 )
         except Exception as e:
             logger.warning(f"Call preservation check query failed: {e}")
-
-    def _get_element_source(
-        self, archimate_manager: ArchimateManager, identifier: str, model_ns: str
-    ) -> str | None:
-        """Get the source Graph node ID for a Model element."""
-        query = f"""
-            MATCH (e:{model_ns} {{identifier: $identifier}})
-            RETURN e.properties_json as properties_json
-        """
-
-        try:
-            result = archimate_manager.query(query, {"identifier": identifier})
-            if result and result[0].get("properties_json"):
-                import json
-
-                props = json.loads(result[0]["properties_json"])
-                return props.get("source")
-        except Exception:
-            pass
-
-        return None
 
     def _check_aspect_constraints(
         self,
@@ -324,9 +279,7 @@ class StructuralConsistencyStep:
                 if fix_violations and violation_type == "flow_to_passive":
                     # Auto-fix: Change Flow to Access
                     try:
-                        self._fix_flow_to_access(
-                            archimate_manager, rel["rel_id"], model_ns
-                        )
+                        self._fix_flow_to_access(archimate_manager, rel["rel_id"])
                         violations_fixed += 1
                         result.details.append(
                             {
@@ -366,10 +319,7 @@ class StructuralConsistencyStep:
                     )
 
         if violations_found > 0:
-            logger.warning(
-                f"Found {violations_found} Flow aspect constraint violations, "
-                f"fixed {violations_fixed}"
-            )
+            logger.warning(f"Found {violations_found} Flow aspect constraint violations, fixed {violations_fixed}")
         else:
             result.details.append(
                 {
@@ -379,74 +329,7 @@ class StructuralConsistencyStep:
                 }
             )
 
-    def _fix_flow_to_access(
-        self,
-        archimate_manager: ArchimateManager,
-        rel_id: str,
-        model_ns: str,
-    ) -> None:
-        """Fix a Flow→Passive violation by changing the relationship type to Access.
-
-        Args:
-            archimate_manager: Manager for ArchiMate model operations
-            rel_id: Identifier of the relationship to fix
-            model_ns: Model namespace
-        """
-        # Update the relationship type from Flow to Access
-        # This requires deleting the old relationship and creating a new one
-        # because the graph doesn't allow changing relationship types in-place
-
-        # Get the relationship details first
-        query = f"""
-            MATCH (source)-[r:`{model_ns}:Flow`]->(target)
-            WHERE r.identifier = $rel_id
-            RETURN source.identifier as source_id,
-                   target.identifier as target_id,
-                   r.name as name,
-                   r.documentation as documentation,
-                   r.properties_json as properties_json,
-                   r.confidence as confidence
-        """
-
-        results = archimate_manager.query(query, {"rel_id": rel_id})
-        if not results:
-            raise ValueError(f"Relationship {rel_id} not found")
-
-        rel_data = results[0]
-
-        # Delete the old Flow relationship
-        delete_query = f"""
-            MATCH ()-[r:`{model_ns}:Flow`]->()
-            WHERE r.identifier = $rel_id
-            DELETE r
-        """
-        archimate_manager.query(delete_query, {"rel_id": rel_id})
-
-        # Create new Access relationship with same properties
-        create_query = f"""
-            MATCH (source:{model_ns} {{identifier: $source_id}}), (target:{model_ns} {{identifier: $target_id}})
-            CREATE (source)-[r:`{model_ns}:Access` {{
-                identifier: $rel_id,
-                relationship_type: 'Access',
-                name: $name,
-                documentation: $documentation,
-                properties_json: $properties_json,
-                confidence: $confidence
-            }}]->(target)
-            RETURN r.identifier as new_id
-        """
-
-        archimate_manager.query(
-            create_query,
-            {
-                "source_id": rel_data["source_id"],
-                "target_id": rel_data["target_id"],
-                "rel_id": rel_id,
-                "name": rel_data.get("name"),
-                "documentation": rel_data.get("documentation"),
-                "properties_json": rel_data.get("properties_json"),
-                "confidence": rel_data.get("confidence", 0.9),
-            },
-        )
-
+    def _fix_flow_to_access(self, archimate_manager: ArchimateManager, rel_id: str) -> None:
+        """Fix a Flow→Passive violation: the relationship becomes an Access with the same identifier and data."""
+        archimate_manager.retype_relationship(rel_id, "Access")
         logger.info(f"Fixed Flow→Access: {rel_id}")

@@ -147,19 +147,14 @@ class BusinessActorDerivation(HybridDerivation):
             enrich_candidate(c, enrichments)
 
         # Check if candidates are BusinessConcept (have conceptType property)
-        is_business_concept = any(
-            "BusinessConcept" in c.labels or c.properties.get("conceptType")
-            for c in candidates
-        )
+        is_business_concept = any("BusinessConcept" in c.labels or c.properties.get("conceptType") for c in candidates)
 
         if is_business_concept:
             # BusinessConcept source: filter by confidence, skip graph metrics
             return self._filter_business_concepts(candidates, max_candidates)
 
         # TypeDefinition source: original auth/pattern-based filtering
-        return self._filter_typedef_candidates(
-            candidates, enrichments, max_candidates, include_patterns, exclude_patterns
-        )
+        return self._filter_typedef_candidates(candidates, enrichments, max_candidates, include_patterns, exclude_patterns)
 
     def _filter_business_concepts(
         self,
@@ -218,9 +213,7 @@ class BusinessActorDerivation(HybridDerivation):
         for c in filtered:
             has_auth = self._has_auth_decorator(c)
             has_actor_name = self._has_actor_name_pattern(c.name)
-            matches_config = self.matches_patterns(
-                c.name, include_patterns, exclude_patterns
-            )
+            matches_config = self.matches_patterns(c.name, include_patterns, exclude_patterns)
 
             if has_auth:
                 c.properties["has_auth_decorator"] = True
@@ -234,15 +227,9 @@ class BusinessActorDerivation(HybridDerivation):
                 others.append(c)
 
         # Apply graph filtering to each group
-        auth_decorated = self.apply_graph_filtering(
-            auth_decorated, enrichments, max_candidates // 4
-        )
-        actor_named = self.apply_graph_filtering(
-            actor_named, enrichments, max_candidates // 4
-        )
-        pattern_matched = self.apply_graph_filtering(
-            pattern_matched, enrichments, max_candidates // 4
-        )
+        auth_decorated = self.apply_graph_filtering(auth_decorated, enrichments, max_candidates // 4)
+        actor_named = self.apply_graph_filtering(actor_named, enrichments, max_candidates // 4)
+        pattern_matched = self.apply_graph_filtering(pattern_matched, enrichments, max_candidates // 4)
 
         # Combine: auth-decorated first, then actor-named, then pattern-matched, then others
         combined = auth_decorated + actor_named + pattern_matched

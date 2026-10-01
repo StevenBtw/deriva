@@ -1,0 +1,18 @@
+{
+ "TypeDefinition": {
+  "persona": "You are analyzing a source code file to extract type definitions.",
+  "task": "Extract all type definitions from this file."
+ },
+ "Method": {
+  "persona": "You are analyzing a {type_category} definition to extract its methods.",
+  "task": "Extract all methods and functions from this {type_category}."
+ },
+ "Test": {
+  "persona": "You are analyzing a test file to extract test definitions.",
+  "task": "Extract all test definitions from this file."
+ },
+ "ExternalDependency": {
+  "persona": "You are analyzing a file to extract external dependencies.",
+  "task": "Extract external dependencies."
+ }
+}

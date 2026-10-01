@@ -14,6 +14,8 @@ from deriva.modules.extraction.method import (
     parse_llm_response,
 )
 
+PROMPT_TEXTS = {"persona": "Analyze the source.", "task": "Extract the items."}
+
 
 class TestMethodSchema:
     """Tests for METHOD_SCHEMA constant."""
@@ -55,6 +57,7 @@ class TestBuildExtractionPrompt:
             file_path="src/my_file.py",
             instruction="Extract all methods",
             example='{"methods": []}',
+            texts=PROMPT_TEXTS,
         )
 
         assert "MyClass" in prompt
@@ -70,6 +73,7 @@ class TestBuildExtractionPrompt:
             file_path="test.py",
             instruction="",
             example="",
+            texts=PROMPT_TEXTS,
         )
 
         assert "1 |" in prompt
@@ -85,6 +89,7 @@ class TestBuildExtractionPrompt:
             file_path="test.py",
             instruction="Custom instruction here",
             example='{"methods": [{"name": "test"}]}',
+            texts=PROMPT_TEXTS,
         )
 
         assert "Custom instruction here" in prompt
@@ -224,7 +229,7 @@ class TestExtractMethods:
             type_node={"properties": {"codeSnippet": ""}},
             repo_name="test",
             llm_query_fn=MagicMock(),
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -251,7 +256,7 @@ class TestExtractMethods:
             },
             repo_name="test",
             llm_query_fn=mock_llm,
-            config={"instruction": "Extract methods", "example": "{}"},
+            config={"instruction": "Extract methods", "example": "{}", "params": {"prompt": PROMPT_TEXTS}},
         )
 
         mock_llm.assert_called_once()
@@ -274,7 +279,7 @@ class TestExtractMethods:
             },
             repo_name="test",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is False
@@ -291,7 +296,7 @@ class TestExtractMethods:
             },
             repo_name="test",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is False
@@ -320,7 +325,7 @@ class TestExtractMethods:
             },
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert len(result["data"]["edges"]) == 1
@@ -347,7 +352,7 @@ class TestExtractMethodsBatch:
             ],
             repo_name="test",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["stats"]["types_processed"] == 2
@@ -372,7 +377,7 @@ class TestExtractMethodsBatch:
             ],
             repo_name="test",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
             progress_callback=progress_cb,
         )
 
@@ -399,7 +404,7 @@ class TestExtractMethodsBatch:
             ],
             repo_name="test",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         # Each type produces 1 method
@@ -420,7 +425,7 @@ class TestExtractMethodsBatch:
             ],
             repo_name="test",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert "type_results" in result

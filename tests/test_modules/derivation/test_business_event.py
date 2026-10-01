@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from deriva.modules.derivation.base import Candidate
 from deriva.modules.derivation.business_event import (
     EVENT_DECORATOR_PATTERNS,
@@ -171,6 +173,56 @@ class TestHasEventDecorator:
             properties={"decorators": ["WEBHOOK_HANDLER"]},
         )
         assert derivation._has_event_decorator(candidate) is True
+
+
+class TestConceptCandidates:
+    """Business concepts were chosen by the query: the method patterns and pagerank threshold do not apply to them."""
+
+    @staticmethod
+    def _concept(node_id, name):
+        return Candidate(node_id=node_id, name=name, labels=["Graph", "BusinessConcept"], properties={"conceptTypes": ["event"], "confidence": 0.9})
+
+    def test_concepts_pass_in_query_order_up_to_the_cap(self):
+        concepts = [self._concept("c3", "Gamma"), self._concept("c1", "Alpha"), self._concept("c2", "Beta")]
+
+        # A pagerank far below the method threshold does not matter for concepts
+        low = {c.node_id: {"pagerank": 0.0001} for c in concepts}
+
+        result = BusinessEventDerivation().filter_candidates(candidates=concepts, enrichments=low, max_candidates=2, include_patterns={"event"}, exclude_patterns=set())
+
+        assert [c.node_id for c in result] == ["c3", "c1"]
+
+    def test_methods_keep_the_method_path(self):
+        method = Candidate(node_id="m1", name="helper", labels=["Graph", "Method"], properties={})
+        low = {"m1": {"pagerank": 0.0001}}
+
+        result = BusinessEventDerivation().filter_candidates(candidates=[method], enrichments=low, max_candidates=10, include_patterns={"event"}, exclude_patterns=set())
+
+        assert result == []  # below the method pagerank threshold, matching no event pattern
+
+    def test_a_method_among_the_concepts_does_not_change_their_path(self):
+        concepts = [self._concept("c2", "Beta"), self._concept("c1", "Alpha")]
+        method = Candidate(node_id="m1", name="helper", labels=["Graph", "Method"], properties={})
+        low = {n: {"pagerank": 0.0001} for n in ("c1", "c2", "m1")}
+
+        candidates = [concepts[0], method, concepts[1]]
+
+        result = BusinessEventDerivation().filter_candidates(candidates=candidates, enrichments=low, max_candidates=10, include_patterns={"event"}, exclude_patterns=set())
+
+        # The concepts keep their query order; the method still meets the method threshold
+        assert [c.node_id for c in result] == ["c2", "c1"]
+
+    @pytest.mark.parametrize("cap, expected", [(10, ["c2", "c1", "d1", "p1"]), (3, ["c2", "c1", "d1"])])
+    def test_concepts_come_first_then_decorated_then_pattern_methods(self, cap, expected):
+        concepts = [self._concept("c2", "Beta"), self._concept("c1", "Alpha")]
+        decorated = Candidate(node_id="d1", name="on_order", labels=["Graph", "Method"], properties={"decorators": ["webhook"]})
+        matching = Candidate(node_id="p1", name="order_event", labels=["Graph", "Method"], properties={})
+        high = {n: {"pagerank": 0.5} for n in ("c1", "c2", "d1", "p1")}
+        candidates = [matching, concepts[0], decorated, concepts[1]]
+
+        result = BusinessEventDerivation().filter_candidates(candidates=candidates, enrichments=high, max_candidates=cap, include_patterns={"event"}, exclude_patterns=set())
+
+        assert [c.node_id for c in result] == expected
 
 
 class TestFilterCandidates:

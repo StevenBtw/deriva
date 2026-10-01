@@ -30,9 +30,8 @@ import logging
 import os
 from typing import Any
 
-from dotenv import load_dotenv
-
 from deriva.adapters.grafeo import GrafeoConnection
+from dotenv import load_dotenv
 
 from .models import ArchiMateMetamodel, Element, Relationship
 from .validation import ArchiMateValidator, ValidationError
@@ -62,10 +61,7 @@ class ArchimateManager:
         self.db: GrafeoConnection | None = None
         self.namespace = os.getenv("ARCHIMATE_NAMESPACE", "Model")
         self.metamodel = ArchiMateMetamodel()
-        self.validator = ArchiMateValidator(
-            strict_mode=os.getenv("ARCHIMATE_VALIDATION_STRICT_MODE", "false").lower()
-            == "true"
-        )
+        self.validator = ArchiMateValidator(strict_mode=os.getenv("ARCHIMATE_VALIDATION_STRICT_MODE", "false").lower() == "true")
 
         logger.info(f"Initialized ArchimateManager with namespace: {self.namespace}")
 
@@ -79,9 +75,7 @@ class ArchimateManager:
             self.db = GrafeoConnection(namespace=self.namespace)
             self.db.connect()
 
-            logger.info(
-                f"Successfully connected to grafeo with namespace '{self.namespace}'"
-            )
+            logger.info(f"Successfully connected to grafeo with namespace '{self.namespace}'")
 
         except Exception as e:
             logger.error(f"Failed to connect to grafeo: {e}")
@@ -99,9 +93,7 @@ class ArchimateManager:
         self.connect()
         return self
 
-    def __exit__(
-        self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any
-    ) -> None:
+    def __exit__(self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any) -> None:
         """Context manager exit."""
         self.disconnect()
 
@@ -135,15 +127,11 @@ class ArchimateManager:
             # while still having namespace isolation via the Model label
 
             # Convert properties to JSON string
-            properties_json = (
-                json.dumps(element.properties) if element.properties else None
-            )
+            properties_json = json.dumps(element.properties) if element.properties else None
 
             # Extract source_identifier from properties for graph-based relationship derivation
             # The graph_relationships refine step needs this to link elements to source graph nodes
-            source_identifier = (
-                element.properties.get("source") if element.properties else None
-            )
+            source_identifier = element.properties.get("source") if element.properties else None
 
             # Found through the identifier index; a MERGE would scan the namespace label
             self.db.merge_node(
@@ -158,18 +146,14 @@ class ArchimateManager:
                     "source_identifier": source_identifier,
                 },
             )
-            logger.debug(
-                f"Added element: {element.identifier} ({element.element_type})"
-            )
+            logger.debug(f"Added element: {element.identifier} ({element.element_type})")
             return element.identifier
 
         except Exception as e:
             logger.error(f"Failed to add element {element.identifier}: {e}")
             raise
 
-    def add_relationship(
-        self, relationship: Relationship, validate: bool = True
-    ) -> str:
+    def add_relationship(self, relationship: Relationship, validate: bool = True) -> str:
         """Add an ArchiMate relationship to the graph.
 
         Args:
@@ -199,9 +183,7 @@ class ArchimateManager:
             # Nodes are matched by having the namespace label (Model)
 
             # Convert properties to JSON string
-            properties_json = (
-                json.dumps(relationship.properties) if relationship.properties else None
-            )
+            properties_json = json.dumps(relationship.properties) if relationship.properties else None
 
             # Get namespaced relationship type (e.g., "Realization" -> "Model:Realization")
             rel_label = self.db.get_label(relationship.relationship_type)
@@ -231,14 +213,10 @@ class ArchimateManager:
             )
 
             if result:
-                logger.debug(
-                    f"Added relationship: {relationship.source} -{relationship.relationship_type}-> {relationship.target}"
-                )
+                logger.debug(f"Added relationship: {relationship.source} -{relationship.relationship_type}-> {relationship.target}")
                 return result[0]["identifier"]
             else:
-                raise RuntimeError(
-                    f"Failed to add relationship. Make sure elements {relationship.source} and {relationship.target} exist."
-                )
+                raise RuntimeError(f"Failed to add relationship. Make sure elements {relationship.source} and {relationship.target} exist.")
 
         except Exception as e:
             logger.error(f"Failed to add relationship {relationship.identifier}: {e}")
@@ -269,36 +247,13 @@ class ArchimateManager:
             """
 
             result = self.db.execute_read(query, {"identifier": identifier})
-
-            if result:
-                data = result[0]
-                # Element type is the non-namespace label
-                element_type = (
-                    data["element_type"] if data.get("element_type") else "Unknown"
-                )
-                # Parse JSON properties back to dict
-                properties = (
-                    json.loads(data["properties_json"])
-                    if data.get("properties_json")
-                    else {}
-                )
-                return Element(
-                    name=data["name"],
-                    element_type=element_type,
-                    identifier=data["identifier"],
-                    documentation=data.get("documentation"),
-                    properties=properties,
-                    enabled=data.get("enabled", True),
-                )
-            return None
+            return self._element_from_row(result[0]) if result else None
 
         except Exception as e:
             logger.error(f"Failed to get element {identifier}: {e}")
             raise
 
-    def get_elements(
-        self, element_type: str | None = None, enabled_only: bool = False
-    ) -> list[Element]:
+    def get_elements(self, element_type: str | None = None, enabled_only: bool = False) -> list[Element]:
         """Get all elements, optionally filtered by type and enabled status.
 
         Args:
@@ -325,25 +280,7 @@ class ArchimateManager:
                            e.properties_json as properties_json,
                            e.enabled as enabled
                 """
-                result = self.db.execute_read(query)
-                # All elements have same type
-                elements = []
-                for data in result:
-                    properties = (
-                        json.loads(data["properties_json"])
-                        if data.get("properties_json")
-                        else {}
-                    )
-                    elements.append(
-                        Element(
-                            name=data["name"],
-                            element_type=element_type,
-                            identifier=data["identifier"],
-                            documentation=data.get("documentation"),
-                            properties=properties,
-                            enabled=data.get("enabled", True),
-                        )
-                    )
+                elements = [self._element_from_row(row, element_type) for row in self.db.execute_read(query)]
             else:
                 # Get all elements - match namespace label and extract type from other labels
                 query = f"""
@@ -356,26 +293,7 @@ class ArchimateManager:
                            e.properties_json as properties_json,
                            e.enabled as enabled
                 """
-                result = self.db.execute_read(query)
-                elements = []
-                for data in result:
-                    # Element type is the non-namespace label
-                    etype = data.get("element_type") or "Unknown"
-                    properties = (
-                        json.loads(data["properties_json"])
-                        if data.get("properties_json")
-                        else {}
-                    )
-                    elements.append(
-                        Element(
-                            name=data["name"],
-                            element_type=etype,
-                            identifier=data["identifier"],
-                            documentation=data.get("documentation"),
-                            properties=properties,
-                            enabled=data.get("enabled", True),
-                        )
-                    )
+                elements = [self._element_from_row(row) for row in self.db.execute_read(query)]
 
             return elements
 
@@ -383,9 +301,42 @@ class ArchimateManager:
             logger.error(f"Failed to get elements: {e}")
             raise
 
-    def get_relationships(
-        self, source_id: str | None = None, target_id: str | None = None
-    ) -> list[Relationship]:
+    @staticmethod
+    def _element_from_row(row: dict[str, Any], element_type: str | None = None) -> Element:
+        """An element from a query row (identifier, name, element_type, documentation, properties_json, enabled)."""
+        return Element(
+            name=row["name"],
+            element_type=element_type or row.get("element_type") or "Unknown",
+            identifier=row["identifier"],
+            documentation=row.get("documentation"),
+            properties=json.loads(row["properties_json"]) if row.get("properties_json") else {},
+            enabled=row.get("enabled", True),
+        )
+
+    def get_orphan_elements(self) -> list[Element]:
+        """Enabled elements without any relationship in this namespace, sorted by identifier."""
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        query = f"""
+            MATCH (e:`{self.namespace}`)
+            WHERE e.enabled = true
+            WITH e
+            WHERE NOT EXISTS {{
+                MATCH (e)-[r]-()
+                WHERE type(r) STARTS WITH '{self.namespace}:'
+            }}
+            RETURN e.identifier as identifier,
+                   e.name as name,
+                   [lbl IN labels(e) WHERE lbl <> '{self.namespace}'][0] as element_type,
+                   e.documentation as documentation,
+                   e.properties_json as properties_json,
+                   e.enabled as enabled
+            ORDER BY identifier
+        """
+        return [self._element_from_row(row) for row in self.db.execute_read(query)]
+
+    def get_relationships(self, source_id: str | None = None, target_id: str | None = None) -> list[Relationship]:
         """Get relationships, optionally filtered by source and/or target.
 
         Args:
@@ -462,11 +413,7 @@ class ArchimateManager:
                 if rel_type.startswith(f"{self.namespace}:"):
                     rel_type = rel_type[len(self.namespace) + 1 :]
                 # Parse JSON properties back to dict
-                properties = (
-                    json.loads(data["properties_json"])
-                    if data.get("properties_json")
-                    else {}
-                )
+                properties = json.loads(data["properties_json"]) if data.get("properties_json") else {}
                 relationships.append(
                     Relationship(
                         source=data["source"],
@@ -498,9 +445,7 @@ class ArchimateManager:
             logger.error(f"Failed to clear model: {e}")
             raise
 
-    def query(
-        self, cypher_query: str, params: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]:
+    def query(self, cypher_query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Execute a custom Cypher query.
 
         Args:
@@ -540,9 +485,7 @@ class ArchimateManager:
                     e.disabled_reason = $reason
                 RETURN e.identifier as identifier
             """
-            result = self.db.execute_write(
-                query, {"identifier": identifier, "reason": reason}
-            )
+            result = self.db.execute_write(query, {"identifier": identifier, "reason": reason})
 
             if result:
                 logger.debug(f"Disabled element: {identifier} (reason: {reason})")
@@ -573,9 +516,7 @@ class ArchimateManager:
         )
         return bool(result)
 
-    def disable_elements(
-        self, identifiers: list[str], reason: str | None = None
-    ) -> int:
+    def disable_elements(self, identifiers: list[str], reason: str | None = None) -> int:
         """Disable multiple elements (batch soft delete for refine phase).
 
         Args:
@@ -599,9 +540,7 @@ class ArchimateManager:
                     e.disabled_reason = $reason
                 RETURN count(e) as count
             """
-            result = self.db.execute_write(
-                query, {"identifiers": identifiers, "reason": reason}
-            )
+            result = self.db.execute_write(query, {"identifiers": identifiers, "reason": reason})
 
             count = result[0]["count"] if result else 0
             logger.info(f"Disabled {count} elements (reason: {reason})")
@@ -642,13 +581,9 @@ class ArchimateManager:
             logger.error(f"Failed to delete relationship {identifier}: {e}")
             raise
 
-    def redirect_relationship(
-        self, identifier: str, new_source: str, new_target: str
-    ) -> str:
+    def redirect_relationship(self, identifier: str, new_source: str, new_target: str) -> str:
         """Replace a relationship by one with new endpoints; returns the new identifier."""
-        old = next(
-            (r for r in self.get_relationships() if r.identifier == identifier), None
-        )
+        old = next((r for r in self.get_relationships() if r.identifier == identifier), None)
         if old is None:
             raise ValueError(f"Relationship not found: {identifier}")
         new_id = self.add_relationship(
@@ -663,6 +598,36 @@ class ArchimateManager:
         )
         self.delete_relationship(identifier)
         return new_id
+
+    def retype_relationship(self, identifier: str, new_type: str) -> str:
+        """Change a relationship's type, keeping its identifier, endpoints, name, documentation and properties.
+
+        The new relationship is validated before the old one is removed, so an invalid type loses nothing.
+        """
+        old = next((r for r in self.get_relationships() if r.identifier == identifier), None)
+        if old is None:
+            raise ValueError(f"Relationship not found: {identifier}")
+        new = Relationship(
+            source=old.source,
+            target=old.target,
+            relationship_type=new_type,
+            identifier=identifier,
+            name=old.name,
+            documentation=old.documentation,
+            properties=old.properties,
+        )
+        is_valid, errors = self.validator.validate_relationship(new)
+        if not is_valid:
+            raise ValidationError(f"Relationship validation failed: {errors}")
+        # Attributes that steps wrote directly on the edge (such as a consolidated confidence) go along
+        rows = self.query("MATCH ()-[r]->() WHERE r.identifier = $identifier RETURN properties(r) AS attributes", {"identifier": identifier})
+        written = {"identifier", "name", "documentation", "properties_json"}
+        extra = {k: v for k, v in ((rows[0].get("attributes") if rows else None) or {}).items() if k not in written}
+        self.delete_relationship(identifier)
+        new_identifier = self.add_relationship(new, validate=False)
+        if extra:
+            self.query("MATCH ()-[r]->() WHERE r.identifier = $identifier SET r += $extra", {"identifier": new_identifier, "extra": extra})
+        return new_identifier
 
     def delete_relationships(self, identifiers: list[str]) -> int:
         """Delete multiple relationships by identifier.

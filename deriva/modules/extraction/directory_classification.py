@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from deriva.common.naming import name_key
 from deriva.modules.derivation.base import name_from_source
 
 from .base import (
@@ -21,8 +22,10 @@ from .base import (
     current_timestamp,
     parse_json_response,
     sample_llm,
+    sample_usage,
 )
-
+from .business_concept import concept_node_id
+from .technology_candidates import technology_node_id
 
 # JSON schema for LLM structured output
 DIRECTORY_CLASSIFICATION_SCHEMA = {
@@ -47,23 +50,14 @@ DIRECTORY_CLASSIFICATION_SCHEMA = {
                         },
                         "conceptType": {
                             "type": "string",
-                            "description": "Specific type (for business: actor/entity/process; for technology: infrastructure/framework/tool)",
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "Brief description of what this represents",
-                        },
-                        "confidence": {
-                            "type": "number",
-                            "description": "Confidence score 0.0-1.0",
+                            "enum": ["entity", "process", "actor", "capability", "infrastructure", "framework", "none"],
+                            "description": "Business: entity, process, actor or capability; technology: infrastructure or framework; skip: none",
                         },
                     },
                     "required": [
                         "directoryName",
                         "classification",
                         "conceptType",
-                        "description",
-                        "confidence",
                     ],
                     "additionalProperties": False,
                 },
@@ -96,10 +90,12 @@ def build_classification_prompt(
     # Format directory list with file context if available
     formatted_dirs = []
     for d in directories:
-        dir_info: dict[str, Any] = {
-            "name": d.get("name", d.get("dirName", "")),
-            "path": d.get("path", d.get("dirPath", "")),
-        }
+        dir_info: dict[str, Any] = {"name": d.get("name", d.get("dirName", ""))}
+        # A name entry lists every directory with that name (see group_directories_by_name)
+        if "paths" in d:
+            dir_info["paths"] = d["paths"]
+        else:
+            dir_info["path"] = d.get("path", d.get("dirPath", ""))
         # Include file stats if available (from graph query enrichment)
         file_count = d.get("file_count", 0)
         if file_count and file_count > 0:
@@ -112,17 +108,13 @@ def build_classification_prompt(
                 file_stats.append(f"docs:{d['docs_count']}")
             if d.get("test_count", 0) > 0:
                 file_stats.append(f"test:{d['test_count']}")
-            dir_info["files"] = (
-                f"{file_count} ({', '.join(file_stats)})"
-                if file_stats
-                else str(file_count)
-            )
+            dir_info["files"] = f"{file_count} ({', '.join(file_stats)})" if file_stats else str(file_count)
 
-            # Include subtypes (languages) if available
+            # Include subtypes (languages) if available, sorted (not in storage order)
             subtypes = d.get("subtypes", [])
             if subtypes and len(subtypes) > 0:
                 # Filter out None values
-                valid_subtypes = [s for s in subtypes if s]
+                valid_subtypes = sorted(s for s in subtypes if s)
                 if valid_subtypes:
                     dir_info["languages"] = valid_subtypes
 
@@ -149,14 +141,16 @@ def build_business_concept_node(
     classification: dict[str, Any],
     source_dir_id: str,
     repo_name: str,
+    confidence: float,
 ) -> dict[str, Any]:
     """Build a BusinessConcept node from classification result.
 
     The name comes from the directory itself (``claims_handling`` ->
-    ``ClaimsHandling``); the LLM only classified the directory.
+    ``ClaimsHandling``); the LLM only classified the directory. The confidence
+    is the step's configured value for directory concepts, not an LLM guess.
     """
     concept_name = name_from_source(classification["directoryName"]).replace(" ", "")
-    node_id = f"concept::{repo_name}::{concept_name.lower().replace(' ', '_')}"
+    node_id = concept_node_id(repo_name, concept_name)
 
     return {
         "id": node_id,
@@ -164,9 +158,9 @@ def build_business_concept_node(
         "properties": {
             "conceptName": concept_name,
             "conceptType": classification.get("conceptType", "entity"),
-            "description": classification.get("description", ""),
+            "description": "",
             "originSource": f"directory:{classification['directoryName']}/",
-            "confidence": classification.get("confidence", 0.8),
+            "confidence": confidence,
             "repositoryName": repo_name,
             "active": True,
             "extracted_at": current_timestamp(),
@@ -178,10 +172,11 @@ def build_technology_node(
     classification: dict[str, Any],
     source_dir_id: str,
     repo_name: str,
+    confidence: float,
 ) -> dict[str, Any]:
-    """Build a Technology node from classification result (name from the directory)."""
+    """Build a Technology node from classification result (name from the directory, confidence from the config)."""
     concept_name = name_from_source(classification["directoryName"])
-    node_id = f"tech::{repo_name}::{concept_name.lower().replace(' ', '_')}"
+    node_id = technology_node_id(repo_name, concept_name)
 
     return {
         "id": node_id,
@@ -189,9 +184,9 @@ def build_technology_node(
         "properties": {
             "technologyName": concept_name,
             "technologyType": classification.get("conceptType", "infrastructure"),
-            "description": classification.get("description", ""),
+            "description": "",
             "originSource": f"directory:{classification['directoryName']}/",
-            "confidence": classification.get("confidence", 0.8),
+            "confidence": confidence,
             "repositoryName": repo_name,
             "active": True,
             "extracted_at": current_timestamp(),
@@ -199,14 +194,64 @@ def build_technology_node(
     }
 
 
-def vote_directory_classifications(
-    samples: list[list[dict[str, Any]]], min_votes: int
-) -> list[dict[str, Any]]:
+# File counts summed over the directories of one name
+_FILE_COUNTS = ("file_count", "source_count", "config_count", "docs_count", "test_count")
+
+
+def group_directories_by_name(directories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One entry per name (canonical name key), with its paths, ids, summed file counts and languages.
+
+    A concept's identity is its name key, so all directories with that name are one
+    decision. Grouped before batching, copies never land in different prompts or get
+    different answers. A group keeps its first directory's name, in order of first appearance.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    for d in directories:
+        name = str(d.get("name", d.get("dirName", "")))
+        group = groups.setdefault(name_key(name), {"name": name, "paths": [], "ids": [], "subtypes": [], **dict.fromkeys(_FILE_COUNTS, 0)})
+        group["paths"].append(d.get("path", d.get("dirPath", "")))
+        group["ids"].append(d.get("id", ""))
+        for count in _FILE_COUNTS:
+            group[count] += d.get(count) or 0
+        group["subtypes"] = sorted(set(group["subtypes"]) | {s for s in d.get("subtypes") or [] if s})
+    return list(groups.values())
+
+
+def structural_skip(directories: list[dict[str, Any]], params: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split off the directories the structure already decides as skip, before any LLM call.
+
+    Configured in the step's params (versioned): ``skip_names`` skips a directory
+    whose own name matches (by canonical name key), ``skip_trees`` also everything
+    inside such a directory, and ``skip_pass_through`` skips path steps: directories
+    without files and with a single subdirectory (a package prefix, for example).
+
+    Args:
+        directories: Directory rows with ``name``, ``path``, ``file_count`` and ``subdir_count``
+        params: The step's params
+
+    Returns:
+        (directories to classify, skipped directories), each in the given order
+    """
+    names = {name_key(n) for n in params.get("skip_names", [])}
+    trees = {name_key(n) for n in params.get("skip_trees", [])}
+    pass_through = bool(params.get("skip_pass_through", False))
+    keep: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for d in directories:
+        segments = [name_key(s) for s in str(d.get("path", "")).split("/")]
+        own = name_key(str(d.get("name", "")))
+        is_step = pass_through and not d.get("file_count") and d.get("subdir_count") == 1
+        skip = own in names or own in trees or any(s in trees for s in segments[:-1]) or is_step
+        (skipped if skip else keep).append(d)
+    return keep, skipped
+
+
+def vote_directory_classifications(samples: list[list[dict[str, Any]]], min_votes: int) -> list[dict[str, Any]]:
     """Per directory, the (classification, type) given by at least ``min_votes`` samples.
 
     Samples are answers to the same prompt. The winner has the most votes (ties
     broken by name); directories without such a majority are left out, which
-    means skipped. Confidence is the median of the winning votes.
+    means skipped.
     """
     votes: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = {}
     for classifications in samples:
@@ -226,31 +271,9 @@ def vote_directory_classifications(
     for directory in sorted(votes):
         options = votes[directory]
         key = min(options, key=lambda k: (-len(options[k]), k))
-        backing = options[key]
-        if len(backing) < min_votes:
+        if len(options[key]) < min_votes:
             continue
-        confidences = sorted(float(c.get("confidence", 0.0)) for c in backing)
-        middle = len(confidences) // 2
-        median = (
-            confidences[middle]
-            if len(confidences) % 2
-            else (confidences[middle - 1] + confidences[middle]) / 2
-        )
-        best = min(
-            backing,
-            key=lambda c: (
-                -float(c.get("confidence", 0.0)),
-                str(c.get("description", "")),
-            ),
-        )
-        winners.append(
-            {
-                **best,
-                "classification": key[0],
-                "conceptType": key[1],
-                "confidence": round(median, 4),
-            }
-        )
+        winners.append({"directoryName": directory, "classification": key[0], "conceptType": key[1]})
     return winners
 
 
@@ -308,12 +331,13 @@ def classify_directories(
             int(params.get("samples", 1)),
         )
         min_votes = int(params.get("min_votes", 1))
-        response = next((r for r in responses if r is not None), None)
+        response = next((r for r in responses if r is not None and not getattr(r, "error", None)), None)
         if response is None:
+            first_error = next((r.error for r in responses if r is not None and getattr(r, "error", None)), "every sample failed")
             return {
                 "success": False,
                 "data": {"nodes": [], "edges": []},
-                "errors": ["LLM error: every sample failed"],
+                "errors": [f"LLM error: {first_error}"],
                 "stats": {},
                 "llm_details": llm_details,
             }
@@ -321,23 +345,9 @@ def classify_directories(
         # Extract LLM details from response
         if hasattr(response, "content"):
             llm_details["response"] = response.content
-        if hasattr(response, "usage") and response.usage:
-            llm_details["tokens_in"] = response.usage.get("prompt_tokens", 0)
-            llm_details["tokens_out"] = response.usage.get("completion_tokens", 0)
+        llm_details["tokens_in"], llm_details["tokens_out"] = sample_usage(responses)
         if hasattr(response, "response_type"):
-            llm_details["cache_used"] = (
-                str(response.response_type) == "ResponseType.CACHED"
-            )
-
-        # Check for failed response
-        if hasattr(response, "error") and response.error:
-            return {
-                "success": False,
-                "data": {"nodes": [], "edges": []},
-                "errors": [f"LLM error: {response.error}"],
-                "stats": {},
-                "llm_details": llm_details,
-            }
+            llm_details["cache_used"] = str(response.response_type) == "ResponseType.CACHED"
 
         # Parse every sample, then take the per-directory majority
         parsed_samples = []
@@ -359,9 +369,7 @@ def classify_directories(
                 "llm_details": llm_details,
             }
 
-        parsed = {
-            "classifications": vote_directory_classifications(parsed_samples, min_votes)
-        }
+        parsed = {"classifications": vote_directory_classifications(parsed_samples, min_votes)}
 
         # Build nodes from classifications
         nodes = []
@@ -372,34 +380,43 @@ def classify_directories(
             "skipped": 0,
         }
 
-        # Create lookup for source directory IDs
-        dir_id_map = {
-            d.get("name", d.get("dirName", "")): d.get("id", "") for d in directories
-        }
+        # Source directory IDs per name key: the answer names directories by name (in any
+        # spelling), so every directory with that name gets the classification (and its edge)
+        dir_ids: dict[str, list[str]] = {}
+        dir_names: dict[str, str] = {}
+        for d in directories:
+            name = d.get("name", d.get("dirName", ""))
+            dir_ids.setdefault(name_key(name), []).extend(d.get("ids") or [d.get("id", "")])
+            dir_names.setdefault(name_key(name), name)
 
+        # Directories without a (majority) classification get no node: skipped
+        classified = {name_key(c.get("directoryName", "")) for c in parsed.get("classifications", [])}
+        stats["skipped"] += sum(len(ids) for key, ids in dir_ids.items() if key not in classified)
+
+        # The answer holds decisions only; nodes and edges get the configured confidence
+        confidence = float(params.get("confidence", 0.8))
         for classification in parsed.get("classifications", []):
-            dir_name = classification.get("directoryName", "")
+            key = name_key(classification.get("directoryName", ""))
+            # The node takes the directory's name, not the answer's spelling of it
+            classification = {**classification, "directoryName": dir_names.get(key, classification.get("directoryName", ""))}
             class_type = classification.get("classification", "skip")
-            confidence = classification.get("confidence", 0.0)
-            source_dir_id = dir_id_map.get(dir_name, "")
+            source_ids = [i for i in dir_ids.get(key, []) if i]
+            source_dir_id = source_ids[0] if source_ids else ""
 
-            # Skip low confidence or explicit skip
-            if class_type == "skip" or confidence < 0.7:
+            if class_type == "skip":
                 stats["skipped"] += 1
                 continue
 
             if class_type == "business":
-                node = build_business_concept_node(
-                    classification, source_dir_id, repo_name
-                )
+                node = build_business_concept_node(classification, source_dir_id, repo_name, confidence)
                 nodes.append(node)
                 stats["business_concepts"] += 1
 
-                # Create edge from Directory to BusinessConcept
-                if source_dir_id:
+                # Create edges from the Directories to the BusinessConcept
+                for dir_id in source_ids:
                     edges.append(
                         {
-                            "source": source_dir_id,
+                            "source": dir_id,
                             "target": node["id"],
                             "relationship_type": "REPRESENTS",
                             "properties": {
@@ -410,15 +427,15 @@ def classify_directories(
                     )
 
             elif class_type == "technology":
-                node = build_technology_node(classification, source_dir_id, repo_name)
+                node = build_technology_node(classification, source_dir_id, repo_name, confidence)
                 nodes.append(node)
                 stats["technologies"] += 1
 
-                # Create edge from Directory to Technology
-                if source_dir_id:
+                # Create edges from the Directories to the Technology
+                for dir_id in source_ids:
                     edges.append(
                         {
-                            "source": source_dir_id,
+                            "source": dir_id,
                             "target": node["id"],
                             "relationship_type": "REPRESENTS",
                             "properties": {

@@ -72,9 +72,7 @@ def summarize_run_events(events: list[Any]) -> dict[str, Any]:
                 }
             )
         elif e.activity in ("ExtractConfig", "DeriveConfig"):
-            summary["steps"].append(
-                {"step": a.get("config_id"), "seconds": a.get("duration_seconds", 0.0)}
-            )
+            summary["steps"].append({"step": a.get("config_id"), "seconds": a.get("duration_seconds", 0.0)})
         elif e.activity == "LLMQuery":
             llm["calls"] += 1
             if a.get("cache_hit"):
@@ -87,9 +85,7 @@ def summarize_run_events(events: list[Any]) -> dict[str, Any]:
             wait_ms += a.get("wait_ms", 0.0) or 0.0
     summary["steps"].sort(key=lambda s: -s["seconds"])
     # Runs without a CompleteRun event (e.g. extraction) report the total of their steps
-    summary["run_seconds"] = round(
-        summary["run_seconds"] or sum(step["seconds"] for step in summary["steps"]), 2
-    )
+    summary["run_seconds"] = round(summary["run_seconds"] or sum(step["seconds"] for step in summary["steps"]), 2)
     summary["llm"] = {
         **llm,
         "latency_seconds": round(latency_ms / 1000, 2),

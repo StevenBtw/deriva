@@ -19,9 +19,9 @@ from .joint import JointElement, MergeCandidate, Metamodel, Proposal, origin_tie
 from .normalization import RepoContext, normalize_for_dedup
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.archimate.models import Element
-    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.archimate.models import Element  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 logger = logging.getLogger(__name__)
 
@@ -47,41 +47,25 @@ def merge_candidates(
                     normalize_for_dedup(b.name, ctx),
                 )
                 if canon_a and canon_a == canon_b:
-                    out.append(
-                        MergeCandidate(
-                            a.identifier, b.identifier, 1, 1.0, "normalized_name"
-                        )
-                    )
+                    out.append(MergeCandidate(a.identifier, b.identifier, 1, 1.0, "normalized_name"))
                     continue
                 if src_a and src_a == src_b:
-                    out.append(
-                        MergeCandidate(
-                            a.identifier, b.identifier, 1, 1.0, "same_source_node"
-                        )
-                    )
+                    out.append(MergeCandidate(a.identifier, b.identifier, 1, 1.0, "same_source_node"))
                     continue
                 if not (canon_a and canon_b):
                     continue  # an empty name is no evidence (similarity("", "") is 1.0)
-                score = similarity_ratio(
-                    normalize_name(canon_a), normalize_name(canon_b)
-                )
+                score = similarity_ratio(normalize_name(canon_a), normalize_name(canon_b))
                 if score < threshold:
                     continue
                 com_a = a.properties.get("source_louvain_community")
                 com_b = b.properties.get("source_louvain_community")
-                near = bool(
-                    src_a and src_b and frozenset((src_a, src_b)) in adjacent
-                ) or (com_a is not None and com_a == com_b)
+                near = bool(src_a and src_b and frozenset((src_a, src_b)) in adjacent) or (com_a is not None and com_a == com_b)
                 tier, evidence = (2, "fuzzy_name+graph") if near else (3, "fuzzy_name")
-                out.append(
-                    MergeCandidate(a.identifier, b.identifier, tier, score, evidence)
-                )
+                out.append(MergeCandidate(a.identifier, b.identifier, tier, score, evidence))
     return out
 
 
-def _adjacent_sources(
-    graph_manager: GraphManager | None, sources: list[str]
-) -> set[frozenset[str]]:
+def _adjacent_sources(graph_manager: GraphManager | None, sources: list[str]) -> set[frozenset[str]]:
     if graph_manager is None or len(sources) < 2:
         return set()
     rows = graph_manager.query(
@@ -92,10 +76,7 @@ def _adjacent_sources(
 
 
 def _duplicate_disabled_ids(archimate_manager: ArchimateManager) -> set[str]:
-    rows = archimate_manager.query(
-        f"MATCH (e:`{archimate_manager.namespace}`) WHERE e.enabled = false "
-        f"AND e.disabled_reason STARTS WITH 'duplicate_of:' RETURN e.identifier as id"
-    )
+    rows = archimate_manager.query(f"MATCH (e:`{archimate_manager.namespace}`) WHERE e.enabled = false AND e.disabled_reason STARTS WITH 'duplicate_of:' RETURN e.identifier as id")
     return {r["id"] for r in rows if r.get("id")}
 
 
@@ -128,22 +109,12 @@ class JointConsistencyStep:
             # Earlier duplicate merges are re-decided here, in dry run and apply alike,
             # so the report describes exactly what an apply run does
             revived = _duplicate_disabled_ids(archimate_manager)
-            elements = [
-                e
-                for e in archimate_manager.get_elements(enabled_only=False)
-                if e.enabled or e.identifier in revived
-            ]
+            elements = [e for e in archimate_manager.get_elements(enabled_only=False) if e.enabled or e.identifier in revived]
             ids = {e.identifier for e in elements}
-            rels = [
-                r
-                for r in archimate_manager.get_relationships()
-                if r.source in ids and r.target in ids
-            ]
-            ctx = _build_repo_context(graph_manager, archimate_manager)
+            rels = [r for r in archimate_manager.get_relationships() if r.source in ids and r.target in ids]
+            ctx = _build_repo_context(graph_manager)
             sources = sorted({s for e in elements if (s := e.properties.get("source"))})
-            candidates = merge_candidates(
-                elements, ctx, _adjacent_sources(graph_manager, sources), threshold
-            )
+            candidates = merge_candidates(elements, ctx, _adjacent_sources(graph_manager, sources), threshold)
             evidence = {(m.first, m.second): m.evidence for m in candidates}
 
             decision = solve(
@@ -192,28 +163,15 @@ class JointConsistencyStep:
                 return result
 
             result.issues_found = len(decision.dropped) + len(decision.merges)
-            result.details += [
-                {"action": "drop", "relationship": k, "reason": v}
-                for k, v in decision.dropped.items()
-            ]
-            result.details += [
-                {"action": "merge", "duplicate": d, "survivor": s}
-                for d, s in decision.merges.items()
-            ]
-            result.details += [
-                {"action": "redirect", "relationship": k, "to": list(v)}
-                for k, v in decision.redirects.items()
-            ]
+            result.details += [{"action": "drop", "relationship": k, "reason": v} for k, v in decision.dropped.items()]
+            result.details += [{"action": "merge", "duplicate": d, "survivor": s} for d, s in decision.merges.items()]
+            result.details += [{"action": "redirect", "relationship": k, "to": list(v)} for k, v in decision.redirects.items()]
             if dry_run:
                 return result
 
             for duplicate, survivor in decision.merges.items():
-                tag = evidence.get(
-                    (min(duplicate, survivor), max(duplicate, survivor)), "transitive"
-                )
-                archimate_manager.disable_element(
-                    duplicate, reason=f"duplicate_of:{survivor}:joint:{tag}"
-                )
+                tag = evidence.get((min(duplicate, survivor), max(duplicate, survivor)), "transitive")
+                archimate_manager.disable_element(duplicate, reason=f"duplicate_of:{survivor}:joint:{tag}")
                 result.elements_merged += 1
                 result.elements_disabled += 1
             for rel_id, (source, target) in decision.redirects.items():

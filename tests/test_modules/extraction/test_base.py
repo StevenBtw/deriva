@@ -1,5 +1,7 @@
 """Tests for modules.extraction.extraction_base module."""
 
+import pytest
+
 from deriva.common.types import LLMDetails
 from deriva.modules.extraction.base import (
     create_empty_llm_details,
@@ -14,9 +16,7 @@ from deriva.modules.extraction.base import (
     has_node_sources,
     is_python_file,
     matches_file_spec,
-    normalize_concept_name,
     normalize_package_name,
-    normalize_technology_name,
     parse_input_sources,
     parse_json_response,
     singularize,
@@ -341,62 +341,6 @@ class TestNormalizePackageName:
         assert normalize_package_name("Flask") == "Flask"
 
 
-class TestNormalizeConceptName:
-    """Tests for normalize_concept_name function."""
-
-    def test_singularizes_plural(self):
-        """Should singularize plural concept names."""
-        result = normalize_concept_name("Users")
-        assert result == "User"
-
-    def test_converts_to_camelcase(self):
-        """Should convert underscored names to CamelCase."""
-        result = normalize_concept_name("user_authentication")
-        assert result == "UserAuthentication"
-
-    def test_handles_spaces(self):
-        """Should convert spaced names to CamelCase."""
-        result = normalize_concept_name("user authentication")
-        assert result == "UserAuthentication"
-
-    def test_empty_name(self):
-        """Should return empty for empty input."""
-        assert normalize_concept_name("") == ""
-
-    def test_keeps_camel_case_word_boundaries(self):
-        """PascalCase from the LLM keeps its words (was squashed to 'Realtimedatastreaming')."""
-        assert normalize_concept_name("RealTimeDataStreaming") == "RealTimeDataStreaming"
-        assert normalize_concept_name("FacebookLike") == "FacebookLike"
-
-    def test_singularizes_the_last_camel_case_word(self):
-        assert normalize_concept_name("DataSources") == "DataSource"
-        assert normalize_concept_name("order_items") == "OrderItem"
-
-    def test_keeps_words_that_only_look_plural(self):
-        """'Analysis', 'Status' and the like are not plurals (was 'PopularityAnalysi')."""
-        assert normalize_concept_name("PopularityAnalysis") == "PopularityAnalysis"
-        assert normalize_concept_name("OrderStatus") == "OrderStatus"
-        assert normalize_concept_name("Business") == "Business"
-
-
-class TestNormalizeTechnologyName:
-    """Tests for normalize_technology_name function."""
-
-    def test_canonical_technology(self):
-        """Should return canonical name for known technologies."""
-        result = normalize_technology_name("flask")
-        assert result == "Flask"
-
-    def test_unknown_technology(self):
-        """Should preserve case for unknown technologies."""
-        result = normalize_technology_name("MyFramework")
-        assert result == "MyFramework"
-
-    def test_empty_name(self):
-        """Should return empty for empty input."""
-        assert normalize_technology_name("") == ""
-
-
 class TestSingularize:
     """Tests for singularize function."""
 
@@ -500,3 +444,68 @@ class TestHasNodeSources:
         """Should return False when no nodes."""
         input_sources = {"files": [], "nodes": []}
         assert has_node_sources(input_sources) is False
+
+
+class TestSampleLLM:
+    """k identical prompts run in parallel, but never with more threads than the cap."""
+
+    def test_caps_parallel_workers(self):
+        import threading
+        import time
+
+        from deriva.modules.extraction.base import MAX_SAMPLE_WORKERS, sample_llm
+
+        lock = threading.Lock()
+        active = peak = 0
+
+        def query(prompt, schema):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.02)
+            with lock:
+                active -= 1
+            return "ok"
+
+        assert sample_llm(query, "p", {}, MAX_SAMPLE_WORKERS * 2 + 1) == ["ok"] * (MAX_SAMPLE_WORKERS * 2 + 1)
+        assert peak <= MAX_SAMPLE_WORKERS
+
+    def test_usage_sums_every_answered_sample(self):
+        from types import SimpleNamespace
+
+        from deriva.modules.extraction.base import sample_usage
+
+        responses = [
+            SimpleNamespace(usage={"prompt_tokens": 10, "completion_tokens": 2}),
+            None,
+            SimpleNamespace(usage={"prompt_tokens": 10, "completion_tokens": 3}),
+            SimpleNamespace(usage=None),
+        ]
+
+        assert sample_usage(responses) == (20, 5)
+
+
+class TestPromptTexts:
+    """The step's prompt texts come from its config row; a missing or blank text is an error."""
+
+    def test_returns_the_configured_texts(self):
+        from deriva.modules.extraction.base import prompt_texts
+
+        texts = {"persona": "You read code.", "task": "List the types."}
+
+        assert prompt_texts({"params": {"prompt": texts}}, "Step") == texts
+
+    @pytest.mark.parametrize("config", [{}, {"params": None}, {"params": {"prompt": {"persona": "You read code."}}}])
+    def test_a_missing_text_is_an_error(self, config):
+        from deriva.modules.extraction.base import prompt_texts
+
+        with pytest.raises(ValueError, match="Step params.prompt needs"):
+            prompt_texts(config, "Step")
+
+    @pytest.mark.parametrize("task", ["", "   ", None])
+    def test_a_blank_text_is_an_error(self, task):
+        from deriva.modules.extraction.base import prompt_texts
+
+        with pytest.raises(ValueError, match="Step params.prompt needs task"):
+            prompt_texts({"params": {"prompt": {"persona": "You read code.", "task": task}}}, "Step")

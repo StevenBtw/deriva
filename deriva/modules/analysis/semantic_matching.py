@@ -663,15 +663,11 @@ def create_semantic_match_report(
 
     # Categorize matches
     correctly_derived = [m for m in element_matches if m.match_type != "no_match"]
-    spurious_elements = [
-        m.derived_id for m in element_matches if m.match_type == "no_match"
-    ]
+    spurious_elements = [m.derived_id for m in element_matches if m.match_type == "no_match"]
 
     # Find missing elements (reference elements not matched)
     matched_ref_ids = {m.reference_id for m in correctly_derived if m.reference_id}
-    missing_elements = [
-        e for e in reference_elements if e.identifier not in matched_ref_ids
-    ]
+    missing_elements = [e for e in reference_elements if e.identifier not in matched_ref_ids]
 
     # Compute metrics
     element_metrics = compute_semantic_metrics(element_matches, len(reference_elements))
@@ -691,11 +687,7 @@ def create_semantic_match_report(
         overlap = derived_rel_ids & ref_rel_ids
         rel_precision = len(overlap) / len(derived_rel_ids) if derived_rel_ids else 0.0
         rel_recall = len(overlap) / len(ref_rel_ids) if ref_rel_ids else 0.0
-        rel_f1 = (
-            2 * rel_precision * rel_recall / (rel_precision + rel_recall)
-            if rel_precision + rel_recall > 0
-            else 0.0
-        )
+        rel_f1 = 2 * rel_precision * rel_recall / (rel_precision + rel_recall) if rel_precision + rel_recall > 0 else 0.0
         rel_metrics = {"precision": rel_precision, "recall": rel_recall, "f1": rel_f1}
 
     return SemanticMatchReport(
@@ -707,12 +699,8 @@ def create_semantic_match_report(
         correctly_derived=correctly_derived,
         missing_elements=missing_elements,
         spurious_elements=spurious_elements,
-        total_derived_relationships=len(derived_relationships)
-        if derived_relationships
-        else 0,
-        total_reference_relationships=len(reference_relationships)
-        if reference_relationships
-        else 0,
+        total_derived_relationships=len(derived_relationships) if derived_relationships else 0,
+        total_reference_relationships=len(reference_relationships) if reference_relationships else 0,
         correctly_derived_relationships=correctly_derived_rels,
         missing_relationships=missing_rels,
         spurious_relationships=spurious_rels,

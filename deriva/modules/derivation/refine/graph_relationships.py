@@ -27,7 +27,7 @@ import uuid
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
-from deriva.adapters.archimate.models import (
+from deriva.adapters.archimate.models import (  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
     RELATIONSHIP_TYPES,
     Relationship,
     validate_relationship_rule,
@@ -36,9 +36,9 @@ from deriva.adapters.archimate.models import (
 from .base import RefineResult, register_refine_step
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.archimate.models import Element
-    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.archimate.models import Element  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 logger = logging.getLogger(__name__)
 
@@ -87,22 +87,10 @@ def get_valid_element_combos(rel_type: str) -> dict[str, set[str] | None]:
     }
 
 
-def _graph_edges(
-    graph_manager: GraphManager, graph_ns: str, edge_type: str
-) -> list[tuple[str, str]]:
+def _graph_edges(graph_manager: GraphManager, graph_ns: str, edge_type: str) -> list[tuple[str, str]]:
     """Distinct (source id, target id) pairs of an edge type between active nodes."""
-    rows = graph_manager.query(
-        f"MATCH (a)-[:`{graph_ns}:{edge_type}`]->(b) "
-        "WHERE a.active = true AND b.active = true "
-        "RETURN a.id AS source, b.id AS target"
-    )
-    return sorted(
-        {
-            (r["source"], r["target"])
-            for r in rows
-            if r.get("source") and r.get("target")
-        }
-    )
+    rows = graph_manager.query(f"MATCH (a)-[:`{graph_ns}:{edge_type}`]->(b) WHERE a.active = true AND b.active = true RETURN a.id AS source, b.id AS target")
+    return sorted({(r["source"], r["target"]) for r in rows if r.get("source") and r.get("target")})
 
 
 def find_relationship_candidates(
@@ -131,12 +119,7 @@ def find_relationship_candidates(
             src.identifier != tgt.identifier
             and (not valid_sources or src.element_type in valid_sources)
             and (not valid_targets or tgt.element_type in valid_targets)
-            and (
-                rel_type not in RELATIONSHIP_TYPES
-                or validate_relationship_rule(
-                    src.element_type, rel_type, tgt.element_type
-                )[0]
-            )
+            and (rel_type not in RELATIONSHIP_TYPES or validate_relationship_rule(src.element_type, rel_type, tgt.element_type)[0])
         )
 
     def row(src: Element, tgt: Element) -> dict[str, Any]:
@@ -156,13 +139,8 @@ def find_relationship_candidates(
     for graph_source, graph_target in edges:
         for src in by_source.get(graph_source, []):
             for tgt in by_source.get(graph_target, []):
-                if (
-                    allowed(src, tgt)
-                    and (src.identifier, tgt.identifier, rel_type) not in existing
-                ):
-                    rows[
-                        (graph_source, graph_target, src.identifier, tgt.identifier)
-                    ] = {
+                if allowed(src, tgt) and (src.identifier, tgt.identifier, rel_type) not in existing:
+                    rows[(graph_source, graph_target, src.identifier, tgt.identifier)] = {
                         **row(src, tgt),
                         "graph_source": graph_source,
                         "graph_target": graph_target,
@@ -180,10 +158,7 @@ def find_relationship_candidates(
     for graph_source, graph_target in edges:
         for src in mentions[graph_source]:
             for tgt in mentions[graph_target]:
-                if (
-                    allowed(src, tgt)
-                    and (src.identifier, tgt.identifier) not in related
-                ):
+                if allowed(src, tgt) and (src.identifier, tgt.identifier) not in related:
                     pairs[(src.identifier, tgt.identifier)] = row(src, tgt)
     return [pairs[k] for k in sorted(pairs)][:limit]
 
@@ -235,9 +210,7 @@ class GraphRelationshipsStep:
         )
 
         if graph_manager is None:
-            logger.warning(
-                "Graph manager not provided, skipping graph relationship derivation"
-            )
+            logger.warning("Graph manager not provided, skipping graph relationship derivation")
             result.details.append(
                 {
                     "action": "skipped",
@@ -251,10 +224,7 @@ class GraphRelationshipsStep:
             # Read the model once; candidates are joined in Python (a Cypher join of
             # graph edges x model element pairs does not use indexes and is very slow).
             elements = archimate_manager.get_elements(enabled_only=True)
-            existing = {
-                (r.source, r.target, r.relationship_type)
-                for r in archimate_manager.get_relationships()
-            }
+            existing = {(r.source, r.target, r.relationship_type) for r in archimate_manager.get_relationships()}
 
             total_created = 0
 
@@ -277,16 +247,12 @@ class GraphRelationshipsStep:
                 if not candidates:
                     continue
 
-                logger.info(
-                    f"Found {len(candidates)} {edge_type} edges for {rel_type} relationships"
-                )
+                logger.info(f"Found {len(candidates)} {edge_type} edges for {rel_type} relationships")
 
                 # Create relationships
                 for candidate in candidates:
                     if total_created >= max_relationships:
-                        logger.warning(
-                            f"Reached max_relationships limit ({max_relationships})"
-                        )
+                        logger.warning(f"Reached max_relationships limit ({max_relationships})")
                         break
 
                     if dry_run:
@@ -331,11 +297,7 @@ class GraphRelationshipsStep:
                                 }
                             )
 
-            logger.info(
-                f"Graph relationship derivation complete: "
-                f"{result.relationships_created} relationships "
-                f"{'would be ' if dry_run else ''}created"
-            )
+            logger.info(f"Graph relationship derivation complete: {result.relationships_created} relationships {'would be ' if dry_run else ''}created")
 
         except Exception as e:
             logger.exception(f"Error in graph relationship derivation: {e}")
@@ -366,9 +328,7 @@ class GraphRelationshipsStep:
         """
         # Safety check: prevent self-referential relationships
         if source_id == target_id:
-            logger.warning(
-                f"Skipping self-referential relationship: {source_id} -> {target_id}"
-            )
+            logger.warning(f"Skipping self-referential relationship: {source_id} -> {target_id}")
             return False
 
         try:
@@ -382,14 +342,9 @@ class GraphRelationshipsStep:
             )
 
             archimate_manager.add_relationship(relationship, validate=True)
-            logger.debug(
-                f"Created {rel_type}: {source_id} -> {target_id} (from {graph_edge})"
-            )
+            logger.debug(f"Created {rel_type}: {source_id} -> {target_id} (from {graph_edge})")
             return True
 
         except Exception as e:
-            logger.warning(
-                f"Failed to create {rel_type} relationship "
-                f"{source_id} -> {target_id}: {e}"
-            )
+            logger.warning(f"Failed to create {rel_type} relationship {source_id} -> {target_id}: {e}")
             return False

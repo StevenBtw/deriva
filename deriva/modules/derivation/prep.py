@@ -42,8 +42,8 @@ Usage:
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -302,9 +302,7 @@ def compute_pagerank(
         tol=tol,
     )
 
-    logger.debug(
-        f"PageRank computed for {len(nodes)} nodes in {result.iterations} iterations"
-    )
+    logger.debug(f"PageRank computed for {len(nodes)} nodes in {result.iterations} iterations")
     return result.solution
 
 
@@ -351,10 +349,7 @@ def compute_louvain(
             for node in community:
                 node_to_community[node] = community_id
 
-    logger.debug(
-        f"Louvain found {len(result.solution)} communities "
-        f"for {len(nodes)} nodes (modularity: {result.objective:.3f})"
-    )
+    logger.debug(f"Louvain found {len(result.solution)} communities for {len(nodes)} nodes (modularity: {result.objective:.3f})")
     return node_to_community
 
 
@@ -413,9 +408,7 @@ def compute_articulation_points(
         neighbors_fn(adj),
     )
 
-    logger.debug(
-        f"Found {len(result.solution)} articulation points in {len(nodes)} nodes"
-    )
+    logger.debug(f"Found {len(result.solution)} articulation points in {len(nodes)} nodes")
     return result.solution
 
 
@@ -603,8 +596,7 @@ def enrich_graph(
                     enrichments[node]["out_degree_percentile"] = pct
 
     logger.info(
-        "Graph enrichment complete: %d algorithms, %d nodes enriched "
-        "(density: %.4f, communities: %d)",
+        "Graph enrichment complete: %d algorithms, %d nodes enriched (density: %.4f, communities: %d)",
         len(algorithms),
         len(enrichments),
         metadata.density,

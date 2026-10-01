@@ -7,15 +7,14 @@ prefixes, case variants) that the generic text normalization does not catch.
 
 DESIGN INVARIANT: no repo-specific hardcoded inputs. No product names, tech
 stacks, or per-repo configuration. All inputs are either ArchiMate-generic
-constants or runtime context derived from the current graph (repo name,
-derived BusinessObjects). Rules that cannot be expressed generically do not
-belong in this module.
+constants or runtime context derived from the current graph (the repo name).
+Rules that cannot be expressed generically do not belong in this module.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # ArchiMate element type names that the LLM tends to append as suffixes.
 # These are from the ArchiMate standard, not from any specific repo.
@@ -36,12 +35,10 @@ class RepoContext:
     """Runtime context for dedup normalization.
 
     Populated from the current graph, not from static config. An empty
-    context (no repo name, no business objects) is valid and makes the
-    repo-specific rules no-ops.
+    context (no repo name) is valid and makes the repo-specific rules no-ops.
     """
 
     repo_name: str = ""
-    business_objects: list[str] = field(default_factory=list)
 
 
 def strip_archimate_suffix(name: str) -> str:
@@ -107,29 +104,3 @@ def normalize_for_dedup(name: str, ctx: RepoContext) -> str:
     result = " ".join(result.split())
     result = to_title_case(result)
     return result
-
-
-def collapse_bo_suffix_groups(
-    names: list[str], business_objects: list[str]
-) -> dict[str, str]:
-    """Map names that differ only by a BusinessObject token to a shared canonical.
-
-    Example: with business_objects=['Order', 'Item'],
-    ['Validate Order', 'Validate Item'] both map to 'Validate <BO>'.
-
-    Returns a dict from original name to canonical form. Used for
-    BusinessProcess entity-suffix collapse (plan rule 4).
-    """
-    if not names:
-        return {}
-    if not business_objects:
-        return {name: name for name in names}
-
-    bo_lower = {bo.lower() for bo in business_objects}
-
-    def mask(name: str) -> str:
-        tokens = name.split()
-        masked = ["<BO>" if token.lower() in bo_lower else token for token in tokens]
-        return " ".join(masked)
-
-    return {name: mask(name) for name in names}

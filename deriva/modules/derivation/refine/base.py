@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 logger = logging.getLogger(__name__)
 
@@ -278,13 +278,7 @@ def normalize_name(
         "assets": "asset",
         "resources": "resource",
         "positions": "position",
-        "invoices": "invoice",
-        "orders": "order",
-        "customers": "customer",
         "users": "user",
-        "products": "product",
-        "payments": "payment",
-        "transactions": "transaction",
         "records": "record",
         "entries": "entry",
         "messages": "message",
@@ -349,21 +343,6 @@ def normalize_name(
         "workflow": "process",
         "procedure": "process",
         "routine": "process",
-        # === DOCUMENT/RENDERING SYNONYMS ===
-        "generation": "rendering",
-        "generator": "renderer",
-        "generate": "render",
-        # === BUSINESS TERM CANONICALIZATION ===
-        "client": "customer",
-        "buyer": "customer",
-        "account": "customer",
-        "purchaser": "customer",
-        "purchase": "order",
-        "sale": "order",
-        "lineitem": "position",
-        "line item": "position",
-        "orderline": "position",
-        "order line": "position",
     }
 
     # Merge with extra synonyms (extra takes precedence)

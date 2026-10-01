@@ -425,3 +425,14 @@ class TestConvenienceFunctions:
             result = export_config_deviations("session_123", engine, str(output_file))
 
         assert Path(result).exists()
+
+
+class TestServiceExports:
+    """The CLI takes recommendations from the service layer."""
+
+    def test_generate_recommendations_is_exported(self):
+        from deriva.modules.analysis import generate_recommendations as pure
+        from deriva.services import config_deviation
+
+        assert "generate_recommendations" in config_deviation.__all__
+        assert config_deviation.generate_recommendations is pure

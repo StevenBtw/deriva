@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -297,6 +298,69 @@ class TestGenerateElement:
         assert result["success"] is False
         assert "Generation failed" in result["errors"][0]
 
+    def _generate_with_patterns(self, **pattern_mock):
+        from deriva.modules.derivation.base import GenerationResult
+
+        engine = MagicMock()
+        with (
+            patch.object(derivation, "_get_derivation") as mock_get,
+            patch.object(derivation.config, "get_derivation_patterns", **pattern_mock) as mock_patterns,
+        ):
+            mock_derivation = MagicMock()
+            mock_derivation.generate.return_value = GenerationResult(success=True)
+            mock_get.return_value = mock_derivation
+            derivation.generate_element(
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                engine=engine,
+                llm_query_fn=MagicMock(),
+                element_type="ApplicationService",
+                query="MATCH (n) RETURN n",
+                instruction="test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+            )
+        return engine, mock_patterns, mock_derivation.generate.call_args.kwargs
+
+    def test_passes_the_step_patterns_to_the_module(self):
+        """The service loads the patterns; the module never touches the config database."""
+        patterns = {"include": {"service"}, "exclude": {"test"}}
+        engine, mock_patterns, kwargs = self._generate_with_patterns(return_value=patterns)
+
+        mock_patterns.assert_called_once_with(engine, "ApplicationService")
+        assert kwargs["patterns"] == patterns
+        assert "engine" not in kwargs
+
+    def test_passes_no_patterns_when_none_are_configured(self):
+        _, _, kwargs = self._generate_with_patterns(side_effect=ValueError("No patterns"))
+
+        assert kwargs["patterns"] == {}
+
+    def test_pattern_labels_travel_with_the_patterns(self):
+        from deriva.modules.derivation.base import GenerationResult
+
+        with (
+            patch.object(derivation, "_get_derivation") as mock_get,
+            patch.object(derivation.config, "get_derivation_patterns", return_value={"include": {"docker"}, "exclude": set()}),
+        ):
+            mock_get.return_value.generate.return_value = GenerationResult(success=True)
+            derivation.generate_element(
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=MagicMock(),
+                element_type="Node",
+                query="MATCH (n) RETURN n",
+                instruction="test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                pattern_labels=frozenset({"File"}),
+            )
+
+        assert mock_get.return_value.generate.call_args.kwargs["patterns"] == {"include": {"docker"}, "exclude": set(), "labels": {"File"}}
+
 
 class TestEnrichmentAlgorithms:
     """Tests for ENRICHMENT_ALGORITHMS constant."""
@@ -306,6 +370,227 @@ class TestEnrichmentAlgorithms:
         assert "pagerank" in derivation.ENRICHMENT_ALGORITHMS
         assert "louvain_communities" in derivation.ENRICHMENT_ALGORITHMS
         assert "k_core_filter" in derivation.ENRICHMENT_ALGORITHMS
+
+
+class TestRunDerivationSteps:
+    """Only the named steps run (the step benchmark measures one derivation step at a time)."""
+
+    @staticmethod
+    def _gen_cfg(name):
+        return MagicMock(
+            step_name=name,
+            element_type=name,
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="I",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params=None,
+        )
+
+    def _run(self, steps, prep=(), gen=(), model_elements=()):
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = list(model_elements)
+        configs = {"prep": list(prep), "generate": list(gen)}
+        created = {"success": True, "elements_created": 1, "created_elements": [{"identifier": "e1", "name": "E", "element_type": "X", "properties": {}}], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: configs.get(phase, [])),
+            patch.object(derivation, "_run_prep_step", return_value={"stats": {}}) as prep_step,
+            patch.object(derivation, "generate_element", return_value=created) as generate,
+            patch.object(derivation, "derive_consolidated_relationships", return_value=[]) as relationships,
+        ):
+            derivation.run_derivation(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, llm_query_fn=MagicMock(), steps=steps)
+        return prep_step, generate, relationships
+
+    def test_only_the_named_steps_run(self):
+        prep = [MagicMock(step_name="pagerank", params=None), MagicMock(step_name="k_core_filter", params=None)]
+        gen = [self._gen_cfg("ApplicationComponent"), self._gen_cfg("BusinessObject")]
+
+        prep_step, generate, relationships = self._run(["k_core_filter", "BusinessObject"], prep=prep, gen=gen)
+
+        assert [c.args[0].step_name for c in prep_step.call_args_list] == ["k_core_filter"]
+        assert [c.kwargs["element_type"] for c in generate.call_args_list] == ["BusinessObject"]
+        # The consolidated relationship pass is a step of its own
+        relationships.assert_not_called()
+
+    def test_the_relationship_pass_runs_on_the_model_when_named(self):
+        element = SimpleNamespace(identifier="e9", name="Ledger", element_type="BusinessObject", properties={})
+
+        _, generate, relationships = self._run([derivation.RELATIONSHIP_STEP], gen=[self._gen_cfg("BusinessObject")], model_elements=[element])
+
+        generate.assert_not_called()
+        (call,) = relationships.call_args_list
+        assert [e["identifier"] for e in call.kwargs["all_elements"]] == ["e9"]
+
+
+class TestContainmentConfig:
+    """The relationship row's params.containment: which type pairs containment decides, checked against the metamodel."""
+
+    @staticmethod
+    def _row(containment):
+        params = {"min_confidence": 0.6, "persona": "P"}
+        if containment is not None:
+            params["containment"] = containment
+        return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
+
+    def test_without_a_row_or_the_key_there_is_no_containment(self):
+        assert derivation._containment_rules([]) == []
+        assert derivation._containment_rules([self._row(None)]) == []
+
+    def test_rules_come_from_params(self):
+        from deriva.modules.derivation.base import ContainmentRule
+
+        row = self._row([{"container": "ApplicationComponent", "contained": "ApplicationInterface", "relationship": "Composition"}])
+
+        assert derivation._containment_rules([row]) == [ContainmentRule(container="ApplicationComponent", contained="ApplicationInterface", relationship="Composition")]
+
+    @pytest.mark.parametrize(
+        "containment",
+        [
+            {"container": "ApplicationComponent"},
+            [{"container": "ApplicationComponent", "contained": "DataObject"}],
+            [{"container": "ApplicationComponent", "contained": "DataObject", "relationship": "Composition"}],
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, containment):
+        with pytest.raises(ValueError, match="containment"):
+            derivation._containment_rules([self._row(containment)])
+
+    def test_the_relationship_pass_receives_the_rules(self):
+        from deriva.modules.derivation.base import ContainmentRule
+
+        row = self._row([{"container": "ApplicationComponent", "contained": "ApplicationService", "relationship": "Realization"}])
+        element = SimpleNamespace(identifier="e9", name="Ledger", element_type="BusinessObject", properties={})
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [element]
+        configs = {"relationship": [row]}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: configs.get(phase, [])),
+            patch.object(derivation, "derive_consolidated_relationships", return_value=[]) as relationships,
+        ):
+            derivation.run_derivation(
+                engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, llm_query_fn=MagicMock(), steps=[derivation.RELATIONSHIP_STEP]
+            )
+
+        assert relationships.call_args.kwargs["containment"] == [ContainmentRule(container="ApplicationComponent", contained="ApplicationService", relationship="Realization")]
+
+
+class TestDependencyConfig:
+    """The relationship row's params.dependency, checked against the metamodel."""
+
+    @staticmethod
+    def _row(**structure):
+        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
+
+    def test_without_the_key_there_are_no_rules(self):
+        assert derivation._dependency_rules([self._row()]) == []
+
+    def test_dependency_rules_come_from_params(self):
+        from deriva.modules.derivation.base import DependencyRule
+
+        row = self._row(dependency=[{"provider": "ApplicationComponent", "consumer": "ApplicationComponent", "relationship": "Serving"}])
+
+        assert derivation._dependency_rules([row]) == [DependencyRule(provider="ApplicationComponent", consumer="ApplicationComponent", relationship="Serving")]
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            {"provider": "ApplicationComponent", "consumer": "ApplicationComponent"},
+            {"provider": "ApplicationComponent", "consumer": "ApplicationComponent", "relationship": "Access"},
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, item):
+        with pytest.raises(ValueError, match="dependency"):
+            derivation._dependency_rules([self._row(dependency=[item])])
+
+    def test_the_relationship_pass_receives_the_rules(self):
+        row = self._row(dependency=[{"provider": "ApplicationComponent", "consumer": "ApplicationComponent", "relationship": "Serving"}])
+        element = SimpleNamespace(identifier="e9", name="Ledger", element_type="BusinessObject", properties={})
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [element]
+        configs = {"relationship": [row]}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: configs.get(phase, [])),
+            patch.object(derivation, "derive_consolidated_relationships", return_value=[]) as relationships,
+        ):
+            derivation.run_derivation(
+                engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, llm_query_fn=MagicMock(), steps=[derivation.RELATIONSHIP_STEP]
+            )
+
+        assert [r.provider for r in relationships.call_args.kwargs["dependency"]] == ["ApplicationComponent"]
+
+
+class TestTechnologyStructureConfig:
+    """The relationship row's params.membership and params.configuration, checked against the metamodel."""
+
+    @staticmethod
+    def _row(**structure):
+        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
+
+    def test_without_the_keys_there_are_no_rules(self):
+        assert derivation._membership_rules([self._row()]) == []
+        assert derivation._configuration_rules([]) == []
+
+    def test_membership_rules_come_from_params(self):
+        from deriva.modules.derivation.base import MembershipRule
+
+        row = self._row(
+            membership=[
+                {"group": "Node", "member": "SystemSoftware", "relationship": "Composition", "from": "group"},
+                {"group": "TechnologyService", "member": "SystemSoftware", "relationship": "Realization", "from": "member"},
+            ]
+        )
+
+        assert derivation._membership_rules([row]) == [
+            MembershipRule(group="Node", member="SystemSoftware", relationship="Composition", from_group=True),
+            MembershipRule(group="TechnologyService", member="SystemSoftware", relationship="Realization", from_group=False),
+        ]
+
+    def test_configuration_rules_come_from_params(self):
+        from deriva.modules.derivation.base import ConfigurationRule
+
+        row = self._row(configuration=[{"provider": "TechnologyService", "consumer": "ApplicationComponent", "relationship": "Serving"}])
+
+        assert derivation._configuration_rules([row]) == [ConfigurationRule(provider="TechnologyService", consumer="ApplicationComponent", relationship="Serving")]
+
+    @pytest.mark.parametrize(
+        "structure",
+        [
+            {"membership": [{"group": "Node", "member": "SystemSoftware", "relationship": "Composition", "from": "elsewhere"}]},
+            {"membership": [{"group": "Node", "member": "SystemSoftware", "relationship": "Access", "from": "group"}]},
+            {"configuration": [{"provider": "TechnologyService", "consumer": "ApplicationComponent"}]},
+            {"configuration": [{"provider": "TechnologyService", "consumer": "ApplicationComponent", "relationship": "Composition"}]},
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, structure):
+        key = next(iter(structure))
+        with pytest.raises(ValueError, match=key):
+            (derivation._membership_rules if key == "membership" else derivation._configuration_rules)([self._row(**structure)])
+
+    def test_the_relationship_pass_receives_the_rules(self):
+        row = self._row(
+            membership=[{"group": "Node", "member": "SystemSoftware", "relationship": "Composition", "from": "group"}],
+            configuration=[{"provider": "TechnologyService", "consumer": "ApplicationComponent", "relationship": "Serving"}],
+        )
+        element = SimpleNamespace(identifier="e9", name="Ledger", element_type="BusinessObject", properties={})
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [element]
+        configs = {"relationship": [row]}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: configs.get(phase, [])),
+            patch.object(derivation, "derive_consolidated_relationships", return_value=[]) as relationships,
+        ):
+            derivation.run_derivation(
+                engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, llm_query_fn=MagicMock(), steps=[derivation.RELATIONSHIP_STEP]
+            )
+
+        kwargs = relationships.call_args.kwargs
+        assert [r.group for r in kwargs["membership"]] == ["Node"]
+        assert [r.provider for r in kwargs["configuration"]] == ["TechnologyService"]
 
 
 class TestRunDerivationWithConfigs:
@@ -1865,18 +2150,32 @@ class TestRelationshipLLMConfig:
     """The enabled relationship-phase config row drives the LLM relationship pass."""
 
     @staticmethod
-    def _row(instruction="rules", params='{"temperature": 0.0, "min_confidence": 0.6}', name="GlobalRelationships"):
+    def _row(instruction="rules", params='{"temperature": 0.0, "min_confidence": 0.6, "persona": "P"}', name="GlobalRelationships"):
         return SimpleNamespace(step_name=name, instruction=instruction, params=params)
 
     def test_no_enabled_row_skips_the_llm_pass(self):
         assert derivation._relationship_llm_config([]) is None
 
     def test_row_supplies_instruction_and_cutoff(self):
-        assert derivation._relationship_llm_config([self._row()]) == RelationshipLLMConfig(instruction="rules", min_confidence=0.6)
+        assert derivation._relationship_llm_config([self._row()]) == RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
 
     def test_row_without_min_confidence_is_an_error(self):
         with pytest.raises(ValueError, match="min_confidence"):
             derivation._relationship_llm_config([self._row(params='{"temperature": 0.0}')])
+
+    def test_llm_proposals_off_leaves_relationships_to_structure(self):
+        row = self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": false}')
+
+        assert derivation._relationship_llm_config([row]) is None
+
+    def test_llm_proposals_on_keeps_the_llm_pass(self):
+        row = self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": true}')
+
+        assert derivation._relationship_llm_config([row]) == RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+
+    def test_llm_proposals_must_be_a_boolean(self):
+        with pytest.raises(ValueError, match="llm_proposals"):
+            derivation._relationship_llm_config([self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": "no"}')])
 
     @pytest.mark.parametrize("runner", ["run_derivation", "run_derivation_iter"])
     def test_runs_that_never_derive_relationships_do_not_read_the_row(self, runner):
@@ -1917,7 +2216,7 @@ def _run_derivation_iter(**kwargs):
 class TestRelationshipConfigReachesTheRelationshipPass:
     """Both runners pass the relationship row to both relationship paths."""
 
-    EXPECTED = RelationshipLLMConfig(instruction="rules", min_confidence=0.6)
+    EXPECTED = RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
 
     @staticmethod
     def _configs(engine, enabled_only, phase):
@@ -1937,7 +2236,7 @@ class TestRelationshipConfigReachesTheRelationshipPass:
                 )
             ]
         if phase == "relationship":
-            return [SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6}')]
+            return [SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6, "persona": "P"}')]
         return []
 
     def _run(self, runner, defer):
@@ -1978,9 +2277,9 @@ class TestPerCandidateConfig:
         assert derivation._per_candidate_config('{"temperature": 0.0}') is None
 
     def test_params_supply_min_pool_and_rules(self):
-        params = '{"temperature": 0.0, "per_candidate": {"min_pool": 6, "rules": "R"}}'
+        params = '{"temperature": 0.0, "per_candidate": {"min_pool": 6, "rules": "R", "persona": "P"}}'
 
-        assert derivation._per_candidate_config(params) == PerCandidateConfig(min_pool=6, rules="R")
+        assert derivation._per_candidate_config(params) == PerCandidateConfig(min_pool=6, rules="R", persona="P")
 
     @pytest.mark.parametrize("value", ['{"min_pool": 6}', '{"rules": "R"}'])
     def test_incomplete_per_candidate_is_an_error(self, value):
@@ -1999,7 +2298,7 @@ class TestPerCandidateConfig:
             batch_size=5,
             temperature=None,
             max_tokens=None,
-            params='{"per_candidate": {"min_pool": 6, "rules": "R"}}',
+            params='{"per_candidate": {"min_pool": 6, "rules": "R", "persona": "P"}}',
         )
         generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
         with (
@@ -2015,7 +2314,7 @@ class TestPerCandidateConfig:
                 phases=["generate"],
             )
 
-        assert gen.call_args.kwargs["per_candidate"] == PerCandidateConfig(min_pool=6, rules="R")
+        assert gen.call_args.kwargs["per_candidate"] == PerCandidateConfig(min_pool=6, rules="R", persona="P")
 
 
 class TestNamingConfig:
@@ -2029,7 +2328,7 @@ class TestNamingConfig:
         from deriva.modules.derivation.base import NamingConfig
 
         assert derivation._naming_config('{"naming": {"instruction": "N", "samples": 5}}') == NamingConfig(instruction="N", samples=5)
-        assert derivation._naming_config('{"naming": {"instruction": "N"}}') == NamingConfig(instruction="N", samples=3)
+        assert derivation._naming_config('{"naming": {"instruction": "N"}}') == NamingConfig(instruction="N", samples=1)  # single call by default: no voting
 
     def test_naming_without_instruction_is_an_error(self):
         with pytest.raises(ValueError, match="naming"):
@@ -2061,11 +2360,578 @@ class TestNamingConfig:
         assert gen.call_args.kwargs["naming"] == NamingConfig(instruction="N", samples=3)
 
 
+class TestPatternLabelsConfig:
+    """Which candidates the step's name patterns filter comes from the element row's params.pattern_labels."""
+
+    def test_without_the_key_patterns_filter_every_candidate(self):
+        assert derivation._pattern_labels(None) is None
+        assert derivation._pattern_labels('{"temperature": 0.0}') is None
+
+    def test_params_supply_the_labels(self):
+        assert derivation._pattern_labels('{"pattern_labels": ["File"]}') == frozenset({"File"})
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_them(self, runner):
+        cfg = SimpleNamespace(
+            step_name="Node",
+            element_type="Node",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"pattern_labels": ["File"]}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["pattern_labels"] == frozenset({"File"})
+
+
+class TestElementPromptConfig:
+    """The batch element prompt's texts come from the element row's params.prompt."""
+
+    TEXTS = {"persona": "P", "candidates": "C", "rules": "1.\n{abstention}3.", "abstention": "2.\n"}
+
+    def test_without_the_key_there_are_no_texts(self):
+        assert derivation._element_prompt(None) is None
+        assert derivation._element_prompt('{"temperature": 0.0}') is None
+
+    def test_params_supply_the_texts(self):
+        from deriva.modules.derivation.base import ElementPrompt
+
+        assert derivation._element_prompt(json.dumps({"prompt": self.TEXTS})) == ElementPrompt(**self.TEXTS)
+
+    def test_incomplete_texts_are_an_error(self):
+        with pytest.raises(ValueError, match="prompt"):
+            derivation._element_prompt(json.dumps({"prompt": {"persona": "P"}}))
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_them(self, runner):
+        cfg = SimpleNamespace(
+            step_name="DataObject",
+            element_type="DataObject",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params=json.dumps({"prompt": self.TEXTS}),
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["prompt"].persona == "P"
+
+
+class TestSkipWhenDirectoryIs:
+    """Element types whose sources take a directory's candidates out come from params.skip_when_directory_is."""
+
+    def test_without_the_key_nothing_is_skipped(self):
+        assert derivation._skip_when_directory_is(None) is None
+        assert derivation._skip_when_directory_is('{"temperature": 0.0}') is None
+
+    def test_params_supply_the_element_types(self):
+        assert derivation._skip_when_directory_is('{"skip_when_directory_is": ["ApplicationComponent"]}') == frozenset({"ApplicationComponent"})
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_them(self, runner):
+        cfg = SimpleNamespace(
+            step_name="SystemSoftware",
+            element_type="SystemSoftware",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"skip_when_directory_is": ["ApplicationComponent"]}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["skip_when_directory_is"] == frozenset({"ApplicationComponent"})
+
+    def test_generate_element_passes_them_to_the_module(self):
+        from deriva.modules.derivation.base import GenerationResult
+
+        with (
+            patch.object(derivation, "_get_derivation") as mock_get,
+            patch.object(derivation.config, "get_derivation_patterns", return_value={}),
+        ):
+            mock_get.return_value.generate.return_value = GenerationResult(success=True)
+            derivation.generate_element(
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=MagicMock(),
+                element_type="SystemSoftware",
+                query="MATCH (n) RETURN n",
+                instruction="test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                skip_when_directory_is=frozenset({"ApplicationComponent"}),
+            )
+
+        assert mock_get.return_value.generate.call_args.kwargs["skip_when_directory_is"] == frozenset({"ApplicationComponent"})
+
+
+class TestSkipSubtypesConfig:
+    """One element per contract: params.skip_subtypes leaves out candidate types that inherit from another candidate."""
+
+    def test_without_the_key_no_candidate_is_left_out(self):
+        assert derivation._skip_subtypes(None) is False
+        assert derivation._skip_subtypes('{"temperature": 0.0}') is False
+
+    def test_params_switch_it_on(self):
+        assert derivation._skip_subtypes('{"skip_subtypes": true}') is True
+
+    def test_a_non_boolean_value_is_an_error(self):
+        with pytest.raises(ValueError, match="skip_subtypes"):
+            derivation._skip_subtypes('{"skip_subtypes": "yes"}')
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_it(self, runner):
+        cfg = SimpleNamespace(
+            step_name="ApplicationService",
+            element_type="ApplicationService",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"skip_subtypes": true}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["skip_subtypes"] is True
+
+    def test_generate_element_passes_it_to_the_module(self):
+        from deriva.modules.derivation.base import GenerationResult
+
+        with (
+            patch.object(derivation, "_get_derivation") as mock_get,
+            patch.object(derivation.config, "get_derivation_patterns", return_value={}),
+        ):
+            mock_get.return_value.generate.return_value = GenerationResult(success=True)
+            derivation.generate_element(
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=MagicMock(),
+                element_type="ApplicationService",
+                query="MATCH (n) RETURN n",
+                instruction="test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                skip_subtypes=True,
+            )
+
+        assert mock_get.return_value.generate.call_args.kwargs["skip_subtypes"] is True
+
+
+class TestDeployableUnitsConfig:
+    """Components at the deployable-unit level: params.deployable_units names the unit files and the minimum."""
+
+    def test_without_the_key_there_is_no_unit_level(self):
+        assert derivation._deployable_units(None) is None
+        assert derivation._deployable_units('{"temperature": 0.0}') is None
+
+    def test_params_set_the_files_and_the_minimum(self):
+        from deriva.modules.derivation.base import UnitFilter
+
+        units = derivation._deployable_units('{"deployable_units": {"file_names": ["pom.xml", "Dockerfile"], "min_units": 2}}')
+
+        assert units == UnitFilter(file_names=frozenset({"pom.xml", "dockerfile"}), min_units=2)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            True,
+            {"min_units": 2},
+            {"file_names": [], "min_units": 2},
+            {"file_names": ["pom.xml", ""], "min_units": 2},
+            {"file_names": ["pom.xml"]},
+            {"file_names": ["pom.xml"], "min_units": 0},
+            {"file_names": ["pom.xml"], "min_units": True},
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, value):
+        with pytest.raises(ValueError, match="deployable_units"):
+            derivation._deployable_units(json.dumps({"deployable_units": value}))
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_it(self, runner):
+        from deriva.modules.derivation.base import UnitFilter
+
+        cfg = SimpleNamespace(
+            step_name="ApplicationComponent",
+            element_type="ApplicationComponent",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"deployable_units": {"file_names": ["pom.xml"], "min_units": 2}}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["deployable_units"] == UnitFilter(file_names=frozenset({"pom.xml"}), min_units=2)
+
+    def test_generate_element_passes_it_to_the_module(self):
+        from deriva.modules.derivation.base import GenerationResult, UnitFilter
+
+        units = UnitFilter(file_names=frozenset({"pom.xml"}), min_units=2)
+        with (
+            patch.object(derivation, "_get_derivation") as mock_get,
+            patch.object(derivation.config, "get_derivation_patterns", return_value={}),
+        ):
+            mock_get.return_value.generate.return_value = GenerationResult(success=True)
+            derivation.generate_element(
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=MagicMock(),
+                element_type="ApplicationComponent",
+                query="MATCH (n) RETURN n",
+                instruction="Gen",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                deployable_units=units,
+            )
+
+        assert mock_get.return_value.generate.call_args.kwargs["deployable_units"] == units
+
+
+class TestSkipNestedConfig:
+    """One module, one element: params.skip_nested names the file type and the share a nested directory must hold."""
+
+    def test_without_the_key_no_candidate_is_left_out(self):
+        assert derivation._skip_nested(None) is None
+        assert derivation._skip_nested('{"temperature": 0.0}') is None
+        assert derivation._skip_nested('{"skip_nested": null}') is None
+
+    def test_a_share_of_one_is_valid(self):
+        from deriva.modules.derivation.base import NestedFilter
+
+        assert derivation._skip_nested('{"skip_nested": {"file_type": "source", "min_share": 1}}') == NestedFilter(file_type="source", min_share=1.0)
+
+    def test_the_file_type_must_be_a_registered_one(self):
+        registered = [SimpleNamespace(file_type="source"), SimpleNamespace(file_type="docs")]
+        with patch.object(derivation.config, "get_file_types", return_value=registered):
+            assert derivation._skip_nested('{"skip_nested": {"file_type": "source", "min_share": 0.9}}', engine=MagicMock()) is not None
+            with pytest.raises(ValueError, match="skip_nested.*file type"):
+                derivation._skip_nested('{"skip_nested": {"file_type": "sources", "min_share": 0.9}}', engine=MagicMock())
+
+    def test_params_set_the_file_type_and_the_share(self):
+        from deriva.modules.derivation.base import NestedFilter
+
+        assert derivation._skip_nested('{"skip_nested": {"file_type": "source", "min_share": 0.9}}') == NestedFilter(file_type="source", min_share=0.9)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            True,
+            {"min_share": 0.9},
+            {"file_type": "", "min_share": 0.9},
+            {"file_type": "source"},
+            {"file_type": "source", "min_share": "0.9"},
+            {"file_type": "source", "min_share": True},
+            {"file_type": "source", "min_share": 0},
+            {"file_type": "source", "min_share": 1.5},
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, value):
+        with pytest.raises(ValueError, match="skip_nested"):
+            derivation._skip_nested(json.dumps({"skip_nested": value}))
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_it(self, runner):
+        from deriva.modules.derivation.base import NestedFilter
+
+        cfg = SimpleNamespace(
+            step_name="ApplicationComponent",
+            element_type="ApplicationComponent",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"skip_nested": {"file_type": "source", "min_share": 0.9}}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation.config, "get_file_types", return_value=[SimpleNamespace(file_type="source")]),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["skip_nested"] == NestedFilter(file_type="source", min_share=0.9)
+
+    def test_generate_element_passes_it_to_the_module(self):
+        from deriva.modules.derivation.base import GenerationResult, NestedFilter
+
+        nested = NestedFilter(file_type="source", min_share=0.9)
+        with (
+            patch.object(derivation, "_get_derivation") as mock_get,
+            patch.object(derivation.config, "get_derivation_patterns", return_value={}),
+        ):
+            mock_get.return_value.generate.return_value = GenerationResult(success=True)
+            derivation.generate_element(
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=MagicMock(),
+                element_type="ApplicationComponent",
+                query="MATCH (n) RETURN n",
+                instruction="test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                skip_nested=nested,
+            )
+
+        assert mock_get.return_value.generate.call_args.kwargs["skip_nested"] == nested
+
+
+class TestGraphFilterConfig:
+    """The step's k-core threshold and the candidates it applies to come from params.graph_filter."""
+
+    def test_without_the_key_there_is_no_threshold(self):
+        assert derivation._graph_filter(None) is None
+        assert derivation._graph_filter('{"temperature": 0.0}') is None
+
+    def test_params_supply_the_threshold_and_labels(self):
+        from deriva.modules.derivation.base import GraphFilter
+
+        assert derivation._graph_filter('{"graph_filter": {"min_kcore_percentile": 30, "labels": ["File"]}}') == GraphFilter(min_kcore_percentile=30.0, labels=frozenset({"File"}))
+        assert derivation._graph_filter('{"graph_filter": {"min_kcore_percentile": 30}}') == GraphFilter(min_kcore_percentile=30.0)
+
+    @pytest.mark.parametrize("settings", ['{"labels": ["File"]}', '{"min_kcore_percentile": "high"}', '{"min_kcore_percentile": 30, "labels": "File"}'])
+    def test_invalid_settings_are_an_error(self, settings):
+        with pytest.raises(ValueError, match="graph_filter"):
+            derivation._graph_filter(f'{{"graph_filter": {settings}}}')
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_it(self, runner):
+        from deriva.modules.derivation.base import GraphFilter
+
+        cfg = SimpleNamespace(
+            step_name="Node",
+            element_type="Node",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"graph_filter": {"min_kcore_percentile": 30, "labels": ["File"]}}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["graph_filter"] == GraphFilter(min_kcore_percentile=30.0, labels=frozenset({"File"}))
+
+    def test_generate_element_passes_it_to_the_module(self):
+        from deriva.modules.derivation.base import GenerationResult, GraphFilter
+
+        graph_filter = GraphFilter(min_kcore_percentile=30.0, labels=frozenset({"File"}))
+        with (
+            patch.object(derivation, "_get_derivation") as mock_get,
+            patch.object(derivation.config, "get_derivation_patterns", return_value={}),
+        ):
+            mock_get.return_value.generate.return_value = GenerationResult(success=True)
+            derivation.generate_element(
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=MagicMock(),
+                element_type="Node",
+                query="MATCH (n) RETURN n",
+                instruction="test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                graph_filter=graph_filter,
+            )
+
+        assert mock_get.return_value.generate.call_args.kwargs["graph_filter"] == graph_filter
+
+
+class TestRoleConfig:
+    """Candidates classified into roles come from the element row's params.roles."""
+
+    def test_without_the_key_there_is_no_role_path(self):
+        assert derivation._role_config(None) is None
+        assert derivation._role_config('{"temperature": 0.0}') is None
+
+    def test_params_supply_labels_instruction_names_and_options(self):
+        from deriva.modules.derivation.base import RoleConfig
+
+        params = '{"roles": {"labels": ["Technology"], "instruction": "I", "names": {"a": "A"}, "documentation": "D {members}", "missing_retries": 2}}'
+
+        assert derivation._role_config(params) == RoleConfig(labels=frozenset({"Technology"}), instruction="I", names={"a": "A"}, documentation="D {members}", missing_retries=2)
+
+    def test_params_can_ask_for_one_element_per_candidate(self):
+        params = '{"roles": {"labels": ["Technology"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate"}}'
+
+        assert derivation._role_config(params).element_per == "candidate"
+
+    def test_element_per_must_be_role_or_candidate(self):
+        with pytest.raises(ValueError, match="element_per"):
+            derivation._role_config('{"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "group"}}')
+
+    def test_params_can_name_candidates_from_a_template(self):
+        params = json.dumps(
+            {
+                "roles": {
+                    "labels": ["File"],
+                    "instruction": "I",
+                    "names": {"a": "A"},
+                    "element_per": "candidate",
+                    "name_template": "{container} {subject} {role}",
+                    "container_type": "ApplicationComponent",
+                    "show_path": True,
+                }
+            }
+        )
+
+        roles = derivation._role_config(params)
+
+        assert (roles.name_template, roles.container_type, roles.show_path) == ("{container} {subject} {role}", "ApplicationComponent", True)
+
+    def test_params_can_name_role_elements_with_the_naming_call(self):
+        params = {"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate", "naming_call": True}, "naming": {"instruction": "N"}}
+
+        assert derivation._role_config(json.dumps(params)).naming_call is True
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate", "naming_call": "yes"}, "naming": {"instruction": "N"}},
+            {"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "role", "naming_call": True}, "naming": {"instruction": "N"}},
+            {"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate", "naming_call": True}},
+        ],
+    )
+    def test_invalid_naming_call_settings_are_an_error(self, params):
+        with pytest.raises(ValueError, match="naming"):
+            derivation._role_config(json.dumps(params))
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"element_per": "candidate", "name_template": 3},
+            {"element_per": "candidate", "show_path": "yes"},
+            {"element_per": "candidate", "container_type": ["ApplicationComponent"]},
+            {"element_per": "role", "name_template": "{subject} {role}"},
+        ],
+    )
+    def test_invalid_template_settings_are_an_error(self, extra):
+        with pytest.raises(ValueError, match="roles"):
+            derivation._role_config(json.dumps({"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, **extra}}))
+
+    @pytest.mark.parametrize("value", ['{"instruction": "I", "names": {"a": "A"}}', '{"labels": ["T"], "names": {"a": "A"}}', '{"labels": ["T"], "instruction": "I"}'])
+    def test_incomplete_roles_are_an_error(self, value):
+        with pytest.raises(ValueError, match="roles"):
+            derivation._role_config(f'{{"roles": {value}}}')
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_them(self, runner):
+        cfg = SimpleNamespace(
+            step_name="Node",
+            element_type="Node",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"roles": {"labels": ["Technology"], "instruction": "I", "names": {"a": "A"}}}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["roles"].names == {"a": "A"}
+
+    def test_generate_element_passes_them_to_the_module(self):
+        from deriva.modules.derivation.base import GenerationResult, RoleConfig
+
+        roles = RoleConfig(labels=frozenset({"Technology"}), instruction="I", names={"a": "A"})
+        with (
+            patch.object(derivation, "_get_derivation") as mock_get,
+            patch.object(derivation.config, "get_derivation_patterns", return_value={}),
+        ):
+            mock_get.return_value.generate.return_value = GenerationResult(success=True)
+            derivation.generate_element(
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=MagicMock(),
+                element_type="Node",
+                query="MATCH (n) RETURN n",
+                instruction="test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                roles=roles,
+            )
+
+        assert mock_get.return_value.generate.call_args.kwargs["roles"] == roles
+
+
 class TestRelationshipTemperature:
     """The relationship row's temperature column sets the consolidated relationship pass temperature."""
 
     def test_row_temperature_is_part_of_the_config(self):
-        row = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6}', temperature=0.0)
+        row = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6, "persona": "P"}', temperature=0.0)
 
         assert derivation._relationship_llm_config([row]).temperature == 0.0
 
@@ -2083,7 +2949,7 @@ class TestRelationshipTemperature:
             max_tokens=None,
             params=None,
         )
-        rel = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6}', temperature=0.0)
+        rel = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6, "persona": "P"}', temperature=0.0)
         generated = {"success": True, "elements_created": 1, "relationships_created": 0, "created_elements": [{"identifier": "e1"}], "errors": []}
         with (
             patch.object(

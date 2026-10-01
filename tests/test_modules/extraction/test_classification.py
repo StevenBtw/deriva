@@ -102,6 +102,26 @@ class TestClassifyFiles:
         src_file = next(f for f in result["classified"] if "src/main.py" in f["path"])
         assert src_file["file_type"] == "source"
 
+    def test_excluded_extensions_win_over_path_patterns(self):
+        """An excluded file type is never an input, wherever it lives (a model file under docs/ is not documentation)."""
+        files = ["r/docs/model.archimate", "r/docs/readme.md", "r/docs/notes.bak"]
+        registry = [
+            {"extension": "path:**/docs/**", "file_type": "docs", "subtype": "directory"},
+            {"extension": ".archimate", "file_type": "exclude", "subtype": "output"},
+            {"extension": ".bak", "file_type": "exclude", "subtype": "backup"},
+        ]
+
+        result = classify_files(files, registry)
+
+        types = {f["path"]: f["file_type"] for f in result["classified"]}
+        assert types == {"r/docs/model.archimate": "exclude", "r/docs/readme.md": "docs", "r/docs/notes.bak": "exclude"}
+
+    def test_excluded_extensions_of_any_length_match(self):
+        """'.archimate' is longer than the short extensions, but as an exclude entry it still matches by extension."""
+        result = classify_files(["r/model.archimate"], [{"extension": ".archimate", "file_type": "exclude", "subtype": "output"}])
+
+        assert [f["file_type"] for f in result["classified"]] == ["exclude"]
+
     def test_returns_undefined_for_unknown_extensions(self):
         """Should return undefined for unknown file types."""
         files = ["app.xyz", "data.unknown"]

@@ -274,6 +274,14 @@ class TestBusinessConceptNode:
         )
         assert node.extraction_method == "llm"
 
+    def test_source_terms_are_stored_sorted(self):
+        node = BusinessConceptNode("Ledger", "entity", "", "docs/a.md", "myrepo", source_terms=["Ledger (en)", "Hauptbuch (de)"])
+
+        assert node.to_dict()["sourceTerms"] == ["Hauptbuch (de)", "Ledger (en)"]
+
+    def test_a_concept_without_document_terms_has_none(self):
+        assert BusinessConceptNode("Ledger", "entity", "", "src/ledger", "myrepo").to_dict()["sourceTerms"] == []
+
 
 class TestTechnologyNode:
     """Tests for TechnologyNode dataclass."""

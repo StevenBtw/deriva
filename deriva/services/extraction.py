@@ -32,9 +32,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
@@ -56,20 +58,20 @@ from deriva.adapters.graph.models import (
     TestNode,
     TypeDefinitionNode,
 )
+from deriva.adapters.nlp import NlpTool
 from deriva.adapters.repository import RepoManager
 from deriva.common.cache_utils import hash_inputs
 from deriva.common.document_reader import read_document
 from deriva.common.file_utils import read_file_with_encoding
+from deriva.common.naming import UNCOUNTABLE_WORDS, name_key
 from deriva.common.ocel import create_edge_id
 from deriva.modules import extraction
-from deriva.modules.extraction import classification
+from deriva.modules.extraction import classification, concept_candidates, technology_candidates
 from deriva.modules.extraction.base import deduplicate_nodes
-from deriva.modules.extraction.business_concept import (
-    extract_seed_concepts_from_structure,
-    get_existing_concepts_from_graph,
-)
 from deriva.modules.extraction.directory_classification import (
     classify_directories,
+    group_directories_by_name,
+    structural_skip,
 )
 from deriva.services import config
 
@@ -142,6 +144,7 @@ def run_extraction(
     phases: list[str] | None = None,
     config_versions: dict[str, dict[str, int]] | None = None,
     extraction_methods: list[str] | None = None,
+    steps: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Run the extraction pipeline.
@@ -161,6 +164,8 @@ def run_extraction(
                         Dict with {"extraction": {node_type: version}}
         extraction_methods: If set, only run steps with matching extraction_method
                            (e.g., ["llm"] to run only LLM steps). None runs all steps.
+        steps: If set, only run these steps (node types), in their sequence order.
+               None runs all steps.
 
     Returns:
         Dict with success, stats, errors
@@ -177,6 +182,7 @@ def run_extraction(
     }
     errors = []
     warnings = []  # For "LLM required" type messages that aren't real errors
+    step_stats: dict[str, dict[str, Any]] = {}  # repo -> step -> the step's own report
 
     # Start phase logging
     if run_logger:
@@ -200,14 +206,21 @@ def run_extraction(
 
     if not configs:
         return {"success": False, "stats": stats, "errors": ["No extraction configs enabled"]}
+    if steps is not None:
+        unknown = sorted(set(steps) - {c.node_type for c in configs})
+        if unknown:
+            return {"success": False, "stats": stats, "errors": [f"Unknown or disabled extraction step(s): {', '.join(unknown)}"]}
+        configs = [c for c in configs if c.node_type in steps]
 
     # Get file type registry for classification
     file_types = config.get_file_types(engine)
     registry_list = [{"extension": ft.extension, "file_type": ft.file_type, "subtype": ft.subtype} for ft in file_types]
 
     # Start progress tracking
-    # If only classify: 1 step per repo; if parse: steps = configs * repos
+    # If only classify: 1 step per repo; if parse: steps = selected configs (by method) * repos
     selected = [c for c in configs if extraction_methods is None or c.extraction_method in extraction_methods]
+    if run_parse and not selected:
+        warnings.append(f"No enabled extraction step uses method(s): {', '.join(extraction_methods or [])}")
     if run_parse:
         total_steps = len(selected) * len(repos)
     else:
@@ -291,6 +304,8 @@ def run_extraction(
                 nodes_created = result.get("nodes_created", 0)
                 edges_created = result.get("edges_created", 0)
                 edge_ids = result.get("edge_ids", [])
+                if result.get("stats"):
+                    step_stats.setdefault(str(repo.name), {})[node_type] = result["stats"]
                 stats["nodes_created"] += nodes_created
                 stats["edges_created"] += edges_created
                 stats["steps_completed"] += 1
@@ -298,6 +313,7 @@ def run_extraction(
                 # Complete step logging
                 if step_ctx:
                     step_ctx.items_created = nodes_created + edges_created
+                    step_ctx.stats = result.get("stats")
                     # Add edge IDs for OCEL logging
                     for edge_id in edge_ids:
                         step_ctx.add_edge(edge_id)
@@ -335,8 +351,8 @@ def run_extraction(
             run_logger.phase_complete("extraction", "Extraction completed successfully", stats=stats)
 
     # Set extraction fingerprint on each processed repo (for cache validation); a
-    # method-filtered run leaves the other steps' data as it was, so it is not current
-    if not errors and extraction_methods is None:
+    # method- or step-filtered run leaves the other steps' data as it was, so it is not current
+    if not errors and extraction_methods is None and steps is None:
         for repo in repos:
             if not hasattr(repo, "name"):
                 continue
@@ -357,6 +373,7 @@ def run_extraction(
         "stats": stats,
         "errors": errors,
         "warnings": warnings,
+        "step_stats": step_stats,
     }
 
 
@@ -404,15 +421,29 @@ def _run_extraction_step(
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
         )
-    elif node_type == "Technology" and cfg.extraction_method == "structural":
-        # Structural Technology extraction - derives from ExternalDependency nodes
-        result = _extract_technology_structural(
+    elif node_type == "Technology":
+        if llm_query_fn is None:
+            return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
+        result = _extract_technologies(
+            cfg=cfg,
             repo=repo,
             repo_path=repo_path,
             classified_files=classified_files,
             graph_manager=graph_manager,
+            llm_query_fn=llm_query_fn,
         )
-    elif node_type in ["BusinessConcept", "TypeDefinition", "Method", "Technology", "ExternalDependency", "Test"]:
+    elif node_type == "BusinessConcept":
+        if llm_query_fn is None:
+            return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
+        result = _extract_business_concepts(
+            cfg=cfg,
+            repo=repo,
+            repo_path=repo_path,
+            classified_files=classified_files,
+            graph_manager=graph_manager,
+            llm_query_fn=llm_query_fn,
+        )
+    elif node_type in ["TypeDefinition", "Method", "ExternalDependency", "Test"]:
         if llm_query_fn is None:
             return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
         result = _extract_llm_based(
@@ -571,114 +602,6 @@ def _extract_files(
         "nodes_created": result["stats"].get("total_nodes", 0),
         "edges_created": result["stats"].get("total_edges", 0),
         "edge_ids": edge_ids,
-        "errors": result.get("errors", []),
-    }
-
-
-def _extract_technology_structural(
-    repo: Any,
-    repo_path: Path,
-    classified_files: list[dict],
-    graph_manager: GraphManager,
-) -> dict[str, Any]:
-    """Extract Technology nodes structurally from config files.
-
-    Parses docker-compose.yml, Dockerfile, and .env files to extract
-    infrastructure technologies. Uses existing Technology nodes from
-    DirectoryClassification to avoid duplicates.
-
-    Args:
-        repo: Repository object
-        repo_path: Path to repository root
-        classified_files: List of classified files
-        graph_manager: Connected GraphManager
-
-    Returns:
-        Dict with nodes_created, edges_created, errors
-    """
-    from deriva.modules.extraction.technology import extract_technologies_structural
-
-    # 1. Query existing Technology nodes from graph (from DirectoryClassification)
-    existing_technologies: list[dict[str, Any]] = []
-    try:
-        tech_query = """
-        MATCH (t:Technology)
-        WHERE t.repository_name = $repo_name OR t.originSource CONTAINS $repo_name
-        RETURN t.id as id, t.techName as name, t.techCategory as category
-        """
-        results = graph_manager.query(tech_query, {"repo_name": repo.name})
-        for r in results:
-            existing_technologies.append(
-                {
-                    "id": r.get("id", ""),
-                    "name": r.get("name", ""),
-                    "category": r.get("category", ""),
-                }
-            )
-        logger.debug(f"Found {len(existing_technologies)} existing Technology nodes")
-    except Exception as e:
-        logger.debug(f"Could not query existing Technology nodes: {e}")
-
-    # 2. Get infrastructure config files (docker-compose, Dockerfile, .env)
-    infra_files: list[dict[str, str]] = []
-    infra_file_patterns = {"dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml", ".env", ".env.example", ".env.local", ".env.development"}
-
-    for file_info in classified_files:
-        file_path = file_info.get("path", "")
-        file_name = Path(file_path).name.lower()
-
-        # Check if it's an infrastructure file
-        is_infra = file_name in infra_file_patterns or file_name.startswith("dockerfile.") or "docker-compose" in file_name
-
-        if is_infra:
-            try:
-                full_path = repo_path / file_path
-                if full_path.exists():
-                    content = full_path.read_text(encoding="utf-8", errors="replace")
-                    infra_files.append({"path": file_path, "content": content})
-            except Exception as e:
-                logger.debug(f"Could not read {file_path}: {e}")
-
-    logger.debug(f"Found {len(infra_files)} infrastructure files to process")
-
-    # 3. Run structural extraction
-    result = extract_technologies_structural(
-        existing_technologies=existing_technologies,
-        files=infra_files,
-        repo_name=repo.name,
-    )
-
-    # 4. Persist new nodes
-    nodes_created = 0
-    for node_data in result["data"]["nodes"]:
-        props = node_data["properties"]
-        tech_node = TechnologyNode(
-            name=props.get("techName", ""),
-            tech_category=props.get("techCategory", "infrastructure"),
-            repository_name=repo.name,
-            description=props.get("description", ""),
-            version=props.get("version"),
-        )
-        graph_manager.add_node(tech_node, node_id=node_data["node_id"])
-        nodes_created += 1
-
-    # 5. Persist edges
-    edges_created = 0
-    for edge_data in result["data"]["edges"]:
-        try:
-            graph_manager.add_edge(
-                src_id=edge_data["from_node_id"],
-                dst_id=edge_data["to_node_id"],
-                relationship=edge_data["relationship_type"],
-                properties=edge_data.get("properties", {}),
-            )
-            edges_created += 1
-        except Exception as e:
-            logger.debug(f"Could not create edge: {e}")
-
-    return {
-        "nodes_created": nodes_created,
-        "edges_created": edges_created,
         "errors": result.get("errors", []),
     }
 
@@ -931,20 +854,25 @@ def _extract_directory_classification(
     # Query Directory nodes from the graph for this repository
     # Include file stats for better LLM context (now that File extraction runs before this).
     # Dependency directories never become nodes (excluded_directories setting).
+    # Sorted by path, so the batches never depend on storage order.
     query = """
     MATCH (d:Directory)
     WHERE d.repository_name = $repo_name
-    OPTIONAL MATCH (d)-[:CONTAINS]->(f:File)
+    OPTIONAL MATCH (d)-[:`Graph:CONTAINS`]->(f:File)
     WITH d,
          count(f) AS file_count,
-         sum(CASE WHEN f.file_type = 'source' THEN 1 ELSE 0 END) AS source_count,
-         sum(CASE WHEN f.file_type = 'config' THEN 1 ELSE 0 END) AS config_count,
-         sum(CASE WHEN f.file_type = 'documentation' THEN 1 ELSE 0 END) AS docs_count,
-         sum(CASE WHEN f.file_type = 'test' THEN 1 ELSE 0 END) AS test_count,
+         sum(CASE WHEN f.fileType = 'source' THEN 1 ELSE 0 END) AS source_count,
+         sum(CASE WHEN f.fileType = 'config' THEN 1 ELSE 0 END) AS config_count,
+         sum(CASE WHEN f.fileType = 'docs' THEN 1 ELSE 0 END) AS docs_count,
+         sum(CASE WHEN f.fileType = 'test' THEN 1 ELSE 0 END) AS test_count,
          collect(DISTINCT f.subtype) AS subtypes
+    OPTIONAL MATCH (d)-[:`Graph:CONTAINS`]->(c:Directory)
+    WITH d, file_count, source_count, config_count, docs_count, test_count, subtypes,
+         count(c) AS subdir_count
     RETURN d.name AS name, d.path AS path, d.id AS id,
            file_count, source_count, config_count, docs_count, test_count,
-           subtypes
+           subtypes, subdir_count
+    ORDER BY d.path
     """
     try:
         directories = graph_manager.query(query, {"repo_name": repo.name})
@@ -963,10 +891,11 @@ def _extract_directory_classification(
             "warnings": [f"No directories found for {repo.name}"],
         }
 
-    # Build config dict from ExtractionConfig
+    # Build config dict from ExtractionConfig (params: samples/min_votes for majority voting)
     extraction_config = {
         "instruction": cfg.instruction or "",
         "example": cfg.example or "",
+        "params": json.loads(cfg.params) if cfg.params else {},
     }
 
     # Wrap llm_query_fn with per-step temperature/max_tokens overrides
@@ -978,6 +907,11 @@ def _extract_directory_classification(
             max_tokens=cfg.max_tokens,
             system_prompt=system_prompt,
         )
+
+    # Directories the structure decides (skip names, skipped trees, path steps) never reach the LLM;
+    # the rest go as one entry per name, so copies of a name share one decision
+    directories, _skipped = structural_skip(directories, extraction_config["params"])
+    directories = group_directories_by_name(directories)
 
     # Process directories in batches (default 50 directories per batch)
     batch_size = cfg.batch_size if cfg.batch_size and cfg.batch_size > 1 else 50
@@ -1065,6 +999,51 @@ def _extract_directory_classification(
     }
 
 
+# Files that can't be meaningfully analyzed as text
+_UNREADABLE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".bmp",
+    ".svg",
+    ".webp",
+    ".xcf",
+    ".psd",
+    ".ai",
+    ".eps",  # Image editing formats
+    ".zip",
+    ".tar",
+    ".gz",
+    ".rar",
+    ".7z",  # Archives
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",  # Binaries
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".otf",
+    ".eot",  # Fonts
+    ".mp3",
+    ".mp4",
+    ".wav",
+    ".avi",
+    ".mov",  # Media
+    ".class",
+    ".pyc",
+    ".pyo",  # Compiled code
+    ".archimate",
+    ".archimate.bak",
+}  # ArchiMate model files (already contain architecture)
+
+
+def _is_unreadable(file_info: dict) -> bool:
+    return any(file_info.get("path", "").lower().endswith(ext) for ext in _UNREADABLE_EXTENSIONS)
+
+
 def _extract_llm_based(
     node_type: str,
     cfg: config.ExtractionConfig,
@@ -1076,10 +1055,11 @@ def _extract_llm_based(
     engine: Any,
     model: str | None = None,
 ) -> dict[str, Any]:
-    """Extract LLM-based nodes (BusinessConcept, TypeDefinition, etc.)."""
+    """Extract LLM-based nodes (TypeDefinition, Method, Technology, ExternalDependency, Test)."""
     nodes_created = 0
     edges_created = 0
     errors = []
+    deferred_inherits: list[dict] = []
 
     # Parse input sources from config
     input_sources = extraction.parse_input_sources(cfg.input_sources) if cfg.input_sources else None
@@ -1090,46 +1070,8 @@ def _extract_llm_based(
     # Get files matching the input sources
     matching_files = extraction.filter_files_by_input_sources(classified_files, input_sources)
 
-    # Filter out binary/image files that can't be meaningfully analyzed as text
-    binary_extensions = {
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".ico",
-        ".bmp",
-        ".svg",
-        ".webp",
-        ".xcf",
-        ".psd",
-        ".ai",
-        ".eps",  # Image editing formats
-        ".zip",
-        ".tar",
-        ".gz",
-        ".rar",
-        ".7z",  # Archives
-        ".exe",
-        ".dll",
-        ".so",
-        ".dylib",  # Binaries
-        ".woff",
-        ".woff2",
-        ".ttf",
-        ".otf",
-        ".eot",  # Fonts
-        ".mp3",
-        ".mp4",
-        ".wav",
-        ".avi",
-        ".mov",  # Media
-        ".class",
-        ".pyc",
-        ".pyo",  # Compiled code
-        ".archimate",
-        ".archimate.bak",
-    }  # ArchiMate model files (already contain architecture)
-    matching_files = [f for f in matching_files if not any(f.get("path", "").lower().endswith(ext) for ext in binary_extensions)]
+    # Binary and image files can't be meaningfully analyzed as text
+    matching_files = [f for f in matching_files if not _is_unreadable(f)]
 
     # Special case: Method extraction with node-based sources (TypeDefinition.codeSnippet)
     # For Python files, we can use AST to extract methods directly from source files
@@ -1160,64 +1102,6 @@ def _extract_llm_based(
         "params": json.loads(cfg.params) if cfg.params else {},
     }
 
-    # For BusinessConcept: get seed concepts for context-aware extraction (hybrid approach)
-    # This improves consistency by guiding the LLM with existing/structural concepts
-    existing_concepts: list[dict[str, str]] | None = None
-    if node_type == "BusinessConcept":
-        # Layer 1: Get deterministic seed concepts from code structure
-        seed_concepts = extract_seed_concepts_from_structure(repo_path)
-
-        # Layer 2: Get existing concepts from graph (if any were previously extracted)
-        graph_concepts = get_existing_concepts_from_graph(graph_manager, repo.name)
-
-        # Merge seed and graph concepts, preferring seed (deterministic) names
-        seen_names = {c["conceptName"].lower() for c in seed_concepts}
-        for gc in graph_concepts:
-            if gc["conceptName"].lower() not in seen_names:
-                seed_concepts.append(gc)
-                seen_names.add(gc["conceptName"].lower())
-
-        if seed_concepts:
-            existing_concepts = seed_concepts
-            logger.debug(f"Using {len(existing_concepts)} existing concepts for context-aware extraction")
-
-    # For Technology: get ExternalDependency and existing Technology nodes as context
-    # so LLM focuses on infrastructure (databases, caches, queues) and avoids duplicates
-    existing_dependencies: list[dict[str, str]] | None = None
-    existing_technologies: list[dict[str, str]] | None = None
-    if node_type == "Technology":
-        # Get ExternalDependency nodes (to avoid overlap with libraries)
-        try:
-            dep_query = """
-            MATCH (ed:ExternalDependency)
-            WHERE ed.repository_name = $repo_name
-            RETURN ed.dependencyName AS name, ed.ecosystem AS ecosystem
-            ORDER BY ed.confidence DESC
-            LIMIT 50
-            """
-            deps = graph_manager.query(dep_query, {"repo_name": repo.name})
-            if deps:
-                existing_dependencies = [{"name": d["name"], "ecosystem": d.get("ecosystem", "unknown")} for d in deps]
-                logger.debug(f"Using {len(existing_dependencies)} ExternalDependency nodes for Technology context")
-        except Exception as e:
-            logger.debug(f"Could not query ExternalDependency nodes for Technology context: {e}")
-
-        # Get existing Technology nodes (to avoid duplicates)
-        try:
-            tech_query = """
-            MATCH (t:Technology)
-            WHERE t.repository_name = $repo_name
-            RETURN t.techName AS name, t.techCategory AS category
-            ORDER BY t.confidence DESC
-            LIMIT 30
-            """
-            techs = graph_manager.query(tech_query, {"repo_name": repo.name})
-            if techs:
-                existing_technologies = [{"name": t["name"], "category": t.get("category", "")} for t in techs]
-                logger.debug(f"Using {len(existing_technologies)} existing Technology nodes")
-        except Exception as e:
-            logger.debug(f"Could not query existing Technology nodes: {e}")
-
     # Wrap llm_query_fn with per-step temperature/max_tokens overrides
     def step_llm_query_fn(prompt: str, schema: dict, system_prompt: str | None = None) -> Any:
         return llm_query_fn(
@@ -1232,95 +1116,7 @@ def _extract_llm_based(
     use_treesitter = node_type in ["TypeDefinition", "Method"]
     treesitter_languages = {"python", "javascript", "typescript", "java", "csharp"}
 
-    # Check for batched extraction (BusinessConcept with batch_size > 1)
-    batch_size = getattr(cfg, "batch_size", 1) or 1
-    use_batching = node_type == "BusinessConcept" and batch_size > 1
-
-    if use_batching:
-        # Batched extraction: read all files first, then process in batches
-        logger.info(f"Using batched extraction for {node_type} with batch_size={batch_size}")
-
-        # Read all file contents
-        files_with_content: list[dict[str, str]] = []
-        for file_info in matching_files:
-            file_path = repo_path / file_info["path"]
-            try:
-                if file_path.suffix.lower() in (".docx", ".pdf"):
-                    content = read_document(file_path)
-                else:
-                    content = read_file_with_encoding(file_path)
-                if content is not None:
-                    files_with_content.append({"path": file_info["path"], "content": content})
-                else:
-                    errors.append(f"Could not read {file_path} | repo={repo.name} | step={node_type}")
-            except Exception as e:
-                errors.append(f"Could not read {file_path} | repo={repo.name} | step={node_type} | exception={type(e).__name__}: {e}")
-
-        # Process in batches
-        for batch_start in range(0, len(files_with_content), batch_size):
-            batch_files = files_with_content[batch_start : batch_start + batch_size]
-
-            if len(batch_files) == 1:
-                # Single file - use regular extraction
-                result = extract_fn(
-                    batch_files[0]["path"],
-                    batch_files[0]["content"],
-                    repo.name,
-                    step_llm_query_fn,
-                    extraction_config,
-                    existing_concepts=existing_concepts,
-                )
-            else:
-                # Multiple files - use multi-file extraction
-                result = extraction.extract_business_concepts_multi(
-                    batch_files,
-                    repo.name,
-                    step_llm_query_fn,
-                    extraction_config,
-                    existing_concepts=existing_concepts,
-                )
-
-            if result.get("errors"):
-                errors.extend(result["errors"])
-
-            batch_nodes = result.get("data", {}).get("nodes", [])
-            batch_edges = result.get("data", {}).get("edges", [])
-
-            # Normalize and persist nodes
-            batch_nodes = extraction.normalize_nodes(batch_nodes, node_type, repo.name)
-            for node_data in batch_nodes:
-                node = _create_node_from_data(node_type, node_data, repo.name, "llm")
-                if node:
-                    node_id = node_data.get("node_id")
-                    if isinstance(node, BusinessConceptNode):
-                        _add_concept_node(graph_manager, node, node_id)
-                    else:
-                        graph_manager.add_node(node, node_id=node_id)
-                    nodes_created += 1
-
-            # Persist edges
-            for edge_data in batch_edges:
-                src_id = edge_data.get("from_node_id", edge_data.get("from_id"))
-                dst_id = edge_data.get("to_node_id", edge_data.get("to_id"))
-                relationship = edge_data.get("relationship_type", edge_data.get("relationship"))
-
-                if not graph_manager.node_exists(dst_id):
-                    logger.debug(f"Skipping edge to non-existent node: {dst_id}")
-                    continue
-
-                try:
-                    graph_manager.add_edge(src_id=src_id, dst_id=dst_id, relationship=relationship)
-                    edges_created += 1
-                except RuntimeError as e:
-                    errors.append(f"Error creating edge {relationship}: {e}")
-
-        return {
-            "nodes_created": nodes_created,
-            "edges_created": edges_created,
-            "errors": errors,
-        }
-
-    # Process each matching file (non-batched path)
+    # Process each matching file
     for file_info in matching_files:
         file_path = repo_path / file_info["path"]
 
@@ -1380,27 +1176,20 @@ def _extract_llm_based(
                 extraction_config=extraction_config,
                 llm_query_fn=step_llm_query_fn,
                 model=model,
-                existing_concepts=existing_concepts,
-                existing_dependencies=existing_dependencies,
-                existing_technologies=existing_technologies,
             )
             extraction_method = "llm"
 
         errors.extend(file_errors)
 
         # Normalize node names for consistency
-        if node_type in ["ExternalDependency", "BusinessConcept", "Technology"]:
+        if node_type == "ExternalDependency":
             file_nodes = extraction.normalize_nodes(file_nodes, node_type, repo.name)
 
         # Persist extracted nodes
         for node_data in file_nodes:
             node = _create_node_from_data(node_type, node_data, repo.name, extraction_method)
             if node:
-                node_id = node_data.get("node_id")
-                if isinstance(node, BusinessConceptNode):
-                    _add_concept_node(graph_manager, node, node_id)
-                else:
-                    graph_manager.add_node(node, node_id=node_id)
+                graph_manager.add_node(node, node_id=node_data.get("node_id"))
                 nodes_created += 1
 
         # Persist extracted edges
@@ -1410,43 +1199,315 @@ def _extract_llm_based(
             dst_id = edge_data.get("to_node_id", edge_data.get("to_id"))
             relationship = edge_data.get("relationship_type", edge_data.get("relationship"))
 
-            # For INHERITS/CALLS edges, create placeholder node if target doesn't exist
+            # A base type outside this file is resolved once every file is extracted (below)
+            if relationship == "INHERITS" and not graph_manager.node_exists(dst_id):
+                deferred_inherits.append(edge_data)
+                continue
+            # For CALLS edges, create placeholder node if target doesn't exist
             # These are semantic edges to types that may be external or in other files
-            if relationship in ("INHERITS", "CALLS") and not graph_manager.node_exists(dst_id):
-                # Create a placeholder TypeDefinition node for the referenced type
-                edge_props = edge_data.get("properties", {})
-                type_name = edge_props.get("base_name") or edge_props.get("type_annotation") or dst_id.split("_")[-1]
-                placeholder_node = TypeDefinitionNode(
-                    name=type_name,
-                    type_category="external_reference",
-                    file_path="external",  # Placeholder for external/unresolved types
-                    repository_name=repo.name,
-                    description=f"External or unresolved type reference: {type_name}",
-                    confidence=0.5,
-                    extraction_method="structural",
-                )
-                graph_manager.add_node(placeholder_node, node_id=dst_id)
-                logger.debug(f"Created placeholder node for {relationship} target: {dst_id}")
+            if relationship == "CALLS" and not graph_manager.node_exists(dst_id):
+                _add_type_placeholder(graph_manager, edge_data, dst_id, repo.name)
             elif not graph_manager.node_exists(dst_id):
                 # Skip edges where target node doesn't exist (may have been filtered/failed)
                 logger.debug(f"Skipping edge to non-existent node: {dst_id}")
                 continue
 
-            try:
-                graph_manager.add_edge(
-                    src_id=src_id,
-                    dst_id=dst_id,
-                    relationship=relationship,
-                )
-                edges_created += 1
-            except RuntimeError as e:
-                errors.append(f"Error creating edge {relationship}: {e}")
+            edges_created += _add_extracted_edge(graph_manager, src_id, dst_id, relationship, edge_data.get("properties"), errors)
+
+    # Inheritance edges to a base type in another file point at the repository's own type of that
+    # name when exactly one exists (structure decides); otherwise at a placeholder, as before
+    if deferred_inherits:
+        definitions = _type_definitions_by_name(graph_manager, repo.name)
+        for edge_data in deferred_inherits:
+            src_id = edge_data.get("from_node_id", edge_data.get("from_id"))
+            dst_id = edge_data.get("to_node_id", edge_data.get("to_id"))
+            base_name = (edge_data.get("properties") or {}).get("base_name") or ""
+            target = extraction.resolve_base_type(base_name, definitions, source_id=src_id)
+            if target is None:
+                target = dst_id
+                if not graph_manager.node_exists(dst_id):
+                    _add_type_placeholder(graph_manager, edge_data, dst_id, repo.name)
+            edges_created += _add_extracted_edge(graph_manager, src_id, target, "INHERITS", edge_data.get("properties"), errors)
 
     return {
         "nodes_created": nodes_created,
         "edges_created": edges_created,
         "errors": errors,
     }
+
+
+def _add_type_placeholder(graph_manager: GraphManager, edge_data: dict, node_id: str, repo_name: str) -> None:
+    """A placeholder TypeDefinition for a referenced type that is external or unresolved."""
+    edge_props = edge_data.get("properties", {})
+    type_name = edge_props.get("base_name") or edge_props.get("type_annotation") or node_id.split("_")[-1]
+    placeholder_node = TypeDefinitionNode(
+        name=type_name,
+        type_category="external_reference",
+        file_path="external",  # Placeholder for external/unresolved types
+        repository_name=repo_name,
+        description=f"External or unresolved type reference: {type_name}",
+        confidence=0.5,
+        extraction_method="structural",
+    )
+    graph_manager.add_node(placeholder_node, node_id=node_id)
+    logger.debug(f"Created placeholder node for {edge_data.get('relationship_type')} target: {node_id}")
+
+
+def _add_extracted_edge(graph_manager: GraphManager, src_id: str, dst_id: str, relationship: str, properties: dict | None, errors: list[str]) -> int:
+    """Add one extracted edge; returns 1 when it was created (errors are collected)."""
+    try:
+        graph_manager.add_edge(src_id=src_id, dst_id=dst_id, relationship=relationship, properties=properties)
+        return 1
+    except RuntimeError as e:
+        errors.append(f"Error creating edge {relationship}: {e}")
+        return 0
+
+
+def _type_definitions_by_name(graph_manager: GraphManager, repo_name: str) -> dict[str, list[str]]:
+    """The repository's own type definitions (no placeholders) by type name, ids sorted."""
+    rows = graph_manager.query(
+        "MATCH (t:Graph:TypeDefinition) WHERE t.repository_name = $repo_name AND t.category <> 'external_reference' RETURN t.typeName AS name, t.id AS id",
+        {"repo_name": repo_name},
+    )
+    definitions: dict[str, list[str]] = {}
+    for row in rows:
+        if row.get("name") and row.get("id"):
+            definitions.setdefault(row["name"], []).append(row["id"])
+    return {name: sorted(ids) for name, ids in definitions.items()}
+
+
+# Params the BusinessConcept step reads from its config row (every one of them changes results)
+_CONCEPT_PARAMS = ("confidence", "evidence_min_count", "evidence_share", "max_candidates", "missing_retries", "nlp", "stop_words", "support_factor")
+
+
+def _code_names(graph_manager: GraphManager, repo_name: str) -> list[str]:
+    """The names that give a candidate term code support: the repository's own type definitions
+    (not external references) and its directory names. Structure only (no LLM decision)."""
+    params = {"repo_name": repo_name}
+    types = graph_manager.query(
+        "MATCH (t:Graph:TypeDefinition) WHERE t.repository_name = $repo_name AND t.category <> 'external_reference' RETURN DISTINCT t.typeName AS name",
+        params,
+    )
+    directories = graph_manager.query("MATCH (d:Graph:Directory) WHERE d.repository_name = $repo_name RETURN DISTINCT d.name AS name", params)
+    return sorted({row["name"] for row in types + directories if row.get("name")})
+
+
+def _read_documents(repo_path: Path, files: list[dict], repo_name: str) -> tuple[list[dict[str, str]], list[str]]:
+    """The text of every file in path order; empty files are left out, unreadable ones reported."""
+    documents, errors = [], []
+    for file_info in sorted(files, key=lambda f: f["path"]):
+        file_path = repo_path / file_info["path"]
+        try:
+            text = read_document(file_path) if file_path.suffix.lower() in (".docx", ".pdf") else read_file_with_encoding(file_path)
+        except Exception as e:
+            errors.append(f"Could not read {file_path} | repo={repo_name} | step=BusinessConcept | exception={type(e).__name__}: {e}")
+            continue
+        if text is None:
+            errors.append(f"Could not read {file_path} | repo={repo_name} | step=BusinessConcept")
+        elif text:
+            documents.append({"path": file_info["path"], "text": text})
+    return documents, errors
+
+
+def _classify_batch(
+    cfg: config.ExtractionConfig,
+    classifier: ModuleType,
+    batch: list[Any],
+    where: str,
+    missing_retries: int,
+    llm_query_fn: Callable,
+) -> dict[str, Any]:
+    """Labels for one batch of a closed classification. Items an answer leaves out are asked again on their
+    own, up to `missing_retries` times; every item still gets one decision, never a vote.
+
+    ``classifier`` is the step's candidate module: ``build_classification_prompt``, ``CLASSIFICATION_SCHEMA``
+    and ``parse_labels``.
+
+    Returns the labels by key, the answer issues, errors, retry calls and the labels the retries recovered.
+    """
+    labels: dict[str, str] = {}
+    issues = {"unmatched": 0, "duplicates": 0, "missing": 0}
+    errors: list[str] = []
+    pending, answered, attempt, recovered = batch, False, 0, 0
+    while True:
+        label = f"{where}, retry {attempt}" if attempt else where
+        prompt = classifier.build_classification_prompt(cfg.instruction or "", pending)
+        response = llm_query_fn(prompt, classifier.CLASSIFICATION_SCHEMA, temperature=cfg.temperature, max_tokens=cfg.max_tokens)
+        if getattr(response, "error", None):
+            errors.append(f"LLM error in {label}: {response.error}")
+            break
+        try:
+            found, answer_issues = classifier.parse_labels(response.content, pending)
+        except ValueError as e:  # also invalid JSON
+            errors.append(f"Unreadable answer in {label}: {e}")
+            break
+        answered = True
+        labels.update(found)
+        recovered += len(found) if attempt else 0
+        issues["unmatched"] += len(answer_issues["unmatched"])
+        issues["duplicates"] += len(answer_issues["duplicates"])
+        pending = [c for c in pending if c.key not in found]
+        if not pending or attempt >= missing_retries:
+            break
+        attempt += 1
+    if answered:
+        issues["missing"] = len(pending)
+    return {"labels": labels, "issues": issues, "errors": errors, "retry_calls": attempt, "recovered": recovered}
+
+
+def _extract_business_concepts(
+    cfg: config.ExtractionConfig,
+    repo: Any,
+    repo_path: Path,
+    classified_files: list[dict],
+    graph_manager: GraphManager,
+    llm_query_fn: Callable,
+) -> dict[str, Any]:
+    """BusinessConcept step: structure decides the candidates, the LLM classifies them.
+
+    The NLP tool finds candidate terms in the documentation inputs (English, German, French) with
+    an English form. Candidates are merged per English identity, supported by type definition and
+    directory names, selected by evidence and classified in stable-hash batches against a closed label set.
+    Names, identities and document references come from the candidates, never from the LLM.
+    """
+    params = json.loads(cfg.params) if cfg.params else {}
+    missing = [name for name in _CONCEPT_PARAMS if name not in params]
+    if missing:
+        return {"nodes_created": 0, "edges_created": 0, "errors": [f"BusinessConcept params missing: {', '.join(missing)}"]}
+    input_sources = extraction.parse_input_sources(cfg.input_sources) if cfg.input_sources else None
+    if not input_sources:
+        return {"nodes_created": 0, "edges_created": 0, "errors": ["No input sources for BusinessConcept"]}
+
+    files = [f for f in extraction.filter_files_by_input_sources(classified_files, input_sources) if not _is_unreadable(f)]
+    documents, errors = _read_documents(repo_path, files, repo.name)
+    if not documents:
+        return {"nodes_created": 0, "edges_created": 0, "errors": errors, "warnings": [f"No documents for BusinessConcept in {repo.name}"]}
+
+    tool = NlpTool()
+    tool.ensure_models()
+    found = tool.extract(documents, params["nlp"], sorted(UNCOUNTABLE_WORDS))
+
+    candidates = concept_candidates.merge_candidates(found["candidates"], repo.name)
+    candidates = concept_candidates.add_support(candidates, _code_names(graph_manager, repo.name))
+    selected, selection = concept_candidates.select_candidates(
+        candidates, int(params["evidence_min_count"]), float(params["evidence_share"]), int(params["max_candidates"]), float(params["support_factor"])
+    )
+    selected, phrases = concept_candidates.without_phrases(selected, frozenset(params["stop_words"]))
+
+    labelled: list[tuple[concept_candidates.ConceptCandidate, str]] = []
+    issues = {"unmatched": 0, "duplicates": 0, "missing": 0}
+    retries = {"calls": 0, "recovered": 0}
+    decisions: dict[str, str | None] = dict.fromkeys(sorted(c.key for c in selected))  # None: no label (skipped, failed batch)
+    batches = concept_candidates.classification_batches(selected, cfg.batch_size)
+    for number, batch in enumerate(batches, 1):
+        result = _classify_batch(cfg, concept_candidates, batch, f"batch {number}", int(params["missing_retries"]), llm_query_fn)
+        errors.extend(result["errors"])
+        labelled.extend((c, result["labels"][c.key]) for c in batch if c.key in result["labels"])
+        decisions.update(result["labels"])
+        for kind, count in result["issues"].items():
+            issues[kind] += count
+        retries["calls"] += result["retry_calls"]
+        retries["recovered"] += result["recovered"]
+
+    nodes, edges = concept_candidates.concept_nodes_and_edges(labelled, repo.name, float(params["confidence"]))
+    for node_data in nodes:
+        _add_concept_node(graph_manager, _create_node_from_data("BusinessConcept", node_data, repo.name, "llm"), node_data["node_id"])
+    edge_ids: list[str] = []
+    for edge in edges:
+        if graph_manager.node_exists(edge["from_node_id"]):
+            graph_manager.add_edge(src_id=edge["from_node_id"], dst_id=edge["to_node_id"], relationship=edge["relationship_type"], properties=edge["properties"])
+            edge_ids.append(create_edge_id(edge["from_node_id"], edge["relationship_type"], edge["to_node_id"]))
+
+    stats = {
+        "selection": selection,
+        "batches": len(batches),
+        "labels": dict(sorted(Counter(label for _, label in labelled).items())),
+        "issues": issues,
+        "retries": retries,
+        "phrases": phrases,
+        "tool": found["tool"],
+        "decisions": decisions,
+    }
+    return {"nodes_created": len(nodes), "edges_created": len(edge_ids), "edge_ids": edge_ids, "errors": errors, "stats": stats}
+
+
+# Params the Technology step reads from its config row (every one of them changes results)
+_TECHNOLOGY_PARAMS = ("confidence", "missing_retries", "platforms")
+
+
+def _extract_technologies(
+    cfg: config.ExtractionConfig,
+    repo: Any,
+    repo_path: Path,
+    classified_files: list[dict],
+    graph_manager: GraphManager,
+    llm_query_fn: Callable,
+) -> dict[str, Any]:
+    """Technology step: structure decides the candidates, the LLM classifies them.
+
+    The input files' types imply platforms (a params table, no LLM); what the files declare (libraries,
+    build plugins and profiles, compose services, base images, environment variable names) is classified in
+    stable-hash batches against a closed category set. Nodes, ids and edges come from structure, never from
+    generated text; a technology that exists before the step (directory classification) keeps its node.
+    """
+    params = json.loads(cfg.params) if cfg.params else {}
+    missing = [name for name in _TECHNOLOGY_PARAMS if name not in params]
+    if missing:
+        return {"nodes_created": 0, "edges_created": 0, "errors": [f"Technology params missing: {', '.join(missing)}"]}
+    input_sources = extraction.parse_input_sources(cfg.input_sources) if cfg.input_sources else None
+    if not input_sources:
+        return {"nodes_created": 0, "edges_created": 0, "errors": ["No input sources for Technology"]}
+
+    files: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for file_info in extraction.filter_files_by_input_sources(classified_files, input_sources):
+        if _is_unreadable(file_info):
+            continue
+        content = read_file_with_encoding(repo_path / file_info["path"])
+        if content is None:
+            errors.append(f"Could not read {repo_path / file_info['path']} | repo={repo.name} | step=Technology")
+            continue
+        files.append({**file_info, "content": content})
+    if not files:
+        return {"nodes_created": 0, "edges_created": 0, "errors": errors, "warnings": [f"No input files for Technology in {repo.name}"]}
+
+    collected = technology_candidates.collect(files, params["platforms"])
+    labels: dict[str, dict[str, str]] = {}
+    issues = {"unmatched": 0, "duplicates": 0, "missing": 0}
+    retries = {"calls": 0, "recovered": 0}
+    decisions: dict[str, dict[str, str] | None] = dict.fromkeys(sorted(collected.items))  # None: no label (skipped, failed batch)
+    batches = concept_candidates.classification_batches(list(collected.items.values()), cfg.batch_size)
+    for number, batch in enumerate(batches, 1):
+        result = _classify_batch(cfg, technology_candidates, batch, f"batch {number}", int(params["missing_retries"]), llm_query_fn)
+        errors.extend(result["errors"])
+        labels.update(result["labels"])
+        decisions.update(result["labels"])
+        for kind, count in result["issues"].items():
+            issues[kind] += count
+        retries["calls"] += result["retry_calls"]
+        retries["recovered"] += result["recovered"]
+
+    rows = graph_manager.query("MATCH (t:Graph:Technology) WHERE t.repository_name = $repo_name RETURN t.id AS id, t.techName AS name", {"repo_name": repo.name})
+    existing = {name_key(row["name"]): row["id"] for row in rows if row.get("name")}
+    nodes, edges = technology_candidates.technology_nodes_and_edges(labels, collected, repo.name, float(params["confidence"]), existing)
+    for node_data in nodes:
+        graph_manager.add_node(_create_node_from_data("Technology", node_data, repo.name, node_data["method"]), node_id=node_data["node_id"])
+    edge_ids: list[str] = []
+    for edge in edges:
+        if graph_manager.node_exists(edge["from_node_id"]):
+            graph_manager.add_edge(src_id=edge["from_node_id"], dst_id=edge["to_node_id"], relationship=edge["relationship_type"], properties=edge["properties"])
+            edge_ids.append(create_edge_id(edge["from_node_id"], edge["relationship_type"], edge["to_node_id"]))
+
+    stats = {
+        "items": dict(sorted(Counter(item.kind.split(",")[0] for item in collected.items.values()).items())),
+        "platforms": len(collected.platforms),
+        "batches": len(batches),
+        "labels": dict(sorted(Counter(label["category"] for label in labels.values()).items())),
+        "issues": issues,
+        "retries": retries,
+        "decisions": decisions,
+    }
+    return {"nodes_created": len(nodes), "edges_created": len(edge_ids), "edge_ids": edge_ids, "errors": errors, "stats": stats}
 
 
 def _extract_file_content(
@@ -1457,9 +1518,6 @@ def _extract_file_content(
     extraction_config: dict[str, Any],
     llm_query_fn: Callable,
     model: str | None = None,
-    existing_concepts: list[dict[str, str]] | None = None,
-    existing_dependencies: list[dict[str, str]] | None = None,
-    existing_technologies: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict], list[dict], list[str]]:
     """
     Extract from file content, with automatic chunking for large files.
@@ -1472,42 +1530,14 @@ def _extract_file_content(
         extraction_config: Config with instruction/example
         llm_query_fn: LLM query function
         model: Model name for token limit lookup (optional)
-        existing_concepts: Optional list of existing concepts for context-aware extraction
-        existing_dependencies: Optional list of ExternalDependency nodes for Technology context
-        existing_technologies: Optional list of existing Technology nodes for deduplication
 
     Returns:
         Tuple of (nodes, edges, errors)
     """
-    # Build optional kwargs for extraction function
-    extra_kwargs: dict[str, Any] = {}
-    if existing_concepts is not None:
-        extra_kwargs["existing_concepts"] = existing_concepts
-    if existing_dependencies is not None:
-        extra_kwargs["existing_dependencies"] = existing_dependencies
-    if existing_technologies is not None:
-        extra_kwargs["existing_technologies"] = existing_technologies
-
     # Check if chunking is needed
     if not should_chunk(content, model=model):
         # Extract from entire file
-        if extra_kwargs:
-            result = extract_fn(
-                file_path,
-                content,
-                repo_name,
-                llm_query_fn,
-                extraction_config,
-                **extra_kwargs,
-            )
-        else:
-            result = extract_fn(
-                file_path,
-                content,
-                repo_name,
-                llm_query_fn,
-                extraction_config,
-            )
+        result = extract_fn(file_path, content, repo_name, llm_query_fn, extraction_config)
         if result["success"]:
             return result["data"]["nodes"], result["data"].get("edges", []), []
         return [], [], result.get("errors", [])
@@ -1522,23 +1552,7 @@ def _extract_file_content(
         # Add chunk context to file path for LLM
         chunk_path = f"{file_path} (lines {chunk.start_line}-{chunk.end_line})"
 
-        if extra_kwargs:
-            result = extract_fn(
-                chunk_path,
-                chunk.content,
-                repo_name,
-                llm_query_fn,
-                extraction_config,
-                **extra_kwargs,
-            )
-        else:
-            result = extract_fn(
-                chunk_path,
-                chunk.content,
-                repo_name,
-                llm_query_fn,
-                extraction_config,
-            )
+        result = extract_fn(chunk_path, chunk.content, repo_name, llm_query_fn, extraction_config)
 
         if result["success"]:
             all_nodes.extend(result["data"]["nodes"])
@@ -1555,11 +1569,6 @@ def _extract_file_content(
 def _get_extraction_config(node_type: str) -> tuple:
     """Get extraction function, schema, and node class for a node type."""
     configs = {
-        "BusinessConcept": (
-            extraction.extract_business_concepts,
-            extraction.BUSINESS_CONCEPT_SCHEMA,
-            BusinessConceptNode,
-        ),
         "TypeDefinition": (
             extraction.extract_type_definitions,
             extraction.TYPE_DEFINITION_SCHEMA,
@@ -1569,11 +1578,6 @@ def _get_extraction_config(node_type: str) -> tuple:
             extraction.extract_methods,
             extraction.METHOD_SCHEMA,
             MethodNode,
-        ),
-        "Technology": (
-            extraction.extract_technologies,
-            extraction.TECHNOLOGY_SCHEMA,
-            TechnologyNode,
         ),
         "ExternalDependency": (
             extraction.extract_external_dependencies,
@@ -1616,6 +1620,7 @@ def _add_concept_node(graph_manager: GraphManager, node: BusinessConceptNode, no
     node.name = merged["conceptName"]
     node.concept_type = merged["conceptType"]
     node.concept_types = merged["conceptTypes"]
+    node.source_terms = merged["sourceTerms"]
     node.description = merged["description"]
     node.origin_source = merged["originSource"]
     node.confidence = merged["confidence"]
@@ -1644,6 +1649,7 @@ def _create_node_from_data(node_type: str, node_data: dict, repo_name: str, extr
             confidence=props.get("confidence", 0.8),
             extraction_method=extraction_method,
             concept_types=props.get("conceptTypes"),
+            source_terms=props.get("sourceTerms"),
         )
     elif node_type == "TypeDefinition":
         return TypeDefinitionNode(
@@ -1658,6 +1664,7 @@ def _create_node_from_data(node_type: str, node_data: dict, repo_name: str, extr
             code_snippet=props.get("codeSnippet", props.get("code_snippet")),
             confidence=props.get("confidence", 0.8),
             extraction_method=extraction_method,
+            decorators=list(props.get("decorators") or []),
         )
     elif node_type == "Method":
         return MethodNode(
@@ -1675,6 +1682,7 @@ def _create_node_from_data(node_type: str, node_data: dict, repo_name: str, extr
             end_line=props.get("endLine", props.get("end_line", 0)),
             confidence=props.get("confidence", 0.8),
             extraction_method=extraction_method,
+            decorators=list(props.get("decorators") or []),
         )
     elif node_type == "Technology":
         return TechnologyNode(

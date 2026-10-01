@@ -18,15 +18,9 @@ app = typer.Typer(name="repo", help="Manage repositories")
 @app.command("clone")
 def repo_clone(
     url: Annotated[str, typer.Argument(help="Repository URL to clone")],
-    name: Annotated[
-        str | None, typer.Option("-n", "--name", help="Custom name for the repository")
-    ] = None,
-    branch: Annotated[
-        str | None, typer.Option("-b", "--branch", help="Branch to clone")
-    ] = None,
-    overwrite: Annotated[
-        bool, typer.Option("--overwrite", help="Overwrite existing repository")
-    ] = False,
+    name: Annotated[str | None, typer.Option("-n", "--name", help="Custom name for the repository")] = None,
+    branch: Annotated[str | None, typer.Option("-b", "--branch", help="Branch to clone")] = None,
+    overwrite: Annotated[bool, typer.Option("--overwrite", help="Overwrite existing repository")] = False,
 ) -> None:
     """Clone a repository."""
     typer.echo(f"\n{'=' * 60}")
@@ -39,9 +33,7 @@ def repo_clone(
         typer.echo(f"Branch: {branch}")
 
     with PipelineSession() as session:
-        result = session.clone_repository(
-            url=url, name=name, branch=branch, overwrite=overwrite
-        )
+        result = session.clone_repository(url=url, name=name, branch=branch, overwrite=overwrite)
         if result.get("success"):
             typer.echo("\nRepository cloned successfully!")
             typer.echo(f"  Name: {result.get('name', 'N/A')}")
@@ -54,9 +46,7 @@ def repo_clone(
 
 @app.command("list")
 def repo_list(
-    detailed: Annotated[
-        bool, typer.Option("-d", "--detailed", help="Show detailed information")
-    ] = False,
+    detailed: Annotated[bool, typer.Option("-d", "--detailed", help="Show detailed information")] = False,
 ) -> None:
     """List all repositories."""
     with PipelineSession() as session:
@@ -94,9 +84,7 @@ def repo_delete(
     name: Annotated[str, typer.Argument(help="Repository name to delete")],
     force: Annotated[
         bool,
-        typer.Option(
-            "-f", "--force", help="Force delete even with uncommitted changes"
-        ),
+        typer.Option("-f", "--force", help="Force delete even with uncommitted changes"),
     ] = False,
 ) -> None:
     """Delete a repository."""

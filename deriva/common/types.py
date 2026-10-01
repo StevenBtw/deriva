@@ -11,7 +11,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypedDict, runtime_checkable
 
-
 # =============================================================================
 # Error Context
 # =============================================================================
@@ -239,7 +238,7 @@ class ExtractionResult(BaseResult):
     """
     Result structure for extraction module functions.
 
-    Returned by functions like extract_business_concepts, extract_type_definitions, etc.
+    Returned by functions like extract_type_definitions, extract_technologies, etc.
     """
 
     data: ExtractionData
@@ -497,6 +496,7 @@ class StepContextProtocol(Protocol):
     """Protocol for step context returned by run loggers."""
 
     items_created: int
+    stats: dict[str, Any] | None  # the step's own report, logged with its completion
 
     def complete(self) -> None:
         """Mark the step as complete."""
@@ -522,9 +522,7 @@ class RunLoggerProtocol(Protocol):
         """Log the start of a phase."""
         ...
 
-    def phase_complete(
-        self, phase: str, message: str = "", stats: dict[str, Any] | None = None
-    ) -> None:
+    def phase_complete(self, phase: str, message: str = "", stats: dict[str, Any] | None = None) -> None:
         """Log the completion of a phase."""
         ...
 

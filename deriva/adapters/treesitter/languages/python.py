@@ -400,9 +400,7 @@ class PythonExtractor(LanguageExtractor):
 
         return tree_sitter_python.language()
 
-    def extract_types(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedType]:
+    def extract_types(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedType]:
         """Extract type definitions (classes, top-level functions, type aliases)."""
         types: list[ExtractedType] = []
         root = tree.root_node
@@ -426,9 +424,7 @@ class PythonExtractor(LanguageExtractor):
 
         return types
 
-    def extract_methods(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedMethod]:
+    def extract_methods(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedMethod]:
         """Extract methods and functions."""
         methods: list[ExtractedMethod] = []
         root = tree.root_node
@@ -444,9 +440,7 @@ class PythonExtractor(LanguageExtractor):
                     elif item.type == "decorated_definition":
                         inner = self._get_decorated_inner(item)
                         if inner and inner.type == "function_definition":
-                            methods.append(
-                                self._extract_method(item, source, class_name, inner)
-                            )
+                            methods.append(self._extract_method(item, source, class_name, inner))
 
         # Extract top-level functions
         for node in root.children:
@@ -459,9 +453,7 @@ class PythonExtractor(LanguageExtractor):
 
         return methods
 
-    def extract_imports(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedImport]:
+    def extract_imports(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedImport]:
         """Extract import statements."""
         imports: list[ExtractedImport] = []
         root = tree.root_node
@@ -474,9 +466,7 @@ class PythonExtractor(LanguageExtractor):
 
         return imports
 
-    def extract_calls(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedCall]:
+    def extract_calls(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedCall]:
         """Extract function/method calls from functions and methods."""
         calls: list[ExtractedCall] = []
         root = tree.root_node
@@ -495,11 +485,7 @@ class PythonExtractor(LanguageExtractor):
 
                     if func_node and func_node.type == "function_definition":
                         func_name = self._get_function_name(func_node, source)
-                        calls.extend(
-                            self._extract_calls_from_body(
-                                func_node, source, func_name, class_name
-                            )
-                        )
+                        calls.extend(self._extract_calls_from_body(func_node, source, func_name, class_name))
 
         # Extract calls from top-level functions
         for node in root.children:
@@ -511,9 +497,7 @@ class PythonExtractor(LanguageExtractor):
 
             if func_node and func_node.type == "function_definition":
                 func_name = self._get_function_name(func_node, source)
-                calls.extend(
-                    self._extract_calls_from_body(func_node, source, func_name, None)
-                )
+                calls.extend(self._extract_calls_from_body(func_node, source, func_name, None))
 
         return calls
 
@@ -532,9 +516,7 @@ class PythonExtractor(LanguageExtractor):
 
         # Find all call expressions in the body
         for call_node in self.walk_tree(body, {"call"}):
-            call = self._extract_single_call(
-                call_node, source, caller_name, caller_class
-            )
+            call = self._extract_single_call(call_node, source, caller_name, caller_class)
             if call:
                 calls.append(call)
 
@@ -620,18 +602,12 @@ class PythonExtractor(LanguageExtractor):
     ) -> ExtractedType:
         """Extract a top-level function as a type definition."""
         func_node = inner_func or node
-        decorators = (
-            self._get_decorators(node, source)
-            if node.type == "decorated_definition"
-            else []
-        )
+        decorators = self._get_decorators(node, source) if node.type == "decorated_definition" else []
 
         name_node = self.find_child_by_field(func_node, "name")
         name = self.get_node_text(name_node, source) if name_node else ""
 
-        is_async = func_node.type == "function_definition" and any(
-            child.type == "async" for child in func_node.children
-        )
+        is_async = func_node.type == "function_definition" and any(child.type == "async" for child in func_node.children)
         # Check parent for async
         if not is_async:
             for child in func_node.children:
@@ -652,9 +628,7 @@ class PythonExtractor(LanguageExtractor):
             is_async=is_async,
         )
 
-    def _extract_type_alias(
-        self, node: tree_sitter.Node, source: bytes
-    ) -> ExtractedType:
+    def _extract_type_alias(self, node: tree_sitter.Node, source: bytes) -> ExtractedType:
         """Extract a type alias (type X = ...)."""
         name_node = self.find_child_by_field(node, "name")
         name = self.get_node_text(name_node, source) if name_node else ""
@@ -679,11 +653,7 @@ class PythonExtractor(LanguageExtractor):
     ) -> ExtractedMethod:
         """Extract a method or function definition."""
         func_node = inner_func or node
-        decorators = (
-            self._get_decorators(node, source)
-            if node.type == "decorated_definition"
-            else []
-        )
+        decorators = self._get_decorators(node, source) if node.type == "decorated_definition" else []
         if not decorators and node.type == "function_definition":
             # Check if parent is decorated_definition
             decorators = []
@@ -708,9 +678,7 @@ class PythonExtractor(LanguageExtractor):
 
         # Extract return annotation
         return_type = self.find_child_by_field(func_node, "return_type")
-        return_annotation = (
-            self.get_node_text(return_type, source) if return_type else None
-        )
+        return_annotation = self.get_node_text(return_type, source) if return_type else None
         if return_annotation and return_annotation.startswith("->"):
             return_annotation = return_annotation[2:].strip()
 
@@ -731,9 +699,7 @@ class PythonExtractor(LanguageExtractor):
             is_property=is_property,
         )
 
-    def _extract_import(
-        self, node: tree_sitter.Node, source: bytes
-    ) -> list[ExtractedImport]:
+    def _extract_import(self, node: tree_sitter.Node, source: bytes) -> list[ExtractedImport]:
         """Extract regular import statement (import x, y, z)."""
         imports: list[ExtractedImport] = []
 
@@ -766,9 +732,7 @@ class PythonExtractor(LanguageExtractor):
 
         return imports
 
-    def _extract_from_import(
-        self, node: tree_sitter.Node, source: bytes
-    ) -> ExtractedImport:
+    def _extract_from_import(self, node: tree_sitter.Node, source: bytes) -> ExtractedImport:
         """Extract from ... import statement."""
         module_node = self.find_child_by_field(node, "module_name")
         module = self.get_node_text(module_node, source) if module_node else ""
@@ -879,9 +843,7 @@ class PythonExtractor(LanguageExtractor):
                 return child
         return None
 
-    def _extract_parameters(
-        self, func_node: tree_sitter.Node, source: bytes
-    ) -> list[dict[str, Any]]:
+    def _extract_parameters(self, func_node: tree_sitter.Node, source: bytes) -> list[dict[str, Any]]:
         """Extract function parameters with type annotations."""
         params: list[dict[str, Any]] = []
 
@@ -903,9 +865,7 @@ class PythonExtractor(LanguageExtractor):
                 name_node = self.find_child_by_type(child, "identifier")
                 type_node = self.find_child_by_field(child, "type")
                 name = self.get_node_text(name_node, source) if name_node else ""
-                annotation = (
-                    self.get_node_text(type_node, source) if type_node else None
-                )
+                annotation = self.get_node_text(type_node, source) if type_node else None
                 params.append(
                     {
                         "name": name,
@@ -927,9 +887,7 @@ class PythonExtractor(LanguageExtractor):
                 name_node = self.find_child_by_type(child, "identifier")
                 type_node = self.find_child_by_field(child, "type")
                 name = self.get_node_text(name_node, source) if name_node else ""
-                annotation = (
-                    self.get_node_text(type_node, source) if type_node else None
-                )
+                annotation = self.get_node_text(type_node, source) if type_node else None
                 params.append(
                     {
                         "name": name,

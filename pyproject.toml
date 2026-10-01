@@ -1,6 +1,6 @@
 [project]
 name = "Deriva"
-version = "0.7.0"
+version = "0.7.1"
 description = "Deriva is a research project aimed at enabling digital architects by automating the derivation of enterprise architecture models. Deriva uses dual knowledge graphs, heuristics and LLM's."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -56,6 +56,13 @@ dependencies = [
     # Document Parsing
     "pypdf>=6",
     "python-docx>=1.2",
+    # NLP (business concept candidate terms; pinned, the versions decide the output)
+    "spacy==3.8.16",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    "de-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl",
+    "fr-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl",
+    "ctranslate2==4.8.2",
+    "sentencepiece==0.2.2",
     # Graph Algorithms
     "solvor>=0.6.2",
     # LLM
@@ -82,7 +89,7 @@ dev = [
     "pip-audit>=2",
     "pytest>=9",
     "pytest-cov>=7",
-    "ruff>=0.15,<0.16",  # <0.16 until the layer ruff.toml files inherit the project config
+    "ruff>=0.16",
     "ty>=0.0",
     "types-lxml>=2026.2",
 ]
@@ -105,6 +112,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["deriva"]
 
+# The spaCy language models are wheels from their GitHub releases, not on PyPI
+[tool.hatch.metadata]
+allow-direct-references = true
+
 # ============================================================================
 # Tool Configuration
 # ============================================================================
@@ -112,6 +123,8 @@ packages = ["deriva"]
 [tool.ruff]
 line-length = 180
 target-version = "py314"
+# Markdown code blocks are documentation examples, formatted by hand
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = [

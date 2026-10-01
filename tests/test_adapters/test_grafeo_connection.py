@@ -57,11 +57,11 @@ def test_set_node_properties_counts_only_nodes_it_changed(conn):
 
 @pytest.mark.parametrize("key", ["../elsewhere", "a/b", r"a\b", "..", ""])
 def test_database_key_must_be_a_plain_file_name(key, tmp_path, monkeypatch):
-    from deriva.adapters.grafeo.manager import _database_file
+    from deriva.adapters.grafeo.manager import database_file
 
     monkeypatch.setenv("GRAFEO_DB_DIR", str(tmp_path))
     with pytest.raises(ValueError, match="database key"):
-        _database_file(key)
+        database_file(key)
 
 
 def test_slow_query_is_logged(conn, caplog, monkeypatch):
@@ -123,12 +123,55 @@ class TestDatabasePerKey:
         db = get_database()
         assert db.has_property_index("id") and db.has_property_index("identifier")
 
+    def test_invalid_key_leaves_the_active_database_open(self, db_dir):
+        """The key is checked before the current database closes, so connections keep working."""
+        from deriva.adapters.grafeo.manager import get_database, use_database
+
+        use_database("alpha")
+        c = GrafeoConnection(namespace="Graph")
+        c.connect()
+        c.execute("CREATE (:Graph {id: 'a1'})")
+        active = get_database()
+
+        with pytest.raises(ValueError, match="Invalid database key"):
+            use_database("../escape")
+
+        assert get_database() is active
+        assert c.db is active
+        assert c.execute("MATCH (n) RETURN n.id AS id") == [{"id": "a1"}]
+        c.disconnect()
+
     def test_legacy_single_file_setting_is_rejected(self, db_dir, monkeypatch):
         from deriva.adapters.grafeo.manager import get_database
 
         monkeypatch.setenv("GRAFEO_DB_PATH", "workspace/grafeo.db")
         with pytest.raises(RuntimeError, match="GRAFEO_DB_DIR"):
             get_database()
+
+
+def test_a_grafeo_build_without_cypher_is_refused(monkeypatch):
+    """Deriva queries only through Cypher; a build without it fails when the database opens, not at the first query."""
+    import grafeo
+
+    from deriva.adapters.grafeo import manager
+
+    class BuildWithoutCypher:
+        def __init__(self, path=None):
+            self.closed = False
+
+        def has_property_index(self, key):
+            return True
+
+        def close(self):
+            self.closed = True
+
+    close_database()
+    monkeypatch.setattr(grafeo, "GrafeoDB", BuildWithoutCypher)
+
+    with pytest.raises(RuntimeError, match="Cypher"):
+        manager.get_database()
+
+    assert manager._db is None  # nothing half-open stays behind
 
 
 def test_tests_never_use_a_persistent_database():
@@ -183,13 +226,19 @@ class TestMergeEdge:
 
 
 class TestDeletedNodesInIndex:
-    """grafeo's property index still returns deleted nodes; lookups must skip them."""
+    """Deleted nodes never come back from the id index, so lookups need no filter of their own."""
 
     def _recreated(self, conn):
         conn.execute("CREATE (:Graph:File {id: 'a'})")
         conn.execute("CREATE (:Graph:File {id: 'b'})")
         conn.db.create_property_index("id")
         conn.execute("MATCH (n:Graph) DETACH DELETE n")
+
+    def test_the_index_forgets_deleted_nodes(self, conn):
+        """grafeo's own contract, relied on by every index-backed write (older grafeo kept deleted nodes in the index)."""
+        self._recreated(conn)
+
+        assert conn.db.find_nodes_by_property("id", "a") == []
 
     def test_merge_node_recreates_after_delete(self, conn):
         self._recreated(conn)

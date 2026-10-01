@@ -14,7 +14,6 @@ from typing import TypeVar
 
 import backoff
 from backoff._typing import Details
-
 from deriva.common.exceptions import (
     CircuitOpenError,
     RateLimitError,
@@ -318,7 +317,7 @@ def should_giveup(exception: Exception) -> bool:
 def wait_with_retry_after(
     base: float = 2.0,
     max_value: float = 60.0,
-) -> Generator[float, Exception | None, None]:
+) -> Generator[float, Exception | None]:
     """
     Wait generator that respects Retry-After headers.
 
@@ -393,7 +392,7 @@ def create_retry_with_classification(
     except ImportError:
         pass
 
-    def wait_gen() -> Generator[float, Exception | None, None]:
+    def wait_gen() -> Generator[float, Exception | None]:
         return wait_with_retry_after(base_delay, max_delay)
 
     return backoff.on_exception(

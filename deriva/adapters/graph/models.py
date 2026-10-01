@@ -7,7 +7,7 @@ repository structure in the graph database.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -174,9 +174,7 @@ class FileNode:
         """Convert to dictionary for graph storage."""
         return {
             "fileName": self.name,  # Use metamodel field name
-            "filePath": normalize_path(
-                self.path, self.repository_name
-            ),  # Use metamodel field name
+            "filePath": normalize_path(self.path, self.repository_name),  # Use metamodel field name
             "fileType": self.file_type,  # Use metamodel field name
             "subtype": self.subtype,
             "size": self.size,
@@ -200,6 +198,8 @@ class BusinessConceptNode:
     extraction_method: str = "llm"  # structural, ast, or llm
     # Every type any file gave this concept (default: [concept_type])
     concept_types: list[str] | None = None
+    # The document wordings behind the concept, as "term (language)"
+    source_terms: list[str] | None = None
 
     def __post_init__(self):
         """Validate concept_type is one of the allowed values."""
@@ -234,6 +234,7 @@ class BusinessConceptNode:
             "conceptName": self.name,
             "conceptType": self.concept_type,
             "conceptTypes": sorted(self.concept_types or [self.concept_type]),
+            "sourceTerms": sorted(self.source_terms or []),
             "description": self.description,
             "originSource": normalize_path(self.origin_source, self.repository_name),
             "confidence": self.confidence,
@@ -256,9 +257,7 @@ class TechnologyNode:
     """
 
     name: str
-    tech_category: (
-        str  # service, system_software, infrastructure, platform, network, security
-    )
+    tech_category: str  # service, system_software, infrastructure, platform, network, security
     repository_name: str
     description: str | None = None
     version: str | None = None
@@ -299,6 +298,7 @@ class TypeDefinitionNode:
     code_snippet: str | None = None  # The actual code of the type definition
     confidence: float = 1.0
     extraction_method: str = "ast"  # structural, ast, or llm
+    decorators: list[str] = field(default_factory=list)  # Annotations or decorators, as written (e.g. RestController)
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -317,6 +317,7 @@ class TypeDefinitionNode:
             "codeSnippet": self.code_snippet,
             "confidence": self.confidence,
             "extractionMethod": self.extraction_method,
+            "decorators": list(self.decorators),
             "type": "TypeDefinition",
         }
 
@@ -332,15 +333,14 @@ class MethodNode:
     type_name: str  # Name of the type this method belongs to
     repository_name: str
     description: str | None = None  # Brief description of what the method does
-    parameters: str | None = (
-        None  # Parameter signature (e.g., "self, name: str, age: int")
-    )
+    parameters: str | None = None  # Parameter signature (e.g., "self, name: str, age: int")
     is_static: bool = False  # Whether it's a static method
     is_async: bool = False  # Whether it's an async method
     start_line: int = 0  # Line number where method starts (relative to type, 1-indexed)
     end_line: int = 0  # Line number where method ends (relative to type, 1-indexed)
     confidence: float = 1.0
     extraction_method: str = "ast"  # structural, ast, or llm
+    decorators: list[str] = field(default_factory=list)  # Annotations or decorators, as written (e.g. GetMapping("orders"))
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -362,6 +362,7 @@ class MethodNode:
             "endLine": self.end_line,
             "confidence": self.confidence,
             "extractionMethod": self.extraction_method,
+            "decorators": list(self.decorators),
             "type": "Method",
         }
 
@@ -436,9 +437,7 @@ class ServiceNode:
             "serviceName": self.name,
             "description": self.description,
             "exposureLevel": self.exposure_level,
-            "filePath": normalize_path(self.file_path, self.repository_name)
-            if self.file_path
-            else None,
+            "filePath": normalize_path(self.file_path, self.repository_name) if self.file_path else None,
             "confidence": self.confidence,
             "extractionMethod": self.extraction_method,
             "type": "Service",
@@ -461,9 +460,7 @@ class ExternalDependencyNode:
     """
 
     name: str
-    dependency_category: (
-        str  # library, external_api, external_service, external_database
-    )
+    dependency_category: str  # library, external_api, external_service, external_database
     repository_name: str
     version: str | None = None
     ecosystem: str | None = None  # pypi, npm, maven, or provider name
@@ -498,9 +495,7 @@ class ExternalDependencyNode:
 
 # Relationship types
 CONTAINS = "CONTAINS"  # For repository->module, repository->directory, directory->file, module->file relationships
-DEPENDS_ON = (
-    "DEPENDS_ON"  # For module->module, file->file, service->service dependencies
-)
+DEPENDS_ON = "DEPENDS_ON"  # For module->module, file->file, service->service dependencies
 REFERENCES = "REFERENCES"  # For file->businessconcept relationships
 IMPLEMENTS = "IMPLEMENTS"  # For file->technology relationships
 DECLARES = "DECLARES"  # For typedefinition->method relationships

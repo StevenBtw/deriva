@@ -67,9 +67,7 @@ TABLES = {
 }
 
 
-def get_connection(
-    db_path: Path | None = None, read_only: bool = False
-) -> duckdb.DuckDBPyConnection:
+def get_connection(db_path: Path | None = None, read_only: bool = False) -> duckdb.DuckDBPyConnection:
     """Get database connection."""
     path = db_path or DB_PATH
     return duckdb.connect(str(path), read_only=read_only)
@@ -91,9 +89,7 @@ def export_table(
         Path to the exported JSON file
     """
     if table_name not in TABLES:
-        raise ValueError(
-            f"Unknown table: {table_name}. Valid tables: {list(TABLES.keys())}"
-        )
+        raise ValueError(f"Unknown table: {table_name}. Valid tables: {list(TABLES.keys())}")
 
     config = TABLES[table_name]
     output_dir = output_dir or DATA_DIR
@@ -140,9 +136,7 @@ def export_table(
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-    logger.info(
-        "Exported %s: %d records -> %s", table_name, len(data), output_file.name
-    )
+    logger.info("Exported %s: %d records -> %s", table_name, len(data), output_file.name)
     return output_file
 
 
@@ -192,9 +186,7 @@ def import_table(
         Number of records imported (0 if skipped due to existing data)
     """
     if table_name not in TABLES:
-        raise ValueError(
-            f"Unknown table: {table_name}. Valid tables: {list(TABLES.keys())}"
-        )
+        raise ValueError(f"Unknown table: {table_name}. Valid tables: {list(TABLES.keys())}")
 
     config = TABLES[table_name]
     input_dir = input_dir or DATA_DIR
@@ -248,9 +240,7 @@ def import_table(
         values = [record.get(col) for col in columns]
         conn.execute(insert_sql, values)
 
-    logger.info(
-        "Imported %s: %d records from %s", table_name, len(data), input_file.name
-    )
+    logger.info("Imported %s: %d records from %s", table_name, len(data), input_file.name)
     return len(data)
 
 

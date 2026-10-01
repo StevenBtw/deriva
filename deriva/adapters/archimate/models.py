@@ -13,7 +13,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # =============================================================================
 # Metamodel Type Definitions
 # =============================================================================
@@ -207,9 +206,7 @@ RELATIONSHIP_LETTERS: dict[str, str] = {
     "t": "Triggering",
     "v": "Serving",
 }
-_LETTER_BY_RELATIONSHIP = {
-    name: letter for letter, name in RELATIONSHIP_LETTERS.items()
-}
+_LETTER_BY_RELATIONSHIP = {name: letter for letter, name in RELATIONSHIP_LETTERS.items()}
 
 _TABLE_COLUMNS = (
     "BusinessActor",
@@ -246,11 +243,7 @@ _TABLE_ROWS: dict[str, tuple[str, ...]] = {
 }
 # fmt: on
 
-RELATIONSHIP_TABLE: dict[tuple[str, str], str] = {
-    (source, target): cell
-    for source, row in _TABLE_ROWS.items()
-    for target, cell in zip(_TABLE_COLUMNS, row, strict=True)
-}
+RELATIONSHIP_TABLE: dict[tuple[str, str], str] = {(source, target): cell for source, row in _TABLE_ROWS.items() for target, cell in zip(_TABLE_COLUMNS, row, strict=True)}
 
 # Relationship types Deriva may propose. Association, Specialization and Influence
 # are valid ArchiMate but deliberately not derived.
@@ -266,9 +259,7 @@ DERIVABLE_RELATIONSHIP_TYPES: tuple[str, ...] = (
 )
 
 
-def relationship_tier(
-    source_type: str, relationship_type: str, target_type: str
-) -> str | None:
+def relationship_tier(source_type: str, relationship_type: str, target_type: str) -> str | None:
     """Return "direct", "derived", or None if ArchiMate 3.2 does not allow it."""
     letter = _LETTER_BY_RELATIONSHIP.get(relationship_type)
     cell = RELATIONSHIP_TABLE.get((source_type, target_type))
@@ -283,9 +274,7 @@ def relationship_tier(
 
 def _endpoints(relationship_type: str) -> tuple[set[str], set[str]]:
     letter = _LETTER_BY_RELATIONSHIP[relationship_type]
-    pairs = [
-        pair for pair, cell in RELATIONSHIP_TABLE.items() if letter in cell.lower()
-    ]
+    pairs = [pair for pair, cell in RELATIONSHIP_TABLE.items() if letter in cell.lower()]
     return {s for s, _ in pairs}, {t for _, t in pairs}
 
 
@@ -301,36 +290,20 @@ def _relationship_type(name: str, description: str) -> RelationshipType:
 
 RELATIONSHIP_TYPES: dict[str, RelationshipType] = {
     # Structural
-    "Composition": _relationship_type(
-        "Composition", "Element consists of other elements"
-    ),
+    "Composition": _relationship_type("Composition", "Element consists of other elements"),
     "Aggregation": _relationship_type("Aggregation", "Element combines other elements"),
-    "Assignment": _relationship_type(
-        "Assignment", "Active structure element performs or is responsible for behavior"
-    ),
-    "Realization": _relationship_type(
-        "Realization", "Element realizes a more abstract element"
-    ),
+    "Assignment": _relationship_type("Assignment", "Active structure element performs or is responsible for behavior"),
+    "Realization": _relationship_type("Realization", "Element realizes a more abstract element"),
     # Dependency
-    "Serving": _relationship_type(
-        "Serving", "Element provides services to another element"
-    ),
-    "Access": _relationship_type(
-        "Access", "Behavior or structure accesses passive elements (data)"
-    ),
-    "Influence": _relationship_type(
-        "Influence", "Element influences a motivation element"
-    ),
+    "Serving": _relationship_type("Serving", "Element provides services to another element"),
+    "Access": _relationship_type("Access", "Behavior or structure accesses passive elements (data)"),
+    "Influence": _relationship_type("Influence", "Element influences a motivation element"),
     "Association": _relationship_type("Association", "Unspecified relationship"),
     # Dynamic
     "Flow": _relationship_type("Flow", "Transfer from one element to another"),
-    "Triggering": _relationship_type(
-        "Triggering", "Temporal or causal relationship between elements"
-    ),
+    "Triggering": _relationship_type("Triggering", "Temporal or causal relationship between elements"),
     # Other
-    "Specialization": _relationship_type(
-        "Specialization", "Element is a particular kind of another element"
-    ),
+    "Specialization": _relationship_type("Specialization", "Element is a particular kind of another element"),
 }
 
 
@@ -365,9 +338,7 @@ class ArchiMateMetamodel:
             raise ValueError(f"Invalid relationship type: {relationship_type}")
         return self.relationship_types[relationship_type]
 
-    def can_relate(
-        self, source_element_type: str, relationship_type: str, target_element_type: str
-    ) -> tuple[bool, str]:
+    def can_relate(self, source_element_type: str, relationship_type: str, target_element_type: str) -> tuple[bool, str]:
         """
         Check if a relationship is valid between two element types.
 
@@ -390,14 +361,11 @@ class ArchiMateMetamodel:
         if not self.is_valid_relationship_type(relationship_type):
             return False, f"Invalid relationship type: {relationship_type}"
 
-        tier = relationship_tier(
-            source_element_type, relationship_type, target_element_type
-        )
+        tier = relationship_tier(source_element_type, relationship_type, target_element_type)
         if tier is None:
             return (
                 False,
-                f"{relationship_type} from {source_element_type} to "
-                f"{target_element_type} is not allowed by ArchiMate 3.2",
+                f"{relationship_type} from {source_element_type} to {target_element_type} is not allowed by ArchiMate 3.2",
             )
 
         return True, f"Valid relationship ({tier})"
@@ -414,9 +382,7 @@ class ArchiMateMetamodel:
         """Get all element types in a specific layer."""
         return [name for name, et in self.element_types.items() if et.layer == layer]
 
-    def get_valid_relationships_from(
-        self, source_element_type: str
-    ) -> list[dict[str, Any]]:
+    def get_valid_relationships_from(self, source_element_type: str) -> list[dict[str, Any]]:
         """Get derivable relationship types and their allowed targets for a source type.
 
         Only DERIVABLE_RELATIONSHIP_TYPES are listed; Association, Specialization
@@ -435,11 +401,7 @@ class ArchiMateMetamodel:
 
         for rel_name in DERIVABLE_RELATIONSHIP_TYPES:
             rel_type = self.relationship_types[rel_name]
-            allowed_targets = [
-                t
-                for t in self.element_types
-                if relationship_tier(source_element_type, rel_name, t)
-            ]
+            allowed_targets = [t for t in self.element_types if relationship_tier(source_element_type, rel_name, t)]
 
             if allowed_targets:
                 valid_relationships.append(
@@ -580,9 +542,7 @@ def _get_metamodel() -> ArchiMateMetamodel:
     return _metamodel
 
 
-def validate_relationship_rule(
-    source_type: str, rel_type: str, target_type: str
-) -> tuple[bool, str]:
+def validate_relationship_rule(source_type: str, rel_type: str, target_type: str) -> tuple[bool, str]:
     """Validate a relationship rule against ArchiMate metamodel constraints.
 
     This is a convenience function for validating relationship rules defined

@@ -1702,6 +1702,71 @@ class TestAffectedRowsWithRealDuckDB:
         assert engine.execute("SELECT count(*) FROM derivation_patterns").fetchone()[0] == 1
 
 
+class TestPatternRows:
+    """Listing and removing derivation patterns (the `config pattern` commands)."""
+
+    @pytest.fixture
+    def engine(self):
+        import duckdb
+
+        con = duckdb.connect()
+        con.execute("CREATE TABLE derivation_patterns (id INTEGER, step_name VARCHAR, pattern_type VARCHAR, pattern_category VARCHAR, patterns VARCHAR, is_active BOOLEAN)")
+        con.execute("""INSERT INTO derivation_patterns VALUES (1, 'Alpha', 'include', 'first', '["a", "b"]', TRUE)""")
+        con.execute("""INSERT INTO derivation_patterns VALUES (2, 'Alpha', 'include', 'second', '["c"]', TRUE)""")
+        con.execute("""INSERT INTO derivation_patterns VALUES (3, 'Alpha', 'exclude', 'third', '["d"]', TRUE)""")
+        con.execute("""INSERT INTO derivation_patterns VALUES (4, 'Beta', 'include', 'first', '["e"]', FALSE)""")
+        yield con
+        con.close()
+
+    def test_list_returns_the_active_rows_of_a_step(self, engine):
+        from deriva.services.config import list_derivation_patterns
+
+        rows = list_derivation_patterns(engine, "Alpha")
+
+        assert [(r["step_name"], r["pattern_type"], r["pattern_category"], r["patterns"]) for r in rows] == [
+            ("Alpha", "exclude", "third", ["d"]),
+            ("Alpha", "include", "first", ["a", "b"]),
+            ("Alpha", "include", "second", ["c"]),
+        ]
+
+    def test_list_without_a_step_returns_every_active_row(self, engine):
+        from deriva.services.config import list_derivation_patterns
+
+        assert len(list_derivation_patterns(engine)) == 3
+
+    def test_removing_single_patterns_keeps_the_rest_of_the_row(self, engine):
+        from deriva.services.config import get_derivation_patterns, remove_derivation_patterns
+
+        assert remove_derivation_patterns(engine, "Alpha", "include", "first", ["a"]) == 1
+        assert get_derivation_patterns(engine, "Alpha")["include"] == {"b", "c"}
+
+    def test_a_row_left_empty_is_deactivated(self, engine):
+        from deriva.services.config import list_derivation_patterns, remove_derivation_patterns
+
+        assert remove_derivation_patterns(engine, "Alpha", "include", "second", ["c"]) == 1
+        assert [r["pattern_category"] for r in list_derivation_patterns(engine, "Alpha")] == ["third", "first"]
+
+    def test_removing_a_whole_type_deactivates_its_rows(self, engine):
+        from deriva.services.config import get_derivation_patterns, remove_derivation_patterns
+
+        assert remove_derivation_patterns(engine, "Alpha", "include") == 2
+        assert get_derivation_patterns(engine, "Alpha") == {"include": set(), "exclude": {"d"}}
+
+    def test_a_row_without_a_category_is_removed_too(self, engine):
+        from deriva.services.config import list_derivation_patterns, remove_derivation_patterns
+
+        engine.execute("""INSERT INTO derivation_patterns VALUES (5, 'Gamma', 'exclude', NULL, '["f"]', TRUE)""")
+
+        assert remove_derivation_patterns(engine, "Gamma", "exclude") == 1
+        assert list_derivation_patterns(engine, "Gamma") == []
+
+    def test_nothing_to_remove_changes_no_row(self, engine):
+        from deriva.services.config import remove_derivation_patterns
+
+        assert remove_derivation_patterns(engine, "Gamma", "include") == 0
+        assert remove_derivation_patterns(engine, "Alpha", "include", "first", ["z"]) == 0
+
+
 class TestAddDerivationStep:
     @pytest.fixture
     def engine(self):
@@ -1737,6 +1802,7 @@ class TestAddDerivationStep:
             ("refnie", 4, None, "phase"),
             ("refine", -1, None, "sequence"),
             ("refine", 4, "{not json", "params"),
+            ("refine", 4, "[1, 2]", "JSON object"),
         ],
     )
     def test_rejects_invalid_values_without_inserting(self, engine, phase, sequence, params, message):
@@ -1745,6 +1811,22 @@ class TestAddDerivationStep:
         with pytest.raises(ValueError, match=message):
             add_derivation_step(engine, "new_step", phase, sequence, params=params)
         assert engine.execute("SELECT count(*) FROM derivation_config WHERE step_name = 'new_step'").fetchone()[0] == 0
+
+
+class TestValidateParams:
+    """Step params are a JSON object; consumers call .get() on them."""
+
+    def test_accepts_an_object(self):
+        from deriva.services.config import validate_params
+
+        validate_params('{"samples": 3}')
+
+    @pytest.mark.parametrize(("params", "message"), [("{bad", "valid JSON"), ("[1, 2]", "JSON object"), ("3", "JSON object"), ('"x"', "JSON object")])
+    def test_rejects_non_objects(self, params, message):
+        from deriva.services.config import validate_params
+
+        with pytest.raises(ValueError, match=message):
+            validate_params(params)
 
 
 class TestExcludedDirectories:
@@ -1810,3 +1892,46 @@ class TestExtractionConfigParams:
         create_extraction_config_version(engine, "Technology", instruction="new")
 
         assert get_extraction_config(engine, "Technology").params == '{"a": 1}'
+
+
+class TestReadOnlyConnection:
+    """The CLI opens read-only connections through the service, not the adapter."""
+
+    def test_opens_the_config_database_read_only(self, monkeypatch):
+        import deriva.adapters.database as database
+        from deriva.services import config
+
+        calls = []
+        sentinel = object()
+
+        def fake_get_connection(**kwargs):
+            calls.append(kwargs)
+            return sentinel
+
+        monkeypatch.setattr(database, "get_connection", fake_get_connection)
+
+        assert config.read_only_connection() is sentinel
+        assert calls == [{"read_only": True}]
+
+
+class TestLlmSamplesPerStep:
+    """Samples per LLM decision, recorded with every benchmark so any voting is visible."""
+
+    def test_extraction_samples_and_element_naming_samples(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from deriva.services import config
+
+        extraction = [
+            SimpleNamespace(node_type="DocConcepts", extraction_method="llm", params='{"samples": 3, "min_votes": 2}'),
+            SimpleNamespace(node_type="DirClasses", extraction_method="llm", params=None),
+            SimpleNamespace(node_type="Files", extraction_method="structural", params=None),
+        ]
+        derivation = [
+            SimpleNamespace(step_name="TypeA", params='{"naming": {"instruction": "i", "samples": 1}}'),
+            SimpleNamespace(step_name="TypeB", params="{}"),
+        ]
+        monkeypatch.setattr(config, "get_extraction_configs", lambda engine, enabled_only=False: extraction)
+        monkeypatch.setattr(config, "get_derivation_configs", lambda engine, enabled_only=False, phase=None, llm_only=None: derivation)
+
+        assert config.llm_samples_per_step(object()) == {"DocConcepts": 3, "DirClasses": 1, "TypeA.naming": 1}

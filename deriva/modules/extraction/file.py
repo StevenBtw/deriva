@@ -9,8 +9,8 @@ Can also generate TESTS edges based on naming conventions.
 from __future__ import annotations
 
 import re
-from datetime import datetime
 from collections.abc import Collection
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -201,9 +201,7 @@ def extract_files(
 
         # First pass: collect all file paths for test matching
         for file_path in repo_path_obj.rglob("*"):
-            if file_path.is_dir() or is_excluded_path(
-                file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs
-            ):
+            if file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs):
                 continue
             rel_path = file_path.relative_to(repo_path_obj)
             file_paths_set.add(str(rel_path).replace("\\", "/"))
@@ -212,9 +210,7 @@ def extract_files(
         test_edges: list[dict[str, Any]] = []
 
         for file_path in repo_path_obj.rglob("*"):
-            if file_path.is_dir() or is_excluded_path(
-                file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs
-            ):
+            if file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs):
                 continue
 
             try:
@@ -235,10 +231,7 @@ def extract_files(
                     "size_bytes": file_stats.st_size,
                     "file_type": classification.get("file_type", ""),
                     "subtype": classification.get("subtype", ""),
-                    "last_modified": datetime.fromtimestamp(
-                        file_stats.st_mtime
-                    ).isoformat()
-                    + "Z",
+                    "last_modified": datetime.fromtimestamp(file_stats.st_mtime).isoformat() + "Z",
                 }
 
                 result = build_file_node(file_metadata, repo_name)
@@ -252,14 +245,10 @@ def extract_files(
                         from_node_id = repo_id
                     else:
                         parent_path = str(rel_path.parent).replace("\\", "/")
-                        from_node_id = (
-                            f"dir::{repo_name}::{parent_path.replace('/', '_')}"
-                        )
+                        from_node_id = f"dir::{repo_name}::{parent_path.replace('/', '_')}"
 
                     edge = {
-                        "edge_id": generate_edge_id(
-                            from_node_id, node_data["node_id"], "CONTAINS"
-                        ),
+                        "edge_id": generate_edge_id(from_node_id, node_data["node_id"], "CONTAINS"),
                         "from_node_id": from_node_id,
                         "to_node_id": node_data["node_id"],
                         "relationship_type": "CONTAINS",
@@ -274,9 +263,7 @@ def extract_files(
                             safe_tested = tested_path.replace("/", "_")
                             tested_node_id = f"file::{repo_name}::{safe_tested}"
                             test_edge = {
-                                "edge_id": generate_edge_id(
-                                    node_data["node_id"], tested_node_id, "TESTS"
-                                ),
+                                "edge_id": generate_edge_id(node_data["node_id"], tested_node_id, "TESTS"),
                                 "from_node_id": node_data["node_id"],
                                 "to_node_id": tested_node_id,
                                 "relationship_type": "TESTS",

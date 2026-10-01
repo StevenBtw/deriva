@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Any
 from .base import RefineResult, register_refine_step
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 logger = logging.getLogger(__name__)
 
@@ -60,23 +60,7 @@ class OrphanElementsStep:
         )
 
         try:
-            # Query for elements with no relationships
-            ns = archimate_manager.namespace
-            orphan_query = f"""
-                MATCH (e:{ns})
-                WHERE e.enabled = true
-                WITH e
-                WHERE NOT EXISTS {{
-                    MATCH (e)-[r]-()
-                    WHERE type(r) STARTS WITH '{ns}:'
-                }}
-                RETURN e.identifier as identifier,
-                       e.name as name,
-                       [lbl IN labels(e) WHERE lbl <> '{ns}'][0] as label,
-                       e.properties_json as properties_json
-            """
-
-            orphans = archimate_manager.query(orphan_query)
+            orphans = archimate_manager.get_orphan_elements()
 
             if not orphans:
                 logger.info("No orphan elements found")
@@ -85,34 +69,20 @@ class OrphanElementsStep:
             logger.info(f"Found {len(orphans)} orphan elements")
 
             for orphan in orphans:
-                identifier = orphan["identifier"]
-                name = orphan["name"]
-                label = orphan["label"]
-                element_type = label if label else "Unknown"
+                identifier = orphan.identifier
+                name = orphan.name
+                element_type = orphan.element_type
 
                 # Check source graph for potential relationships
                 proposed_relationships = []
                 if graph_manager:
-                    proposed_relationships = self._propose_relationships(
-                        graph_manager, archimate_manager, identifier
-                    )
+                    proposed_relationships = self._propose_relationships(graph_manager, orphan.properties.get("source"))
 
-                # Calculate importance from properties if available
-                importance = 0
-                if orphan.get("properties_json"):
-                    import json
-
-                    try:
-                        props = json.loads(orphan["properties_json"])
-                        importance = props.get("source_pagerank", 0)
-                    except json.JSONDecodeError, TypeError:
-                        pass
+                importance = orphan.properties.get("source_pagerank", 0)
 
                 # Decide action based on importance and params
                 if disable_orphans and importance < min_importance:
-                    archimate_manager.disable_element(
-                        identifier, reason="orphan_no_relationships"
-                    )
+                    archimate_manager.disable_element(identifier, reason="orphan_no_relationships")
                     result.elements_disabled += 1
                     result.issues_fixed += 1
                     result.details.append(
@@ -140,10 +110,7 @@ class OrphanElementsStep:
                         }
                     )
 
-            logger.info(
-                f"Orphan detection complete: {result.elements_disabled} disabled, "
-                f"{result.issues_found} flagged"
-            )
+            logger.info(f"Orphan detection complete: {result.elements_disabled} disabled, {result.issues_found} flagged")
 
         except Exception as e:
             logger.exception(f"Error in orphan element detection: {e}")
@@ -152,50 +119,13 @@ class OrphanElementsStep:
 
         return result
 
-    def _propose_relationships(
-        self,
-        graph_manager: GraphManager,
-        archimate_manager: ArchimateManager,
-        element_identifier: str,
-    ) -> list[dict[str, Any]]:
-        """Propose relationships based on source graph patterns.
-
-        Looks up the source node for the element and checks its
-        relationships in the graph namespace.
-        """
-        proposals = []
+    def _propose_relationships(self, graph_manager: GraphManager, source_id: str | None) -> list[dict[str, Any]]:
+        """Propose relationships from the relationships of the element's source node in the graph."""
+        proposals: list[dict[str, Any]] = []
+        if not source_id:
+            return proposals
 
         try:
-            # Find the element's source node
-            ns = archimate_manager.namespace
-            source_query = f"""
-                MATCH (e:{ns} {{identifier: $identifier}})
-                RETURN e.properties_json as properties_json
-            """
-            result = archimate_manager.query(
-                source_query, {"identifier": element_identifier}
-            )
-
-            if not result:
-                return proposals
-
-            # Extract source from properties
-            import json
-
-            props_json = result[0].get("properties_json")
-            if not props_json:
-                return proposals
-
-            try:
-                props = json.loads(props_json)
-            except json.JSONDecodeError, TypeError:
-                return proposals
-
-            source_id = props.get("source")
-            if not source_id:
-                return proposals
-
-            # Query graph for relationships of the source node
             graph_rel_query = """
                 MATCH (source)-[r]->(target)
                 WHERE source.id = $source_id

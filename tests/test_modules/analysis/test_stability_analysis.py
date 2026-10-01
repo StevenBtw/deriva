@@ -452,3 +452,181 @@ class TestAggregateStabilityMetrics:
 
         # Worst should be the lowest
         assert result["worst_element_types"][0][0] == "LowType"
+
+
+class TestAnswerStability:
+    """Raw LLM answer stability: the same prompt answered identically in every run, per step.
+
+    Reported next to output consistency, so voting or post-processing cannot hide LLM variance.
+    """
+
+    def test_counts_prompts_answered_identically_in_every_run(self):
+        from deriva.modules.analysis import compute_answer_stability
+
+        runs = {
+            "r1": {("Naming", "k1"): ["a"], ("Naming", "k2"): ["b"], ("Concepts", "k3"): ["c"]},
+            "r2": {("Naming", "k1"): ["a"], ("Naming", "k2"): ["x"], ("Concepts", "k3"): ["c"]},
+            "r3": {("Naming", "k1"): ["a"], ("Naming", "k2"): ["b"], ("Concepts", "k3"): ["c"], ("Concepts", "k4"): ["d"]},
+        }
+
+        result = {s.step: (s.prompts, s.identical, s.score) for s in compute_answer_stability(runs)}
+
+        # k4 was not asked in every run, so it does not count
+        assert result == {"Concepts": (1, 1, 1.0), "Naming": (2, 1, 0.5)}
+
+    def test_repeated_prompts_compare_as_multisets(self):
+        from deriva.modules.analysis import compute_answer_stability
+
+        runs = {"r1": {("S", "k"): ["a", "b"]}, "r2": {("S", "k"): ["b", "a"]}}
+
+        (stability,) = compute_answer_stability(runs)
+
+        assert (stability.prompts, stability.identical) == (1, 1)
+
+    def test_fewer_than_two_runs_measure_nothing(self):
+        from deriva.modules.analysis import compute_answer_stability
+
+        assert compute_answer_stability({"r1": {("S", "k"): ["a"]}}) == []
+
+
+class TestDecisionContent:
+    """Answers are compared on their decisions: free text and scores are left out."""
+
+    def test_free_text_and_scores_do_not_count(self):
+        from deriva.modules.analysis import decision_content
+
+        first = '{"items": [{"name": "Alpha", "kind": "entity", "description": "One wording", "confidence": 0.9}]}'
+        second = '{"items":[{"confidence":0.7,"kind":"entity","name":"Alpha","description":"Another wording"}]}'
+
+        assert decision_content(first) == decision_content(second)
+
+    def test_documentation_does_not_count(self):
+        from deriva.modules.analysis import decision_content
+
+        assert decision_content('{"name": "Alpha", "documentation": "x"}') == decision_content('{"name": "Alpha", "documentation": "y"}')
+
+    def test_a_different_decision_counts(self):
+        from deriva.modules.analysis import decision_content
+
+        assert decision_content('{"items": [{"name": "Alpha", "kind": "entity"}]}') != decision_content('{"items": [{"name": "Alpha", "kind": "process"}]}')
+
+    def test_text_that_is_not_json_is_compared_as_is(self):
+        from deriva.modules.analysis import decision_content
+
+        assert decision_content("plain answer") == "plain answer"
+
+
+class TestStepOutputConsistency:
+    """One step repeated on a fixed input: are its outputs (and their properties) the same every run?"""
+
+    def test_presence_counts_objects_in_every_run(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        runs = [
+            {("Concept", "a"): {}, ("Concept", "b"): {}},
+            {("Concept", "a"): {}},
+            {("Concept", "a"): {}, ("Concept", "c"): {}},
+        ]
+
+        result = compare_step_outputs(runs)
+
+        assert (result.present, result.total, result.counts) == (1, 3, [2, 1, 2])
+        assert result.presence_score == 1 / 3
+
+    def test_identical_needs_the_same_properties_in_every_run(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        runs = [
+            {("Concept", "a"): {"kind": "entity", "score": 0.9}, ("Concept", "b"): {"kind": "actor"}},
+            {("Concept", "a"): {"kind": "process", "score": 0.8}, ("Concept", "b"): {"kind": "actor"}},
+        ]
+
+        result = compare_step_outputs(runs)
+
+        assert (result.present, result.identical) == (2, 1)
+        assert result.exact_score == 0.5
+        assert result.property_differences == {"kind": 1, "score": 1}
+
+    def test_unscored_properties_are_reported_but_keep_an_object_exact(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        runs = [
+            {("E", "a"): {"name": "A", "note": "one"}, ("E", "b"): {"name": "B"}},
+            {("E", "a"): {"name": "A", "note": "two"}, ("E", "b"): {"name": "C"}},
+        ]
+
+        result = compare_step_outputs(runs, unscored=frozenset({"note"}))
+
+        assert (result.identical, result.groups["E"].identical) == (1, 1)
+        assert result.property_differences == {"name": 1, "note": 1}
+
+    def test_a_property_missing_in_one_run_differs(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        result = compare_step_outputs([{("E", "a"): {"x": 1}}, {("E", "a"): {}}])
+
+        assert result.property_differences == {"x": 1}
+
+    def test_a_property_set_to_none_differs_from_a_missing_one(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        result = compare_step_outputs([{("E", "a"): {"x": None}}, {("E", "a"): {}}])
+
+        assert result.property_differences == {"x": 1}
+
+    def test_equal_values_are_equal_whatever_their_key_order(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        result = compare_step_outputs([{("E", "a"): {"x": {"p": 1, "q": 2}}}, {("E", "a"): {"x": {"q": 2, "p": 1}}}])
+
+        assert (result.identical, result.property_differences) == (1, {})
+
+    def test_groups_are_scored_separately(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        runs = [{("Concept", "a"): {}, ("Edge", "e1"): {}}, {("Concept", "a"): {}}]
+
+        result = compare_step_outputs(runs)
+
+        assert (result.groups["Concept"].present, result.groups["Concept"].total) == (1, 1)
+        assert (result.groups["Edge"].present, result.groups["Edge"].total) == (0, 1)
+
+    def test_no_output_in_any_run_is_consistent(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        result = compare_step_outputs([{}, {}, {}])
+
+        assert (result.presence_score, result.exact_score, result.counts) == (1.0, 1.0, [0, 0, 0])
+
+    def test_to_dict_carries_scores_and_groups(self):
+        from deriva.modules.analysis import compare_step_outputs
+
+        data = compare_step_outputs([{("E", "a"): {}}, {("E", "a"): {}}]).to_dict()
+
+        assert (data["presence_score"], data["exact_score"], data["groups"]["E"]["present"]) == (1.0, 1.0, 1)
+
+
+class TestDecisionStability:
+    """Per-item decisions of a classification step (one label per term): the same decision in every run?"""
+
+    def test_items_with_the_same_decision_in_every_run(self):
+        from deriva.modules.analysis import decision_stability
+
+        runs = [{"a": "x", "b": "y", "c": None}, {"a": "x", "b": "z", "c": None}, {"a": "x", "b": "y"}]
+
+        result = decision_stability(runs)
+
+        # a is stable; b changes; c was skipped twice and missing from the third run's list
+        assert (result.items, result.stable) == (3, 1)
+        assert result.score == 1 / 3
+        assert result.to_dict() == {"items": 3, "stable": 1, "score": 1 / 3}
+
+    def test_a_decision_skipped_in_every_run_is_stable(self):
+        from deriva.modules.analysis import decision_stability
+
+        assert decision_stability([{"a": None}, {"a": None}]).stable == 1
+
+    def test_no_items(self):
+        from deriva.modules.analysis import decision_stability
+
+        assert decision_stability([{}, {}]).score == 1.0

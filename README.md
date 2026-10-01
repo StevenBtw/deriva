@@ -78,7 +78,11 @@ source .venv/bin/activate
 uv sync
 ```
 
-### 5. Launch Deriva
+### 5. NLP Models (Business Concepts)
+
+The business concept step finds candidate terms in the documentation with pinned spaCy pipelines (English, German, French), which `uv sync` installs with the other dependencies. It gives German and French terms an English form with pinned translation models, which the step downloads into `workspace/cache/nlp` on its first run and checks by SHA-256. `DERIVA_NLP_MODELS_DIR` in `.env` moves that folder.
+
+### 6. Launch Deriva
 
 ```bash
 cd ../../..  # Back to Deriva root
@@ -115,7 +119,7 @@ Enable the extraction steps you need:
 | TypeDefinition | Extracts classes, functions (AST for Python) | Yes |
 | Method | Extracts methods from type definitions | Optional |
 | Edge | Extracts relationships (IMPORTS, USES, CALLS, DECORATED_BY, REFERENCES) | Yes |
-| Technology | Detects frameworks and libraries | Optional |
+| Technology | Finds infrastructure (runtimes, databases, brokers, container platforms) from manifests, build and container files | Optional |
 | ExternalDependency | Maps external dependencies | Optional |
 | Test | Extracts test definitions | Optional |
 
@@ -200,6 +204,9 @@ LLM_MISTRAL_DEVSTRAL_STRUCTURED_OUTPUT=true
 # Namespaces
 GRAPH_NAMESPACE=Graph
 ARCHIMATE_NAMESPACE=Model
+
+# NLP translation models for business concepts (default shown)
+DERIVA_NLP_MODELS_DIR=workspace/cache/nlp
 ```
 
 See `.env.example` for all available options.
@@ -282,6 +289,14 @@ deriva config filetype stats
 ```bash
 deriva config setting show excluded_directories
 deriva config setting set excluded_directories '[".git", "node_modules", "third_party"]'
+```
+
+**Derivation name patterns:** some derivation steps use include and exclude patterns on the names of their code candidates; business concepts are already classified and skip them. Most of these steps reject a name that contains an exclude pattern and keep one that contains an include pattern, and a name that matches neither follows the step's default (rejected by most steps, kept by BusinessFunction, ApplicationInterface, SystemSoftware and TechnologyService). BusinessObject (type definitions) and BusinessEvent (methods) use the patterns to rank candidates instead, and fill their remaining slots with names that did not match. A step that uses the default candidate filter (ApplicationComponent, ApplicationInterface, BusinessFunction, DataObject, Device, Node, SystemSoftware, TechnologyService) can limit the patterns to candidates with given graph labels with its `pattern_labels` param, and set a k-core threshold with `graph_filter`. Patterns are stored per step, type and category.
+
+```bash
+deriva config pattern list Node
+deriva config pattern add Node include deployment helm
+deriva config pattern delete Node include --category deployment helm   # a category left empty is deactivated
 ```
 
 ### Updating Configurations (Versioning)
@@ -401,6 +416,9 @@ deriva config filetype stats
 # System settings (e.g. directories skipped during extraction)
 deriva config setting show excluded_directories
 
+# Derivation name patterns (include and exclude, per step and category)
+deriva config pattern list SystemSoftware
+
 # Run pipeline stages
 deriva run extraction --repo flask_invoice_generator -v
 deriva run derivation -v
@@ -478,6 +496,10 @@ OCEL files can be analyzed with process mining tools like PM4Py, Celonis, or cus
 ---
 
 ## Troubleshooting
+
+### NLP Model Issues
+
+The business concept step downloads its translation models on the first run. If the download fails, check that the machine can reach the model host and run the step again; a model folder that was not verified is replaced. A SHA-256 mismatch means the downloaded file is not the pinned model (a changed upload or a damaged download), and the step refuses it.
 
 ### Marimo Issues
 
