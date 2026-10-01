@@ -111,6 +111,28 @@ class TestSourcePaths:
 
         assert paths == {"dir::r::core": "r/core", "file::r::core/Find.java": "r/core/Find.java", "typedef::r::core/Order.java::Order": "r/core/Order.java"}
 
+    def test_a_source_a_directory_represents_lies_in_that_directory(self, graph):
+        from deriva.adapters.graph.models import BusinessConceptNode, DirectoryNode
+
+        graph.add_node(DirectoryNode(name="billing", path="r/apps/billing", repository_name="r"), node_id="dir::r::apps_billing")
+        graph.add_node(DirectoryNode(name="ledger", path="r/apps/ledger/ui", repository_name="r"), node_id="dir::r::apps_ledger_ui")
+        graph.add_node(DirectoryNode(name="ledger", path="r/apps/ledger/api", repository_name="r"), node_id="dir::r::apps_ledger_api")
+        for key in ("billing", "ledger", "invoicing"):
+            graph.add_node(BusinessConceptNode(name=key, concept_type="capability", description="", origin_source="", repository_name="r"), node_id=f"concept::r::{key}")
+        graph.add_edge(src_id="dir::r::apps_billing", dst_id="concept::r::billing", relationship="REPRESENTS")
+        graph.add_edge(src_id="dir::r::apps_ledger_ui", dst_id="concept::r::ledger", relationship="REPRESENTS")
+        graph.add_edge(src_id="dir::r::apps_ledger_api", dst_id="concept::r::ledger", relationship="REPRESENTS")
+        elements = [
+            _el("as_billing", "ApplicationService", "concept::r::billing"),
+            _el("as_ledger", "ApplicationService", "concept::r::ledger"),
+            _el("bo_invoicing", "BusinessObject", "concept::r::invoicing"),
+        ]
+
+        paths = element_source_paths(graph, elements)
+
+        # Represented in two directories: their deepest shared directory; not represented: no path
+        assert paths == {"concept::r::billing": "r/apps/billing", "concept::r::ledger": "r/apps/ledger"}
+
 
 class FakeGraph:
     """Answers the source-path query; every other query finds nothing."""

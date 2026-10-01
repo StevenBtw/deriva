@@ -2147,6 +2147,19 @@ class NestedFilter:
 
 
 @dataclass(frozen=True)
+class UnitFilter:
+    """Components at the deployable-unit level (element config ``params.deployable_units``).
+
+    A unit is a directory candidate that directly holds a file named in ``file_names`` (a
+    build, dependency or container file). With at least ``min_units`` outermost units, those
+    units are the candidates; a repository with fewer keeps its candidates.
+    """
+
+    file_names: frozenset[str]  # Lower-case file names
+    min_units: int
+
+
+@dataclass(frozen=True)
 class RoleConfig:
     """Candidates classified into a closed list of roles (element config ``params.roles``).
 
@@ -2899,7 +2912,11 @@ def derive_batch_relationships(
 
 
 def element_source_paths(graph_manager: GraphManager, elements: list[dict[str, Any]]) -> dict[str, str]:
-    """Repository path of each element's source node: a directory's path, a file's, type's or method's file path."""
+    """Repository path of each element's source node: a directory's path, a file's, type's or method's file path.
+
+    A source without a path of its own (a concept found in a directory name) lies in the directory
+    that represents it; in the deepest directory shared by several.
+    """
     ids = sorted({src for e in elements if (src := (e.get("properties") or {}).get("source"))})
     if not ids:
         return {}
@@ -2909,6 +2926,20 @@ def element_source_paths(graph_manager: GraphManager, elements: list[dict[str, A
         path = row.get("file_path") or row.get("path")
         if row.get("id") and path:
             paths[row["id"]] = str(path).replace(chr(92), "/").rstrip("/")
+    missing = [i for i in ids if i not in paths]
+    if missing:
+        represented: dict[str, list[list[str]]] = defaultdict(list)
+        for row in graph_manager.query("MATCH (d)-[:`Graph:REPRESENTS`]->(n) WHERE n.id IN $ids RETURN n.id AS id, d.path AS path", {"ids": missing}):
+            if row.get("id") and row.get("path"):
+                represented[row["id"]].append(str(row["path"]).replace(chr(92), "/").rstrip("/").split("/"))
+        for node_id, holders in represented.items():
+            shared = []
+            for parts in zip(*holders, strict=False):
+                if len(set(parts)) != 1:
+                    break
+                shared.append(parts[0])
+            if shared:
+                paths[node_id] = "/".join(shared)
     return paths
 
 

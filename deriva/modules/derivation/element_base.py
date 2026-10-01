@@ -52,6 +52,7 @@ from deriva.modules.derivation.base import (
     RelationshipLLMConfig,
     RelationshipRule,
     RoleConfig,
+    UnitFilter,
     batch_candidates,
     build_derivation_prompt,
     build_element,
@@ -371,6 +372,7 @@ class ElementDerivationBase(ABC):
         graph_filter: GraphFilter | None = None,
         skip_subtypes: bool = False,
         skip_nested: NestedFilter | None = None,
+        deployable_units: UnitFilter | None = None,
     ) -> GenerationResult:
         """
         Generate elements of this type.
@@ -416,6 +418,9 @@ class ElementDerivationBase(ABC):
                 another candidate type of the repository is left out before any ranking or cut
             skip_nested: One module, one element: a selected directory holding nearly all of its
                 nearest selected ancestor's files of a type is left out after the cut (None: none)
+            deployable_units: Components at the deployable-unit level: with enough outermost
+                units among the directory candidates, only those units stay, before the ranking
+                and cut (None: the candidates stay)
 
         Returns:
             GenerationResult with success status, counts, and any errors
@@ -480,6 +485,14 @@ class ElementDerivationBase(ABC):
             represented = self._represented_by_elements(candidates, skip_when_directory_is, graph_manager, archimate_manager)
             eligible = [c for c in candidates if c.node_id not in represented]
 
+        # Components at the deployable-unit level: with enough outermost units, the units are the candidates
+        not_units: set[str] = set()
+        if deployable_units is not None:
+            units = self._outermost_units(eligible, deployable_units, graph_manager)
+            if len(units) >= deployable_units.min_units:
+                not_units = {c.node_id for c in eligible if c.node_id not in units}
+                eligible = [c for c in eligible if c.node_id in units]
+
         # Filter candidates (module-specific)
         filtered = self.filter_candidates(eligible, enrichments, max_candidates, **filter_kwargs)
 
@@ -497,7 +510,7 @@ class ElementDerivationBase(ABC):
                         in_degree=c.in_degree,
                         out_degree=c.out_degree,
                         confidence=c.properties.get("confidence"),
-                        stage="filtered_out",
+                        stage="not_a_unit" if c.node_id in not_units else "filtered_out",
                         became_element=False,
                     )
                 )
@@ -521,7 +534,7 @@ class ElementDerivationBase(ABC):
                         in_degree=c.in_degree,
                         out_degree=c.out_degree,
                         confidence=c.properties.get("confidence"),
-                        stage="filtered_out",
+                        stage="not_a_unit" if c.node_id in not_units else "filtered_out",
                         became_element=False,
                     )
                 )
@@ -907,6 +920,19 @@ class ElementDerivationBase(ABC):
             {"ids": [c.node_id for c in candidates]},
         )
         return {row["id"] for row in rows}
+
+    def _outermost_units(self, candidates: list[Candidate], units: UnitFilter, graph_manager: GraphManager) -> set[str]:
+        """Ids of the directory candidates that directly hold a unit file and lie in no other such candidate."""
+        ids = [c.node_id for c in candidates]
+        if not ids:
+            return set()
+        rows = graph_manager.query(
+            "MATCH (d:Graph:Directory)-[:`Graph:CONTAINS`]->(f:Graph:File) WHERE d.id IN $ids AND toLower(f.fileName) IN $names RETURN DISTINCT d.id AS id",
+            {"ids": ids, "names": sorted(units.file_names)},
+        )
+        found = {row["id"] for row in rows}
+        paths = {c.node_id: str(c.properties.get("path") or "").replace(chr(92), "/").rstrip("/") for c in candidates if c.node_id in found}
+        return {i for i, p in paths.items() if p and not any(o != p and p.startswith(o + "/") for o in paths.values() if o)}
 
     def _nested_in_ancestors(self, candidates: list[Candidate], nested: NestedFilter, graph_manager: GraphManager) -> set[str]:
         """Ids of the directory candidates that hold at least ``nested.min_share`` of their nearest kept ancestor's files.

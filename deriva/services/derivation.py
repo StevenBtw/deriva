@@ -64,6 +64,7 @@ from deriva.modules.derivation.base import (
     PerCandidateConfig,
     RelationshipLLMConfig,
     RoleConfig,
+    UnitFilter,
     derive_consolidated_relationships,
 )
 from deriva.modules.derivation.business_actor import BusinessActorDerivation
@@ -377,6 +378,25 @@ def _skip_nested(params: str | None, engine: Any = None) -> NestedFilter | None:
     return NestedFilter(file_type=file_type, min_share=float(share))
 
 
+def _deployable_units(params: str | None) -> UnitFilter | None:
+    """The files that make a directory a deployable unit, and how many units a repository needs (``params.deployable_units``).
+
+    ``{"file_names": ["pom.xml", "build.gradle", "package.json"], "min_units": 2}``: when at least two
+    outermost directory candidates directly hold one of those files, those units are the candidates.
+    File names match without regard to case. Without the key the candidates stay.
+    """
+    settings = json.loads(params).get("deployable_units") if params else None
+    if settings is None:
+        return None
+    names = settings.get("file_names") if isinstance(settings, dict) else None
+    minimum = settings.get("min_units") if isinstance(settings, dict) else None
+    if not isinstance(names, list) or not names or not all(isinstance(n, str) and n for n in names):
+        raise ValueError(f"params.deployable_units needs a non-empty list of file_names, got {settings!r}")
+    if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 1:
+        raise ValueError(f"params.deployable_units needs a min_units of at least 1, got {settings!r}")
+    return UnitFilter(file_names=frozenset(n.lower() for n in names), min_units=minimum)
+
+
 def _graph_filter(params: str | None) -> GraphFilter | None:
     """The step's k-core threshold and the labels it applies to (``params.graph_filter``).
 
@@ -433,6 +453,7 @@ def generate_element(
     graph_filter: GraphFilter | None = None,
     skip_subtypes: bool = False,
     skip_nested: NestedFilter | None = None,
+    deployable_units: UnitFilter | None = None,
 ) -> dict[str, Any]:
     """
     Generate ArchiMate elements of a specific type (and optionally their relationships).
@@ -469,6 +490,7 @@ def generate_element(
         graph_filter: The step's k-core threshold (``params.graph_filter``; None: none)
         skip_subtypes: Leave out candidate types that inherit from another candidate (``params.skip_subtypes``)
         skip_nested: Leave out directories nested in a selected ancestor that holds nearly the same files (``params.skip_nested``)
+        deployable_units: With enough outermost deployable units, only those units are candidates (``params.deployable_units``)
 
     Returns:
         Dict with success, elements_created, relationships_created, created_elements, errors
@@ -517,6 +539,7 @@ def generate_element(
             graph_filter=graph_filter,
             skip_subtypes=skip_subtypes,
             skip_nested=skip_nested,
+            deployable_units=deployable_units,
         )
         return {
             "success": result.success,
@@ -924,6 +947,7 @@ def run_derivation(
                     graph_filter=_graph_filter(cfg.params),
                     skip_subtypes=_skip_subtypes(cfg.params),
                     skip_nested=_skip_nested(cfg.params, engine),
+                    deployable_units=_deployable_units(cfg.params),
                 )
 
                 elements_created = step_result.get("elements_created", 0)
@@ -1361,6 +1385,7 @@ def run_derivation_iter(
                     graph_filter=_graph_filter(cfg.params),
                     skip_subtypes=_skip_subtypes(cfg.params),
                     skip_nested=_skip_nested(cfg.params, engine),
+                    deployable_units=_deployable_units(cfg.params),
                 )
 
                 elements_created = step_result.get("elements_created", 0)

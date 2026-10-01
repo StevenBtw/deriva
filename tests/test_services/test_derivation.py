@@ -2556,6 +2556,88 @@ class TestSkipSubtypesConfig:
         assert mock_get.return_value.generate.call_args.kwargs["skip_subtypes"] is True
 
 
+class TestDeployableUnitsConfig:
+    """Components at the deployable-unit level: params.deployable_units names the unit files and the minimum."""
+
+    def test_without_the_key_there_is_no_unit_level(self):
+        assert derivation._deployable_units(None) is None
+        assert derivation._deployable_units('{"temperature": 0.0}') is None
+
+    def test_params_set_the_files_and_the_minimum(self):
+        from deriva.modules.derivation.base import UnitFilter
+
+        units = derivation._deployable_units('{"deployable_units": {"file_names": ["pom.xml", "Dockerfile"], "min_units": 2}}')
+
+        assert units == UnitFilter(file_names=frozenset({"pom.xml", "dockerfile"}), min_units=2)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            True,
+            {"min_units": 2},
+            {"file_names": [], "min_units": 2},
+            {"file_names": ["pom.xml", ""], "min_units": 2},
+            {"file_names": ["pom.xml"]},
+            {"file_names": ["pom.xml"], "min_units": 0},
+            {"file_names": ["pom.xml"], "min_units": True},
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, value):
+        with pytest.raises(ValueError, match="deployable_units"):
+            derivation._deployable_units(json.dumps({"deployable_units": value}))
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_generate_element_receives_it(self, runner):
+        from deriva.modules.derivation.base import UnitFilter
+
+        cfg = SimpleNamespace(
+            step_name="ApplicationComponent",
+            element_type="ApplicationComponent",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params='{"deployable_units": {"file_names": ["pom.xml"], "min_units": 2}}',
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["deployable_units"] == UnitFilter(file_names=frozenset({"pom.xml"}), min_units=2)
+
+    def test_generate_element_passes_it_to_the_module(self):
+        from deriva.modules.derivation.base import GenerationResult, UnitFilter
+
+        units = UnitFilter(file_names=frozenset({"pom.xml"}), min_units=2)
+        with (
+            patch.object(derivation, "_get_derivation") as mock_get,
+            patch.object(derivation.config, "get_derivation_patterns", return_value={}),
+        ):
+            mock_get.return_value.generate.return_value = GenerationResult(success=True)
+            derivation.generate_element(
+                graph_manager=MagicMock(),
+                archimate_manager=MagicMock(),
+                engine=MagicMock(),
+                llm_query_fn=MagicMock(),
+                element_type="ApplicationComponent",
+                query="MATCH (n) RETURN n",
+                instruction="Gen",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                deployable_units=units,
+            )
+
+        assert mock_get.return_value.generate.call_args.kwargs["deployable_units"] == units
+
+
 class TestSkipNestedConfig:
     """One module, one element: params.skip_nested names the file type and the share a nested directory must hold."""
 
