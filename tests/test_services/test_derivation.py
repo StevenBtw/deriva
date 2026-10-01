@@ -2380,6 +2380,19 @@ class TestSkipNestedConfig:
     def test_without_the_key_no_candidate_is_left_out(self):
         assert derivation._skip_nested(None) is None
         assert derivation._skip_nested('{"temperature": 0.0}') is None
+        assert derivation._skip_nested('{"skip_nested": null}') is None
+
+    def test_a_share_of_one_is_valid(self):
+        from deriva.modules.derivation.base import NestedFilter
+
+        assert derivation._skip_nested('{"skip_nested": {"file_type": "source", "min_share": 1}}') == NestedFilter(file_type="source", min_share=1.0)
+
+    def test_the_file_type_must_be_a_registered_one(self):
+        registered = [SimpleNamespace(file_type="source"), SimpleNamespace(file_type="docs")]
+        with patch.object(derivation.config, "get_file_types", return_value=registered):
+            assert derivation._skip_nested('{"skip_nested": {"file_type": "source", "min_share": 0.9}}', engine=MagicMock()) is not None
+            with pytest.raises(ValueError, match="skip_nested.*file type"):
+                derivation._skip_nested('{"skip_nested": {"file_type": "sources", "min_share": 0.9}}', engine=MagicMock())
 
     def test_params_set_the_file_type_and_the_share(self):
         from deriva.modules.derivation.base import NestedFilter
@@ -2422,6 +2435,7 @@ class TestSkipNestedConfig:
         generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
         with (
             patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "generate" else []),
+            patch.object(derivation.config, "get_file_types", return_value=[SimpleNamespace(file_type="source")]),
             patch.object(derivation, "generate_element", return_value=generated) as gen,
         ):
             runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])

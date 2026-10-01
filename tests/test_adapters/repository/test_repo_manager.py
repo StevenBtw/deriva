@@ -354,6 +354,31 @@ class TestRepoManagerClone:
         assert result.name == "old-repo"
         assert not pack.exists()
 
+    def test_on_windows_removal_clears_the_read_only_bit(self, tmp_path):
+        """The overwrite goes through the removal that handles read-only files, also where CI runs on Linux."""
+        from deriva.adapters.repository import manager as repo_manager
+
+        target = tmp_path / "old"
+        target.mkdir()
+        with patch.object(repo_manager.os, "name", "nt"), patch.object(repo_manager.shutil, "rmtree") as rmtree:
+            repo_manager._force_remove_directory(target)
+
+        assert rmtree.call_args.kwargs == {"onexc": repo_manager._handle_remove_readonly}
+
+    def test_the_read_only_handler_removes_a_read_only_file(self, tmp_path):
+        import os
+        import stat
+
+        from deriva.adapters.repository import manager as repo_manager
+
+        pack = tmp_path / "pack.idx"
+        pack.write_text("x")
+        pack.chmod(stat.S_IREAD)
+
+        repo_manager._handle_remove_readonly(os.unlink, str(pack), PermissionError())
+
+        assert not pack.exists()
+
     def test_clone_existing_without_overwrite(self, tmp_path):
         """Should fail when directory exists and overwrite=False."""
         manager = RepoManager(workspace_dir=tmp_path)

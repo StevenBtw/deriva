@@ -619,8 +619,15 @@ class ArchimateManager:
         is_valid, errors = self.validator.validate_relationship(new)
         if not is_valid:
             raise ValidationError(f"Relationship validation failed: {errors}")
+        # Attributes that steps wrote directly on the edge (such as a consolidated confidence) go along
+        rows = self.query("MATCH ()-[r]->() WHERE r.identifier = $identifier RETURN properties(r) AS attributes", {"identifier": identifier})
+        written = {"identifier", "name", "documentation", "properties_json"}
+        extra = {k: v for k, v in ((rows[0].get("attributes") if rows else None) or {}).items() if k not in written}
         self.delete_relationship(identifier)
-        return self.add_relationship(new, validate=False)
+        new_identifier = self.add_relationship(new, validate=False)
+        if extra:
+            self.query("MATCH ()-[r]->() WHERE r.identifier = $identifier SET r += $extra", {"identifier": new_identifier, "extra": extra})
+        return new_identifier
 
     def delete_relationships(self, identifiers: list[str]) -> int:
         """Delete multiple relationships by identifier.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from deriva.modules.derivation.base import Candidate
 from deriva.modules.derivation.business_event import (
     EVENT_DECORATOR_PATTERNS,
@@ -209,6 +211,18 @@ class TestConceptCandidates:
 
         # The concepts keep their query order; the method still meets the method threshold
         assert [c.node_id for c in result] == ["c2", "c1"]
+
+    @pytest.mark.parametrize("cap, expected", [(10, ["c2", "c1", "d1", "p1"]), (3, ["c2", "c1", "d1"])])
+    def test_concepts_come_first_then_decorated_then_pattern_methods(self, cap, expected):
+        concepts = [self._concept("c2", "Beta"), self._concept("c1", "Alpha")]
+        decorated = Candidate(node_id="d1", name="on_order", labels=["Graph", "Method"], properties={"decorators": ["webhook"]})
+        matching = Candidate(node_id="p1", name="order_event", labels=["Graph", "Method"], properties={})
+        high = {n: {"pagerank": 0.5} for n in ("c1", "c2", "d1", "p1")}
+        candidates = [matching, concepts[0], decorated, concepts[1]]
+
+        result = BusinessEventDerivation().filter_candidates(candidates=candidates, enrichments=high, max_candidates=cap, include_patterns={"event"}, exclude_patterns=set())
+
+        assert [c.node_id for c in result] == expected
 
 
 class TestFilterCandidates:

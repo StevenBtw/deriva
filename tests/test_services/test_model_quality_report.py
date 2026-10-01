@@ -94,6 +94,7 @@ class TestAnalysisSummary:
             "orphan_share": 0.333,
             "composition_violations": 0,
             "duplicate_pairs": 0,
+            "duplicate_elements": 2,
             "reference": {"precision": 0.5, "recall": 0.25},
         }
         with (
@@ -106,4 +107,44 @@ class TestAnalysisSummary:
         text = (tmp_path / "summary.md").read_text(encoding="utf-8")
         assert path.endswith("summary.md")
         assert "## Model Quality" in text
-        assert "| shop-repo | model-a | 1 | 3 | 1 | 0.33 | 33% | 0 | 0 | 0.50 / 0.25 |" in text
+        assert "| Orphan % |" in text and "| Duplicate elements |" in text
+        assert "| shop-repo | model-a | 1 | 3 | 1 | 0.33 | 33% | 0 | 0 | 2 | 0.50 / 0.25 |" in text
+
+
+class TestReferenceMatching:
+    def test_a_name_match_of_another_type_does_not_count(self, tmp_path):
+        _export(tmp_path / "models" / "shop-repo_model-a_run1.xml", [Element(name="Order Service", element_type="ApplicationComponent", identifier="ac_order")], [])
+        reference = tmp_path / "reference.xml"
+        _export(reference, [Element(name="Order Service", element_type="ApplicationService", identifier="ref_order")], [])
+
+        rows = model_quality_for_session(tmp_path, ["shop-repo"], ["model-a"], reference_models={"shop-repo": str(reference)})
+
+        assert rows[0]["reference"]["precision"] == 0.0
+
+    def test_duplicates_match_a_reference_element_once(self, tmp_path):
+        twin = Element(name="Shop", element_type="ApplicationComponent", identifier="ac_shop_twin")
+        _export(tmp_path / "models" / "shop-repo_model-a_run1.xml", [SHOP, twin], [])
+        reference = tmp_path / "reference.xml"
+        _export(
+            reference,
+            [
+                Element(name="Shop", element_type="ApplicationComponent", identifier="ref_shop"),
+                Element(name="Billing", element_type="ApplicationService", identifier="ref_billing"),
+            ],
+            [],
+        )
+
+        rows = model_quality_for_session(tmp_path, ["shop-repo"], ["model-a"], reference_models={"shop-repo": str(reference)})
+
+        # One of the two Shops matches; the second one costs precision
+        assert rows[0]["reference"]["precision"] == 0.5
+        assert rows[0]["reference"]["recall"] == 0.5
+
+
+class TestCombinedSessions:
+    def test_a_combined_session_reads_the_model_of_the_joined_repositories(self, tmp_path):
+        _export(tmp_path / "models" / "alpha_beta_model-a_run1.xml", [SHOP], [])
+
+        rows = model_quality_for_session(tmp_path, ["beta", "alpha"], ["model-a"], reference_models={"alpha": "unused.xml"})
+
+        assert [(r["repository"], r["run"], r["reference"]) for r in rows] == [("alpha_beta", 1, None)]

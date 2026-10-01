@@ -78,3 +78,12 @@ class TestChains:
 
         assert "BusinessProcess-ApplicationService" not in chains
         assert chains["ApplicationComponent-Node"] == (0, 1)
+
+
+class TestDuplicateElements:
+    def test_elements_of_one_type_with_one_name_key_are_duplicates(self):
+        elements = [_el("a", "ApplicationComponent"), _el("b", "ApplicationComponent"), _el("c", "ApplicationService")]
+        elements[0].name, elements[1].name, elements[2].name = "Order Service", "order_service", "Order Service"
+
+        # The service shares the name but not the type
+        assert compute_model_quality(elements, []).duplicate_elements == 1

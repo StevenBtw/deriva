@@ -3,16 +3,19 @@
 Consistency says whether runs agree; these measures say something about whether the
 model is usable: how many elements take part in no relationship, how dense the lines
 are, whether composition stays exclusive (a part belongs to one whole), whether pairs
-carry several relationship types, and how far the cross-layer chains a reader follows
-are present (a business process served by an application service, a data object
-realizing a business object, a component served by a node).
+carry several relationship types, whether an element repeats another (same type and
+name key; the pipeline should never derive one), and how far the cross-layer chains a
+reader follows are present (a business process served by an application service, a
+data object realizing a business object, a component served by a node).
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+from deriva.common.naming import name_key
 
 from .types import ReferenceElement, ReferenceRelationship
 
@@ -41,6 +44,7 @@ class ModelQuality:
     orphan_share: float
     composition_violations: int  # parts composed into more than one whole
     duplicate_pairs: int  # source and target linked by more than one relationship type
+    duplicate_elements: int  # elements repeating the type and name key of an earlier one (should be 0)
     chains: dict[str, tuple[int, int]] = field(default_factory=dict)  # "A-B": (A linked to a B, all A)
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,6 +76,7 @@ def compute_model_quality(elements: list[ReferenceElement], relationships: list[
             chains[f"{own}-{other}"] = (sum(other in neighbour_types[m] for m in members), len(members))
 
     orphans = sum(e.identifier not in linked for e in elements)
+    keys = Counter((e.element_type, name_key(e.name)) for e in elements)
     return ModelQuality(
         elements=len(elements),
         relationships=len(rels),
@@ -80,5 +85,6 @@ def compute_model_quality(elements: list[ReferenceElement], relationships: list[
         orphan_share=round(orphans / len(elements), 3) if elements else 0.0,
         composition_violations=sum(len(sources) > 1 for sources in wholes.values()),
         duplicate_pairs=sum(len(kinds) > 1 for kinds in pair_types.values()),
+        duplicate_elements=sum(n - 1 for n in keys.values()),
         chains=chains,
     )

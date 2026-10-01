@@ -375,15 +375,18 @@ def benchmark_analyze(
         # Hotspots
         if summary.model_quality:
             typer.echo("MODEL QUALITY (structure of each exported model)")
-            typer.echo("-" * 100)
-            typer.echo(f"{'Repository':<24} {'Model':<18} {'Run':>3} {'Elem':>5} {'Rel':>5} {'Per el':>6} {'Orphans':>7} {'Comp.viol':>9} {'Double':>6} {'Ref P / R':>11}")
+            typer.echo("-" * 108)
+            typer.echo(
+                f"{'Repository':<24} {'Model':<18} {'Run':>3} {'Elem':>5} {'Rel':>5} {'Per el':>6} {'Orphan%':>7} {'Comp.viol':>9} {'Double':>6} {'Dupl.el':>7} {'Ref P / R':>11}"
+            )
             typer.echo("-" * 100)
             for q in summary.model_quality:
                 ref = q.get("reference")
                 ref_text = f"{ref['precision']:.2f} / {ref['recall']:.2f}" if ref else "-"
                 typer.echo(
                     f"{q['repository'][:24]:<24} {q['model'][:18]:<18} {q['run']:>3} {q['elements']:>5} {q['relationships']:>5} "
-                    f"{q['relationships_per_element']:>6.2f} {q['orphan_share']:>7.0%} {q['composition_violations']:>9} {q['duplicate_pairs']:>6} {ref_text:>11}"
+                    f"{q['relationships_per_element']:>6.2f} {q['orphan_share']:>7.0%} {q['composition_violations']:>9} "
+                    f"{q['duplicate_pairs']:>6} {q['duplicate_elements']:>7} {ref_text:>11}"
                 )
                 chains = ", ".join(f"{name} {linked}/{total}" for name, (linked, total) in q.get("chains", {}).items())
                 if chains:

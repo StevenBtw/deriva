@@ -971,3 +971,20 @@ class TestStructureDecidesUniqueness:
         result, _ = self._generate(candidates, ["Shared", "Shared"], per_candidate=False, batch_size=1)
 
         assert [e["name"] for e in result.created_elements] == ["Shared", "Beta"]
+
+
+class TestStepParamsReachTheBaseFilter:
+    """A module that pre-filters and then delegates passes the step params (graph_filter, pattern_labels) on."""
+
+    def test_application_interface_applies_the_graph_filter(self):
+        from deriva.modules.derivation.application_interface import ApplicationInterfaceDerivation
+        from deriva.modules.derivation.base import GraphFilter
+
+        low = Candidate(node_id="low", name="LowController", labels=["File"])
+        high = Candidate(node_id="high", name="HighController", labels=["File"])
+        # The module enriches its candidates from the graph metrics first
+        enrichments = {"low": {"kcore_percentile": 1.0, "pagerank": 0.5}, "high": {"kcore_percentile": 99.0, "pagerank": 0.5}}
+
+        kept = ApplicationInterfaceDerivation().filter_candidates([low, high], enrichments, 10, set(), set(), graph_filter=GraphFilter(min_kcore_percentile=50.0))
+
+        assert [c.node_id for c in kept] == ["high"]

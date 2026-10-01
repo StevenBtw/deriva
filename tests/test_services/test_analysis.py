@@ -63,6 +63,19 @@ class TestAnswerStability:
 
         assert result == {"New": (1, 1), "Old": (1, 0)}
 
+    def test_a_combined_session_reports_its_derivation_under_the_joined_name(self):
+        """Combined runs derive once over all repositories: their run ids carry the joined repository name."""
+        log = OCELLog()
+        for session in ("s1", "s2"):
+            log.create_event("LLMQuery", objects={"BenchmarkRun": [f"{session}:alpha_beta:m:1"]}, config_id="DeriveStep", cache_key="k", decision_hash="d")
+        analyzer = BenchmarkAnalyzer.__new__(BenchmarkAnalyzer)
+        analyzer.ocel_logs = {"all": log}
+        analyzer.repositories = ["beta", "alpha"]
+
+        result = analyzer.analyze_answer_stability()
+
+        assert {s.step: (s.prompts, s.identical) for s in result["alpha_beta"]} == {"DeriveStep": (1, 1)}
+
 
 class TestSessionInfo:
     """The analyzer reads the benchmark's session metadata (it was renamed from summary.json)."""

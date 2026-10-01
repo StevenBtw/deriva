@@ -1845,10 +1845,11 @@ def model_quality_for_session(
 ) -> list[dict[str, Any]]:
     """Structural quality of every model a benchmark session exported, one row per run.
 
-    Reads ``models/{repo}_{model}_run{N}.xml`` and adds, where a reference model exists,
-    precision and recall of the elements against it (indicative: the references are
-    hand-made and partly not derivable). Only a name match with the same type counts;
-    a match on the type alone does not.
+    Reads ``models/{repo}_{model}_run{N}.xml`` (for a combined session the repositories'
+    joined name) and adds, where a reference model exists, precision and recall of the
+    elements against it (indicative: the references are hand-made and partly not
+    derivable). Only a name match with the same type counts, and each reference element
+    at most once, so a duplicate costs precision.
     """
     if reference_models is None:
         from deriva.services.analysis import REFERENCE_MODELS
@@ -1856,7 +1857,8 @@ def model_quality_for_session(
         reference_models = REFERENCE_MODELS
     rows: list[dict[str, Any]] = []
     models_dir = Path(session_dir) / "models"
-    for repo in repositories:
+    names = list(repositories) + (["_".join(sorted(repositories))] if len(repositories) > 1 else [])
+    for repo in names:
         reference = _reference_elements(reference_models.get(repo))
         for model in models:
             prefix = f"{repo.replace('/', '_')}_{model.replace('/', '_')}_run"
@@ -1870,9 +1872,9 @@ def model_quality_for_session(
                 row["reference"] = None
                 if reference:
                     derived = [{"id": e.identifier, "name": e.name, "type": e.element_type} for e in elements]
-                    named = [m for m in match_elements(derived, reference) if m.match_type in NAME_MATCHES]
+                    named = {m.reference_id for m in match_elements(derived, reference) if m.match_type in NAME_MATCHES and m.derived_type == m.reference_type}
                     precision = len(named) / len(derived) if derived else 0.0
-                    recall = len({m.reference_id for m in named}) / len(reference)
+                    recall = len(named) / len(reference)
                     row["reference"] = {"precision": round(precision, 3), "recall": round(recall, 3), "reference_elements": len(reference)}
                 rows.append(row)
     return rows
@@ -2775,10 +2777,10 @@ class BenchmarkAnalyzer:
                     "## Model Quality",
                     "",
                     "Structure of each exported model: relationships per element, elements in no relationship, parts composed into more than one whole,",
-                    "pairs with several relationship types, and element precision and recall against the reference model (indicative).",
+                    "pairs with several relationship types, elements repeating another (should be 0), and element precision and recall against the reference model (indicative).",
                     "",
-                    "| Repository | Model | Run | Elements | Relationships | Per element | Orphans | Composition violations | Double pairs | Reference P / R |",
-                    "|------------|-------|-----|----------|---------------|-------------|---------|------------------------|--------------|-----------------|",
+                    "| Repository | Model | Run | Elements | Relationships | Per element | Orphan % | Comp. violations | Double pairs | Duplicate elements | Reference P / R |",
+                    "|------------|-------|-----|----------|---------------|-------------|----------|------------------------|--------------|--------------------|-----------------|",
                 ]
             )
             for q in summary.model_quality:
@@ -2786,7 +2788,7 @@ class BenchmarkAnalyzer:
                 ref_text = f"{ref['precision']:.2f} / {ref['recall']:.2f}" if ref else "-"
                 lines.append(
                     f"| {q['repository']} | {q['model']} | {q['run']} | {q['elements']} | {q['relationships']} | {q['relationships_per_element']:.2f} | "
-                    f"{q['orphan_share']:.0%} | {q['composition_violations']} | {q['duplicate_pairs']} | {ref_text} |"
+                    f"{q['orphan_share']:.0%} | {q['composition_violations']} | {q['duplicate_pairs']} | {q['duplicate_elements']} | {ref_text} |"
                 )
             lines.append("")
 

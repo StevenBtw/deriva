@@ -112,10 +112,13 @@ class BusinessEventDerivation(HybridDerivation):
 
         Strategy:
         1. Enrich with graph metrics
-        2. Detect event-related decorators (webhook, event, signal, etc.)
-        3. Filter by event patterns
-        4. Apply graph filtering (PageRank threshold)
-        5. Prioritize decorator-detected handlers in final selection
+        2. Business concepts were chosen by the query: they keep the query order, come
+           first and skip the name patterns and the PageRank threshold
+        3. Other candidates: detect event-related decorators (webhook, event, signal, etc.)
+        4. Filter them by event patterns
+        5. Apply graph filtering (PageRank threshold)
+        6. Order: concepts, decorator-detected handlers, pattern matches, then the rest
+           while places remain
         """
         include_patterns = include_patterns or set()
         exclude_patterns = exclude_patterns or set()

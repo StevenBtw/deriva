@@ -305,9 +305,9 @@ class BenchmarkAnalyzer:
                         continue
                     runs = answers.setdefault(repo, {}).setdefault(family, {})
                     runs.setdefault(run_id, {}).setdefault((step, key), []).append(event.attributes.get("decision_hash") or event.attributes.get("response_hash"))
-        return {
-            repo: [s for family in ("extraction", "derivation") for s in compute_answer_stability(answers[repo].get(family, {}))] for repo in self.repositories if repo in answers
-        }
+        # A combined session derives once over all repositories, under their joined name
+        names = list(self.repositories) + (["_".join(sorted(self.repositories))] if len(self.repositories) > 1 else [])
+        return {repo: [s for family in ("extraction", "derivation") for s in compute_answer_stability(answers[repo].get(family, {}))] for repo in names if repo in answers}
 
     def analyze_semantic_match(self) -> dict[str, SemanticMatchReport]:
         """

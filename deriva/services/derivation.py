@@ -263,12 +263,14 @@ def _skip_subtypes(params: str | None) -> bool:
     return value
 
 
-def _skip_nested(params: str | None) -> NestedFilter | None:
+def _skip_nested(params: str | None, engine: Any = None) -> NestedFilter | None:
     """The file type and share that make a nested directory candidate leave (``params.skip_nested``).
 
     ``{"file_type": "source", "min_share": 0.9}`` leaves out a selected directory that holds at
     least 90% of the source files below its nearest selected ancestor directory, which represents
-    it. Without the key no candidate is left out this way.
+    it. Without the key no candidate is left out this way. With ``engine`` the file type
+    must be a registered one (``config filetype list``): an unknown type would count no
+    files and silently leave nothing out.
     """
     settings = json.loads(params).get("skip_nested") if params else None
     if settings is None:
@@ -279,6 +281,8 @@ def _skip_nested(params: str | None) -> NestedFilter | None:
         raise ValueError(f"params.skip_nested needs a file_type, got {settings!r}")
     if isinstance(share, bool) or not isinstance(share, (int, float)) or not 0 < share <= 1:
         raise ValueError(f"params.skip_nested needs a min_share above 0 and at most 1, got {settings!r}")
+    if engine is not None and file_type not in {ft.file_type for ft in config.get_file_types(engine)}:
+        raise ValueError(f"params.skip_nested names file type {file_type!r}, which is not a registered file type")
     return NestedFilter(file_type=file_type, min_share=float(share))
 
 
@@ -828,7 +832,7 @@ def run_derivation(
                     prompt=_element_prompt(cfg.params),
                     graph_filter=_graph_filter(cfg.params),
                     skip_subtypes=_skip_subtypes(cfg.params),
-                    skip_nested=_skip_nested(cfg.params),
+                    skip_nested=_skip_nested(cfg.params, engine),
                 )
 
                 elements_created = step_result.get("elements_created", 0)
@@ -1261,7 +1265,7 @@ def run_derivation_iter(
                     prompt=_element_prompt(cfg.params),
                     graph_filter=_graph_filter(cfg.params),
                     skip_subtypes=_skip_subtypes(cfg.params),
-                    skip_nested=_skip_nested(cfg.params),
+                    skip_nested=_skip_nested(cfg.params, engine),
                 )
 
                 elements_created = step_result.get("elements_created", 0)

@@ -843,6 +843,7 @@ class TestBenchmarkAnalyzeCommand:
                 "orphan_share": 0.2,
                 "composition_violations": 2,
                 "duplicate_pairs": 1,
+                "duplicate_elements": 4,
                 "chains": {"ApplicationService-ApplicationComponent": (3, 4)},
                 "reference": {"precision": 0.4, "recall": 0.6},
             }
@@ -857,6 +858,7 @@ class TestBenchmarkAnalyzeCommand:
 
         assert result.exit_code == 0
         assert "MODEL QUALITY" in result.stdout
+        assert "Orphan%" in result.stdout and "Dupl.el" in result.stdout
         assert "repo1" in result.stdout and "1.50" in result.stdout and "20%" in result.stdout
         assert "ApplicationService-ApplicationComponent 3/4" in result.stdout
 

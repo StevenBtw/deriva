@@ -79,6 +79,18 @@ def test_a_relationship_can_be_retyped_keeping_its_identity_and_data(am):
     assert (relationship.name, relationship.documentation, relationship.properties) == ("writes", "d", {"confidence": 0.8})
 
 
+def test_retyping_keeps_attributes_written_on_the_edge(am):
+    # Relationship consolidation writes confidence and a consolidated flag directly on the edge
+    am.add_element(Element(name="Service", element_type="ApplicationService", identifier="as_1"))
+    am.add_element(Element(name="Data", element_type="DataObject", identifier="do_1"))
+    am.add_relationship(Relationship(source="as_1", target="do_1", relationship_type="Flow", identifier="rel_1"), validate=False)
+    am.query("MATCH ()-[r]->() WHERE r.identifier = 'rel_1' SET r.confidence = 0.77, r.consolidated = true")
+
+    am.retype_relationship("rel_1", "Access")
+
+    assert am.query("MATCH ()-[r]->() WHERE r.identifier = 'rel_1' RETURN type(r) AS t, r.confidence AS c, r.consolidated AS k") == [{"t": "Model:Access", "c": 0.77, "k": True}]
+
+
 def test_retyping_a_missing_relationship_is_an_error(am):
     with pytest.raises(ValueError, match="not found"):
         am.retype_relationship("missing", "Access")

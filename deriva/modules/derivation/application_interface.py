@@ -101,4 +101,4 @@ class ApplicationInterfaceDerivation(HybridDerivation):
         filtered = [c for c in candidates if c.name and not c.name.startswith("_")]
 
         # Delegate to base class for pattern + graph filtering
-        return super().filter_candidates(filtered, enrichments, max_candidates, include_patterns, exclude_patterns)
+        return super().filter_candidates(filtered, enrichments, max_candidates, include_patterns, exclude_patterns, **kwargs)

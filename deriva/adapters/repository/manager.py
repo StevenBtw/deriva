@@ -197,7 +197,7 @@ def _force_remove_directory(path: Path, max_retries: int = 3) -> None:
     for attempt in range(max_retries):
         try:
             if os.name == "nt":
-                shutil.rmtree(path, onerror=_handle_remove_readonly)
+                shutil.rmtree(path, onexc=_handle_remove_readonly)
             else:
                 shutil.rmtree(path)
             return
