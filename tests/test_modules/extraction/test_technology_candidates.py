@@ -145,6 +145,59 @@ class TestCollect:
         assert list(collected.items) == ["npm library::alpha-client"]
         assert collected.declared["npm library::alpha-client"] == {"a/package.json", "b/package.json"}
 
+    def test_a_compose_service_that_is_an_own_module_is_no_item(self):
+        compose = """services:
+  billing-service:
+    image: acme/shop:billing
+  ledger:
+    image: acme/shop:ledgerservice
+  store:
+    image: storedb:9
+"""
+        own = frozenset({"billingservice", "ledgerservice"})
+
+        collected = tc.collect([_file("deploy/docker-compose.yml", compose, "infra", "docker-compose")], [], own_units=own)
+
+        # The service named like an own unit and the one running an own unit's image leave; the store stays
+        assert sorted(collected.items) == ["compose service::store"]
+
+    def test_items_named_after_the_repository_are_no_items(self):
+        manifest = """spec:
+  containers:
+    - image: acme/shop-billing:1.2
+    - image: redis:7
+"""
+        compose = """services:
+  billing:
+    image: acme/shop-billing:1.2
+  db:
+    image: postgres:16
+"""
+        files = [
+            _file("deploy/app.yaml", manifest, "infra", "kubernetes"),
+            _file("deploy/docker-compose.yml", compose, "infra", "docker-compose"),
+            _file("web/package.json", _package("shop-client", "left-pad")),
+        ]
+
+        collected = tc.collect(files, [], repository_name="Shop")
+
+        # The repository's own image, the service running it and its own client library are the software itself
+        assert sorted(collected.items) == ["compose service::db", "container image::redis:7", "npm library::left-pad"]
+
+    def test_own_units_are_the_directories_holding_a_unit_file(self):
+        files = [
+            {"path": "billing-service/build.gradle", "file_type": "build", "subtype": "gradle"},
+            {"path": "ledger/package.json", "file_type": "dependency", "subtype": "javascript"},
+            {"path": "db/Dockerfile", "file_type": "infra", "subtype": "docker"},
+            {"path": "pom.xml", "file_type": "build", "subtype": "maven"},
+            {"path": "docs/notes.md", "file_type": "docs", "subtype": "markdown"},
+        ]
+
+        units = tc.own_unit_names(files, file_types=frozenset({"build", "dependency"}), subtypes=frozenset({"docker"}))
+
+        # The repository root is no module of its own
+        assert units == frozenset({"billingservice", "ledger", "db"})
+
     def test_file_types_imply_the_configured_platforms(self):
         collected = tc.collect([_file("package.json", _package()), _file("docker-compose.yml", "services: {}", "infra", "docker-compose")], PLATFORMS)
 

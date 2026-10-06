@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
+import pytest
+
 # =============================================================================
 # Tests for refine/base.py
 # =============================================================================
@@ -1224,6 +1226,155 @@ class TestCrossLayerCoherenceStep:
 
         assert result.success is False
         assert "Query error" in result.errors[0]
+
+
+class TestUnanchoredLayers:
+    """Elements of a listed layer without a link to another layer, directly or through their own layer (params.disable_unanchored)."""
+
+    TYPES = {
+        "svc": "ApplicationService",
+        "proc": "BusinessProcess",
+        "obj": "BusinessObject",
+        "actor": "BusinessActor",
+        "event": "BusinessEvent",
+        "node": "Node",
+    }
+    # svc serves proc, proc accesses obj; actor triggers event; node has no link at all
+    LINKS = [("svc", "proc"), ("proc", "obj"), ("actor", "event")]
+
+    def test_unlinked_and_business_only_islands_are_unanchored(self):
+        from deriva.modules.derivation.refine.cross_layer import unanchored
+
+        # obj is anchored through proc; actor and event only link to each other
+        assert unanchored(self.TYPES, self.LINKS, ["Business"]) == ["actor", "event"]
+
+    def test_layers_not_listed_are_untouched(self):
+        from deriva.modules.derivation.refine.cross_layer import unanchored
+
+        assert unanchored(self.TYPES, self.LINKS, ["Technology"]) == ["node"]
+        assert unanchored(self.TYPES, self.LINKS, []) == []
+
+    def test_links_to_unknown_elements_do_not_anchor(self):
+        from deriva.modules.derivation.refine.cross_layer import unanchored
+
+        # "gone" is not among the elements (disabled earlier), so the actor has nothing to stand on
+        assert unanchored(self.TYPES, [*self.LINKS, ("gone", "actor")], ["Business"]) == ["actor", "event"]
+
+    def _manager(self):
+        from deriva.adapters.archimate.models import Element, Relationship
+
+        manager = MagicMock()
+        manager.namespace = "Model"
+        manager.query.return_value = []
+        manager.get_elements.return_value = [Element(name=i, element_type=t, identifier=i) for i, t in self.TYPES.items()]
+        manager.get_relationships.return_value = [Relationship(source=s, target=t, relationship_type="Serving") for s, t in self.LINKS]
+        return manager
+
+    def test_step_disables_unanchored_business_elements(self):
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, params={"disable_unanchored": ["Business"]})
+
+        assert result.success is True
+        manager.get_elements.assert_called_once_with(enabled_only=True)
+        manager.disable_elements.assert_called_once_with(["actor", "event"], reason="no_cross_layer_anchor")
+        assert result.elements_disabled == 2
+        assert {d["identifier"] for d in result.details if d["action"] == "disabled"} == {"actor", "event"}
+
+    def test_step_without_the_param_disables_nothing(self):
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager)
+
+        assert result.success is True
+        manager.disable_elements.assert_not_called()
+        assert result.elements_disabled == 0
+
+    def test_code_support_needs_more_names_for_a_single_word(self):
+        from deriva.modules.derivation.refine.cross_layer import code_supported
+
+        names = {"order": "Order", "policy": "Insurance Policy", "actor": "Actor", "ledger": "Ledger"}
+        code = ["OrderService", "orders", "OrderController", "InsurancePolicyEntity", "ActorSystem", "Ordering", "LedgerView", "LedgerView"]
+
+        # Order: three names (Ordering is another word); Insurance Policy: one name, two words;
+        # Actor: one name only; Ledger: the same name twice counts once
+        assert code_supported(names, code, multi_word_names=1, single_word_names=3) == {"order", "policy"}
+
+    def test_without_a_single_word_count_only_names_of_several_words_count(self):
+        from deriva.modules.derivation.refine.cross_layer import code_supported
+
+        names = {"order": "Order", "policy": "Insurance Policy"}
+        code = ["OrderService", "orders", "OrderController", "InsurancePolicyEntity"]
+
+        assert code_supported(names, code, multi_word_names=1, single_word_names=None) == {"policy"}
+
+    class Graph:
+        """Code names and the source concept names, as the step asks for them."""
+
+        def query(self, query, params=None):
+            if "TypeDefinition" in query:
+                return [{"name": n} for n in ("OrderService", "OrderController")]
+            if "Directory" in query:
+                return [{"name": "orders"}]
+            return [{"id": i, "name": "Order"} for i in (params or {}).get("ids", []) if i == "concept::r::order"]
+
+    def test_step_keeps_unanchored_elements_the_code_names(self):
+        from deriva.adapters.archimate.models import Element
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        manager.get_elements.return_value = [
+            Element(name=i, element_type=t, identifier=i, properties={"source": "concept::r::order"} if i == "actor" else {}) for i, t in self.TYPES.items()
+        ]
+        params = {"disable_unanchored": ["Business"], "code_support": {"multi_word_names": 1, "single_word_names": 3}}
+
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=self.Graph(), params=params)
+
+        assert result.success is True
+        manager.disable_elements.assert_called_once_with(["event"], reason="no_cross_layer_anchor")
+
+    def test_step_accepts_no_single_word_count(self):
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        params = {"disable_unanchored": ["Business"], "code_support": {"multi_word_names": 1, "single_word_names": None}}
+
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=self.Graph(), params=params)
+
+        assert result.success is True
+        manager.disable_elements.assert_called_once_with(["actor", "event"], reason="no_cross_layer_anchor")
+
+    @pytest.mark.parametrize(
+        "support",
+        [
+            {"multi_word_names": 0, "single_word_names": 3},
+            {"multi_word_names": 1, "single_word_names": 0},
+            {"multi_word_names": None, "single_word_names": 3},
+            {"multi_word_names": 1},
+            ["multi_word_names"],
+        ],
+    )
+    def test_step_rejects_invalid_code_support(self, support):
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=self.Graph(), params={"disable_unanchored": ["Business"], "code_support": support})
+
+        assert result.success is False
+        assert "code_support" in result.errors[0]
+        manager.disable_elements.assert_not_called()
+
+    def test_step_rejects_an_unknown_layer(self):
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, params={"disable_unanchored": ["Business"]})
+
+        assert result.success is False
+        assert "Business" in result.errors[0]
+        manager.disable_elements.assert_not_called()
 
 
 # =============================================================================

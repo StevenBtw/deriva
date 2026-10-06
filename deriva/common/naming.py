@@ -227,3 +227,20 @@ def name_key(name: str) -> str:
     words = _words(name)
     acronyms = len(words) == 1 or any(ch.islower() for ch in name)
     return "".join(_key_word(word, acronyms) for word in words)
+
+
+def contains_name(text: str, name: str) -> bool:
+    """Whether ``name``, in any spelling, is one or more consecutive words of ``text``: its key equals the joined keys
+    of those words ("Big Data Kafka" holds "bigdata", "acme/teastore-persistence" holds "TeaStore"). Part of a word
+    or part of the name does not count."""
+    key = name_key(name)
+    keys = [name_key(word) for word in _words(text)]
+    for start in range(len(keys)):
+        joined = ""
+        for word in keys[start:]:
+            joined += word
+            if joined == key:
+                return True
+            if not key.startswith(joined):
+                break
+    return False

@@ -215,9 +215,10 @@ def classify_files(file_paths: list[str], file_type_registry: list[dict[str, str
                 undefined.append({"path": file_path, "extension": "", "reason": "no_extension"})
                 continue
 
-            if extension in extension_map:
-                # Known file type by extension
-                type_info = extension_map[extension]
+            # A registered extension longer than four letters (.gradle, .properties) is kept with the
+            # dotfile names; it still classifies a file by its suffix
+            type_info = extension_map.get(extension) or filename_map.get(extension)
+            if type_info:
                 classified.append(
                     {
                         "path": file_path,

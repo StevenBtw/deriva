@@ -2087,84 +2087,12 @@ class TestBenchmarkRunOptions:
         assert result.exit_code == 0
         assert mock_session.run_benchmark.call_args[1]["defer_relationships"] is deferred
 
-    @patch("deriva.cli.commands.benchmark.create_benchmark_progress_reporter")
-    @patch("deriva.cli.commands.benchmark.PipelineSession")
-    def test_run_with_no_enrichment_cache(self, mock_session_class, mock_progress):
-        """Should disable enrichment cache."""
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.session_id = "bench_123"
-        mock_result.runs_completed = 3
-        mock_result.runs_failed = 0
-        mock_result.duration_seconds = 60.0
-        mock_result.ocel_path = "ocel.json"
-        mock_result.success = True
-        mock_result.errors = []
-        mock_session.run_benchmark.return_value = mock_result
-        mock_session_class.return_value.__enter__.return_value = mock_session
+    @pytest.mark.parametrize("flag", [["--no-enrichment-cache"], ["--nocache-enrichment-configs", "ApplicationComponent"]])
+    def test_enrichment_cache_flags_are_gone(self, flag):
+        """Enrichment values are read once per derivation run, so there is no cache to switch off."""
+        result = runner.invoke(app, ["benchmark", "run", "--repos", "repo1", "--models", "model1", *flag])
 
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        result = runner.invoke(
-            app,
-            [
-                "benchmark",
-                "run",
-                "--repos",
-                "repo1",
-                "--models",
-                "gpt4",
-                "--no-enrichment-cache",
-            ],
-        )
-
-        assert result.exit_code == 0
-        assert "Enrichment cache: disabled" in result.stdout
-        call_kwargs = mock_session.run_benchmark.call_args[1]
-        assert call_kwargs["use_enrichment_cache"] is False
-
-    @patch("deriva.cli.commands.benchmark.create_benchmark_progress_reporter")
-    @patch("deriva.cli.commands.benchmark.PipelineSession")
-    def test_run_with_nocache_enrichment_configs(self, mock_session_class, mock_progress):
-        """Should pass nocache-enrichment-configs option."""
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.session_id = "bench_123"
-        mock_result.runs_completed = 3
-        mock_result.runs_failed = 0
-        mock_result.duration_seconds = 60.0
-        mock_result.ocel_path = "ocel.json"
-        mock_result.success = True
-        mock_result.errors = []
-        mock_session.run_benchmark.return_value = mock_result
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        result = runner.invoke(
-            app,
-            [
-                "benchmark",
-                "run",
-                "--repos",
-                "repo1",
-                "--models",
-                "gpt4",
-                "--nocache-enrichment-configs",
-                "ApplicationComponent",
-            ],
-        )
-
-        assert result.exit_code == 0
-        assert "No-cache enrichment configs: ['ApplicationComponent']" in result.stdout
-        call_kwargs = mock_session.run_benchmark.call_args[1]
-        assert call_kwargs["nocache_enrichment_configs"] == ["ApplicationComponent"]
+        assert result.exit_code == 2
 
 
 class TestBenchmarkListOptions:

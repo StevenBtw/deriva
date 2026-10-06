@@ -49,6 +49,7 @@ class TestMerge:
         (candidate,) = cc.merge_candidates(tool, "repo")
 
         assert candidate.snippets == ["first b", "first a"]
+        assert candidate.snippet_paths == ["b.md", "a.md"]
 
     def test_with_one_document_the_second_snippet_is_a_different_sentence(self):
         tool = [_tool_candidate("Ledger", "en", "ledger", [("a.md", 0, "same"), ("a.md", 0, "same"), ("a.md", 3, "other")])]
@@ -56,6 +57,7 @@ class TestMerge:
         (candidate,) = cc.merge_candidates(tool, "repo")
 
         assert candidate.snippets == ["same", "other"]
+        assert candidate.snippet_paths == ["a.md", "a.md"]
 
 
 class TestPhrases:
@@ -180,6 +182,41 @@ class TestPrompt:
         prompt = cc.build_classification_prompt("Classify.", [candidate])
 
         assert prompt == ('Classify.\n\nTerms:\n1. "Ledger" (original: "Hauptbuch", German)\n   context: "The ledger is closed."\n   context: "Das Hauptbuch wird geführt."\n')
+
+    LEDGER = cc.ConceptCandidate(key="ledger", name="Ledger", kind="noun", count=2, documents={}, originals=[], snippets=["The ledger is closed."], snippet_paths=["docs/a.md"])
+
+    def test_the_system_description_comes_before_the_terms(self):
+        prompt = cc.build_classification_prompt("Classify.", [self.LEDGER], system_description="A service that keeps ledgers.")
+
+        assert prompt == 'Classify.\n\nSystem description:\nA service that keeps ledgers.\n\nTerms:\n1. "Ledger"\n   context: "The ledger is closed."\n'
+
+    def test_context_lines_can_name_their_document(self):
+        prompt = cc.build_classification_prompt("Classify.", [self.LEDGER], show_sources=True)
+
+        assert prompt == 'Classify.\n\nTerms:\n1. "Ledger"\n   context (docs/a.md): "The ledger is closed."\n'
+
+
+class TestSystemDescription:
+    README = (
+        "[![Build](https://ci/badge.svg)](https://ci)\n"
+        "# Ledger\n\n"
+        "A service that keeps [ledgers](docs/ledger.md) for small shops.\n"
+        "![diagram](d.png)\n"
+        "```bash\npip install ledger\n```\n"
+        "| Column | Meaning |\n"
+        "Module | Coverage ![badge](b.svg)\n"
+        "<p align=center>logo</p>\n"
+        "**Shop owners** close their `books` every month.\n"
+    )
+
+    def test_the_prose_of_the_opening_without_markup(self):
+        assert cc.system_description(self.README, 500) == "A service that keeps ledgers for small shops. Shop owners close their books every month."
+
+    def test_cut_at_a_word_boundary(self):
+        assert cc.system_description(self.README, 30) == "A service that keeps ledgers"
+
+    def test_zero_characters_means_no_description(self):
+        assert cc.system_description(self.README, 0) == ""
 
 
 class TestParse:

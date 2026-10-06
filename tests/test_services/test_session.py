@@ -1314,8 +1314,6 @@ class TestPipelineSessionBenchmarking:
                 bench_hash=True,
                 defer_relationships=True,
                 per_repo=True,
-                use_enrichment_cache=False,
-                nocache_enrichment_configs=["SomeConfig"],
             )
 
             config_call = mock_config.call_args

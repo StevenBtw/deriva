@@ -17,7 +17,10 @@ Refine Step Name: "cross_layer"
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
+
+from deriva.common.naming import _words, singularize
 
 from .base import RefineResult, register_refine_step
 
@@ -60,6 +63,67 @@ VALID_CROSS_LAYER_RELS = {
     "Association",
 }
 
+LAYERS = {"Business": BUSINESS_LAYER, "Application": APPLICATION_LAYER, "Technology": TECHNOLOGY_LAYER}
+
+
+def unanchored(element_types: dict[str, str], links: Iterable[tuple[str, str]], layers: Iterable[str]) -> list[str]:
+    """Elements of the given layers without a link to another layer, directly or through links within their layer.
+
+    Args:
+        element_types: Element identifier -> ArchiMate type (the elements that count; links to others are ignored)
+        links: (source, target) identifier pairs, direction ignored
+        layers: Layer names (keys of LAYERS) whose elements need an anchor
+
+    Returns:
+        Sorted identifiers of the unanchored elements
+    """
+    layer_of = {element_type: name for name, types in LAYERS.items() for element_type in types}
+    listed = set(layers)
+    candidates = {i for i, t in element_types.items() if layer_of.get(t) in listed}
+    pairs = [(s, t) for s, t in links if s in element_types and t in element_types]
+    anchored = {a for s, t in pairs for a, b in ((s, t), (t, s)) if a in candidates and layer_of.get(element_types[b]) != layer_of.get(element_types[a])}
+    changed = True
+    while changed:
+        changed = False
+        for s, t in pairs:
+            if s in candidates and t in candidates and (s in anchored) != (t in anchored):
+                anchored |= {s, t}
+                changed = True
+    return sorted(candidates - anchored)
+
+
+def _name_words(name: str) -> tuple[str, ...]:
+    return tuple(singularize(w.lower()) for w in _words(name or "") if w)
+
+
+def _in_a_row(words: tuple[str, ...], part: tuple[str, ...]) -> bool:
+    return any(words[i : i + len(part)] == part for i in range(len(words) - len(part) + 1))
+
+
+def code_supported(names: dict[str, str], code_names: Iterable[str], multi_word_names: int, single_word_names: int | None) -> set[str]:
+    """Identifiers whose name's words appear in a row in enough distinct code names (type definition and
+    directory names): `multi_word_names` for a name of two or more words, `single_word_names` for one word
+    (None: a single word never counts)."""
+    code = [words for words in {_name_words(n) for n in code_names} if words]
+    supported = set()
+    for identifier, name in names.items():
+        words = _name_words(name)
+        needed = multi_word_names if len(words) > 1 else single_word_names
+        if words and needed is not None and sum(1 for c in code if _in_a_row(c, words)) >= needed:
+            supported.add(identifier)
+    return supported
+
+
+_CODE_NAME_QUERIES = (
+    "MATCH (t:Graph:TypeDefinition) WHERE t.category <> 'external_reference' RETURN DISTINCT t.typeName AS name",
+    "MATCH (d:Graph:Directory) RETURN DISTINCT d.name AS name",
+)
+
+
+def _code_names(graph_manager: GraphManager) -> list[str]:
+    """The repository's own type definition names and its directory names."""
+    return [row["name"] for query in _CODE_NAME_QUERIES for row in graph_manager.query(query) if row.get("name")]
+
 
 @register_refine_step("cross_layer_coherence")
 class CrossLayerCoherenceStep:
@@ -76,12 +140,17 @@ class CrossLayerCoherenceStep:
 
         Args:
             archimate_manager: Manager for ArchiMate model operations
-            graph_manager: Not used for this step
+            graph_manager: Source graph, for the code names of `code_support`
             llm_query_fn: Not used for this step
             params: Optional parameters:
                 - check_business_to_app: Validate Business→App connections (default: True)
                 - check_app_to_tech: Validate App→Tech connections (default: True)
                 - strict_mode: Fail on any violations (default: False)
+                - disable_unanchored: Layers (Business, Application, Technology) whose elements are disabled
+                  when they have no link to another layer, directly or through their own layer (default: none)
+                - code_support: {"multi_word_names": n, "single_word_names": m}: an unanchored element stays
+                  when the words of its source's name appear in a row in at least n (m for one word, null: a
+                  single word never counts) distinct type definition or directory names (default: no code support)
 
         Returns:
             RefineResult with details of cross-layer issues found
@@ -89,14 +158,42 @@ class CrossLayerCoherenceStep:
         params = params or {}
         check_business_to_app = params.get("check_business_to_app", True)
         check_app_to_tech = params.get("check_app_to_tech", True)
+        disable_unanchored = params.get("disable_unanchored", [])
+        code_support = params.get("code_support")
 
         result = RefineResult(
             success=True,
             step_name="cross_layer_coherence",
         )
 
+        if not isinstance(disable_unanchored, list) or any(layer not in LAYERS for layer in disable_unanchored):
+            result.success = False
+            result.errors.append(f"params.disable_unanchored must be a list of {sorted(LAYERS)}, got {disable_unanchored!r}")
+            return result
+        support_keys = ("multi_word_names", "single_word_names")
+
+        def count(value: Any, optional: bool) -> bool:
+            return (optional and value is None) or (isinstance(value, int) and not isinstance(value, bool) and value >= 1)
+
+        if code_support is not None and not (
+            isinstance(code_support, dict)
+            and set(code_support) == set(support_keys)
+            and count(code_support["multi_word_names"], optional=False)
+            and count(code_support["single_word_names"], optional=True)
+            and graph_manager is not None
+        ):
+            result.success = False
+            result.errors.append(
+                f"params.code_support must be {{{', '.join(support_keys)}}} with counts of at least 1 (single_word_names may be null) "
+                f"and needs the source graph, got {code_support!r}"
+            )
+            return result
+
         try:
             ns = archimate_manager.namespace
+
+            if disable_unanchored:
+                self._disable_unanchored(archimate_manager, result, disable_unanchored, graph_manager, code_support)
 
             # Check Business Layer → Application Layer connections
             if check_business_to_app:
@@ -141,6 +238,47 @@ class CrossLayerCoherenceStep:
             result.errors.append(str(e))
 
         return result
+
+    def _disable_unanchored(
+        self,
+        archimate_manager: ArchimateManager,
+        result: RefineResult,
+        layers: list[str],
+        graph_manager: GraphManager | None = None,
+        code_support: dict[str, int] | None = None,
+    ) -> None:
+        """Disable the enabled elements of the given layers that have no anchor in another layer and, with
+        `code_support`, whose source's name the code does not carry."""
+        elements = {e.identifier: e for e in archimate_manager.get_elements(enabled_only=True)}
+        links = [(r.source, r.target) for r in archimate_manager.get_relationships()]
+        identifiers = unanchored({i: e.element_type for i, e in elements.items()}, links, layers)
+        if identifiers and code_support and graph_manager is not None:
+            sources = {i: (elements[i].properties or {}).get("source") for i in identifiers}
+            rows = graph_manager.query("MATCH (n) WHERE n.id IN $ids RETURN n.id AS id, n.conceptName AS name", {"ids": sorted({s for s in sources.values() if s})})
+            source_names = {row["id"]: row["name"] for row in rows if row.get("name")}
+            names = {i: source_names.get(sources[i] or "", elements[i].name) for i in identifiers}
+            kept = code_supported(names, _code_names(graph_manager), code_support["multi_word_names"], code_support["single_word_names"])
+            for identifier in sorted(kept):
+                element = elements[identifier]
+                result.details.append({"action": "kept", "identifier": identifier, "name": element.name, "element_type": element.element_type, "reason": "code_support"})
+            identifiers = [i for i in identifiers if i not in kept]
+        if not identifiers:
+            return
+        archimate_manager.disable_elements(identifiers, reason="no_cross_layer_anchor")
+        logger.info("Disabled %d elements without a cross-layer anchor (%s)", len(identifiers), ", ".join(layers))
+        result.elements_disabled += len(identifiers)
+        result.issues_fixed += len(identifiers)
+        for identifier in identifiers:
+            element = elements[identifier]
+            result.details.append(
+                {
+                    "action": "disabled",
+                    "identifier": identifier,
+                    "name": element.name,
+                    "element_type": element.element_type,
+                    "reason": "no_cross_layer_anchor",
+                }
+            )
 
     def _check_layer_connections(
         self,

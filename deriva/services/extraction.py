@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
-from deriva.adapters.graph import GraphManager
+from deriva.adapters.graph import STORAGE_FORMAT, GraphManager
 from deriva.common.chunking import chunk_content, should_chunk
 from deriva.common.types import ProgressUpdate
 
@@ -119,7 +119,7 @@ def compute_extraction_fingerprint(
     repo_info = repo_mgr.get_repository_info(repo_name)
     commit = repo_info.last_commit if repo_info else "unknown"
 
-    return hash_inputs("extraction", ext_versions, commit, config.get_excluded_directories(engine))
+    return hash_inputs("extraction", ext_versions, commit, config.get_excluded_directories(engine), STORAGE_FORMAT)
 
 
 def llm_extraction_labels(engine: Any, config_versions: dict[str, dict[str, int]] | None = None) -> list[str]:
@@ -898,6 +898,11 @@ def _extract_directory_classification(
         "params": json.loads(cfg.params) if cfg.params else {},
     }
 
+    # A technology answer for a directory named after the repository is skipped (params.skip_repository_name)
+    skip_name = extraction_config["params"].get("skip_repository_name", False)
+    if not isinstance(skip_name, bool):
+        return {"nodes_created": 0, "edges_created": 0, "errors": [f"DirectoryClassification params.skip_repository_name must be true or false, got {skip_name!r}"]}
+
     # Wrap llm_query_fn with per-step temperature/max_tokens overrides
     def step_llm_query_fn(prompt: str, schema: dict, system_prompt: str | None = None) -> Any:
         return llm_query_fn(
@@ -928,6 +933,7 @@ def _extract_directory_classification(
             repo_name=repo.name,
             llm_query_fn=step_llm_query_fn,
             config=extraction_config,
+            repository_name=repo.name if skip_name else "",
         )
 
         if not result["success"]:
@@ -1044,6 +1050,10 @@ def _is_unreadable(file_info: dict) -> bool:
     return any(file_info.get("path", "").lower().endswith(ext) for ext in _UNREADABLE_EXTENSIONS)
 
 
+# Languages the tree-sitter adapter extracts types and methods from
+_TREESITTER_LANGUAGES = frozenset({"python", "javascript", "typescript", "java", "csharp"})
+
+
 def _extract_llm_based(
     node_type: str,
     cfg: config.ExtractionConfig,
@@ -1073,11 +1083,13 @@ def _extract_llm_based(
     # Binary and image files can't be meaningfully analyzed as text
     matching_files = [f for f in matching_files if not _is_unreadable(f)]
 
-    # Special case: Method extraction with node-based sources (TypeDefinition.codeSnippet)
-    # For Python files, we can use AST to extract methods directly from source files
+    # Special case: Method extraction with node-based sources (TypeDefinition.codeSnippet): tree-sitter
+    # parses the source files of the languages in params.languages (Python when absent)
     if not matching_files and node_type == "Method" and extraction.has_node_sources(input_sources):
-        # Get all Python source files for AST-based method extraction
-        matching_files = [f for f in classified_files if extraction.is_python_file(f.get("subtype"))]
+        languages = (json.loads(cfg.params) if cfg.params else {}).get("languages", ["python"])
+        if not isinstance(languages, list) or not languages or not set(languages) <= _TREESITTER_LANGUAGES:
+            return {"nodes_created": 0, "edges_created": 0, "errors": [f"Method params.languages must be a non-empty list of {sorted(_TREESITTER_LANGUAGES)}, got {languages!r}"]}
+        matching_files = [f for f in classified_files if (f.get("subtype") or "").lower() in languages]
 
     if not matching_files:
         # Not an error - valid case when no files match input sources
@@ -1114,7 +1126,6 @@ def _extract_llm_based(
 
     # Check if we can use tree-sitter extraction for supported languages
     use_treesitter = node_type in ["TypeDefinition", "Method"]
-    treesitter_languages = {"python", "javascript", "typescript", "java", "csharp"}
 
     # Process each matching file
     for file_info in matching_files:
@@ -1135,7 +1146,7 @@ def _extract_llm_based(
 
         # Check if this file's language is supported by tree-sitter
         file_subtype = file_info.get("subtype", "").lower()
-        is_treesitter_supported = file_subtype in treesitter_languages
+        is_treesitter_supported = file_subtype in _TREESITTER_LANGUAGES
 
         # Track extraction method for this file
         extraction_method = "llm"  # Default
@@ -1316,12 +1327,13 @@ def _classify_batch(
     where: str,
     missing_retries: int,
     llm_query_fn: Callable,
+    prompt_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Labels for one batch of a closed classification. Items an answer leaves out are asked again on their
     own, up to `missing_retries` times; every item still gets one decision, never a vote.
 
     ``classifier`` is the step's candidate module: ``build_classification_prompt``, ``CLASSIFICATION_SCHEMA``
-    and ``parse_labels``.
+    and ``parse_labels``; ``prompt_options`` are extra arguments for its prompt builder.
 
     Returns the labels by key, the answer issues, errors, retry calls and the labels the retries recovered.
     """
@@ -1331,7 +1343,7 @@ def _classify_batch(
     pending, answered, attempt, recovered = batch, False, 0, 0
     while True:
         label = f"{where}, retry {attempt}" if attempt else where
-        prompt = classifier.build_classification_prompt(cfg.instruction or "", pending)
+        prompt = classifier.build_classification_prompt(cfg.instruction or "", pending, **(prompt_options or {}))
         response = llm_query_fn(prompt, classifier.CLASSIFICATION_SCHEMA, temperature=cfg.temperature, max_tokens=cfg.max_tokens)
         if getattr(response, "error", None):
             errors.append(f"LLM error in {label}: {response.error}")
@@ -1374,6 +1386,11 @@ def _extract_business_concepts(
     missing = [name for name in _CONCEPT_PARAMS if name not in params]
     if missing:
         return {"nodes_created": 0, "edges_created": 0, "errors": [f"BusinessConcept params missing: {', '.join(missing)}"]}
+    description_chars, context_sources = params.get("system_description_chars", 0), params.get("context_sources", False)
+    if not isinstance(description_chars, int) or isinstance(description_chars, bool) or description_chars < 0:
+        return {"nodes_created": 0, "edges_created": 0, "errors": [f"BusinessConcept params.system_description_chars must be a non-negative integer, got {description_chars!r}"]}
+    if not isinstance(context_sources, bool):
+        return {"nodes_created": 0, "edges_created": 0, "errors": [f"BusinessConcept params.context_sources must be true or false, got {context_sources!r}"]}
     input_sources = extraction.parse_input_sources(cfg.input_sources) if cfg.input_sources else None
     if not input_sources:
         return {"nodes_created": 0, "edges_created": 0, "errors": ["No input sources for BusinessConcept"]}
@@ -1382,6 +1399,9 @@ def _extract_business_concepts(
     documents, errors = _read_documents(repo_path, files, repo.name)
     if not documents:
         return {"nodes_created": 0, "edges_created": 0, "errors": errors, "warnings": [f"No documents for BusinessConcept in {repo.name}"]}
+    # The system's own description for the classifier: the opening of the README at the repository root
+    readme = next((d for d in documents if "/" not in d["path"].replace(chr(92), "/") and d["path"].lower().startswith("readme")), None)
+    prompt_options = {"system_description": concept_candidates.system_description(readme["text"], description_chars) if readme else "", "show_sources": context_sources}
 
     tool = NlpTool()
     tool.ensure_models()
@@ -1400,7 +1420,7 @@ def _extract_business_concepts(
     decisions: dict[str, str | None] = dict.fromkeys(sorted(c.key for c in selected))  # None: no label (skipped, failed batch)
     batches = concept_candidates.classification_batches(selected, cfg.batch_size)
     for number, batch in enumerate(batches, 1):
-        result = _classify_batch(cfg, concept_candidates, batch, f"batch {number}", int(params["missing_retries"]), llm_query_fn)
+        result = _classify_batch(cfg, concept_candidates, batch, f"batch {number}", int(params["missing_retries"]), llm_query_fn, prompt_options)
         errors.extend(result["errors"])
         labelled.extend((c, result["labels"][c.key]) for c in batch if c.key in result["labels"])
         decisions.update(result["labels"])
@@ -1433,6 +1453,21 @@ def _extract_business_concepts(
 
 # Params the Technology step reads from its config row (every one of them changes results)
 _TECHNOLOGY_PARAMS = ("confidence", "missing_retries", "platforms")
+
+
+def _own_units(params: dict[str, Any], classified_files: list[dict]) -> frozenset[str]:
+    """Name keys of the repository's own modules (``params.own_modules``): directories holding a file of the given types or subtypes.
+
+    ``{"file_types": ["build", "dependency"], "subtypes": ["docker"]}``. Without the key there are none.
+    """
+    settings = params.get("own_modules")
+    if settings is None:
+        return frozenset()
+    types = settings.get("file_types") if isinstance(settings, dict) else None
+    subtypes = settings.get("subtypes", []) if isinstance(settings, dict) else None
+    if not isinstance(types, list) or not types or not isinstance(subtypes, list) or not all(isinstance(t, str) and t for t in [*types, *subtypes]):
+        raise ValueError(f"params.own_modules needs non-empty file_types and optional subtypes, as lists of names, got {settings!r}")
+    return technology_candidates.own_unit_names(classified_files, frozenset(types), frozenset(subtypes))
 
 
 def _extract_technologies(
@@ -1471,7 +1506,14 @@ def _extract_technologies(
     if not files:
         return {"nodes_created": 0, "edges_created": 0, "errors": errors, "warnings": [f"No input files for Technology in {repo.name}"]}
 
-    collected = technology_candidates.collect(files, params["platforms"])
+    try:
+        own_units = _own_units(params, classified_files)
+    except ValueError as e:
+        return {"nodes_created": 0, "edges_created": 0, "errors": [str(e)]}
+    skip_name = params.get("skip_repository_name", False)
+    if not isinstance(skip_name, bool):
+        return {"nodes_created": 0, "edges_created": 0, "errors": [f"Technology params.skip_repository_name must be true or false, got {skip_name!r}"]}
+    collected = technology_candidates.collect(files, params["platforms"], own_units, repository_name=repo.name if skip_name else "")
     labels: dict[str, dict[str, str]] = {}
     issues = {"unmatched": 0, "duplicates": 0, "missing": 0}
     retries = {"calls": 0, "recovered": 0}

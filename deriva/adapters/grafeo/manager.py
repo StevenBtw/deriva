@@ -56,9 +56,6 @@ _db: Any | None = None
 _db_key: str = DEFAULT_DATABASE
 # Connected GrafeoConnections; they follow the active database when it changes
 _connections: weakref.WeakSet[GrafeoConnection] = weakref.WeakSet()
-# Existing edges per edge type as (source node, target node, edge id), loaded on first
-# use by merge_edge; dropped on any DELETE and whenever the database closes
-_edge_keys: dict[str, set[tuple[int, int, Any]]] = {}
 
 
 def database_file(key: str) -> str | None:
@@ -86,18 +83,16 @@ def get_database() -> Any:
     """
     global _db
     if _db is None:
-        from grafeo import GrafeoDB
+        import grafeo
 
-        load_dotenv()
-        path = database_file(_db_key)
-        _db = GrafeoDB(path)
-        # Every query is Cypher; a grafeo build without it (a narrow local build) fails here, not at the first query
-        if not hasattr(_db, "execute_cypher"):
-            _db.close()
-            _db = None
+        # Every query is Cypher; a grafeo build without it (a narrow local build) is refused before a file opens
+        if "cypher" not in grafeo.features():
             raise RuntimeError(
                 "This grafeo build has no Cypher support, which Deriva uses for every query: install the released wheel, or build the Python binding with its default features"
             )
+        load_dotenv()
+        path = database_file(_db_key)
+        _db = grafeo.GrafeoDB(path)
         # Node lookups by id (Graph) and identifier (Model) must use an index
         for key in ("id", "identifier"):
             if not _db.has_property_index(key):
@@ -127,7 +122,6 @@ def use_database(key: str) -> None:
 def close_database() -> None:
     """Close the active database (checkpoints the file) and release it."""
     global _db
-    _edge_keys.clear()
     if _db is not None:
         logger.info("Closing GrafeoDB '%s'", _db_key)
         _db.close()
@@ -229,8 +223,6 @@ class GrafeoConnection:
             logger.debug("Parameters: %s", parameters)
 
         started = time.perf_counter()
-        if "DELETE" in query.upper():
-            _edge_keys.clear()
         try:
             params = parameters if parameters is not None else {}
             result = self.db.execute_cypher(query, params)
@@ -306,23 +298,17 @@ class GrafeoConnection:
         assert self.db is not None
         return list(self.db.find_nodes_by_property(key, value))
 
-    def merge_node(self, key: str, value: Any, labels: list[str], properties: dict[str, Any]) -> None:
-        """Set ``properties`` on the node with ``key`` = ``value`` and all ``labels``, or create it.
+    def merge_node(self, key: str, value: Any, labels: list[str], properties: dict[str, Any], replace: bool = False) -> None:
+        """Create or update the node with ``key`` = ``value`` and all ``labels``, through grafeo's index-backed upsert.
 
-        Same semantics as ``MERGE (n:L1:L2 {key: value}) SET n += properties``, but
-        the node is found through the property index instead of a label scan.
+        By default ``properties`` are merged into the stored ones and a None value removes that
+        property; with ``replace`` the stored properties become exactly ``{key: value, **properties}``.
         """
         if self.db is None:
             raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         started = time.perf_counter()
-        wanted = set(labels)
-        matches = [node for node in self._find_nodes(key, value) if wanted <= set(self.db.get_node_labels(node) or [])]
-        for node in matches:
-            for name, prop in properties.items():
-                self.db.set_node_property(node, name, prop)
-        if not matches:
-            self.db.create_node(labels, {key: value, **properties})
+        self.db.upsert_nodes(labels, [{key: value, **properties}], key=key, replace=replace)
         _record_query(f"merge_node({':'.join(labels)})", started)
 
     def merge_edge(
@@ -334,46 +320,36 @@ class GrafeoConnection:
         edge_id: str,
         properties: dict[str, Any],
     ) -> bool:
-        """Create or update an edge between the nodes whose ``key`` matches, via the index.
+        """Create or replace the ``edge_type`` edge with ``id`` = ``edge_id`` between this namespace's nodes whose ``key`` matches.
 
-        An existing edge of ``edge_type`` with the same ``id`` between the same nodes
-        is updated instead of duplicated. Returns False when an endpoint is missing.
+        The edge's properties become exactly ``{"id": edge_id, **properties}``. Returns False when an
+        endpoint is missing.
         """
         if self.db is None:
             raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
         started = time.perf_counter()
-        sources = self._find_nodes(key, src_value)
-        targets = self._find_nodes(key, dst_value)
-        if not (sources and targets):
-            _record_query(f"merge_edge({edge_type})", started)
-            return False
-
-        existing = _edge_keys.get(edge_type)
-        if existing is None:
-            # One scan per edge type instead of a lookup per edge: a lookup by endpoint
-            # ids scans every edge of the type (3.45 ms per call at 10,000 edges on
-            # grafeo 0.5.43, against about 11 ms for this whole scan)
-            existing = {(row["s"], row["d"], row["id"]) for row in self.execute(f"MATCH (s)-[r:`{edge_type}`]->(d) RETURN id(s) AS s, id(d) AS d, r.id AS id")}
-            _edge_keys[edge_type] = existing
-            started = time.perf_counter()
-
-        for src in sources:
-            for dst in targets:
-                if (src, dst, edge_id) in existing:
-                    rows = self.db.execute_cypher(
-                        f"MATCH (s)-[r:`{edge_type}`]->(d) WHERE id(s) = $s AND id(d) = $d RETURN id(r) AS eid, r.id AS id",
-                        {"s": src, "d": dst},
-                    ).to_list()
-                    for row in rows:
-                        if row["id"] == edge_id:
-                            for name, value in properties.items():
-                                self.db.set_edge_property(row["eid"], name, value)
-                else:
-                    self.db.create_edge(src, dst, edge_type, {"id": edge_id, **properties})
-                    existing.add((src, dst, edge_id))
+        # Endpoint fields named so that no edge property can collide with them
+        row = {"__src": src_value, "__dst": dst_value, "id": edge_id, **properties}
+        result = self.db.upsert_edges(edge_type, [row], key="id", endpoint_key=key, endpoint_labels=[self.namespace], src_field="__src", dst_field="__dst", replace=True)
         _record_query(f"merge_edge({edge_type})", started)
-        return True
+        return not result["skipped"]
+
+    def algorithm(self, name: str, **kwargs: Any) -> Any:
+        """Run one of grafeo's graph algorithms (``db.algorithms.<name>``) on this namespace only.
+
+        The algorithm sees a projection on the namespace label, so the other namespace in the same
+        database is never scored. Results are keyed by grafeo's internal node ids.
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        started = time.perf_counter()
+        try:
+            self.db.create_projection(self.namespace, node_labels=[self.namespace])  # False when it exists
+            return getattr(self.db.algorithms, name)(projection=self.namespace, **kwargs)
+        finally:
+            _record_query(f"algorithm({name})", started)
 
     # ------------------------------------------------------------------
     # Namespace helpers

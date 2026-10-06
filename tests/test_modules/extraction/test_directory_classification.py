@@ -341,6 +341,35 @@ class TestClassifyDirectories:
         assert result["stats"]["skipped"] == 1
         assert len(result["data"]["nodes"]) == 0
 
+    def test_a_directory_named_after_the_repository_is_no_technology(self):
+        """A technology answer for a directory named after the repository is skipped (it is the software itself);
+        business answers stay."""
+        mock_response = MagicMock()
+        mock_response.error = None
+        mock_response.content = """{
+            "classifications": [
+                {"directoryName": "kafka", "classification": "technology", "conceptType": "messaging"},
+                {"directoryName": "shop-ldap", "classification": "technology", "conceptType": "infrastructure"},
+                {"directoryName": "shop-orders", "classification": "business", "conceptType": "entity"}
+            ]
+        }"""
+        mock_response.usage = {"prompt_tokens": 100, "completion_tokens": 50}
+        mock_response.response_type = "live"
+        directories = [{"name": n, "path": f"r/{n}", "id": f"dir_{n}"} for n in ("kafka", "shop-ldap", "shop-orders")]
+
+        result = classify_directories(
+            directories=directories,
+            repo_name="r",
+            llm_query_fn=MagicMock(return_value=mock_response),
+            config={"instruction": "Classify", "example": "{}"},
+            repository_name="Shop",
+        )
+
+        assert result["success"] is True
+        labels = sorted((n["properties"].get("technologyName") or n["properties"].get("conceptName"), n["labels"][-1]) for n in result["data"]["nodes"])
+        assert labels == [("Kafka", "Graph:Technology"), ("ShopOrders", "Graph:BusinessConcept")]
+        assert (result["stats"]["technologies"], result["stats"]["skipped"]) == (1, 1)
+
     def test_creates_edges_from_directories(self):
         """Should create REPRESENTS edges from Directory to created nodes."""
         mock_response = MagicMock()

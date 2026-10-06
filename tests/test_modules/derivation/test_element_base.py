@@ -222,9 +222,10 @@ class TestPerCandidateMode:
 
     RESPONSE = '{"elements": [{"identifier": "te_x", "name": "X", "documentation": "d", "source": "1", "confidence": 0.9}]}'
 
-    def _prompts(self, per_candidate, n_candidates=2):
+    def _prompts(self, per_candidate, n_candidates=2, decorators=None):
         llm = MagicMock(return_value=SimpleNamespace(content=self.RESPONSE))
-        candidates = [Candidate(node_id=str(i), name=f"c{i}", labels=["Node"], properties={}) for i in range(n_candidates)]
+        decorators = decorators or {}
+        candidates = [Candidate(node_id=str(i), name=f"c{i}", labels=["Node"], properties={"decorators": decorators.get(i, [])}) for i in range(n_candidates)]
         with (
             patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
             patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
@@ -258,6 +259,51 @@ class TestPerCandidateMode:
 
     def test_without_config_batch_mode_is_used(self):
         assert len(self._prompts(None)) == 1
+
+    def test_marked_candidates_pass_the_name_filters(self):
+        """The step's name filters judge names; a candidate whose annotation shows what it is is not judged by its name."""
+
+        class NameFiltered(ConcreteDerivation):
+            def filter_candidates(self, candidates, enrichments, max_candidates, **kwargs):
+                return [c for c in candidates if c.name.endswith("Data")][:max_candidates]
+
+        llm = MagicMock(return_value=SimpleNamespace(content=self.RESPONSE))
+        candidates = [
+            Candidate(node_id="0", name="OrderImpl", labels=["TypeDefinition"], properties={"decorators": ["Entity"]}),
+            Candidate(node_id="1", name="OrderHelper", labels=["TypeDefinition"], properties={"decorators": []}),
+        ]
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            result = NameFiltered().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                prompt=TEST_PROMPT,
+                per_candidate=PerCandidateConfig(min_pool=1, rules="CONFIG NAMING RULES", persona="P", decorators=r"^Entity(\(.*)?$"),
+            )
+
+        stages = {d.node_id: d.stage for d in result.candidate_decisions}
+        assert stages["1"] == "filtered_out"
+        assert stages.get("0") != "filtered_out"
+        assert [("CONFIG NAMING RULES" in c.args[0]) for c in llm.call_args_list] == [True]
+
+    def test_with_an_annotation_pattern_only_marked_candidates_are_named_per_candidate(self):
+        """An annotation that shows what a candidate is decides; the LLM only names it. The others are judged in a batch."""
+        per_candidate = PerCandidateConfig(min_pool=1, rules="CONFIG NAMING RULES", persona="P", decorators=r"^Entity(\(.*)?$")
+
+        prompts = self._prompts(per_candidate, n_candidates=3, decorators={0: ["Entity"], 1: ['Entity(name = "x")'], 2: ["Deprecated"]})
+
+        assert sum("CONFIG NAMING RULES" in p for p in prompts) == 2
+        batch = [p for p in prompts if "CONFIG NAMING RULES" not in p]
+        assert len(batch) == 1 and '"c2"' in batch[0] and '"c0"' not in batch[0]
 
 
 class TestPatternBasedDerivation:
@@ -764,6 +810,30 @@ class TestGraphFilter:
         assert [c.node_id for c in kept] == ["tech"]
 
 
+class TestCandidateRankingTieBreak:
+    """Candidates with equal PageRank rank by node id, so the result order of the candidate query never decides."""
+
+    @staticmethod
+    def _mixin():
+        from deriva.modules.derivation.element_base import HybridFilteringMixin
+
+        class Filter:
+            MIN_PAGERANK = None
+            MIN_PAGERANK_PERCENTILE = None
+            USE_COMMUNITY_ROOTS = False
+            USE_ARTICULATION_POINTS = False
+
+        return type("F", (Filter, HybridFilteringMixin), {})()
+
+    def test_ties_rank_by_node_id_whatever_the_input_order(self):
+        candidates = [Candidate(node_id=n, name=n, pagerank=0.1) for n in ("c", "a", "d", "b")] + [Candidate(node_id="top", name="top", pagerank=0.9)]
+
+        forward = [c.node_id for c in self._mixin().apply_graph_filtering(candidates, {}, 3)]
+        backward = [c.node_id for c in self._mixin().apply_graph_filtering(list(reversed(candidates)), {}, 3)]
+
+        assert forward == backward == ["top", "a", "b"]
+
+
 class TestPerCandidateIdentity:
     """In per-candidate mode the prompt holds one candidate, so the element belongs to it."""
 
@@ -825,7 +895,7 @@ class TestIsolatedNamingStep:
 
     ELEMENTS = '{"elements": [{"identifier": "x", "name": "In-batch LLM name", "documentation": "d", "source": "%s", "confidence": 0.9}]}'
 
-    def _created(self, candidates, naming_answers, per_candidate=True):
+    def _created(self, candidates, naming_answers, per_candidate=True, repo_name=""):
         from deriva.modules.derivation.base import NamingConfig
 
         answers = iter(naming_answers)
@@ -841,6 +911,7 @@ class TestIsolatedNamingStep:
         with (
             patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
             patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+            patch.object(ConcreteDerivation, "_active_repo_name", return_value=repo_name),
         ):
             result = ConcreteDerivation().generate(
                 graph_manager=MagicMock(query=MagicMock(return_value=[])),
@@ -866,6 +937,25 @@ class TestIsolatedNamingStep:
         naming_prompts = [p for p in prompts if "NAMING RULES" in p]
         assert len(naming_prompts) == 3 and len(set(naming_prompts)) == 1
         assert created[0]["identifier"] == "te_n1"  # identity still from structure
+
+    def test_word_casing_comes_from_a_cased_source_name(self):
+        """The source's spelling decides a word's casing, so answers that differ only in casing give one name; a
+        lowercase source (a directory) carries no casing and the answer's stays."""
+        typed = Candidate(node_id="n1", name="CrudTypeImpl", labels=["TypeDefinition"], properties={})
+        directory = Candidate(node_id="n2", name="crud", labels=["Directory"], properties={})
+
+        created, _ = self._created([typed], ["CRUD Type"] * 3)
+        created_dir, _ = self._created([directory], ["CRUD Service"] * 3)
+
+        assert [e["name"] for e in created] == ["Crud Type"]
+        assert [e["name"] for e in created_dir] == ["CRUD Service"]
+
+    def test_repository_words_are_removed_from_an_answer(self):
+        candidate = Candidate(node_id="n1", name="registry", labels=["Directory"], properties={})
+
+        created, _ = self._created([candidate], ["Tea Store Registry"] * 3, repo_name="TeaStore")
+
+        assert [e["name"] for e in created] == ["Registry"]
 
     def test_no_usable_answer_falls_back_to_the_structure_name(self):
         created, _ = self._created([Candidate(node_id="n1", name="crud", labels=["Directory"], properties={})], ["", "", ""])

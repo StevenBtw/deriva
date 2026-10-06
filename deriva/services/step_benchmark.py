@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from deriva.common.types import RunLoggerProtocol
 
 # Properties that record when or how a value was stored, not what the step decided
-VOLATILE_PROPERTIES = frozenset({"properties_json", "created_at", "extracted_at", "derived_at"})
+VOLATILE_PROPERTIES = frozenset({"created_at", "extracted_at", "derived_at"})
 
 # Element properties an element step reports but does not score in exact: no later step
 # reads them for identity (documentation is open text, the LLM's own name is unused and
@@ -50,18 +50,19 @@ def graph_outputs(graph_manager: GraphManager) -> dict[tuple[str, str], dict[str
     """Every node and edge of the graph namespace as (type, key) -> properties.
 
     Nodes are keyed by id under their type label, edges by ``source -> target`` under
-    their relationship type. A node's JSON copy of its properties is merged in (it also
-    holds the non-scalar ones); timestamps are left out.
+    their relationship type, each with its stored properties; timestamps and the edge id
+    are left out.
     """
     ns = graph_manager.namespace
     outputs: dict[tuple[str, str], dict[str, Any]] = {}
     for row in graph_manager.query(f"MATCH (n:{ns}) RETURN labels(n) AS labels, properties(n) AS props"):
         props = row["props"]
         label = next((name for name in sorted(row["labels"]) if name != ns), ns)
-        outputs[(label, props["id"])] = _decided({**json.loads(props.get("properties_json") or "{}"), **props})
-    for row in graph_manager.query(f"MATCH (a:{ns})-[r]->(b:{ns}) RETURN a.id AS source, type(r) AS rel, b.id AS target, r.properties_json AS props"):
+        outputs[(label, props["id"])] = _decided(props)
+    for row in graph_manager.query(f"MATCH (a:{ns})-[r]->(b:{ns}) RETURN a.id AS source, type(r) AS rel, b.id AS target, properties(r) AS props"):
         relationship = row["rel"].rsplit(":", 1)[-1]
-        outputs[(relationship, f"{row['source']} -> {row['target']}")] = _decided(json.loads(row["props"] or "{}"))
+        props = {name: value for name, value in (row["props"] or {}).items() if name != "id"}
+        outputs[(relationship, f"{row['source']} -> {row['target']}")] = _decided(props)
     return outputs
 
 

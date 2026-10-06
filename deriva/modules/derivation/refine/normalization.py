@@ -60,10 +60,12 @@ def strip_archimate_suffix(name: str) -> str:
 
 
 def strip_repo_prefix(name: str, repo_name: str) -> str:
-    """Remove a leading token matching the repo name (case-insensitive).
+    """Remove the leading tokens that spell the repo name (case-insensitive).
 
     Repo name is compared with separators stripped, so a hyphenated or
-    mixed-case repo name matches a prefix token regardless of formatting.
+    mixed-case repo name matches its prefix regardless of formatting, also
+    when it is spread over several words ("Tea Store Registry" for TeaStore).
+    A name that is only the repo name stays.
     """
     if not name or not repo_name:
         return name
@@ -71,11 +73,13 @@ def strip_repo_prefix(name: str, repo_name: str) -> str:
     if not repo_normalized:
         return name
     tokens = name.split()
-    if len(tokens) <= 1:
-        return name
-    first_normalized = re.sub(r"[-_]+", "", tokens[0]).lower()
-    if first_normalized == repo_normalized:
-        return " ".join(tokens[1:])
+    joined = ""
+    for i, token in enumerate(tokens[:-1]):
+        joined += re.sub(r"[-_]+", "", token).lower()
+        if joined == repo_normalized:
+            return " ".join(tokens[i + 1 :])
+        if not repo_normalized.startswith(joined):
+            break
     return name
 
 

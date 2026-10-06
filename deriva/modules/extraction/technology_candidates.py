@@ -18,12 +18,12 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
 
-from deriva.common.naming import name_key
+from deriva.common.naming import contains_name, name_key
 
 from .base import current_timestamp, generate_edge_id, generate_file_node_id
 from .external_dependency import parse_requirement_line
@@ -266,6 +266,38 @@ def items_from_file(path: str, content: str, file_type: str, subtype: str | None
     return parser(content) if parser else []
 
 
+_COMPOSE_IMAGE = re.compile(r"image (\S+?)(?:,|$)")
+
+
+def own_unit_names(files: list[dict[str, Any]], file_types: frozenset[str], subtypes: frozenset[str]) -> frozenset[str]:
+    """Name keys of the repository's own modules: the directories that directly hold a file of one of the types or
+    subtypes (a build, dependency or container file). The repository root is no module of its own."""
+    names = set()
+    for f in files:
+        parent = PurePosixPath(str(f.get("path", "")).replace(chr(92), "/")).parent
+        if parent.name and (f.get("file_type") in file_types or (f.get("subtype") or "") in subtypes) and (key := name_key(parent.name)):
+            names.add(key)
+    return frozenset(names)
+
+
+def _own_module_service(text: str, kind: str, own_units: frozenset[str]) -> bool:
+    """A compose service named like one of the repository's own modules, or running an image tagged like one."""
+    if not own_units or not kind.startswith("compose service"):
+        return False
+    if name_key(text) in own_units:
+        return True
+    image = _COMPOSE_IMAGE.search(kind)
+    return bool(image and ":" in image.group(1) and name_key(image.group(1).rsplit(":", 1)[1]) in own_units)
+
+
+def _names_repository(text: str, kind: str, repository_name: str) -> bool:
+    """An item named after the repository, or a compose service running an image named after it: the software itself."""
+    if not repository_name:
+        return False
+    image = _COMPOSE_IMAGE.search(kind) if kind.startswith("compose service") else None
+    return contains_name(text, repository_name) or bool(image and contains_name(image.group(1), repository_name))
+
+
 def item_key(text: str, kind: str) -> str:
     """One item per kind and text, whatever details the kind shows."""
     return f"{kind.split(',')[0]}::{text.casefold()}"
@@ -276,8 +308,13 @@ def technology_node_id(repo_name: str, tech_name: str) -> str:
     return f"tech::{repo_name}::{name_key(tech_name)}"
 
 
-def collect(files: list[dict[str, Any]], platforms: list[dict[str, str]]) -> Collected:
-    """The items the files declare and the platforms their types imply (platforms: the step's params table)."""
+def collect(files: list[dict[str, Any]], platforms: list[dict[str, str]], own_units: frozenset[str] = frozenset(), repository_name: str = "") -> Collected:
+    """The items the files declare and the platforms their types imply (platforms: the step's params table).
+
+    A compose service that is one of the repository's own modules (``own_units``, name keys) is no item, and with
+    ``repository_name`` neither is an item named after the repository (an image, a library, a service running such
+    an image): it is or runs the software itself, not a technology it uses.
+    """
     table = {(p["file_type"], p["subtype"]): (p["name"], p["category"]) for p in platforms}
     collected = Collected()
     for f in files:
@@ -285,6 +322,8 @@ def collect(files: list[dict[str, Any]], platforms: list[dict[str, str]]) -> Col
         if platform:
             collected.platforms.setdefault(platform, set()).add(f["path"])
         for text, kind in items_from_file(f["path"], f["content"], f["file_type"], f.get("subtype")):
+            if _own_module_service(text, kind, own_units) or _names_repository(text, kind, repository_name):
+                continue
             key = item_key(text, kind)
             collected.items.setdefault(key, TechnologyItem(key, text, kind))
             collected.declared.setdefault(key, set()).add(f["path"])

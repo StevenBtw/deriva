@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from deriva.common.naming import name_key
+from deriva.common.naming import contains_name, name_key
 from deriva.modules.derivation.base import name_from_source
 
 from .base import (
@@ -282,6 +282,7 @@ def classify_directories(
     repo_name: str,
     llm_query_fn: Callable,
     config: dict[str, Any],
+    repository_name: str = "",
 ) -> dict[str, Any]:
     """
     Classify directories into BusinessConcept, Technology, or skip.
@@ -291,6 +292,7 @@ def classify_directories(
         repo_name: Repository name
         llm_query_fn: Function to call LLM
         config: Extraction config with 'instruction' and 'example' keys
+        repository_name: When given, a technology answer for a directory named after the repository is skipped
 
     Returns:
         Dictionary with:
@@ -425,6 +427,10 @@ def classify_directories(
                             },
                         }
                     )
+
+            elif class_type == "technology" and repository_name and contains_name(classification["directoryName"], repository_name):
+                # A directory named after the repository is the software itself, no technology it uses
+                stats["skipped"] += 1
 
             elif class_type == "technology":
                 node = build_technology_node(classification, source_dir_id, repo_name, confidence)

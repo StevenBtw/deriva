@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from deriva.common.naming import name_key, singularize
+from deriva.common.naming import contains_name, name_key, singularize
 
 # Generic English singular:plural pairs per rule family; each plural must come back as its singular
 PAIRS = {
@@ -113,3 +113,32 @@ class TestNameKey:
         # Several words in capitals are a constant or shouting, not acronyms
         assert name_key("CLAIMS HANDLING") == name_key("Claims Handling")
         assert name_key("MY_SERVICES") == name_key("MyServices")
+
+
+class TestContainsName:
+    """A name, in any spelling, as one or more consecutive words of a text."""
+
+    @pytest.mark.parametrize(
+        "text, name",
+        [
+            ("Lightblue Ldap", "lightblue"),
+            ("descartesresearch/teastore-persistence", "TeaStore"),
+            ("Big Data Kafka", "bigdata"),
+            ("gcr.io/lakeside-mutual-2020/customer-core", "LakesideMutual"),
+        ],
+    )
+    def test_the_name_is_found_across_spellings(self, text, name):
+        assert contains_name(text, name)
+
+    @pytest.mark.parametrize(
+        "text, name",
+        [
+            ("Application Server", "app"),  # part of a word only
+            ("Data Kafka", "bigdata"),  # part of the name only
+            ("Kafka", "bigdata"),
+            ("", "bigdata"),
+            ("Kafka", ""),
+        ],
+    )
+    def test_parts_of_words_or_of_the_name_do_not_count(self, text, name):
+        assert not contains_name(text, name)

@@ -157,6 +157,55 @@ class TestTechnologyStep:
         assert result["nodes_created"] == 1
         assert result["stats"]["decisions"] == {"npm library::alpha-client": None, "npm library::beta-lib": None}
 
+    def test_compose_services_of_the_repositories_own_modules_are_no_items(self, tmp_path, graph):
+        compose = "services:\n  app:\n    image: acme/shop:app\n  store:\n    image: storedb:9\n"
+        files = {"app/package.json": (PACKAGE, "dependency", "javascript"), "deploy/docker-compose.yml": (compose, "infra", "docker-compose")}
+        classified = []
+        for path, (content, file_type, subtype) in files.items():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_text(content, encoding="utf-8")
+            graph.add_node(FileNode(name=Path(path).name, path=path, repository_name="r", file_type=file_type, subtype=subtype), node_id=generate_file_node_id("r", path))
+            classified.append({"path": path, "file_type": file_type, "subtype": subtype})
+        cfg = _cfg(params={**PARAMS, "own_modules": {"file_types": ["dependency"], "subtypes": ["docker"]}})
+        cfg.input_sources = json.dumps({"files": [{"type": "dependency", "subtype": "*"}, {"type": "infra", "subtype": "*"}], "nodes": []})
+        llm = FakeLlm({})
+
+        service._extract_technologies(cfg, SimpleNamespace(name="r"), tmp_path, classified, graph, llm)
+
+        # The "app" service runs the repository's own app module (a directory holding a dependency file)
+        assert sorted(llm.prompted_items(0)) == ["alpha-client", "beta-lib", "store"]
+
+    @pytest.mark.parametrize("skip, prompted", [(True, ["beta-lib"]), (False, ["alpha-client", "beta-lib"])])
+    def test_items_named_after_the_repository_are_skipped_when_configured(self, tmp_path, graph, skip, prompted):
+        (tmp_path / "app").mkdir()
+        (tmp_path / "app/package.json").write_text(PACKAGE, encoding="utf-8")
+        package = FileNode(name="package.json", path="app/package.json", repository_name="alpha", file_type="dependency", subtype="javascript")
+        graph.add_node(package, node_id=generate_file_node_id("alpha", "app/package.json"))
+        classified = [{"path": "app/package.json", "file_type": "dependency", "subtype": "javascript"}]
+        llm = FakeLlm({})
+
+        service._extract_technologies(_cfg(params={**PARAMS, "skip_repository_name": skip}), SimpleNamespace(name="alpha"), tmp_path, classified, graph, llm)
+
+        # The repository "alpha" publishes its own client library; it is no technology the repository uses
+        assert sorted(llm.prompted_items(0)) == prompted
+
+    def test_a_non_boolean_skip_repository_name_is_an_error(self, tmp_path, graph):
+        llm = FakeLlm({})
+
+        result = _run(tmp_path, graph, llm, cfg=_cfg(params={**PARAMS, "skip_repository_name": "yes"}))
+
+        assert result["errors"] and "skip_repository_name" in result["errors"][0]
+        assert llm.calls == []
+
+    @pytest.mark.parametrize("own", [True, {"file_types": "build"}, {"file_types": ["build"], "subtypes": [""]}, {"subtypes": ["docker"]}])
+    def test_invalid_own_module_settings_are_an_error(self, tmp_path, graph, own):
+        llm = FakeLlm({})
+
+        result = _run(tmp_path, graph, llm, cfg=_cfg(params={**PARAMS, "own_modules": own}))
+
+        assert result["errors"] and "own_modules" in result["errors"][0]
+        assert llm.calls == []
+
     def test_without_input_files_there_is_nothing_to_do(self, tmp_path, graph):
         llm = FakeLlm({})
 

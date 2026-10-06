@@ -48,6 +48,11 @@ def _file(path):
 NESTED = {"route": "document", "confidence": 0.9, "meta": {"terms": ["a", "b"], "note": None}}
 
 
+def _stored(node):
+    """What the graph keeps of a node model: its dict without None values."""
+    return {name: value for name, value in node.to_dict().items() if value is not None}
+
+
 class TestGraphNodes:
     @pytest.mark.parametrize(
         "node_id, make, label",
@@ -58,8 +63,8 @@ class TestGraphNodes:
         node = make()
         gm.add_node(node, node_id=node_id)
 
-        assert gm.get_node(node_id) == {"id": node_id, "label": label, "properties": node.to_dict()}
-        assert gm.get_nodes_by_type(label) == [{"id": node_id, "label": label, "properties": node.to_dict()}]
+        assert gm.get_node(node_id) == {"id": node_id, "label": label, "properties": _stored(node)}
+        assert gm.get_nodes_by_type(label) == [{"id": node_id, "label": label, "properties": _stored(node)}]
 
     def test_a_rewrite_replaces_what_was_stored(self, managers):
         gm, _ = managers
@@ -69,7 +74,17 @@ class TestGraphNodes:
 
         gm.add_node(node, node_id="concept::r::ledger")
 
-        assert gm.get_node("concept::r::ledger")["properties"] == node.to_dict()
+        assert gm.get_node("concept::r::ledger")["properties"] == _stored(node)
+        assert gm.query("MATCH (n {id: 'concept::r::ledger'}) RETURN n.pagerank AS pr") == [{"pr": None}]
+
+    def test_properties_are_stored_natively_without_a_copy(self, managers):
+        gm, _ = managers
+        node = _concept()
+        gm.add_node(node, node_id="concept::r::ledger")
+
+        (row,) = gm.query("MATCH (n {id: 'concept::r::ledger'}) RETURN properties(n) AS p, labels(n) AS l")
+        assert row["p"] == {**_stored(node), "id": "concept::r::ledger", "active": True, "repository_name": "r"}
+        assert sorted(row["l"]) == ["BusinessConcept", "Graph"]
 
 
 class TestGraphEdges:
@@ -97,6 +112,15 @@ class TestGraphEdges:
         gm.add_edge(src, dst, "REFERENCES")
         assert graph_outputs(gm)[("REFERENCES", f"{src} -> {dst}")] == {}
 
+    def test_empty_and_nested_values_read_back_as_written(self, managers):
+        gm, _ = managers
+        src, dst = self._two_nodes(gm)
+        props = {"empty_list": [], "empty_map": {}, "nested": {"a": [1, 2.5, None, {"b": None}]}, "ratio": 1.0}
+
+        gm.add_edge(src, dst, "REFERENCES", properties=props)
+
+        assert graph_outputs(gm)[("REFERENCES", f"{src} -> {dst}")] == props
+
 
 class TestModelElements:
     PROPS = {"source": "typedef::r::src_a.py::a", "confidence": 0.9, "tags": ["x", "y"], "evidence": {"pagerank": 0.2, "note": None}}
@@ -108,6 +132,24 @@ class TestModelElements:
         assert am.get_element("ac_ledger").properties == self.PROPS
         assert [e.properties for e in am.get_elements()] == [self.PROPS]
         assert [e.properties for e in am.get_elements("ApplicationComponent")] == [self.PROPS]
+
+    def test_element_and_relationship_properties_are_one_native_map(self, managers):
+        _, am = managers
+        for identifier in ("ac_a", "ac_b"):
+            am.add_element(Element(name=identifier, element_type="ApplicationComponent", identifier=identifier, properties=self.PROPS))
+        am.add_relationship(Relationship(source="ac_a", target="ac_b", relationship_type="Serving", identifier="rel_1", properties=self.PROPS))
+
+        (element,) = am.query("MATCH (e:Model {identifier: 'ac_a'}) RETURN properties(e) AS p")
+        (relationship,) = am.query("MATCH ()-[r]->() WHERE r.identifier = 'rel_1' RETURN properties(r) AS p")
+        assert element["p"]["properties"] == self.PROPS and "properties_json" not in element["p"]
+        assert relationship["p"]["properties"] == self.PROPS and "properties_json" not in relationship["p"]
+
+    def test_an_element_without_properties_reads_back_empty(self, managers):
+        _, am = managers
+        am.add_element(Element(name="Ledger", element_type="ApplicationComponent", identifier="ac_ledger", properties=self.PROPS))
+        am.add_element(Element(name="Ledger", element_type="ApplicationComponent", identifier="ac_ledger"))
+
+        assert am.get_element("ac_ledger").properties == {}
 
     def test_relationship_properties_read_back_unchanged(self, managers):
         _, am = managers

@@ -19,20 +19,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from deriva.adapters.archimate.models import validate_relationship_rule  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-from deriva.adapters.graph.cache import (  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-    EnrichmentCache,
-    EnrichmentCacheManager,
-    compute_graph_hash,
-)
 from deriva.adapters.llm import FailedResponse, ResponseType  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 from deriva.common import current_timestamp, parse_json_array
+from deriva.common.naming import name_key
 from deriva.common.types import PipelineResult
 
 if TYPE_CHECKING:
     from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-
-# Module-level enrichment cache for cross-element-type caching within a run
-_enrichment_cache = EnrichmentCache()
 
 
 def extract_response_content(response: Any) -> tuple[str, str | None]:
@@ -245,6 +238,20 @@ class ConfigurationRule:
 
 
 @dataclass(frozen=True)
+class SameNameRule:
+    """Relationships between elements whose structural sources carry the same name (``params.same_name``).
+
+    The name of a source is the last part of its node id (a type's name, a concept's key), compared
+    by canonical name key after removing any of ``strip_suffixes`` (an implementation suffix).
+    """
+
+    source: str  # e.g. DataObject
+    target: str  # e.g. BusinessObject
+    relationship: str  # e.g. Realization
+    strip_suffixes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class DependencyRule:
     """Dependencies from file imports (relationship config ``params.dependency``).
 
@@ -285,6 +292,9 @@ class PerCandidateConfig:
     min_pool: int  # Per-candidate mode engages only for pools at least this large
     rules: str  # Rules text for the single-candidate naming prompt
     persona: str  # Opening line of the single-candidate naming prompt
+    # Only candidates carrying an annotation that fully matches this pattern are named per
+    # candidate (their annotation decides, whatever the pool size); the others take the batch path
+    decorators: str | None = None
 
 
 @dataclass
@@ -360,52 +370,21 @@ class DerivationResult:
 # =============================================================================
 
 
-def get_enrichments_from_graph(
-    graph_manager: GraphManager,
-    use_cache: bool = True,
-    cache_manager: EnrichmentCacheManager | None = None,
-    config_name: str | None = None,
-) -> dict[str, dict[str, Any]]:
+def get_enrichments_from_graph(graph_manager: GraphManager) -> dict[str, dict[str, Any]]:
     """
     Get all graph enrichment data from graph node properties.
 
     The prep phase stores enrichments (PageRank, Louvain, k-core, etc.)
-    as properties on graph nodes. This function reads them back.
-
-    Uses caching to avoid repeated graph queries when called multiple times
-    for different element types in the same generation phase.
+    as properties on graph nodes. This function reads them back, from the
+    graph every time: the derivation service reads them once per run and
+    passes them to the element steps.
 
     Args:
         graph_manager: Connected GraphManager instance
-        use_cache: If True, check cache first (default True). Ignored if cache_manager provided.
-        cache_manager: Optional EnrichmentCacheManager for controlled caching.
-                      When provided, uses manager's cache control (nocache_configs, bench_hash).
-                      When None, falls back to module-level cache with use_cache flag.
-        config_name: Optional config name for per-config cache control (only used with cache_manager)
 
     Returns:
         Dict mapping node_id to enrichment data
     """
-    # Determine if we should use cache
-    if cache_manager is not None:
-        # Use managed cache with full control
-        if cached := cache_manager.get_enrichments(graph_manager, config_name):
-            logger.debug("Using managed cached enrichments for config: %s", config_name)
-            return cached
-        should_write_cache = cache_manager.should_use_cache(config_name)
-    elif use_cache:
-        # Fallback to legacy module-level cache
-        try:
-            graph_hash = compute_graph_hash(graph_manager)
-            if cached := _enrichment_cache.get_enrichments(graph_hash):
-                logger.debug("Using cached enrichments for graph hash %s", graph_hash[:8])
-                return cached
-        except Exception as e:
-            logger.debug("Cache lookup failed, querying graph: %s", e)
-        should_write_cache = True
-    else:
-        should_write_cache = False
-
     # Query the graph
     # Note: Labels are stored as separate items (e.g., ['Graph', 'Directory']),
     # not as concatenated strings (e.g., 'Graph:Directory').
@@ -439,32 +418,10 @@ def get_enrichments_from_graph(
             for row in rows
             if row.get("node_id")
         }
-
-        # Cache the results
-        if should_write_cache:
-            try:
-                if cache_manager is not None:
-                    cache_manager.set_enrichments(graph_manager, enrichments, config_name)
-                else:
-                    graph_hash = compute_graph_hash(graph_manager)
-                    _enrichment_cache.set_enrichments(graph_hash, enrichments)
-            except Exception as e:
-                logger.debug("Failed to cache enrichments: %s", e)
-
         return enrichments
     except Exception as e:
         logger.warning("Failed to get enrichments from graph: %s", e)
         return {}
-
-
-def clear_enrichment_cache() -> None:
-    """Clear the module-level enrichment cache.
-
-    Call this when starting a new derivation run or when the graph
-    has been modified.
-    """
-    _enrichment_cache.clear_all()
-    logger.debug("Cleared enrichment cache")
 
 
 # Backward compatibility alias (deprecated)
@@ -1727,6 +1684,8 @@ def query_candidates(
             enrich_candidate(candidate, enrichments)
         candidates.append(candidate)
 
+    # The graph's result order is unspecified: every later step sees the candidates in node id order
+    candidates.sort(key=lambda c: c.node_id)
     return candidates
 
 
@@ -2278,6 +2237,18 @@ def choose_name(samples: list[str | None]) -> str | None:
     best = min(groups, key=lambda k: (-len(groups[k]), k))
     forms = groups[best]
     return min(forms, key=lambda f: (-forms.count(f), f))
+
+
+def source_casing(name: str, source_name: str) -> str:
+    """``name`` with each word spelled as the source spells it, when the source writes that word with capitals (a
+    type name in camel case: "CrudTypeImpl" makes "CRUD Type" read "Crud Type"); a lowercase source (a directory
+    name) carries no casing, so its words keep the name's spelling."""
+    spelled: dict[str, str] = {}
+    for chunk in re.split(r"[_\-.\s]+", source_name or ""):
+        for word in _WORD.findall(chunk):
+            if not word.islower():
+                spelled.setdefault(word.lower(), word)
+    return " ".join(spelled.get(word.lower(), word) for word in name.split(" "))
 
 
 def element_identifier(element_type: str, source_id: str) -> str:
@@ -3043,6 +3014,32 @@ def derive_configuration_relationships(
     return relationships
 
 
+def _source_name_key(element: dict[str, Any], strip_suffixes: tuple[str, ...]) -> str:
+    """Canonical name key of the last part of the element's source id, without a configured suffix."""
+    name = str((element.get("properties") or {}).get("source") or "").rsplit("::", 1)[-1]
+    for suffix in strip_suffixes:
+        if suffix and name.endswith(suffix) and len(name) > len(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name_key(name)
+
+
+def derive_same_name_relationships(elements: list[dict[str, Any]], rules: list[SameNameRule]) -> list[dict[str, Any]]:
+    """The source element relates to every target element whose structural source carries the same name."""
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        targets: dict[str, list[str]] = defaultdict(list)
+        for e in elements:
+            if e.get("element_type") == rule.target and (key := _source_name_key(e, ())):
+                targets[key].append(e["identifier"])
+        for e in sorted((x for x in elements if x.get("element_type") == rule.source), key=lambda x: x.get("identifier", "")):
+            key = _source_name_key(e, rule.strip_suffixes)
+            for target in sorted(targets.get(key, [])) if key else []:
+                if target != e["identifier"]:
+                    relationships.append({"source": e["identifier"], "target": target, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "same_name"})
+    return relationships
+
+
 def file_imports(graph_manager: GraphManager) -> list[tuple[str, str]]:
     """(importing file path, imported file path) for every import between files of the repository."""
     rows = graph_manager.query("MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(b:Graph:File) RETURN a.filePath AS a, b.filePath AS b")
@@ -3108,6 +3105,7 @@ def derive_consolidated_relationships(
     membership: list[MembershipRule] | None = None,
     configuration: list[ConfigurationRule] | None = None,
     dependency: list[DependencyRule] | None = None,
+    same_name: list[SameNameRule] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for all elements in a single consolidated pass.
@@ -3136,6 +3134,9 @@ def derive_consolidated_relationships(
         dependency: Dependencies from file imports between siblings (``params.dependency``);
             usage, so no tier adds another relationship between the two. None: no
             dependency tier
+        same_name: Relationships between elements whose sources carry the same name
+            (``params.same_name``); no tier adds another relationship between the two.
+            None: no same-name tier
 
     Returns:
         List of all derived relationship dicts
@@ -3180,6 +3181,8 @@ def derive_consolidated_relationships(
             decide(rels, rule.provider, rule.consumer, rule.relationship, "target")
     if dependency and graph_manager:
         structural.extend(derive_dependency_relationships(all_elements, paths, file_imports(graph_manager), dependency))
+    if same_name:
+        structural.extend(derive_same_name_relationships(all_elements, same_name))
     all_relationships.extend(structural)
     owner_pairs = {frozenset((r["source"], r["target"])) for r in structural}
 
@@ -3277,7 +3280,6 @@ __all__ = [
     # Enrichment
     "get_enrichments",
     "get_enrichments_from_graph",
-    "clear_enrichment_cache",
     "enrich_candidate",
     # Filtering
     "filter_by_pagerank",

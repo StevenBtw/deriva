@@ -61,14 +61,6 @@ def benchmark_run(
         bool, typer.Option("--defer-relationships/--no-defer-relationships", help="Two-phase derivation: elements first, then the relationship pass (default)")
     ] = True,
     per_repo: Annotated[bool, typer.Option("--per-repo", help="Run each repo separately")] = False,
-    no_enrichment_cache: Annotated[bool, typer.Option("--no-enrichment-cache", help="Disable enrichment caching")] = False,
-    nocache_enrichment_configs: Annotated[
-        str | None,
-        typer.Option(
-            "--nocache-enrichment-configs",
-            help="Configs to skip enrichment cache for (comma-separated)",
-        ),
-    ] = None,
     no_cache_extraction: Annotated[
         bool,
         typer.Option(
@@ -103,10 +95,8 @@ def benchmark_run(
     models_list = [m.strip() for m in models.split(",")]
     stages_list = [s.strip() for s in stages.split(",")] if stages else None
     nocache_configs_list = [c.strip() for c in nocache_configs.split(",")] if nocache_configs else None
-    nocache_enrichment_configs_list = [c.strip() for c in nocache_enrichment_configs.split(",")] if nocache_enrichment_configs else None
 
     use_cache = not no_cache
-    use_enrichment_cache_flag = not no_enrichment_cache
     export_models = not no_export_models
     clear_between_runs = not no_clear
 
@@ -135,9 +125,6 @@ def benchmark_run(
         typer.echo("Defer relationships: enabled (two-phase derivation)")
     if nocache_configs_list:
         typer.echo(f"No-cache configs: {nocache_configs_list}")
-    typer.echo(f"Enrichment cache: {'enabled' if use_enrichment_cache_flag else 'disabled'}")
-    if nocache_enrichment_configs_list:
-        typer.echo(f"No-cache enrichment configs: {nocache_enrichment_configs_list}")
     if no_cache_extraction:
         typer.echo("Extraction cache: disabled (full re-extraction)")
     elif no_cache_extraction_llm:
@@ -186,8 +173,6 @@ def benchmark_run(
                 bench_hash=bench_hash,
                 defer_relationships=defer_relationships,
                 per_repo=per_repo,
-                use_enrichment_cache=use_enrichment_cache_flag,
-                nocache_enrichment_configs=nocache_enrichment_configs_list,
                 no_cache_extraction=no_cache_extraction,
                 no_cache_extraction_llm=no_cache_extraction_llm,
             )

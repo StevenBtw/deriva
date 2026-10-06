@@ -225,13 +225,6 @@ class TestGraphOutputs:
         # Timestamps record when, not what: they are left out
         assert outputs[("REPRESENTS", "dir::r::d -> concept::r::alpha")] == {"route": "directory"}
 
-    def test_the_json_copy_of_the_properties_is_left_out(self, graph_manager):
-        from deriva.services.step_benchmark import graph_outputs
-
-        graph_manager.add_node(_concept("Alpha"), node_id="concept::r::alpha")
-
-        assert "properties_json" not in graph_outputs(graph_manager)[("BusinessConcept", "concept::r::alpha")]
-
 
 class TestStepOutput:
     def test_new_changed_and_removed_objects(self):

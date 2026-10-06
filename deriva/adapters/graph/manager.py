@@ -24,7 +24,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any
@@ -62,6 +61,13 @@ GraphNode = (
 )
 
 logger = logging.getLogger(__name__)
+
+# Keys the adapter stores next to a node's model properties; readers leave them out
+SYSTEM_PROPERTIES = frozenset({"id", "repository_name", "active"})
+
+# How nodes and edges are stored. Part of the extraction fingerprint, so a graph written in an
+# older layout is extracted again instead of read (2: native properties, no JSON copy, no label property)
+STORAGE_FORMAT = 2
 
 # Node ID prefixes that embed repository name
 _NODE_ID_PREFIXES = frozenset(
@@ -211,40 +217,20 @@ class GraphManager:
         # Get node label (type)
         node_label = node.__class__.__name__.replace("Node", "")
 
-        # Convert node to properties dict
-        properties = node.to_dict()
-
-        # Convert properties to JSON string for full data backup
-        properties_json = json.dumps(properties) if properties else None
-
-        # Extract scalar properties to store directly on node
-        # Graph can store: strings, numbers, booleans, and arrays of these
-        flat_props = {}
-        for key, value in properties.items():
-            if isinstance(value, (str, int, float, bool)) or value is None:
-                flat_props[key] = value
-            elif isinstance(value, list) and all(isinstance(v, (str, int, float, bool)) for v in value):
-                flat_props[key] = value
-
-        # Add active flag for prep phase filtering (default true)
-        flat_props["active"] = True
-
-        # Extract and store repository_name for filtering in multi-repo setups
-        if "repository_name" not in flat_props:
+        # The node's model properties, natively (nested values included); None values are not stored
+        properties = {name: value for name, value in node.to_dict().items() if value is not None}
+        # Active flag for prep phase filtering, repository for multi-repo filtering
+        system: dict[str, Any] = {"active": True}
+        if "repository_name" not in properties:
             repo_name = _extract_repo_from_node_id(node_id)
             if repo_name:
-                flat_props["repository_name"] = repo_name
+                system["repository_name"] = repo_name
 
         try:
-            # Two labels: namespace (Graph) + type (Directory), so MATCH (d:Directory)
-            # works with namespace isolation. Found through the id index; a MERGE
-            # would scan every node with the namespace label.
-            self.db.merge_node(
-                "id",
-                node_id,
-                [self.namespace, node_label],
-                {"label": node_label, "properties_json": properties_json, **flat_props},
-            )
+            # Two labels: namespace (Graph) + type (Directory), so MATCH (d:Directory) works with
+            # namespace isolation. The stored node is exactly this write: properties set on it since
+            # (such as enrichment scores) are dropped.
+            self.db.merge_node("id", node_id, [self.namespace, node_label], {**properties, **system}, replace=True)
             logger.debug(f"Added node: {node_id} ({node_label})")
             return node_id
 
@@ -281,16 +267,12 @@ class GraphManager:
 
         properties = properties or {}
 
-        # Convert properties to JSON string
-        properties_json = json.dumps(properties) if properties else None
-
         try:
             # Relationship type as the label (e.g., Graph:CONTAINS); endpoints are
             # found through the id index (a second MATCH clause would scan all nodes)
             edge_label = self.db.get_label(relationship)
-            # Always set (None without properties), so a re-added edge replaces the old ones
-            props = {"properties_json": properties_json}
-            if not self.db.merge_edge("id", src_id, dst_id, edge_label, edge_id, props):
+            # The edge's properties become exactly these, so a re-added edge replaces the old ones
+            if not self.db.merge_edge("id", src_id, dst_id, edge_label, edge_id, properties):
                 raise RuntimeError(f"Failed to add edge. Make sure nodes {src_id} and {dst_id} exist.")
             logger.debug(f"Added edge: {src_id} -{relationship}-> {dst_id}")
             return edge_id
@@ -404,6 +386,47 @@ class GraphManager:
             logger.error(f"Failed to batch update properties: {e}")
             raise
 
+    def _node_from_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        """A node from a row with ``labels`` and ``props``: id, type label and stored properties without the system keys."""
+        props = row["props"]
+        label = next((name for name in row["labels"] if name != self.namespace), None)
+        return {"id": props["id"], "label": label, "properties": {name: value for name, value in props.items() if name not in SYSTEM_PROPERTIES}}
+
+    def graph_metric(self, name: str, **kwargs: Any) -> dict[str, Any]:
+        """One grafeo graph algorithm over this namespace, with the values keyed by node id.
+
+        Args:
+            name: ``pagerank``, ``louvain``, ``kcore``, ``articulation_points`` or ``degree_centrality``
+            **kwargs: The algorithm's own arguments (for example ``directed=False`` for PageRank)
+
+        Returns:
+            ``node_ids`` (every node of the namespace, sorted), ``edge_count`` (edges between them) and
+            ``values``: {id: score} for pagerank, {id: community number} for louvain, {id: core number}
+            for kcore, sorted ids for articulation_points, {id: {"in_degree", "out_degree"}} for
+            degree_centrality.
+        """
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        ns = self.namespace
+        node_ids = sorted(row["id"] for row in self.db.execute(f"MATCH (n:`{ns}`) RETURN n.id AS id"))
+        edge_count = self.db.execute(f"MATCH (:`{ns}`)-[r]->(:`{ns}`) RETURN count(r) AS c")[0]["c"]
+        # key="id": results keyed by node id and computed in id order, so they depend only on the
+        # graph's content, never on the order in which extraction wrote the nodes
+        raw = self.db.algorithm(name, key="id", **kwargs)
+        values: Any
+        if name == "louvain":
+            values = dict(raw["communities"])
+        elif name == "kcore":
+            values = dict(raw["core_numbers"])
+        elif name == "articulation_points":
+            values = sorted(raw)
+        elif name == "degree_centrality":
+            values = {node: {"in_degree": d["in_degree"], "out_degree": d["out_degree"]} for node, d in raw.items()}
+        else:
+            values = dict(raw)
+        return {"node_ids": node_ids, "edge_count": edge_count, "values": values}
+
     def get_node(self, node_id: str) -> dict[str, Any] | None:
         """Retrieve a node by ID.
 
@@ -420,23 +443,11 @@ class GraphManager:
             query = """
                 MATCH (n)
                 WHERE n.id = $node_id
-                RETURN n.id as id,
-                       n.label as label,
-                       n.properties_json as properties_json
+                RETURN labels(n) AS labels, properties(n) AS props
             """
 
             result = self.db.execute_read(query, {"node_id": node_id})
-
-            if result:
-                data = result[0]
-                # Parse JSON properties back to dict
-                properties = json.loads(data["properties_json"]) if data.get("properties_json") else {}
-                return {
-                    "id": data["id"],
-                    "label": data["label"],
-                    "properties": properties,
-                }
-            return None
+            return self._node_from_row(result[0]) if result else None
 
         except Exception as e:
             logger.error(f"Failed to get node {node_id}: {e}")
@@ -484,20 +495,11 @@ class GraphManager:
             # Nodes have two labels: namespace (Graph) + type (Repository, Directory, etc.)
             query = f"""
                 MATCH (n:`{node_type}`)
-                RETURN n.id as id,
-                       n.label as label,
-                       n.properties_json as properties_json
+                RETURN labels(n) AS labels, properties(n) AS props
             """
 
-            result = self.db.execute_read(query)
-
-            nodes = []
-            for data in result:
-                # Parse JSON properties back to dict
-                properties = json.loads(data["properties_json"]) if data.get("properties_json") else {}
-                nodes.append({"id": data["id"], "label": data["label"], "properties": properties})
-
-            return nodes
+            # In id order: the graph's result order is unspecified, and callers take the first match
+            return sorted((self._node_from_row(row) for row in self.db.execute_read(query)), key=lambda node: node["id"])
 
         except Exception as e:
             logger.error(f"Failed to get nodes by type {node_type}: {e}")

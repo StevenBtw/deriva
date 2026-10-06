@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
@@ -72,6 +73,7 @@ class ConceptCandidate:
     originals: list[dict[str, Any]]  # {"term", "language", "count"}, most frequent first
     snippets: list[str]
     code_support: bool = False
+    snippet_paths: list[str] = field(default_factory=list)  # the document of each snippet
     score: float = field(default=0.0, compare=False)
 
 
@@ -82,9 +84,10 @@ def _title(words: list[str], singular_head: bool) -> str:
     return " ".join(w[:1].upper() + w[1:] for w in words)
 
 
-def _snippets(occurrences: list[dict[str, Any]]) -> list[str]:
-    """First occurrence in the document that mentions the candidate most (ties by path), then the first
-    occurrence in the next such document; with one document, its next occurrence with other context."""
+def _snippets(occurrences: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """(snippet, document path): the first occurrence in the document that mentions the candidate most (ties
+    by path), then the first occurrence in the next such document; with one document, its next occurrence
+    with other context."""
     by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for o in occurrences:
         by_path[o["path"]].append(o)
@@ -93,9 +96,33 @@ def _snippets(occurrences: list[dict[str, Any]]) -> list[str]:
         by_path[path].sort(key=lambda o: (o["segment"], o["start"]))
     first = by_path[order[0]][0]["snippet"]
     if len(order) > 1:
-        return [first, by_path[order[1]][0]["snippet"]]
+        return [(first, order[0]), (by_path[order[1]][0]["snippet"], order[1])]
     other = next((o["snippet"] for o in by_path[order[0]][1:] if o["snippet"] != first), None)
-    return [first] if other is None else [first, other]
+    return [(first, order[0])] if other is None else [(first, order[0]), (other, order[0])]
+
+
+_MARKUP_LINE = re.compile(r"^\s*(#|\[!\[|!\[|<|```|~~~)")
+_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def system_description(text: str, max_chars: int) -> str:
+    """The prose of a README's opening: headings, images, badges, HTML, tables and code blocks left out, links
+    reduced to their text, emphasis and code marks removed, cut to `max_chars` at a word boundary (0: no description)."""
+    if max_chars <= 0:
+        return ""
+    prose, in_code = [], False
+    for line in text.splitlines():
+        if line.strip().startswith(("```", "~~~")):
+            in_code = not in_code
+            continue
+        if in_code or not line.strip() or _MARKUP_LINE.match(line) or "|" in line:
+            continue
+        prose.append(_LINK.sub(r"\1", _IMAGE.sub("", line)).replace("**", "").replace("__", "").replace("`", "").strip())
+    joined = " ".join(" ".join(prose).split())
+    if len(joined) <= max_chars:
+        return joined
+    return joined[:max_chars].rsplit(" ", 1)[0]
 
 
 def merge_candidates(tool_candidates: list[dict[str, Any]], repo_name: str) -> list[ConceptCandidate]:
@@ -129,6 +156,7 @@ def merge_candidates(tool_candidates: list[dict[str, Any]], repo_name: str) -> l
             documents.update(o["path"] for o in m["occurrences"])
             occurrences.extend(m["occurrences"])
         pool = english or translated
+        snippets = _snippets(occurrences)
         merged.append(
             ConceptCandidate(
                 key=key,
@@ -137,7 +165,8 @@ def merge_candidates(tool_candidates: list[dict[str, Any]], repo_name: str) -> l
                 count=sum(m["count"] for m in members),
                 documents=dict(sorted(documents.items())),
                 originals=[{"term": t, "language": lang, "count": n} for (t, lang), n in sorted(originals.items(), key=lambda kv: (-kv[1], kv[0][1], kv[0][0]))],
-                snippets=_snippets(occurrences),
+                snippets=[s for s, _ in snippets],
+                snippet_paths=[path for _, path in snippets],
             )
         )
     return merged
@@ -243,14 +272,21 @@ def classification_batches[K: Keyed](candidates: list[K], batch_size: int) -> li
     return [sorted(grouped[b], key=lambda c: c.key) for b in sorted(grouped)]
 
 
-def build_classification_prompt(instruction: str, batch: list[ConceptCandidate]) -> str:
-    """The configured instruction, then every term with its original wording (when translated) and context."""
-    lines = [instruction.strip(), "", "Terms:"]
+def build_classification_prompt(instruction: str, batch: list[ConceptCandidate], system_description: str = "", show_sources: bool = False) -> str:
+    """The configured instruction, the system's own description when given, then every term with its original
+    wording (when translated) and context, each context line with its document when `show_sources`."""
+    lines = [instruction.strip(), ""]
+    if system_description:
+        lines += ["System description:", system_description, ""]
+    lines.append("Terms:")
     for i, c in enumerate(batch, 1):
         shown = [o for o in c.originals if o["language"] != "en" and o["term"].casefold() != c.name.casefold()][:2]
         suffix = " (original: " + "; ".join(f'"{o["term"]}", {LANGUAGE_NAMES.get(o["language"], o["language"])}' for o in shown) + ")" if shown else ""
         lines.append(f'{i}. "{c.name}"{suffix}')
-        lines.extend(f'   context: "{s}"' for s in c.snippets)
+        if show_sources:
+            lines.extend(f'   context ({path}): "{s}"' for s, path in zip(c.snippets, c.snippet_paths, strict=True))
+        else:
+            lines.extend(f'   context: "{s}"' for s in c.snippets)
     return "\n".join(lines) + "\n"
 
 

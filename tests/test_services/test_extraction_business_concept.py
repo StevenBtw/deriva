@@ -110,12 +110,15 @@ def _cfg(params=None, batch_size=50):
     )
 
 
-def _run(tmp_path, graph, tool, llm, cfg=None):
+def _run(tmp_path, graph, tool, llm, cfg=None, readme=None):
     (tmp_path / "docs").mkdir(exist_ok=True)
     for name in DOCS:
         (tmp_path / "docs" / name).write_text(f"text of {name}", encoding="utf-8")
         graph.add_node(FileNode(name=name, path=f"docs/{name}", repository_name="r", file_type="docs", subtype="markdown"), node_id=f"file::r::docs_{name}")
     files = [{"path": f"docs/{name}", "file_type": "docs", "subtype": "markdown"} for name in DOCS]
+    if readme is not None:
+        (tmp_path / "README.md").write_text(readme, encoding="utf-8")
+        files.append({"path": "README.md", "file_type": "docs", "subtype": "markdown"})
     with patch.object(service, "NlpTool", lambda: tool):
         return service._extract_business_concepts(cfg or _cfg(), SimpleNamespace(name="r"), tmp_path, files, graph, llm)
 
@@ -298,6 +301,38 @@ class TestBusinessConceptStep:
         _run(tmp_path, graph, tool, llm, cfg=_cfg(params={**PARAMS, "evidence_min_count": 1, "evidence_share": 0.8}))
 
         assert llm.prompted_terms() == ["Journal", "Ledger"]
+
+    README = "# Ledger\n\nLedger keeps the books of small shops and their owners.\n"
+
+    def test_the_classifier_sees_the_opening_of_the_root_readme(self, tmp_path, graph):
+        llm = FakeLlm({})
+
+        _run(tmp_path, graph, _ledger_tool(), llm, cfg=_cfg(params={**PARAMS, "system_description_chars": 30}), readme=self.README)
+
+        assert llm.calls[0]["prompt"].startswith("Classify every term.\n\nSystem description:\nLedger keeps the books of\n\nTerms:\n")
+
+    def test_without_a_root_readme_there_is_no_description(self, tmp_path, graph):
+        llm = FakeLlm({})
+
+        _run(tmp_path, graph, _ledger_tool(), llm, cfg=_cfg(params={**PARAMS, "system_description_chars": 30}))
+
+        assert llm.calls[0]["prompt"].startswith("Classify every term.\n\nTerms:\n")
+
+    def test_context_lines_name_their_document_when_configured(self, tmp_path, graph):
+        llm = FakeLlm({})
+
+        _run(tmp_path, graph, _ledger_tool(), llm, cfg=_cfg(params={**PARAMS, "context_sources": True}))
+
+        assert '   context (docs/a.md): "Ledger in docs/a.md"' in llm.calls[0]["prompt"]
+
+    @pytest.mark.parametrize("option", [{"system_description_chars": -1}, {"system_description_chars": "many"}, {"context_sources": "yes"}])
+    def test_invalid_prompt_options_are_an_error_before_any_work(self, tmp_path, graph, option):
+        tool, llm = _ledger_tool(), FakeLlm({})
+
+        result = _run(tmp_path, graph, tool, llm, cfg=_cfg(params={**PARAMS, **option}))
+
+        assert len(result["errors"]) == 1 and next(iter(option)) in result["errors"][0]
+        assert (tool.calls, llm.calls) == ([], [])
 
     def test_a_failed_call_is_an_error_and_creates_nothing(self, tmp_path, graph):
         result = _run(tmp_path, graph, _ledger_tool(), FakeLlm({}, response=SimpleNamespace(content="", error="rate limited")))

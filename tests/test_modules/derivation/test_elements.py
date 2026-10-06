@@ -10,18 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from deriva.modules.derivation.base import ElementPrompt, clear_enrichment_cache
+from deriva.modules.derivation.base import ElementPrompt
 from deriva.services.derivation import DERIVATION_REGISTRY
 
 TEST_PROMPT = ElementPrompt(persona="Derive elements.", candidates="Candidates.", rules="{abstention}Rules.", abstention="")
-
-
-@pytest.fixture(autouse=True)
-def reset_enrichment_cache():
-    """Clear the module-level enrichment cache before each test."""
-    clear_enrichment_cache()
-    yield
-    clear_enrichment_cache()
 
 
 # All derivation element types
@@ -128,8 +120,6 @@ class TestGenerateMethod:
 
         # Setup graph manager with stats, enrichment and candidate results
         mock_manager = MagicMock()
-        # Stats for compute_graph_hash (called for cache lookup and cache store)
-        stats_results = [{"node_count": 10, "edge_count": 20}]
         enrichment_results = [
             {
                 "node_id": "node_1",
@@ -150,7 +140,7 @@ class TestGenerateMethod:
             },
         ]
         # Order: stats (cache lookup) -> enrichments -> stats (cache store) -> candidates
-        mock_manager.query.side_effect = [stats_results, enrichment_results, stats_results, candidate_results]
+        mock_manager.query.side_effect = [enrichment_results, candidate_results]
 
         # Setup LLM response with valid element
         mock_llm = MagicMock()
@@ -198,8 +188,6 @@ class TestGenerateMethod:
 
         # Setup graph manager with valid results
         mock_manager = MagicMock()
-        # Stats for compute_graph_hash (called for cache lookup and cache store)
-        stats_results = [{"node_count": 10, "edge_count": 20}]
         enrichment_results = [
             {
                 "node_id": "n1",
@@ -213,7 +201,7 @@ class TestGenerateMethod:
         ]
         candidate_results = [{"id": "n1", "name": "Test", "labels": [], "properties": {}}]
         # Order: stats (cache lookup) -> enrichments -> stats (cache store) -> candidates
-        mock_manager.query.side_effect = [stats_results, enrichment_results, stats_results, candidate_results]
+        mock_manager.query.side_effect = [enrichment_results, candidate_results]
 
         # LLM throws exception
         failing_llm = MagicMock()
@@ -252,8 +240,6 @@ class TestGenerateMethod:
 
         # Setup graph manager
         mock_manager = MagicMock()
-        # Stats for compute_graph_hash (called for cache lookup and cache store)
-        stats_results = [{"node_count": 10, "edge_count": 20}]
         enrichment_results = [
             {
                 "node_id": "n1",
@@ -267,7 +253,7 @@ class TestGenerateMethod:
         ]
         candidate_results = [{"id": "n1", "name": "Test", "labels": [], "properties": {}}]
         # Order: stats (cache lookup) -> enrichments -> stats (cache store) -> candidates
-        mock_manager.query.side_effect = [stats_results, enrichment_results, stats_results, candidate_results]
+        mock_manager.query.side_effect = [enrichment_results, candidate_results]
 
         # LLM returns invalid JSON
         invalid_llm = MagicMock()

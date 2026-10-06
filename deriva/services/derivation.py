@@ -37,6 +37,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import re
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
@@ -47,7 +48,6 @@ from deriva.common.types import PipelineResult, ProgressUpdate
 if TYPE_CHECKING:
     from deriva.common.types import ProgressReporter, RunLoggerProtocol
 from deriva.adapters.graph import GraphManager
-from deriva.adapters.graph.cache import EnrichmentCacheManager
 from deriva.modules.derivation import prep
 from deriva.modules.derivation.application_component import ApplicationComponentDerivation
 from deriva.modules.derivation.application_interface import ApplicationInterfaceDerivation
@@ -64,8 +64,10 @@ from deriva.modules.derivation.base import (
     PerCandidateConfig,
     RelationshipLLMConfig,
     RoleConfig,
+    SameNameRule,
     UnitFilter,
     derive_consolidated_relationships,
+    get_enrichments_from_graph,
 )
 from deriva.modules.derivation.business_actor import BusinessActorDerivation
 from deriva.modules.derivation.business_event import BusinessEventDerivation
@@ -236,6 +238,22 @@ def _dependency_rules(configs: list[Any]) -> list[DependencyRule]:
     return rules
 
 
+def _same_name_rules(configs: list[Any]) -> list[SameNameRule]:
+    """Relationships between elements whose structural sources carry the same name (``params.same_name``).
+
+    ``[{"source": "DataObject", "target": "BusinessObject", "relationship": "Realization", "strip_suffixes": ["Impl"]}]``:
+    a data object realizes the business object its type names, the type name without the suffix.
+    """
+    rules: list[SameNameRule] = []
+    for item in _structural_items(configs, "same_name", ("source", "target", "relationship")):
+        _check_rule("same_name", item, item["source"], item["relationship"], item["target"])
+        suffixes = item.get("strip_suffixes", [])
+        if not isinstance(suffixes, list) or not all(isinstance(x, str) and x for x in suffixes):
+            raise ValueError(f"params.same_name rule {item!r}: strip_suffixes must be a list of names")
+        rules.append(SameNameRule(source=item["source"], target=item["target"], relationship=item["relationship"], strip_suffixes=tuple(suffixes)))
+    return rules
+
+
 def _per_candidate_config(params: str | None) -> PerCandidateConfig | None:
     """Read per-candidate naming mode from an element config's params.
 
@@ -247,7 +265,15 @@ def _per_candidate_config(params: str | None) -> PerCandidateConfig | None:
         return None
     if "min_pool" not in settings or not settings.get("rules") or not settings.get("persona"):
         raise ValueError("params.per_candidate needs min_pool, rules and persona")
-    return PerCandidateConfig(min_pool=int(settings["min_pool"]), rules=settings["rules"], persona=settings["persona"])
+    decorators = settings.get("decorators")
+    if decorators is not None:
+        if not isinstance(decorators, str) or not decorators:
+            raise ValueError(f"params.per_candidate.decorators must be a non-empty pattern, got {decorators!r}")
+        try:
+            re.compile(decorators)
+        except re.error as e:
+            raise ValueError(f"params.per_candidate.decorators is not a valid pattern: {e}") from e
+    return PerCandidateConfig(min_pool=int(settings["min_pool"]), rules=settings["rules"], persona=settings["persona"], decorators=decorators)
 
 
 def _naming_config(params: str | None) -> NamingConfig | None:
@@ -442,7 +468,7 @@ def generate_element(
     temperature: float | None = None,
     max_tokens: int | None = None,
     defer_relationships: bool = True,
-    cache_manager: EnrichmentCacheManager | None = None,
+    enrichments: dict[str, dict[str, Any]] | None = None,
     relationship_config: RelationshipLLMConfig | None = None,
     per_candidate: PerCandidateConfig | None = None,
     naming: NamingConfig | None = None,
@@ -479,7 +505,7 @@ def generate_element(
         temperature: Optional LLM temperature override
         max_tokens: Optional LLM max_tokens override
         defer_relationships: If True, skip relationship derivation (for separated phases mode)
-        cache_manager: Optional EnrichmentCacheManager for controlled caching
+        enrichments: The run's graph enrichment values by node id (read from the graph when None)
         relationship_config: Relationship config row settings (None skips the LLM relationship pass)
         per_candidate: Per-candidate naming mode from the element config (None uses batch mode)
         naming: Isolated naming step from the element config (None keeps structure names)
@@ -528,7 +554,7 @@ def generate_element(
             temperature=temperature,
             max_tokens=max_tokens,
             defer_relationships=defer_relationships,
-            cache_manager=cache_manager,
+            enrichments=enrichments,
             relationship_config=relationship_config,
             per_candidate=per_candidate,
             naming=naming,
@@ -583,47 +609,57 @@ ENRICHMENT_ALGORITHMS: dict[str, str] = {
 }
 
 
-def _get_graph_edges(
-    graph_manager: GraphManager,
-    repository_name: str | None = None,
-) -> list[dict[str, str]]:
-    """Get edges from the graph for enrichment algorithms.
+def _graph_metrics(graph_manager: GraphManager, algorithm: str, params: dict[str, Any]) -> prep.GraphMetrics:
+    """Run one prep algorithm natively in grafeo on the graph namespace; its raw values by node id.
 
-    Returns edges in the format expected by prep module:
-    [{"source": "node_id_1", "target": "node_id_2"}, ...]
-
-    Args:
-        graph_manager: Connected GraphManager
-        repository_name: Optional repo name to filter edges.
-            If provided, only returns edges where both nodes belong to this repo.
-            This enables per-repository enrichment isolation in multi-repo setups.
-
-    Note: Labels are separate (e.g., ['Graph', 'Directory'], not 'Graph:Directory').
-    We match any node with the 'Graph' label to get all graph nodes.
+    PageRank runs on the undirected graph (each connected pair once), like the structural
+    importance the derivation steps expect; config params keep their names (``max_iter``, ``tol``).
     """
-    if repository_name:
-        # Filter to edges within a single repository
-        query = """
-            MATCH (a)-[r]->(b)
-            WHERE 'Graph' IN labels(a)
-              AND 'Graph' IN labels(b)
-              AND a.active = true AND b.active = true
-              AND a.repository_name = $repo_name
-              AND b.repository_name = $repo_name
-            RETURN a.id as source, b.id as target
-        """
-        result = graph_manager.query(query, {"repo_name": repository_name})
+    if algorithm == "pagerank":
+        metric = graph_manager.graph_metric(
+            "pagerank",
+            directed=False,
+            damping=params.get("damping", 0.85),
+            max_iterations=params.get("max_iter", 100),
+            tolerance=params.get("tol", 1e-6),
+        )
+        values = {"pagerank": metric["values"]}
+    elif algorithm == "louvain":
+        metric = graph_manager.graph_metric("louvain", resolution=params.get("resolution", 1.0))
+        values = {"communities": metric["values"]}
+    elif algorithm == "kcore":
+        metric = graph_manager.graph_metric("kcore")
+        values = {"core_levels": metric["values"]}
+    elif algorithm == "articulation_points":
+        metric = graph_manager.graph_metric("articulation_points")
+        values = {"articulation_points": metric["values"]}
+    elif algorithm == "degree":
+        metric = graph_manager.graph_metric("degree_centrality")
+        values = {"degrees": metric["values"]}
     else:
-        # Default: get all edges
-        query = """
-            MATCH (a)-[r]->(b)
-            WHERE 'Graph' IN labels(a)
-              AND 'Graph' IN labels(b)
-              AND a.active = true AND b.active = true
-            RETURN a.id as source, b.id as target
-        """
-        result = graph_manager.query(query)
-    return [{"source": row["source"], "target": row["target"]} for row in result]
+        raise ValueError(f"Unknown prep algorithm: {algorithm}")
+    return prep.GraphMetrics(node_ids=metric["node_ids"], edge_count=metric["edge_count"], **values)
+
+
+class _RunEnrichments:
+    """The graph enrichment values of one derivation run.
+
+    Prep steps write the values onto the graph nodes; the element steps read them through
+    this holder: once, and again after any prep step, so a run never reads values that an
+    earlier run, another solver version or other prep parameters produced.
+    """
+
+    def __init__(self, graph_manager: GraphManager):
+        self._graph_manager = graph_manager
+        self._values: dict[str, dict[str, Any]] | None = None
+
+    def get(self) -> dict[str, dict[str, Any]]:
+        if self._values is None:
+            self._values = get_enrichments_from_graph(self._graph_manager)
+        return self._values
+
+    def invalidate(self) -> None:
+        self._values = None
 
 
 def _run_prep_step(
@@ -644,36 +680,24 @@ def _run_prep_step(
 
     algorithm = ENRICHMENT_ALGORITHMS[step_name]
 
-    # Parse params from config
-    params: dict[str, dict[str, Any]] = {}
+    # Parse params from config (invalid JSON falls back to the defaults)
+    params: dict[str, Any] = {}
     if cfg.params:
         try:
-            step_params = json.loads(cfg.params)
-            # Remove non-algorithm params like "description"
-            step_params = {k: v for k, v in step_params.items() if k not in ["description"]}
-            if step_params:
-                params[algorithm] = step_params
+            params = json.loads(cfg.params)
         except json.JSONDecodeError:
-            pass
+            params = {}
 
     logger.info(f"Running enrichment: {step_name} (algorithm: {algorithm})")
 
     try:
-        # Get graph edges
-        edges = _get_graph_edges(graph_manager)
-
-        if not edges:
-            logger.warning(f"No edges found for enrichment step: {step_name}")
+        # The algorithm runs natively in grafeo on the graph namespace
+        metrics = _graph_metrics(graph_manager, algorithm, params)
+        if not metrics.node_ids:
+            logger.warning(f"Empty graph for enrichment step: {step_name}")
             return {"success": True, "stats": {"nodes_updated": 0}}
 
-        # Run the enrichment algorithm
-        result = prep.enrich_graph(
-            edges=edges,
-            algorithms=[algorithm],
-            params=params,
-            include_percentiles=True,
-        )
-
+        result = prep.enrich_from_metrics(metrics, include_percentiles=True)
         if not result.enrichments:
             return {"success": True, "stats": {"nodes_updated": 0}}
 
@@ -720,9 +744,6 @@ def run_derivation(
     progress: ProgressReporter | None = None,
     defer_relationships: bool = True,
     config_versions: dict[str, dict[str, int]] | None = None,
-    use_enrichment_cache: bool = True,
-    nocache_enrichment_configs: list[str] | None = None,
-    enrichment_bench_hash: str | None = None,
 ) -> dict[str, Any]:
     """
     Run the derivation pipeline.
@@ -749,9 +770,6 @@ def run_derivation(
                             be derived. Use for A/B testing or separated phases.
         config_versions: Optional config version snapshot (for benchmark consistency).
                         Dict with {"derivation": {step_name: version}}
-        use_enrichment_cache: Enable/disable graph enrichment caching (default True).
-        nocache_enrichment_configs: List of config names to skip enrichment cache for.
-        enrichment_bench_hash: Optional benchmark hash for per-run cache isolation.
 
     Returns:
         Dict with success, stats, errors
@@ -769,12 +787,8 @@ def run_derivation(
     all_created_elements: list[dict] = []
     all_candidate_decisions: list[dict] = []  # For threshold optimization analysis
 
-    # Create enrichment cache manager with control settings
-    enrichment_cache = EnrichmentCacheManager(
-        use_cache=use_enrichment_cache,
-        nocache_configs=nocache_enrichment_configs,
-        bench_hash=enrichment_bench_hash,
-    )
+    # The graph enrichment values, read once per run and again after a prep step rewrote them
+    enrichments = _RunEnrichments(graph_manager)
 
     # Accumulate graph metadata from prep phase for use in refine steps
     graph_metadata: dict[str, Any] = {}
@@ -830,6 +844,7 @@ def run_derivation(
                 step_ctx = run_logger.step_start(cfg.step_name, f"Running prep step: {cfg.step_name}")
 
             result = _run_prep_step(cfg, graph_manager)
+            enrichments.invalidate()
             stats["steps_completed"] += 1
 
             # Capture graph metadata for refine steps
@@ -936,7 +951,7 @@ def run_derivation(
                     batch_size=cfg.batch_size,
                     existing_elements=all_created_elements,  # Pass accumulated elements
                     defer_relationships=defer_relationships,
-                    cache_manager=enrichment_cache,
+                    enrichments=enrichments.get(),
                     relationship_config=relationship_config(),
                     per_candidate=_per_candidate_config(cfg.params),
                     naming=_naming_config(cfg.params),
@@ -1048,6 +1063,7 @@ def run_derivation(
                 membership=_membership_rules(relationship_configs),
                 configuration=_configuration_rules(relationship_configs),
                 dependency=_dependency_rules(relationship_configs),
+                same_name=_same_name_rules(relationship_configs),
             )
 
             # Persist relationships to archimate model with graph metadata for stability analysis
@@ -1208,9 +1224,6 @@ def run_derivation_iter(
     verbose: bool = False,
     phases: list[str] | None = None,
     defer_relationships: bool = True,
-    use_enrichment_cache: bool = True,
-    nocache_enrichment_configs: list[str] | None = None,
-    enrichment_bench_hash: str | None = None,
 ) -> Iterator[ProgressUpdate]:
     """
     Run derivation pipeline as a generator, yielding progress updates.
@@ -1227,9 +1240,6 @@ def run_derivation_iter(
         enabled_only: Only run enabled derivation steps
         verbose: Print progress to stdout
         phases: List of phases to run ("prep", "generate", "refine")
-        use_enrichment_cache: Enable/disable graph enrichment caching (default True).
-        nocache_enrichment_configs: List of config names to skip enrichment cache for.
-        enrichment_bench_hash: Optional benchmark hash for per-run cache isolation.
 
     Yields:
         ProgressUpdate objects for each step in the pipeline
@@ -1246,12 +1256,8 @@ def run_derivation_iter(
     errors: list[str] = []
     all_created_elements: list[dict] = []
 
-    # Create enrichment cache manager with control settings
-    enrichment_cache = EnrichmentCacheManager(
-        use_cache=use_enrichment_cache,
-        nocache_configs=nocache_enrichment_configs,
-        bench_hash=enrichment_bench_hash,
-    )
+    # The graph enrichment values, read once per run and again after a prep step rewrote them
+    enrichments = _RunEnrichments(graph_manager)
 
     # Calculate total steps for progress
     prep_configs = config.get_derivation_configs(engine, enabled_only=enabled_only, phase="prep")
@@ -1286,6 +1292,7 @@ def run_derivation_iter(
                 print(f"  Prep: {cfg.step_name}")
 
             result = _run_prep_step(cfg, graph_manager)
+            enrichments.invalidate()
             stats["steps_completed"] += 1
 
             if result.get("errors"):
@@ -1374,7 +1381,7 @@ def run_derivation_iter(
                     batch_size=cfg.batch_size,
                     existing_elements=all_created_elements,
                     defer_relationships=defer_relationships,
-                    cache_manager=enrichment_cache,
+                    enrichments=enrichments.get(),
                     relationship_config=relationship_config(),
                     per_candidate=_per_candidate_config(cfg.params),
                     naming=_naming_config(cfg.params),
@@ -1466,6 +1473,7 @@ def run_derivation_iter(
                 membership=_membership_rules(relationship_configs),
                 configuration=_configuration_rules(relationship_configs),
                 dependency=_dependency_rules(relationship_configs),
+                same_name=_same_name_rules(relationship_configs),
             )
 
             # Persist relationships to archimate model

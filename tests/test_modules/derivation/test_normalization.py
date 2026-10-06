@@ -59,6 +59,16 @@ class TestStripRepoPrefix:
     def test_empty_repo_name_unchanged(self):
         assert strip_repo_prefix("Lightblue Core", "") == "Lightblue Core"
 
+    def test_a_repo_name_spread_over_several_words(self):
+        assert strip_repo_prefix("Tea Store Registry", "TeaStore") == "Registry"
+        assert strip_repo_prefix("Lakeside Mutual Customer Core", "LakesideMutual") == "Customer Core"
+
+    def test_a_name_that_is_only_the_repo_name_stays(self):
+        assert strip_repo_prefix("Tea Store", "TeaStore") == "Tea Store"
+
+    def test_part_of_a_word_is_no_prefix(self):
+        assert strip_repo_prefix("Teapot Store Registry", "TeaStore") == "Teapot Store Registry"
+
     def test_single_token_not_stripped(self):
         assert strip_repo_prefix("Lightblue", "lightblue") == "Lightblue"
 

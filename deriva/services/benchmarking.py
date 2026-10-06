@@ -198,12 +198,12 @@ def _node_routes(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
     route (``structural`` or ``llm``); edges written before that stamp count as ``file``.
 
     Args:
-        rows: One row per incoming edge: node ``id``, edge type ``rel``, edge ``props`` (JSON)
+        rows: One row per incoming edge: node ``id``, edge type ``rel``, edge ``props`` (a map)
     """
     routes: dict[str, set[str]] = {}
     for row in rows:
         rel = str(row.get("rel") or "").rsplit(":", 1)[-1]
-        route = json.loads(row.get("props") or "{}").get("route", "file") if rel == "CONFIGURES" else _ROUTE_BY_EDGE.get(rel)
+        route = (row.get("props") or {}).get("route", "file") if rel == "CONFIGURES" else _ROUTE_BY_EDGE.get(rel)
         if route:
             routes.setdefault(row["id"], set()).add(route)
     return {node: sorted(found) for node, found in sorted(routes.items())}
@@ -212,10 +212,10 @@ def _node_routes(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
 def _incoming_routes(graph_manager: GraphManager, label: str) -> dict[str, list[str]]:
     """The extraction routes of every ``Graph:<label>`` node (see ``_node_routes``).
 
-    The labelled node starts the pattern: as the target of an expand, grafeo applies
-    only its first label (``Graph``) and would return every graph node.
+    The labelled node starts the pattern (needed before grafeo 0.5.44, #513, where an
+    expand target kept only its first label; both forms work now).
     """
-    return _node_routes(graph_manager.query(f"MATCH (n:Graph:{label})<-[r]-() RETURN n.id AS id, type(r) AS rel, r.properties_json AS props"))
+    return _node_routes(graph_manager.query(f"MATCH (n:Graph:{label})<-[r]-() RETURN n.id AS id, type(r) AS rel, properties(r) AS props"))
 
 
 def _print_timings(timings: dict[str, Any]) -> None:
@@ -326,8 +326,6 @@ class BenchmarkConfig:
     defer_relationships: bool = True  # Two-phase derivation: elements first, then relationships (recommended)
     per_repo: bool = False  # Run each repo as separate benchmark (vs combined)
     # Enrichment cache settings (mirrors LLM cache patterns)
-    use_enrichment_cache: bool = True  # Global enrichment cache setting
-    nocache_enrichment_configs: list[str] = field(default_factory=list)  # Configs to skip enrichment cache
     # Extraction cache settings
     no_cache_extraction: bool = False  # Force full re-extraction (ignore fingerprint)
     no_cache_extraction_llm: bool = False  # Re-run LLM extraction steps only (keep structural/AST)
@@ -1015,9 +1013,6 @@ class BenchmarkOrchestrator:
                     defer_relationships=self.config.defer_relationships,
                     phases=["prep", "generate", "refine"],  # Include refine for graph_relationships
                     config_versions=getattr(self, "_config_versions_snapshot", None),
-                    use_enrichment_cache=self.config.use_enrichment_cache,
-                    nocache_enrichment_configs=self.config.nocache_enrichment_configs or None,
-                    enrichment_bench_hash=bench_hash_str if self.config.bench_hash else None,
                 )
                 stats["derivation"] = result.get("stats", {})
                 self._log_derivation_results(result)

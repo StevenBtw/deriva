@@ -228,8 +228,6 @@ deriva benchmark run --repos <repos> --models <models> [options]
   --stages                      Stages to run: extraction,derivation
   --no-cache                    Disable all LLM caching
   --nocache-configs             Configs to skip cache for (comma-separated)
-  --no-enrichment-cache         Disable enrichment caching
-  --nocache-enrichment-configs  Enrichment configs to skip cache for (comma-separated)
   --no-export-models            Disable exporting ArchiMate model files
   --per-repo                    Run each repo separatetely (default: combine all)
   -v, --verbose                 Show detailed text progress

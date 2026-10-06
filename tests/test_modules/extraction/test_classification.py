@@ -52,6 +52,24 @@ class TestClassifyFiles:
         assert result["stats"]["classified_count"] == 2
         assert result["stats"]["undefined_count"] == 1  # .css not in registry
 
+    def test_a_long_registered_extension_classifies_by_suffix(self):
+        """Extensions longer than four letters (.gradle, .properties) match a file's suffix; dotfile names still match."""
+        files = ["service/build.gradle", "service/src/main/resources/application.properties", ".gitignore"]
+        registry = [
+            {"extension": ".gradle", "file_type": "build", "subtype": "gradle"},
+            {"extension": ".properties", "file_type": "config", "subtype": "properties"},
+            {"extension": ".gitignore", "file_type": "config", "subtype": "git"},
+        ]
+
+        result = classify_files(files, registry)
+
+        assert {f["path"]: (f["file_type"], f["subtype"]) for f in result["classified"]} == {
+            "service/build.gradle": ("build", "gradle"),
+            "service/src/main/resources/application.properties": ("config", "properties"),
+            ".gitignore": ("config", "git"),
+        }
+        assert result["undefined"] == []
+
     def test_classify_by_filename(self):
         """Should classify by full filename match."""
         files = ["requirements.txt", "Makefile", "main.py"]

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from deriva.modules.derivation.base import PerCandidateConfig, RelationshipLLMConfig
-from deriva.modules.derivation.prep import EnrichmentResult
+from deriva.modules.derivation.prep import GraphMetrics
 from deriva.services import derivation
 
 # =============================================================================
@@ -73,103 +73,95 @@ class TestDerivationRegistry:
         assert instance is None
 
 
-class TestGetGraphEdges:
-    """Tests for _get_graph_edges function."""
-
-    def test_returns_edges_from_query(self):
-        """Should return edges from graph query."""
-        graph_manager = MagicMock()
-        graph_manager.query.return_value = [
-            {"source": "n1", "target": "n2"},
-            {"source": "n2", "target": "n3"},
-        ]
-
-        edges = derivation._get_graph_edges(graph_manager)
-
-        assert len(edges) == 2
-        assert edges[0] == {"source": "n1", "target": "n2"}
-
-    def test_returns_empty_list_when_no_edges(self):
-        """Should return empty list when no edges."""
-        graph_manager = MagicMock()
-        graph_manager.query.return_value = []
-
-        edges = derivation._get_graph_edges(graph_manager)
-
-        assert edges == []
-
-
 class TestRunPrepStep:
-    """Tests for _run_prep_step function."""
+    """A prep step computes one graph metric natively in grafeo and writes the enrichments onto the graph nodes."""
 
-    def test_runs_known_prep_step(self):
-        """Should run known prep step."""
-        graph_manager = MagicMock()
-        graph_manager.batch_update_properties.return_value = 5
-        cfg = MagicMock()
-        cfg.step_name = "pagerank"
-        cfg.params = None
+    @pytest.fixture
+    def gm(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode
 
-        mock_result = EnrichmentResult(enrichments={"n1": {"pagerank": 0.5}})
-        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
-            with patch.object(derivation.prep, "enrich_graph", return_value=mock_result):
-                result = derivation._run_prep_step(cfg, graph_manager)
+        close_database()
+        gm = GraphManager()
+        gm.connect()
+        # a - b - c, plus d without edges
+        for name in "abcd":
+            gm.add_node(DirectoryNode(name=name, path=name, repository_name="r"), node_id=f"dir::r::{name}")
+        gm.add_edge("dir::r::a", "dir::r::b", "CONTAINS")
+        gm.add_edge("dir::r::b", "dir::r::c", "CONTAINS")
+        yield gm
+        gm.disconnect()
+        close_database()
+
+    @staticmethod
+    def _cfg(step_name, params=None):
+        return SimpleNamespace(step_name=step_name, params=params)
+
+    def _read(self, gm, prop):
+        return {r["id"]: r["v"] for r in gm.query(f"MATCH (n:Graph) RETURN n.id AS id, n.{prop} AS v")}
+
+    def test_pagerank_is_written_with_percentiles(self, gm):
+        result = derivation._run_prep_step(self._cfg("pagerank", '{"damping": 0.85, "max_iter": 100}'), gm)
+
+        assert result["success"] is True and result["stats"]["nodes_updated"] == 4
+        scores = self._read(gm, "pagerank")
+        assert scores["dir::r::b"] > scores["dir::r::a"] == scores["dir::r::c"]
+        assert scores["dir::r::d"] is not None  # nodes without edges are scored too
+        assert self._read(gm, "pagerank_percentile")["dir::r::b"] == 100.0
+
+    @pytest.mark.parametrize(
+        "step, prop, expected_b",
+        [
+            ("louvain_communities", "louvain_community", "dir::r::a"),
+            ("k_core_filter", "kcore_level", 1),
+            ("articulation_points", "is_articulation_point", True),
+            ("degree_centrality", "in_degree", 1),
+        ],
+    )
+    def test_each_step_writes_its_property(self, gm, step, prop, expected_b):
+        result = derivation._run_prep_step(self._cfg(step), gm)
 
         assert result["success"] is True
+        assert self._read(gm, prop)["dir::r::b"] == expected_b
+
+    def test_config_params_reach_the_algorithm(self):
+        graph_manager = MagicMock()
+        graph_manager.graph_metric.return_value = {"node_ids": ["n1"], "edge_count": 0, "values": {"n1": 1.0}}
+
+        derivation._run_prep_step(self._cfg("pagerank", '{"damping": 0.9, "max_iter": 50, "description": "PageRank"}'), graph_manager)
+
+        graph_manager.graph_metric.assert_called_once_with("pagerank", directed=False, damping=0.9, max_iterations=50, tolerance=1e-6)
+
+    def test_invalid_params_fall_back_to_defaults(self):
+        graph_manager = MagicMock()
+        graph_manager.graph_metric.return_value = {"node_ids": ["n1"], "edge_count": 0, "values": {"n1": 1.0}}
+
+        result = derivation._run_prep_step(self._cfg("pagerank", "not valid json {"), graph_manager)
+
+        assert result["success"] is True
+        graph_manager.graph_metric.assert_called_once_with("pagerank", directed=False, damping=0.85, max_iterations=100, tolerance=1e-6)
+
+    def test_an_empty_graph_updates_nothing(self):
+        graph_manager = MagicMock()
+        graph_manager.graph_metric.return_value = {"node_ids": [], "edge_count": 0, "values": {}}
+
+        result = derivation._run_prep_step(self._cfg("pagerank"), graph_manager)
+
+        assert result["success"] is True and result["stats"]["nodes_updated"] == 0
+        graph_manager.batch_update_properties.assert_not_called()
 
     def test_unknown_prep_step_returns_error(self):
-        """Should return error for unknown prep step."""
-        graph_manager = MagicMock()
-        cfg = MagicMock()
-        cfg.step_name = "unknown_step"
-        cfg.params = None
-
-        result = derivation._run_prep_step(cfg, graph_manager)
+        result = derivation._run_prep_step(self._cfg("unknown_step"), MagicMock())
 
         assert result["success"] is False
         assert "Unknown prep step" in result["errors"][0]
 
-    def test_handles_empty_edges(self):
-        """Should handle case when no edges found."""
+    def test_a_failing_algorithm_is_reported(self):
         graph_manager = MagicMock()
-        cfg = MagicMock()
-        cfg.step_name = "pagerank"
-        cfg.params = None
+        graph_manager.graph_metric.side_effect = Exception("Test error")
 
-        with patch.object(derivation, "_get_graph_edges", return_value=[]):
-            result = derivation._run_prep_step(cfg, graph_manager)
-
-        assert result["success"] is True
-        assert result["stats"]["nodes_updated"] == 0
-
-    def test_parses_json_params(self):
-        """Should parse JSON params from config."""
-        graph_manager = MagicMock()
-        graph_manager.batch_update_properties.return_value = 3
-        cfg = MagicMock()
-        cfg.step_name = "pagerank"
-        cfg.params = '{"damping": 0.85}'
-
-        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
-            with patch.object(derivation.prep, "enrich_graph") as mock_enrich:
-                mock_enrich.return_value = EnrichmentResult(enrichments={"n1": {"pagerank": 0.5}})
-                result = derivation._run_prep_step(cfg, graph_manager)
-
-        assert result["success"] is True
-        # Check that params were passed to enrich_graph
-        call_args = mock_enrich.call_args
-        assert "params" in call_args.kwargs or len(call_args.args) > 2
-
-    def test_handles_enrichment_exception(self):
-        """Should handle exception during enrichment."""
-        graph_manager = MagicMock()
-        cfg = MagicMock()
-        cfg.step_name = "pagerank"
-        cfg.params = None
-
-        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
-            with patch.object(derivation.prep, "enrich_graph", side_effect=Exception("Test error")):
-                result = derivation._run_prep_step(cfg, graph_manager)
+        result = derivation._run_prep_step(self._cfg("pagerank"), graph_manager)
 
         assert result["success"] is False
         assert "Enrichment failed" in result["errors"][0]
@@ -372,6 +364,21 @@ class TestEnrichmentAlgorithms:
         assert "k_core_filter" in derivation.ENRICHMENT_ALGORITHMS
 
 
+class TestRunEnrichments:
+    """A derivation run reads the graph enrichment values once, and again after a prep step rewrote them."""
+
+    def test_one_read_until_invalidated(self):
+        reads = []
+        with patch.object(derivation, "get_enrichments_from_graph", side_effect=lambda gm: reads.append(gm) or {"n": len(reads)}):
+            run = derivation._RunEnrichments("gm")
+            first = run.get()
+            assert run.get() is first
+            run.invalidate()
+            assert run.get() == {"n": 2}
+
+        assert reads == ["gm", "gm"]
+
+
 class TestRunDerivationSteps:
     """Only the named steps run (the step benchmark measures one derivation step at a time)."""
 
@@ -414,6 +421,21 @@ class TestRunDerivationSteps:
         assert [c.kwargs["element_type"] for c in generate.call_args_list] == ["BusinessObject"]
         # The consolidated relationship pass is a step of its own
         relationships.assert_not_called()
+
+    def test_one_enrichment_read_serves_every_element_step_after_prep(self):
+        reads = []
+
+        def read(graph_manager):
+            reads.append(graph_manager)
+            return {"n": {"pagerank": float(len(reads))}}
+
+        prep = [MagicMock(step_name="pagerank", params=None)]
+        gen = [self._gen_cfg("ApplicationComponent"), self._gen_cfg("BusinessObject")]
+        with patch.object(derivation, "get_enrichments_from_graph", side_effect=read):
+            _, generate, _ = self._run(None, prep=prep, gen=gen)
+
+        assert len(reads) == 1
+        assert [c.kwargs["enrichments"] for c in generate.call_args_list] == [{"n": {"pagerank": 1.0}}] * 2
 
     def test_the_relationship_pass_runs_on_the_model_when_named(self):
         element = SimpleNamespace(identifier="e9", name="Ledger", element_type="BusinessObject", properties={})
@@ -475,6 +497,53 @@ class TestContainmentConfig:
             )
 
         assert relationships.call_args.kwargs["containment"] == [ContainmentRule(container="ApplicationComponent", contained="ApplicationService", relationship="Realization")]
+
+
+class TestSameNameConfig:
+    """The relationship row's params.same_name, checked against the metamodel."""
+
+    @staticmethod
+    def _row(**structure):
+        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
+
+    def test_without_the_key_there_are_no_rules(self):
+        assert derivation._same_name_rules([self._row()]) == []
+
+    def test_rules_come_from_params(self):
+        from deriva.modules.derivation.base import SameNameRule
+
+        row = self._row(same_name=[{"source": "DataObject", "target": "BusinessObject", "relationship": "Realization", "strip_suffixes": ["Impl"]}])
+
+        assert derivation._same_name_rules([row]) == [SameNameRule(source="DataObject", target="BusinessObject", relationship="Realization", strip_suffixes=("Impl",))]
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            {"source": "DataObject", "target": "BusinessObject"},
+            {"source": "DataObject", "target": "BusinessObject", "relationship": "Assignment"},
+            {"source": "DataObject", "target": "BusinessObject", "relationship": "Realization", "strip_suffixes": "Impl"},
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, item):
+        with pytest.raises(ValueError, match="same_name"):
+            derivation._same_name_rules([self._row(same_name=[item])])
+
+    def test_the_relationship_pass_receives_the_rules(self):
+        row = self._row(same_name=[{"source": "DataObject", "target": "BusinessObject", "relationship": "Realization"}])
+        element = SimpleNamespace(identifier="e9", name="Ledger", element_type="BusinessObject", properties={})
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [element]
+        configs = {"relationship": [row]}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: configs.get(phase, [])),
+            patch.object(derivation, "derive_consolidated_relationships", return_value=[]) as relationships,
+        ):
+            derivation.run_derivation(
+                engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, llm_query_fn=MagicMock(), steps=[derivation.RELATIONSHIP_STEP]
+            )
+
+        assert [r.source for r in relationships.call_args.kwargs["same_name"]] == ["DataObject"]
 
 
 class TestDependencyConfig:
@@ -609,8 +678,8 @@ class TestRunDerivationWithConfigs:
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
-            with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "a", "target": "b"}]):
-                with patch.object(derivation.prep, "enrich_graph", return_value=EnrichmentResult(enrichments={"a": {"pagerank": 0.5}})):
+            with patch.object(derivation, "_graph_metrics", return_value=GraphMetrics(node_ids=["a", "b"], edge_count=1, pagerank={"a": 0.5, "b": 0.5})):
+                with patch.object(derivation.prep, "enrich_from_metrics", wraps=derivation.prep.enrich_from_metrics):
                     result = derivation.run_derivation(
                         engine=engine,
                         graph_manager=graph_manager,
@@ -773,7 +842,7 @@ class TestRunDerivationWithConfigs:
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
-            with patch.object(derivation, "_get_graph_edges", return_value=[]):
+            with patch.object(derivation, "_graph_metrics", return_value=GraphMetrics(node_ids=[], edge_count=0)):
                 derivation.run_derivation(
                     engine=engine,
                     graph_manager=graph_manager,
@@ -958,87 +1027,6 @@ class TestRunDerivationWithConfigs:
         assert "error" in str(progress.log.call_args)
 
 
-class TestRunPrepStepEdgeCases:
-    """Tests for edge cases in _run_prep_step function."""
-
-    def test_returns_success_when_enrichment_returns_empty(self):
-        """Should return success when enrichment returns empty results."""
-        graph_manager = MagicMock()
-        cfg = MagicMock()
-        cfg.step_name = "pagerank"
-        cfg.params = None
-
-        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
-            with patch.object(derivation.prep, "enrich_graph", return_value=EnrichmentResult(enrichments={})):
-                result = derivation._run_prep_step(cfg, graph_manager)
-
-        assert result["success"] is True
-        assert result["stats"]["nodes_updated"] == 0
-
-    def test_handles_json_decode_error_in_params(self):
-        """Should handle invalid JSON in params gracefully."""
-        graph_manager = MagicMock()
-        graph_manager.batch_update_properties.return_value = 3
-        cfg = MagicMock()
-        cfg.step_name = "pagerank"
-        cfg.params = "not valid json {"
-
-        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
-            with patch.object(derivation.prep, "enrich_graph", return_value=EnrichmentResult(enrichments={"n1": {"pagerank": 0.5}})):
-                result = derivation._run_prep_step(cfg, graph_manager)
-
-        # Should succeed despite invalid params (uses defaults)
-        assert result["success"] is True
-
-    def test_filters_description_from_params(self):
-        """Should filter out 'description' key from params."""
-        graph_manager = MagicMock()
-        graph_manager.batch_update_properties.return_value = 3
-        cfg = MagicMock()
-        cfg.step_name = "pagerank"
-        cfg.params = '{"damping": 0.85, "description": "PageRank algorithm"}'
-
-        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
-            with patch.object(derivation.prep, "enrich_graph") as mock_enrich:
-                mock_enrich.return_value = EnrichmentResult(enrichments={"n1": {"pagerank": 0.5}})
-                derivation._run_prep_step(cfg, graph_manager)
-
-        # Verify description was filtered out
-        call_kwargs = mock_enrich.call_args.kwargs
-        if "params" in call_kwargs and "pagerank" in call_kwargs["params"]:
-            assert "description" not in call_kwargs["params"]["pagerank"]
-
-    def test_runs_louvain_communities_algorithm(self):
-        """Should run louvain_communities algorithm."""
-        graph_manager = MagicMock()
-        graph_manager.batch_update_properties.return_value = 5
-        cfg = MagicMock()
-        cfg.step_name = "louvain_communities"
-        cfg.params = None
-
-        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
-            with patch.object(derivation.prep, "enrich_graph", return_value=EnrichmentResult(enrichments={"n1": {"community": 1}})):
-                result = derivation._run_prep_step(cfg, graph_manager)
-
-        assert result["success"] is True
-        assert result["stats"]["algorithm"] == "louvain"
-
-    def test_runs_degree_centrality_algorithm(self):
-        """Should run degree_centrality algorithm."""
-        graph_manager = MagicMock()
-        graph_manager.batch_update_properties.return_value = 3
-        cfg = MagicMock()
-        cfg.step_name = "degree_centrality"
-        cfg.params = None
-
-        with patch.object(derivation, "_get_graph_edges", return_value=[{"source": "n1", "target": "n2"}]):
-            with patch.object(derivation.prep, "enrich_graph", return_value=EnrichmentResult(enrichments={"n1": {"degree": 2}})):
-                result = derivation._run_prep_step(cfg, graph_manager)
-
-        assert result["success"] is True
-        assert result["stats"]["algorithm"] == "degree"
-
-
 class TestRunDerivationIter:
     """Tests for run_derivation_iter generator function."""
 
@@ -1057,7 +1045,7 @@ class TestRunDerivationIter:
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
-            with patch.object(derivation, "_get_graph_edges", return_value=[]):
+            with patch.object(derivation, "_graph_metrics", return_value=GraphMetrics(node_ids=[], edge_count=0)):
                 updates = list(
                     derivation.run_derivation_iter(
                         engine=engine,
@@ -1106,7 +1094,7 @@ class TestRunDerivationIter:
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg1, enrich_cfg2] if phase == "prep" else []
-            with patch.object(derivation, "_get_graph_edges", return_value=[]):
+            with patch.object(derivation, "_graph_metrics", return_value=GraphMetrics(node_ids=[], edge_count=0)):
                 updates = list(
                     derivation.run_derivation_iter(
                         engine=engine,
@@ -1243,7 +1231,7 @@ class TestRunDerivationIter:
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
-            with patch.object(derivation, "_get_graph_edges", return_value=[]):
+            with patch.object(derivation, "_graph_metrics", return_value=GraphMetrics(node_ids=[], edge_count=0)):
                 updates = list(
                     derivation.run_derivation_iter(
                         engine=engine,
@@ -1383,41 +1371,6 @@ class TestGetElementProps:
         props = derivation._get_element_props([], "elem1")
 
         assert props == {}
-
-
-class TestGetGraphEdgesWithRepoFilter:
-    """Tests for _get_graph_edges with repository_name filter."""
-
-    def test_filters_edges_by_repository(self):
-        """Should filter edges by repository name when provided."""
-        graph_manager = MagicMock()
-        graph_manager.query.return_value = [
-            {"source": "n1", "target": "n2"},
-        ]
-
-        edges = derivation._get_graph_edges(graph_manager, repository_name="my-repo")
-
-        # Verify query was called with repo_name parameter
-        call_args = graph_manager.query.call_args
-        assert "repo_name" in call_args[1] or (len(call_args[0]) > 1 and "my-repo" in str(call_args[0][1]))
-        assert len(edges) == 1
-
-    def test_uses_different_query_for_repo_filter(self):
-        """Should use different query when repository_name is provided."""
-        graph_manager = MagicMock()
-        graph_manager.query.return_value = []
-
-        # Call without repo filter
-        derivation._get_graph_edges(graph_manager)
-        query_without_filter = graph_manager.query.call_args[0][0]
-
-        # Call with repo filter
-        derivation._get_graph_edges(graph_manager, repository_name="test-repo")
-        query_with_filter = graph_manager.query.call_args[0][0]
-
-        # Queries should be different
-        assert "repository_name" in query_with_filter
-        assert "repository_name" not in query_without_filter
 
 
 class TestRunDerivationRefinePhase:
@@ -1899,7 +1852,7 @@ class TestRunDerivationIterVerbose:
 
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
-            with patch.object(derivation, "_get_graph_edges", return_value=[]):
+            with patch.object(derivation, "_graph_metrics", return_value=GraphMetrics(node_ids=[], edge_count=0)):
                 list(
                     derivation.run_derivation_iter(
                         engine=engine,
@@ -2280,6 +2233,16 @@ class TestPerCandidateConfig:
         params = '{"temperature": 0.0, "per_candidate": {"min_pool": 6, "rules": "R", "persona": "P"}}'
 
         assert derivation._per_candidate_config(params) == PerCandidateConfig(min_pool=6, rules="R", persona="P")
+
+    def test_an_annotation_pattern_limits_it_to_marked_candidates(self):
+        params = json.dumps({"per_candidate": {"min_pool": 1, "rules": "R", "persona": "P", "decorators": r"^Entity(\(.*)?$"}})
+
+        assert derivation._per_candidate_config(params) == PerCandidateConfig(min_pool=1, rules="R", persona="P", decorators=r"^Entity(\(.*)?$")
+
+    @pytest.mark.parametrize("pattern", ["", "(", 3])
+    def test_an_invalid_annotation_pattern_is_an_error(self, pattern):
+        with pytest.raises(ValueError, match="per_candidate.decorators"):
+            derivation._per_candidate_config(json.dumps({"per_candidate": {"min_pool": 1, "rules": "R", "persona": "P", "decorators": pattern}}))
 
     @pytest.mark.parametrize("value", ['{"min_pool": 6}', '{"rules": "R"}'])
     def test_incomplete_per_candidate_is_an_error(self, value):

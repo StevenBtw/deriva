@@ -25,7 +25,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any
@@ -126,9 +125,6 @@ class ArchimateManager:
             # This allows queries like MATCH (e:TechnologyService) to work
             # while still having namespace isolation via the Model label
 
-            # Convert properties to JSON string
-            properties_json = json.dumps(element.properties) if element.properties else None
-
             # Extract source_identifier from properties for graph-based relationship derivation
             # The graph_relationships refine step needs this to link elements to source graph nodes
             source_identifier = element.properties.get("source") if element.properties else None
@@ -141,7 +137,8 @@ class ArchimateManager:
                 {
                     "name": element.name,
                     "documentation": element.documentation,
-                    "properties_json": properties_json,
+                    # One native map; None (no properties) removes a previous map
+                    "properties": element.properties or None,
                     "enabled": element.enabled,
                     "source_identifier": source_identifier,
                 },
@@ -182,9 +179,6 @@ class ArchimateManager:
             # This is consistent with Graph namespace which uses Graph:CONTAINS, Graph:CALLS, etc.
             # Nodes are matched by having the namespace label (Model)
 
-            # Convert properties to JSON string
-            properties_json = json.dumps(relationship.properties) if relationship.properties else None
-
             # Get namespaced relationship type (e.g., "Realization" -> "Model:Realization")
             rel_label = self.db.get_label(relationship.relationship_type)
 
@@ -195,7 +189,7 @@ class ArchimateManager:
                     identifier: $identifier,
                     name: $name,
                     documentation: $documentation,
-                    properties_json: $properties_json
+                    properties: $properties
                 }}]->(target)
                 RETURN r.identifier as identifier
             """
@@ -208,7 +202,7 @@ class ArchimateManager:
                     "identifier": relationship.identifier,
                     "name": relationship.name,
                     "documentation": relationship.documentation,
-                    "properties_json": properties_json,
+                    "properties": relationship.properties or None,
                 },
             )
 
@@ -242,7 +236,7 @@ class ArchimateManager:
                        e.name as name,
                        [lbl IN labels(e) WHERE lbl <> '{self.namespace}'][0] as element_type,
                        e.documentation as documentation,
-                       e.properties_json as properties_json,
+                       e.properties as properties,
                        e.enabled as enabled
             """
 
@@ -277,7 +271,7 @@ class ArchimateManager:
                     RETURN e.identifier as identifier,
                            e.name as name,
                            e.documentation as documentation,
-                           e.properties_json as properties_json,
+                           e.properties as properties,
                            e.enabled as enabled
                 """
                 elements = [self._element_from_row(row, element_type) for row in self.db.execute_read(query)]
@@ -290,7 +284,7 @@ class ArchimateManager:
                            e.name as name,
                            [lbl IN labels(e) WHERE lbl <> '{self.namespace}'][0] as element_type,
                            e.documentation as documentation,
-                           e.properties_json as properties_json,
+                           e.properties as properties,
                            e.enabled as enabled
                 """
                 elements = [self._element_from_row(row) for row in self.db.execute_read(query)]
@@ -303,13 +297,13 @@ class ArchimateManager:
 
     @staticmethod
     def _element_from_row(row: dict[str, Any], element_type: str | None = None) -> Element:
-        """An element from a query row (identifier, name, element_type, documentation, properties_json, enabled)."""
+        """An element from a query row (identifier, name, element_type, documentation, properties, enabled)."""
         return Element(
             name=row["name"],
             element_type=element_type or row.get("element_type") or "Unknown",
             identifier=row["identifier"],
             documentation=row.get("documentation"),
-            properties=json.loads(row["properties_json"]) if row.get("properties_json") else {},
+            properties=row.get("properties") or {},
             enabled=row.get("enabled", True),
         )
 
@@ -330,7 +324,7 @@ class ArchimateManager:
                    e.name as name,
                    [lbl IN labels(e) WHERE lbl <> '{self.namespace}'][0] as element_type,
                    e.documentation as documentation,
-                   e.properties_json as properties_json,
+                   e.properties as properties,
                    e.enabled as enabled
             ORDER BY identifier
         """
@@ -363,7 +357,7 @@ class ArchimateManager:
                            type(r) as rel_type,
                            r.name as name,
                            r.documentation as documentation,
-                           r.properties_json as properties_json
+                           r.properties as properties
                 """
                 params = {"source_id": source_id, "target_id": target_id}
             elif source_id:
@@ -375,7 +369,7 @@ class ArchimateManager:
                            type(r) as rel_type,
                            r.name as name,
                            r.documentation as documentation,
-                           r.properties_json as properties_json
+                           r.properties as properties
                 """
                 params = {"source_id": source_id}
             elif target_id:
@@ -387,7 +381,7 @@ class ArchimateManager:
                            type(r) as rel_type,
                            r.name as name,
                            r.documentation as documentation,
-                           r.properties_json as properties_json
+                           r.properties as properties
                 """
                 params = {"target_id": target_id}
             else:
@@ -399,7 +393,7 @@ class ArchimateManager:
                            type(r) as rel_type,
                            r.name as name,
                            r.documentation as documentation,
-                           r.properties_json as properties_json
+                           r.properties as properties
                 """
                 params = {}
 
@@ -412,8 +406,7 @@ class ArchimateManager:
                 rel_type = data.get("rel_type") or "Unknown"
                 if rel_type.startswith(f"{self.namespace}:"):
                     rel_type = rel_type[len(self.namespace) + 1 :]
-                # Parse JSON properties back to dict
-                properties = json.loads(data["properties_json"]) if data.get("properties_json") else {}
+                properties = data.get("properties") or {}
                 relationships.append(
                     Relationship(
                         source=data["source"],
@@ -621,7 +614,7 @@ class ArchimateManager:
             raise ValidationError(f"Relationship validation failed: {errors}")
         # Attributes that steps wrote directly on the edge (such as a consolidated confidence) go along
         rows = self.query("MATCH ()-[r]->() WHERE r.identifier = $identifier RETURN properties(r) AS attributes", {"identifier": identifier})
-        written = {"identifier", "name", "documentation", "properties_json"}
+        written = {"identifier", "name", "documentation", "properties"}
         extra = {k: v for k, v in ((rows[0].get("attributes") if rows else None) or {}).items() if k not in written}
         self.delete_relationship(identifier)
         new_identifier = self.add_relationship(new, validate=False)

@@ -42,7 +42,7 @@ dependencies = [
     "lxml>=6",
     # Databases
     "duckdb>=1.5",
-    "grafeo>=0.5.43",
+    "grafeo>=0.5.44",
     "sqlglot>=30",
     # UI
     "marimo>=0.25",
@@ -64,7 +64,7 @@ dependencies = [
     "ctranslate2==4.8.2",
     "sentencepiece==0.2.2",
     # Graph Algorithms
-    "solvor>=0.6.2",
+    "solvor>=0.6.3",
     # LLM
     "backoff>=2.2.1",
     "pydantic-ai>=2",
@@ -119,6 +119,10 @@ allow-direct-references = true
 # ============================================================================
 # Tool Configuration
 # ============================================================================
+
+[tool.uv.sources]
+# grafeo 0.6.0 development build (native graph metrics); back to PyPI when 0.6.0 is released
+grafeo = { path = "H:/GrafeoDB/wheels/0.6.0-dev-7fc8c43b/grafeo-0.5.44-cp312-abi3-win_amd64.whl" }
 
 [tool.ruff]
 line-length = 180

@@ -2347,7 +2347,7 @@ class TestRunSnapshotGraphNodes:
             if "type(r)" in q:  # incoming edges, for the routes
                 if "BusinessConcept" in q:
                     return [{"id": "concept::r::alpha", "rel": "Graph:REPRESENTS", "props": None}]
-                return [{"id": "tech::r::beta", "rel": "Graph:CONFIGURES", "props": '{"route": "llm"}'}]
+                return [{"id": "tech::r::beta", "rel": "Graph:CONFIGURES", "props": {"route": "llm"}}]
             if "BusinessConcept" in q:
                 return [{"id": "concept::r::alpha", "types": ["entity", "actor"], "name": "Alpha"}]
             return [{"id": "tech::r::beta", "name": "Beta"}]
@@ -2386,7 +2386,7 @@ class TestNodeRoutes:
         rows = [
             {"id": "c1", "rel": "Graph:REPRESENTS", "props": None},
             {"id": "c1", "rel": "Graph:REFERENCES", "props": None},
-            {"id": "t1", "rel": "Graph:CONFIGURES", "props": '{"route": "llm"}'},
+            {"id": "t1", "rel": "Graph:CONFIGURES", "props": {"route": "llm"}},
             {"id": "t2", "rel": "Graph:CONFIGURES", "props": None},
         ]
 

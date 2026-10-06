@@ -1479,6 +1479,41 @@ class TestExtractDirectoryClassification:
         (only,) = classify.call_args.kwargs["directories"]
         assert only["paths"] == ["r/lib/records"]
 
+    @pytest.mark.parametrize("params, name", [({"skip_repository_name": True}, "r"), ({}, "")])
+    def test_the_repository_name_reaches_the_classifier_when_configured(self, params, name):
+        """params.skip_repository_name: a technology answer for a directory named after the repository is skipped (real graph)."""
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode
+        from deriva.services.extraction import _extract_directory_classification
+
+        close_database()
+        with GraphManager() as gm:
+            gm.add_node(DirectoryNode(name="billing", path="r/billing", repository_name="r"), node_id="dir::r::billing")
+            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
+            with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
+                _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
+        close_database()
+
+        assert classify.call_args.kwargs["repository_name"] == name
+
+    def test_a_non_boolean_skip_repository_name_is_an_error(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode
+        from deriva.services.extraction import _extract_directory_classification
+
+        close_database()
+        with GraphManager() as gm:
+            gm.add_node(DirectoryNode(name="billing", path="r/billing", repository_name="r"), node_id="dir::r::billing")
+            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps({"skip_repository_name": 1}), temperature=None, max_tokens=None, batch_size=50)
+            with patch("deriva.services.extraction.classify_directories") as classify:
+                result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
+        close_database()
+
+        assert len(result["errors"]) == 1 and "skip_repository_name" in result["errors"][0]
+        classify.assert_not_called()
+
     def test_same_named_directories_reach_the_llm_as_one_entry(self):
         """Copies of a name are grouped before batching, so they are never split over prompts (real graph)."""
         from deriva.adapters.grafeo.manager import close_database
@@ -1743,6 +1778,77 @@ class TestExtractLLMBasedTreesitter:
             mock_ts.assert_called()
 
 
+class TestMethodLanguages:
+    """With node sources the Method step parses the source files of the languages in params.languages (Python when absent)."""
+
+    FILES = {"app/main.py": "def handle():\n    pass\n", "app/Orders.java": "class Orders {\n  public void place() {}\n}\n"}
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _extract(self, graph, params):
+        from deriva.adapters.graph.models import FileNode, TypeDefinitionNode
+
+        subtypes = {".py": "python", ".java": "java"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for path, text in self.FILES.items():
+                (Path(tmpdir) / path).parent.mkdir(parents=True, exist_ok=True)
+                (Path(tmpdir) / path).write_text(text, encoding="utf-8")
+                file = FileNode(name=Path(path).name, path=path, repository_name="r", file_type="source", subtype=subtypes[Path(path).suffix])
+                graph.add_node(file, node_id=f"file::r::{path.replace('/', '_')}")
+            # The TypeDefinition step runs first and creates the class that holds the Java method
+            orders = TypeDefinitionNode(name="Orders", type_category="class", file_path="app/Orders.java", repository_name="r")
+            graph.add_node(orders, node_id="typedef::r::app_Orders.java::Orders")
+            cfg = SimpleNamespace(
+                node_type="Method",
+                input_sources=json.dumps({"files": [], "nodes": [{"label": "TypeDefinition", "property": "codeSnippet"}]}),
+                params=json.dumps(params) if params is not None else None,
+                instruction="",
+                example="",
+                temperature=None,
+                max_tokens=None,
+            )
+            return _extract_llm_based(
+                node_type="Method",
+                cfg=cfg,
+                repo=SimpleNamespace(name="r"),
+                repo_path=Path(tmpdir),
+                classified_files=[{"path": p, "file_type": "source", "subtype": subtypes[Path(p).suffix]} for p in self.FILES],
+                graph_manager=graph,
+                llm_query_fn=MagicMock(),
+                engine=MagicMock(),
+            )
+
+    @staticmethod
+    def _methods(graph) -> list[str]:
+        return sorted(row["name"] for row in graph.query("MATCH (m:Graph:Method) RETURN m.methodName AS name"))
+
+    def test_without_params_only_python_is_parsed(self, graph):
+        self._extract(graph, None)
+
+        assert self._methods(graph) == ["handle"]
+
+    def test_the_configured_languages_are_parsed(self, graph):
+        result = self._extract(graph, {"languages": ["python", "java"]})
+
+        assert result["errors"] == []
+        assert self._methods(graph) == ["handle", "place"]
+
+    @pytest.mark.parametrize("languages", [["cobol"], "java", []])
+    def test_unknown_or_malformed_languages_are_an_error(self, graph, languages):
+        result = self._extract(graph, {"languages": languages})
+
+        assert len(result["errors"]) == 1 and "languages" in result["errors"][0]
+        assert self._methods(graph) == []
+
+
 class TestInheritanceResolution:
     """An inheritance edge points at the repository's own base type, wherever the type is defined."""
 
@@ -1907,6 +2013,22 @@ class TestRepositoryWalkExclusions:
             repo_mgr.return_value.get_repository_info.return_value = MagicMock(last_commit="abc")
             first = extraction.compute_extraction_fingerprint(MagicMock(), "repo", versions)
             second = extraction.compute_extraction_fingerprint(MagicMock(), "repo", versions)
+
+        assert first != second
+
+    def test_the_storage_format_is_part_of_the_fingerprint(self):
+        """Graphs written in an older storage layout are extracted again, never read as cached."""
+        from deriva.services import extraction
+
+        versions = {"extraction": {"File": 1}}
+        with (
+            patch.object(extraction, "RepoManager") as repo_mgr,
+            patch.object(extraction.config, "get_excluded_directories", return_value=[".git"]),
+        ):
+            repo_mgr.return_value.get_repository_info.return_value = MagicMock(last_commit="abc")
+            first = extraction.compute_extraction_fingerprint(MagicMock(), "repo", versions)
+            with patch.object(extraction, "STORAGE_FORMAT", 99):
+                second = extraction.compute_extraction_fingerprint(MagicMock(), "repo", versions)
 
         assert first != second
 

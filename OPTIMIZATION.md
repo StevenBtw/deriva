@@ -470,14 +470,15 @@ Unstable elements may correlate with graph properties of their source nodes. By 
 <summary><strong>Step 1: Run Enrichment</strong></summary>
 
 ```python
-from deriva.modules.derivation import enrich
+from deriva.modules.derivation import prep
 
-enrichments = enrich.enrich_graph(
-    edges=edges,
-    algorithms=['pagerank', 'louvain', 'kcore', 'articulation_points', 'degree']
-)
-# Write to graph: graph_manager.batch_update_properties(enrichments)
+# Each metric runs natively in grafeo on the graph namespace (PageRank on the undirected graph)
+metric = graph_manager.graph_metric("pagerank", directed=False)
+result = prep.enrich_from_metrics(prep.GraphMetrics(metric["node_ids"], metric["edge_count"], pagerank=metric["values"]))
+graph_manager.batch_update_properties(result.enrichments)  # pagerank and pagerank_percentile per node
 ```
+
+The prep phase does this for PageRank, Louvain, k-core, articulation points and degree (`deriva-cli run derivation` runs it first).
 
 </details>
 
@@ -488,10 +489,9 @@ Query source nodes for stable vs unstable elements:
 
 ```cypher
 // Get graph properties for element sources
-MATCH (e) WHERE e.identifier IN $element_ids
-WITH e.properties_json as props
-MATCH (n {id: source_id})
-RETURN n.pagerank, n.kcore_level, n.out_degree, n.in_degree
+MATCH (e:Model) WHERE e.identifier IN $element_ids
+MATCH (n:Graph {id: e.source_identifier})
+RETURN e.identifier AS element, n.pagerank, n.kcore_level, n.out_degree, n.in_degree
 ```
 
 Analysis result:

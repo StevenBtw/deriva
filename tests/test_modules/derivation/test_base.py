@@ -407,6 +407,28 @@ class TestGetEnrichmentsFromGraph:
 
         assert result == {}
 
+    def test_a_changed_value_is_read_fresh(self):
+        """Values come from the graph on every read: equal node and edge counts must not serve stale ones."""
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import FileNode
+        from deriva.modules.derivation.base import get_enrichments_from_graph
+
+        close_database()
+        gm = GraphManager()
+        gm.connect()
+        try:
+            gm.add_node(FileNode(name="a.py", path="a.py", repository_name="r", file_type="source"), node_id="file::r::a.py")
+            gm.batch_update_properties({"file::r::a.py": {"pagerank": 0.1}})
+            assert get_enrichments_from_graph(gm)["file::r::a.py"]["pagerank"] == 0.1
+
+            gm.batch_update_properties({"file::r::a.py": {"pagerank": 0.9}})
+
+            assert get_enrichments_from_graph(gm)["file::r::a.py"]["pagerank"] == 0.9
+        finally:
+            gm.disconnect()
+            close_database()
+
 
 class TestEnrichCandidate:
     """Tests for enrich_candidate function."""
@@ -744,6 +766,21 @@ class TestQueryCandidates:
 
         assert result[0].pagerank == 0.9
         assert result[0].kcore_level == 5
+
+    def test_candidates_come_in_node_id_order_whatever_the_query_order(self):
+        """The graph's result order is unspecified; every later step must see the same candidate order."""
+        from unittest.mock import MagicMock
+
+        from deriva.modules.derivation.base import query_candidates
+
+        rows = [{"id": node_id, "name": node_id, "labels": [], "properties": {}} for node_id in ("c", "a", "b")]
+        mock_graph = MagicMock()
+        mock_graph.query.side_effect = [rows, list(reversed(rows))]
+
+        first = [c.node_id for c in query_candidates(mock_graph, "MATCH (n) RETURN n")]
+        second = [c.node_id for c in query_candidates(mock_graph, "MATCH (n) RETURN n")]
+
+        assert first == second == ["a", "b", "c"]
 
 
 class TestSanitizeIdentifier:
@@ -2048,17 +2085,6 @@ class TestGetCommunityFromElement:
 
         elem = {"identifier": "test"}
         assert get_community_from_element(elem) is None
-
-
-class TestClearEnrichmentCache:
-    """Tests for clear_enrichment_cache function."""
-
-    def test_clears_cache(self):
-        """Should clear the enrichment cache without error."""
-        from deriva.modules.derivation.base import clear_enrichment_cache
-
-        # Just verify it doesn't raise
-        clear_enrichment_cache()
 
 
 class TestDeriveCommunityRelationships:

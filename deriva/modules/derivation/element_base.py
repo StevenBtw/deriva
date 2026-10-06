@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -70,6 +71,7 @@ from deriva.modules.derivation.base import (
     parse_derivation_response,
     parse_role_answer,
     query_candidates,
+    source_casing,
     structure_element_name,
 )
 from deriva.modules.derivation.refine.base import normalize_name, similarity_ratio
@@ -77,7 +79,6 @@ from deriva.modules.derivation.refine.base import normalize_name, similarity_rat
 if TYPE_CHECKING:
     from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
     from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-    from deriva.adapters.graph.cache import EnrichmentCacheManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 
 def _display_key(name: str) -> str:
@@ -361,7 +362,7 @@ class ElementDerivationBase(ABC):
         temperature: float | None = None,
         max_tokens: int | None = None,
         defer_relationships: bool = False,
-        cache_manager: EnrichmentCacheManager | None = None,
+        enrichments: dict[str, dict[str, Any]] | None = None,
         relationship_config: RelationshipLLMConfig | None = None,
         per_candidate: PerCandidateConfig | None = None,
         naming: NamingConfig | None = None,
@@ -398,7 +399,7 @@ class ElementDerivationBase(ABC):
             temperature: Optional LLM temperature override
             max_tokens: Optional LLM max_tokens override
             defer_relationships: If True, skip relationship derivation
-            cache_manager: Optional EnrichmentCacheManager for controlled caching
+            enrichments: The run's graph enrichment values by node id (read from the graph when None)
             relationship_config: Relationship config row settings for the LLM
                 relationship pass (None skips that pass)
             per_candidate: Per-candidate naming mode from the element config
@@ -432,12 +433,9 @@ class ElementDerivationBase(ABC):
         if graph_filter is not None:
             filter_kwargs["graph_filter"] = graph_filter
 
-        # Get enrichments and query candidates
-        enrichments = get_enrichments_from_graph(
-            graph_manager,
-            cache_manager=cache_manager,
-            config_name=self.ELEMENT_TYPE,
-        )
+        # Enrichments (the run's values when given) and candidates
+        if enrichments is None:
+            enrichments = get_enrichments_from_graph(graph_manager)
 
         try:
             candidates = query_candidates(graph_manager, query, enrichments)
@@ -493,8 +491,17 @@ class ElementDerivationBase(ABC):
                 not_units = {c.node_id for c in eligible if c.node_id not in units}
                 eligible = [c for c in eligible if c.node_id in units]
 
+        # A candidate whose annotation shows what it is (per_candidate.decorators) is not judged by its
+        # name: it passes the name filters and the cut
+        marked: list[Candidate] = []
+        if per_candidate is not None and per_candidate.decorators:
+            marked_pattern = re.compile(per_candidate.decorators)
+            marked = [c for c in eligible if any(marked_pattern.fullmatch(str(d)) for d in c.properties.get("decorators") or [])]
+            marked_ids = {c.node_id for c in marked}
+            eligible = [c for c in eligible if c.node_id not in marked_ids]
+
         # Filter candidates (module-specific)
-        filtered = self.filter_candidates(eligible, enrichments, max_candidates, **filter_kwargs)
+        filtered = marked + (self.filter_candidates(eligible, enrichments, max_candidates, **filter_kwargs) if eligible else [])
 
         if not filtered:
             self.logger.info("No candidates passed filtering for %s", self.ELEMENT_TYPE)
@@ -655,6 +662,35 @@ class ElementDerivationBase(ABC):
                 self._process_roles(
                     role_candidates, roles, llm_query_fn, llm_kwargs, graph_manager, archimate_manager, repo_name, batch_size, result, taken, naming, structure_names
                 )
+
+        # Candidates whose annotation shows what they are are named, not judged; the others take the batch path
+        if per_candidate is not None and per_candidate.decorators:
+            pattern = re.compile(per_candidate.decorators)
+            marked = [c for c in filtered if any(pattern.fullmatch(str(d)) for d in c.properties.get("decorators") or [])]
+            if marked:
+                self._process_per_candidate(
+                    filtered=marked,
+                    instruction=instruction,
+                    rules=per_candidate.rules,
+                    persona=per_candidate.persona,
+                    llm_query_fn=llm_query_fn,
+                    llm_kwargs=llm_kwargs,
+                    archimate_manager=archimate_manager,
+                    graph_manager=graph_manager,
+                    existing_elements=existing_elements,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    defer_relationships=defer_relationships,
+                    result=result,
+                    repo_name=repo_name,
+                    structure_names=structure_names,
+                    taken=taken,
+                    relationship_config=relationship_config,
+                    naming=naming,
+                )
+            marked_ids = {c.node_id for c in marked}
+            filtered = [c for c in filtered if c.node_id not in marked_ids]
+            per_candidate = None
 
         # Compute abstention strength signal from the filtered set.
         # Shared across batches so the LLM sees one consistent view.
@@ -1016,6 +1052,9 @@ class ElementDerivationBase(ABC):
         # and words like "Service" or "API" are often part of the right name
         if name and repo_name:
             name = strip_repo_prefix(name, repo_name)
+        # Words the source spells with capitals keep its spelling, so casing never differs between runs
+        if name:
+            name = source_casing(name, candidate.name)
         blocked = {_display_key(n) for n in taken} | {key for node_id, key in structure_names.items() if node_id != candidate.node_id}
         if name and name != element_data["name"] and _display_key(name) not in blocked:
             element_data["properties"]["structure_name"] = element_data["name"]
@@ -1607,9 +1646,10 @@ class HybridFilteringMixin:
             else:
                 regular_candidates.append(c)
 
-        # Sort each group by PageRank (descending)
-        priority_candidates.sort(key=lambda c: c.pagerank or 0, reverse=True)
-        regular_candidates.sort(key=lambda c: c.pagerank or 0, reverse=True)
+        # Sort each group by PageRank (descending), ties by node id: the cap below must never
+        # depend on the result order of the candidate query
+        priority_candidates.sort(key=lambda c: (-(c.pagerank or 0), c.node_id))
+        regular_candidates.sort(key=lambda c: (-(c.pagerank or 0), c.node_id))
 
         # Combine with priority candidates first
         if self.USE_COMMUNITY_ROOTS and priority_candidates:
