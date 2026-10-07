@@ -291,6 +291,7 @@ class TestDeletedNodesInIndex:
         assert conn.execute("MATCH (s)-[r:`Graph:X`]->(d) RETURN s.id AS s, d.id AS d") == [{"s": "a", "d": "b"}]
 
 
+@pytest.mark.grafeo_dev
 class TestAlgorithm:
     """grafeo's graph algorithms run on this connection's namespace only (a projection on its label)."""
 

@@ -101,6 +101,7 @@ class TestRunPrepStep:
     def _read(self, gm, prop):
         return {r["id"]: r["v"] for r in gm.query(f"MATCH (n:Graph) RETURN n.id AS id, n.{prop} AS v")}
 
+    @pytest.mark.grafeo_dev
     def test_pagerank_is_written_with_percentiles(self, gm):
         result = derivation._run_prep_step(self._cfg("pagerank", '{"damping": 0.85, "max_iter": 100}'), gm)
 
@@ -110,6 +111,7 @@ class TestRunPrepStep:
         assert scores["dir::r::d"] is not None  # nodes without edges are scored too
         assert self._read(gm, "pagerank_percentile")["dir::r::b"] == 100.0
 
+    @pytest.mark.grafeo_dev
     @pytest.mark.parametrize(
         "step, prop, expected_b",
         [

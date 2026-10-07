@@ -963,7 +963,7 @@ class ElementDerivationBase(ABC):
         if not ids:
             return set()
         rows = graph_manager.query(
-            "MATCH (d:Graph:Directory)-[:`Graph:CONTAINS`]->(f:Graph:File) WHERE d.id IN $ids AND toLower(f.fileName) IN $names RETURN DISTINCT d.id AS id",
+            "MATCH (d:Graph:Directory)-[:`Graph:CONTAINS`]->(f:Graph:File) WHERE d.id IN $ids AND f.active = true AND toLower(f.fileName) IN $names RETURN DISTINCT d.id AS id",
             {"ids": ids, "names": sorted(units.file_names)},
         )
         found = {row["id"] for row in rows}

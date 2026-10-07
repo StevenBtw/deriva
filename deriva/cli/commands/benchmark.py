@@ -58,7 +58,12 @@ def benchmark_run(
     no_clear: Annotated[bool, typer.Option("--no-clear", help="Don't clear graph between runs")] = False,
     bench_hash: Annotated[bool, typer.Option("--bench-hash", help="Per-run cache isolation")] = False,
     defer_relationships: Annotated[
-        bool, typer.Option("--defer-relationships/--no-defer-relationships", help="Two-phase derivation: elements first, then the relationship pass (default)")
+        bool,
+        typer.Option(
+            "--defer-relationships/--no-defer-relationships",
+            help="Two-phase derivation: elements first, then the relationship pass (default). "
+            "Without it, relationships come per batch and the structural tiers (containment, membership, configuration, dependency, same name) do not run",
+        ),
     ] = True,
     per_repo: Annotated[bool, typer.Option("--per-repo", help="Run each repo separately")] = False,
     no_cache_extraction: Annotated[
@@ -360,11 +365,12 @@ def benchmark_analyze(
         # Hotspots
         if summary.model_quality:
             typer.echo("MODEL QUALITY (structure of each exported model)")
-            typer.echo("-" * 108)
-            typer.echo(
+            header = (
                 f"{'Repository':<24} {'Model':<18} {'Run':>3} {'Elem':>5} {'Rel':>5} {'Per el':>6} {'Orphan%':>7} {'Comp.viol':>9} {'Double':>6} {'Dupl.el':>7} {'Ref P / R':>11}"
             )
-            typer.echo("-" * 100)
+            typer.echo("-" * len(header))
+            typer.echo(header)
+            typer.echo("-" * len(header))
             for q in summary.model_quality:
                 ref = q.get("reference")
                 ref_text = f"{ref['precision']:.2f} / {ref['recall']:.2f}" if ref else "-"

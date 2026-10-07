@@ -247,18 +247,26 @@ class TestLlmProposals:
 
 
 class TestNoCoMentionAssignment:
-    def test_an_actor_and_a_process_two_hops_apart_are_not_assigned(self):
-        from deriva.modules.derivation.base import derive_neighbor_relationships
-
-        class TwoHops:
+    @staticmethod
+    def _neighbors(neighbor_ids):
+        class Neighbors:
             def query(self, cypher, params=None):
-                # Both concepts are referenced by one document: two hops apart, no direct edge
-                if "*1..2" in cypher:
-                    return [{"id": "concept::r::approve_order"}]
-                return []
+                # The direct neighbors of the actor's source
+                return [{"neighbor_id": n} for n in neighbor_ids] if (params or {}).get("source_id") == "concept::r::clerk" else []
+
+        return Neighbors()
+
+    def _derive(self, neighbor_ids):
+        from deriva.modules.derivation.base import derive_neighbor_relationships
 
         actor = _el("ba_clerk", "BusinessActor", "concept::r::clerk")
         process = _el("bp_approve", "BusinessProcess", "concept::r::approve_order")
         rules = [RelationshipRule(target_type="BusinessProcess", rel_type="Assignment", description="")]
+        return derive_neighbor_relationships([actor], [process], self._neighbors(neighbor_ids), rules, [])
 
-        assert derive_neighbor_relationships([actor], [process], TwoHops(), rules, []) == []
+    def test_an_actor_and_a_process_two_hops_apart_are_not_assigned(self):
+        # Both concepts are referenced by one document: two hops apart, no direct edge
+        assert self._derive(["file::r::docs/guide.md"]) == []
+
+    def test_an_actor_and_a_process_that_are_direct_neighbors_are_assigned(self):
+        assert _pairs(self._derive(["concept::r::approve_order"])) == {("ba_clerk", "Assignment", "bp_approve")}

@@ -287,7 +287,8 @@ def _own_module_service(text: str, kind: str, own_units: frozenset[str]) -> bool
     if name_key(text) in own_units:
         return True
     image = _COMPOSE_IMAGE.search(kind)
-    return bool(image and ":" in image.group(1) and name_key(image.group(1).rsplit(":", 1)[1]) in own_units)
+    reference = image.group(1).split("@", 1)[0] if image else ""  # a digest is no tag
+    return ":" in reference and name_key(reference.rsplit(":", 1)[1]) in own_units
 
 
 def _names_repository(text: str, kind: str, repository_name: str) -> bool:

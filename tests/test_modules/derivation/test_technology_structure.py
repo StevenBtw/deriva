@@ -132,13 +132,27 @@ class TestConsolidatedPass:
         assert ("n_compose", "Serving", "ac_core") in pairs
 
     def test_a_node_without_member_technologies_never_owns_system_software(self):
+        import json
+        from types import SimpleNamespace
+
+        from deriva.modules.derivation.base import RelationshipLLMConfig
+
         # MySQL is in no role: no structural owner, but a container-file node may still not compose it
-        compose = _el("n_compose", "Node", "file::r::docker-compose.yml", name="Docker Compose")
-        mysql = _el("ss_mysql", "SystemSoftware", "tech::r::mysql", name="Docker Compose MySQL")
+        compose = _el("n_compose", "Node", "file::r::docker-compose.yml")
+        mysql = _el("ss_mysql", "SystemSoftware", "tech::r::mysql")
         rules = {"Node": ([RelationshipRule(target_type="SystemSoftware", rel_type="Composition"), RelationshipRule(target_type="SystemSoftware", rel_type="Serving")], [])}
+        proposals = [
+            {"source": "n_compose", "target": "ss_mysql", "relationship_type": "Composition", "confidence": 0.9},
+            {"source": "n_compose", "target": "ss_mysql", "relationship_type": "Serving", "confidence": 0.9},
+        ]
 
         relationships = derive_consolidated_relationships(
-            all_elements=[compose, mysql], relationship_rules=rules, llm_query_fn=None, graph_manager=FakeGraph({}, []), membership=MEMBERSHIP
+            all_elements=[compose, mysql],
+            relationship_rules=rules,
+            llm_query_fn=lambda prompt, schema, **kw: SimpleNamespace(content=json.dumps({"relationships": proposals})),
+            graph_manager=FakeGraph({}, [], connected=["file::r::docker-compose.yml", "tech::r::mysql"]),
+            llm_config=RelationshipLLMConfig(instruction="rules", min_confidence=0.5, persona="P"),
+            membership=MEMBERSHIP,
         )
 
         pairs = _pairs(relationships)

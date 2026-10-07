@@ -3072,7 +3072,7 @@ def derive_dependency_relationships(
             return path == holder or path.startswith(holder + "/")
 
         def nearest(path: str, element_type: str) -> tuple[str, str] | None:
-            owners = [h for h in holders if path.startswith(h[0] + "/") and type_of[h[1]] == element_type]
+            owners = [h for h in holders if within(path, h[0]) and type_of[h[1]] == element_type]
             return max(owners, key=lambda h: len(h[0])) if owners else None
 
         def lift(owner: tuple[str, str], parent: str | None) -> str:

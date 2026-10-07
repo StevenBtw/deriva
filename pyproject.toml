@@ -120,10 +120,6 @@ allow-direct-references = true
 # Tool Configuration
 # ============================================================================
 
-[tool.uv.sources]
-# grafeo 0.6.0 development build (native graph metrics); back to PyPI when 0.6.0 is released
-grafeo = { path = "H:/GrafeoDB/wheels/0.6.0-dev-ff9cca65/grafeo-0.5.44-cp312-abi3-win_amd64.whl" }
-
 [tool.ruff]
 line-length = 180
 target-version = "py314"
@@ -185,9 +181,10 @@ docstring-quotes = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-v -m 'not integration'"
+addopts = "-v -m 'not integration and not grafeo_dev'"
 markers = [
     "integration: integration tests (run locally with -m integration)",
+    "grafeo_dev: needs the grafeo 0.6.0 development build (algorithm projections)",
 ]
 
 [tool.coverage.run]

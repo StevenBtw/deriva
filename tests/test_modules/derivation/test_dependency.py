@@ -69,6 +69,15 @@ class TestDependencies:
 
         assert len(derive_dependency_relationships(ELEMENTS, PATHS, imports, RULES)) == 1
 
+    def test_an_element_from_a_file_owns_that_file(self):
+        # A file outside every directory element is held only by the element derived from it
+        elements = [*ELEMENTS, {"identifier": "gen", "name": "gen", "element_type": "ApplicationComponent", "properties": {"source": "file::r::gen"}}]
+        paths = {**PATHS, "file::r::gen": "r/app/gen.py"}
+
+        relationships = derive_dependency_relationships(elements, paths, [("r/app/cli/main.py", "r/app/gen.py"), ("r/app/gen.py", "r/app/common/util.py")], RULES)
+
+        assert _pairs(relationships) == {("gen", "Serving", "cli"), ("common", "Serving", "gen")}
+
 
 class FakeGraph:
     """Answers the source-path and import queries; every other query finds nothing."""

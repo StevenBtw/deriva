@@ -161,6 +161,19 @@ class TestCollect:
         # The service named like an own unit and the one running an own unit's image leave; the store stays
         assert sorted(collected.items) == ["compose service::store"]
 
+    def test_an_own_module_image_pinned_by_digest_is_no_item(self):
+        compose = """services:
+  ledger:
+    image: acme/shop:ledgerservice@sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+  store:
+    image: storedb@sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+"""
+        own = frozenset({"ledgerservice"})
+
+        collected = tc.collect([_file("deploy/docker-compose.yml", compose, "infra", "docker-compose")], [], own_units=own)
+
+        assert sorted(collected.items) == ["compose service::store"]
+
     def test_items_named_after_the_repository_are_no_items(self):
         manifest = """spec:
   containers:

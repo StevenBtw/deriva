@@ -69,7 +69,7 @@ ALL_EDGE_TYPES = set(EdgeType)
 SUPPORTED_LANGUAGES = ("python", "javascript", "typescript", "java", "csharp")
 
 # Extensions a relative JavaScript or TypeScript import may leave out
-SCRIPT_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+SCRIPT_EXTENSIONS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 
 
 # =============================================================================
@@ -746,6 +746,7 @@ def _extract_import_edges(
             stdlib_modules=stdlib_modules,
             names=imp.names,
             java_files=java_files,
+            is_from_import=imp.is_from_import,
         )
 
         if resolved["type"] == "internal" and EdgeType.IMPORTS in edge_types:
@@ -836,14 +837,18 @@ def _resolve_import(
     stdlib_modules: set[str] | None = None,
     names: list[str] | None = None,
     java_files: dict[str, list[str]] | None = None,
+    is_from_import: bool = False,
 ) -> dict[str, Any]:
-    """Resolve an import to determine if it's internal or external."""
+    """Resolve an import to determine if it's internal or external.
+
+    For Java, ``is_from_import`` marks a static import (as the Java parser records it).
+    """
     # Use provided stdlib or fall back to Python stdlib
     stdlib = stdlib_modules if stdlib_modules else PYTHON_STDLIB
 
     suffix = PurePosixPath(current_file).suffix.lower()
     if suffix == ".java":
-        return _resolve_java_import(module, names or [], current_file, all_file_paths, stdlib_modules or set(), java_files)
+        return _resolve_java_import(module, names or [], current_file, all_file_paths, stdlib_modules or set(), java_files, is_static=is_from_import)
     if suffix in SCRIPT_EXTENSIONS and module.startswith("."):
         script_target = _resolve_script_import(module, current_file, all_file_paths)
         if script_target:
@@ -905,20 +910,25 @@ def _resolve_java_import(
     all_file_paths: set[str],
     stdlib_modules: set[str],
     java_files: dict[str, list[str]] | None = None,
+    is_static: bool = False,
 ) -> dict[str, Any]:
     """A Java import: standard library, a class file of the repository, an own package, or external.
 
     The class file is found by its package path under any source root; a nested class or a
     static member lives in the file of its outer class. A class in several modules resolves
-    to the one nearest the importing file.
+    to the one nearest the importing file. A static wildcard imports the members of the class
+    ``module``, so it resolves like a class import.
     """
     if any(module == s or module.startswith(s + ".") for s in stdlib_modules):
         return {"type": "stdlib", "module": module}
     if names == ["*"]:
-        package_dir = "/" + module.replace(".", "/") + "/"
-        if any(package_dir in "/" + path for path in all_file_paths if path.endswith(".java")):
-            return {"type": "package", "module": module}
-        return {"type": "external", "package": module.split(".")[0]}
+        if is_static:
+            names = []
+        else:
+            package_dir = "/" + module.replace(".", "/") + "/"
+            if any(package_dir in "/" + path for path in all_file_paths if path.endswith(".java")):
+                return {"type": "package", "module": module}
+            return {"type": "external", "package": module.split(".")[0]}
     index = java_files if java_files is not None else _java_file_index(all_file_paths)
     segments = [*module.split("."), *names[:1]]
     while len(segments) >= 2:
@@ -935,6 +945,8 @@ def _resolve_script_import(module: str, current_file: str, all_file_paths: set[s
     resolved = list(PurePosixPath(current_file).parent.parts)
     for part in module.split("/"):
         if part == "..":
+            if not resolved:
+                return None  # above the repository root
             resolved = resolved[:-1]
         elif part not in (".", ""):
             resolved.append(part)

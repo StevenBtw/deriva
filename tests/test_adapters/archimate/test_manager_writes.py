@@ -91,6 +91,20 @@ def test_retyping_keeps_attributes_written_on_the_edge(am):
     assert am.query("MATCH ()-[r]->() WHERE r.identifier = 'rel_1' RETURN type(r) AS t, r.confidence AS c, r.consolidated AS k") == [{"t": "Model:Access", "c": 0.77, "k": True}]
 
 
+def test_retyping_leaves_other_namespaces_alone(am):
+    am.add_element(Element(name="Service", element_type="ApplicationService", identifier="as_1"))
+    am.add_element(Element(name="Data", element_type="DataObject", identifier="do_1"))
+    am.add_relationship(Relationship(source="as_1", target="do_1", relationship_type="Flow", identifier="rel_1"), validate=False)
+    am.query("MATCH ()-[r]->() WHERE r.identifier = 'rel_1' SET r.confidence = 0.77")
+    # An edge with the same identifier in another namespace of the same database
+    am.query("CREATE (:Other {id: 'a'})-[:LINKS {identifier: 'rel_1', weight: 5}]->(:Other {id: 'b'})")
+
+    am.retype_relationship("rel_1", "Access")
+
+    assert am.query("MATCH (:Model)-[r]->(:Model) RETURN r.confidence AS c, r.weight AS w") == [{"c": 0.77, "w": None}]
+    assert am.query("MATCH (:Other)-[r]->(:Other) RETURN r.confidence AS c, r.weight AS w") == [{"c": None, "w": 5}]
+
+
 def test_retyping_a_missing_relationship_is_an_error(am):
     with pytest.raises(ValueError, match="not found"):
         am.retype_relationship("missing", "Access")
