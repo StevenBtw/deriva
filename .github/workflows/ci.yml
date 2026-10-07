@@ -84,7 +84,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run tests
-        run: uv run pytest --cov --cov-report=xml --cov-fail-under=80 -v -m "not integration"
+        run: uv run pytest --cov --cov-report=xml --cov-fail-under=80 -v -m "not integration and not grafeo_dev"
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
