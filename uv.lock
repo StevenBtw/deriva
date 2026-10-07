@@ -78,6 +78,18 @@ wheels = [
 ]
 
 [[package]]
+name = "anywidget-archimate"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anywidget" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4b/cf/ff5f97f70037eb34751c4c9058f07e45bdd9831e73ed963fea542f0e518c/anywidget_archimate-0.2.0.tar.gz", hash = "sha256:3dcc4ce6dbc7fa1c8e2ca6e4ef248f3208465b0261cbf69e97fdc4494e2db863", size = 148711, upload-time = "2026-03-16T14:51:54.013Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/df/58/0bdc415d9756415d95d896e683ae7a0ff40b811932dbbbddc536a46331bb/anywidget_archimate-0.2.0-py3-none-any.whl", hash = "sha256:0951c20401ea07638592a07badcecbd56e0abf5564210ae2f6ae82dcf00ed957", size = 26865, upload-time = "2026-03-16T14:51:52.903Z" },
+]
+
+[[package]]
 name = "anywidget-graph"
 version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -538,6 +550,7 @@ name = "deriva"
 version = "0.7.1"
 source = { editable = "." }
 dependencies = [
+    { name = "anywidget-archimate" },
     { name = "anywidget-graph" },
     { name = "authlib" },
     { name = "backoff" },
@@ -546,6 +559,7 @@ dependencies = [
     { name = "diskcache" },
     { name = "duckdb" },
     { name = "en-core-web-sm" },
+    { name = "fastapi" },
     { name = "fr-core-news-sm" },
     { name = "grafeo" },
     { name = "httpx" },
@@ -575,6 +589,7 @@ dependencies = [
     { name = "tree-sitter-javascript" },
     { name = "tree-sitter-python" },
     { name = "typer" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -589,6 +604,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anywidget-archimate", specifier = ">=0.2.0" },
     { name = "anywidget-graph", specifier = ">=0.3" },
     { name = "authlib", specifier = ">=1.8.0" },
     { name = "backoff", specifier = ">=2.2.1" },
@@ -597,6 +613,7 @@ requires-dist = [
     { name = "diskcache", specifier = ">=5.6.3" },
     { name = "duckdb", specifier = ">=1.5" },
     { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
+    { name = "fastapi", specifier = ">=0.142.4" },
     { name = "fr-core-news-sm", url = "https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl" },
     { name = "grafeo", path = "H:/GrafeoDB/wheels/0.6.0-dev-ff9cca65/grafeo-0.5.44-cp312-abi3-win_amd64.whl" },
     { name = "httpx", specifier = ">=0.28.1" },
@@ -632,6 +649,7 @@ requires-dist = [
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0" },
     { name = "typer", specifier = ">=0.27" },
     { name = "types-lxml", marker = "extra == 'dev'", specifier = ">=2026.2" },
+    { name = "uvicorn", specifier = ">=0.41.0" },
 ]
 provides-extras = ["dev"]
 
@@ -741,6 +759,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cc/28/c14e053b6762b1044f34a13aab6859bbf40456d37d23aa286ac24cfd9a5d/executing-2.2.1.tar.gz", hash = "sha256:3632cc370565f6648cc328b32435bd120a1e4ebb20c77e3fdde9a13cd1e533c4", size = 1129488, upload-time = "2025-09-01T09:48:10.866Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/ea/53f2148663b321f21b5a606bd5f191517cf40b7072c0497d3c92c4a13b1e/executing-2.2.1-py2.py3-none-any.whl", hash = "sha256:760643d3452b4d777d295bb167ccc74c64a81df23fb5e08eff250c425a4b2017", size = 28317, upload-time = "2025-09-01T09:48:08.5Z" },
+]
+
+[[package]]
+name = "fastapi"
+version = "0.142.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b8/2c/d69ce63c27bf9c5e574ab425118390102924503b4b3cdf33c07a69744dd2/fastapi-0.142.4.tar.gz", hash = "sha256:7fe2e254a0a948b88f432b02b8f627463285248233bba0998ed9640191e2ff57", size = 467841, upload-time = "2026-10-07T21:22:13.046Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/75/6a/c3e85c05b2ec12e9d352b6f1700e29e0fb3f0fff2511b9c44cdf8837577d/fastapi-0.142.4-py3-none-any.whl", hash = "sha256:8a651aa071a9f92c8217cca1d0b044bf9c326f336578be0a728a1a1f22ec52d2", size = 144456, upload-time = "2026-10-07T21:22:11.386Z" },
 ]
 
 [[package]]

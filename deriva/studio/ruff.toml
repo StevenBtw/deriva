@@ -1,0 +1,9 @@
+# Architectural boundaries for the studio layer (FastAPI backend of the web UI).
+# Like the CLI, the studio talks to the pipeline through services only (PipelineSession is the API).
+extend = "../../pyproject.toml"
+
+[lint.flake8-tidy-imports.banned-api]
+"deriva.adapters" = { msg = "Architecture violation: the studio imports services only (use PipelineSession)" }
+"deriva.modules" = { msg = "Architecture violation: the studio imports services only (use PipelineSession)" }
+"deriva.common" = { msg = "Architecture violation: the studio imports services only (services re-export what it needs)" }
+"deriva.cli" = { msg = "Architecture violation: cli is a top-level entry point and should not be imported" }
