@@ -122,7 +122,7 @@ allow-direct-references = true
 
 [tool.uv.sources]
 # grafeo 0.6.0 development build (native graph metrics); back to PyPI when 0.6.0 is released
-grafeo = { path = "H:/GrafeoDB/wheels/0.6.0-dev-7fc8c43b/grafeo-0.5.44-cp312-abi3-win_amd64.whl" }
+grafeo = { path = "H:/GrafeoDB/wheels/0.6.0-dev-ff9cca65/grafeo-0.5.44-cp312-abi3-win_amd64.whl" }
 
 [tool.ruff]
 line-length = 180

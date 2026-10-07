@@ -598,7 +598,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.5" },
     { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "fr-core-news-sm", url = "https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl" },
-    { name = "grafeo", path = "H:/GrafeoDB/wheels/0.6.0-dev-7fc8c43b/grafeo-0.5.44-cp312-abi3-win_amd64.whl" },
+    { name = "grafeo", path = "H:/GrafeoDB/wheels/0.6.0-dev-ff9cca65/grafeo-0.5.44-cp312-abi3-win_amd64.whl" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "lxml", specifier = ">=6" },
     { name = "marimo", specifier = ">=0.25" },
@@ -856,12 +856,12 @@ wheels = [
 [[package]]
 name = "grafeo"
 version = "0.5.44"
-source = { path = "H:/GrafeoDB/wheels/0.6.0-dev-7fc8c43b/grafeo-0.5.44-cp312-abi3-win_amd64.whl" }
+source = { path = "H:/GrafeoDB/wheels/0.6.0-dev-ff9cca65/grafeo-0.5.44-cp312-abi3-win_amd64.whl" }
 dependencies = [
     { name = "solvor" },
 ]
 wheels = [
-    { filename = "grafeo-0.5.44-cp312-abi3-win_amd64.whl", hash = "sha256:1adba01d4cdd9d185fc2ddcc62a7ddf714da19b2f925c0a1b55856a25a105b9b" },
+    { filename = "grafeo-0.5.44-cp312-abi3-win_amd64.whl", hash = "sha256:e4a6d27d112a1c1bfa295e2eb7651623651d249beaf77a3343a890177a997975" },
 ]
 
 [package.metadata]

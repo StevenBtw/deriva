@@ -1370,10 +1370,10 @@ class TestUnanchoredLayers:
         from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
 
         manager = self._manager()
-        result = CrossLayerCoherenceStep().run(archimate_manager=manager, params={"disable_unanchored": ["Business"]})
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, params={"disable_unanchored": ["Strategy"]})
 
         assert result.success is False
-        assert "Business" in result.errors[0]
+        assert "Strategy" in result.errors[0]
         manager.disable_elements.assert_not_called()
 
 
