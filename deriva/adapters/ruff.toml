@@ -2,6 +2,11 @@
 # Adapters is the data access layer and can only import from common.
 # It must NOT import from peer or higher layers: modules, services, or cli.
 
+# Inherit the project rules (select, line length, per-file ignores); the ban table
+# below replaces the root one, so it repeats the root 'deriva.cli' ban.
+extend = "../../pyproject.toml"
+
 [lint.flake8-tidy-imports.banned-api]
+"deriva.cli" = { msg = "Architecture violation: cli is a top-level entry point and should not be imported" }
 "deriva.modules" = { msg = "Architecture violation: adapters cannot import from modules (use common layer for shared types)" }
 "deriva.services" = { msg = "Architecture violation: adapters cannot import from services (adapters is a lower layer)" }

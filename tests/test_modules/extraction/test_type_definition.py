@@ -7,13 +7,51 @@ from unittest.mock import MagicMock
 
 from deriva.modules.extraction.type_definition import (
     TYPE_DEFINITION_SCHEMA,
+    base_type_name,
     build_extraction_prompt,
     build_type_definition_node,
     extract_type_definitions,
     extract_type_definitions_batch,
     extract_types_from_source,
     parse_llm_response,
+    resolve_base_type,
 )
+
+PROMPT_TEXTS = {"persona": "Analyze the source.", "task": "Extract the items."}
+
+
+class TestBaseTypeResolution:
+    """An inheritance reference resolves to the repository's own type of that name, decided by structure."""
+
+    def test_the_name_drops_type_arguments(self):
+        assert base_type_name("Renderer<Circle.Options>") == "Renderer"
+        assert base_type_name("Generic[T]") == "Generic"
+        assert base_type_name(" Shape ") == "Shape"
+
+    def test_a_qualified_name_has_no_key(self):
+        # A module or package prefix names one specific type: its last part alone must not match
+        assert base_type_name("widgets.Shape") is None
+
+    def test_resolves_to_the_only_definition(self):
+        definitions = {"Shape": ["typedef::r::shapes_Shape.java::Shape"]}
+
+        assert resolve_base_type("Shape", definitions, source_id="typedef::r::shapes_Circle.java::Circle") == "typedef::r::shapes_Shape.java::Shape"
+
+    def test_type_arguments_do_not_block_resolution(self):
+        definitions = {"Renderer": ["typedef::r::Renderer.java::Renderer"]}
+
+        assert resolve_base_type("Renderer<Circle>", definitions, source_id="typedef::r::Circle.java::Circle") == "typedef::r::Renderer.java::Renderer"
+
+    def test_no_definition_or_several_leave_it_unresolved(self):
+        definitions = {"Shape": ["typedef::r::a_Shape.java::Shape", "typedef::r::b_Shape.java::Shape"]}
+
+        assert resolve_base_type("Shape", definitions, source_id="typedef::r::Circle.java::Circle") is None
+        assert resolve_base_type("Serializable", definitions, source_id="typedef::r::Circle.java::Circle") is None
+
+    def test_never_resolves_to_the_extending_type_itself(self):
+        definitions = {"Shape": ["typedef::r::Shape.java::Shape"]}
+
+        assert resolve_base_type("Shape", definitions, source_id="typedef::r::Shape.java::Shape") is None
 
 
 class TestTypeDefinitionSchema:
@@ -61,6 +99,7 @@ class TestBuildExtractionPrompt:
             file_path="src/models/user.py",
             instruction="Extract types",
             example="{}",
+            texts=PROMPT_TEXTS,
         )
         assert "src/models/user.py" in prompt
 
@@ -72,6 +111,7 @@ class TestBuildExtractionPrompt:
             file_path="test.py",
             instruction=instruction,
             example="{}",
+            texts=PROMPT_TEXTS,
         )
         assert instruction in prompt
 
@@ -83,6 +123,7 @@ class TestBuildExtractionPrompt:
             file_path="test.py",
             instruction="Extract types",
             example=example,
+            texts=PROMPT_TEXTS,
         )
         assert example in prompt
 
@@ -93,6 +134,7 @@ class TestBuildExtractionPrompt:
             file_path="test.py",
             instruction="Extract types",
             example="{}",
+            texts=PROMPT_TEXTS,
         )
         # Should have line numbers
         assert "1 |" in prompt or "   1" in prompt
@@ -319,7 +361,7 @@ class TestExtractTypeDefinitions:
             usage = {"prompt_tokens": 100, "completion_tokens": 50}
 
         mock_llm_fn = MagicMock(return_value=MockResponse())
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
 
         result = extract_type_definitions(
             file_path="models/user.py",
@@ -342,7 +384,7 @@ class TestExtractTypeDefinitions:
             error = "Rate limit exceeded"
 
         mock_llm_fn = MagicMock(return_value=MockErrorResponse())
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
 
         result = extract_type_definitions(
             file_path="test.py",
@@ -363,7 +405,7 @@ class TestExtractTypeDefinitions:
             usage = {}
 
         mock_llm_fn = MagicMock(return_value=MockResponse())
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
 
         result = extract_type_definitions(
             file_path="test.py",
@@ -384,7 +426,7 @@ class TestExtractTypeDefinitions:
             usage = {}
 
         mock_llm_fn = MagicMock(return_value=MockResponse())
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
 
         result = extract_type_definitions(
             file_path="test.py",
@@ -406,7 +448,7 @@ class TestExtractTypeDefinitions:
             response_type = "ResponseType.CACHED"
 
         mock_llm_fn = MagicMock(return_value=MockResponse())
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
 
         result = extract_type_definitions(
             file_path="test.py",
@@ -423,7 +465,7 @@ class TestExtractTypeDefinitions:
     def test_handles_exception(self):
         """Should handle exceptions gracefully."""
         mock_llm_fn = MagicMock(side_effect=RuntimeError("Connection failed"))
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
 
         result = extract_type_definitions(
             file_path="test.py",
@@ -446,7 +488,7 @@ class TestExtractTypeDefinitions:
             usage = {}
 
         mock_llm_fn = MagicMock(return_value=MockResponse())
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
 
         result = extract_type_definitions(
             file_path="models/user.py",
@@ -476,7 +518,7 @@ class TestExtractTypeDefinitionsBatch:
             usage = {}
 
         mock_llm_fn = MagicMock(return_value=MockResponse())
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
         files = [
             {"path": "user.py", "content": "class User: pass"},
             {"path": "order.py", "content": "class Order: pass"},
@@ -510,7 +552,7 @@ class TestExtractTypeDefinitionsBatch:
             {"path": "a.py", "content": ""},
             {"path": "b.py", "content": ""},
         ]
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
 
         extract_type_definitions_batch(
             files=files,
@@ -535,7 +577,7 @@ class TestExtractTypeDefinitionsBatch:
         files = [
             {"path": "broken.py", "content": ""},
         ]
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
 
         result = extract_type_definitions_batch(
             files=files,
@@ -558,7 +600,7 @@ class TestExtractTypeDefinitionsBatch:
         files = [
             {"path": "test.py", "content": ""},
         ]
-        config = {"instruction": "Extract types", "example": "{}"}
+        config = {"instruction": "Extract types", "example": "{}", "params": {"prompt": PROMPT_TEXTS}}
 
         result = extract_type_definitions_batch(
             files=files,

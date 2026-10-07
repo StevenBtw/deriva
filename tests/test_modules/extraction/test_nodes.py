@@ -7,12 +7,12 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from deriva.adapters.treesitter.models import ExtractedMethod, ExtractedType
 from deriva.modules.extraction import (
-    business_concept,
     external_dependency,
     method,
-    technology,
     type_definition,
 )
 from deriva.modules.extraction import (
@@ -41,109 +41,7 @@ from deriva.modules.extraction.type_definition import (
     extract_types_from_python,
 )
 
-# Technology prompt texts as stored in the step config (params.prompt)
-TECH_PARAMS = {
-    "prompt": {
-        "existing_dependencies_heading": "Known dependencies:",
-        "existing_technologies_heading": "Known technologies:",
-        "closing_instruction": "Return JSON matching the schema.",
-    }
-}
-
-
-class TestBusinessConceptModule:
-    """Tests for business_concept extraction module."""
-
-    def test_schema_has_required_structure(self):
-        """Should have properly structured JSON schema."""
-        schema = business_concept.BUSINESS_CONCEPT_SCHEMA
-
-        assert "name" in schema
-        assert schema["name"] == "business_concepts_extraction"
-        assert "schema" in schema
-        assert schema["schema"]["type"] == "object"  # type: ignore[index]
-        assert "concepts" in schema["schema"]["properties"]  # type: ignore[operator,index]
-
-    def test_build_extraction_prompt(self):
-        """Should build prompt with all components."""
-        prompt = business_concept.build_extraction_prompt(
-            file_content="# Business Overview\n\nThis is a user service.",
-            file_path="docs/overview.md",
-            instruction="Extract business concepts from documentation",
-            example='{"concepts": [{"conceptName": "User", "conceptType": "entity"}]}',
-        )
-
-        assert "docs/overview.md" in prompt
-        assert "Business Overview" in prompt
-        assert "Extract business concepts" in prompt
-        assert '"conceptName"' in prompt
-
-    def test_build_business_concept_node_success(self):
-        """Should build valid node from concept data."""
-        concept_data = {
-            "conceptName": "User Authentication",
-            "conceptType": "service",
-            "description": "Handles user login and session management",
-            "confidence": 0.9,
-        }
-
-        result = business_concept.build_business_concept_node(concept_data, "auth.py", "myrepo")
-
-        assert result["success"] is True
-        assert result["data"]["label"] == "BusinessConcept"
-        assert result["data"]["properties"]["conceptName"] == "User Authentication"
-        assert result["data"]["properties"]["conceptType"] == "service"
-
-    def test_build_business_concept_node_missing_field(self):
-        """Should fail when required field is missing."""
-        concept_data = {
-            "conceptType": "service",
-            "description": "Some description",
-        }
-
-        result = business_concept.build_business_concept_node(concept_data, "auth.py", "myrepo")
-
-        assert result["success"] is False
-        assert any("conceptName" in e for e in result["errors"])
-
-    def test_build_business_concept_node_invalid_type(self):
-        """Should default to 'other' for invalid concept type."""
-        concept_data = {
-            "conceptName": "Something",
-            "conceptType": "invalid_type",
-            "description": "Some description",
-        }
-
-        result = business_concept.build_business_concept_node(concept_data, "file.py", "myrepo")
-
-        assert result["success"] is True
-        assert result["data"]["properties"]["conceptType"] == "other"
-
-    def test_parse_llm_response_valid(self):
-        """Should parse valid LLM response."""
-        response = json.dumps({"concepts": [{"conceptName": "User", "conceptType": "entity", "description": "A user"}]})
-
-        result = business_concept.parse_llm_response(response)
-
-        assert result["success"] is True
-        assert len(result["data"]) == 1
-
-    def test_parse_llm_response_invalid_json(self):
-        """Should handle invalid JSON gracefully."""
-        response = "not valid json {"
-
-        result = business_concept.parse_llm_response(response)
-
-        assert result["success"] is False
-        assert len(result["errors"]) > 0
-
-    def test_parse_llm_response_missing_concepts(self):
-        """Should fail when concepts array is missing."""
-        response = json.dumps({"data": []})
-
-        result = business_concept.parse_llm_response(response)
-
-        assert result["success"] is False
+PROMPT_TEXTS = {"persona": "Analyze the source.", "task": "Extract the items."}
 
 
 class TestTypeDefinitionModule:
@@ -164,6 +62,7 @@ class TestTypeDefinitionModule:
             file_path="models/user.py",
             instruction="Extract type definitions",
             example='{"types": []}',
+            texts=PROMPT_TEXTS,
         )
 
         assert "models/user.py" in prompt
@@ -225,6 +124,7 @@ class TestMethodModule:
             file_path="api/users.py",
             instruction="Extract methods",
             example='{"methods": []}',
+            texts=PROMPT_TEXTS,
         )
 
         assert "api/users.py" in prompt
@@ -267,66 +167,6 @@ class TestMethodModule:
         assert result["success"] is True
 
 
-class TestTechnologyModule:
-    """Tests for technology extraction module."""
-
-    def test_schema_has_required_structure(self):
-        """Should have properly structured JSON schema."""
-        schema = technology.TECHNOLOGY_SCHEMA
-
-        assert "name" in schema
-        assert "schema" in schema
-        assert "technologies" in schema["schema"]["properties"]  # type: ignore[operator,index]
-
-    def test_build_extraction_prompt(self):
-        """Should build prompt with all components."""
-        prompt = technology.build_extraction_prompt(
-            file_content="import redis\nimport fastapi",
-            file_path="app/main.py",
-            instruction="Extract technology references",
-            example='{"technologies": []}',
-            texts=TECH_PARAMS["prompt"],
-        )
-
-        assert "app/main.py" in prompt
-        assert "import redis" in prompt
-
-    def test_build_technology_node_success(self):
-        """Should build valid node from technology data."""
-        tech_data = {
-            "techName": "Redis",
-            "techCategory": "system_software",
-            "description": "In-memory data store",
-            "version": "7.0",
-            "confidence": 0.95,
-        }
-
-        result = technology.build_technology_node(tech_data, "app/main.py", "myrepo")
-
-        assert result["label"] == "Technology"
-        assert result["properties"]["techName"] == "Redis"
-
-    def test_build_technology_node_missing_field(self):
-        """Should handle missing techName field."""
-        tech_data = {
-            "techCategory": "service",
-        }
-
-        result = technology.build_technology_node(tech_data, "file.py", "myrepo")
-
-        # Returns node with empty name
-        assert result["properties"]["techName"] == ""
-
-    def test_parse_llm_response_valid(self):
-        """Should parse valid LLM response."""
-        response = MockLLMResponse({"technologies": [{"techName": "FastAPI", "techCategory": "service", "description": "Web framework"}]})
-
-        result = technology.parse_llm_response(response)
-
-        assert isinstance(result, list)
-        assert len(result) >= 1
-
-
 class TestExternalDependencyModule:
     """Tests for external_dependency extraction module."""
 
@@ -345,6 +185,7 @@ class TestExternalDependencyModule:
             file_path="pyproject.toml",
             instruction="Extract dependencies",
             example='{"dependencies": []}',
+            texts=PROMPT_TEXTS,
         )
 
         assert "pyproject.toml" in prompt
@@ -440,6 +281,7 @@ class TestTestExtractionModule:
             file_path="tests/test_user.py",
             instruction="Extract test definitions",
             example='{"tests": []}',
+            texts=PROMPT_TEXTS,
         )
 
         assert "tests/test_user.py" in prompt
@@ -530,138 +372,6 @@ class MockLLMResponse:
         self.response_type = "live"
 
 
-class TestExtractBusinessConcepts:
-    """Tests for extract_business_concepts function."""
-
-    def test_extract_handles_llm_error_response(self):
-        """Should handle LLM error responses (response with .error attribute)."""
-
-        class ErrorResponse:
-            error = "Rate limit exceeded"
-            content = ""
-
-        mock_llm = MagicMock(return_value=ErrorResponse())
-
-        result = business_concept.extract_business_concepts(
-            file_path="file.py",
-            file_content="code",
-            repo_name="repo",
-            llm_query_fn=mock_llm,
-            config={},
-        )
-
-        assert result["success"] is False
-        assert any("LLM error" in e for e in result["errors"])
-        assert result["stats"]["llm_error"] is True
-
-    def test_extract_handles_parse_error(self):
-        """Should handle parse errors from LLM response."""
-        mock_response = MockLLMResponse({"invalid": "structure"})  # No 'concepts' key
-
-        mock_llm = MagicMock(return_value=mock_response)
-
-        result = business_concept.extract_business_concepts(
-            file_path="file.py",
-            file_content="code",
-            repo_name="repo",
-            llm_query_fn=mock_llm,
-            config={},
-        )
-
-        assert result["success"] is False
-        assert result["stats"]["parse_error"] is True
-
-    def test_extract_handles_node_build_failure(self):
-        """Should continue when some nodes fail to build."""
-        # Missing required conceptName in second item
-        mock_response = MockLLMResponse(
-            {
-                "concepts": [
-                    {"conceptName": "Valid", "conceptType": "service", "description": "OK"},
-                    {"conceptType": "broken", "description": "Missing name"},
-                ]
-            }
-        )
-
-        mock_llm = MagicMock(return_value=mock_response)
-
-        result = business_concept.extract_business_concepts(
-            file_path="file.py",
-            file_content="code",
-            repo_name="repo",
-            llm_query_fn=mock_llm,
-            config={},
-        )
-
-        # A concept without a name cannot vote; the named one is kept
-        assert result["success"] is True
-        assert len(result["data"]["nodes"]) == 1
-
-    def test_extract_success(self):
-        """Should extract concepts successfully with mocked LLM."""
-        mock_response = MockLLMResponse(
-            {
-                "concepts": [
-                    {
-                        "conceptName": "UserService",
-                        "conceptType": "service",
-                        "description": "Handles user operations",
-                        "confidence": 0.9,
-                    }
-                ]
-            },
-            usage={"prompt_tokens": 100, "completion_tokens": 50},
-        )
-
-        mock_llm = MagicMock(return_value=mock_response)
-
-        result = business_concept.extract_business_concepts(
-            file_path="services/user.py",
-            file_content="class UserService:\n    pass",
-            repo_name="myrepo",
-            llm_query_fn=mock_llm,
-            config={"instruction": "Extract concepts", "example": "{}"},
-        )
-
-        assert result["success"] is True
-        assert len(result["data"]["nodes"]) == 1
-        assert result["data"]["nodes"][0]["label"] == "BusinessConcept"
-        mock_llm.assert_called_once()
-
-    def test_extract_handles_llm_error(self):
-        """Should handle LLM errors gracefully."""
-        mock_llm = MagicMock(side_effect=Exception("LLM failed"))
-
-        result = business_concept.extract_business_concepts(
-            file_path="file.py",
-            file_content="code",
-            repo_name="repo",
-            llm_query_fn=mock_llm,
-            config={},
-        )
-
-        assert result["success"] is False
-        assert len(result["errors"]) > 0
-
-    def test_extract_creates_edges(self):
-        """Should create REFERENCES edges from File to concepts."""
-        mock_response = MockLLMResponse({"concepts": [{"conceptName": "Auth", "conceptType": "service", "description": "Auth"}]})
-
-        mock_llm = MagicMock(return_value=mock_response)
-
-        result = business_concept.extract_business_concepts(
-            file_path="auth.py",
-            file_content="code",
-            repo_name="repo",
-            llm_query_fn=mock_llm,
-            config={},
-        )
-
-        assert len(result["data"]["edges"]) > 0
-        edge = result["data"]["edges"][0]
-        assert edge["relationship_type"] == "REFERENCES"
-
-
 class TestExtractTypeDefs:
     """Tests for extract_type_definitions function."""
 
@@ -689,7 +399,7 @@ class TestExtractTypeDefs:
             file_content="class UserModel:\n    pass",
             repo_name="myrepo",
             llm_query_fn=mock_llm,
-            config={"instruction": "Extract types"},
+            config={"instruction": "Extract types", "params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -704,7 +414,7 @@ class TestExtractTypeDefs:
             file_content="code",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is False
@@ -747,7 +457,7 @@ class TestExtractMethods:
             type_node=type_node,
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -772,54 +482,7 @@ class TestExtractMethods:
             type_node=type_node,
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
-        )
-
-        assert result["success"] is False
-
-
-class TestExtractTechnologies:
-    """Tests for extract_technologies function."""
-
-    def test_extract_success(self):
-        """Should extract technologies successfully."""
-        mock_response = MockLLMResponse(
-            {
-                "technologies": [
-                    {
-                        "technologyName": "Redis",
-                        "technologyType": "system_software",
-                        "description": "Cache",
-                        "version": "7.0",
-                    }
-                ]
-            },
-            usage={"prompt_tokens": 20},
-        )
-
-        mock_llm = MagicMock(return_value=mock_response)
-
-        result = technology.extract_technologies(
-            file_path="main.py",
-            file_content="import redis",
-            repo_name="repo",
-            llm_query_fn=mock_llm,
-            config={"params": TECH_PARAMS},
-        )
-
-        assert result["success"] is True
-        assert len(result["data"]["nodes"]) == 1
-
-    def test_extract_handles_error(self):
-        """Should handle extraction errors."""
-        mock_llm = MagicMock(side_effect=Exception("API error"))
-
-        result = technology.extract_technologies(
-            file_path="file.py",
-            file_content="code",
-            repo_name="repo",
-            llm_query_fn=mock_llm,
-            config={"params": TECH_PARAMS},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is False
@@ -835,7 +498,7 @@ class TestExtractExternalDependencies:
             file_content="fastapi==0.100.0\n",
             repo_name="repo",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -848,7 +511,7 @@ class TestExtractExternalDependencies:
             file_content="flask==2.0.0\nrequests>=2.25.0\n",
             repo_name="repo",
             llm_query_fn=None,  # No LLM needed
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -864,7 +527,7 @@ class TestExtractExternalDependencies:
             file_content="content",
             repo_name="repo",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         # config.toml is not a recognized file type, so it's skipped
@@ -898,7 +561,7 @@ class TestExtractTests:
             file_content="def test_login(): assert True",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -913,7 +576,7 @@ class TestExtractTests:
             file_content="code",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is False
@@ -1591,7 +1254,7 @@ dependencies = [
             file_content=content,
             repo_name="myrepo",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -1622,7 +1285,7 @@ class TestExtractFromPackageJson:
             file_content=content,
             repo_name="myrepo",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -1638,7 +1301,7 @@ class TestExtractFromPackageJson:
             file_content="{invalid json",
             repo_name="myrepo",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is False or len(result["data"]["nodes"]) == 0
@@ -1674,7 +1337,7 @@ class TestExtractFromPythonAst:
             file_content="import requests\nfrom flask import Flask",
             repo_name="myrepo",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
             subtype="python",  # Required to trigger AST extraction
         )
 
@@ -1701,7 +1364,7 @@ class TestExtractFromPythonAst:
             file_content="import os\nimport json\nimport requests",
             repo_name="myrepo",
             llm_query_fn=None,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
             subtype="python",  # Required to trigger AST extraction
         )
 
@@ -1717,68 +1380,6 @@ class TestExtractFromPythonAst:
 # =============================================================================
 # Batch extraction tests
 # =============================================================================
-
-
-class TestExtractTechnologiesBatch:
-    """Tests for extract_technologies_batch function."""
-
-    def test_batch_success(self):
-        """Batch extraction is a stub - returns empty results."""
-        result = technology.extract_technologies_batch(
-            files=[{"path": "main.py", "content": "import redis"}],
-            repo_name="repo",
-            llm_query_fn=MagicMock(),
-            config={},
-        )
-
-        assert result["success"] is True
-        assert len(result["data"]["nodes"]) == 0
-
-    def test_batch_with_progress_callback(self):
-        """Batch extraction is a stub - progress callback is not called."""
-        progress_calls = []
-
-        def progress_cb(current, total, path):
-            progress_calls.append((current, total, path))
-
-        result = technology.extract_technologies_batch(
-            files=[
-                {"path": "file1.py", "content": "code1"},
-                {"path": "file2.py", "content": "code2"},
-            ],
-            repo_name="repo",
-            llm_query_fn=MagicMock(),
-            config={},
-            progress_callback=progress_cb,
-        )
-
-        assert result["success"] is True
-
-    def test_batch_handles_errors(self):
-        """Batch extraction is a stub - returns empty without errors."""
-        result = technology.extract_technologies_batch(
-            files=[{"path": "fail.py", "content": "code1"}],
-            repo_name="repo",
-            llm_query_fn=MagicMock(),
-            config={},
-        )
-
-        assert result["success"] is True
-        assert len(result["errors"]) == 0
-
-    def test_batch_deduplicates_technologies(self):
-        """Batch extraction is a stub - returns empty data."""
-        result = technology.extract_technologies_batch(
-            files=[
-                {"path": "file1.py", "content": "redis code"},
-                {"path": "file2.py", "content": "more redis"},
-            ],
-            repo_name="repo",
-            llm_query_fn=MagicMock(),
-            config={},
-        )
-
-        assert len(result["data"]["nodes"]) == 0
 
 
 class TestExtractTestsBatch:
@@ -1811,7 +1412,7 @@ class TestExtractTestsBatch:
             files=files,
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -1837,123 +1438,11 @@ class TestExtractTestsBatch:
             files=files,
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
             progress_callback=progress_cb,
         )
 
         assert len(progress_calls) == 2
-
-
-class TestTechnologyBuildNodeEdgeCases:
-    """Additional edge case tests for technology node building."""
-
-    def test_invalid_category_defaults_to_service(self):
-        """Should keep the category as-is (no validation in build_technology_node)."""
-        tech_data = {
-            "techName": "Something",
-            "techCategory": "invalid_category",
-            "description": "Some tech",
-        }
-
-        result = technology.build_technology_node(tech_data, "file.py", "repo")
-
-        assert result["label"] == "Technology"
-        assert result["properties"]["techCategory"] == "invalid_category"
-
-    def test_all_valid_categories(self):
-        """Should accept all valid categories."""
-        categories = [
-            "service",
-            "system_software",
-            "infrastructure",
-            "platform",
-            "network",
-            "security",
-        ]
-
-        for cat in categories:
-            tech_data = {
-                "techName": f"Tech_{cat}",
-                "techCategory": cat,
-                "description": f"A {cat} technology",
-            }
-            result = technology.build_technology_node(tech_data, "file.py", "repo")
-            assert result["label"] == "Technology"
-            assert result["properties"]["techCategory"] == cat
-
-
-class TestExtractTechnologyEdgeCases:
-    """Additional edge case tests for technology extraction."""
-
-    def test_llm_error_response(self):
-        """Should handle LLM error response gracefully."""
-
-        class ErrorResponse:
-            error = "API rate limit"
-            content = ""
-
-        mock_llm = MagicMock(return_value=ErrorResponse())
-
-        result = technology.extract_technologies(
-            file_path="file.py",
-            file_content="code",
-            repo_name="repo",
-            llm_query_fn=mock_llm,
-            config={"params": TECH_PARAMS},
-        )
-
-        # Empty content parses to empty list, success with 0 nodes
-        assert result["success"] is True
-        assert len(result["data"]["nodes"]) == 0
-
-    def test_parse_error(self):
-        """Should handle invalid response structure gracefully."""
-        mock_response = MockLLMResponse({"invalid": "structure"})
-        mock_llm = MagicMock(return_value=mock_response)
-
-        result = technology.extract_technologies(
-            file_path="file.py",
-            file_content="code",
-            repo_name="repo",
-            llm_query_fn=mock_llm,
-            config={"params": TECH_PARAMS},
-        )
-
-        # No "technologies" key, parse returns empty list
-        assert result["success"] is True
-        assert len(result["data"]["nodes"]) == 0
-
-    def test_partial_node_build_skips_empty_name(self):
-        """Should skip nodes with empty/missing name."""
-        mock_response = MockLLMResponse(
-            {
-                "technologies": [
-                    {
-                        "technologyName": "Valid",
-                        "technologyType": "service",
-                        "description": "OK",
-                    },
-                    {
-                        "technologyType": "service",  # Missing technologyName
-                        "description": "Missing name",
-                    },
-                ]
-            }
-        )
-
-        mock_llm = MagicMock(return_value=mock_response)
-
-        result = technology.extract_technologies(
-            file_path="file.py",
-            file_content="code",
-            repo_name="repo",
-            llm_query_fn=mock_llm,
-            config={"params": TECH_PARAMS},
-        )
-
-        assert result["success"] is True
-        # Only the valid tech should be included (empty name is skipped)
-        assert len(result["data"]["nodes"]) == 1
 
 
 class TestExtractTestsEdgeCases:
@@ -1973,7 +1462,7 @@ class TestExtractTestsEdgeCases:
             file_content="code",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is False
@@ -1989,7 +1478,7 @@ class TestExtractTestsEdgeCases:
             file_content="code",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is False
@@ -2020,7 +1509,7 @@ class TestExtractTestsEdgeCases:
             file_content="code",
             repo_name="repo",
             llm_query_fn=mock_llm,
-            config={},
+            config={"params": {"prompt": PROMPT_TEXTS}},
         )
 
         assert result["success"] is True
@@ -2082,50 +1571,123 @@ class TestExcludedDirectories:
         assert web["properties"]["subdirectory_count"] == 0
 
 
-class TestTechnologyPromptTextsFromConfig:
-    """The Technology prompt texts come from the step's versioned params."""
+class TestExtractDirectoriesWalk:
+    """One pruned walk gives exactly the nodes, order, counts and sizes of the full rglob scan."""
 
-    TEXTS = {"existing_dependencies_heading": "DEPS:", "existing_technologies_heading": "TECHS:", "closing_instruction": "CLOSE FROM CONFIG"}
+    EXCLUDED = ("node_modules", "vendor", ".git")
 
-    def test_prompt_uses_config_texts(self):
-        from deriva.modules.extraction.technology import extract_technologies
+    @staticmethod
+    def _tree(root):
+        files = {
+            "README.md": 10,
+            "src/app.py": 100,
+            "src/lib/util.py": 40,
+            "src/lib/deep/x.py": 7,
+            "src/vendor/pkg.js": 999,  # excluded directory below a kept one
+            "docs/guide.md": 25,
+            "docs/api/ref.md": 5,
+            "docs/api/v1/x.md": 2,  # depth 3 in two branches: rglob's order is not breadth-first
+            "tools/vendor": 3,  # a file named like an excluded directory
+            "node_modules/a/index.js": 5000,
+            "a_dir/b_dir/c.txt": 1,
+        }
+        for rel, size in files.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x" * size)
+        (root / "empty").mkdir()
 
-        llm = MagicMock(return_value=MagicMock(content='{"technologies": []}'))
+    @classmethod
+    def _reference(cls, root):
+        """The previous algorithm: rglob for the directories, rglob again per directory for its size."""
+        from deriva.modules.extraction.base import is_excluded_path
 
-        extract_technologies("setup.py", "x", "repo", llm, {"instruction": "I", "example": "{}", "params": {"prompt": self.TEXTS}}, existing_dependencies=[{"name": "lib"}])
+        out = []
+        for d in root.rglob("*"):
+            rel = d.relative_to(root).as_posix()
+            if not d.is_dir() or is_excluded_path(rel, cls.EXCLUDED):
+                continue
+            files = len([f for f in d.iterdir() if f.is_file()])
+            subdirs = len([s for s in d.iterdir() if s.is_dir() and s.name not in cls.EXCLUDED])
+            size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file() and not is_excluded_path(f.relative_to(root).as_posix(), cls.EXCLUDED))
+            out.append((rel, d.name, files, subdirs, size))
+        return out
 
-        prompt = llm.call_args.args[0]
-        assert "DEPS:\nlib" in prompt and prompt.endswith("CLOSE FROM CONFIG")
+    def test_matches_the_full_scan(self, tmp_path):
+        self._tree(tmp_path)
 
-    def test_missing_texts_is_an_error(self):
-        from deriva.modules.extraction.technology import extract_technologies
+        result = extract_directories(str(tmp_path), "r", excluded_dirs=self.EXCLUDED)
 
-        llm = MagicMock()
+        got = [
+            (n["properties"]["path"], n["properties"]["name"], n["properties"]["file_count"], n["properties"]["subdirectory_count"], n["properties"]["total_size_bytes"])
+            for n in result["data"]["nodes"]
+        ]
+        # rglob's order is the filesystem's (NTFS sorts, ext4 does not); the walk's order is pinned below
+        assert sorted(got) == sorted(self._reference(tmp_path))
 
-        result = extract_technologies("setup.py", "x", "repo", llm, {"instruction": "I", "example": "{}"})
+    @pytest.mark.parametrize("listing", ["as the filesystem lists", "reversed"])
+    def test_the_order_does_not_depend_on_the_filesystem(self, tmp_path, monkeypatch, listing):
+        """rglob's order (a directory's children listed when it is found, last found scanned first) over
+        names sorted as NTFS lists them, so Windows keeps its order and every other system matches it."""
+        import os
 
-        assert result["success"] is False
-        assert "params.prompt" in result["errors"][0]
-        llm.assert_not_called()
+        self._tree(tmp_path)
+        if listing == "reversed":
+            real_scandir = os.scandir
 
+            class Reversed:
+                def __init__(self, path):
+                    with real_scandir(path) as it:
+                        self.entries = list(it)[::-1]
 
-class TestTechnologyLLMFieldNames:
-    """The LLM answers with the enforced schema's field names (technologyName, technologyType)."""
+                def __enter__(self):
+                    return iter(self.entries)
 
-    def test_enforced_field_names_become_technology_nodes(self):
-        from deriva.modules.extraction.technology import extract_technologies
+                def __exit__(self, *exc):
+                    return False
 
-        answer = {"technologies": [{"technologyName": "Runtime X", "technologyType": "platform", "description": "d", "version": None, "confidence": 0.8}]}
-        llm = MagicMock(return_value=MockLLMResponse(answer))
+            monkeypatch.setattr(os, "scandir", Reversed)
 
-        result = extract_technologies("setup.py", "x", "repo", llm, {"instruction": "I", "example": "{}", "params": TECH_PARAMS})
+        result = extract_directories(str(tmp_path), "r", excluded_dirs=self.EXCLUDED)
 
-        (node,) = result["data"]["nodes"]
-        assert (node["properties"]["techName"], node["properties"]["techCategory"]) == ("Runtime X", "platform")
+        assert [n["properties"]["path"] for n in result["data"]["nodes"]] == [
+            "a_dir", "docs", "empty", "src", "tools", "a_dir/b_dir", "docs/api", "src/lib", "src/lib/deep", "docs/api/v1"
+        ]  # fmt: skip
+        edges = [(e["from_node_id"], e["to_node_id"]) for e in result["data"]["edges"]]
+        assert edges[:5] == [("repo::r", f"dir::r::{d}") for d in ("a_dir", "docs", "empty", "src", "tools")]
 
-    def test_module_schema_matches_the_enforced_model(self):
-        from deriva.adapters.llm.schemas import TechnologyItem
-        from deriva.modules.extraction.technology import TECHNOLOGY_SCHEMA
+    def test_an_unreadable_directory_is_listed_without_its_contents(self, tmp_path, monkeypatch):
+        import os
 
-        items = TECHNOLOGY_SCHEMA["schema"]["properties"]["technologies"]["items"]["properties"]
-        assert set(items) == set(TechnologyItem.model_fields)
+        self._tree(tmp_path)
+        real_scandir = os.scandir
+
+        def denying_scandir(path="."):
+            if os.fspath(path).endswith("docs"):
+                raise PermissionError(13, "Access is denied", os.fspath(path))
+            return real_scandir(path)
+
+        monkeypatch.setattr(os, "scandir", denying_scandir)
+        result = extract_directories(str(tmp_path), "r", excluded_dirs=self.EXCLUDED)
+
+        paths = {n["properties"]["path"]: n["properties"] for n in result["data"]["nodes"]}
+        assert result["success"]
+        assert (paths["docs"]["file_count"], paths["docs"]["total_size_bytes"]) == (0, 0)
+        assert "docs/api" not in paths and "src/lib/deep" in paths
+
+    def test_never_enters_an_excluded_directory(self, tmp_path, monkeypatch):
+        import os
+
+        self._tree(tmp_path)
+        visited = []
+        real_scandir = os.scandir
+
+        def recording_scandir(path="."):
+            visited.append(os.fspath(path))
+            return real_scandir(path)
+
+        monkeypatch.setattr(os, "scandir", recording_scandir)
+        extract_directories(str(tmp_path), "r", excluded_dirs=self.EXCLUDED)
+
+        assert visited
+        assert not [p for p in visited if "node_modules" in p or os.sep + "vendor" in p]

@@ -19,10 +19,12 @@ app = typer.Typer(name="config", help="Manage pipeline configurations")
 # Filetype subapp
 filetype_app = typer.Typer(name="filetype", help="Manage file type registry")
 app.add_typer(filetype_app)
-setting_app = typer.Typer(
-    name="setting", help="Manage system settings (e.g. excluded_directories)"
-)
+setting_app = typer.Typer(name="setting", help="Manage system settings (e.g. excluded_directories)")
 app.add_typer(setting_app)
+pattern_app = typer.Typer(name="pattern", help="Manage derivation name patterns (include and exclude)")
+app.add_typer(pattern_app)
+
+PATTERN_TYPES = ("include", "exclude")
 
 
 # =============================================================================
@@ -33,14 +35,10 @@ app.add_typer(setting_app)
 @app.command("list")
 def config_list(
     step_type: Annotated[str, typer.Argument(help="Type of configuration to list")],
-    enabled: Annotated[
-        bool, typer.Option("--enabled", help="Only show enabled configurations")
-    ] = False,
+    enabled: Annotated[bool, typer.Option("--enabled", help="Only show enabled configurations")] = False,
     phase: Annotated[
         str | None,
-        typer.Option(
-            "--phase", help="Filter derivation by phase (prep, generate, refine)"
-        ),
+        typer.Option("--phase", help="Filter derivation by phase (prep, generate, refine)"),
     ] = None,
 ) -> None:
     """List configurations for a step type."""
@@ -148,17 +146,11 @@ def config_disable(
 
 @app.command("add")
 def config_add(
-    step_type: Annotated[
-        str, typer.Argument(help="Type of configuration (derivation)")
-    ],
+    step_type: Annotated[str, typer.Argument(help="Type of configuration (derivation)")],
     name: Annotated[str, typer.Argument(help="Step name")],
     phase: Annotated[str, typer.Option("--phase", help="prep, generate or refine")],
-    sequence: Annotated[
-        int, typer.Option("--sequence", help="Execution order within the phase")
-    ],
-    params: Annotated[
-        str | None, typer.Option("--params", "-p", help="Params JSON")
-    ] = None,
+    sequence: Annotated[int, typer.Option("--sequence", help="Execution order within the phase")],
+    params: Annotated[str | None, typer.Option("--params", "-p", help="Params JSON")] = None,
 ) -> None:
     """Add a new derivation step (created disabled; enable with 'config enable')."""
     if step_type != "derivation":
@@ -181,19 +173,13 @@ def config_add(
 def config_update(
     step_type: Annotated[str, typer.Argument(help="Type of configuration to update")],
     name: Annotated[str, typer.Argument(help="Name of the configuration to update")],
-    instruction: Annotated[
-        str | None, typer.Option("-i", "--instruction", help="New instruction text")
-    ] = None,
-    example: Annotated[
-        str | None, typer.Option("-e", "--example", help="New example text")
-    ] = None,
+    instruction: Annotated[str | None, typer.Option("-i", "--instruction", help="New instruction text")] = None,
+    example: Annotated[str | None, typer.Option("-e", "--example", help="New example text")] = None,
     instruction_file: Annotated[
         str | None,
         typer.Option("--instruction-file", help="Read instruction from file"),
     ] = None,
-    example_file: Annotated[
-        str | None, typer.Option("--example-file", help="Read example from file")
-    ] = None,
+    example_file: Annotated[str | None, typer.Option("--example-file", help="Read example from file")] = None,
     query: Annotated[
         str | None,
         typer.Option("-q", "--query", help="New input_graph_query (derivation only)"),
@@ -206,18 +192,14 @@ def config_update(
         str | None,
         typer.Option("-p", "--params", help="New params JSON"),
     ] = None,
-    params_file: Annotated[
-        str | None, typer.Option("--params-file", help="Read params JSON from file")
-    ] = None,
+    params_file: Annotated[str | None, typer.Option("--params-file", help="Read params JSON from file")] = None,
     temperature: Annotated[
         float | None,
-        typer.Option("--temperature", help="LLM temperature for this step"),
+        typer.Option("--temperature", min=0.0, max=2.0, help="LLM temperature for this step (0 to 2)"),
     ] = None,
     batch_size: Annotated[
         int | None,
-        typer.Option(
-            "--batch-size", help="Files per LLM call for extraction (1=no batching)"
-        ),
+        typer.Option("--batch-size", help="Files per LLM call for extraction (1=no batching)"),
     ] = None,
     max_candidates: Annotated[
         int | None,
@@ -256,13 +238,13 @@ def config_update(
             typer.echo(f"Error reading params file: {e}", err=True)
             raise typer.Exit(1)
 
-    # Validate params is valid JSON if provided
+    # Params must be a JSON object (steps read them with .get())
     if params:
         try:
-            json.loads(params)
-        except json.JSONDecodeError as e:
-            typer.echo(f"Error: params must be valid JSON: {e}", err=True)
-            raise typer.Exit(1)
+            config.validate_params(params)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
 
     with PipelineSession() as session:
         if step_type == "derivation":
@@ -304,9 +286,7 @@ def config_update(
 
 @app.command("sequence")
 def config_sequence(
-    step_type: Annotated[
-        str, typer.Argument(help="Type: 'derivation' (extraction not supported)")
-    ],
+    step_type: Annotated[str, typer.Argument(help="Type: 'derivation' (extraction not supported)")],
     order: Annotated[
         str,
         typer.Option(
@@ -316,9 +296,7 @@ def config_sequence(
     ],
     phase: Annotated[
         str | None,
-        typer.Option(
-            "--phase", help="Only update steps in this phase (e.g., 'generate')"
-        ),
+        typer.Option("--phase", help="Only update steps in this phase (e.g., 'generate')"),
     ] = None,
 ) -> None:
     """Update the execution sequence of derivation steps.
@@ -329,11 +307,9 @@ def config_sequence(
     Example (ArchiMate bottom-up: Technology -> Application -> Business):
 
         deriva config sequence derivation --phase generate --order "TechnologyService,SystemSoftware,Node,Device,ApplicationComponent,ApplicationService,ApplicationInterface,DataObject,BusinessObject,BusinessProcess,BusinessFunction,BusinessActor,BusinessEvent"
-    """
+    """  # noqa: E501 - copyable example in the help text
     if step_type != "derivation":
-        typer.echo(
-            "Error: Only 'derivation' step type supports sequence updates", err=True
-        )
+        typer.echo("Error: Only 'derivation' step type supports sequence updates", err=True)
         raise typer.Exit(1)
 
     # Parse the order list
@@ -347,9 +323,7 @@ def config_sequence(
         typer.echo(f"Phase filter: {phase}")
 
     with PipelineSession() as session:
-        result = config.update_derivation_sequence(
-            session._engine, step_order, phase=phase
-        )
+        result = config.update_derivation_sequence(session._engine, step_order, phase=phase)
 
         if result["success"]:
             typer.echo(f"\nUpdated {result['total_updated']} steps:")
@@ -390,9 +364,7 @@ def config_versions() -> None:
 
 @app.command("query")
 def config_query(
-    step_type: Annotated[
-        str, typer.Argument(help="Type: 'extraction' or 'derivation'")
-    ],
+    step_type: Annotated[str, typer.Argument(help="Type: 'extraction' or 'derivation'")],
     name: Annotated[str | None, typer.Argument(help="Config name (optional)")] = None,
 ) -> None:
     """Query configs with read-only connection (safe during benchmarks).
@@ -401,8 +373,6 @@ def config_query(
     query configurations even while a benchmark is running without causing
     lock contention.
     """
-    from deriva.adapters.database import get_connection
-
     if step_type not in ("extraction", "derivation"):
         typer.echo(
             f"Error: step_type must be 'extraction' or 'derivation', got '{step_type}'",
@@ -411,7 +381,7 @@ def config_query(
         raise typer.Exit(1)
 
     # Use read-only connection for safe concurrent access
-    engine = get_connection(read_only=True)
+    engine = config.read_only_connection()
 
     try:
         if step_type == "extraction":
@@ -446,9 +416,7 @@ def config_query(
                 typer.echo(f"\nDERIVATION CONFIGS ({len(configs)}):")
                 for c in configs:
                     status = "enabled" if c.enabled else "disabled"
-                    typer.echo(
-                        f"  [{c.sequence}] {c.step_name:<25} {c.phase:<10} ({status})"
-                    )
+                    typer.echo(f"  [{c.sequence}] {c.step_name:<25} {c.phase:<10} ({status})")
     finally:
         engine.close()
 
@@ -462,9 +430,7 @@ def config_snapshot(
     Benchmarks capture the active config versions at start time. This command
     shows which versions were used for a specific benchmark session.
     """
-    from deriva.adapters.database import get_connection
-
-    engine = get_connection(read_only=True)
+    engine = config.read_only_connection()
     try:
         row = engine.execute(
             "SELECT config_versions_snapshot FROM benchmark_sessions WHERE session_id = ?",
@@ -477,9 +443,7 @@ def config_snapshot(
 
         if not row[0]:
             typer.echo(f"No config snapshot found for session: {session_id}")
-            typer.echo(
-                "(This may be an older session created before snapshots were added)"
-            )
+            typer.echo("(This may be an older session created before snapshots were added)")
             raise typer.Exit(1)
 
         snapshot = json.loads(row[0])
@@ -536,13 +500,9 @@ def filetype_list() -> None:
 
 @filetype_app.command("add")
 def filetype_add(
-    extension: Annotated[
-        str, typer.Argument(help="File extension (e.g., '.py', 'Dockerfile')")
-    ],
+    extension: Annotated[str, typer.Argument(help="File extension (e.g., '.py', 'Dockerfile')")],
     file_type: Annotated[str, typer.Argument(help="File type category")],
-    subtype: Annotated[
-        str, typer.Argument(help="Subtype (e.g., 'python', 'javascript')")
-    ],
+    subtype: Annotated[str, typer.Argument(help="Subtype (e.g., 'python', 'javascript')")],
 ) -> None:
     """Add a new file type."""
     with PipelineSession() as session:
@@ -551,9 +511,7 @@ def filetype_add(
         if success:
             typer.echo(f"Added file type: {extension} -> {file_type}/{subtype}")
         else:
-            typer.echo(
-                f"Failed to add file type (may already exist): {extension}", err=True
-            )
+            typer.echo(f"Failed to add file type (may already exist): {extension}", err=True)
             raise typer.Exit(1)
 
 
@@ -588,11 +546,66 @@ def filetype_stats() -> None:
         typer.echo(f"\n  {'Total':<20} {sum(stats.values())}")
 
 
+def _check_pattern_type(pattern_type: str) -> None:
+    if pattern_type not in PATTERN_TYPES:
+        typer.echo(f"Error: pattern type must be one of {', '.join(PATTERN_TYPES)}", err=True)
+        raise typer.Exit(1)
+
+
+@pattern_app.command("list")
+def pattern_list(
+    step: Annotated[str | None, typer.Argument(help="Derivation step (every step when left out)")] = None,
+) -> None:
+    """List the active include and exclude patterns."""
+    with PipelineSession() as session:
+        rows = config.list_derivation_patterns(session._engine, step)
+
+    if not rows:
+        typer.echo("No patterns found.")
+        return
+    for row in rows:
+        typer.echo(f"{row['step_name']:24} {row['pattern_type']:8} {row['pattern_category']:20} {', '.join(row['patterns'])}")
+
+
+@pattern_app.command("add")
+def pattern_add(
+    step: Annotated[str, typer.Argument(help="Derivation step")],
+    pattern_type: Annotated[str, typer.Argument(help="include or exclude")],
+    category: Annotated[str, typer.Argument(help="Pattern category (created when missing)")],
+    patterns: Annotated[list[str], typer.Argument(help="Patterns to add")],
+) -> None:
+    """Add patterns to a step's category."""
+    _check_pattern_type(pattern_type)
+    with PipelineSession() as session:
+        rows = config.list_derivation_patterns(session._engine, step)
+        existing = next((r["patterns"] for r in rows if r["pattern_type"] == pattern_type and r["pattern_category"] == category), [])
+        merged = existing + [p for p in dict.fromkeys(patterns) if p not in existing]
+        config.update_derivation_patterns(session._engine, step, pattern_type, category, merged)
+
+    typer.echo(f"{step} {pattern_type} {category}: {', '.join(merged)}")
+
+
+@pattern_app.command("delete")
+def pattern_delete(
+    step: Annotated[str, typer.Argument(help="Derivation step")],
+    pattern_type: Annotated[str, typer.Argument(help="include or exclude")],
+    patterns: Annotated[list[str] | None, typer.Argument(help="Patterns to remove (every pattern when left out)")] = None,
+    category: Annotated[str | None, typer.Option("--category", help="Only this category")] = None,
+) -> None:
+    """Remove patterns from a step (a category left empty is deactivated)."""
+    _check_pattern_type(pattern_type)
+    with PipelineSession() as session:
+        changed = config.remove_derivation_patterns(session._engine, step, pattern_type, category, patterns or None)
+
+    if not changed:
+        typer.echo(f"No matching {pattern_type} patterns for {step}.", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Updated {changed} {pattern_type} pattern row(s) of {step}.")
+
+
 @setting_app.command("show")
 def setting_show(
-    key: Annotated[
-        str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")
-    ],
+    key: Annotated[str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")],
 ) -> None:
     """Show a system setting."""
     with PipelineSession() as session:
@@ -606,9 +619,7 @@ def setting_show(
 
 @setting_app.command("set")
 def setting_set(
-    key: Annotated[
-        str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")
-    ],
+    key: Annotated[str, typer.Argument(help="Setting key (e.g., 'excluded_directories')")],
     value: Annotated[str, typer.Argument(help="New value (JSON for list settings)")],
 ) -> None:
     """Set a system setting."""

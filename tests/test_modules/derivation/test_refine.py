@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
+import pytest
+
 # =============================================================================
 # Tests for refine/base.py
 # =============================================================================
@@ -63,6 +65,16 @@ class TestNormalizeName:
 
         # Note: AuthService without separator becomes authservice (no spaces inserted)
         assert normalize_name("AuthService") == "authservice"
+
+    def test_no_business_domain_synonyms(self):
+        """Only generic architecture rules: domain words are not rewritten into other domain words."""
+        from deriva.modules.derivation.refine.base import normalize_name
+
+        assert normalize_name("Client Portal") == "client portal"
+        assert normalize_name("Account Settings") == "account setting"  # the generic plural rule still applies
+        assert normalize_name("Sale Record") == "sale record"
+        assert normalize_name("Report Generation") == "report generation"
+        assert normalize_name("Payments") == "payments"  # only architecture plurals have entries
 
     def test_removes_common_prefixes(self):
         """Should remove the, a, an prefixes."""
@@ -426,49 +438,23 @@ class TestDuplicateElementsStep:
         assert survivor.identifier == "aaa"  # First alphabetically
 
 
-class TestDuplicateElementsStepSemantic:
-    """Tests for semantic duplicate detection (Tier 3)."""
+class TestDuplicateElementsStepNoLlm:
+    """Duplicate detection is rule-based (exact and fuzzy names): it never calls an LLM, even when given one."""
 
-    def test_calls_llm_for_semantic_check(self):
-        """Should call LLM for potential semantic duplicates."""
+    def test_similar_names_below_the_fuzzy_threshold_make_no_llm_call(self):
         from deriva.modules.derivation.refine.duplicate_elements import DuplicateElementsStep
-
-        elements = [
-            MockElement("id1", "UserAuthentication", "ApplicationComponent"),
-            MockElement("id2", "LoginSystem", "ApplicationComponent"),
-        ]
 
         mock_manager = MagicMock()
-        mock_manager.get_elements.return_value = elements
-
+        mock_manager.get_elements.return_value = [
+            MockElement("id1", "Journal Reader", "ApplicationComponent"),
+            MockElement("id2", "Journal Writer", "ApplicationComponent"),
+        ]
         mock_llm = MagicMock()
-        mock_llm.return_value = {"is_duplicate": True, "confidence": 0.98}
 
-        step = DuplicateElementsStep()
-        result = step.run(
-            archimate_manager=mock_manager,
-            llm_query_fn=mock_llm,
-            params={"fuzzy_threshold": 0.9},  # High threshold to trigger semantic check
-        )
+        result = DuplicateElementsStep().run(archimate_manager=mock_manager, llm_query_fn=mock_llm, params={"fuzzy_threshold": 0.99})
 
-        # LLM should be called for semantic check
-        assert result.success is True
-
-    def test_check_semantic_duplicate_handles_exception(self):
-        """Should handle LLM exception gracefully."""
-        from deriva.modules.derivation.refine.duplicate_elements import DuplicateElementsStep
-
-        elem_a = MockElement("id1", "Service", "ApplicationComponent")
-        elem_b = MockElement("id2", "System", "ApplicationComponent")
-
-        mock_llm = MagicMock()
-        mock_llm.side_effect = Exception("LLM error")
-
-        step = DuplicateElementsStep()
-        is_dup, confidence = step._check_semantic_duplicate(mock_llm, elem_a, elem_b)
-
-        assert is_dup is False
-        assert confidence == 0.0
+        mock_llm.assert_not_called()
+        assert (result.success, result.elements_merged) == (True, 0)
 
 
 # =============================================================================
@@ -979,143 +965,83 @@ class TestRelationshipConsolidationStep:
 
 
 class TestOrphanElementsStep:
-    """Tests for OrphanElementsStep class."""
+    """The manager finds the orphans (enabled elements without relationships); the step decides."""
+
+    @staticmethod
+    def _manager(*orphans):
+        manager = MagicMock()
+        manager.namespace = "Model"
+        manager.get_orphan_elements.return_value = list(orphans)
+        return manager
+
+    @staticmethod
+    def _orphan(name="Orphan Component", properties=None):
+        from deriva.adapters.archimate.models import Element
+
+        return Element(name=name, element_type="ApplicationComponent", identifier="orphan1", properties=properties or {})
 
     def test_returns_success_for_no_orphans(self):
-        """Should return success when no orphans found."""
         from deriva.modules.derivation.refine.orphan_elements import OrphanElementsStep
 
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.return_value = []
-
-        step = OrphanElementsStep()
-        result = step.run(archimate_manager=mock_manager)
+        result = OrphanElementsStep().run(archimate_manager=self._manager())
 
         assert result.success is True
         assert result.issues_found == 0
 
     def test_flags_orphan_elements(self):
-        """Should flag orphan elements for review."""
         from deriva.modules.derivation.refine.orphan_elements import OrphanElementsStep
 
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.return_value = [
-            {
-                "identifier": "orphan1",
-                "name": "Orphan Component",
-                "label": "Model:ApplicationComponent",
-                "properties_json": None,
-            }
-        ]
-
-        step = OrphanElementsStep()
-        result = step.run(archimate_manager=mock_manager)
+        result = OrphanElementsStep().run(archimate_manager=self._manager(self._orphan()))
 
         assert result.success is True
         assert result.issues_found == 1
-        assert any(d.get("action") == "flagged" for d in result.details)
+        assert [(d["action"], d["element_type"]) for d in result.details] == [("flagged", "ApplicationComponent")]
 
-    def test_disables_orphans_when_enabled(self):
-        """Should disable orphans when disable_orphans=True."""
+    def test_disables_orphans_below_the_importance_threshold(self):
         from deriva.modules.derivation.refine.orphan_elements import OrphanElementsStep
 
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.return_value = [
-            {
-                "identifier": "orphan1",
-                "name": "Orphan Component",
-                "label": "Model:ApplicationComponent",
-                "properties_json": '{"source_pagerank": 0.01}',
-            }
-        ]
+        manager = self._manager(self._orphan(properties={"source_pagerank": 0.01}))
 
-        step = OrphanElementsStep()
-        result = step.run(
-            archimate_manager=mock_manager,
-            params={"disable_orphans": True, "min_importance": 0.1},
-        )
+        result = OrphanElementsStep().run(archimate_manager=manager, params={"disable_orphans": True, "min_importance": 0.1})
 
-        assert result.success is True
-        assert result.elements_disabled == 1
-        assert result.issues_fixed == 1
-        mock_manager.disable_element.assert_called_once()
+        assert (result.success, result.elements_disabled, result.issues_fixed) == (True, 1, 1)
+        manager.disable_element.assert_called_once_with("orphan1", reason="orphan_no_relationships")
 
     def test_keeps_important_orphans(self):
-        """Should not disable orphans with high importance."""
         from deriva.modules.derivation.refine.orphan_elements import OrphanElementsStep
 
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.return_value = [
-            {
-                "identifier": "orphan1",
-                "name": "Important Orphan",
-                "label": "Model:ApplicationComponent",
-                "properties_json": '{"source_pagerank": 0.9}',
-            }
-        ]
+        manager = self._manager(self._orphan(name="Important Orphan", properties={"source_pagerank": 0.9}))
 
-        step = OrphanElementsStep()
-        result = step.run(
-            archimate_manager=mock_manager,
-            params={"disable_orphans": True, "min_importance": 0.1},
-        )
+        result = OrphanElementsStep().run(archimate_manager=manager, params={"disable_orphans": True, "min_importance": 0.1})
 
-        # Should flag but not disable
+        # Flagged, not disabled
         assert result.elements_disabled == 0
         assert result.issues_found == 1
 
     def test_handles_exception(self):
-        """Should handle exceptions gracefully."""
         from deriva.modules.derivation.refine.orphan_elements import OrphanElementsStep
 
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.side_effect = Exception("Query error")
+        manager = self._manager()
+        manager.get_orphan_elements.side_effect = Exception("Query error")
 
-        step = OrphanElementsStep()
-        result = step.run(archimate_manager=mock_manager)
+        result = OrphanElementsStep().run(archimate_manager=manager)
 
         assert result.success is False
         assert "Query error" in result.errors[0]
 
-    def test_proposes_relationships_from_graph(self):
-        """Should propose relationships based on source graph."""
+    def test_proposes_relationships_from_the_source_graph(self):
         from deriva.modules.derivation.refine.orphan_elements import OrphanElementsStep
 
-        mock_archimate_manager = MagicMock()
-        mock_archimate_manager.namespace = "Model"
-        mock_archimate_manager.query.side_effect = [
-            [
-                {
-                    "identifier": "orphan1",
-                    "name": "Orphan",
-                    "label": "Model:ApplicationComponent",
-                    "properties_json": '{"source": "graph_node_1"}',
-                }
-            ],
-            [{"properties_json": '{"source": "graph_node_1"}'}],
+        graph = MagicMock()
+        graph.query.return_value = [{"rel_type": "Graph:CONTAINS", "target_id": "target_1", "target_name": "Target Node"}]
+
+        result = OrphanElementsStep().run(archimate_manager=self._manager(self._orphan(properties={"source": "graph_node_1"})), graph_manager=graph)
+
+        (detail,) = result.details
+        assert detail["proposed_relationships"] == [
+            {"source_graph_rel": "CONTAINS", "proposed_archimate_rel": "Composition", "target_graph_id": "target_1", "target_name": "Target Node"}
         ]
-
-        mock_graph_manager = MagicMock()
-        mock_graph_manager.query.return_value = [
-            {
-                "rel_type": "Graph:CONTAINS",
-                "target_id": "target_1",
-                "target_name": "Target Node",
-            }
-        ]
-
-        step = OrphanElementsStep()
-        result = step.run(
-            archimate_manager=mock_archimate_manager,
-            graph_manager=mock_graph_manager,
-        )
-
-        assert result.success is True
+        assert graph.query.call_args.args[1] == {"source_id": "graph_node_1"}
 
 
 # =============================================================================
@@ -1302,6 +1228,155 @@ class TestCrossLayerCoherenceStep:
         assert "Query error" in result.errors[0]
 
 
+class TestUnanchoredLayers:
+    """Elements of a listed layer without a link to another layer, directly or through their own layer (params.disable_unanchored)."""
+
+    TYPES = {
+        "svc": "ApplicationService",
+        "proc": "BusinessProcess",
+        "obj": "BusinessObject",
+        "actor": "BusinessActor",
+        "event": "BusinessEvent",
+        "node": "Node",
+    }
+    # svc serves proc, proc accesses obj; actor triggers event; node has no link at all
+    LINKS = [("svc", "proc"), ("proc", "obj"), ("actor", "event")]
+
+    def test_unlinked_and_business_only_islands_are_unanchored(self):
+        from deriva.modules.derivation.refine.cross_layer import unanchored
+
+        # obj is anchored through proc; actor and event only link to each other
+        assert unanchored(self.TYPES, self.LINKS, ["Business"]) == ["actor", "event"]
+
+    def test_layers_not_listed_are_untouched(self):
+        from deriva.modules.derivation.refine.cross_layer import unanchored
+
+        assert unanchored(self.TYPES, self.LINKS, ["Technology"]) == ["node"]
+        assert unanchored(self.TYPES, self.LINKS, []) == []
+
+    def test_links_to_unknown_elements_do_not_anchor(self):
+        from deriva.modules.derivation.refine.cross_layer import unanchored
+
+        # "gone" is not among the elements (disabled earlier), so the actor has nothing to stand on
+        assert unanchored(self.TYPES, [*self.LINKS, ("gone", "actor")], ["Business"]) == ["actor", "event"]
+
+    def _manager(self):
+        from deriva.adapters.archimate.models import Element, Relationship
+
+        manager = MagicMock()
+        manager.namespace = "Model"
+        manager.query.return_value = []
+        manager.get_elements.return_value = [Element(name=i, element_type=t, identifier=i) for i, t in self.TYPES.items()]
+        manager.get_relationships.return_value = [Relationship(source=s, target=t, relationship_type="Serving") for s, t in self.LINKS]
+        return manager
+
+    def test_step_disables_unanchored_business_elements(self):
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, params={"disable_unanchored": ["Business"]})
+
+        assert result.success is True
+        manager.get_elements.assert_called_once_with(enabled_only=True)
+        manager.disable_elements.assert_called_once_with(["actor", "event"], reason="no_cross_layer_anchor")
+        assert result.elements_disabled == 2
+        assert {d["identifier"] for d in result.details if d["action"] == "disabled"} == {"actor", "event"}
+
+    def test_step_without_the_param_disables_nothing(self):
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager)
+
+        assert result.success is True
+        manager.disable_elements.assert_not_called()
+        assert result.elements_disabled == 0
+
+    def test_code_support_needs_more_names_for_a_single_word(self):
+        from deriva.modules.derivation.refine.cross_layer import code_supported
+
+        names = {"order": "Order", "policy": "Insurance Policy", "actor": "Actor", "ledger": "Ledger"}
+        code = ["OrderService", "orders", "OrderController", "InsurancePolicyEntity", "ActorSystem", "Ordering", "LedgerView", "LedgerView"]
+
+        # Order: three names (Ordering is another word); Insurance Policy: one name, two words;
+        # Actor: one name only; Ledger: the same name twice counts once
+        assert code_supported(names, code, multi_word_names=1, single_word_names=3) == {"order", "policy"}
+
+    def test_without_a_single_word_count_only_names_of_several_words_count(self):
+        from deriva.modules.derivation.refine.cross_layer import code_supported
+
+        names = {"order": "Order", "policy": "Insurance Policy"}
+        code = ["OrderService", "orders", "OrderController", "InsurancePolicyEntity"]
+
+        assert code_supported(names, code, multi_word_names=1, single_word_names=None) == {"policy"}
+
+    class Graph:
+        """Code names and the source concept names, as the step asks for them."""
+
+        def query(self, query, params=None):
+            if "TypeDefinition" in query:
+                return [{"name": n} for n in ("OrderService", "OrderController")]
+            if "Directory" in query:
+                return [{"name": "orders"}]
+            return [{"id": i, "name": "Order"} for i in (params or {}).get("ids", []) if i == "concept::r::order"]
+
+    def test_step_keeps_unanchored_elements_the_code_names(self):
+        from deriva.adapters.archimate.models import Element
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        manager.get_elements.return_value = [
+            Element(name=i, element_type=t, identifier=i, properties={"source": "concept::r::order"} if i == "actor" else {}) for i, t in self.TYPES.items()
+        ]
+        params = {"disable_unanchored": ["Business"], "code_support": {"multi_word_names": 1, "single_word_names": 3}}
+
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=self.Graph(), params=params)
+
+        assert result.success is True
+        manager.disable_elements.assert_called_once_with(["event"], reason="no_cross_layer_anchor")
+
+    def test_step_accepts_no_single_word_count(self):
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        params = {"disable_unanchored": ["Business"], "code_support": {"multi_word_names": 1, "single_word_names": None}}
+
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=self.Graph(), params=params)
+
+        assert result.success is True
+        manager.disable_elements.assert_called_once_with(["actor", "event"], reason="no_cross_layer_anchor")
+
+    @pytest.mark.parametrize(
+        "support",
+        [
+            {"multi_word_names": 0, "single_word_names": 3},
+            {"multi_word_names": 1, "single_word_names": 0},
+            {"multi_word_names": None, "single_word_names": 3},
+            {"multi_word_names": 1},
+            ["multi_word_names"],
+        ],
+    )
+    def test_step_rejects_invalid_code_support(self, support):
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=self.Graph(), params={"disable_unanchored": ["Business"], "code_support": support})
+
+        assert result.success is False
+        assert "code_support" in result.errors[0]
+        manager.disable_elements.assert_not_called()
+
+    def test_step_rejects_an_unknown_layer(self):
+        from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
+
+        manager = self._manager()
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, params={"disable_unanchored": ["Strategy"]})
+
+        assert result.success is False
+        assert "Strategy" in result.errors[0]
+        manager.disable_elements.assert_not_called()
+
+
 # =============================================================================
 # Integration Tests for Step Registration
 # =============================================================================
@@ -1345,140 +1420,30 @@ class TestDuplicateElementsMerge:
 
         mock_manager.disable_element.assert_called_once()
 
-    def test_semantic_duplicate_returns_llm_result(self):
-        """Should return LLM result for semantic check."""
-        from deriva.modules.derivation.refine.duplicate_elements import (
-            DuplicateCheckResult,
-            DuplicateElementsStep,
-        )
-
-        elem_a = MockElement("id1", "Auth", "ApplicationComponent")
-        elem_b = MockElement("id2", "Login", "ApplicationComponent")
-
-        # The LLM function now uses response_model=DuplicateCheckResult (Pydantic structured output)
-        mock_llm = MagicMock()
-        mock_llm.return_value = DuplicateCheckResult(is_duplicate=True, confidence=0.92, reasoning="Same auth concept")
-
-        step = DuplicateElementsStep()
-        is_dup, conf = step._check_semantic_duplicate(mock_llm, elem_a, elem_b)
-
-        assert is_dup is True
-        assert conf == 0.92
-
 
 class TestOrphanElementsProposals:
-    """Additional tests for orphan relationship proposals."""
+    """Relationship proposals from the element's source node in the graph."""
 
-    def test_propose_relationships_handles_no_source(self):
-        """Should handle elements without source property."""
-        from deriva.modules.derivation.refine.orphan_elements import (
-            OrphanElementsStep,
-        )
+    def test_no_source_means_no_proposals(self):
+        from deriva.modules.derivation.refine.orphan_elements import OrphanElementsStep
 
-        mock_archimate = MagicMock()
-        mock_archimate.namespace = "Model"
-        mock_archimate.query.return_value = [{"properties_json": "{}"}]
+        graph = MagicMock()
 
-        mock_graph = MagicMock()
+        assert OrphanElementsStep()._propose_relationships(graph, None) == []
+        graph.query.assert_not_called()
 
-        step = OrphanElementsStep()
-        proposals = step._propose_relationships(mock_graph, mock_archimate, "elem1")
+    def test_maps_graph_relationships_to_archimate_types(self):
+        from deriva.modules.derivation.refine.orphan_elements import OrphanElementsStep
 
-        assert proposals == []
-
-    def test_propose_relationships_handles_invalid_json(self):
-        """Should handle invalid JSON in properties."""
-        from deriva.modules.derivation.refine.orphan_elements import (
-            OrphanElementsStep,
-        )
-
-        mock_archimate = MagicMock()
-        mock_archimate.namespace = "Model"
-        mock_archimate.query.return_value = [{"properties_json": "not valid json"}]
-
-        mock_graph = MagicMock()
-
-        step = OrphanElementsStep()
-        proposals = step._propose_relationships(mock_graph, mock_archimate, "elem1")
-
-        assert proposals == []
-
-    def test_propose_relationships_maps_graph_relationships(self):
-        """Should map graph relationships to ArchiMate types."""
-        from deriva.modules.derivation.refine.orphan_elements import (
-            OrphanElementsStep,
-        )
-
-        mock_archimate = MagicMock()
-        mock_archimate.namespace = "Model"
-        mock_archimate.query.return_value = [{"properties_json": '{"source": "graph_node_1"}'}]
-
-        mock_graph = MagicMock()
-        mock_graph.query.return_value = [
-            {
-                "rel_type": "Graph:CONTAINS",
-                "target_id": "target_1",
-                "target_name": "Child",
-            },
-            {
-                "rel_type": "Graph:CALLS",
-                "target_id": "target_2",
-                "target_name": "Callee",
-            },
+        graph = MagicMock()
+        graph.query.return_value = [
+            {"rel_type": "Graph:CONTAINS", "target_id": "target_1", "target_name": "Child"},
+            {"rel_type": "Graph:CALLS", "target_id": "target_2", "target_name": "Callee"},
         ]
 
-        step = OrphanElementsStep()
-        proposals = step._propose_relationships(mock_graph, mock_archimate, "elem1")
+        proposals = OrphanElementsStep()._propose_relationships(graph, "graph_node_1")
 
-        assert len(proposals) == 2
-        assert proposals[0]["proposed_archimate_rel"] == "Composition"
-        assert proposals[1]["proposed_archimate_rel"] == "Flow"
-
-
-class TestStructuralConsistencyGetElementSource:
-    """Tests for _get_element_source helper."""
-
-    def test_get_element_source_returns_source_id(self):
-        """Should extract source ID from element properties."""
-        from deriva.modules.derivation.refine.structural_consistency import (
-            StructuralConsistencyStep,
-        )
-
-        mock_manager = MagicMock()
-        mock_manager.query.return_value = [{"properties_json": '{"source": "graph_node_123"}'}]
-
-        step = StructuralConsistencyStep()
-        source = step._get_element_source(mock_manager, "elem1", "Model")
-
-        assert source == "graph_node_123"
-
-    def test_get_element_source_returns_none_for_no_result(self):
-        """Should return None when element not found."""
-        from deriva.modules.derivation.refine.structural_consistency import (
-            StructuralConsistencyStep,
-        )
-
-        mock_manager = MagicMock()
-        mock_manager.query.return_value = []
-
-        step = StructuralConsistencyStep()
-        source = step._get_element_source(mock_manager, "elem1", "Model")
-
-        assert source is None
-
-    def test_get_element_source_handles_exception(self):
-        """Should return None on query exception."""
-        from deriva.modules.derivation.refine.structural_consistency import (
-            StructuralConsistencyStep,
-        )
-
-        mock_manager = MagicMock()
-        mock_manager.query.side_effect = Exception("Query error")
-
-        step = StructuralConsistencyStep()
-        source = step._get_element_source(mock_manager, "elem1", "Model")
-
-        assert source is None
+        assert [p["proposed_archimate_rel"] for p in proposals] == ["Composition", "Flow"]
 
 
 class TestCrossLayerHelpers:

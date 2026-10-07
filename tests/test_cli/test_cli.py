@@ -822,6 +822,46 @@ class TestBenchmarkAnalyzeCommand:
         assert result.exit_code == 0
         assert "INTRA-MODEL CONSISTENCY" in result.stdout
 
+    @patch("deriva.cli.commands.benchmark._get_run_stats_from_ocel")
+    @patch("deriva.cli.commands.benchmark.PipelineSession")
+    def test_analyze_shows_model_quality(self, mock_session_class, mock_get_stats):
+        """Should display the structural quality of each exported model."""
+        mock_session = MagicMock()
+        mock_analyzer = MagicMock()
+        mock_summary = MagicMock()
+        mock_summary.intra_model = []
+        mock_summary.inter_model = []
+        mock_summary.localization.hotspots = []
+        mock_summary.model_quality = [
+            {
+                "repository": "repo1",
+                "model": "gpt4",
+                "run": 1,
+                "elements": 30,
+                "relationships": 45,
+                "relationships_per_element": 1.5,
+                "orphan_share": 0.2,
+                "composition_violations": 2,
+                "duplicate_pairs": 1,
+                "duplicate_elements": 4,
+                "chains": {"ApplicationService-ApplicationComponent": (3, 4)},
+                "reference": {"precision": 0.4, "recall": 0.6},
+            }
+        ]
+        mock_analyzer.compute_full_analysis.return_value = mock_summary
+        mock_analyzer.export_summary.return_value = "output.json"
+        mock_session.analyze_benchmark.return_value = mock_analyzer
+        mock_session_class.return_value.__enter__.return_value = mock_session
+        mock_get_stats.return_value = {}
+
+        result = runner.invoke(app, ["benchmark", "analyze", "session_123"])
+
+        assert result.exit_code == 0
+        assert "MODEL QUALITY" in result.stdout
+        assert "Orphan%" in result.stdout and "Dupl.el" in result.stdout
+        assert "repo1" in result.stdout and "1.50" in result.stdout and "20%" in result.stdout
+        assert "ApplicationService-ApplicationComponent 3/4" in result.stdout
+
 
 class TestBenchmarkDeviationsCommand:
     """Tests for benchmark deviations command."""
@@ -845,7 +885,7 @@ class TestBenchmarkDeviationsCommand:
         assert result.exit_code == 1
         assert "Not found" in result.output
 
-    @patch("deriva.modules.analysis.generate_recommendations")
+    @patch("deriva.services.config_deviation.generate_recommendations")
     @patch("deriva.cli.commands.benchmark.PipelineSession")
     def test_deviations_success(self, mock_session_class, mock_recommendations):
         """Should analyze deviations successfully."""
@@ -1140,6 +1180,19 @@ class TestConfigUpdateCommand:
 
         assert result.exit_code == 1
         assert "params must be valid JSON" in result.output
+
+    def test_update_rejects_params_that_are_not_an_object(self):
+        """Params are read with .get(), so an array or scalar is rejected up front."""
+        result = runner.invoke(app, ["config", "update", "derivation", "AppComp", "-p", "[1, 2]"])
+
+        assert result.exit_code == 1
+        assert "params must be a JSON object" in result.output
+
+    def test_update_rejects_temperature_out_of_range(self):
+        result = runner.invoke(app, ["config", "update", "derivation", "AppComp", "--temperature", "3"])
+
+        assert result.exit_code != 0
+        assert "temperature" in result.output.lower()
 
     @patch("deriva.cli.commands.config.config")
     @patch("deriva.cli.commands.config.PipelineSession")
@@ -2015,84 +2068,31 @@ class TestBenchmarkRunOptions:
         call_kwargs = mock_session.run_benchmark.call_args[1]
         assert call_kwargs["defer_relationships"] is True
 
+    @pytest.mark.parametrize("flags, deferred", [([], True), (["--no-defer-relationships"], False)])
     @patch("deriva.cli.commands.benchmark.create_benchmark_progress_reporter")
     @patch("deriva.cli.commands.benchmark.PipelineSession")
-    def test_run_with_no_enrichment_cache(self, mock_session_class, mock_progress):
-        """Should disable enrichment cache."""
+    def test_relationships_are_deferred_by_default(self, mock_session_class, mock_progress, flags, deferred):
+        """The CLI follows the service default: elements first, then the relationship pass."""
         mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.session_id = "bench_123"
-        mock_result.runs_completed = 3
-        mock_result.runs_failed = 0
-        mock_result.duration_seconds = 60.0
-        mock_result.ocel_path = "ocel.json"
-        mock_result.success = True
-        mock_result.errors = []
+        mock_result = MagicMock(session_id="bench_123", runs_completed=1, runs_failed=0, duration_seconds=1.0, ocel_path="ocel.json", success=True, errors=[])
         mock_session.run_benchmark.return_value = mock_result
         mock_session_class.return_value.__enter__.return_value = mock_session
-
         mock_reporter = MagicMock()
         mock_progress.return_value = mock_reporter
         mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
         mock_reporter.__exit__ = MagicMock(return_value=False)
 
-        result = runner.invoke(
-            app,
-            [
-                "benchmark",
-                "run",
-                "--repos",
-                "repo1",
-                "--models",
-                "gpt4",
-                "--no-enrichment-cache",
-            ],
-        )
+        result = runner.invoke(app, ["benchmark", "run", "--repos", "repo1", "--models", "gpt4", *flags])
 
         assert result.exit_code == 0
-        assert "Enrichment cache: disabled" in result.stdout
-        call_kwargs = mock_session.run_benchmark.call_args[1]
-        assert call_kwargs["use_enrichment_cache"] is False
+        assert mock_session.run_benchmark.call_args[1]["defer_relationships"] is deferred
 
-    @patch("deriva.cli.commands.benchmark.create_benchmark_progress_reporter")
-    @patch("deriva.cli.commands.benchmark.PipelineSession")
-    def test_run_with_nocache_enrichment_configs(self, mock_session_class, mock_progress):
-        """Should pass nocache-enrichment-configs option."""
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.session_id = "bench_123"
-        mock_result.runs_completed = 3
-        mock_result.runs_failed = 0
-        mock_result.duration_seconds = 60.0
-        mock_result.ocel_path = "ocel.json"
-        mock_result.success = True
-        mock_result.errors = []
-        mock_session.run_benchmark.return_value = mock_result
-        mock_session_class.return_value.__enter__.return_value = mock_session
+    @pytest.mark.parametrize("flag", [["--no-enrichment-cache"], ["--nocache-enrichment-configs", "ApplicationComponent"]])
+    def test_enrichment_cache_flags_are_gone(self, flag):
+        """Enrichment values are read once per derivation run, so there is no cache to switch off."""
+        result = runner.invoke(app, ["benchmark", "run", "--repos", "repo1", "--models", "model1", *flag])
 
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        result = runner.invoke(
-            app,
-            [
-                "benchmark",
-                "run",
-                "--repos",
-                "repo1",
-                "--models",
-                "gpt4",
-                "--nocache-enrichment-configs",
-                "ApplicationComponent",
-            ],
-        )
-
-        assert result.exit_code == 0
-        assert "No-cache enrichment configs: ['ApplicationComponent']" in result.stdout
-        call_kwargs = mock_session.run_benchmark.call_args[1]
-        assert call_kwargs["nocache_enrichment_configs"] == ["ApplicationComponent"]
+        assert result.exit_code == 2
 
 
 class TestBenchmarkListOptions:
@@ -2225,7 +2225,7 @@ class TestBenchmarkAnalyzeInterModel:
 class TestBenchmarkDeviationsDetails:
     """Tests for benchmark deviations with detailed output."""
 
-    @patch("deriva.modules.analysis.generate_recommendations")
+    @patch("deriva.services.config_deviation.generate_recommendations")
     @patch("deriva.cli.commands.benchmark.PipelineSession")
     def test_deviations_with_recommendations(self, mock_session_class, mock_recommendations):
         """Should display recommendations when available."""
@@ -2260,7 +2260,7 @@ class TestBenchmarkDeviationsDetails:
         assert "RECOMMENDATIONS" in result.stdout
         assert "Improve instruction clarity" in result.stdout
 
-    @patch("deriva.modules.analysis.generate_recommendations")
+    @patch("deriva.services.config_deviation.generate_recommendations")
     @patch("deriva.cli.commands.benchmark.PipelineSession")
     def test_deviations_sorted_by_consistency(self, mock_session_class, mock_recommendations):
         """Should export with different sort order."""
@@ -2528,12 +2528,11 @@ class TestConfigQueryCommand:
         assert result.exit_code == 1
         assert "extraction' or 'derivation'" in result.output
 
-    @patch("deriva.adapters.database.get_connection")
     @patch("deriva.cli.commands.config.config")
-    def test_query_extraction_list(self, mock_config, mock_get_conn):
+    def test_query_extraction_list(self, mock_config):
         """Should list extraction configs."""
         mock_engine = MagicMock()
-        mock_get_conn.return_value = mock_engine
+        mock_config.read_only_connection.return_value = mock_engine
 
         mock_cfg = MagicMock()
         mock_cfg.node_type = "BusinessConcept"
@@ -2546,15 +2545,14 @@ class TestConfigQueryCommand:
         assert result.exit_code == 0
         assert "EXTRACTION CONFIGS (1)" in result.stdout
         assert "BusinessConcept" in result.stdout
-        mock_get_conn.assert_called_once_with(read_only=True)
+        mock_config.read_only_connection.assert_called_once_with()
         mock_engine.close.assert_called_once()
 
-    @patch("deriva.adapters.database.get_connection")
     @patch("deriva.cli.commands.config.config")
-    def test_query_extraction_single(self, mock_config, mock_get_conn):
+    def test_query_extraction_single(self, mock_config):
         """Should query single extraction config."""
         mock_engine = MagicMock()
-        mock_get_conn.return_value = mock_engine
+        mock_config.read_only_connection.return_value = mock_engine
 
         mock_cfg = MagicMock()
         mock_cfg.node_type = "BusinessConcept"
@@ -2569,12 +2567,11 @@ class TestConfigQueryCommand:
         assert "EXTRACTION: BusinessConcept" in result.stdout
         assert "Enabled: True" in result.stdout
 
-    @patch("deriva.adapters.database.get_connection")
     @patch("deriva.cli.commands.config.config")
-    def test_query_extraction_not_found(self, mock_config, mock_get_conn):
+    def test_query_extraction_not_found(self, mock_config):
         """Should handle config not found."""
         mock_engine = MagicMock()
-        mock_get_conn.return_value = mock_engine
+        mock_config.read_only_connection.return_value = mock_engine
         mock_config.get_extraction_config.return_value = None
 
         result = runner.invoke(app, ["config", "query", "extraction", "NotFound"])
@@ -2582,12 +2579,11 @@ class TestConfigQueryCommand:
         assert result.exit_code == 0
         assert "Config not found: NotFound" in result.stdout
 
-    @patch("deriva.adapters.database.get_connection")
     @patch("deriva.cli.commands.config.config")
-    def test_query_derivation_list(self, mock_config, mock_get_conn):
+    def test_query_derivation_list(self, mock_config):
         """Should list derivation configs."""
         mock_engine = MagicMock()
-        mock_get_conn.return_value = mock_engine
+        mock_config.read_only_connection.return_value = mock_engine
 
         mock_cfg = MagicMock()
         mock_cfg.step_name = "ApplicationComponent"
@@ -2602,12 +2598,11 @@ class TestConfigQueryCommand:
         assert "DERIVATION CONFIGS (1)" in result.stdout
         assert "ApplicationComponent" in result.stdout
 
-    @patch("deriva.adapters.database.get_connection")
     @patch("deriva.cli.commands.config.config")
-    def test_query_derivation_single(self, mock_config, mock_get_conn):
+    def test_query_derivation_single(self, mock_config):
         """Should query single derivation config."""
         mock_engine = MagicMock()
-        mock_get_conn.return_value = mock_engine
+        mock_config.read_only_connection.return_value = mock_engine
 
         mock_cfg = MagicMock()
         mock_cfg.step_name = "ApplicationComponent"
@@ -2627,7 +2622,7 @@ class TestConfigQueryCommand:
 class TestConfigSnapshotCommand:
     """Tests for config snapshot command."""
 
-    @patch("deriva.adapters.database.get_connection")
+    @patch("deriva.services.config.read_only_connection")
     def test_snapshot_session_not_found(self, mock_get_conn):
         """Should handle session not found."""
         mock_engine = MagicMock()
@@ -2639,7 +2634,7 @@ class TestConfigSnapshotCommand:
         assert result.exit_code == 1
         assert "Session not found" in result.stdout
 
-    @patch("deriva.adapters.database.get_connection")
+    @patch("deriva.services.config.read_only_connection")
     def test_snapshot_no_snapshot_data(self, mock_get_conn):
         """Should handle no snapshot data."""
         mock_engine = MagicMock()
@@ -2651,7 +2646,7 @@ class TestConfigSnapshotCommand:
         assert result.exit_code == 1
         assert "No config snapshot found" in result.stdout
 
-    @patch("deriva.adapters.database.get_connection")
+    @patch("deriva.services.config.read_only_connection")
     def test_snapshot_success(self, mock_get_conn):
         """Should display snapshot data."""
         mock_engine = MagicMock()
@@ -3853,3 +3848,125 @@ class TestUpdateTemperature:
         assert result.exit_code == 0
         fn = mock_config.create_derivation_config_version if step_type == "derivation" else mock_config.create_extraction_config_version
         assert fn.call_args.kwargs["temperature"] == 0.0
+
+
+class TestConfigPatternCommands:
+    """``config pattern`` lists, adds and removes a derivation step's name patterns."""
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_list_prints_the_rows(self, mock_session_class, mock_config):
+        mock_config.list_derivation_patterns.return_value = [{"step_name": "Alpha", "pattern_type": "include", "pattern_category": "first", "patterns": ["a", "b"]}]
+
+        result = runner.invoke(app, ["config", "pattern", "list", "Alpha"])
+
+        assert result.exit_code == 0
+        mock_config.list_derivation_patterns.assert_called_once_with(mock_session_class.return_value.__enter__.return_value._engine, "Alpha")
+        assert "Alpha" in result.stdout and "include" in result.stdout and "first" in result.stdout and "a, b" in result.stdout
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_add_merges_into_the_category(self, mock_session_class, mock_config):
+        mock_config.list_derivation_patterns.return_value = [{"step_name": "Alpha", "pattern_type": "include", "pattern_category": "first", "patterns": ["a"]}]
+
+        result = runner.invoke(app, ["config", "pattern", "add", "Alpha", "include", "first", "b", "a"])
+
+        assert result.exit_code == 0
+        engine = mock_session_class.return_value.__enter__.return_value._engine
+        mock_config.update_derivation_patterns.assert_called_once_with(engine, "Alpha", "include", "first", ["a", "b"])
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_delete_removes_patterns_or_whole_categories(self, mock_session_class, mock_config):
+        mock_config.remove_derivation_patterns.return_value = 2
+
+        result = runner.invoke(app, ["config", "pattern", "delete", "Alpha", "include"])
+
+        assert result.exit_code == 0
+        engine = mock_session_class.return_value.__enter__.return_value._engine
+        mock_config.remove_derivation_patterns.assert_called_once_with(engine, "Alpha", "include", None, None)
+        assert "2" in result.stdout
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_delete_with_category_and_patterns(self, mock_session_class, mock_config):
+        mock_config.remove_derivation_patterns.return_value = 1
+
+        result = runner.invoke(app, ["config", "pattern", "delete", "Alpha", "include", "--category", "first", "a"])
+
+        assert result.exit_code == 0
+        engine = mock_session_class.return_value.__enter__.return_value._engine
+        mock_config.remove_derivation_patterns.assert_called_once_with(engine, "Alpha", "include", "first", ["a"])
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_delete_that_changes_nothing_fails(self, mock_session_class, mock_config):
+        mock_config.remove_derivation_patterns.return_value = 0
+
+        result = runner.invoke(app, ["config", "pattern", "delete", "Alpha", "include"])
+
+        assert result.exit_code == 1
+
+
+class TestBenchmarkStepCommand:
+    """``benchmark step`` repeats one step per repository and prints its consistency."""
+
+    @staticmethod
+    def _result(errors=None, unscored=None):
+        from deriva.modules.analysis import AnswerStability, DecisionStability, compare_step_outputs
+        from deriva.services.step_benchmark import StepBenchmarkResult
+
+        consistency = compare_step_outputs([{("Concept", "a"): {"kind": "x"}, ("Concept", "b"): {}}, {("Concept", "a"): {"kind": "y"}}])
+        return StepBenchmarkResult(
+            session_id="bench_1",
+            step="BusinessConcept",
+            repositories={"repo1": consistency},
+            answer_stability={"repo1": [AnswerStability(step="BusinessConcept", prompts=4, identical=3)]},
+            decision_stability={"repo1": DecisionStability(items=573, stable=549)},
+            llm_calls={"repo1": [4, 4]},
+            errors=errors or [],
+            unscored=unscored or [],
+        )
+
+    @patch("deriva.cli.commands.benchmark.PipelineSession")
+    def test_properties_that_are_not_scored_are_named(self, mock_session_class):
+        session = mock_session_class.return_value.__enter__.return_value
+        session.run_step_benchmark.return_value = self._result(unscored=["documentation", "llm_name"])
+
+        result = runner.invoke(app, ["benchmark", "step", "DataObject", "--repos", "repo1", "--model", "m1"])
+
+        assert "not scored in exact: documentation, llm_name" in result.stdout
+
+    @patch("deriva.cli.commands.benchmark.PipelineSession")
+    def test_runs_the_step_and_prints_its_consistency(self, mock_session_class):
+        session = mock_session_class.return_value.__enter__.return_value
+        session.run_step_benchmark.return_value = self._result()
+
+        result = runner.invoke(app, ["benchmark", "step", "BusinessConcept", "--repos", "repo1", "--model", "m1", "-n", "2"])
+
+        assert result.exit_code == 0
+        session.run_step_benchmark.assert_called_once_with("BusinessConcept", repositories=["repo1"], model="m1", runs=2, verbose=False)
+        assert "repo1" in result.stdout and "50.0%" in result.stdout  # presence 1 of 2 objects
+        assert "Average" in result.stdout
+        assert "kind" in result.stdout  # the property that differs
+        assert "3/4" in result.stdout  # answer stability of the step
+        assert "549/573" in result.stdout  # decision stability of the step's items
+        assert "bench_1" in result.stdout
+
+    @patch("deriva.cli.commands.benchmark.PipelineSession")
+    def test_errors_exit_with_failure(self, mock_session_class):
+        session = mock_session_class.return_value.__enter__.return_value
+        session.run_step_benchmark.return_value = self._result(errors=["repo1: run 1 failed"])
+
+        result = runner.invoke(app, ["benchmark", "step", "BusinessConcept", "--repos", "repo1", "--model", "m1"])
+
+        assert result.exit_code == 1
+        assert "run 1 failed" in result.stdout
+
+    @pytest.mark.parametrize("command", [["step", "BusinessConcept", "--model", "m1"], ["run", "--models", "m1"]])
+    @patch("deriva.cli.commands.benchmark.PipelineSession")
+    def test_a_benchmark_needs_at_least_one_run(self, mock_session_class, command):
+        result = runner.invoke(app, ["benchmark", *command, "--repos", "repo1", "-n", "0"])
+
+        assert result.exit_code == 2  # usage error: an empty benchmark would report 100%
+        mock_session_class.assert_not_called()

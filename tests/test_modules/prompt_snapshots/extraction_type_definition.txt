@@ -1,0 +1,20 @@
+You are analyzing a source code file to extract type definitions.
+
+## Context
+- **File Path:** src/ledger.alpha
+
+## Instructions
+INSTRUCTION
+
+## Example Output
+{"types": []}
+
+## File Content (with line numbers)
+```
+   1 | class Ledger:
+   2 |     def post(self, entry):
+   3 |         return entry
+   4 | 
+```
+
+Extract all type definitions from this file. Return ONLY a JSON object with a "types" array. If no type definitions are found, return {"types": []}.

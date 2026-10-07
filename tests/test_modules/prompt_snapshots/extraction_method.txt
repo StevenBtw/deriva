@@ -1,0 +1,22 @@
+You are analyzing a class definition to extract its methods.
+
+## Context
+- **Type Name:** Ledger
+- **Category:** class
+- **File Path:** src/ledger.alpha
+
+## Instructions
+INSTRUCTION
+
+## Example Output
+{"methods": []}
+
+## Code (with line numbers)
+```
+   1 | class Ledger:
+   2 |     def post(self, entry):
+   3 |         return entry
+   4 | 
+```
+
+Extract all methods and functions from this class. Return ONLY a JSON object with a "methods" array. If no methods are found, return {"methods": []}.

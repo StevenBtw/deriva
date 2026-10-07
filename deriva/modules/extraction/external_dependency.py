@@ -26,6 +26,7 @@ from .base import (
     current_timestamp,
     deduplicate_nodes,
     generate_edge_id,
+    prompt_texts,
     strip_chunk_suffix,
 )
 
@@ -373,7 +374,7 @@ def _extract_from_requirements_txt(
         if not line or line.startswith("#") or line.startswith("-"):
             continue
 
-        dep = _parse_requirement_line(line)
+        dep = parse_requirement_line(line)
         if not dep:
             continue
 
@@ -397,7 +398,7 @@ def _extract_from_requirements_txt(
     return _build_result(nodes, edges, [], "deterministic")
 
 
-def _parse_requirement_line(line: str) -> dict[str, Any] | None:
+def parse_requirement_line(line: str) -> dict[str, Any] | None:
     """Parse a single requirement line into package name and version."""
     line = line.strip()
     if not line:
@@ -458,7 +459,7 @@ def _extract_from_pyproject_toml(
         dep_strings = re.findall(r'"([^"]+)"|\'([^\']+)\'', match)
         for dep_tuple in dep_strings:
             dep_str = dep_tuple[0] or dep_tuple[1]
-            dep = _parse_requirement_line(dep_str)
+            dep = parse_requirement_line(dep_str)
             if not dep:
                 continue
 
@@ -545,7 +546,7 @@ def _extract_from_python_ast(
     repo_name: str,
 ) -> dict[str, Any]:
     """Extract external dependencies from Python imports using tree-sitter."""
-    from deriva.adapters.treesitter import TreeSitterManager
+    from deriva.adapters.treesitter import TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -604,11 +605,9 @@ def _extract_from_python_ast(
 # =============================================================================
 
 
-def build_extraction_prompt(
-    file_content: str, file_path: str, instruction: str, example: str
-) -> str:
-    """Build the LLM prompt for external dependency extraction."""
-    return f"""You are analyzing a file to extract external dependencies.
+def build_extraction_prompt(file_content: str, file_path: str, instruction: str, example: str, texts: dict[str, str]) -> str:
+    """Build the LLM prompt for external dependency extraction (``texts``: the step's params.prompt, persona and task)."""
+    return f"""{texts["persona"]}
 
 ## Context
 - **File Path:** {file_path}
@@ -624,7 +623,7 @@ def build_extraction_prompt(
 {file_content}
 ```
 
-Extract external dependencies. Return ONLY a JSON object with a "dependencies" array. If no dependencies are found, return {{"dependencies": []}}.
+{texts["task"]} Return ONLY a JSON object with a "dependencies" array. If no dependencies are found, return {{"dependencies": []}}.
 """
 
 
@@ -639,14 +638,10 @@ def _extract_from_llm(
     """Extract external dependencies using LLM with automatic chunking for large files."""
     # Check if chunking is needed for large files
     if should_chunk(file_content, model=model):
-        return _extract_from_llm_chunked(
-            file_path, file_content, repo_name, llm_query_fn, config, model
-        )
+        return _extract_from_llm_chunked(file_path, file_content, repo_name, llm_query_fn, config, model)
 
     # Extract from full file content
-    return _extract_from_llm_single(
-        file_path, file_content, repo_name, llm_query_fn, config
-    )
+    return _extract_from_llm_single(file_path, file_content, repo_name, llm_query_fn, config)
 
 
 def _extract_from_llm_chunked(
@@ -670,9 +665,7 @@ def _extract_from_llm_chunked(
         # Add chunk context to file path
         chunk_path = f"{file_path} (lines {chunk.start_line}-{chunk.end_line})"
 
-        result = _extract_from_llm_single(
-            chunk_path, chunk.content, repo_name, llm_query_fn, config
-        )
+        result = _extract_from_llm_single(chunk_path, chunk.content, repo_name, llm_query_fn, config)
 
         if result["success"]:
             all_nodes.extend(result["data"]["nodes"])
@@ -715,7 +708,7 @@ def _extract_from_llm_single(
         instruction = config.get("instruction", "")
         example = config.get("example", "{}")
 
-        prompt = build_extraction_prompt(file_content, file_path, instruction, example)
+        prompt = build_extraction_prompt(file_content, file_path, instruction, example, prompt_texts(config, "ExternalDependency"))
         llm_details["prompt"] = prompt
 
         response = llm_query_fn(prompt, EXTERNAL_DEPENDENCY_SCHEMA)
@@ -726,9 +719,7 @@ def _extract_from_llm_single(
             llm_details["tokens_in"] = response.usage.get("prompt_tokens", 0)
             llm_details["tokens_out"] = response.usage.get("completion_tokens", 0)
         if hasattr(response, "response_type"):
-            llm_details["cache_used"] = (
-                str(response.response_type) == "ResponseType.CACHED"
-            )
+            llm_details["cache_used"] = str(response.response_type) == "ResponseType.CACHED"
 
         if hasattr(response, "error"):
             return {
@@ -759,9 +750,7 @@ def _extract_from_llm_single(
                 node_data = node_result["data"]
                 nodes.append(node_data)
                 edge = {
-                    "edge_id": generate_edge_id(
-                        file_node_id, node_data["node_id"], "USES"
-                    ),
+                    "edge_id": generate_edge_id(file_node_id, node_data["node_id"], "USES"),
                     "from_node_id": file_node_id,
                     "to_node_id": node_data["node_id"],
                     "relationship_type": "USES",
@@ -814,9 +803,7 @@ def parse_llm_response(response_content: str) -> dict[str, Any]:
         return {"success": False, "data": [], "errors": [f"JSON parsing error: {e}"]}
 
 
-def build_external_dependency_node(
-    dep_data: dict[str, Any], origin_source: str, repo_name: str
-) -> dict[str, Any]:
+def build_external_dependency_node(dep_data: dict[str, Any], origin_source: str, repo_name: str) -> dict[str, Any]:
     """Build an ExternalDependency graph node from extracted data."""
     errors = []
 
@@ -910,9 +897,7 @@ def _build_dependency_node_and_edge(
     return node, edge
 
 
-def _build_result(
-    nodes: list[dict], edges: list[dict], errors: list[str], method: str
-) -> dict[str, Any]:
+def _build_result(nodes: list[dict], edges: list[dict], errors: list[str], method: str) -> dict[str, Any]:
     """Build a standard extraction result."""
     return {
         "success": len(errors) == 0 or len(nodes) > 0,
@@ -1031,9 +1016,7 @@ def extract_external_dependencies_batch(
                 "file_path": file_path,
                 "success": result["success"],
                 "dependencies_extracted": len(result["data"]["nodes"]),
-                "extraction_method": result["stats"].get(
-                    "extraction_method", "unknown"
-                ),
+                "extraction_method": result["stats"].get("extraction_method", "unknown"),
                 "llm_details": result.get("llm_details", {}),
                 "errors": result["errors"],
             }

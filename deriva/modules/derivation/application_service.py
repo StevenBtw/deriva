@@ -56,9 +56,7 @@ class ApplicationServiceDerivation(HybridDerivation):
     """
 
     ELEMENT_TYPE = "ApplicationService"
-    MIN_PAGERANK = (
-        None  # Query already filters by out_degree, no need for pagerank filter
-    )
+    MIN_PAGERANK = None  # Query already filters by out_degree, no need for pagerank filter
     USE_COMMUNITY_ROOTS = True  # Prioritize service hubs
 
     OUTBOUND_RULES = [
@@ -141,9 +139,7 @@ class ApplicationServiceDerivation(HybridDerivation):
                 type_definitions.append(c)
 
         # Filter each group appropriately (don't pre-limit, combine then limit)
-        filtered_concepts = self._filter_business_concepts(
-            business_concepts, max_candidates
-        )
+        filtered_concepts = self._filter_business_concepts(business_concepts, max_candidates)
         filtered_types = self._filter_typedef_candidates(
             type_definitions,
             enrichments,
@@ -216,13 +212,7 @@ class ApplicationServiceDerivation(HybridDerivation):
         # Skip include_patterns for TypeDefinitions - they already match *Service* in query
         # Only apply exclude_patterns if provided
         if exclude_patterns:
-            filtered = [
-                c
-                for c in filtered
-                if not any(
-                    pattern.lower() in c.name.lower() for pattern in exclude_patterns
-                )
-            ]
+            filtered = [c for c in filtered if not any(pattern.lower() in c.name.lower() for pattern in exclude_patterns)]
 
         # Sort by confidence (if available) then pagerank
         # TypeDefinitions matching *Service* pattern are already strong candidates

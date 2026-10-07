@@ -10,6 +10,9 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 __all__ = [
+    "AnswerStability",
+    "DecisionStability",
+    "StepConsistency",
     "ConfigDeviation",
     "DeviationReport",
     "InconsistencyInfo",
@@ -110,9 +113,7 @@ class IntraModelMetrics:
     edge_consistency: float = 100.0  # % of edges in ALL runs
     stable_edges: list[str] = field(default_factory=list)
     unstable_edges: dict[str, int] = field(default_factory=dict)
-    edge_type_breakdown: dict[str, float] = field(
-        default_factory=dict
-    )  # CONTAINS: 95%, etc.
+    edge_type_breakdown: dict[str, float] = field(default_factory=dict)  # CONTAINS: 95%, etc.
 
     # Relationship consistency (derivation phase)
     relationship_counts: list[int] = field(default_factory=list)
@@ -120,9 +121,7 @@ class IntraModelMetrics:
     relationship_consistency: float = 100.0  # % of relationships in ALL runs
     stable_relationships: list[str] = field(default_factory=list)
     unstable_relationships: dict[str, int] = field(default_factory=dict)
-    relationship_type_breakdown: dict[str, float] = field(
-        default_factory=dict
-    )  # Serving: 90%, etc.
+    relationship_type_breakdown: dict[str, float] = field(default_factory=dict)  # Serving: 90%, etc.
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -148,9 +147,7 @@ class InterModelMetrics:
 
     # Relationship comparison (derivation phase)
     relationships_by_model: dict[str, list[str]] = field(default_factory=dict)
-    relationship_overlap: list[str] = field(
-        default_factory=list
-    )  # Relationships in ALL models
+    relationship_overlap: list[str] = field(default_factory=list)  # Relationships in ALL models
     relationship_unique_by_model: dict[str, list[str]] = field(default_factory=dict)
     relationship_jaccard: float = 1.0
 
@@ -162,6 +159,87 @@ class InterModelMetrics:
 # ============================================================================
 # Comprehensive Benchmark Analysis Types
 # ============================================================================
+
+
+@dataclass
+class AnswerStability:
+    """Raw LLM answer stability of one step: the same prompt answered identically in every run.
+
+    Reported next to output consistency, so that voting or deterministic
+    post-processing cannot hide the variance of the LLM itself.
+    """
+
+    step: str
+    prompts: int  # prompts asked in every run
+    identical: int  # of those, answered identically in every run
+
+    @property
+    def score(self) -> float:
+        return self.identical / self.prompts if self.prompts else 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {"step": self.step, "prompts": self.prompts, "identical": self.identical, "score": self.score}
+
+
+@dataclass
+class DecisionStability:
+    """Per-item decisions of a classification step (one label per term): decided alike in every run.
+
+    Finer than ``AnswerStability`` for batched prompts, where one changed label makes a
+    whole batch answer differ. A skipped item (no decision) counts as a decision of its own.
+    """
+
+    items: int  # items decided in any run
+    stable: int  # of those, with the same decision in every run
+
+    @property
+    def score(self) -> float:
+        return self.stable / self.items if self.items else 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {"items": self.items, "stable": self.stable, "score": self.score}
+
+
+@dataclass
+class StepConsistency:
+    """One step repeated on a fixed input: how often its outputs agree across runs.
+
+    Presence compares which objects the runs produced; exact also requires the same
+    properties. ``property_differences`` names the properties that differ, per object
+    present in every run.
+    """
+
+    runs: int
+    counts: list[int]  # objects produced per run
+    present: int  # objects produced in every run
+    total: int  # objects produced in any run
+    identical: int  # of those in every run, with the same properties in every run
+    property_differences: dict[str, int] = field(default_factory=dict)
+    groups: dict[str, StepConsistency] = field(default_factory=dict)
+
+    @property
+    def presence_score(self) -> float:
+        return self.present / self.total if self.total else 1.0
+
+    @property
+    def exact_score(self) -> float:
+        return self.identical / self.total if self.total else 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "runs": self.runs,
+            "counts": self.counts,
+            "present": self.present,
+            "total": self.total,
+            "identical": self.identical,
+            "presence_score": self.presence_score,
+            "exact_score": self.exact_score,
+            "property_differences": self.property_differences,
+            "groups": {name: group.to_dict() for name, group in self.groups.items()},
+        }
 
 
 @dataclass
@@ -211,9 +289,7 @@ class PhaseStabilityReport:
             "node_breakdown": [b.to_dict() for b in self.node_breakdown],
             "edge_breakdown": [b.to_dict() for b in self.edge_breakdown],
             "element_breakdown": [b.to_dict() for b in self.element_breakdown],
-            "relationship_breakdown": [
-                b.to_dict() for b in self.relationship_breakdown
-            ],
+            "relationship_breakdown": [b.to_dict() for b in self.relationship_breakdown],
         }
 
 
@@ -308,9 +384,7 @@ class SemanticMatchReport:
             "spurious_elements": self.spurious_elements,
             "total_derived_relationships": self.total_derived_relationships,
             "total_reference_relationships": self.total_reference_relationships,
-            "correctly_derived_relationships": [
-                m.to_dict() for m in self.correctly_derived_relationships
-            ],
+            "correctly_derived_relationships": [m.to_dict() for m in self.correctly_derived_relationships],
             "missing_relationships": [r.to_dict() for r in self.missing_relationships],
             "spurious_relationships": self.spurious_relationships,
             "element_precision": self.element_precision,
@@ -388,19 +462,15 @@ class BenchmarkReport:
     generated_at: str
 
     # 1. Stability Analysis
-    stability_reports: dict[str, dict[str, PhaseStabilityReport]] = field(
-        default_factory=dict
-    )  # repo -> phase -> report
+    stability_reports: dict[str, dict[str, PhaseStabilityReport]] = field(default_factory=dict)  # repo -> phase -> report
+    # Raw LLM answer stability, so voting or post-processing cannot hide LLM variance
+    answer_stability: dict[str, list[AnswerStability]] = field(default_factory=dict)  # repo -> per step
 
     # 2. Semantic Match Analysis
-    semantic_reports: dict[str, SemanticMatchReport] = field(
-        default_factory=dict
-    )  # repo -> report
+    semantic_reports: dict[str, SemanticMatchReport] = field(default_factory=dict)  # repo -> report
 
     # 3. Fit Analysis
-    fit_analyses: dict[str, FitAnalysis] = field(
-        default_factory=dict
-    )  # repo -> analysis
+    fit_analyses: dict[str, FitAnalysis] = field(default_factory=dict)  # repo -> analysis
 
     # 4. Cross-Repository Comparison
     cross_repo: CrossRepoComparison | None = None
@@ -422,16 +492,10 @@ class BenchmarkReport:
                 "models": self.models,
                 "generated_at": self.generated_at,
             },
-            "stability": {
-                repo: {phase: report.to_dict() for phase, report in phases.items()}
-                for repo, phases in self.stability_reports.items()
-            },
-            "semantic_match": {
-                repo: report.to_dict() for repo, report in self.semantic_reports.items()
-            },
-            "fit_analysis": {
-                repo: analysis.to_dict() for repo, analysis in self.fit_analyses.items()
-            },
+            "stability": {repo: {phase: report.to_dict() for phase, report in phases.items()} for repo, phases in self.stability_reports.items()},
+            "answer_stability": {repo: [s.to_dict() for s in steps] for repo, steps in self.answer_stability.items()},
+            "semantic_match": {repo: report.to_dict() for repo, report in self.semantic_reports.items()},
+            "fit_analysis": {repo: analysis.to_dict() for repo, analysis in self.fit_analyses.items()},
             "cross_repo": self.cross_repo.to_dict() if self.cross_repo else None,
             "summary": {
                 "overall_consistency": self.overall_consistency,
@@ -458,18 +522,12 @@ class BenchmarkReport:
         ]
 
         for repo in self.repositories:
-            consistency = (
-                self.stability_reports.get(repo, {})
-                .get("derivation", PhaseStabilityReport("", repo, "", 0, 0.0))
-                .overall_consistency
-            )
+            consistency = self.stability_reports.get(repo, {}).get("derivation", PhaseStabilityReport("", repo, "", 0, 0.0)).overall_consistency
             semantic = self.semantic_reports.get(repo)
             precision = semantic.element_precision if semantic else 0.0
             recall = semantic.element_recall if semantic else 0.0
             f1 = semantic.element_f1 if semantic else 0.0
-            lines.append(
-                f"| {repo} | {consistency:.1%} | {precision:.1%} | {recall:.1%} | {f1:.2f} |"
-            )
+            lines.append(f"| {repo} | {consistency:.1%} | {precision:.1%} | {recall:.1%} | {f1:.2f} |")
 
         lines.extend(
             [
@@ -482,19 +540,20 @@ class BenchmarkReport:
         for repo, phases in self.stability_reports.items():
             lines.append(f"### {repo}")
             for phase, report in phases.items():
-                lines.append(
-                    f"**{phase.title()} Phase:** {report.overall_consistency:.1%} consistency"
-                )
+                lines.append(f"**{phase.title()} Phase:** {report.overall_consistency:.1%} consistency")
                 if report.element_breakdown:
                     lines.append("| Element Type | Consistency | Stable | Unstable |")
                     lines.append("|--------------|-------------|--------|----------|")
-                    for b in sorted(
-                        report.element_breakdown, key=lambda x: -x.consistency_score
-                    ):
-                        lines.append(
-                            f"| {b.item_type} | {b.consistency_score:.1%} | {b.stable_count} | {b.unstable_count} |"
-                        )
+                    for b in sorted(report.element_breakdown, key=lambda x: -x.consistency_score):
+                        lines.append(f"| {b.item_type} | {b.consistency_score:.1%} | {b.stable_count} | {b.unstable_count} |")
             lines.append("")
+
+        if self.answer_stability:
+            lines.extend(["### LLM Answer Stability", "", "The same prompt given the same decisions in every run (raw LLM output; free text and confidence left out).", ""])
+            for repo, steps in self.answer_stability.items():
+                lines.extend([f"**{repo}**", "", "| Step | Prompts | Identical | Score |", "|------|---------|-----------|-------|"])
+                lines.extend(f"| {s.step} | {s.prompts} | {s.identical} | {s.score:.1%} |" for s in steps)
+                lines.append("")
 
         if self.semantic_reports:
             lines.extend(

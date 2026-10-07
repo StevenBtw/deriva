@@ -59,24 +59,12 @@ app.add_typer(benchmark_app, name="benchmark")
 
 @app.command("run")
 def run_stage(
-    stage: Annotated[
-        str, typer.Argument(help="Pipeline stage to run (extraction, derivation, all)")
-    ],
-    repo: Annotated[
-        str | None, typer.Option("--repo", help="Specific repository to process")
-    ] = None,
-    phase: Annotated[
-        str | None, typer.Option("--phase", help="Run specific phase")
-    ] = None,
-    verbose: Annotated[
-        bool, typer.Option("-v", "--verbose", help="Print detailed progress")
-    ] = False,
-    quiet: Annotated[
-        bool, typer.Option("-q", "--quiet", help="Disable progress bar")
-    ] = False,
-    no_llm: Annotated[
-        bool, typer.Option("--no-llm", help="Skip LLM-based steps")
-    ] = False,
+    stage: Annotated[str, typer.Argument(help="Pipeline stage to run (extraction, derivation, all)")],
+    repo: Annotated[str | None, typer.Option("--repo", help="Specific repository to process")] = None,
+    phase: Annotated[str | None, typer.Option("--phase", help="Run specific phase")] = None,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
+    quiet: Annotated[bool, typer.Option("-q", "--quiet", help="Disable progress bar")] = False,
+    no_llm: Annotated[bool, typer.Option("--no-llm", help="Skip LLM-based steps")] = False,
     only_step: Annotated[
         str | None,
         typer.Option(
@@ -106,15 +94,11 @@ def run_stage(
     if phase:
         if stage == "extraction" and phase not in extraction_phases:
             typer.echo(f"Error: Phase '{phase}' is not valid for extraction.", err=True)
-            typer.echo(
-                f"Valid extraction phases: {', '.join(sorted(extraction_phases))}"
-            )
+            typer.echo(f"Valid extraction phases: {', '.join(sorted(extraction_phases))}")
             raise typer.Exit(1)
         if stage == "derivation" and phase not in derivation_phases:
             typer.echo(f"Error: Phase '{phase}' is not valid for derivation.", err=True)
-            typer.echo(
-                f"Valid derivation phases: {', '.join(sorted(derivation_phases))}"
-            )
+            typer.echo(f"Valid derivation phases: {', '.join(sorted(derivation_phases))}")
             raise typer.Exit(1)
 
     typer.echo(f"\n{'=' * 60}")
@@ -131,9 +115,7 @@ def run_stage(
 
         if only_step:
             step_type = "extraction" if stage in ("extraction", "all") else "derivation"
-            typer.echo(
-                f"Enabling only {step_type} step: {only_step} (restored afterwards)"
-            )
+            typer.echo(f"Enabling only {step_type} step: {only_step} (restored afterwards)")
             try:
                 step_scope.enter_context(session.only_step(step_type, only_step))
             except ValueError as e:
@@ -197,10 +179,7 @@ def run_stage(
                 with open(output_path, "w") as f:
                     json.dump(candidate_data, f, indent=2)
 
-                typer.echo(
-                    f"\nExported {len(result['candidate_decisions'])} "
-                    f"candidate decisions to {output_path}"
-                )
+                typer.echo(f"\nExported {len(result['candidate_decisions'])} candidate decisions to {output_path}")
 
         elif stage == "all":
             with progress_reporter:
@@ -224,9 +203,7 @@ def run_stage(
 def status(
     repo: Annotated[
         str | None,
-        typer.Option(
-            "--repo", help="Repository whose graph database to use (default: shared)"
-        ),
+        typer.Option("--repo", help="Repository whose graph database to use (default: shared)"),
     ] = None,
 ) -> None:
     """Show current pipeline status."""
@@ -238,9 +215,7 @@ def status(
         for step_type in ["extraction", "derivation"]:
             all_steps = session.list_steps(step_type)
             enabled = [s for s in all_steps if s["enabled"]]
-            typer.echo(
-                f"  {step_type.capitalize()}: {len(enabled)}/{len(all_steps)} steps enabled"
-            )
+            typer.echo(f"  {step_type.capitalize()}: {len(enabled)}/{len(all_steps)} steps enabled")
 
         # File types
         file_types = session.get_file_types()
@@ -270,18 +245,12 @@ def status(
 
 @app.command("export")
 def export(
-    output: Annotated[
-        str, typer.Option("-o", "--output", help="Output file path")
-    ] = "workspace/output/model.xml",
+    output: Annotated[str, typer.Option("-o", "--output", help="Output file path")] = "workspace/output/model.xml",
     name: Annotated[str | None, typer.Option("-n", "--name", help="Model name")] = None,
-    verbose: Annotated[
-        bool, typer.Option("-v", "--verbose", help="Print detailed progress")
-    ] = False,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
     repo: Annotated[
         str | None,
-        typer.Option(
-            "--repo", help="Repository whose graph database to use (default: shared)"
-        ),
+        typer.Option("--repo", help="Repository whose graph database to use (default: shared)"),
     ] = None,
 ) -> None:
     """Export ArchiMate model to file."""
@@ -301,9 +270,7 @@ def export(
             typer.echo(f"  Elements exported: {result['elements_exported']}")
             typer.echo(f"  Relationships exported: {result['relationships_exported']}")
             typer.echo(f"\nExported to: {result['output_path']}")
-            typer.echo(
-                "Model can be opened with Archi or other ArchiMate-compatible tools."
-            )
+            typer.echo("Model can be opened with Archi or other ArchiMate-compatible tools.")
         else:
             typer.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
             raise typer.Exit(1)
@@ -319,16 +286,12 @@ def clear(
     target: Annotated[str, typer.Argument(help="Data layer to clear (graph, model)")],
     repo: Annotated[
         str | None,
-        typer.Option(
-            "--repo", help="Repository whose graph database to use (default: shared)"
-        ),
+        typer.Option("--repo", help="Repository whose graph database to use (default: shared)"),
     ] = None,
 ) -> None:
     """Clear graph or model data."""
     if target not in ("graph", "model"):
-        typer.echo(
-            f"Error: target must be 'graph' or 'model', got '{target}'", err=True
-        )
+        typer.echo(f"Error: target must be 'graph' or 'model', got '{target}'", err=True)
         raise typer.Exit(1)
 
     typer.echo(f"\n{'=' * 60}")

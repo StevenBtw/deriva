@@ -112,4 +112,4 @@ class ApplicationComponentDerivation(HybridDerivation):
     # Uses HybridDerivation.filter_candidates() which applies:
     # 1. Pattern matching (if patterns configured)
     # 2. Graph filtering with community roots prioritized (USE_COMMUNITY_ROOTS=True)
-    # 3. PageRank threshold filtering (MIN_PAGERANK=0.001)
+    # 3. PageRank threshold filtering (MIN_PAGERANK above)

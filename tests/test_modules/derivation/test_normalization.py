@@ -6,7 +6,6 @@ from pathlib import Path
 
 from deriva.modules.derivation.refine.normalization import (
     RepoContext,
-    collapse_bo_suffix_groups,
     normalize_for_dedup,
     strip_archimate_suffix,
     strip_repo_prefix,
@@ -60,6 +59,16 @@ class TestStripRepoPrefix:
     def test_empty_repo_name_unchanged(self):
         assert strip_repo_prefix("Lightblue Core", "") == "Lightblue Core"
 
+    def test_a_repo_name_spread_over_several_words(self):
+        assert strip_repo_prefix("Tea Store Registry", "TeaStore") == "Registry"
+        assert strip_repo_prefix("Lakeside Mutual Customer Core", "LakesideMutual") == "Customer Core"
+
+    def test_a_name_that_is_only_the_repo_name_stays(self):
+        assert strip_repo_prefix("Tea Store", "TeaStore") == "Tea Store"
+
+    def test_part_of_a_word_is_no_prefix(self):
+        assert strip_repo_prefix("Teapot Store Registry", "TeaStore") == "Teapot Store Registry"
+
     def test_single_token_not_stripped(self):
         assert strip_repo_prefix("Lightblue", "lightblue") == "Lightblue"
 
@@ -103,30 +112,6 @@ class TestNormalizeForDedup:
 
     def test_whitespace_collapsed(self):
         assert normalize_for_dedup("  Mongo   Controller  ", RepoContext()) == "Mongo"
-
-
-class TestCollapseBOSuffixGroups:
-    def test_collapses_data_likes_ratings(self):
-        names = ["Aggregate Data", "Aggregate Likes", "Aggregate Ratings"]
-        bos = ["Data", "Likes", "Ratings"]
-        result = collapse_bo_suffix_groups(names, bos)
-        canonicals = set(result.values())
-        assert len(canonicals) == 1
-        assert result["Aggregate Data"] == result["Aggregate Likes"]
-
-    def test_preserves_non_bo_differences(self):
-        names = ["Aggregate Data", "Clean Data"]
-        bos = ["Data"]
-        result = collapse_bo_suffix_groups(names, bos)
-        assert result["Aggregate Data"] != result["Clean Data"]
-
-    def test_empty_bos_identity_map(self):
-        names = ["Foo", "Bar"]
-        result = collapse_bo_suffix_groups(names, [])
-        assert result == {"Foo": "Foo", "Bar": "Bar"}
-
-    def test_empty_names(self):
-        assert collapse_bo_suffix_groups([], ["Data"]) == {}
 
 
 class TestDesignInvariant:

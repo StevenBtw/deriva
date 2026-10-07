@@ -38,9 +38,7 @@ def compute_consistency_score(objects_by_run: dict[str, set[str]]) -> float:
         return 1.0
 
     # Count objects that appear in ALL runs
-    consistent_count = sum(
-        1 for obj in all_objects if all(obj in objs for objs in objects_by_run.values())
-    )
+    consistent_count = sum(1 for obj in all_objects if all(obj in objs for objs in objects_by_run.values()))
 
     return consistent_count / len(all_objects)
 

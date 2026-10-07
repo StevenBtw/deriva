@@ -474,9 +474,7 @@ class CSharpExtractor(LanguageExtractor):
 
         return tree_sitter_c_sharp.language()
 
-    def extract_types(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedType]:
+    def extract_types(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedType]:
         """Extract type definitions (classes, interfaces, structs, enums, records)."""
         types: list[ExtractedType] = []
         root = tree.root_node
@@ -495,9 +493,7 @@ class CSharpExtractor(LanguageExtractor):
 
         return types
 
-    def extract_methods(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedMethod]:
+    def extract_methods(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedMethod]:
         """Extract methods, constructors, and properties."""
         methods: list[ExtractedMethod] = []
         root = tree.root_node
@@ -521,19 +517,13 @@ class CSharpExtractor(LanguageExtractor):
                     if child.type == "method_declaration":
                         methods.append(self._extract_method(child, source, class_name))
                     elif child.type == "constructor_declaration":
-                        methods.append(
-                            self._extract_constructor(child, source, class_name)
-                        )
+                        methods.append(self._extract_constructor(child, source, class_name))
                     elif child.type == "property_declaration":
-                        methods.append(
-                            self._extract_property(child, source, class_name)
-                        )
+                        methods.append(self._extract_property(child, source, class_name))
 
         return methods
 
-    def extract_imports(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedImport]:
+    def extract_imports(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedImport]:
         """Extract using directives."""
         imports: list[ExtractedImport] = []
         root = tree.root_node
@@ -543,9 +533,7 @@ class CSharpExtractor(LanguageExtractor):
 
         return imports
 
-    def extract_calls(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedCall]:
+    def extract_calls(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedCall]:
         """Extract method and constructor calls from C# source code.
 
         Walks through all type declarations (class, interface, struct, record)
@@ -575,20 +563,10 @@ class CSharpExtractor(LanguageExtractor):
                 for child in body.children:
                     if child.type == "method_declaration":
                         name_node = self.find_child_by_field(child, "name")
-                        method_name = (
-                            self.get_node_text(name_node, source) if name_node else ""
-                        )
-                        calls.extend(
-                            self._extract_calls_from_body(
-                                child, source, method_name, class_name
-                            )
-                        )
+                        method_name = self.get_node_text(name_node, source) if name_node else ""
+                        calls.extend(self._extract_calls_from_body(child, source, method_name, class_name))
                     elif child.type == "constructor_declaration":
-                        calls.extend(
-                            self._extract_calls_from_body(
-                                child, source, class_name, class_name
-                            )
-                        )
+                        calls.extend(self._extract_calls_from_body(child, source, class_name, class_name))
 
         return calls
 
@@ -611,9 +589,7 @@ class CSharpExtractor(LanguageExtractor):
         call_types = {"invocation_expression", "object_creation_expression"}
 
         for call_node in self.walk_tree(body, call_types):
-            call = self._extract_single_call(
-                call_node, source, caller_name, caller_class
-            )
+            call = self._extract_single_call(call_node, source, caller_name, caller_class)
             if call:
                 calls.append(call)
 
@@ -700,9 +676,7 @@ class CSharpExtractor(LanguageExtractor):
 
         return None
 
-    def _get_invocation_target_class(
-        self, node: tree_sitter.Node, source: bytes
-    ) -> str | None:
+    def _get_invocation_target_class(self, node: tree_sitter.Node, source: bytes) -> str | None:
         """Try to determine the target class from an invocation.
 
         For member access like `obj.Method()`, returns the object/type name.
@@ -725,9 +699,7 @@ class CSharpExtractor(LanguageExtractor):
 
         return None
 
-    def _get_type_name_from_node(
-        self, type_node: tree_sitter.Node, source: bytes
-    ) -> str | None:
+    def _get_type_name_from_node(self, type_node: tree_sitter.Node, source: bytes) -> str | None:
         """Extract type name from a type node (for object creation)."""
         if type_node.type == "identifier":
             return self.get_node_text(type_node, source)
@@ -767,9 +739,7 @@ class CSharpExtractor(LanguageExtractor):
             visibility=visibility,
         )
 
-    def _extract_method(
-        self, node: tree_sitter.Node, source: bytes, class_name: str
-    ) -> ExtractedMethod:
+    def _extract_method(self, node: tree_sitter.Node, source: bytes, class_name: str) -> ExtractedMethod:
         """Extract a method declaration."""
         name_node = self.find_child_by_field(node, "name")
         name = self.get_node_text(name_node, source) if name_node else ""
@@ -780,9 +750,7 @@ class CSharpExtractor(LanguageExtractor):
 
         # Get return type
         return_type_node = self.find_child_by_field(node, "type")
-        return_annotation = (
-            self.get_node_text(return_type_node, source) if return_type_node else None
-        )
+        return_annotation = self.get_node_text(return_type_node, source) if return_type_node else None
 
         # Check modifiers
         is_static = self._has_modifier(node, source, "static")
@@ -804,9 +772,7 @@ class CSharpExtractor(LanguageExtractor):
             visibility=visibility,
         )
 
-    def _extract_constructor(
-        self, node: tree_sitter.Node, source: bytes, class_name: str
-    ) -> ExtractedMethod:
+    def _extract_constructor(self, node: tree_sitter.Node, source: bytes, class_name: str) -> ExtractedMethod:
         """Extract a constructor declaration."""
         name_node = self.find_child_by_field(node, "name")
         name = self.get_node_text(name_node, source) if name_node else class_name
@@ -831,9 +797,7 @@ class CSharpExtractor(LanguageExtractor):
             visibility=visibility,
         )
 
-    def _extract_property(
-        self, node: tree_sitter.Node, source: bytes, class_name: str
-    ) -> ExtractedMethod:
+    def _extract_property(self, node: tree_sitter.Node, source: bytes, class_name: str) -> ExtractedMethod:
         """Extract a property declaration."""
         name_node = self.find_child_by_field(node, "name")
         name = self.get_node_text(name_node, source) if name_node else ""
@@ -880,9 +844,7 @@ class CSharpExtractor(LanguageExtractor):
         module = self.get_node_text(name_node, source) if name_node else ""
 
         # Check for static using
-        is_static = any(
-            self.get_node_text(child, source) == "static" for child in node.children
-        )
+        is_static = any(self.get_node_text(child, source) == "static" for child in node.children)
 
         return ExtractedImport(
             module=module,
@@ -958,9 +920,7 @@ class CSharpExtractor(LanguageExtractor):
 
         return None
 
-    def _has_modifier(
-        self, node: tree_sitter.Node, source: bytes, modifier: str
-    ) -> bool:
+    def _has_modifier(self, node: tree_sitter.Node, source: bytes, modifier: str) -> bool:
         """Check if a node has a specific modifier."""
         for child in node.children:
             if child.type == "modifier":
@@ -968,9 +928,7 @@ class CSharpExtractor(LanguageExtractor):
                     return True
         return False
 
-    def _extract_parameters(
-        self, node: tree_sitter.Node, source: bytes
-    ) -> list[dict[str, Any]]:
+    def _extract_parameters(self, node: tree_sitter.Node, source: bytes) -> list[dict[str, Any]]:
         """Extract method parameters."""
         params: list[dict[str, Any]] = []
 
@@ -994,18 +952,13 @@ class CSharpExtractor(LanguageExtractor):
                 has_default = default_node is not None
 
                 # Check for params keyword (varargs)
-                is_params = any(
-                    self.get_node_text(c, source) == "params" for c in child.children
-                )
+                is_params = any(self.get_node_text(c, source) == "params" for c in child.children)
                 if is_params:
                     name = f"params {name}"
 
                 # Check for ref/out/in
                 for modifier in ("ref", "out", "in"):
-                    if any(
-                        self.get_node_text(c, source) == modifier
-                        for c in child.children
-                    ):
+                    if any(self.get_node_text(c, source) == modifier for c in child.children):
                         name = f"{modifier} {name}"
                         break
 

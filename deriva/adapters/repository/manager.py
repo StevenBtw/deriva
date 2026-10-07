@@ -71,11 +71,7 @@ class _StateManager:
             try:
                 with open(self.state_file, encoding="utf-8") as f:
                     state = yaml.safe_load(f)
-                    if (
-                        not state
-                        or "version" not in state
-                        or "repositories" not in state
-                    ):
+                    if not state or "version" not in state or "repositories" not in state:
                         self._write_state(self._default_state())
             except Exception:
                 self._write_state(self._default_state())
@@ -201,7 +197,7 @@ def _force_remove_directory(path: Path, max_retries: int = 3) -> None:
     for attempt in range(max_retries):
         try:
             if os.name == "nt":
-                shutil.rmtree(path, onerror=_handle_remove_readonly)
+                shutil.rmtree(path, onexc=_handle_remove_readonly)
             else:
                 shutil.rmtree(path)
             return
@@ -210,10 +206,7 @@ def _force_remove_directory(path: Path, max_retries: int = 3) -> None:
                 time.sleep(0.5)
                 continue
             else:
-                raise DeleteError(
-                    f"Failed to delete directory after {max_retries} attempts. "
-                    f"Some files may be locked by another process: {e}"
-                )
+                raise DeleteError(f"Failed to delete directory after {max_retries} attempts. Some files may be locked by another process: {e}")
         except Exception as e:
             raise DeleteError(f"Failed to delete directory: {e}")
 
@@ -481,9 +474,7 @@ def _extract_file_structure(repo_path: Path) -> FileNode:
             except PermissionError:
                 pass
 
-            dir_size = sum(
-                child.size_bytes for child in children if child.type == "file"
-            )
+            dir_size = sum(child.size_bytes for child in children if child.type == "file")
 
             return FileNode(
                 name=path.name if path != relative_to else repo_path.name,
@@ -609,14 +600,11 @@ class RepoManager:
         if target_path.exists():
             if overwrite:
                 try:
-                    shutil.rmtree(target_path)
+                    _force_remove_directory(target_path)
                 except Exception as e:
                     raise CloneError(f"Failed to remove existing directory: {e}")
             else:
-                raise CloneError(
-                    f"Directory already exists: {target_path}. "
-                    "Use overwrite=True to replace it."
-                )
+                raise CloneError(f"Directory already exists: {target_path}. Use overwrite=True to replace it.")
 
         cmd = ["git", "clone"]
         if branch:
@@ -626,16 +614,11 @@ class RepoManager:
         cmd.extend([repo_url, str(target_path)])
 
         try:
-            subprocess.run(
-                cmd, capture_output=True, encoding="utf-8", errors="replace", check=True
-            )
+            subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", check=True)
         except subprocess.CalledProcessError as e:
             raise CloneError(f"Git clone failed: {e.stderr or e.stdout or str(e)}")
         except FileNotFoundError:
-            raise CloneError(
-                "Git is not installed or not in PATH. "
-                "Please install Git to use clone functionality."
-            )
+            raise CloneError("Git is not installed or not in PATH. Please install Git to use clone functionality.")
 
         result = _get_repository_info_from_path(target_path, repo_url)
         self._state_manager.add_repository(result)
@@ -700,10 +683,7 @@ class RepoManager:
                     check=True,
                 )
                 if result.stdout.strip():
-                    raise DeleteError(
-                        f"Repository has uncommitted changes: {repo_name}. "
-                        "Use force=True to delete anyway."
-                    )
+                    raise DeleteError(f"Repository has uncommitted changes: {repo_name}. Use force=True to delete anyway.")
             except subprocess.CalledProcessError:
                 pass
 
@@ -760,9 +740,7 @@ class RepoManager:
         """
         return self._state_manager.sync_state()
 
-    def extract_metadata(
-        self, repo_name: str, output_dir: Path | None = None
-    ) -> tuple[Path, Path]:
+    def extract_metadata(self, repo_name: str, output_dir: Path | None = None) -> tuple[Path, Path]:
         """Extract metadata from a repository.
 
         Creates two JSON files:

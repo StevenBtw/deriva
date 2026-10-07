@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -292,11 +294,11 @@ class TestExtractLLMBased:
             (Path(tmpdir) / "main.py").write_text("class MyService: pass")
 
             mock_cfg = MagicMock()
-            mock_cfg.node_type = "BusinessConcept"
+            mock_cfg.node_type = "Test"
             # Use proper JSON format for input_sources
             mock_cfg.input_sources = json_module.dumps({"files": [{"type": "source", "subtype": "python"}]})
             mock_cfg.params = None
-            mock_cfg.instruction = "Extract business concepts"
+            mock_cfg.instruction = "Extract tests"
             mock_cfg.example = None
             mock_cfg.batch_size = 1
 
@@ -308,39 +310,59 @@ class TestExtractLLMBased:
             ]
 
             graph_manager = MagicMock()
-            graph_manager.get_node.return_value = None  # no stored concept yet
-
-            # Mock LLM to return a valid response
-            def mock_llm(prompt, schema):
-                return {
-                    "concepts": [
-                        {
-                            "name": "MyService",
-                            "type": "service",
-                            "description": "A service class",
-                        }
-                    ]
-                }
 
             with patch("deriva.services.extraction._extract_file_content") as mock_extract:
                 mock_extract.return_value = (
-                    [{"properties": {"name": "MyService", "concept_type": "service", "description": "A service"}}],
+                    [{"properties": {"name": "test_my_service", "test_type": "unit", "file_path": "main.py"}}],
                     [],
                     [],
                 )
 
                 result = _extract_llm_based(
-                    node_type="BusinessConcept",
+                    node_type="Test",
                     cfg=mock_cfg,
                     repo=mock_repo,
                     repo_path=Path(tmpdir),
                     classified_files=classified_files,
                     graph_manager=graph_manager,
-                    llm_query_fn=mock_llm,
+                    llm_query_fn=MagicMock(),
                     engine=MagicMock(),
                 )
 
             assert result["nodes_created"] >= 1
+
+    def test_edge_properties_are_persisted(self):
+        """Edge properties from the module reach the graph."""
+        import json as json_module
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "manifest.txt").write_text("x")
+            cfg = SimpleNamespace(
+                node_type="Test",
+                input_sources=json_module.dumps({"files": [{"type": "config", "subtype": "text"}]}),
+                params=None,
+                instruction="I",
+                example=None,
+                batch_size=1,
+            )
+            repo = SimpleNamespace(name="r")
+            graph_manager = MagicMock()
+            graph_manager.node_exists.return_value = True
+            edge = {"from_node_id": "file::r::manifest.txt", "to_node_id": "test::r::alpha", "relationship_type": "TESTS", "properties": {"route": "llm"}}
+
+            with patch("deriva.services.extraction._extract_file_content", return_value=([], [edge], [])):
+                _extract_llm_based(
+                    node_type="Test",
+                    cfg=cfg,
+                    repo=repo,
+                    repo_path=Path(tmpdir),
+                    classified_files=[{"path": "manifest.txt", "file_type": "config", "subtype": "text"}],
+                    graph_manager=graph_manager,
+                    llm_query_fn=MagicMock(),
+                    engine=MagicMock(),
+                )
+
+            graph_manager.add_edge.assert_called_once_with(src_id="file::r::manifest.txt", dst_id="test::r::alpha", relationship="TESTS", properties={"route": "llm"})
 
 
 class TestExtractFileContent:
@@ -399,14 +421,6 @@ class TestExtractFileContent:
 class TestGetExtractionConfig:
     """Tests for _get_extraction_config function."""
 
-    def test_returns_config_for_business_concept(self):
-        """Should return extraction config for BusinessConcept."""
-        extract_fn, schema, node_class = _get_extraction_config("BusinessConcept")
-
-        assert extract_fn is not None
-        assert schema is not None
-        assert node_class is not None
-
     def test_returns_config_for_type_definition(self):
         """Should return extraction config for TypeDefinition."""
         extract_fn, schema, node_class = _get_extraction_config("TypeDefinition")
@@ -417,13 +431,6 @@ class TestGetExtractionConfig:
     def test_returns_config_for_method(self):
         """Should return extraction config for Method."""
         extract_fn, schema, node_class = _get_extraction_config("Method")
-
-        assert extract_fn is not None
-        assert schema is not None
-
-    def test_returns_config_for_technology(self):
-        """Should return extraction config for Technology."""
-        extract_fn, schema, node_class = _get_extraction_config("Technology")
 
         assert extract_fn is not None
         assert schema is not None
@@ -562,6 +569,17 @@ class TestCreateNodeFromData:
 
         assert node is not None
         assert node.extraction_method == "ast"
+
+    def test_annotations_of_types_and_methods_are_kept(self):
+        """Annotations and decorators are structure later steps select on (an endpoint marker, a route)."""
+        type_props = {"typeName": "OrderController", "category": "class", "filePath": "a.java", "decorators": ["RestController"]}
+        method_props = {"methodName": "find", "typeName": "OrderController", "filePath": "a.java", "decorators": ['GetMapping("orders")']}
+        type_node = _create_node_from_data("TypeDefinition", {"properties": type_props}, "r", extraction_method="ast")
+        method_node = _create_node_from_data("Method", {"properties": method_props}, "r", extraction_method="ast")
+
+        assert type_node.to_dict()["decorators"] == ["RestController"]
+        assert method_node.to_dict()["decorators"] == ['GetMapping("orders")']
+        assert _create_node_from_data("TypeDefinition", {"properties": {"typeName": "Plain"}}, "r").to_dict()["decorators"] == []
 
     def test_creates_method_node(self):
         """Should create MethodNode from data."""
@@ -877,6 +895,42 @@ class TestRunExtractionWithRunLogger:
 
             run_logger.step_start.assert_called()
             step_ctx.complete.assert_called()
+
+    def test_step_stats_reach_the_run_log(self, tmp_path):
+        """A step that reports stats (selection sizes, label counts) has them logged with its completion."""
+        run_logger = MagicMock()
+        step_ctx = MagicMock()
+        run_logger.step_start.return_value = step_ctx
+        repo = SimpleNamespace(name="test_repo", path=str(tmp_path), url="u", branch="main")
+        step_result = {"nodes_created": 0, "edges_created": 0, "errors": [], "stats": {"selected": 3}}
+
+        with (
+            patch("deriva.services.extraction.RepoManager") as repo_mgr,
+            patch("deriva.services.extraction.config.get_extraction_configs", return_value=[SimpleNamespace(node_type="Repository", extraction_method="structural")]),
+            patch("deriva.services.extraction.config.get_file_types", return_value=[]),
+            patch("deriva.services.extraction._run_extraction_step", return_value=step_result),
+        ):
+            repo_mgr.return_value.list_repositories.return_value = [repo]
+            run_extraction(MagicMock(), MagicMock(), run_logger=run_logger)
+
+        assert step_ctx.stats == {"selected": 3}
+        step_ctx.complete.assert_called_once()
+
+    def test_step_stats_are_returned_per_repository_and_step(self, tmp_path):
+        """Callers (the step benchmark) read a step's own report from the result."""
+        repo = SimpleNamespace(name="test_repo", path=str(tmp_path), url="u", branch="main")
+        step_result = {"nodes_created": 0, "edges_created": 0, "errors": [], "stats": {"selected": 3}}
+
+        with (
+            patch("deriva.services.extraction.RepoManager") as repo_mgr,
+            patch("deriva.services.extraction.config.get_extraction_configs", return_value=[SimpleNamespace(node_type="Repository", extraction_method="structural")]),
+            patch("deriva.services.extraction.config.get_file_types", return_value=[]),
+            patch("deriva.services.extraction._run_extraction_step", return_value=step_result),
+        ):
+            repo_mgr.return_value.list_repositories.return_value = [repo]
+            result = run_extraction(MagicMock(), MagicMock())
+
+        assert result["step_stats"] == {"test_repo": {"Repository": {"selected": 3}}}
 
 
 class TestRunExtractionWithProgressReporter:
@@ -1375,6 +1429,110 @@ class TestExtractReferences:
 class TestExtractDirectoryClassification:
     """Tests for _extract_directory_classification function."""
 
+    def test_directories_reach_the_llm_sorted_by_path_with_their_files(self):
+        """The prompt gets each directory's file counts by type and languages, in path order (real graph)."""
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode, FileNode
+        from deriva.services.extraction import _extract_directory_classification
+
+        close_database()
+        with GraphManager() as gm:
+            for name in ("zeta", "alpha"):
+                gm.add_node(DirectoryNode(name=name, path=f"r/{name}", repository_name="r"), node_id=f"dir::r::{name}")
+            for i, (file_type, subtype) in enumerate([("source", "java"), ("source", "java"), ("docs", "markdown"), ("test", "java"), ("config", "yaml")]):
+                gm.add_node(FileNode(name=f"f{i}", path=f"r/alpha/f{i}", repository_name="r", file_type=file_type, subtype=subtype), node_id=f"file::r::f{i}")
+                gm.add_edge("dir::r::alpha", f"file::r::f{i}", "CONTAINS")
+            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
+            with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
+                _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
+        close_database()
+
+        alpha, zeta = classify.call_args.kwargs["directories"]
+        assert (alpha["paths"], zeta["paths"]) == (["r/alpha"], ["r/zeta"])
+        counts = {k: alpha[k] for k in ("file_count", "source_count", "docs_count", "test_count", "config_count")}
+        assert counts == {"file_count": 5, "source_count": 2, "docs_count": 1, "test_count": 1, "config_count": 1}
+        assert sorted(alpha["subtypes"]) == ["java", "markdown", "yaml"]
+        assert zeta["file_count"] == 0
+
+    def test_structural_skips_never_reach_the_llm(self):
+        """Pass-through directories and configured skip names are decided before any LLM call (real graph)."""
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode, FileNode
+        from deriva.services.extraction import _extract_directory_classification
+
+        close_database()
+        with GraphManager() as gm:
+            for path in ("r/lib", "r/lib/records", "r/utils"):
+                gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r"), node_id=f"dir::r::{path}")
+            gm.add_edge("dir::r::r/lib", "dir::r::r/lib/records", "CONTAINS")
+            for path in ("r/lib/records", "r/utils"):
+                gm.add_node(FileNode(name="f", path=f"{path}/f", repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}/f")
+                gm.add_edge(f"dir::r::{path}", f"file::r::{path}/f", "CONTAINS")
+            params = {"skip_names": ["utils"], "skip_trees": [], "skip_pass_through": True}
+            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
+            with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
+                _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
+        close_database()
+
+        (only,) = classify.call_args.kwargs["directories"]
+        assert only["paths"] == ["r/lib/records"]
+
+    @pytest.mark.parametrize("params, name", [({"skip_repository_name": True}, "r"), ({}, "")])
+    def test_the_repository_name_reaches_the_classifier_when_configured(self, params, name):
+        """params.skip_repository_name: a technology answer for a directory named after the repository is skipped (real graph)."""
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode
+        from deriva.services.extraction import _extract_directory_classification
+
+        close_database()
+        with GraphManager() as gm:
+            gm.add_node(DirectoryNode(name="billing", path="r/billing", repository_name="r"), node_id="dir::r::billing")
+            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
+            with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
+                _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
+        close_database()
+
+        assert classify.call_args.kwargs["repository_name"] == name
+
+    def test_a_non_boolean_skip_repository_name_is_an_error(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode
+        from deriva.services.extraction import _extract_directory_classification
+
+        close_database()
+        with GraphManager() as gm:
+            gm.add_node(DirectoryNode(name="billing", path="r/billing", repository_name="r"), node_id="dir::r::billing")
+            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps({"skip_repository_name": 1}), temperature=None, max_tokens=None, batch_size=50)
+            with patch("deriva.services.extraction.classify_directories") as classify:
+                result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
+        close_database()
+
+        assert len(result["errors"]) == 1 and "skip_repository_name" in result["errors"][0]
+        classify.assert_not_called()
+
+    def test_same_named_directories_reach_the_llm_as_one_entry(self):
+        """Copies of a name are grouped before batching, so they are never split over prompts (real graph)."""
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode
+        from deriva.services.extraction import _extract_directory_classification
+
+        close_database()
+        with GraphManager() as gm:
+            for path in ("r/a/records", "r/b", "r/c/records"):
+                gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r"), node_id=f"dir::r::{path}")
+            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=2)
+            with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
+                _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
+        close_database()
+
+        (batch,) = [c.kwargs["directories"] for c in classify.call_args_list]
+        assert [(g["name"], g["paths"]) for g in batch] == [("records", ["r/a/records", "r/c/records"]), ("b", ["r/b"])]
+
     def test_queries_directories_from_graph(self):
         """Should query directories from graph."""
         from deriva.services.extraction import _extract_directory_classification
@@ -1423,6 +1581,7 @@ class TestExtractDirectoryClassification:
         mock_cfg = MagicMock()
         mock_cfg.instruction = "Classify directories"
         mock_cfg.example = "{}"
+        mock_cfg.params = None
         mock_cfg.temperature = None
         mock_cfg.max_tokens = None
         mock_cfg.batch_size = 50
@@ -1461,6 +1620,28 @@ class TestExtractDirectoryClassification:
         assert result["nodes_created"] >= 1
         graph_manager.add_node.assert_called()
 
+    def test_passes_the_step_params(self):
+        """samples/min_votes on the row reach the classification (majority voting)."""
+        from deriva.services.extraction import _extract_directory_classification
+
+        mock_cfg = MagicMock()
+        mock_cfg.instruction = "Classify directories"
+        mock_cfg.example = "{}"
+        mock_cfg.params = '{"samples": 3, "min_votes": 2}'
+        mock_cfg.temperature = None
+        mock_cfg.max_tokens = None
+        mock_cfg.batch_size = 50
+        mock_repo = MagicMock()
+        mock_repo.name = "test_repo"
+        graph_manager = MagicMock()
+        graph_manager.query.return_value = [{"name": "src", "path": "src", "id": "dir_1"}]
+
+        with patch("deriva.services.extraction.classify_directories") as mock_classify:
+            mock_classify.return_value = {"success": True, "data": {"nodes": [], "edges": []}}
+            _extract_directory_classification(mock_cfg, mock_repo, graph_manager, MagicMock())
+
+        assert mock_classify.call_args.kwargs["config"]["params"] == {"samples": 3, "min_votes": 2}
+
 
 class TestExtractFileContentWithChunking:
     """Tests for _extract_file_content with chunking."""
@@ -1498,86 +1679,6 @@ class TestExtractFileContentWithChunking:
                 )
 
         assert mock_chunk.called
-
-    def test_passes_existing_concepts_to_extract_fn(self):
-        """Should pass existing_concepts when provided."""
-        content = "def func(): pass"
-        existing_concepts = [{"conceptName": "TestConcept", "conceptType": "entity"}]
-
-        extract_calls = []
-
-        def mock_extract_fn(file_path, content, repo_name, llm_fn, config, existing_concepts=None):
-            extract_calls.append(existing_concepts)
-            return {
-                "success": True,
-                "data": {"nodes": [], "edges": []},
-            }
-
-        nodes, edges, errors = _extract_file_content(
-            file_path="test.py",
-            content=content,
-            repo_name="myrepo",
-            extract_fn=mock_extract_fn,
-            extraction_config={},
-            llm_query_fn=MagicMock(),
-            existing_concepts=existing_concepts,
-        )
-
-        assert len(extract_calls) == 1
-        assert extract_calls[0] == existing_concepts
-
-
-class TestExtractLLMBasedBatching:
-    """Tests for _extract_llm_based with batching."""
-
-    def test_uses_batching_for_business_concepts(self):
-        """Should use batching when batch_size > 1 for BusinessConcept."""
-        import json as json_module
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create multiple files
-            (Path(tmpdir) / "file1.py").write_text("class A: pass")
-            (Path(tmpdir) / "file2.py").write_text("class B: pass")
-
-            mock_cfg = MagicMock()
-            mock_cfg.node_type = "BusinessConcept"
-            mock_cfg.input_sources = json_module.dumps({"files": [{"type": "source", "subtype": "python"}]})
-            mock_cfg.params = None
-            mock_cfg.instruction = "Extract concepts"
-            mock_cfg.example = "{}"
-            mock_cfg.batch_size = 10  # Enable batching
-            mock_cfg.temperature = None
-            mock_cfg.max_tokens = None
-
-            mock_repo = MagicMock()
-            mock_repo.name = "test"
-
-            classified_files = [
-                {"path": "file1.py", "file_type": "source", "subtype": "python"},
-                {"path": "file2.py", "file_type": "source", "subtype": "python"},
-            ]
-
-            graph_manager = MagicMock()
-
-            with patch("deriva.services.extraction.extraction.extract_business_concepts_multi") as mock_multi:
-                mock_multi.return_value = {
-                    "success": True,
-                    "data": {"nodes": [], "edges": []},
-                    "errors": [],
-                }
-
-                _extract_llm_based(
-                    node_type="BusinessConcept",
-                    cfg=mock_cfg,
-                    repo=mock_repo,
-                    repo_path=Path(tmpdir),
-                    classified_files=classified_files,
-                    graph_manager=graph_manager,
-                    llm_query_fn=MagicMock(),
-                    engine=MagicMock(),
-                )
-
-            mock_multi.assert_called()
 
 
 class TestExtractLLMBasedTreesitter:
@@ -1677,6 +1778,161 @@ class TestExtractLLMBasedTreesitter:
             mock_ts.assert_called()
 
 
+class TestMethodLanguages:
+    """With node sources the Method step parses the source files of the languages in params.languages (Python when absent)."""
+
+    FILES = {"app/main.py": "def handle():\n    pass\n", "app/Orders.java": "class Orders {\n  public void place() {}\n}\n"}
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _extract(self, graph, params):
+        from deriva.adapters.graph.models import FileNode, TypeDefinitionNode
+
+        subtypes = {".py": "python", ".java": "java"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for path, text in self.FILES.items():
+                (Path(tmpdir) / path).parent.mkdir(parents=True, exist_ok=True)
+                (Path(tmpdir) / path).write_text(text, encoding="utf-8")
+                file = FileNode(name=Path(path).name, path=path, repository_name="r", file_type="source", subtype=subtypes[Path(path).suffix])
+                graph.add_node(file, node_id=f"file::r::{path.replace('/', '_')}")
+            # The TypeDefinition step runs first and creates the class that holds the Java method
+            orders = TypeDefinitionNode(name="Orders", type_category="class", file_path="app/Orders.java", repository_name="r")
+            graph.add_node(orders, node_id="typedef::r::app_Orders.java::Orders")
+            cfg = SimpleNamespace(
+                node_type="Method",
+                input_sources=json.dumps({"files": [], "nodes": [{"label": "TypeDefinition", "property": "codeSnippet"}]}),
+                params=json.dumps(params) if params is not None else None,
+                instruction="",
+                example="",
+                temperature=None,
+                max_tokens=None,
+            )
+            return _extract_llm_based(
+                node_type="Method",
+                cfg=cfg,
+                repo=SimpleNamespace(name="r"),
+                repo_path=Path(tmpdir),
+                classified_files=[{"path": p, "file_type": "source", "subtype": subtypes[Path(p).suffix]} for p in self.FILES],
+                graph_manager=graph,
+                llm_query_fn=MagicMock(),
+                engine=MagicMock(),
+            )
+
+    @staticmethod
+    def _methods(graph) -> list[str]:
+        return sorted(row["name"] for row in graph.query("MATCH (m:Graph:Method) RETURN m.methodName AS name"))
+
+    def test_without_params_only_python_is_parsed(self, graph):
+        self._extract(graph, None)
+
+        assert self._methods(graph) == ["handle"]
+
+    def test_the_configured_languages_are_parsed(self, graph):
+        result = self._extract(graph, {"languages": ["python", "java"]})
+
+        assert result["errors"] == []
+        assert self._methods(graph) == ["handle", "place"]
+
+    @pytest.mark.parametrize("languages", [["cobol"], "java", []])
+    def test_unknown_or_malformed_languages_are_an_error(self, graph, languages):
+        result = self._extract(graph, {"languages": languages})
+
+        assert len(result["errors"]) == 1 and "languages" in result["errors"][0]
+        assert self._methods(graph) == []
+
+
+class TestInheritanceResolution:
+    """An inheritance edge points at the repository's own base type, wherever the type is defined."""
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    @staticmethod
+    def _extract(graph, files: dict[str, str]) -> dict:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for path, text in files.items():
+                (Path(tmpdir) / path).parent.mkdir(parents=True, exist_ok=True)
+                (Path(tmpdir) / path).write_text(text, encoding="utf-8")
+            cfg = SimpleNamespace(
+                node_type="TypeDefinition",
+                input_sources=json.dumps({"files": [{"type": "source", "subtype": "java"}]}),
+                params=None,
+                instruction="",
+                example="",
+                temperature=None,
+                max_tokens=None,
+            )
+            return _extract_llm_based(
+                node_type="TypeDefinition",
+                cfg=cfg,
+                repo=SimpleNamespace(name="r"),
+                repo_path=Path(tmpdir),
+                classified_files=[{"path": path, "file_type": "source", "subtype": "java"} for path in files],
+                graph_manager=graph,
+                llm_query_fn=MagicMock(),
+                engine=MagicMock(),
+            )
+
+    @staticmethod
+    def _inherits(graph) -> list[tuple[str, str, str]]:
+        rows = graph.query(
+            "MATCH (a:Graph:TypeDefinition)-[e]->(b:Graph:TypeDefinition) WHERE type(e) = 'Graph:INHERITS' "
+            "RETURN a.typeName AS source, b.typeName AS target, b.category AS category"
+        )
+        return sorted((row["source"], row["target"], row["category"]) for row in rows)
+
+    @staticmethod
+    def _placeholders(graph) -> list[str]:
+        rows = graph.query("MATCH (t:Graph:TypeDefinition) WHERE t.category = 'external_reference' RETURN t.typeName AS name")
+        return sorted(row["name"] for row in rows)
+
+    def test_a_base_type_defined_in_another_file_is_the_target(self, graph):
+        self._extract(graph, {"shapes/Shape.java": "public interface Shape {}\n", "shapes/Circle.java": "public class Circle implements Shape {}\n"})
+
+        (edge,) = self._inherits(graph)
+        assert edge[:2] == ("Circle", "Shape")
+        assert edge[2] != "external_reference"
+        assert self._placeholders(graph) == []
+
+    def test_type_arguments_are_not_part_of_the_base_name(self, graph):
+        self._extract(graph, {"Renderer.java": "public abstract class Renderer<T> {}\n", "Circle.java": "public class Circle extends Renderer<String> {}\n"})
+
+        assert [edge[:2] for edge in self._inherits(graph)] == [("Circle", "Renderer")]
+        assert self._placeholders(graph) == []
+
+    def test_an_external_base_type_keeps_a_placeholder(self, graph):
+        self._extract(graph, {"Circle.java": "public class Circle implements Serializable {}\n"})
+
+        assert self._inherits(graph) == [("Circle", "Serializable", "external_reference")]
+
+    def test_a_name_defined_twice_keeps_a_placeholder(self, graph):
+        self._extract(
+            graph,
+            {
+                "a/Shape.java": "public interface Shape {}\n",
+                "b/Shape.java": "public interface Shape {}\n",
+                "c/Circle.java": "public class Circle implements Shape {}\n",
+            },
+        )
+
+        assert self._inherits(graph) == [("Circle", "Shape", "external_reference")]
+
+
 class TestExtractEdgesCreateStubNodes:
     """Tests for edge extraction creating stub nodes."""
 
@@ -1760,6 +2016,22 @@ class TestRepositoryWalkExclusions:
 
         assert first != second
 
+    def test_the_storage_format_is_part_of_the_fingerprint(self):
+        """Graphs written in an older storage layout are extracted again, never read as cached."""
+        from deriva.services import extraction
+
+        versions = {"extraction": {"File": 1}}
+        with (
+            patch.object(extraction, "RepoManager") as repo_mgr,
+            patch.object(extraction.config, "get_excluded_directories", return_value=[".git"]),
+        ):
+            repo_mgr.return_value.get_repository_info.return_value = MagicMock(last_commit="abc")
+            first = extraction.compute_extraction_fingerprint(MagicMock(), "repo", versions)
+            with patch.object(extraction, "STORAGE_FORMAT", 99):
+                second = extraction.compute_extraction_fingerprint(MagicMock(), "repo", versions)
+
+        assert first != second
+
 
 class TestConceptNodesMergeAcrossFiles:
     """Every BusinessConcept write merges with the stored node, so file order does not matter."""
@@ -1833,6 +2105,12 @@ class TestExtractionMethodFilter:
         assert result["stats"]["steps_skipped"] == 2
         graph_manager.add_node.assert_not_called()
 
+    def test_warns_when_no_step_matches(self, tmp_path):
+        """A method filter that selects nothing is reported, not a silent success."""
+        result, _ = self._run(str(tmp_path), ["ast"])
+
+        assert any("No enabled extraction step" in w and "ast" in w for w in result["warnings"])
+
     def test_filtered_run_does_not_write_the_fingerprint(self, tmp_path):
         _, graph_manager = self._run(str(tmp_path), ["structural"])
 
@@ -1848,6 +2126,46 @@ class TestExtractionMethodFilter:
         self._run(str(tmp_path), ["structural"], progress=progress)
 
         progress.start_phase.assert_called_once_with("extraction", 1)
+
+
+class TestExtractionStepFilter:
+    """``steps`` runs only the named steps, in their sequence order (the step benchmark repeats one step)."""
+
+    @staticmethod
+    def _cfg(node_type):
+        return SimpleNamespace(node_type=node_type, input_sources=None, extraction_method="structural")
+
+    def _run(self, tmpdir, steps):
+        graph_manager = MagicMock()
+        repo = SimpleNamespace(name="test_repo", path=tmpdir)
+        configs = [self._cfg("Repository"), self._cfg("Directory"), self._cfg("File")]
+        with (
+            patch("deriva.services.extraction.RepoManager") as repo_mgr,
+            patch("deriva.services.extraction.config.get_extraction_configs", return_value=configs),
+            patch("deriva.services.extraction.config.get_file_types", return_value=[]),
+            patch("deriva.services.extraction.compute_extraction_fingerprint", return_value="fp"),
+            patch("deriva.services.extraction._run_extraction_step", return_value={}) as run_step,
+        ):
+            repo_mgr.return_value.list_repositories.return_value = [repo]
+            result = run_extraction(MagicMock(), graph_manager, steps=steps)
+        return result, graph_manager, [c.kwargs["cfg"].node_type for c in run_step.call_args_list]
+
+    def test_only_the_named_steps_run_in_sequence_order(self, tmp_path):
+        _, _, ran = self._run(str(tmp_path), ["File", "Repository"])
+
+        assert ran == ["Repository", "File"]
+
+    def test_unknown_step_is_an_error(self, tmp_path):
+        result, _, ran = self._run(str(tmp_path), ["Nope"])
+
+        assert not result["success"]
+        assert any("Nope" in e for e in result["errors"])
+        assert ran == []
+
+    def test_filtered_run_does_not_write_the_fingerprint(self, tmp_path):
+        _, graph_manager, _ = self._run(str(tmp_path), ["Repository"])
+
+        graph_manager.set_extraction_fingerprint.assert_not_called()
 
 
 class TestLLMExtractionLabels:

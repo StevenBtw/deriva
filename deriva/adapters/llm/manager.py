@@ -32,6 +32,8 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 import os
 import random
@@ -40,16 +42,13 @@ import time
 from pathlib import Path
 from typing import Any, TypeVar, cast, overload
 
-import asyncio
-import concurrent.futures
 import httpx
+from deriva.common.exceptions import CircuitOpenError
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
-
-from deriva.common.exceptions import CircuitOpenError
 
 from .cache import CacheManager
 from .model_registry import VALID_PROVIDERS, get_pydantic_ai_model
@@ -74,9 +73,7 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
     """Get or create the thread pool executor for LLM calls."""
     global _llm_executor
     if _llm_executor is None:
-        _llm_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=4, thread_name_prefix="llm_"
-        )
+        _llm_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm_")
     return _llm_executor
 
 
@@ -106,10 +103,9 @@ logger = logging.getLogger(__name__)
 
 # Map JSON schema names to Pydantic models
 _SCHEMA_NAME_TO_MODEL: dict[str, type[BaseModel]] = {
-    "business_concepts_extraction": EXTRACTION_SCHEMAS["BusinessConcept"],
-    "business_concepts_multi_extraction": EXTRACTION_SCHEMAS["BusinessConceptMulti"],
+    "business_concept_classification": EXTRACTION_SCHEMAS["BusinessConcept"],
     "type_definitions_extraction": EXTRACTION_SCHEMAS["TypeDefinition"],
-    "technology_extraction": EXTRACTION_SCHEMAS["Technology"],
+    "technology_classification": EXTRACTION_SCHEMAS["Technology"],
     "external_dependency_extraction": EXTRACTION_SCHEMAS["ExternalDependency"],
     "test_extraction": EXTRACTION_SCHEMAS["Test"],
     "methods_extraction": EXTRACTION_SCHEMAS["Method"],
@@ -294,12 +290,8 @@ class LLMManager:
                 throttle_min_factor=self.config.get("throttle_min_factor", 0.25),
                 throttle_recovery_time=self.config.get("throttle_recovery_time", 60.0),
                 # Circuit breaker
-                circuit_breaker_enabled=self.config.get(
-                    "circuit_breaker_enabled", True
-                ),
-                circuit_failure_threshold=self.config.get(
-                    "circuit_failure_threshold", 5
-                ),
+                circuit_breaker_enabled=self.config.get("circuit_breaker_enabled", True),
+                circuit_failure_threshold=self.config.get("circuit_failure_threshold", 5),
                 circuit_recovery_time=self.config.get("circuit_recovery_time", 30.0),
             )
         )
@@ -324,7 +316,7 @@ class LLMManager:
         timeout: int = 60,
         temperature: float | None = None,
         nocache: bool = True,
-    ) -> "LLMManager":
+    ) -> LLMManager:
         """
         Create an LLMManager from explicit configuration.
 
@@ -341,11 +333,7 @@ class LLMManager:
         """
         load_dotenv(override=True)
 
-        effective_temperature = (
-            temperature
-            if temperature is not None
-            else float(os.getenv("LLM_TEMPERATURE", "0.7"))
-        )
+        effective_temperature = temperature if temperature is not None else float(os.getenv("LLM_TEMPERATURE", "0.7"))
 
         instance = object.__new__(cls)
 
@@ -375,23 +363,13 @@ class LLMManager:
                 requests_per_minute=rpm,
                 min_request_delay=float(os.getenv("LLM_RATE_LIMIT_DELAY", "0.0")),
                 # Adaptive throttling
-                throttle_enabled=os.getenv("LLM_THROTTLE_ENABLED", "true").lower()
-                == "true",
+                throttle_enabled=os.getenv("LLM_THROTTLE_ENABLED", "true").lower() == "true",
                 throttle_min_factor=float(os.getenv("LLM_THROTTLE_MIN_FACTOR", "0.25")),
-                throttle_recovery_time=float(
-                    os.getenv("LLM_THROTTLE_RECOVERY_TIME", "60.0")
-                ),
+                throttle_recovery_time=float(os.getenv("LLM_THROTTLE_RECOVERY_TIME", "60.0")),
                 # Circuit breaker
-                circuit_breaker_enabled=os.getenv(
-                    "LLM_CIRCUIT_BREAKER_ENABLED", "true"
-                ).lower()
-                == "true",
-                circuit_failure_threshold=int(
-                    os.getenv("LLM_CIRCUIT_FAILURE_THRESHOLD", "5")
-                ),
-                circuit_recovery_time=float(
-                    os.getenv("LLM_CIRCUIT_RECOVERY_TIME", "30.0")
-                ),
+                circuit_breaker_enabled=os.getenv("LLM_CIRCUIT_BREAKER_ENABLED", "true").lower() == "true",
+                circuit_failure_threshold=int(os.getenv("LLM_CIRCUIT_FAILURE_THRESHOLD", "5")),
+                circuit_recovery_time=float(os.getenv("LLM_CIRCUIT_RECOVERY_TIME", "30.0")),
             )
         )
 
@@ -417,12 +395,8 @@ class LLMManager:
         if default_model:
             benchmark_models = load_benchmark_models()
             if default_model not in benchmark_models:
-                available = (
-                    ", ".join(benchmark_models.keys()) if benchmark_models else "none"
-                )
-                raise ConfigurationError(
-                    f"LLM_DEFAULT_MODEL '{default_model}' not found. Available: {available}"
-                )
+                available = ", ".join(benchmark_models.keys()) if benchmark_models else "none"
+                raise ConfigurationError(f"LLM_DEFAULT_MODEL '{default_model}' not found. Available: {available}")
             config = benchmark_models[default_model]
             provider = config.provider
             api_url = config.get_api_url()
@@ -444,9 +418,7 @@ class LLMManager:
                 api_key = os.getenv("LLM_ANTHROPIC_API_KEY")
                 model = os.getenv("LLM_ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
             elif provider == "ollama":
-                api_url = os.getenv(
-                    "LLM_OLLAMA_API_URL", "http://localhost:11434/api/chat"
-                )
+                api_url = os.getenv("LLM_OLLAMA_API_URL", "http://localhost:11434/api/chat")
                 api_key = None
                 model = os.getenv("LLM_OLLAMA_MODEL", "llama3.2")
             elif provider == "mistral":
@@ -454,9 +426,7 @@ class LLMManager:
                 api_key = os.getenv("LLM_MISTRAL_API_KEY")
                 model = os.getenv("LLM_MISTRAL_MODEL", "mistral-large-latest")
             elif provider == "lmstudio":
-                api_url = os.getenv(
-                    "LLM_LMSTUDIO_API_URL", "http://localhost:1234/v1/chat/completions"
-                )
+                api_url = os.getenv("LLM_LMSTUDIO_API_URL", "http://localhost:1234/v1/chat/completions")
                 api_key = None
                 model = os.getenv("LLM_LMSTUDIO_MODEL", "local-model")
             else:
@@ -483,32 +453,20 @@ class LLMManager:
             "retry_base_delay": float(os.getenv("LLM_RETRY_BASE_DELAY", "2.0")),
             "retry_max_delay": float(os.getenv("LLM_RETRY_MAX_DELAY", "60.0")),
             # Adaptive throttling
-            "throttle_enabled": os.getenv("LLM_THROTTLE_ENABLED", "true").lower()
-            == "true",
+            "throttle_enabled": os.getenv("LLM_THROTTLE_ENABLED", "true").lower() == "true",
             "throttle_min_factor": float(os.getenv("LLM_THROTTLE_MIN_FACTOR", "0.25")),
-            "throttle_recovery_time": float(
-                os.getenv("LLM_THROTTLE_RECOVERY_TIME", "60.0")
-            ),
+            "throttle_recovery_time": float(os.getenv("LLM_THROTTLE_RECOVERY_TIME", "60.0")),
             # Circuit breaker
-            "circuit_breaker_enabled": os.getenv(
-                "LLM_CIRCUIT_BREAKER_ENABLED", "true"
-            ).lower()
-            == "true",
-            "circuit_failure_threshold": int(
-                os.getenv("LLM_CIRCUIT_FAILURE_THRESHOLD", "5")
-            ),
-            "circuit_recovery_time": float(
-                os.getenv("LLM_CIRCUIT_RECOVERY_TIME", "30.0")
-            ),
+            "circuit_breaker_enabled": os.getenv("LLM_CIRCUIT_BREAKER_ENABLED", "true").lower() == "true",
+            "circuit_failure_threshold": int(os.getenv("LLM_CIRCUIT_FAILURE_THRESHOLD", "5")),
+            "circuit_recovery_time": float(os.getenv("LLM_CIRCUIT_RECOVERY_TIME", "30.0")),
         }
 
     def _validate_config(self) -> None:
         """Validate configuration has required fields."""
         provider = self.config.get("provider", "")
         if provider not in VALID_PROVIDERS:
-            raise ConfigurationError(
-                f"Invalid provider: {provider}. Must be one of {VALID_PROVIDERS}"
-            )
+            raise ConfigurationError(f"Invalid provider: {provider}. Must be one of {VALID_PROVIDERS}")
 
         # Ollama and LM Studio don't require api_key
         if provider in ("ollama", "lmstudio"):
@@ -518,9 +476,7 @@ class LLMManager:
 
         missing = [f for f in required_fields if not self.config.get(f)]
         if missing:
-            raise ConfigurationError(
-                f"Missing required config fields: {', '.join(missing)}"
-            )
+            raise ConfigurationError(f"Missing required config fields: {', '.join(missing)}")
 
     @overload
     def query(
@@ -559,29 +515,22 @@ class LLMManager:
         """
         return getattr(self._call_store(), "call", None)
 
-    def _run_agent(
-        self, agent: Agent[None, Any], prompt: str, settings: ModelSettings
-    ) -> tuple[Any, int]:
+    def _run_agent(self, agent: Agent[None, Any], prompt: str, settings: ModelSettings) -> tuple[Any, int]:
         """Run one agent call with retries; returns the result and the number of failed attempts."""
         if _is_event_loop_running():
             # Running inside an async context (marimo/Jupyter): run the whole retry loop
             # in the thread pool, so backoff waits do not block the event loop
-            return (
-                _get_executor()
-                .submit(self._run_with_retries, agent, prompt, settings)
-                .result()
-            )
+            return _get_executor().submit(self._run_with_retries, agent, prompt, settings).result()
         return self._run_with_retries(agent, prompt, settings)
 
-    def _run_with_retries(
-        self, agent: Agent[None, Any], prompt: str, settings: ModelSettings
-    ) -> tuple[Any, int]:
+    def _run_with_retries(self, agent: Agent[None, Any], prompt: str, settings: ModelSettings) -> tuple[Any, int]:
         """Retry transient failures with jittered exponential backoff.
 
         A stalled request is bounded by the timeout in ``settings``; timeouts,
         connection errors, rate limits and 5xx responses are retried up to
         ``max_retries`` times (honouring Retry-After), anything else is raised at once.
-        The circuit breaker and throttle count the query once, in ``query()``.
+        The circuit breaker counts the query once, in ``query()``; every rate-limited
+        attempt slows the adaptive throttle.
         """
         base_delay = self.config.get("retry_base_delay", 2.0)
         max_delay = self.config.get("retry_max_delay", 60.0)
@@ -591,7 +540,11 @@ class LLMManager:
             except Exception as e:
                 if attempt == self.max_retries or not _is_retriable(e):
                     raise
-                _, retry_after = classify_exception(e)
+                category, retry_after = classify_exception(e)
+                if category == "rate_limited":
+                    # Slow the adaptive throttle even if the retry succeeds (the final
+                    # failed attempt is recorded by query())
+                    self._rate_limiter.record_rate_limit(retry_after)
                 if retry_after:
                     delay = min(retry_after, max_delay)
                 else:
@@ -659,9 +612,7 @@ class LLMManager:
             If response_model is provided: Validated Pydantic model instance or FailedResponse
             Otherwise: LiveResponse, CachedResponse, or FailedResponse
         """
-        effective_temperature = (
-            temperature if temperature is not None else self.temperature
-        )
+        effective_temperature = temperature if temperature is not None else self.temperature
         effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
 
         # Generate cache key
@@ -776,9 +727,7 @@ class LLMManager:
             def _try_cache_write(content: str) -> None:
                 """Cache-write is best-effort; disk-full must not fail the call."""
                 try:
-                    self.cache.set_response(
-                        cache_key, content, prompt, self.model, usage
-                    )
+                    self.cache.set_response(cache_key, content, prompt, self.model, usage)
                 except Exception as cache_err:
                     logger.warning("LLM cache write failed (non-fatal): %s", cache_err)
 
@@ -905,9 +854,7 @@ class LLMManager:
             "total_tokens": total_prompt + total_completion,
             "total_calls": total_calls,
             "avg_prompt_tokens": total_prompt / total_calls if total_calls else 0,
-            "avg_completion_tokens": total_completion / total_calls
-            if total_calls
-            else 0,
+            "avg_completion_tokens": total_completion / total_calls if total_calls else 0,
         }
 
     def __repr__(self) -> str:

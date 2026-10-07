@@ -1029,6 +1029,20 @@ class TestOCELStepContext:
         assert ctx._completed is True
         assert len(ocel_log.events) == 1
 
+    def test_step_stats_are_logged_with_the_completion(self):
+        """A step's own stats (selection sizes, label counts) reach the OCEL event."""
+        ocel_log = OCELLog()
+        logger = OCELRunLogger(ocel_log=ocel_log, run_id="run-1", session_id="session-1", model="gpt-4", repo="test-repo")
+        logger.phase_start("extraction", "")
+        ctx = OCELStepContext(logger, "BusinessConcept", 1)
+        ctx.stats = {"selection": {"selected": 3}}
+
+        ctx.complete()
+
+        (event,) = ocel_log.events
+        assert event.attributes["stats"]["selection"] == {"selected": 3}
+        assert "duration_seconds" in event.attributes["stats"]
+
     def test_context_manager_handles_exception(self):
         """Should log error when exception in context."""
         ocel_log = OCELLog()
@@ -1992,6 +2006,49 @@ class TestLLMQueryEvent:
         assert (a["tokens_in"], a["tokens_out"], a["cache_hit"], a["error_type"]) == (100, 20, False, None)
         assert query_fn.used_cache_keys == ["k1"]
 
+    def test_event_records_the_call_kind_from_the_schema_name(self):
+        """keep / naming / relationship / extraction calls are told apart by their schema."""
+        from deriva.services.benchmarking import BenchmarkConfig
+
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(),
+            graph_manager=MagicMock(),
+            archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["r"], models=["m"]),
+        )
+        llm = MagicMock()
+        llm.query.return_value = MagicMock(content="{}", usage=None)
+        llm.last_call = {}
+        query_fn = orchestrator._create_logging_query_fn(llm, llm, MagicMock(current_config="ApplicationComponent"))
+
+        query_fn("prompt", schema={"name": "element_naming", "schema": {}})
+        query_fn("prompt")
+
+        kinds = [e.attributes["call_kind"] for e in orchestrator.ocel_log.events if e.activity == "LLMQuery"]
+        assert kinds == ["element_naming", None]
+
+    def test_event_hashes_the_decision_apart_from_the_free_text(self):
+        """Answer stability compares decisions; a reworded description is the same decision."""
+        from deriva.services.benchmarking import BenchmarkConfig
+
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(),
+            graph_manager=MagicMock(),
+            archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["r"], models=["m"]),
+        )
+        llm = MagicMock()
+        llm.last_call = {}
+        query_fn = orchestrator._create_logging_query_fn(llm, llm, MagicMock(current_config="Step"))
+
+        for content in ('{"name": "Alpha", "description": "One wording"}', '{"name": "Alpha", "description": "Another wording"}'):
+            llm.query.return_value = MagicMock(content=content, usage=None)
+            query_fn("prompt")
+
+        first, second = [e.attributes for e in orchestrator.ocel_log.events if e.activity == "LLMQuery"]
+        assert first["response_hash"] != second["response_hash"]
+        assert first["decision_hash"] == second["decision_hash"]
+
 
 class TestTimingsExport:
     def test_export_writes_timings_per_run_with_top_queries(self, tmp_path, monkeypatch):
@@ -2195,6 +2252,62 @@ class TestRunModelSnapshot:
         ]
 
 
+class TestSessionMetadataSamples:
+    """session_metadata.json records the LLM samples per step, so voting is visible in every report."""
+
+    def test_samples_are_recorded(self, tmp_path, monkeypatch):
+        import json
+        from pathlib import Path
+
+        monkeypatch.chdir(tmp_path)
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(),
+            graph_manager=MagicMock(),
+            archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["r"], models=["m"]),
+        )
+        orchestrator.session_id = "s"
+        orchestrator._llm_samples = {"DocConcepts": 1, "TypeA.naming": 1}
+
+        orchestrator._export_ocel()
+
+        metadata = json.loads(Path("workspace/benchmarks/s/session_metadata.json").read_text(encoding="utf-8"))
+        assert metadata["llm_samples"] == {"DocConcepts": 1, "TypeA.naming": 1}
+
+
+class TestRunSnapshotCandidates:
+    """The run snapshot records every candidate decision, so keep rates per type can be measured."""
+
+    def test_candidate_decisions_are_recorded(self, tmp_path, monkeypatch):
+        import json
+        from pathlib import Path
+
+        monkeypatch.chdir(tmp_path)
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [Element(name="A", element_type="ApplicationComponent", identifier="ac_a")]
+        archimate_manager.get_relationships.return_value = []
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(),
+            graph_manager=MagicMock(query=MagicMock(return_value=[])),
+            archimate_manager=archimate_manager,
+            config=BenchmarkConfig(repositories=["r"], models=["m"], export_models=True),
+        )
+        orchestrator.session_id = "s"
+        decisions = [
+            {"node_id": "dir::r::b", "element_type": "ApplicationComponent", "stage": "llm_rejected", "name": "b"},
+            {"node_id": "dir::r::a", "element_type": "ApplicationComponent", "stage": "created", "name": "a"},
+        ]
+
+        with patch("deriva.services.benchmarking.ArchiMateXMLExporter"):
+            xml_path = orchestrator._export_run_model("r", "m", 1, candidate_decisions=decisions)
+
+        snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
+        assert snapshot["candidates"] == [
+            {"type": "ApplicationComponent", "source": "dir::r::a", "stage": "created"},
+            {"type": "ApplicationComponent", "source": "dir::r::b", "stage": "llm_rejected"},
+        ]
+
+
 class TestExtractionHonoursNoCache:
     """--no-cache must also make extraction's LLM calls live, or extraction variance is never measured."""
 
@@ -2229,7 +2342,17 @@ class TestRunSnapshotGraphNodes:
         archimate_manager.get_elements.return_value = [Element(name="A", element_type="ApplicationComponent", identifier="a")]
         archimate_manager.get_relationships.return_value = []
         graph_manager = MagicMock()
-        graph_manager.query.side_effect = lambda q, *a, **k: [{"id": "concept::r::user", "types": ["entity", "actor"]}] if "BusinessConcept" in q else [{"id": "tech::r::kafka"}]
+
+        def query(q, *args, **kwargs):
+            if "type(r)" in q:  # incoming edges, for the routes
+                if "BusinessConcept" in q:
+                    return [{"id": "concept::r::alpha", "rel": "Graph:REPRESENTS", "props": None}]
+                return [{"id": "tech::r::beta", "rel": "Graph:CONFIGURES", "props": {"route": "llm"}}]
+            if "BusinessConcept" in q:
+                return [{"id": "concept::r::alpha", "types": ["entity", "actor"], "name": "Alpha"}]
+            return [{"id": "tech::r::beta", "name": "Beta"}]
+
+        graph_manager.query.side_effect = query
         orchestrator = BenchmarkOrchestrator(
             engine=MagicMock(),
             graph_manager=graph_manager,
@@ -2242,4 +2365,57 @@ class TestRunSnapshotGraphNodes:
             xml_path = orchestrator._export_run_model("r", "m", 1)
 
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
-        assert snapshot["graph"] == {"concepts": [["concept::r::user", ["actor", "entity"]]], "technologies": ["tech::r::kafka"]}
+        assert snapshot["graph"] == {
+            "concepts": [["concept::r::alpha", ["actor", "entity"]]],
+            "technologies": ["tech::r::beta"],
+            # Display names keep the word boundaries the ids lost (for name normalization analysis)
+            "concept_names": {"concept::r::alpha": "Alpha"},
+            "technology_names": {"tech::r::beta": "Beta"},
+            # The routes that produced each node (directory, document, structural, llm), for per-route stability
+            "concept_routes": {"concept::r::alpha": ["directory"]},
+            "technology_routes": {"tech::r::beta": ["llm"]},
+        }
+
+
+class TestNodeRoutes:
+    """Routes per LLM-created graph node, read from its incoming edges."""
+
+    def test_routes_from_edge_types_and_stamps(self):
+        from deriva.services.benchmarking import _node_routes
+
+        rows = [
+            {"id": "c1", "rel": "Graph:REPRESENTS", "props": None},
+            {"id": "c1", "rel": "Graph:REFERENCES", "props": None},
+            {"id": "t1", "rel": "Graph:CONFIGURES", "props": {"route": "llm"}},
+            {"id": "t2", "rel": "Graph:CONFIGURES", "props": None},
+        ]
+
+        assert _node_routes(rows) == {"c1": ["directory", "document"], "t1": ["llm"], "t2": ["file"]}
+
+
+class TestIncomingRoutes:
+    """The route query reads only the nodes of one label, on a real (in-memory) graph."""
+
+    @pytest.fixture
+    def graph_manager(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import BusinessConceptNode, DirectoryNode, TechnologyNode
+
+        close_database()
+        gm = GraphManager()
+        gm.connect()
+        gm.add_node(DirectoryNode(name="d", path="d", repository_name="r"), node_id="dir::r::d")
+        gm.add_node(BusinessConceptNode(name="Alpha", concept_type="entity", description="", origin_source="f", repository_name="r"), node_id="concept::r::alpha")
+        gm.add_node(TechnologyNode(name="Beta", tech_category="service", repository_name="r", description=""), node_id="tech::r::beta")
+        gm.add_edge("dir::r::d", "concept::r::alpha", "REPRESENTS")
+        gm.add_edge("dir::r::d", "tech::r::beta", "CONFIGURES", properties={"route": "llm"})
+        yield gm
+        gm.disconnect()
+        close_database()
+
+    def test_each_label_reads_only_its_own_nodes(self, graph_manager):
+        from deriva.services.benchmarking import _incoming_routes
+
+        assert _incoming_routes(graph_manager, "BusinessConcept") == {"concept::r::alpha": ["directory"]}
+        assert _incoming_routes(graph_manager, "Technology") == {"tech::r::beta": ["llm"]}

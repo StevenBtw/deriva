@@ -51,6 +51,7 @@ from typing import Any
 
 import tree_sitter
 
+from .languages import get_extractor, supported_languages
 from .models import (
     ExtractedCall,
     ExtractedImport,
@@ -58,7 +59,6 @@ from .models import (
     ExtractedType,
     FilterConstants,
 )
-from .languages import get_extractor, supported_languages
 
 
 class TreeSitterManager:
@@ -97,9 +97,7 @@ class TreeSitterManager:
         """Initialize the manager."""
         self._parsers: dict[str, tree_sitter.Parser] = {}
 
-    def extract_types(
-        self, source: str, file_path: str | None = None, language: str | None = None
-    ) -> list[ExtractedType]:
+    def extract_types(self, source: str, file_path: str | None = None, language: str | None = None) -> list[ExtractedType]:
         """Extract type definitions from source code.
 
         Args:
@@ -124,9 +122,7 @@ class TreeSitterManager:
 
         return extractor.extract_types(tree, source.encode("utf-8"))
 
-    def extract_methods(
-        self, source: str, file_path: str | None = None, language: str | None = None
-    ) -> list[ExtractedMethod]:
+    def extract_methods(self, source: str, file_path: str | None = None, language: str | None = None) -> list[ExtractedMethod]:
         """Extract method and function definitions from source code.
 
         Args:
@@ -151,9 +147,7 @@ class TreeSitterManager:
 
         return extractor.extract_methods(tree, source.encode("utf-8"))
 
-    def extract_imports(
-        self, source: str, file_path: str | None = None, language: str | None = None
-    ) -> list[ExtractedImport]:
+    def extract_imports(self, source: str, file_path: str | None = None, language: str | None = None) -> list[ExtractedImport]:
         """Extract import statements from source code.
 
         Args:
@@ -178,9 +172,7 @@ class TreeSitterManager:
 
         return extractor.extract_imports(tree, source.encode("utf-8"))
 
-    def extract_calls(
-        self, source: str, file_path: str | None = None, language: str | None = None
-    ) -> list[ExtractedCall]:
+    def extract_calls(self, source: str, file_path: str | None = None, language: str | None = None) -> list[ExtractedCall]:
         """Extract function/method calls from source code.
 
         Args:
@@ -205,9 +197,7 @@ class TreeSitterManager:
 
         return extractor.extract_calls(tree, source.encode("utf-8"))
 
-    def extract_all(
-        self, source: str, file_path: str | None = None, language: str | None = None
-    ) -> dict[str, Any]:
+    def extract_all(self, source: str, file_path: str | None = None, language: str | None = None) -> dict[str, Any]:
         """Extract all elements from source code.
 
         Args:
@@ -272,9 +262,7 @@ class TreeSitterManager:
         """
         return supported_languages()
 
-    def get_filter_constants(
-        self, file_path: str | None = None, language: str | None = None
-    ) -> FilterConstants:
+    def get_filter_constants(self, file_path: str | None = None, language: str | None = None) -> FilterConstants:
         """Get language-specific filter constants for edge extraction.
 
         Args:
@@ -299,9 +287,7 @@ class TreeSitterManager:
     # Private helper methods
     # =========================================================================
 
-    def _resolve_language(
-        self, file_path: str | None, language: str | None
-    ) -> str | None:
+    def _resolve_language(self, file_path: str | None, language: str | None) -> str | None:
         """Resolve the language to use for extraction.
 
         TypeScript files are mapped to JavaScript for extraction.
@@ -351,9 +337,7 @@ class TreeSitterManager:
 
         return self._parsers[language]
 
-    def _parse(
-        self, source: str, language: str, extractor: Any
-    ) -> tree_sitter.Tree | None:
+    def _parse(self, source: str, language: str, extractor: Any) -> tree_sitter.Tree | None:
         """Parse source code into a tree-sitter tree.
 
         Args:

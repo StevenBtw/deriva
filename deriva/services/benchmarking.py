@@ -57,6 +57,9 @@ from deriva.adapters.llm.manager import load_benchmark_models
 from deriva.adapters.llm.models import BenchmarkModelConfig
 from deriva.common.ocel import OCELLog, create_run_id, hash_content, load_benchmark_ocel
 from deriva.common.timing import query_stats, summarize_run_events
+from deriva.modules.analysis import decision_content
+from deriva.modules.analysis.model_quality import compute_model_quality
+from deriva.modules.analysis.semantic_matching import match_elements, parse_archi_xml, parse_exchange_format_xml
 from deriva.services import config as config_service
 from deriva.services import derivation, extraction
 
@@ -183,6 +186,38 @@ class OCELRunLogger:
         )
 
 
+# Incoming edge type -> the extraction route that created the node
+_ROUTE_BY_EDGE = {"REPRESENTS": "directory", "REFERENCES": "document"}
+
+
+def _node_routes(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """The extraction routes that produced each node, read from its incoming edges.
+
+    Directory classification links a concept or technology with REPRESENTS and
+    document extraction with REFERENCES. Technology edges (CONFIGURES) carry their
+    route (``structural`` or ``llm``); edges written before that stamp count as ``file``.
+
+    Args:
+        rows: One row per incoming edge: node ``id``, edge type ``rel``, edge ``props`` (a map)
+    """
+    routes: dict[str, set[str]] = {}
+    for row in rows:
+        rel = str(row.get("rel") or "").rsplit(":", 1)[-1]
+        route = (row.get("props") or {}).get("route", "file") if rel == "CONFIGURES" else _ROUTE_BY_EDGE.get(rel)
+        if route:
+            routes.setdefault(row["id"], set()).add(route)
+    return {node: sorted(found) for node, found in sorted(routes.items())}
+
+
+def _incoming_routes(graph_manager: GraphManager, label: str) -> dict[str, list[str]]:
+    """The extraction routes of every ``Graph:<label>`` node (see ``_node_routes``).
+
+    The labelled node starts the pattern (needed before grafeo 0.5.44, #513, where an
+    expand target kept only its first label; both forms work now).
+    """
+    return _node_routes(graph_manager.query(f"MATCH (n:Graph:{label})<-[r]-() RETURN n.id AS id, type(r) AS rel, properties(r) AS props"))
+
+
 def _print_timings(timings: dict[str, Any]) -> None:
     """Print the slowest steps, LLM totals and slowest graph queries per run."""
     print("TIMINGS (full detail in timings.json)")
@@ -253,7 +288,7 @@ class OCELStepContext:
             objects_created=self._created_objects,
             edges_created=self._created_edges if self._created_edges else None,
             relationships_created=self._created_relationships if self._created_relationships else None,
-            stats={"items_created": self.items_created, "items_processed": self.items_processed, "duration_seconds": self._elapsed_seconds()},
+            stats={**(self.stats or {}), "items_created": self.items_created, "items_processed": self.items_processed, "duration_seconds": self._elapsed_seconds()},
             errors=[],
         )
 
@@ -291,8 +326,6 @@ class BenchmarkConfig:
     defer_relationships: bool = True  # Two-phase derivation: elements first, then relationships (recommended)
     per_repo: bool = False  # Run each repo as separate benchmark (vs combined)
     # Enrichment cache settings (mirrors LLM cache patterns)
-    use_enrichment_cache: bool = True  # Global enrichment cache setting
-    nocache_enrichment_configs: list[str] = field(default_factory=list)  # Configs to skip enrichment cache
     # Extraction cache settings
     no_cache_extraction: bool = False  # Force full re-extraction (ignore fingerprint)
     no_cache_extraction_llm: bool = False  # Re-run LLM extraction steps only (keep structural/AST)
@@ -404,6 +437,8 @@ class BenchmarkOrchestrator:
 
         # Current context for OCEL events
         self._current_run_id: str | None = None
+        # LLM answers per decision per step, recorded in the session metadata
+        self._llm_samples: dict[str, int] = {}
         self._current_model: str | None = None
         self._current_repo: str | None = None
 
@@ -472,12 +507,18 @@ class BenchmarkOrchestrator:
         config_versions: dict[str, dict[str, int]] | None,
         extraction_methods: list[str] | None = None,
         verbose: bool = False,
+        steps: list[str] | None = None,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
-        """Run extraction for one repo, logging its steps and LLM calls to the event log."""
+        """Run extraction for one repo, logging its steps and LLM calls to the event log.
+
+        ``steps`` limits the run to those steps; ``run_id`` names it in the event log
+        (default: the session's extraction run of the repo).
+        """
         model = self._model_configs[self.config.models[0]].model
         run_logger = OCELRunLogger(
             ocel_log=self.ocel_log,
-            run_id=f"{self.session_id}:extraction:{repo_name}",
+            run_id=run_id or f"{self.session_id}:extraction:{repo_name}",
             session_id=self.session_id or "",
             model=model,
             repo=repo_name,
@@ -496,6 +537,7 @@ class BenchmarkOrchestrator:
                 config_versions=config_versions,
                 model=model,
                 extraction_methods=extraction_methods,
+                steps=steps,
             )
         finally:
             self._current_run_id = previous_run_id
@@ -971,9 +1013,6 @@ class BenchmarkOrchestrator:
                     defer_relationships=self.config.defer_relationships,
                     phases=["prep", "generate", "refine"],  # Include refine for graph_relationships
                     config_versions=getattr(self, "_config_versions_snapshot", None),
-                    use_enrichment_cache=self.config.use_enrichment_cache,
-                    nocache_enrichment_configs=self.config.nocache_enrichment_configs or None,
-                    enrichment_bench_hash=bench_hash_str if self.config.bench_hash else None,
                 )
                 stats["derivation"] = result.get("stats", {})
                 self._log_derivation_results(result)
@@ -984,7 +1023,7 @@ class BenchmarkOrchestrator:
             if self.config.export_models and "derivation" in stages:
                 if verbose:
                     print("  Exporting combined model...")
-                model_path = self._export_run_model(combined_repo_name, model_name, iteration)
+                model_path = self._export_run_model(combined_repo_name, model_name, iteration, candidate_decisions=result.get("candidate_decisions", []))
                 if model_path:
                     stats["model_file"] = model_path
 
@@ -1129,6 +1168,9 @@ class BenchmarkOrchestrator:
                 requests=call.get("requests", 0),
                 error_type=call.get("error_type"),
                 response_hash=hash_content(content) if content else None,
+                decision_hash=hash_content(decision_content(content)) if content else None,
+                # keep / naming / relationship / extraction call, from the output schema's name
+                call_kind=(schema or {}).get("name"),
             )
 
             return response
@@ -1181,6 +1223,7 @@ class BenchmarkOrchestrator:
         repo_name: str,
         model_name: str,
         iteration: int,
+        candidate_decisions: list[dict[str, Any]] | None = None,
     ) -> str | None:
         """
         Export ArchiMate model to file after a benchmark run.
@@ -1191,6 +1234,7 @@ class BenchmarkOrchestrator:
             repo_name: Repository name
             model_name: Model config name
             iteration: Run iteration number (1-based)
+            candidate_decisions: The run's candidate decisions (recorded in the JSON snapshot)
 
         Returns:
             Path to exported file, or None if export failed
@@ -1231,6 +1275,10 @@ class BenchmarkOrchestrator:
 
             # JSON snapshot for consistency analysis: the XML carries no properties,
             # but identity by source node and relationship provenance need them
+            concept_rows = self.graph_manager.query("MATCH (n:Graph:BusinessConcept) RETURN n.id AS id, n.conceptTypes AS types, n.conceptName AS name")
+            technology_rows = self.graph_manager.query("MATCH (n:Graph:Technology) RETURN n.id AS id, n.techName AS name")
+            concept_routes = _incoming_routes(self.graph_manager, "BusinessConcept")
+            technology_routes = _incoming_routes(self.graph_manager, "Technology")
             snapshot = {
                 "elements": [{"identifier": e.identifier, "type": e.element_type, "name": e.name, "source": (e.properties or {}).get("source")} for e in elements],
                 "relationships": [
@@ -1243,14 +1291,22 @@ class BenchmarkOrchestrator:
                     }
                     for r in relationships
                 ],
-                # LLM-created graph nodes, so extraction consistency can be measured on its own
+                # LLM-created graph nodes, so extraction consistency can be measured on its own;
+                # display names keep the word boundaries the ids lost (name normalization analysis)
                 "graph": {
-                    "concepts": sorted(
-                        [row["id"], sorted(row.get("types") or [])]
-                        for row in self.graph_manager.query("MATCH (n:Graph:BusinessConcept) RETURN n.id AS id, n.conceptTypes AS types")
-                    ),
-                    "technologies": sorted(row["id"] for row in self.graph_manager.query("MATCH (n:Graph:Technology) RETURN n.id AS id")),
+                    "concepts": sorted([row["id"], sorted(row.get("types") or [])] for row in concept_rows),
+                    "technologies": sorted(row["id"] for row in technology_rows),
+                    "concept_names": dict(sorted((row["id"], row.get("name")) for row in concept_rows)),
+                    "technology_names": dict(sorted((row["id"], row.get("name")) for row in technology_rows)),
+                    # The extraction routes that produced each node, so stability can be measured per route
+                    "concept_routes": concept_routes,
+                    "technology_routes": technology_routes,
                 },
+                # Every candidate's fate per element type (created, llm_rejected, filtered_out, ...), for keep rates
+                "candidates": sorted(
+                    ({"type": d.get("element_type"), "source": d.get("node_id"), "stage": d.get("stage")} for d in candidate_decisions or []),
+                    key=lambda c: (str(c["type"]), str(c["source"]), str(c["stage"])),
+                ),
             }
             output_path.with_suffix(".json").write_text(json.dumps(snapshot, indent=1), encoding="utf-8")
 
@@ -1271,6 +1327,7 @@ class BenchmarkOrchestrator:
 
         # Capture current config versions as snapshot for consistency during benchmark
         self._config_versions_snapshot = config_service.get_active_config_versions(self.engine)
+        self._llm_samples = config_service.llm_samples_per_step(self.engine)
 
         self.engine.execute(
             """
@@ -1384,6 +1441,8 @@ class BenchmarkOrchestrator:
             "completed_at": datetime.now().isoformat(),
             "total_events": len(self.ocel_log.events),
             "object_types": list(self.ocel_log.object_types),
+            # Above 1 means majority voting: consistency is then not single-call behaviour
+            "llm_samples": self._llm_samples,
         }
         with open(output_dir / "session_metadata.json", "w") as f:
             json.dump(summary, f, indent=2)
@@ -1773,6 +1832,61 @@ class InconsistencyLocalization:
         return asdict(self)
 
 
+def model_quality_for_session(
+    session_dir: Path,
+    repositories: list[str],
+    models: list[str],
+    reference_models: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Structural quality of every model a benchmark session exported, one row per run.
+
+    Reads ``models/{repo}_{model}_run{N}.xml`` (for a combined session the repositories'
+    joined name) and adds, where a reference model exists, precision and recall of the
+    elements against it (indicative: the references are hand-made and partly not
+    derivable). Only a name match with the same type counts, and each reference element
+    at most once, so a duplicate costs precision.
+    """
+    if reference_models is None:
+        from deriva.services.analysis import REFERENCE_MODELS
+
+        reference_models = REFERENCE_MODELS
+    rows: list[dict[str, Any]] = []
+    models_dir = Path(session_dir) / "models"
+    names = list(repositories) + (["_".join(sorted(repositories))] if len(repositories) > 1 else [])
+    for repo in names:
+        reference = _reference_elements(reference_models.get(repo))
+        for model in models:
+            prefix = f"{repo.replace('/', '_')}_{model.replace('/', '_')}_run"
+            files = sorted(models_dir.glob(f"{prefix}*.xml"), key=lambda f: int(f.stem[len(prefix) :]) if f.stem[len(prefix) :].isdigit() else 0)
+            for path in files:
+                run = path.stem[len(prefix) :]
+                if not run.isdigit():
+                    continue
+                elements, relationships = parse_exchange_format_xml(path)
+                row: dict[str, Any] = {"repository": repo, "model": model, "run": int(run), **compute_model_quality(elements, relationships).to_dict()}
+                row["reference"] = None
+                if reference:
+                    derived = [{"id": e.identifier, "name": e.name, "type": e.element_type} for e in elements]
+                    named = {m.reference_id for m in match_elements(derived, reference) if m.match_type in NAME_MATCHES and m.derived_type == m.reference_type}
+                    precision = len(named) / len(derived) if derived else 0.0
+                    recall = len(named) / len(reference)
+                    row["reference"] = {"precision": round(precision, 3), "recall": round(recall, 3), "reference_elements": len(reference)}
+                rows.append(row)
+    return rows
+
+
+# Semantic matches that agree on the name and the type (a match on the type alone does not count)
+NAME_MATCHES = {"exact", "fuzzy_name"}
+
+
+def _reference_elements(path: str | None) -> list[Any]:
+    """Elements of a reference model (Archi format first, then the exchange format); none when missing."""
+    if not path or not Path(path).exists():
+        return []
+    elements, _ = parse_archi_xml(path)
+    return elements or parse_exchange_format_xml(path)[0]
+
+
 @dataclass
 class AnalysisSummary:
     """Complete analysis summary."""
@@ -1783,6 +1897,7 @@ class AnalysisSummary:
     inter_model: list[InterModelMetrics]
     localization: InconsistencyLocalization
     overall_consistency: float
+    model_quality: list[dict[str, Any]] = field(default_factory=list)  # one row per exported run model
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -1793,6 +1908,7 @@ class AnalysisSummary:
             "inter_model": [m.to_dict() for m in self.inter_model],
             "localization": self.localization.to_dict(),
             "overall_consistency": self.overall_consistency,
+            "model_quality": self.model_quality,
         }
 
 
@@ -2579,7 +2695,13 @@ class BenchmarkAnalyzer:
             inter_model=inter,
             localization=localization,
             overall_consistency=overall,
+            model_quality=self.compute_model_quality(),
         )
+
+    def compute_model_quality(self) -> list[dict[str, Any]]:
+        """Structural quality of every model the session exported (see ``model_quality_for_session``)."""
+        config = (self.session_info or {}).get("config", {})
+        return model_quality_for_session(Path("workspace/benchmarks") / self.session_id, config.get("repositories", []), config.get("models", []))
 
     def export_summary(self, path: str | None = None, format: str = "json") -> str:
         """
@@ -2642,6 +2764,28 @@ class BenchmarkAnalyzer:
 
         for inter_m in summary.inter_model:
             lines.append(f"| {inter_m.repository} | {', '.join(inter_m.models)} | {len(inter_m.overlap)} | {inter_m.jaccard_similarity:.2f} |")
+
+        if summary.model_quality:
+            lines.extend(
+                [
+                    "",
+                    "## Model Quality",
+                    "",
+                    "Structure of each exported model: relationships per element, elements in no relationship, parts composed into more than one whole,",
+                    "pairs with several relationship types, elements repeating another (should be 0), and element precision and recall against the reference model (indicative).",
+                    "",
+                    "| Repository | Model | Run | Elements | Relationships | Per element | Orphan % | Comp. violations | Double pairs | Duplicate elements | Reference P / R |",
+                    "|------------|-------|-----|----------|---------------|-------------|----------|------------------------|--------------|--------------------|-----------------|",
+                ]
+            )
+            for q in summary.model_quality:
+                ref = q.get("reference")
+                ref_text = f"{ref['precision']:.2f} / {ref['recall']:.2f}" if ref else "-"
+                lines.append(
+                    f"| {q['repository']} | {q['model']} | {q['run']} | {q['elements']} | {q['relationships']} | {q['relationships_per_element']:.2f} | "
+                    f"{q['orphan_share']:.0%} | {q['composition_violations']} | {q['duplicate_pairs']} | {q['duplicate_elements']} | {ref_text} |"
+                )
+            lines.append("")
 
         lines.extend(
             [

@@ -36,12 +36,13 @@ def rel(identifier: str, source: str, target: str, rel_type: str = "Serving", ti
 
 
 class TestOriginTier:
-    def test_graph_edges_are_tier_1(self):
+    def test_graph_edges_and_containment_are_tier_1(self):
         assert origin_tier("Graph:CALLS") == 1
         assert origin_tier("calls_edge") == 1
+        assert origin_tier("containment") == 1
 
     def test_structural_rules_are_tier_2(self):
-        for origin in ("graph_neighbor", "graph_neighbor_2hop", "community", "rule"):
+        for origin in ("graph_neighbor", "community", "rule"):
             assert origin_tier(origin) == 2
 
     def test_llm_and_unknown_are_tier_3(self):
@@ -245,6 +246,83 @@ class TestCyclesAndFailures:
         from deriva.modules.derivation.refine import joint
 
         monkeypatch.setattr(joint, "solve_milp", lambda *a, **k: Result(None, 0.0, status=Status.MAX_ITER))
-        decision = run([el("a"), el("b")], [rel("ab", "a", "b", tier=2)], [])
+        # Two relationships on one pair (H1), so the solver is needed; an unconstrained part is decided without it
+        decision = run([el("a"), el("b")], [rel("ab", "a", "b", tier=2), rel("ab2", "a", "b", "Flow", tier=3)], [])
         assert not decision.ok
         assert decision.kept == [] and decision.merges == {}
+
+
+class TestDecomposition:
+    """Independent parts of the model are solved separately, with the same optimum as one solve."""
+
+    @staticmethod
+    def _instance(seed, n_comp):
+        rng = random.Random(seed)
+        elements, proposals, merges = [], [], []
+        for c in range(n_comp):
+            ids = [f"c{c}e{k}" for k in range(3)]
+            elements += [el(i, pagerank=rng.random()) for i in ids]
+            for k in range(4):
+                s, t = rng.sample(ids, 2)
+                proposals.append(rel(f"c{c}r{k}", s, t, rng.choice(["Composition", "Serving", "Flow"]), tier=rng.randint(1, 3), confidence=rng.random()))
+            if rng.random() < 0.7:
+                a, b = rng.sample(ids, 2)
+                merges.append(MergeCandidate(a, b, tier=rng.randint(1, 3), score=rng.random()))
+        return elements, proposals, merges
+
+    @staticmethod
+    def _prepared(elements, proposals, merges):
+        """The valid proposals and canonical merges, as solve() passes them to _select()."""
+        from deriva.modules.derivation.refine import joint
+
+        types = {e.identifier: e.element_type for e in elements}
+        valid = [
+            p
+            for p in sorted(proposals, key=lambda p: (p.tier, -p.confidence, p.identifier))
+            if p.source != p.target and ARCHIMATE.is_valid(types[p.source], p.relationship_type, types[p.target])
+        ]
+        return valid, joint._canonical_merges(merges, types)
+
+    @staticmethod
+    def _objective(chosen, tiers):
+        n = len(tiers)
+        return tuple(sum(1 for i in chosen if tiers[i] == t) for t in (1, 2, 3)) + (sum(n - i for i in chosen),)
+
+    def test_same_optimum_as_exhaustive_search(self):
+        from itertools import product
+
+        from deriva.modules.derivation.refine import joint
+
+        for seed in range(30):
+            valid, merges = self._prepared(*self._instance(seed, n_comp=2))
+            tiers = [p.tier for p in valid] + [m.tier for m in merges]
+            status, chosen, _ = joint._select(valid, merges, ARCHIMATE)
+            rows = joint._build_rows(valid, merges, ARCHIMATE.single_parent_types)
+
+            best = max(
+                self._objective(pick, tiers)
+                for bits in product((0, 1), repeat=len(tiers))
+                if (pick := {i for i, b in enumerate(bits) if b}) is not None
+                and all(sum(c for i, c in r.coef.items() if i in pick) <= r.rhs for r in rows)
+                and not joint._find_cycles(valid, merges, pick, ARCHIMATE.acyclic_types)
+            )
+
+            assert status == "optimal"
+            assert self._objective(chosen, tiers) == best, seed
+
+    def test_each_component_is_its_own_solve(self, monkeypatch):
+        from solvor.types import Result, Status
+
+        from deriva.modules.derivation.refine import joint
+
+        sizes = []
+
+        def recording_solver(c, a, b, **kwargs):
+            sizes.append(len(c))
+            return Result([0.0] * len(c), 0.0, status=Status.OPTIMAL)
+
+        monkeypatch.setattr(joint, "solve_milp", recording_solver)
+        run(*self._instance(1, n_comp=6))
+
+        assert sizes
+        assert max(sizes) <= 5  # at most 4 proposals and 1 merge per component

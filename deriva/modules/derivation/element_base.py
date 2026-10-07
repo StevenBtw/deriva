@@ -31,40 +31,76 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
-from deriva.adapters.archimate.models import Element, Relationship
+from deriva.adapters.archimate.models import Element, Relationship  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+from deriva.common import current_timestamp
 from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
+    NAMING_SCHEMA,
+    ROLE_SCHEMA,
     Candidate,
     CandidateDecision,
-    NAMING_SCHEMA,
+    ElementPrompt,
     GenerationResult,
+    GraphFilter,
     NamingConfig,
+    NestedFilter,
     PerCandidateConfig,
     RelationshipLLMConfig,
     RelationshipRule,
+    RoleConfig,
+    UnitFilter,
     batch_candidates,
     build_derivation_prompt,
     build_element,
     build_naming_prompt,
+    build_role_prompt,
     build_single_candidate_prompt,
     choose_name,
     compute_candidate_strength,
     derive_batch_relationships,
+    element_identifier,
     extract_response_content,
-    naming_source,
     get_enrichments_from_graph,
+    name_from_source,
+    naming_source,
     parse_derivation_response,
+    parse_role_answer,
     query_candidates,
+    source_casing,
+    structure_element_name,
 )
 from deriva.modules.derivation.refine.base import normalize_name, similarity_ratio
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.graph import GraphManager
-    from deriva.adapters.graph.cache import EnrichmentCacheManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+
+
+def _display_key(name: str) -> str:
+    """Element names within a type compare case- and space-insensitively."""
+    return " ".join(name.lower().split())
+
+
+def _each_word_once(text: str) -> str:
+    """The words of ``text`` in order, each once (compared case-insensitively)."""
+    seen: set[str] = set()
+    words: list[str] = []
+    for word in text.split():
+        if word.casefold() not in seen:
+            seen.add(word.casefold())
+            words.append(word)
+    return " ".join(words)
+
+
+def _relative_path(path: str, repo_name: str) -> str:
+    """A node path relative to the repository, with forward slashes."""
+    path = path.replace("\\", "/").strip("/")
+    return path[len(repo_name) + 1 :] if repo_name and path.startswith(repo_name + "/") else path
 
 
 def _get_element_props(
@@ -142,15 +178,15 @@ class ElementDerivationBase(ABC):
         """
         ...
 
-    def get_filter_kwargs(self, engine: Any) -> dict[str, Any]:
+    def get_filter_kwargs(self, patterns: dict[str, set[str]]) -> dict[str, Any]:
         """
         Get additional kwargs for filter_candidates().
 
-        Pattern-based modules override this to load patterns from config.
+        Pattern-based modules override this to pass their patterns on.
         Graph-based modules can use the default (empty dict).
 
         Args:
-            engine: DuckDB connection for config queries
+            patterns: The step's include/exclude patterns (loaded by the service)
 
         Returns:
             Dict of kwargs to pass to filter_candidates()
@@ -160,7 +196,7 @@ class ElementDerivationBase(ABC):
     def _filter_existing_duplicates(
         self,
         candidates: list[Candidate],
-        archimate_manager: "ArchimateManager",
+        archimate_manager: ArchimateManager,
         threshold: float = 0.85,
     ) -> list[Candidate]:
         """
@@ -178,9 +214,7 @@ class ElementDerivationBase(ABC):
             Filtered candidates with existing matches removed
         """
         try:
-            existing = archimate_manager.get_elements(
-                element_type=self.ELEMENT_TYPE, enabled_only=True
-            )
+            existing = archimate_manager.get_elements(element_type=self.ELEMENT_TYPE, enabled_only=True)
         except Exception:
             # If we can't get existing elements, skip duplicate check
             return candidates
@@ -316,9 +350,8 @@ class ElementDerivationBase(ABC):
 
     def generate(
         self,
-        graph_manager: "GraphManager",
-        archimate_manager: "ArchimateManager",
-        engine: Any,
+        graph_manager: GraphManager,
+        archimate_manager: ArchimateManager,
         llm_query_fn: Callable[..., Any],
         query: str,
         instruction: str,
@@ -329,10 +362,18 @@ class ElementDerivationBase(ABC):
         temperature: float | None = None,
         max_tokens: int | None = None,
         defer_relationships: bool = False,
-        cache_manager: "EnrichmentCacheManager | None" = None,
+        enrichments: dict[str, dict[str, Any]] | None = None,
         relationship_config: RelationshipLLMConfig | None = None,
         per_candidate: PerCandidateConfig | None = None,
         naming: NamingConfig | None = None,
+        patterns: dict[str, set[str]] | None = None,
+        roles: RoleConfig | None = None,
+        skip_when_directory_is: frozenset[str] | None = None,
+        prompt: ElementPrompt | None = None,
+        graph_filter: GraphFilter | None = None,
+        skip_subtypes: bool = False,
+        skip_nested: NestedFilter | None = None,
+        deployable_units: UnitFilter | None = None,
     ) -> GenerationResult:
         """
         Generate elements of this type.
@@ -348,7 +389,6 @@ class ElementDerivationBase(ABC):
         Args:
             graph_manager: GraphManager for querying graph nodes
             archimate_manager: ArchimateManager for creating elements
-            engine: DuckDB connection for config
             llm_query_fn: Function to call LLM
             query: Cypher query to find candidates
             instruction: LLM instruction for derivation
@@ -359,28 +399,43 @@ class ElementDerivationBase(ABC):
             temperature: Optional LLM temperature override
             max_tokens: Optional LLM max_tokens override
             defer_relationships: If True, skip relationship derivation
-            cache_manager: Optional EnrichmentCacheManager for controlled caching
+            enrichments: The run's graph enrichment values by node id (read from the graph when None)
             relationship_config: Relationship config row settings for the LLM
                 relationship pass (None skips that pass)
             per_candidate: Per-candidate naming mode from the element config
                 (None uses batch mode)
             naming: Isolated naming step from the element config (None keeps the
                 structure name)
+            patterns: The step's include/exclude patterns from config (None: none)
+            roles: Candidates classified into roles from the element config (None: every
+                candidate takes the keep and naming path)
+            skip_when_directory_is: Element types whose sources take a directory's candidates
+                out: one structural source, one element (None: nothing left out this way)
+            prompt: The texts of the batch element prompt from the element config (required
+                when candidates are derived in batches)
+            graph_filter: The step's k-core threshold from the element config (None: no
+                k-core threshold)
+            skip_subtypes: One element per contract: a candidate type that inherits from
+                another candidate type of the repository is left out before any ranking or cut
+            skip_nested: One module, one element: a selected directory holding nearly all of its
+                nearest selected ancestor's files of a type is left out after the cut (None: none)
+            deployable_units: Components at the deployable-unit level: with enough outermost
+                units among the directory candidates, only those units stay, before the ranking
+                and cut (None: the candidates stay)
 
         Returns:
             GenerationResult with success status, counts, and any errors
         """
         result = GenerationResult(success=True)
 
-        # Get filter kwargs (patterns for pattern-based modules)
-        filter_kwargs = self.get_filter_kwargs(engine)
+        # Get filter kwargs (patterns for pattern-based modules, the step's graph threshold)
+        filter_kwargs = self.get_filter_kwargs(patterns or {})
+        if graph_filter is not None:
+            filter_kwargs["graph_filter"] = graph_filter
 
-        # Get enrichments and query candidates
-        enrichments = get_enrichments_from_graph(
-            graph_manager,
-            cache_manager=cache_manager,
-            config_name=self.ELEMENT_TYPE,
-        )
+        # Enrichments (the run's values when given) and candidates
+        if enrichments is None:
+            enrichments = get_enrichments_from_graph(graph_manager)
 
         try:
             candidates = query_candidates(graph_manager, query, enrichments)
@@ -397,14 +452,56 @@ class ElementDerivationBase(ABC):
         # Track all queried candidates for threshold analysis
         result.candidates_queried = len(candidates)
 
-        self.logger.info(
-            "Found %d candidates for %s", len(candidates), self.ELEMENT_TYPE
-        )
+        self.logger.info("Found %d candidates for %s", len(candidates), self.ELEMENT_TYPE)
+
+        # One element per contract: a type that inherits from another candidate type of the
+        # repository is represented by it and leaves the list before any ranking or cut
+        if skip_subtypes:
+            subtypes = self._subtypes_of_candidates(candidates, graph_manager)
+            for c in candidates:
+                if c.node_id in subtypes:
+                    result.candidate_decisions.append(
+                        CandidateDecision(
+                            node_id=c.node_id,
+                            name=c.name,
+                            element_type=self.ELEMENT_TYPE,
+                            pagerank=c.pagerank,
+                            kcore_level=c.kcore_level,
+                            in_degree=c.in_degree,
+                            out_degree=c.out_degree,
+                            confidence=c.properties.get("confidence"),
+                            stage="duplicate_removed",
+                            became_element=False,
+                        )
+                    )
+            candidates = [c for c in candidates if c.node_id not in subtypes]
+
+        # One structural source, one element: a candidate whose directory already is an element's
+        # source is left out before the ranking and cut, so it takes no place (recorded as filtered out)
+        eligible = candidates
+        if skip_when_directory_is:
+            represented = self._represented_by_elements(candidates, skip_when_directory_is, graph_manager, archimate_manager)
+            eligible = [c for c in candidates if c.node_id not in represented]
+
+        # Components at the deployable-unit level: with enough outermost units, the units are the candidates
+        not_units: set[str] = set()
+        if deployable_units is not None:
+            units = self._outermost_units(eligible, deployable_units, graph_manager)
+            if len(units) >= deployable_units.min_units:
+                not_units = {c.node_id for c in eligible if c.node_id not in units}
+                eligible = [c for c in eligible if c.node_id in units]
+
+        # A candidate whose annotation shows what it is (per_candidate.decorators) is not judged by its
+        # name: it passes the name filters and the cut
+        marked: list[Candidate] = []
+        if per_candidate is not None and per_candidate.decorators:
+            marked_pattern = re.compile(per_candidate.decorators)
+            marked = [c for c in eligible if any(marked_pattern.fullmatch(str(d)) for d in c.properties.get("decorators") or [])]
+            marked_ids = {c.node_id for c in marked}
+            eligible = [c for c in eligible if c.node_id not in marked_ids]
 
         # Filter candidates (module-specific)
-        filtered = self.filter_candidates(
-            candidates, enrichments, max_candidates, **filter_kwargs
-        )
+        filtered = marked + (self.filter_candidates(eligible, enrichments, max_candidates, **filter_kwargs) if eligible else [])
 
         if not filtered:
             self.logger.info("No candidates passed filtering for %s", self.ELEMENT_TYPE)
@@ -420,7 +517,7 @@ class ElementDerivationBase(ABC):
                         in_degree=c.in_degree,
                         out_degree=c.out_degree,
                         confidence=c.properties.get("confidence"),
-                        stage="filtered_out",
+                        stage="not_a_unit" if c.node_id in not_units else "filtered_out",
                         became_element=False,
                     )
                 )
@@ -429,9 +526,7 @@ class ElementDerivationBase(ABC):
         result.candidates_filtered = len(filtered)
         filtered_ids = {c.node_id for c in filtered}
 
-        self.logger.info(
-            "Filtered to %d candidates for LLM (%s)", len(filtered), self.ELEMENT_TYPE
-        )
+        self.logger.info("Filtered to %d candidates for LLM (%s)", len(filtered), self.ELEMENT_TYPE)
 
         # Track candidates filtered out at this stage
         for c in candidates:
@@ -446,10 +541,32 @@ class ElementDerivationBase(ABC):
                         in_degree=c.in_degree,
                         out_degree=c.out_degree,
                         confidence=c.properties.get("confidence"),
-                        stage="filtered_out",
+                        stage="not_a_unit" if c.node_id in not_units else "filtered_out",
                         became_element=False,
                     )
                 )
+
+        # One module, one element: a directory holding nearly all of its nearest selected
+        # ancestor's files is represented by it; after the cut, so no place moves to the next candidate
+        if skip_nested is not None:
+            nested = self._nested_in_ancestors(filtered, skip_nested, graph_manager)
+            for c in filtered:
+                if c.node_id in nested:
+                    result.candidate_decisions.append(
+                        CandidateDecision(
+                            node_id=c.node_id,
+                            name=c.name,
+                            element_type=self.ELEMENT_TYPE,
+                            pagerank=c.pagerank,
+                            kcore_level=c.kcore_level,
+                            in_degree=c.in_degree,
+                            out_degree=c.out_degree,
+                            confidence=c.properties.get("confidence"),
+                            stage="nested_removed",
+                            became_element=False,
+                        )
+                    )
+            filtered = [c for c in filtered if c.node_id not in nested]
 
         # Pre-generation duplicate check - filter out candidates matching existing elements
         pre_dedup_ids = {c.node_id for c in filtered}
@@ -475,9 +592,7 @@ class ElementDerivationBase(ABC):
                 )
 
         if not filtered:
-            self.logger.info(
-                "All candidates matched existing elements for %s", self.ELEMENT_TYPE
-            )
+            self.logger.info("All candidates matched existing elements for %s", self.ELEMENT_TYPE)
             return result
 
         # Consolidate near-duplicate candidate names before LLM
@@ -501,8 +616,81 @@ class ElementDerivationBase(ABC):
                 )
         filtered = consolidated
 
+        # Names are unique within the type, decided by structure before any LLM call: a
+        # candidate whose structure name repeats an earlier candidate's is left out, and an
+        # LLM name never takes another candidate's structure name (see _apply_naming)
+        repo_name = self._active_repo_name(graph_manager)
+        structure_names: dict[str, str] = {}  # candidate id -> key of its structure name
+        for c in filtered:
+            key = _display_key(structure_element_name(c.node_id, c.name, repo_name))
+            if key in structure_names.values():
+                result.candidate_decisions.append(
+                    CandidateDecision(
+                        node_id=c.node_id,
+                        name=c.name,
+                        element_type=self.ELEMENT_TYPE,
+                        pagerank=c.pagerank,
+                        kcore_level=c.kcore_level,
+                        in_degree=c.in_degree,
+                        out_degree=c.out_degree,
+                        confidence=c.properties.get("confidence"),
+                        stage="duplicate_removed",
+                        became_element=False,
+                    )
+                )
+                continue
+            structure_names[c.node_id] = key
+        filtered = [c for c in filtered if c.node_id in structure_names]
+
         # Track candidates sent to LLM
         result.candidates_to_llm = len(filtered)
+
+        llm_kwargs: dict[str, Any] = {}
+        if temperature is not None:
+            llm_kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            llm_kwargs["max_tokens"] = max_tokens
+
+        # Names given so far in this step: role elements first, then kept candidates
+        taken: list[str] = []
+
+        # Candidates the step classifies into roles leave the keep and naming path
+        if roles is not None:
+            role_candidates = [c for c in filtered if roles.labels.intersection(c.labels)]
+            filtered = [c for c in filtered if not roles.labels.intersection(c.labels)]
+            if role_candidates:
+                self._process_roles(
+                    role_candidates, roles, llm_query_fn, llm_kwargs, graph_manager, archimate_manager, repo_name, batch_size, result, taken, naming, structure_names
+                )
+
+        # Candidates whose annotation shows what they are are named, not judged; the others take the batch path
+        if per_candidate is not None and per_candidate.decorators:
+            pattern = re.compile(per_candidate.decorators)
+            marked = [c for c in filtered if any(pattern.fullmatch(str(d)) for d in c.properties.get("decorators") or [])]
+            if marked:
+                self._process_per_candidate(
+                    filtered=marked,
+                    instruction=instruction,
+                    rules=per_candidate.rules,
+                    persona=per_candidate.persona,
+                    llm_query_fn=llm_query_fn,
+                    llm_kwargs=llm_kwargs,
+                    archimate_manager=archimate_manager,
+                    graph_manager=graph_manager,
+                    existing_elements=existing_elements,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    defer_relationships=defer_relationships,
+                    result=result,
+                    repo_name=repo_name,
+                    structure_names=structure_names,
+                    taken=taken,
+                    relationship_config=relationship_config,
+                    naming=naming,
+                )
+            marked_ids = {c.node_id for c in marked}
+            filtered = [c for c in filtered if c.node_id not in marked_ids]
+            per_candidate = None
 
         # Compute abstention strength signal from the filtered set.
         # Shared across batches so the LLM sees one consistent view.
@@ -511,17 +699,12 @@ class ElementDerivationBase(ABC):
         # Batch and process
         batches = batch_candidates(filtered, batch_size)
 
-        llm_kwargs: dict[str, Any] = {}
-        if temperature is not None:
-            llm_kwargs["temperature"] = temperature
-        if max_tokens is not None:
-            llm_kwargs["max_tokens"] = max_tokens
-
         if per_candidate is not None and len(filtered) >= per_candidate.min_pool:
             self._process_per_candidate(
                 filtered=filtered,
                 instruction=instruction,
                 rules=per_candidate.rules,
+                persona=per_candidate.persona,
                 llm_query_fn=llm_query_fn,
                 llm_kwargs=llm_kwargs,
                 archimate_manager=archimate_manager,
@@ -531,9 +714,15 @@ class ElementDerivationBase(ABC):
                 max_tokens=max_tokens,
                 defer_relationships=defer_relationships,
                 result=result,
+                repo_name=repo_name,
+                structure_names=structure_names,
+                taken=taken,
                 relationship_config=relationship_config,
                 naming=naming,
             )
+        elif batches and prompt is None:
+            result.success = False
+            result.errors.append(f"{self.ELEMENT_TYPE}: params.prompt is missing (the texts of the batch element prompt)")
         else:
             for batch_num, batch in enumerate(batches, 1):
                 self._process_batch(
@@ -551,6 +740,10 @@ class ElementDerivationBase(ABC):
                     max_tokens=max_tokens,
                     defer_relationships=defer_relationships,
                     result=result,
+                    repo_name=repo_name,
+                    structure_names=structure_names,
+                    taken=taken,
+                    element_prompt=cast(ElementPrompt, prompt),
                     relationship_config=relationship_config,
                     naming=naming,
                 )
@@ -563,6 +756,263 @@ class ElementDerivationBase(ABC):
         )
         return result
 
+    def _process_roles(
+        self,
+        candidates: list[Candidate],
+        roles: RoleConfig,
+        llm_query_fn: Callable[..., Any],
+        llm_kwargs: dict[str, Any],
+        graph_manager: GraphManager,
+        archimate_manager: ArchimateManager,
+        repo_name: str,
+        batch_size: int,
+        result: GenerationResult,
+        taken: list[str],
+        naming: NamingConfig | None = None,
+        structure_names: dict[str, str] | None = None,
+    ) -> None:
+        """Classify candidates into the configured roles and create one element per chosen role.
+
+        Candidates are asked in batches of ``batch_size`` in id order; a candidate left out of
+        an answer is asked again up to ``roles.missing_retries`` times. The element's identity
+        and name come from the role; its source is the first member by id (for graph
+        grounding) and ``sources`` lists every member. With ``element_per`` "candidate" each
+        candidate with a role is its own element, named as written or by ``name_template``.
+        """
+        ordered = sorted(candidates, key=lambda c: c.node_id)
+        role_of: dict[str, str | None] = {}
+        for start in range(0, len(ordered), batch_size):
+            pending = ordered[start : start + batch_size]
+            for _ in range(1 + roles.missing_retries):
+                prompt = build_role_prompt(pending, roles.instruction, roles.names, show_path=roles.show_path)
+                try:
+                    content, error = extract_response_content(llm_query_fn(prompt, ROLE_SCHEMA, **llm_kwargs))
+                except Exception as e:
+                    content, error = "", str(e)
+                if error:
+                    self.logger.warning("Role classification failed for %s: %s", self.ELEMENT_TYPE, error)
+                    continue
+                role_of.update(parse_role_answer(content, {c.node_id for c in pending}, roles.names))
+                pending = [c for c in pending if c.node_id not in role_of]
+                if not pending:
+                    break
+
+        # The elements: (identifier, name, members, role key)
+        containers: dict[str, str] = {}
+        subjects: dict[str, str] = {}
+        duplicates: set[str] = set()
+        if roles.element_per == "candidate":
+            chosen = [c for c in ordered if role_of.get(c.node_id) is not None]
+            if roles.name_template:
+                # The name from structure: container + subject + role name, each word once
+                containers = self._containers_of(chosen, roles.container_type, graph_manager, archimate_manager, repo_name)
+                subjects = {c.node_id: structure_element_name(c.node_id, c.name, repo_name) for c in chosen}
+                names = {
+                    c.node_id: _each_word_once(roles.name_template.format(container=containers[c.node_id], subject=subjects[c.node_id], role=roles.names[role_of[c.node_id] or ""]))
+                    for c in chosen
+                }
+            else:
+                # Named as the candidate is (as written)
+                names = {c.node_id: c.name for c in chosen}
+            # Names are unique within the type: a candidate whose planned name repeats a name given
+            # before (earlier in the step or to an earlier candidate) is left out, as structure names are
+            seen = {_display_key(name) for name in taken}
+            for c in chosen:
+                key = _display_key(names[c.node_id])
+                if key in seen:
+                    duplicates.add(c.node_id)
+                seen.add(key)
+            planned = [(element_identifier(self.ELEMENT_TYPE, c.node_id), names[c.node_id], [c], role_of[c.node_id] or "") for c in chosen if c.node_id not in duplicates]
+        else:
+            members: dict[str, list[Candidate]] = {}
+            for c in ordered:
+                role = role_of.get(c.node_id)
+                if role is not None:
+                    members.setdefault(role, []).append(c)
+            planned = [(element_identifier(self.ELEMENT_TYPE, f"role::{repo_name}::{key}"), name, members[key], key) for key, name in roles.names.items() if key in members]
+
+        element_of: dict[str, str] = {}  # candidate id -> identifier of its element
+        for identifier, name, group, key in planned:
+            source = group[0]
+            properties: dict[str, Any] = {
+                "source": source.node_id,
+                "role": key,
+                "derived_at": current_timestamp(),
+                "source_pagerank": source.pagerank,
+                "source_louvain_community": source.louvain_community,
+            }
+            if roles.element_per == "role":
+                properties["sources"] = [c.node_id for c in group]
+            element_data: dict[str, Any] = {
+                "identifier": identifier,
+                "name": name,
+                "element_type": self.ELEMENT_TYPE,
+                "documentation": roles.documentation.format(
+                    members=", ".join(c.name for c in group), role=roles.names[key], container=containers.get(source.node_id, ""), subject=subjects.get(source.node_id, "")
+                ),
+                "properties": properties,
+            }
+            # The step's naming call may rename a candidate's element (the usual uniqueness rules apply)
+            if roles.naming_call and naming is not None and roles.element_per == "candidate":
+                try:
+                    self._apply_naming(element_data, source, naming, llm_query_fn, llm_kwargs, repo_name, taken, structure_names or {})
+                except Exception as e:
+                    self.logger.warning("Naming failed for %s: %s", source.node_id, e)
+            try:
+                archimate_manager.add_element(
+                    Element(
+                        name=element_data["name"],
+                        element_type=self.ELEMENT_TYPE,
+                        identifier=element_data["identifier"],
+                        documentation=element_data["documentation"],
+                        properties=element_data["properties"],
+                    )
+                )
+            except Exception as e:
+                result.errors.append(f"Failed to create {self.ELEMENT_TYPE} element {element_data['identifier']}: {e}")
+                continue
+            result.elements_created += 1
+            result.created_elements.append(element_data)
+            taken.append(element_data["name"])
+            for c in group:
+                element_of[c.node_id] = element_data["identifier"]
+
+        for c in ordered:
+            answered = c.node_id in role_of
+            result.candidate_decisions.append(
+                CandidateDecision(
+                    node_id=c.node_id,
+                    name=c.name,
+                    element_type=self.ELEMENT_TYPE,
+                    pagerank=c.pagerank,
+                    kcore_level=c.kcore_level,
+                    in_degree=c.in_degree,
+                    out_degree=c.out_degree,
+                    confidence=c.properties.get("confidence"),
+                    stage="created" if c.node_id in element_of else ("duplicate_removed" if c.node_id in duplicates else ("llm_rejected" if answered else "llm_unanswered")),
+                    became_element=c.node_id in element_of,
+                    element_id=element_of.get(c.node_id),
+                )
+            )
+
+    def _containers_of(
+        self,
+        candidates: list[Candidate],
+        element_type: str,
+        graph_manager: GraphManager,
+        archimate_manager: ArchimateManager,
+        repo_name: str,
+    ) -> dict[str, str]:
+        """Per candidate id, the name of the ``element_type`` element whose source directory holds it.
+
+        The deepest such directory wins; a candidate that none holds gets its top-level module's
+        name from structure ("" without a path). Structure only: directories and paths.
+        """
+        from deriva.modules.derivation.refine.normalization import strip_repo_prefix
+
+        sources = {e.properties.get("source"): e.name for e in (archimate_manager.get_elements(element_type=element_type) if element_type else []) if e.properties.get("source")}
+        rows = graph_manager.query("MATCH (d:Graph:Directory) WHERE d.id IN $ids RETURN d.id AS id, d.path AS path", {"ids": sorted(sources)}) if sources else []
+        directories = [(_relative_path(row["path"], repo_name), sources[row["id"]]) for row in rows if row.get("path") and row.get("id") in sources]
+        containers: dict[str, str] = {}
+        for c in candidates:
+            path = _relative_path(c.properties.get("filePath") or c.properties.get("path") or "", repo_name)
+            holders = [(len(directory), name) for directory, name in directories if path == directory or path.startswith(directory + "/")]
+            if holders:
+                containers[c.node_id] = max(holders)[1]
+            elif path:
+                module = name_from_source(path.split("/")[0])
+                containers[c.node_id] = strip_repo_prefix(module, repo_name) if repo_name else module
+            else:
+                containers[c.node_id] = ""
+        return containers
+
+    def _represented_by_elements(
+        self,
+        candidates: list[Candidate],
+        element_types: frozenset[str],
+        graph_manager: GraphManager,
+        archimate_manager: ArchimateManager,
+    ) -> set[str]:
+        """Ids of the candidates a directory represents when that directory is the source of an element of ``element_types``."""
+        sources = {e.properties.get("source") for element_type in sorted(element_types) for e in archimate_manager.get_elements(element_type=element_type)}
+        if not candidates or not sources:
+            return set()
+        rows = graph_manager.query(
+            "MATCH (d:Graph:Directory)-[r]->(t) WHERE type(r) = 'Graph:REPRESENTS' AND t.id IN $ids RETURN d.id AS dir, t.id AS id",
+            {"ids": [c.node_id for c in candidates]},
+        )
+        return {row["id"] for row in rows if row["dir"] in sources}
+
+    def _subtypes_of_candidates(self, candidates: list[Candidate], graph_manager: GraphManager) -> set[str]:
+        """Ids of the candidates that inherit from another candidate type defined in the repository.
+
+        A placeholder for an unresolved or external base type never represents a candidate.
+        """
+        if len(candidates) < 2:
+            return set()
+        rows = graph_manager.query(
+            "MATCH (a:Graph:TypeDefinition)-[r]->(b) WHERE type(r) = 'Graph:INHERITS' AND a.id IN $ids AND b.id IN $ids "
+            "AND b.category <> 'external_reference' RETURN DISTINCT a.id AS id",
+            {"ids": [c.node_id for c in candidates]},
+        )
+        return {row["id"] for row in rows}
+
+    def _outermost_units(self, candidates: list[Candidate], units: UnitFilter, graph_manager: GraphManager) -> set[str]:
+        """Ids of the directory candidates that directly hold a unit file and lie in no other such candidate."""
+        ids = [c.node_id for c in candidates]
+        if not ids:
+            return set()
+        rows = graph_manager.query(
+            "MATCH (d:Graph:Directory)-[:`Graph:CONTAINS`]->(f:Graph:File) WHERE d.id IN $ids AND f.active = true AND toLower(f.fileName) IN $names RETURN DISTINCT d.id AS id",
+            {"ids": ids, "names": sorted(units.file_names)},
+        )
+        found = {row["id"] for row in rows}
+        paths = {c.node_id: str(c.properties.get("path") or "").replace(chr(92), "/").rstrip("/") for c in candidates if c.node_id in found}
+        return {i for i, p in paths.items() if p and not any(o != p and p.startswith(o + "/") for o in paths.values() if o)}
+
+    def _nested_in_ancestors(self, candidates: list[Candidate], nested: NestedFilter, graph_manager: GraphManager) -> set[str]:
+        """Ids of the directory candidates that hold at least ``nested.min_share`` of their nearest kept ancestor's files.
+
+        Files of ``nested.file_type`` are counted below each directory through containment, over
+        any depth. Ancestors are decided top-down, so a left-out directory never represents another.
+        """
+        if len(candidates) < 2:
+            return set()
+        ids = [c.node_id for c in candidates]
+        pairs = graph_manager.query(
+            "MATCH (a:Graph:Directory)-[:`Graph:CONTAINS`*]->(b:Graph:Directory) WHERE a.id IN $ids AND b.id IN $ids RETURN a.id AS a, b.id AS b",
+            {"ids": ids},
+        )
+        ancestors: dict[str, set[str]] = {}
+        for row in pairs:
+            ancestors.setdefault(row["b"], set()).add(row["a"])
+        if not ancestors:
+            return set()
+        rows = graph_manager.query(
+            "MATCH (d:Graph:Directory)-[:`Graph:CONTAINS`*]->(f:Graph:File) WHERE d.id IN $ids AND f.active = true AND f.fileType = $file_type RETURN d.id AS id, count(f) AS n",
+            {"ids": ids, "file_type": nested.file_type},
+        )
+        files = {row["id"]: row["n"] for row in rows}
+        left_out: set[str] = set()
+        for node_id in sorted(ancestors, key=lambda d: len(ancestors[d])):
+            kept = ancestors[node_id] - left_out
+            if not kept:
+                continue
+            nearest = max(kept, key=lambda a: len(ancestors.get(a, ())))
+            if files.get(nearest, 0) and files.get(node_id, 0) / files[nearest] >= nested.min_share:
+                left_out.add(node_id)
+        return left_out
+
+    def _active_repo_name(self, graph_manager: GraphManager) -> str:
+        """The active repository's name ("" when unknown), stripped from element names as a leading token."""
+        try:
+            rows = graph_manager.query("MATCH (r:Graph:Repository) WHERE r.active = true RETURN r.repository_name as name LIMIT 1")
+            if rows and rows[0].get("name"):
+                return rows[0]["name"]
+        except Exception as e:
+            self.logger.debug("Could not read active repository name: %s", e)
+        return ""
+
     def _apply_naming(
         self,
         element_data: dict[str, Any],
@@ -572,47 +1022,41 @@ class ElementDerivationBase(ABC):
         llm_kwargs: dict[str, Any],
         repo_name: str,
         taken: list[str],
+        structure_names: dict[str, str],
     ) -> None:
         """Name an element with the isolated naming step, in place.
 
         The prompt holds only the candidate's structural description, the type
         and the configured convention, so the same source gets the same prompt in
         every run; ``naming.samples`` answers are combined by majority. Without a
-        usable answer, or when a sibling already has the name, the structure name
-        stays.
+        usable answer, when a sibling already has the name, or when the name is
+        another candidate's structure name (``structure_names``: candidate id ->
+        name key), the structure name stays: which candidates become elements never
+        depends on an LLM name.
         """
         from deriva.modules.derivation.refine.normalization import strip_repo_prefix
 
-        prompt = build_naming_prompt(
-            naming_source(candidate), self.ELEMENT_TYPE, naming.instruction
-        )
+        prompt = build_naming_prompt(naming_source(candidate), self.ELEMENT_TYPE, naming.instruction)
         answers: list[str | None] = []
         for _ in range(naming.samples):
             try:
-                content, error = extract_response_content(
-                    llm_query_fn(prompt, NAMING_SCHEMA, **llm_kwargs)
-                )
+                content, error = extract_response_content(llm_query_fn(prompt, NAMING_SCHEMA, **llm_kwargs))
                 if error:
                     continue
-                text = (
-                    content.strip()
-                    .removeprefix("```json")
-                    .removeprefix("```")
-                    .removesuffix("```")
-                    .strip()
-                )
+                text = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
                 answers.append(json.loads(text).get("name"))
             except (ValueError, AttributeError) as e:
-                self.logger.debug(
-                    "Unusable naming answer for %s: %s", candidate.node_id, e
-                )
+                self.logger.debug("Unusable naming answer for %s: %s", candidate.node_id, e)
         name = choose_name(answers)
         # No type-suffix stripping here: the configured convention governs suffixes,
         # and words like "Service" or "API" are often part of the right name
         if name and repo_name:
             name = strip_repo_prefix(name, repo_name)
-        norm_taken = {" ".join(n.lower().split()) for n in taken}
-        if name and " ".join(name.lower().split()) not in norm_taken:
+        # Words the source spells with capitals keep its spelling, so casing never differs between runs
+        if name:
+            name = source_casing(name, candidate.name)
+        blocked = {_display_key(n) for n in taken} | {key for node_id, key in structure_names.items() if node_id != candidate.node_id}
+        if name and name != element_data["name"] and _display_key(name) not in blocked:
             element_data["properties"]["structure_name"] = element_data["name"]
             element_data["name"] = name
 
@@ -624,13 +1068,17 @@ class ElementDerivationBase(ABC):
         example: str,
         llm_query_fn: Callable[..., Any],
         llm_kwargs: dict[str, Any],
-        archimate_manager: "ArchimateManager",
-        graph_manager: "GraphManager",
+        archimate_manager: ArchimateManager,
+        graph_manager: GraphManager,
         existing_elements: list[dict[str, Any]],
         temperature: float | None,
         max_tokens: int | None,
         defer_relationships: bool,
         result: GenerationResult,
+        repo_name: str,
+        structure_names: dict[str, str],
+        taken: list[str],
+        element_prompt: ElementPrompt,
         strength: dict[str, Any] | None = None,
         relationship_config: RelationshipLLMConfig | None = None,
         naming: NamingConfig | None = None,
@@ -662,7 +1110,7 @@ class ElementDerivationBase(ABC):
             candidates=batch,
             instruction=instruction,
             example=example,
-            element_type=self.ELEMENT_TYPE,
+            prompt=element_prompt,
             strength=strength,
         )
 
@@ -671,25 +1119,16 @@ class ElementDerivationBase(ABC):
             response = llm_query_fn(prompt, DERIVATION_SCHEMA, **llm_kwargs)
             response_content, error = extract_response_content(response)
             if error:
-                result.errors.append(
-                    f"LLM error in batch {batch_num} ({self.ELEMENT_TYPE}): {error}"
-                )
+                result.errors.append(f"LLM error in batch {batch_num} ({self.ELEMENT_TYPE}): {error}")
                 return
         except Exception as e:
-            result.errors.append(
-                f"LLM error in batch {batch_num} ({self.ELEMENT_TYPE}): {e}"
-            )
+            result.errors.append(f"LLM error in batch {batch_num} ({self.ELEMENT_TYPE}): {e}")
             return
 
         # Parse response
         parse_result = parse_derivation_response(response_content)
         if not parse_result["success"]:
-            result.errors.extend(
-                [
-                    f"{self.ELEMENT_TYPE} batch {batch_num}: {e}"
-                    for e in parse_result.get("errors", [])
-                ]
-            )
+            result.errors.extend([f"{self.ELEMENT_TYPE} batch {batch_num}: {e}" for e in parse_result.get("errors", [])])
             return
 
         # Build enrichment lookup for this batch
@@ -701,28 +1140,13 @@ class ElementDerivationBase(ABC):
             for c in batch
         }
 
-        # Read active repo name once for name normalization at build time.
-        # Stripping the repo prefix prevents cross-run flutter like
-        # "<Repo> Client Interaction" vs "Client Interaction".
-        repo_name = ""
-        try:
-            rows = graph_manager.query(
-                "MATCH (r:Graph:Repository) WHERE r.active = true "
-                "RETURN r.repository_name as name LIMIT 1"
-            )
-            if rows and rows[0].get("name"):
-                repo_name = rows[0]["name"]
-        except Exception as e:
-            self.logger.debug("Could not read active repository name: %s", e)
-
         # Create elements
         batch_elements: list[dict[str, Any]] = []
-        created_source_ids: set[str] = set()
+        created_by_source: dict[str, dict[str, Any]] = {}
 
         # Element names come from the candidates' own names (structure), not the LLM
         source_names = {c.node_id: c.name for c in batch}
         candidates_by_id = {c.node_id: c for c in batch}
-        batch_names: list[str] = []
         for derived in parse_result.get("data", []):
             element_result = build_element(
                 derived,
@@ -757,9 +1181,10 @@ class ElementDerivationBase(ABC):
                     llm_query_fn,
                     llm_kwargs,
                     repo_name,
-                    batch_names,
+                    taken,
+                    structure_names,
                 )
-            batch_names.append(element_data["name"])
+            taken.append(element_data["name"])
 
             try:
                 element = Element(
@@ -777,24 +1202,18 @@ class ElementDerivationBase(ABC):
                 # Track source node that became element
                 source_id = derived.get("source")
                 if source_id:
-                    created_source_ids.add(source_id)
+                    created_by_source[source_id] = element_data
             except Exception as e:
-                result.errors.append(
-                    f"Failed to create {self.ELEMENT_TYPE} element "
-                    f"{element_data.get('identifier', 'unknown')}: {e}"
-                )
+                result.errors.append(f"Failed to create {self.ELEMENT_TYPE} element {element_data.get('identifier', 'unknown')}: {e}")
 
         # Track candidate decisions for this batch
         for c in batch:
-            if c.node_id in created_source_ids:
-                # Find the element that was created from this candidate
-                element_id = None
-                element_confidence = None
-                for derived in parse_result.get("data", []):
-                    if derived.get("source") == c.node_id:
-                        element_id = derived.get("identifier")
-                        element_confidence = derived.get("confidence")
-                        break
+            created = created_by_source.get(c.node_id)
+            if created is not None:
+                # The element created from this candidate (its identifier comes from the
+                # structure, not from the identifier the LLM proposed)
+                element_id = created["identifier"]
+                element_confidence = created.get("properties", {}).get("confidence")
 
                 result.candidate_decisions.append(
                     CandidateDecision(
@@ -848,15 +1267,19 @@ class ElementDerivationBase(ABC):
         filtered: list[Candidate],
         instruction: str,
         rules: str,
+        persona: str,
         llm_query_fn: Callable[..., Any],
         llm_kwargs: dict[str, Any],
-        archimate_manager: "ArchimateManager",
-        graph_manager: "GraphManager",
+        archimate_manager: ArchimateManager,
+        graph_manager: GraphManager,
         existing_elements: list[dict[str, Any]],
         temperature: float | None,
         max_tokens: int | None,
         defer_relationships: bool,
         result: GenerationResult,
+        repo_name: str,
+        structure_names: dict[str, str],
+        taken: list[str],
         relationship_config: RelationshipLLMConfig | None = None,
         naming: NamingConfig | None = None,
     ) -> None:
@@ -874,56 +1297,31 @@ class ElementDerivationBase(ABC):
             for c in filtered
         }
 
-        repo_name = ""
-        try:
-            rows = graph_manager.query(
-                "MATCH (r:Graph:Repository) WHERE r.active = true "
-                "RETURN r.repository_name as name LIMIT 1"
-            )
-            if rows and rows[0].get("name"):
-                repo_name = rows[0]["name"]
-        except Exception as e:
-            self.logger.debug("Could not read active repository name: %s", e)
-
         created_elements: list[dict[str, Any]] = []
         created_by_source: dict[str, dict[str, Any]] = {}
-        # Track names already chosen this batch to avoid sibling collisions
-        # (per-candidate prompts otherwise can't see each other).
-        names_so_far: list[str] = []
+        # Names already taken (``taken``) are checked after each call, never put in a prompt
+        # (prompts depend on structure only, so one LLM drift cannot cascade)
 
         for cand in filtered:
-            existing_summary: dict[str, list[str]] | None = None
-            if names_so_far:
-                existing_summary = {self.ELEMENT_TYPE: sorted(names_so_far)}
             prompt = build_single_candidate_prompt(
                 candidate=cand,
                 instruction=instruction,
-                element_type=self.ELEMENT_TYPE,
-                existing_elements_summary=existing_summary,
                 rules=rules,
+                persona=persona,
             )
             try:
                 response = llm_query_fn(prompt, DERIVATION_SCHEMA, **llm_kwargs)
                 response_content, error = extract_response_content(response)
                 if error:
-                    result.errors.append(
-                        f"LLM error ({self.ELEMENT_TYPE}/{cand.node_id}): {error}"
-                    )
+                    result.errors.append(f"LLM error ({self.ELEMENT_TYPE}/{cand.node_id}): {error}")
                     continue
             except Exception as e:
-                result.errors.append(
-                    f"LLM error ({self.ELEMENT_TYPE}/{cand.node_id}): {e}"
-                )
+                result.errors.append(f"LLM error ({self.ELEMENT_TYPE}/{cand.node_id}): {e}")
                 continue
 
             parse_result = parse_derivation_response(response_content)
             if not parse_result["success"]:
-                result.errors.extend(
-                    [
-                        f"{self.ELEMENT_TYPE}/{cand.node_id}: {e}"
-                        for e in parse_result.get("errors", [])
-                    ]
-                )
+                result.errors.extend([f"{self.ELEMENT_TYPE}/{cand.node_id}: {e}" for e in parse_result.get("errors", [])])
                 continue
 
             derived_list = parse_result.get("data", [])
@@ -956,22 +1354,9 @@ class ElementDerivationBase(ABC):
                     llm_query_fn,
                     llm_kwargs,
                     repo_name,
-                    names_so_far,
+                    taken,
+                    structure_names,
                 )
-
-            # Two candidates can have the same graph name (e.g. equally named
-            # directories); keep the first so names stay unique within the type.
-            # Candidates arrive in a deterministic order, so the choice is stable.
-            if " ".join(element_data["name"].lower().split()) in {
-                " ".join(n.lower().split()) for n in names_so_far
-            }:
-                self.logger.debug(
-                    "Skipping duplicate name '%s' on %s (%s)",
-                    element_data["name"],
-                    self.ELEMENT_TYPE,
-                    cand.node_id,
-                )
-                continue
 
             try:
                 element = Element(
@@ -986,12 +1371,9 @@ class ElementDerivationBase(ABC):
                 result.created_elements.append(element_data)
                 created_elements.append(element_data)
                 created_by_source[cand.node_id] = element_data
-                names_so_far.append(element_data["name"])
+                taken.append(element_data["name"])
             except Exception as e:
-                result.errors.append(
-                    f"Failed to create {self.ELEMENT_TYPE} element "
-                    f"{element_data.get('identifier', 'unknown')}: {e}"
-                )
+                result.errors.append(f"Failed to create {self.ELEMENT_TYPE} element {element_data.get('identifier', 'unknown')}: {e}")
 
         for c in filtered:
             created = created_by_source.get(c.node_id)
@@ -1008,9 +1390,7 @@ class ElementDerivationBase(ABC):
                     stage="created" if created else "llm_rejected",
                     became_element=created is not None,
                     element_id=created["identifier"] if created else None,
-                    element_confidence=created.get("properties", {}).get("confidence")
-                    if created
-                    else None,
+                    element_confidence=created.get("properties", {}).get("confidence") if created else None,
                 )
             )
 
@@ -1034,8 +1414,8 @@ class ElementDerivationBase(ABC):
         llm_query_fn: Callable[..., Any],
         temperature: float | None,
         max_tokens: int | None,
-        graph_manager: "GraphManager",
-        archimate_manager: "ArchimateManager",
+        graph_manager: GraphManager,
+        archimate_manager: ArchimateManager,
         result: GenerationResult,
         relationship_config: RelationshipLLMConfig | None = None,
     ) -> None:
@@ -1069,12 +1449,8 @@ class ElementDerivationBase(ABC):
         for rel_data in relationships:
             try:
                 # Propagate graph properties from source/target elements for stability analysis
-                source_props = _get_element_props(
-                    batch_elements, existing_elements, rel_data["source"]
-                )
-                target_props = _get_element_props(
-                    batch_elements, existing_elements, rel_data["target"]
-                )
+                source_props = _get_element_props(batch_elements, existing_elements, rel_data["source"])
+                target_props = _get_element_props(batch_elements, existing_elements, rel_data["target"])
 
                 relationship = Relationship(
                     source=rel_data["source"],
@@ -1085,23 +1461,17 @@ class ElementDerivationBase(ABC):
                         "derived_from": rel_data.get("derived_from"),
                         "source_pagerank": source_props.get("source_pagerank"),
                         "source_kcore": source_props.get("source_kcore_level"),
-                        "source_community": source_props.get(
-                            "source_louvain_community"
-                        ),
+                        "source_community": source_props.get("source_louvain_community"),
                         "target_pagerank": target_props.get("source_pagerank"),
                         "target_kcore": target_props.get("source_kcore_level"),
-                        "target_community": target_props.get(
-                            "source_louvain_community"
-                        ),
+                        "target_community": target_props.get("source_louvain_community"),
                     },
                 )
                 archimate_manager.add_relationship(relationship)
                 result.relationships_created += 1
                 result.created_relationships.append(rel_data)
             except Exception as e:
-                result.errors.append(
-                    f"Failed to create {self.ELEMENT_TYPE} relationship: {e}"
-                )
+                result.errors.append(f"Failed to create {self.ELEMENT_TYPE} relationship: {e}")
 
 
 class PatternBasedDerivation(ElementDerivationBase):
@@ -1109,8 +1479,8 @@ class PatternBasedDerivation(ElementDerivationBase):
     Mixin for element modules that use pattern-based filtering.
 
     Most element modules (10 out of 13) use include/exclude patterns
-    loaded from the config database. This mixin provides the default
-    implementation of get_filter_kwargs() to load those patterns.
+    from the config database (loaded by the service). This mixin provides the
+    default implementation of get_filter_kwargs() to pass those patterns on.
 
     Modules using this base class receive include_patterns and
     exclude_patterns as kwargs to their filter_candidates() method.
@@ -1122,9 +1492,7 @@ class PatternBasedDerivation(ElementDerivationBase):
     # Override in subclass to change default behavior when no patterns match
     PATTERN_MATCH_DEFAULT: bool = False
 
-    def matches_patterns(
-        self, name: str, include_patterns: set[str], exclude_patterns: set[str]
-    ) -> bool:
+    def matches_patterns(self, name: str, include_patterns: set[str], exclude_patterns: set[str]) -> bool:
         """
         Check if name matches include patterns and not exclude patterns.
 
@@ -1157,34 +1525,25 @@ class PatternBasedDerivation(ElementDerivationBase):
 
         return self.PATTERN_MATCH_DEFAULT
 
-    def get_filter_kwargs(self, engine: Any) -> dict[str, Any]:
+    def get_filter_kwargs(self, patterns: dict[str, set[str]]) -> dict[str, Any]:
         """
-        Load include/exclude patterns from config database.
+        Pass the step's include/exclude patterns to filter_candidates().
 
         Args:
-            engine: DuckDB connection
+            patterns: Include/exclude patterns from config (empty when none are configured),
+                and under ``labels`` the labels of the candidates they filter, when the step
+                limits them (``params.pattern_labels``)
 
         Returns:
-            Dict with include_patterns and exclude_patterns sets
+            Dict with include_patterns and exclude_patterns sets (and pattern_labels when set)
         """
-        from deriva.services import config
-
-        try:
-            patterns = config.get_derivation_patterns(engine, self.ELEMENT_TYPE)
-            return {
-                "include_patterns": patterns.get("include", set()),
-                "exclude_patterns": patterns.get("exclude", set()),
-            }
-        except ValueError:
-            # No patterns configured - return empty sets
-            self.logger.debug(
-                "No derivation patterns found for %s, using empty sets",
-                self.ELEMENT_TYPE,
-            )
-            return {
-                "include_patterns": set(),
-                "exclude_patterns": set(),
-            }
+        kwargs: dict[str, Any] = {
+            "include_patterns": patterns.get("include", set()),
+            "exclude_patterns": patterns.get("exclude", set()),
+        }
+        if "labels" in patterns:
+            kwargs["pattern_labels"] = patterns["labels"]
+        return kwargs
 
 
 class HybridFilteringMixin:
@@ -1203,29 +1562,26 @@ class HybridFilteringMixin:
 
     # Graph filtering constants - override in subclass as needed
     MIN_PAGERANK: float | None = None
-    MIN_PAGERANK_PERCENTILE: float | None = (
-        None  # Scale-independent (e.g., 40.0 = top 60%)
-    )
-    MIN_KCORE_PERCENTILE: float | None = None
+    MIN_PAGERANK_PERCENTILE: float | None = None  # Scale-independent (e.g., 40.0 = top 60%)
     USE_COMMUNITY_ROOTS: bool = False
     USE_ARTICULATION_POINTS: bool = False
-    COMMUNITY_ROOT_RATIO: float = (
-        0.5  # 50% community roots when USE_COMMUNITY_ROOTS=True
-    )
+    COMMUNITY_ROOT_RATIO: float = 0.5  # 50% community roots when USE_COMMUNITY_ROOTS=True
 
     def apply_graph_filtering(
         self,
         candidates: list[Candidate],
         enrichments: dict[str, dict[str, Any]],
         max_candidates: int,
+        graph_filter: GraphFilter | None = None,
     ) -> list[Candidate]:
         """
         Apply graph-based filtering to candidates.
 
         Filters by:
         1. Minimum PageRank threshold (if MIN_PAGERANK set)
-        2. Community roots (if USE_COMMUNITY_ROOTS set)
-        3. Articulation points (if USE_ARTICULATION_POINTS set)
+        2. The step's k-core threshold (``graph_filter``, from its config)
+        3. Community roots (if USE_COMMUNITY_ROOTS set)
+        4. Articulation points (if USE_ARTICULATION_POINTS set)
 
         After filtering, ranks by PageRank and returns top N.
 
@@ -1233,6 +1589,7 @@ class HybridFilteringMixin:
             candidates: Pre-filtered candidates (e.g., after pattern matching)
             enrichments: Graph enrichment data
             max_candidates: Maximum candidates to return
+            graph_filter: The step's k-core threshold and the labels it applies to (None: none)
 
         Returns:
             Filtered and ranked candidates
@@ -1249,18 +1606,14 @@ class HybridFilteringMixin:
         # Filter by percentile thresholds (scale-independent)
         # Only apply when percentile data is available (None means prep did not compute it)
         if self.MIN_PAGERANK_PERCENTILE is not None:
+            filtered = [c for c in filtered if c.pagerank_percentile is None or c.pagerank_percentile >= self.MIN_PAGERANK_PERCENTILE]
+        if graph_filter is not None:
             filtered = [
                 c
                 for c in filtered
-                if c.pagerank_percentile is None
-                or c.pagerank_percentile >= self.MIN_PAGERANK_PERCENTILE
-            ]
-        if self.MIN_KCORE_PERCENTILE is not None:
-            filtered = [
-                c
-                for c in filtered
-                if c.kcore_percentile is None
-                or c.kcore_percentile >= self.MIN_KCORE_PERCENTILE
+                if (graph_filter.labels is not None and not graph_filter.labels.intersection(c.labels))
+                or c.kcore_percentile is None
+                or c.kcore_percentile >= graph_filter.min_kcore_percentile
             ]
 
         if not filtered:
@@ -1293,9 +1646,10 @@ class HybridFilteringMixin:
             else:
                 regular_candidates.append(c)
 
-        # Sort each group by PageRank (descending)
-        priority_candidates.sort(key=lambda c: c.pagerank or 0, reverse=True)
-        regular_candidates.sort(key=lambda c: c.pagerank or 0, reverse=True)
+        # Sort each group by PageRank (descending), ties by node id: the cap below must never
+        # depend on the result order of the candidate query
+        priority_candidates.sort(key=lambda c: (-(c.pagerank or 0), c.node_id))
+        regular_candidates.sort(key=lambda c: (-(c.pagerank or 0), c.node_id))
 
         # Combine with priority candidates first
         if self.USE_COMMUNITY_ROOTS and priority_candidates:
@@ -1359,7 +1713,9 @@ class HybridDerivation(PatternBasedDerivation, HybridFilteringMixin):
             max_candidates: Maximum candidates to return
             include_patterns: Patterns that indicate inclusion
             exclude_patterns: Patterns that indicate exclusion
-            **kwargs: Additional module-specific parameters
+            **kwargs: Additional module-specific parameters; ``pattern_labels`` limits the
+                patterns to candidates with one of those labels (others pass);
+                ``graph_filter`` is the step's k-core threshold
 
         Returns:
             Filtered candidates, ranked by PageRank
@@ -1369,13 +1725,15 @@ class HybridDerivation(PatternBasedDerivation, HybridFilteringMixin):
 
         include_patterns = include_patterns or set()
         exclude_patterns = exclude_patterns or set()
+        pattern_labels: set[str] | None = kwargs.get("pattern_labels")
+        graph_filter: GraphFilter | None = kwargs.get("graph_filter")
 
         # Step 1: Pattern matching (if patterns configured)
         if include_patterns or exclude_patterns:
             pattern_matched = [
                 c
                 for c in candidates
-                if self.matches_patterns(c.name, include_patterns, exclude_patterns)
+                if (pattern_labels is not None and not pattern_labels.intersection(c.labels)) or self.matches_patterns(c.name, include_patterns, exclude_patterns)
             ]
         else:
             # No patterns = include all (subject to graph filtering)
@@ -1385,9 +1743,7 @@ class HybridDerivation(PatternBasedDerivation, HybridFilteringMixin):
             return []
 
         # Step 2: Apply graph filtering
-        filtered = self.apply_graph_filtering(
-            pattern_matched, enrichments, max_candidates
-        )
+        filtered = self.apply_graph_filtering(pattern_matched, enrichments, max_candidates, graph_filter)
 
         return filtered
 

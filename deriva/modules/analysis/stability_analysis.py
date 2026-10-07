@@ -9,11 +9,13 @@ This module provides:
 
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from .types import PhaseStabilityReport, StabilityBreakdown
+from .types import AnswerStability, DecisionStability, PhaseStabilityReport, StabilityBreakdown, StepConsistency
 
 __all__ = [
     "compute_type_breakdown",
@@ -323,21 +325,15 @@ def compute_phase_stability(
         edge_breakdown = []
 
         if nodes_by_run:
-            node_breakdown = compute_type_breakdown(
-                nodes_by_run, extract_node_type, "extraction"
-            )
+            node_breakdown = compute_type_breakdown(nodes_by_run, extract_node_type, "extraction")
 
         if edges_by_run:
-            edge_breakdown = compute_type_breakdown(
-                edges_by_run, extract_edge_type, "extraction"
-            )
+            edge_breakdown = compute_type_breakdown(edges_by_run, extract_edge_type, "extraction")
 
         # Calculate overall consistency
         all_breakdowns = node_breakdown + edge_breakdown
         if all_breakdowns:
-            overall = sum(b.consistency_score for b in all_breakdowns) / len(
-                all_breakdowns
-            )
+            overall = sum(b.consistency_score for b in all_breakdowns) / len(all_breakdowns)
         else:
             overall = 0.0
 
@@ -361,21 +357,15 @@ def compute_phase_stability(
         relationship_breakdown = []
 
         if elements_by_run:
-            element_breakdown = compute_type_breakdown(
-                elements_by_run, extract_element_type, "derivation"
-            )
+            element_breakdown = compute_type_breakdown(elements_by_run, extract_element_type, "derivation")
 
         if relationships_by_run:
-            relationship_breakdown = compute_type_breakdown(
-                relationships_by_run, extract_relationship_type, "derivation"
-            )
+            relationship_breakdown = compute_type_breakdown(relationships_by_run, extract_relationship_type, "derivation")
 
         # Calculate overall consistency
         all_breakdowns = element_breakdown + relationship_breakdown
         if all_breakdowns:
-            overall = sum(b.consistency_score for b in all_breakdowns) / len(
-                all_breakdowns
-            )
+            overall = sum(b.consistency_score for b in all_breakdowns) / len(all_breakdowns)
         else:
             overall = 0.0
 
@@ -426,13 +416,9 @@ def identify_stability_patterns(
 
     for breakdown in breakdowns:
         if breakdown.consistency_score >= high_threshold:
-            highly_stable_types.append(
-                f"{breakdown.item_type} ({breakdown.consistency_score:.0%})"
-            )
+            highly_stable_types.append(f"{breakdown.item_type} ({breakdown.consistency_score:.0%})")
         elif breakdown.consistency_score < low_threshold:
-            unstable_types.append(
-                f"{breakdown.item_type} ({breakdown.consistency_score:.0%})"
-            )
+            unstable_types.append(f"{breakdown.item_type} ({breakdown.consistency_score:.0%})")
 
         # Analyze naming patterns
         if breakdown.stable_items:
@@ -442,9 +428,7 @@ def identify_stability_patterns(
                 stable_name_patterns.extend(stable_prefixes)
 
         if breakdown.unstable_items:
-            unstable_prefixes = _find_common_patterns(
-                list(breakdown.unstable_items.keys())
-            )
+            unstable_prefixes = _find_common_patterns(list(breakdown.unstable_items.keys()))
             if unstable_prefixes:
                 unstable_name_patterns.extend(unstable_prefixes)
 
@@ -526,47 +510,130 @@ def aggregate_stability_metrics(
             derivation_consistencies.append(phases["derivation"].overall_consistency)
 
             for breakdown in phases["derivation"].element_breakdown:
-                element_type_scores[breakdown.item_type].append(
-                    breakdown.consistency_score
-                )
+                element_type_scores[breakdown.item_type].append(breakdown.consistency_score)
 
             for breakdown in phases["derivation"].relationship_breakdown:
-                relationship_type_scores[breakdown.item_type].append(
-                    breakdown.consistency_score
-                )
+                relationship_type_scores[breakdown.item_type].append(breakdown.consistency_score)
 
     # Calculate averages
-    avg_extraction = (
-        sum(extraction_consistencies) / len(extraction_consistencies)
-        if extraction_consistencies
-        else 0.0
-    )
-    avg_derivation = (
-        sum(derivation_consistencies) / len(derivation_consistencies)
-        if derivation_consistencies
-        else 0.0
-    )
+    avg_extraction = sum(extraction_consistencies) / len(extraction_consistencies) if extraction_consistencies else 0.0
+    avg_derivation = sum(derivation_consistencies) / len(derivation_consistencies) if derivation_consistencies else 0.0
 
     # Calculate per-type averages and sort
-    element_type_avgs = [
-        (t, sum(scores) / len(scores)) for t, scores in element_type_scores.items()
-    ]
+    element_type_avgs = [(t, sum(scores) / len(scores)) for t, scores in element_type_scores.items()]
     element_type_avgs.sort(key=lambda x: -x[1])  # Descending
 
-    relationship_type_avgs = [
-        (t, sum(scores) / len(scores)) for t, scores in relationship_type_scores.items()
-    ]
+    relationship_type_avgs = [(t, sum(scores) / len(scores)) for t, scores in relationship_type_scores.items()]
     relationship_type_avgs.sort(key=lambda x: -x[1])  # Descending
 
     return {
         "avg_extraction_consistency": avg_extraction,
         "avg_derivation_consistency": avg_derivation,
         "best_element_types": element_type_avgs[:5],  # Top 5
-        "worst_element_types": element_type_avgs[-5:][::-1]
-        if element_type_avgs
-        else [],
+        "worst_element_types": element_type_avgs[-5:][::-1] if element_type_avgs else [],
         "best_relationship_types": relationship_type_avgs[:5],
-        "worst_relationship_types": (
-            relationship_type_avgs[-5:][::-1] if relationship_type_avgs else []
-        ),
+        "worst_relationship_types": (relationship_type_avgs[-5:][::-1] if relationship_type_avgs else []),
     }
+
+
+def compute_answer_stability(answers_by_run: dict[str, dict[tuple[str, str], list[str | None]]]) -> list[AnswerStability]:
+    """Per step, how many prompts asked in every run got the same answers in every run.
+
+    Args:
+        answers_by_run: run id -> {(step, prompt key): answer hashes}; a prompt asked
+            several times in a run (samples, repeated candidates) compares as a multiset
+
+    Returns:
+        One AnswerStability per step, sorted by step; empty with fewer than two runs
+    """
+    if len(answers_by_run) < 2:
+        return []
+    runs = list(answers_by_run.values())
+    shared = set(runs[0]).intersection(*runs[1:])
+    counts: dict[str, list[int]] = {}
+    for key in shared:
+        answers = {tuple(sorted(str(a) for a in run[key])) for run in runs}
+        step_counts = counts.setdefault(key[0], [0, 0])
+        step_counts[0] += 1
+        step_counts[1] += len(answers) == 1
+    return [AnswerStability(step=step, prompts=n, identical=same) for step, (n, same) in sorted(counts.items())]
+
+
+# Answer fields that carry free text or a score, not a decision
+FREE_ANSWER_FIELDS = frozenset({"description", "documentation", "confidence"})
+
+
+def decision_content(content: str) -> str:
+    """The decisions in an LLM answer, for comparing answers across runs.
+
+    Free text and scores (``FREE_ANSWER_FIELDS``, at any depth) are left out and the
+    rest is serialised with sorted keys, so a reworded description or a different
+    confidence is the same decision. Text that is not JSON is returned as is.
+    """
+    try:
+        answer = json.loads(content)
+    except ValueError:
+        return content
+
+    def decisions(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: decisions(v) for k, v in value.items() if k not in FREE_ANSWER_FIELDS}
+        if isinstance(value, list):
+            return [decisions(v) for v in value]
+        return value
+
+    return json.dumps(decisions(answer), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def decision_stability(runs: list[dict[str, Any]]) -> DecisionStability:
+    """How many items got the same decision in every run.
+
+    Args:
+        runs: Per run, the step's decision per item (``None`` for an item it skipped). An item
+            missing from a run's decisions differs from every decision, ``None`` included.
+    """
+    missing = object()
+    items = set().union(*runs) if runs else set()
+    stable = sum(1 for item in items if len({repr(run.get(item, missing)) for run in runs}) == 1)
+    return DecisionStability(items=len(items), stable=stable)
+
+
+def compare_step_outputs(runs: list[dict[tuple[str, str], dict[str, Any]]], unscored: frozenset[str] = frozenset()) -> StepConsistency:
+    """Compare the outputs of one step repeated on the same input.
+
+    Args:
+        runs: Per run, the step's output objects: (group, key) -> properties. The group
+            (a node label or edge type) gets its own scores in ``groups``.
+        unscored: Properties that are counted in ``property_differences`` but do not make
+            an object inexact
+
+    Returns:
+        Presence and exact consistency overall and per group, with the properties that differ
+    """
+
+    def compare(outputs: list[dict[Any, dict[str, Any]]]) -> StepConsistency:
+        keys = [set(output) for output in outputs]
+        union = set().union(*keys)
+        common = set.intersection(*keys) if keys else set()
+        identical = 0
+        differences: dict[str, int] = defaultdict(int)
+        for key in common:
+            values = [output[key] for output in outputs]
+            # Missing differs from None; values compare by equality, so dict key order does not count
+            differing = {name for name in set().union(*values) if any(name not in v or v[name] != values[0][name] for v in values)}
+            identical += not (differing - unscored)
+            for name in differing:
+                differences[name] += 1
+        return StepConsistency(
+            runs=len(outputs),
+            counts=[len(output) for output in outputs],
+            present=len(common),
+            total=len(union),
+            identical=identical,
+            property_differences=dict(sorted(differences.items())),
+        )
+
+    result = compare(runs)
+    for group in sorted({group for run in runs for group, _ in run}):
+        result.groups[group] = compare([{key: props for key, props in run.items() if key[0] == group} for run in runs])
+    return result

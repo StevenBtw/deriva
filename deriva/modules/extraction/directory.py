@@ -6,7 +6,8 @@ Directories form the hierarchical container structure of the graph, with CONTAIN
 relationships linking parent directories to child directories and files.
 
 Note:
-    The .git directory and its contents are automatically excluded from extraction.
+    Excluded directories (the excluded_directories setting) and their contents are
+    skipped without being walked.
 
 Example:
     >>> from deriva.modules.extraction import extract_directories
@@ -19,6 +20,7 @@ Example:
 
 from __future__ import annotations
 
+import os
 from collections.abc import Collection
 from pathlib import Path
 from typing import Any
@@ -31,9 +33,7 @@ from .base import (
 )
 
 
-def build_directory_node(
-    dir_metadata: dict[str, Any], repo_name: str
-) -> dict[str, Any]:
+def build_directory_node(dir_metadata: dict[str, Any], repo_name: str) -> dict[str, Any]:
     """
     Build a Directory graph node from directory metadata.
 
@@ -86,9 +86,76 @@ def build_directory_node(
     }
 
 
-def extract_directories(
-    repo_path: str, repo_name: str, excluded_dirs: Collection[str] = (".git",)
-) -> dict[str, Any]:
+def _walk_directories(root: Path, excluded_dirs: Collection[str]) -> dict[Path, tuple[int, int, int]]:
+    """Every non-excluded directory below ``root`` with (file count, subdirectory count, total size).
+
+    Same directories in the same order as filtering ``root.rglob("*")`` on NTFS, whatever
+    the filesystem (names are sorted as NTFS lists them), but every directory is scanned
+    once and excluded directories are never entered. The file
+    count covers the directory's own files; the total size covers its subtree without
+    files on an excluded path. Like ``rglob``, symlinked directories are listed but
+    not recursed into.
+    """
+    scans: dict[Path, list[os.DirEntry[str]]] = {}
+
+    def scan(directory: Path) -> list[os.DirEntry[str]]:
+        if directory not in scans:
+            try:
+                # Sorted as NTFS lists names (by their upper case), so every filesystem gives the same order
+                with os.scandir(directory) as entries:
+                    scans[directory] = sorted(entries, key=lambda e: (e.name.upper(), e.name))
+            except OSError:
+                # Unreadable (permissions, removed meanwhile): listed, like rglob does, without contents
+                scans[directory] = []
+        return scans[directory]
+
+    def file_size(entry: os.DirEntry[str]) -> int:
+        try:
+            return entry.stat().st_size
+        except OSError:
+            return 0
+
+    def excluded(entry: os.DirEntry[str]) -> bool:
+        return is_excluded_path(Path(entry.path).relative_to(root).as_posix(), excluded_dirs)
+
+    def listed(directory: Path) -> list[Path]:
+        return [Path(e.path) for e in scan(directory) if e.is_dir() and not excluded(e)]
+
+    # rglob("*") lists a directory's children as soon as the directory is found and
+    # recurses through a stack (last found, first scanned)
+    order = listed(root)
+    stack = [root]
+    while stack:
+        for entry in scan(stack.pop()):
+            if entry.is_dir(follow_symlinks=False) and not excluded(entry):
+                order.extend(listed(Path(entry.path)))
+                stack.append(Path(entry.path))
+
+    totals: dict[Path, int] = {}
+
+    def total(directory: Path) -> int:
+        if directory not in totals:
+            size = 0
+            for entry in scan(directory):
+                if entry.is_file():
+                    if not excluded(entry):
+                        size += file_size(entry)
+                elif entry.is_dir(follow_symlinks=False) and not excluded(entry):
+                    size += total(Path(entry.path))
+            totals[directory] = size
+        return totals[directory]
+
+    return {
+        d: (
+            sum(1 for e in scan(d) if e.is_file()),
+            sum(1 for e in scan(d) if e.is_dir() and e.name not in excluded_dirs),
+            total(d),
+        )
+        for d in order
+    }
+
+
+def extract_directories(repo_path: str, repo_name: str, excluded_dirs: Collection[str] = (".git",)) -> dict[str, Any]:
     """
     Extract all directories from a repository path.
 
@@ -125,37 +192,11 @@ def extract_directories(
 
         repo_id = f"repo::{repo_name}"
 
-        # Walk through all directories
-        for dir_path in repo_path_obj.rglob("*"):
-            # Skip non-directories and excluded directories (with their contents)
-            if not dir_path.is_dir() or is_excluded_path(
-                dir_path.relative_to(repo_path_obj).as_posix(), excluded_dirs
-            ):
-                continue
-
+        # One walk (excluded directories are never entered), then the directories in order
+        for dir_path, (file_count, subdir_count, total_size) in _walk_directories(repo_path_obj, excluded_dirs).items():
             try:
                 rel_path = dir_path.relative_to(repo_path_obj)
                 rel_path_str = str(rel_path).replace("\\", "/")
-
-                # Count files and subdirectories
-                file_count = len([f for f in dir_path.iterdir() if f.is_file()])
-                subdir_count = len(
-                    [
-                        d
-                        for d in dir_path.iterdir()
-                        if d.is_dir() and d.name not in excluded_dirs
-                    ]
-                )
-
-                # Calculate total size
-                total_size = sum(
-                    f.stat().st_size
-                    for f in dir_path.rglob("*")
-                    if f.is_file()
-                    and not is_excluded_path(
-                        f.relative_to(repo_path_obj).as_posix(), excluded_dirs
-                    )
-                )
 
                 dir_metadata = {
                     "path": rel_path_str,
@@ -176,14 +217,10 @@ def extract_directories(
                         from_node_id = repo_id
                     else:
                         parent_path = str(rel_path.parent).replace("\\", "/")
-                        from_node_id = (
-                            f"dir::{repo_name}::{parent_path.replace('/', '_')}"
-                        )
+                        from_node_id = f"dir::{repo_name}::{parent_path.replace('/', '_')}"
 
                     edge = {
-                        "edge_id": generate_edge_id(
-                            from_node_id, node_data["node_id"], "CONTAINS"
-                        ),
+                        "edge_id": generate_edge_id(from_node_id, node_data["node_id"], "CONTAINS"),
                         "from_node_id": from_node_id,
                         "to_node_id": node_data["node_id"],
                         "relationship_type": "CONTAINS",

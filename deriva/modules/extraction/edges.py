@@ -28,11 +28,11 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-from deriva.adapters.treesitter import TreeSitterManager
-from deriva.adapters.treesitter.models import (
+from deriva.adapters.treesitter import TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+from deriva.adapters.treesitter.models import (  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
     ExtractedCall,
     ExtractedImport,
     ExtractedMethod,
@@ -52,7 +52,7 @@ from .base import (
 # =============================================================================
 
 
-class EdgeType(str, Enum):
+class EdgeType(str, Enum):  # noqa: UP042 - StrEnum would change str() of members, which callers compare
     """Types of edges that can be extracted from source code."""
 
     IMPORTS = "IMPORTS"  # File → File (internal imports)
@@ -67,6 +67,9 @@ ALL_EDGE_TYPES = set(EdgeType)
 
 # Supported languages for tree-sitter extraction
 SUPPORTED_LANGUAGES = ("python", "javascript", "typescript", "java", "csharp")
+
+# Extensions a relative JavaScript or TypeScript import may leave out
+SCRIPT_EXTENSIONS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 
 
 # =============================================================================
@@ -628,11 +631,7 @@ def extract_edges_batch(
     all_file_paths = {f["path"] for f in files}
 
     # Filter to only source files that Tree-sitter can parse
-    source_files = [
-        f
-        for f in files
-        if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES
-    ]
+    source_files = [f for f in files if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES]
 
     total = len(source_files)
 
@@ -733,11 +732,10 @@ def _extract_import_edges(
     stats = {"internal": 0, "external": 0, "unresolved": 0}
 
     # Use language-specific stdlib or fall back to Python stdlib
-    stdlib_modules = (
-        filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
-    )
+    stdlib_modules = filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
 
     source_file_id = generate_file_node_id(repo_name, file_path)
+    java_files = _java_file_index(all_file_paths) if file_path.endswith(".java") and imports else None
 
     for imp in imports:
         resolved = _resolve_import(
@@ -746,6 +744,9 @@ def _extract_import_edges(
             all_file_paths=all_file_paths,
             external_packages=external_packages,
             stdlib_modules=stdlib_modules,
+            names=imp.names,
+            java_files=java_files,
+            is_from_import=imp.is_from_import,
         )
 
         if resolved["type"] == "internal" and EdgeType.IMPORTS in edge_types:
@@ -834,10 +835,25 @@ def _resolve_import(
     all_file_paths: set[str],
     external_packages: set[str],
     stdlib_modules: set[str] | None = None,
+    names: list[str] | None = None,
+    java_files: dict[str, list[str]] | None = None,
+    is_from_import: bool = False,
 ) -> dict[str, Any]:
-    """Resolve an import to determine if it's internal or external."""
+    """Resolve an import to determine if it's internal or external.
+
+    For Java, ``is_from_import`` marks a static import (as the Java parser records it).
+    """
     # Use provided stdlib or fall back to Python stdlib
     stdlib = stdlib_modules if stdlib_modules else PYTHON_STDLIB
+
+    suffix = PurePosixPath(current_file).suffix.lower()
+    if suffix == ".java":
+        return _resolve_java_import(module, names or [], current_file, all_file_paths, stdlib_modules or set(), java_files, is_static=is_from_import)
+    if suffix in SCRIPT_EXTENSIONS and module.startswith("."):
+        script_target = _resolve_script_import(module, current_file, all_file_paths)
+        if script_target:
+            return {"type": "internal", "target_path": script_target}
+        return {"type": "unknown", "reason": "relative_not_found"}
 
     # Handle relative imports
     if module.startswith("."):
@@ -864,15 +880,89 @@ def _resolve_import(
     return {"type": "external", "package": top_level}
 
 
+def _java_file_index(all_file_paths: set[str]) -> dict[str, list[str]]:
+    """Java file name -> the repository paths with that name."""
+    index: dict[str, list[str]] = {}
+    for path in all_file_paths:
+        if path.endswith(".java"):
+            index.setdefault(PurePosixPath(path).name, []).append(path)
+    return index
+
+
+def _nearest(candidates: list[str], current_file: str) -> str:
+    """The candidate sharing the most leading directories with the importing file (ties by path)."""
+
+    def shared(path: str) -> int:
+        count = 0
+        for a, b in zip(path.split("/"), current_file.split("/"), strict=False):
+            if a != b:
+                break
+            count += 1
+        return count
+
+    return sorted(candidates, key=lambda path: (-shared(path), path))[0]
+
+
+def _resolve_java_import(
+    module: str,
+    names: list[str],
+    current_file: str,
+    all_file_paths: set[str],
+    stdlib_modules: set[str],
+    java_files: dict[str, list[str]] | None = None,
+    is_static: bool = False,
+) -> dict[str, Any]:
+    """A Java import: standard library, a class file of the repository, an own package, or external.
+
+    The class file is found by its package path under any source root; a nested class or a
+    static member lives in the file of its outer class. A class in several modules resolves
+    to the one nearest the importing file. A static wildcard imports the members of the class
+    ``module``, so it resolves like a class import.
+    """
+    if any(module == s or module.startswith(s + ".") for s in stdlib_modules):
+        return {"type": "stdlib", "module": module}
+    if names == ["*"]:
+        if is_static:
+            names = []
+        else:
+            package_dir = "/" + module.replace(".", "/") + "/"
+            if any(package_dir in "/" + path for path in all_file_paths if path.endswith(".java")):
+                return {"type": "package", "module": module}
+            return {"type": "external", "package": module.split(".")[0]}
+    index = java_files if java_files is not None else _java_file_index(all_file_paths)
+    segments = [*module.split("."), *names[:1]]
+    while len(segments) >= 2:
+        relative = "/".join(segments) + ".java"
+        candidates = [path for path in index.get(segments[-1] + ".java", []) if path == relative or path.endswith("/" + relative)]
+        if candidates:
+            return {"type": "internal", "target_path": _nearest(candidates, current_file)}
+        segments = segments[:-1]
+    return {"type": "external", "package": module.split(".")[0]}
+
+
+def _resolve_script_import(module: str, current_file: str, all_file_paths: set[str]) -> str | None:
+    """A relative JavaScript or TypeScript import: the file with any script extension, or the directory's index file."""
+    resolved = list(PurePosixPath(current_file).parent.parts)
+    for part in module.split("/"):
+        if part == "..":
+            if not resolved:
+                return None  # above the repository root
+            resolved = resolved[:-1]
+        elif part not in (".", ""):
+            resolved.append(part)
+    base = "/".join(resolved)
+    for candidate in (base, *(base + ext for ext in SCRIPT_EXTENSIONS), *(f"{base}/index{ext}" for ext in SCRIPT_EXTENSIONS)):
+        if candidate in all_file_paths:
+            return candidate
+    return None
+
+
 def _resolve_relative_import(
     module: str,
     current_file: str,
     all_file_paths: set[str],
 ) -> str | None:
     """Resolve a relative import (e.g., '.models', '..utils') to a file path."""
-    # Use PurePosixPath to ensure consistent forward-slash handling across platforms
-    from pathlib import PurePosixPath
-
     current_dir = str(PurePosixPath(current_file).parent)
     if current_dir == ".":
         current_dir = ""
@@ -952,9 +1042,7 @@ def _extract_call_edges(
     stats = {"total": 0, "resolved": 0, "unresolved": 0, "cross_file": 0}
 
     # Use language-specific builtins or fall back to Python builtins
-    builtin_functions = (
-        filter_constants.builtin_functions if filter_constants else PYTHON_BUILTINS
-    )
+    builtin_functions = filter_constants.builtin_functions if filter_constants else PYTHON_BUILTINS
 
     for call in calls:
         stats["total"] += 1
@@ -1089,16 +1177,12 @@ def _resolve_caller(
     candidates = method_lookup[caller_name]
 
     if len(candidates) == 1:
-        return generate_method_node_id(
-            repo_name, file_path, caller_name, candidates[0]["class_name"]
-        )
+        return generate_method_node_id(repo_name, file_path, caller_name, candidates[0]["class_name"])
 
     if caller_class:
         for c in candidates:
             if c["class_name"] == caller_class:
-                return generate_method_node_id(
-                    repo_name, file_path, caller_name, caller_class
-                )
+                return generate_method_node_id(repo_name, file_path, caller_name, caller_class)
 
     for c in candidates:
         if c["class_name"] is None:
@@ -1138,15 +1222,11 @@ def _resolve_callee(
     if is_method_call and callee_qualifier in ("self", "cls") and caller_class:
         for c in candidates:
             if c["class_name"] == caller_class:
-                return generate_method_node_id(
-                    repo_name, file_path, callee_name, caller_class
-                )
+                return generate_method_node_id(repo_name, file_path, callee_name, caller_class)
         return None
 
     if len(candidates) == 1:
-        return generate_method_node_id(
-            repo_name, file_path, callee_name, candidates[0]["class_name"]
-        )
+        return generate_method_node_id(repo_name, file_path, callee_name, candidates[0]["class_name"])
 
     for c in candidates:
         if c["class_name"] is None:
@@ -1176,11 +1256,7 @@ def _extract_decorator_edges(
     stats = {"total": 0, "resolved": 0, "builtin": 0, "unresolved": 0, "cross_file": 0}
 
     # Use language-specific builtin decorators or fall back to Python
-    builtin_decorators = (
-        filter_constants.builtin_decorators
-        if filter_constants
-        else PYTHON_DECORATOR_BUILTINS
-    )
+    builtin_decorators = filter_constants.builtin_decorators if filter_constants else PYTHON_DECORATOR_BUILTINS
 
     # Build local lookup for within-file decorators
     local_func_lookup = {m.name: m for m in methods if not m.class_name}
@@ -1192,9 +1268,7 @@ def _extract_decorator_edges(
         if not method.decorators:
             continue
 
-        decorated_id = generate_method_node_id(
-            repo_name, file_path, method.name, method.class_name
-        )
+        decorated_id = generate_method_node_id(repo_name, file_path, method.name, method.class_name)
 
         for decorator in method.decorators:
             stats["total"] += 1
@@ -1229,9 +1303,7 @@ def _extract_decorator_edges(
             if not decorator_id:
                 decorator_method = local_func_lookup.get(dec_name)
                 if decorator_method:
-                    decorator_id = generate_method_node_id(
-                        repo_name, file_path, decorator_method.name, None
-                    )
+                    decorator_id = generate_method_node_id(repo_name, file_path, decorator_method.name, None)
 
             if not decorator_id:
                 stats["unresolved"] += 1
@@ -1287,17 +1359,11 @@ def _extract_reference_edges(
     }
 
     # Use language-specific builtin types or fall back to Python
-    builtin_types = (
-        filter_constants.builtin_types if filter_constants else PYTHON_BUILTIN_TYPES
-    )
-    generic_containers = (
-        filter_constants.generic_containers if filter_constants else GENERIC_CONTAINERS
-    )
+    builtin_types = filter_constants.builtin_types if filter_constants else PYTHON_BUILTIN_TYPES
+    generic_containers = filter_constants.generic_containers if filter_constants else GENERIC_CONTAINERS
 
     for method in methods:
-        method_id = generate_method_node_id(
-            repo_name, file_path, method.name, method.class_name
-        )
+        method_id = generate_method_node_id(repo_name, file_path, method.name, method.class_name)
 
         referenced_types: set[str] = set()
 
@@ -1312,9 +1378,7 @@ def _extract_reference_edges(
         # Extract type names from return annotation
         if method.return_annotation:
             stats["total_annotations"] += 1
-            type_names = _extract_type_names(
-                method.return_annotation, generic_containers
-            )
+            type_names = _extract_type_names(method.return_annotation, generic_containers)
             referenced_types.update(type_names)
 
         # Create edges for each referenced type

@@ -14,24 +14,18 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from deriva.adapters.archimate.models import validate_relationship_rule
-from deriva.adapters.graph.cache import (
-    EnrichmentCache,
-    EnrichmentCacheManager,
-    compute_graph_hash,
-)
-from deriva.adapters.llm import FailedResponse, ResponseType
+from deriva.adapters.archimate.models import validate_relationship_rule  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+from deriva.adapters.llm import FailedResponse, ResponseType  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 from deriva.common import current_timestamp, parse_json_array
+from deriva.common.naming import name_key
 from deriva.common.types import PipelineResult
 
 if TYPE_CHECKING:
-    from deriva.adapters.graph import GraphManager
-
-# Module-level enrichment cache for cross-element-type caching within a run
-_enrichment_cache = EnrichmentCache()
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 
 def extract_response_content(response: Any) -> tuple[str, str | None]:
@@ -115,10 +109,7 @@ def strip_for_relationship_prompt(
     Returns:
         List with only essential fields per element
     """
-    return [
-        {k: v for k, v in elem.items() if k in RELATIONSHIP_ESSENTIAL_FIELDS}
-        for elem in elements
-    ]
+    return [{k: v for k, v in elem.items() if k in RELATIONSHIP_ESSENTIAL_FIELDS} for elem in elements]
 
 
 def strip_cache_breaking_props(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -143,11 +134,7 @@ def strip_cache_breaking_props(elements: list[dict[str, Any]]) -> list[dict[str,
     for elem in elements:
         clean = dict(elem)
         if "properties" in clean and isinstance(clean["properties"], dict):
-            clean["properties"] = {
-                k: v
-                for k, v in clean["properties"].items()
-                if k not in EXCLUDED_FROM_CACHE
-            }
+            clean["properties"] = {k: v for k, v in clean["properties"].items() if k not in EXCLUDED_FROM_CACHE}
         result.append(clean)
     return result
 
@@ -168,9 +155,7 @@ class Candidate:
 
     # Graph enrichment data (populated from DuckDB)
     pagerank: float = 0.0
-    pagerank_percentile: float | None = (
-        None  # None: not computed (0.0 is the bottom rank)
-    )
+    pagerank_percentile: float | None = None  # None: not computed (0.0 is the bottom rank)
     louvain_community: str | None = None
     kcore_level: int = 0
     kcore_percentile: float | None = None
@@ -206,11 +191,78 @@ class Candidate:
 class RelationshipRule:
     """A rule defining valid relationships for an element type."""
 
-    target_type: (
-        str  # For outbound: target element type. For inbound: source element type
-    )
+    target_type: str  # For outbound: target element type. For inbound: source element type
     rel_type: str  # ArchiMate relationship type (Serving, Access, etc.)
     description: str = ""  # Human-readable description
+
+
+@dataclass(frozen=True)
+class ContainmentRule:
+    """Ownership decided by containment (relationship config ``params.containment``).
+
+    The nearest element of the container type whose source directory holds the source
+    of an element of the contained type is related to it with ``relationship``.
+    """
+
+    container: str  # e.g. ApplicationComponent
+    contained: str  # e.g. ApplicationInterface
+    relationship: str  # e.g. Composition
+
+
+@dataclass(frozen=True)
+class MembershipRule:
+    """Relationships from role membership (relationship config ``params.membership``).
+
+    An element of the group type lists its member technologies (``sources``); it is
+    related to each element of the member type whose source is one of them, from the
+    group to the member when ``from_group``, else from the member to the group.
+    """
+
+    group: str  # e.g. Node
+    member: str  # e.g. SystemSoftware
+    relationship: str  # e.g. Composition
+    from_group: bool = True
+
+
+@dataclass(frozen=True)
+class ConfigurationRule:
+    """Relationships from configuration files (relationship config ``params.configuration``).
+
+    A provider element serves the consumer element whose directory holds (nearest
+    enclosing) a file that configures one of the provider's technologies.
+    """
+
+    provider: str  # e.g. TechnologyService
+    consumer: str  # e.g. ApplicationComponent
+    relationship: str  # e.g. Serving
+
+
+@dataclass(frozen=True)
+class SameNameRule:
+    """Relationships between elements whose structural sources carry the same name (``params.same_name``).
+
+    The name of a source is the last part of its node id (a type's name, a concept's key), compared
+    by canonical name key after removing any of ``strip_suffixes`` (an implementation suffix).
+    """
+
+    source: str  # e.g. DataObject
+    target: str  # e.g. BusinessObject
+    relationship: str  # e.g. Realization
+    strip_suffixes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DependencyRule:
+    """Dependencies from file imports (relationship config ``params.dependency``).
+
+    The provider serves the consumer when a file of the consumer imports a file of the
+    provider, drawn between the two elements just below the deepest element that holds
+    both (siblings).
+    """
+
+    provider: str  # e.g. ApplicationComponent
+    consumer: str  # e.g. ApplicationComponent
+    relationship: str  # e.g. Serving
 
 
 @dataclass(frozen=True)
@@ -223,9 +275,8 @@ class RelationshipLLMConfig:
 
     instruction: str  # Conventions and rules inserted into the relationship prompt
     min_confidence: float  # LLM relationships below this confidence are dropped
-    temperature: float | None = (
-        None  # Temperature of the consolidated relationship pass (row column)
-    )
+    persona: str  # Opening line of the relationship prompt; {element_type} is the type just created
+    temperature: float | None = None  # Temperature of the consolidated relationship pass (row column)
 
 
 @dataclass(frozen=True)
@@ -240,6 +291,10 @@ class PerCandidateConfig:
 
     min_pool: int  # Per-candidate mode engages only for pools at least this large
     rules: str  # Rules text for the single-candidate naming prompt
+    persona: str  # Opening line of the single-candidate naming prompt
+    # Only candidates carrying an annotation that fully matches this pattern are named per
+    # candidate (their annotation decides, whatever the pool size); the others take the batch path
+    decorators: str | None = None
 
 
 @dataclass
@@ -315,54 +370,21 @@ class DerivationResult:
 # =============================================================================
 
 
-def get_enrichments_from_graph(
-    graph_manager: "GraphManager",
-    use_cache: bool = True,
-    cache_manager: EnrichmentCacheManager | None = None,
-    config_name: str | None = None,
-) -> dict[str, dict[str, Any]]:
+def get_enrichments_from_graph(graph_manager: GraphManager) -> dict[str, dict[str, Any]]:
     """
     Get all graph enrichment data from graph node properties.
 
     The prep phase stores enrichments (PageRank, Louvain, k-core, etc.)
-    as properties on graph nodes. This function reads them back.
-
-    Uses caching to avoid repeated graph queries when called multiple times
-    for different element types in the same generation phase.
+    as properties on graph nodes. This function reads them back, from the
+    graph every time: the derivation service reads them once per run and
+    passes them to the element steps.
 
     Args:
         graph_manager: Connected GraphManager instance
-        use_cache: If True, check cache first (default True). Ignored if cache_manager provided.
-        cache_manager: Optional EnrichmentCacheManager for controlled caching.
-                      When provided, uses manager's cache control (nocache_configs, bench_hash).
-                      When None, falls back to module-level cache with use_cache flag.
-        config_name: Optional config name for per-config cache control (only used with cache_manager)
 
     Returns:
         Dict mapping node_id to enrichment data
     """
-    # Determine if we should use cache
-    if cache_manager is not None:
-        # Use managed cache with full control
-        if cached := cache_manager.get_enrichments(graph_manager, config_name):
-            logger.debug("Using managed cached enrichments for config: %s", config_name)
-            return cached
-        should_write_cache = cache_manager.should_use_cache(config_name)
-    elif use_cache:
-        # Fallback to legacy module-level cache
-        try:
-            graph_hash = compute_graph_hash(graph_manager)
-            if cached := _enrichment_cache.get_enrichments(graph_hash):
-                logger.debug(
-                    "Using cached enrichments for graph hash %s", graph_hash[:8]
-                )
-                return cached
-        except Exception as e:
-            logger.debug("Cache lookup failed, querying graph: %s", e)
-        should_write_cache = True
-    else:
-        should_write_cache = False
-
     # Query the graph
     # Note: Labels are stored as separate items (e.g., ['Graph', 'Directory']),
     # not as concatenated strings (e.g., 'Graph:Directory').
@@ -396,48 +418,20 @@ def get_enrichments_from_graph(
             for row in rows
             if row.get("node_id")
         }
-
-        # Cache the results
-        if should_write_cache:
-            try:
-                if cache_manager is not None:
-                    cache_manager.set_enrichments(
-                        graph_manager, enrichments, config_name
-                    )
-                else:
-                    graph_hash = compute_graph_hash(graph_manager)
-                    _enrichment_cache.set_enrichments(graph_hash, enrichments)
-            except Exception as e:
-                logger.debug("Failed to cache enrichments: %s", e)
-
         return enrichments
     except Exception as e:
         logger.warning("Failed to get enrichments from graph: %s", e)
         return {}
 
 
-def clear_enrichment_cache() -> None:
-    """Clear the module-level enrichment cache.
-
-    Call this when starting a new derivation run or when the graph
-    has been modified.
-    """
-    _enrichment_cache.clear_all()
-    logger.debug("Cleared enrichment cache")
-
-
 # Backward compatibility alias (deprecated)
 def get_enrichments(engine: Any) -> dict[str, dict[str, Any]]:
     """Deprecated: Use get_enrichments_from_graph() instead."""
-    logger.warning(
-        "get_enrichments(engine) is deprecated - enrichments should be read from the graph"
-    )
+    logger.warning("get_enrichments(engine) is deprecated - enrichments should be read from the graph")
     return {}
 
 
-def enrich_candidate(
-    candidate: Candidate, enrichments: dict[str, dict[str, Any]]
-) -> None:
+def enrich_candidate(candidate: Candidate, enrichments: dict[str, dict[str, Any]]) -> None:
     """Add enrichment data to a candidate in-place."""
     data = enrichments.get(candidate.node_id, {})
     candidate.pagerank = data.get("pagerank", 0.0)
@@ -508,9 +502,7 @@ def filter_by_labels(
         result = [c for c in result if any(lbl in c.labels for lbl in include_labels)]
 
     if exclude_labels:
-        result = [
-            c for c in result if not any(lbl in c.labels for lbl in exclude_labels)
-        ]
+        result = [c for c in result if not any(lbl in c.labels for lbl in exclude_labels)]
 
     return result
 
@@ -675,17 +667,14 @@ def stratified_sample_elements(
                 by_type[etype] = []
             by_type[etype].append(elem)
 
-    # Take top max_per_type from each type (sorted by confidence, then identifier for determinism)
+    # Take the top max_per_type of each type by graph importance (the pagerank of the source
+    # node, stored by build_element as source_pagerank), then identifier: structure only,
+    # never the LLM-written confidence
     sampled = []
-    for etype, type_elements in by_type.items():
+    for etype in sorted(by_type):
         sorted_type = sorted(
-            type_elements,
-            key=lambda e: (
-                -e.get("properties", {}).get("confidence", 0.5),
-                e.get(
-                    "identifier", ""
-                ),  # Secondary key ensures deterministic order on ties
-            ),
+            by_type[etype],
+            key=lambda e: (-(e.get("properties", {}).get("source_pagerank") or 0.0), e.get("identifier", "")),
         )
         sampled.extend(sorted_type[:max_per_type])
 
@@ -745,9 +734,7 @@ def normalize_name_for_matching(name: str) -> set[str]:
     return {w for w in word_list if len(w) > 2 and w not in stop_words}
 
 
-def names_match_for_relationship(
-    source_name: str, target_name: str, threshold: float = 0.3
-) -> bool:
+def names_match_for_relationship(source_name: str, target_name: str, threshold: float = 0.3) -> bool:
     """
     Determine if two element names are semantically related.
 
@@ -865,8 +852,8 @@ _NOT_FROM_CO_MEMBERSHIP = frozenset({"Flow", "Triggering", "Aggregation"})
 def derive_community_relationships(
     new_elements: list[dict[str, Any]],
     existing_elements: list[dict[str, Any]],
-    outbound_rules: list["RelationshipRule"],
-    inbound_rules: list["RelationshipRule"],
+    outbound_rules: list[RelationshipRule],
+    inbound_rules: list[RelationshipRule],
 ) -> list[dict[str, Any]]:
     """
     Create relationships between elements in the same Louvain community.
@@ -896,11 +883,7 @@ def derive_community_relationships(
             continue
 
         # Find existing elements in SAME community
-        same_community = [
-            e
-            for e in existing_elements
-            if get_community_from_element(e) == new_community
-        ]
+        same_community = [e for e in existing_elements if get_community_from_element(e) == new_community]
 
         if not same_community:
             continue
@@ -911,9 +894,7 @@ def derive_community_relationships(
             if rule.rel_type in _NOT_FROM_CO_MEMBERSHIP:
                 continue
             # Validate rule against ArchiMate metamodel
-            is_valid, msg = validate_relationship_rule(
-                new_type, rule.rel_type, rule.target_type
-            )
+            is_valid, msg = validate_relationship_rule(new_type, rule.rel_type, rule.target_type)
             if not is_valid:
                 logger.warning(
                     "Skipping invalid OUTBOUND rule: %s -[%s]-> %s: %s",
@@ -924,9 +905,7 @@ def derive_community_relationships(
                 )
                 continue
 
-            targets = [
-                e for e in same_community if e.get("element_type") == rule.target_type
-            ]
+            targets = [e for e in same_community if e.get("element_type") == rule.target_type]
 
             for target in targets:
                 target_id = target.get("identifier", "")
@@ -959,9 +938,7 @@ def derive_community_relationships(
                 continue
             # Validate rule against ArchiMate metamodel
             # For INBOUND: source=rule.target_type, target=new_type
-            is_valid, msg = validate_relationship_rule(
-                rule.target_type, rule.rel_type, new_type
-            )
+            is_valid, msg = validate_relationship_rule(rule.target_type, rule.rel_type, new_type)
             if not is_valid:
                 logger.warning(
                     "Skipping invalid INBOUND rule: %s -[%s]-> %s: %s",
@@ -972,9 +949,7 @@ def derive_community_relationships(
                 )
                 continue
 
-            sources = [
-                e for e in same_community if e.get("element_type") == rule.target_type
-            ]
+            sources = [e for e in same_community if e.get("element_type") == rule.target_type]
 
             for source in sources:
                 source_id = source.get("identifier", "")
@@ -1005,26 +980,16 @@ def derive_community_relationships(
     return relationships
 
 
-# Rule triples (source_type, target_type, rel_type) whose semantic pairing is
-# reliable when source and target are graph-connected within 2 hops, but whose
-# LLM proposal is non-deterministic. Promoting these to the neighbor tier with
-# a wider radius reduces relationship variance without touching other rules.
-SEMANTIC_PAIR_RULES_2HOP: set[tuple[str, str, str]] = {
-    ("BusinessActor", "BusinessProcess", "Assignment"),
-    ("BusinessActor", "BusinessFunction", "Assignment"),
-}
-
-
 def derive_neighbor_relationships(
     new_elements: list[dict[str, Any]],
     existing_elements: list[dict[str, Any]],
-    graph_manager: "GraphManager",
-    outbound_rules: list["RelationshipRule"],
-    inbound_rules: list["RelationshipRule"],
+    graph_manager: GraphManager,
+    outbound_rules: list[RelationshipRule],
+    inbound_rules: list[RelationshipRule],
 ) -> list[dict[str, Any]]:
     """
     Create relationships between elements whose source nodes are direct
-    neighbors in the graph (1-hop), plus semantic-pair rules at 2-hop.
+    neighbors in the graph (1-hop).
 
     This is Tier 1b of the graph-first relationship derivation approach.
 
@@ -1082,9 +1047,7 @@ def derive_neighbor_relationships(
                 for rule in outbound_rules:
                     if existing_type == rule.target_type:
                         # Validate rule against ArchiMate metamodel
-                        is_valid, _ = validate_relationship_rule(
-                            new_type, rule.rel_type, rule.target_type
-                        )
+                        is_valid, _ = validate_relationship_rule(new_type, rule.rel_type, rule.target_type)
                         if not is_valid:
                             continue
 
@@ -1105,9 +1068,7 @@ def derive_neighbor_relationships(
                 for rule in inbound_rules:
                     if existing_type == rule.target_type:
                         # Validate rule against ArchiMate metamodel
-                        is_valid, _ = validate_relationship_rule(
-                            rule.target_type, rule.rel_type, new_type
-                        )
+                        is_valid, _ = validate_relationship_rule(rule.target_type, rule.rel_type, new_type)
                         if not is_valid:
                             continue
 
@@ -1127,76 +1088,6 @@ def derive_neighbor_relationships(
         except Exception as e:
             logger.warning("Error querying graph neighbors for %s: %s", source_id, e)
             continue
-
-    # 2-hop pass for semantic-pair rules: narrowly expands radius for rule
-    # triples known to have reliable semantic pairing but variable LLM output.
-    new_type_ref = new_elements[0].get("element_type", "") if new_elements else ""
-    semantic_outbound = [
-        r
-        for r in outbound_rules
-        if (new_type_ref, r.target_type, r.rel_type) in SEMANTIC_PAIR_RULES_2HOP
-    ]
-    semantic_inbound = [
-        r
-        for r in inbound_rules
-        if (r.target_type, new_type_ref, r.rel_type) in SEMANTIC_PAIR_RULES_2HOP
-    ]
-    if semantic_outbound or semantic_inbound:
-        for new_elem in new_elements:
-            new_id = new_elem.get("identifier", "")
-            source_id = new_elem.get("properties", {}).get("source")
-            if not new_id or not source_id:
-                continue
-            connected = get_connected_source_ids(graph_manager, [source_id], max_hops=2)
-            new_type = new_elem.get("element_type", "")
-            for neighbor_source_id in connected:
-                if neighbor_source_id == source_id:
-                    continue
-                existing = existing_by_source.get(neighbor_source_id)
-                if not existing:
-                    continue
-                existing_id = existing.get("identifier", "")
-                existing_type = existing.get("element_type", "")
-                for rule in semantic_outbound:
-                    if existing_type != rule.target_type:
-                        continue
-                    is_valid, _ = validate_relationship_rule(
-                        new_type, rule.rel_type, rule.target_type
-                    )
-                    if not is_valid:
-                        continue
-                    pair_key = (new_id, existing_id, rule.rel_type)
-                    if pair_key not in created_pairs:
-                        created_pairs.add(pair_key)
-                        relationships.append(
-                            {
-                                "source": new_id,
-                                "target": existing_id,
-                                "relationship_type": rule.rel_type,
-                                "confidence": 0.88,
-                                "derived_from": "graph_neighbor_2hop",
-                            }
-                        )
-                for rule in semantic_inbound:
-                    if existing_type != rule.target_type:
-                        continue
-                    is_valid, _ = validate_relationship_rule(
-                        rule.target_type, rule.rel_type, new_type
-                    )
-                    if not is_valid:
-                        continue
-                    pair_key = (existing_id, new_id, rule.rel_type)
-                    if pair_key not in created_pairs:
-                        created_pairs.add(pair_key)
-                        relationships.append(
-                            {
-                                "source": existing_id,
-                                "target": new_id,
-                                "relationship_type": rule.rel_type,
-                                "confidence": 0.88,
-                                "derived_from": "graph_neighbor_2hop",
-                            }
-                        )
 
     logger.debug("Graph neighbor derivation: %d relationships", len(relationships))
     return relationships
@@ -1236,10 +1127,10 @@ EDGE_RELATIONSHIP_MAP: dict[str, dict[str, tuple[str, float]]] = {
 def derive_edge_relationships(
     new_elements: list[dict[str, Any]],
     existing_elements: list[dict[str, Any]],
-    graph_manager: "GraphManager",
+    graph_manager: GraphManager,
     element_type: str,
-    outbound_rules: list["RelationshipRule"],
-    inbound_rules: list["RelationshipRule"],
+    outbound_rules: list[RelationshipRule],
+    inbound_rules: list[RelationshipRule],
 ) -> list[dict[str, Any]]:
     """
     Derive relationships by walking specific edge types (CALLS, IMPORTS, USES).
@@ -1336,14 +1227,8 @@ def derive_edge_relationships(
                     rel_type, confidence = edge_mapping[existing_type]
 
                     # Verify this relationship type is allowed by the rules
-                    valid_outbound = any(
-                        r.target_type == existing_type and r.rel_type == rel_type
-                        for r in outbound_rules
-                    )
-                    valid_inbound = any(
-                        r.target_type == existing_type and r.rel_type == rel_type
-                        for r in inbound_rules
-                    )
+                    valid_outbound = any(r.target_type == existing_type and r.rel_type == rel_type for r in outbound_rules)
+                    valid_inbound = any(r.target_type == existing_type and r.rel_type == rel_type for r in inbound_rules)
 
                     if direction == "outbound" and valid_outbound:
                         pair_key = (new_id, existing_elem_id, rel_type)
@@ -1373,9 +1258,7 @@ def derive_edge_relationships(
                             )
 
             except Exception as e:
-                logger.warning(
-                    "Error querying %s edges for %s: %s", edge_type, source_id, e
-                )
+                logger.warning("Error querying %s edges for %s: %s", edge_type, source_id, e)
                 continue
 
     logger.debug(
@@ -1390,8 +1273,8 @@ def derive_deterministic_relationships(
     new_elements: list[dict[str, Any]],
     existing_elements: list[dict[str, Any]],
     element_type: str,
-    outbound_rules: list["RelationshipRule"],
-    inbound_rules: list["RelationshipRule"],
+    outbound_rules: list[RelationshipRule],
+    inbound_rules: list[RelationshipRule],
 ) -> list[dict[str, Any]]:
     """
     Derive relationships deterministically from rules without LLM.
@@ -1429,9 +1312,7 @@ def derive_deterministic_relationships(
         # Process OUTBOUND rules (FROM new TO existing)
         for rule in outbound_rules:
             # Validate rule against ArchiMate metamodel
-            is_valid, msg = validate_relationship_rule(
-                element_type, rule.rel_type, rule.target_type
-            )
+            is_valid, msg = validate_relationship_rule(element_type, rule.rel_type, rule.target_type)
             if not is_valid:
                 logger.warning(
                     "Skipping invalid OUTBOUND rule: %s -[%s]-> %s: %s",
@@ -1442,11 +1323,7 @@ def derive_deterministic_relationships(
                 )
                 continue
 
-            targets = [
-                e
-                for e in existing_elements
-                if e.get("element_type") == rule.target_type
-            ]
+            targets = [e for e in existing_elements if e.get("element_type") == rule.target_type]
 
             # Use lower threshold for Flow-like relationships
             threshold = 0.15 if rule.rel_type in loose_match_types else 0.3
@@ -1459,9 +1336,7 @@ def derive_deterministic_relationships(
                     continue
 
                 # Strategy 1: Name matching (with relationship-specific threshold)
-                name_match = names_match_for_relationship(
-                    new_name, target_name, threshold=threshold
-                )
+                name_match = names_match_for_relationship(new_name, target_name, threshold=threshold)
 
                 # Strategy 2: File proximity (elements from same source file)
                 file_match = elements_share_source_file(new_elem, target)
@@ -1486,9 +1361,7 @@ def derive_deterministic_relationships(
         for rule in inbound_rules:
             # Validate rule against ArchiMate metamodel
             # For INBOUND: source=rule.target_type, target=element_type
-            is_valid, msg = validate_relationship_rule(
-                rule.target_type, rule.rel_type, element_type
-            )
+            is_valid, msg = validate_relationship_rule(rule.target_type, rule.rel_type, element_type)
             if not is_valid:
                 logger.warning(
                     "Skipping invalid INBOUND rule: %s -[%s]-> %s: %s",
@@ -1499,11 +1372,7 @@ def derive_deterministic_relationships(
                 )
                 continue
 
-            sources = [
-                e
-                for e in existing_elements
-                if e.get("element_type") == rule.target_type
-            ]
+            sources = [e for e in existing_elements if e.get("element_type") == rule.target_type]
 
             # Use lower threshold for Flow-like relationships
             threshold = 0.15 if rule.rel_type in loose_match_types else 0.3
@@ -1516,9 +1385,7 @@ def derive_deterministic_relationships(
                     continue
 
                 # Strategy 1: Name matching
-                name_match = names_match_for_relationship(
-                    source_name, new_name, threshold=threshold
-                )
+                name_match = names_match_for_relationship(source_name, new_name, threshold=threshold)
 
                 # Strategy 2: File proximity
                 file_match = elements_share_source_file(source, new_elem)
@@ -1547,7 +1414,7 @@ def derive_deterministic_relationships(
 
 
 def get_connected_source_ids(
-    graph_manager: "GraphManager",
+    graph_manager: GraphManager,
     source_ids: list[str],
     max_hops: int = 2,
 ) -> set[str]:
@@ -1570,16 +1437,13 @@ def get_connected_source_ids(
 
     # Build Cypher query for neighbors within max_hops
     # Using variable-length path pattern for efficiency
-    query = (
-        """
+    query = f"""
         MATCH (n)
         WHERE n.id IN $source_ids
-        MATCH (n)-[*1..%d]-(neighbor)
+        MATCH (n)-[*1..{int(max_hops)}]-(neighbor)
         WHERE neighbor.active = true OR neighbor.active IS NULL
         RETURN DISTINCT neighbor.id as id
     """
-        % max_hops
-    )
 
     try:
         results = graph_manager.query(query, {"source_ids": source_ids})
@@ -1797,7 +1661,7 @@ def batch_candidates(
 
 
 def query_candidates(
-    graph_manager: "GraphManager",
+    graph_manager: GraphManager,
     cypher_query: str,
     enrichments: dict[str, dict[str, Any]] | None = None,
 ) -> list[Candidate]:
@@ -1820,6 +1684,8 @@ def query_candidates(
             enrich_candidate(candidate, enrichments)
         candidates.append(candidate)
 
+    # The graph's result order is unspecified: every later step sees the candidates in node id order
+    candidates.sort(key=lambda c: c.node_id)
     return candidates
 
 
@@ -1948,13 +1814,25 @@ RELATIONSHIP_SCHEMA: dict[str, Any] = {
 # =============================================================================
 
 
+@dataclass(frozen=True)
+class ElementPrompt:
+    """The texts of the batch element prompt (element config ``params.prompt``).
+
+    ``rules`` holds an ``{abstention}`` slot for ``abstention``, which is filled in only when the
+    candidate evidence is minimal (so the model may answer with an empty list).
+    """
+
+    persona: str
+    candidates: str  # What the candidate list is
+    rules: str
+    abstention: str
+
+
 def build_derivation_prompt(
     candidates: list[Candidate] | list[dict[str, Any]],
     instruction: str,
     example: str,
-    element_type: str,
-    existing_identifiers: list[str] | None = None,
-    existing_elements_summary: dict[str, list[str]] | None = None,
+    prompt: ElementPrompt,
     strength: dict[str, Any] | None = None,
 ) -> str:
     """
@@ -1964,10 +1842,8 @@ def build_derivation_prompt(
         candidates: Pre-filtered candidate nodes (Candidate objects or dicts)
         instruction: Element-specific derivation instructions
         example: Example output format
-        element_type: ArchiMate element type
-        existing_identifiers: Optional list of already-created identifiers to avoid
-        existing_elements_summary: Optional dict mapping element_type to list of names,
-                                  for naming alignment across types
+        prompt: The step's prompt texts (persona, candidate note, rules, abstention rule)
+        strength: Candidate evidence strength; ``minimal`` fills the abstention slot
     """
     # Convert Candidate objects to dicts with minimal properties (reduces tokens)
     if candidates and isinstance(candidates[0], Candidate):
@@ -1979,33 +1855,12 @@ def build_derivation_prompt(
     # Use compact JSON (no indentation) to reduce token usage by ~20-30%
     data_json = json.dumps(data, separators=(",", ":"), default=str)
 
-    # Build forbidden names section if existing identifiers provided
-    forbidden_section = ""
-    if existing_identifiers:
-        forbidden_section = f"""
-## Already Created (DO NOT duplicate these identifiers)
-{json.dumps(existing_identifiers, separators=(",", ":"))}
-"""
-
-    # Build cross-element reference section for naming alignment
-    context_section = ""
-    if existing_elements_summary:
-        lines = []
-        for etype, names in existing_elements_summary.items():
-            if names:
-                lines.append(f"- {etype}: {', '.join(names[:10])}")  # Limit to 10
-        if lines:
-            context_section = f"""
-## Existing Elements (for naming alignment)
-{chr(10).join(lines)}
-"""
-
     # Abstention signal — inform the LLM about candidate evidence strength.
     # The strength label bucketing is done upstream from graph signals only.
     # "Zero is valid" guidance is only surfaced when strength is 'minimal' to
     # avoid triggering over-abstention on repos with many noisy candidates.
     strength_section = ""
-    abstention_rule = ""
+    abstention = ""
     if strength:
         label = strength.get("strength_label", "unknown")
         strength_section = f"""
@@ -2016,38 +1871,25 @@ def build_derivation_prompt(
 - Overall strength: {label}
 """
         if label == "minimal":
-            abstention_rule = (
-                "2. The code may not support elements of this type at all. "
-                "If no candidate clearly fits the {etype} definition, returning "
-                "an empty list is a valid, correct answer.\n"
-            ).format(etype=element_type)
+            abstention = prompt.abstention
 
-    return f"""You are deriving ArchiMate {element_type} elements from source code graph data.
+    return f"""{prompt.persona}
 
 ## Instructions
 {instruction}
 
 ## Candidate Nodes
-These nodes have been pre-filtered as potential {element_type} candidates.
-Each includes graph metrics (pagerank, degree) to help assess importance.
+{prompt.candidates}
 
 ```json
 {data_json}
 ```
-{strength_section}{forbidden_section}{context_section}
+{strength_section}
 ## Example Output
 {example}
 
 ## Rules
-1. Evaluate each candidate individually. Include candidates that fit the
-   ArchiMate {element_type} definition. For candidates that do not fit,
-   set confidence below 0.5 so they are dropped by the confidence gate.
-{abstention_rule}3. Use the node "id" as the "source" field to link back.
-4. Provide meaningful names; do not append ArchiMate type suffixes like
-   " Component", " Service", " Interface", or " API" to names.
-5. Add documentation explaining the element's purpose.
-6. Set confidence realistic to how well the candidate matches the definition.
-7. Output stable, deterministic results — same inputs should produce same outputs.
+{prompt.rules.replace("{abstention}", abstention)}
 
 Return a JSON object with an "elements" array.
 """
@@ -2056,18 +1898,17 @@ Return a JSON object with an "elements" array.
 def build_single_candidate_prompt(
     candidate: Candidate | dict[str, Any],
     instruction: str,
-    element_type: str,
-    existing_elements_summary: dict[str, list[str]] | None = None,
     *,
     rules: str,
+    persona: str,
 ) -> str:
     """Build a focused prompt asking the LLM to judge ONE candidate.
 
     Isolating the decision per candidate prevents cross-candidate correlations
     in the output (one name influencing a sibling's name, or the batch-level
     abstention trigger dropping legitimate middles). The LLM returns either
-    zero or one element. The rules text comes from the element config
-    (``params.per_candidate.rules``).
+    zero or one element. The persona and rules texts come from the element config
+    (``params.per_candidate``).
     """
     if isinstance(candidate, Candidate):
         cand_dict = candidate.to_dict(include_props=ESSENTIAL_PROPS)
@@ -2075,20 +1916,7 @@ def build_single_candidate_prompt(
         cand_dict = candidate
     cand_json = json.dumps(cand_dict, separators=(",", ":"), default=str)
 
-    context_section = ""
-    if existing_elements_summary:
-        lines = []
-        for etype, names in existing_elements_summary.items():
-            if names:
-                lines.append(f"- {etype}: {', '.join(names[:10])}")
-        if lines:
-            context_section = (
-                "\n## Existing Elements (for naming alignment)\n"
-                + "\n".join(lines)
-                + "\n"
-            )
-
-    return f"""You are naming ONE candidate node as an ArchiMate {element_type}.
+    return f"""{persona}
 
 ## Instructions
 {instruction}
@@ -2097,7 +1925,7 @@ def build_single_candidate_prompt(
 ```json
 {cand_json}
 ```
-{context_section}
+
 ## Rules
 {rules}
 
@@ -2177,12 +2005,21 @@ def name_from_source(source_name: str, strip_extension: bool = False) -> str:
     words = []
     for chunk in re.split(r"[_\-.]+", base.lstrip(".")):
         for part in _WORD.findall(chunk):
-            words.append(
-                part
-                if len(part) > 1 and part.isupper()
-                else part[:1].upper() + part[1:]
-            )
+            words.append(part if len(part) > 1 and part.isupper() else part[:1].upper() + part[1:])
     return " ".join(words)
+
+
+def structure_element_name(source_id: str, source_name: str, repo_name: str = "") -> str:
+    """The name an element gets from its source node: ``name_from_source`` without an
+    ArchiMate type suffix and, when ``repo_name`` is given, without a leading repository token.
+    """
+    from deriva.modules.derivation.refine.normalization import (
+        strip_archimate_suffix,
+        strip_repo_prefix,
+    )
+
+    name = strip_archimate_suffix(name_from_source(source_name, strip_extension=source_id.startswith("file::")))
+    return strip_repo_prefix(name, repo_name) if repo_name else name
 
 
 @dataclass(frozen=True)
@@ -2195,7 +2032,7 @@ class NamingConfig:
     """
 
     instruction: str  # Naming convention for the element type
-    samples: int = 3  # Answers per element, combined by majority
+    samples: int = 1  # Answers per element; above 1 they are combined by majority (voting, reported per session)
 
 
 # Structural source fields that are the same in every run (no LLM-written text)
@@ -2230,9 +2067,7 @@ def naming_source(candidate: Candidate) -> dict[str, Any]:
     return source
 
 
-def build_naming_prompt(
-    source: dict[str, Any], element_type: str, instruction: str
-) -> str:
+def build_naming_prompt(source: dict[str, Any], element_type: str, instruction: str) -> str:
     """Prompt for naming one element; depends only on its source, type and instruction."""
     source_json = json.dumps(source, sort_keys=True, separators=(",", ":"), default=str)
     return f"""{instruction}
@@ -2243,6 +2078,137 @@ def build_naming_prompt(
 ```
 
 Return {{"name": "..."}}."""
+
+
+@dataclass(frozen=True)
+class GraphFilter:
+    """A step's k-core threshold for its candidates (element config ``params.graph_filter``).
+
+    The percentile is computed over the whole graph, so it only fits candidates that were
+    chosen as graph neighbours; ``labels`` limits the threshold to candidates with one of
+    those graph labels (others, chosen by the query on structure, pass).
+    """
+
+    min_kcore_percentile: float
+    labels: frozenset[str] | None = None  # None: the threshold applies to every candidate
+
+
+@dataclass(frozen=True)
+class NestedFilter:
+    """One module, one element (element config ``params.skip_nested``).
+
+    A selected directory that holds at least ``min_share`` of the files of ``file_type``
+    below its nearest selected ancestor directory is represented by that ancestor.
+    """
+
+    file_type: str
+    min_share: float
+
+
+@dataclass(frozen=True)
+class UnitFilter:
+    """Components at the deployable-unit level (element config ``params.deployable_units``).
+
+    A unit is a directory candidate that directly holds a file named in ``file_names`` (a
+    build, dependency or container file). With at least ``min_units`` outermost units, those
+    units are the candidates; a repository with fewer keeps its candidates.
+    """
+
+    file_names: frozenset[str]  # Lower-case file names
+    min_units: int
+
+
+@dataclass(frozen=True)
+class RoleConfig:
+    """Candidates classified into a closed list of roles (element config ``params.roles``).
+
+    Candidates with one of ``labels`` leave the keep and naming path: one call per batch
+    chooses a role key (or none) for each, and every chosen role becomes one element whose
+    identity and name come from the role.
+    """
+
+    labels: frozenset[str]  # Graph labels of the candidates classified into roles
+    instruction: str  # What each role means (config text)
+    names: dict[str, str]  # Role key -> role name, in the order the elements are created
+    documentation: str = ""  # Element documentation; {members} lists the candidates' names, {role} the role name
+    missing_retries: int = 0  # Times a candidate left out of an answer is asked again
+    # "role": one element per chosen role, named after it; "candidate": one element per
+    # candidate with a role, with the candidate's identity and name and the role stored
+    element_per: str = "role"
+    # element_per "candidate" only: the element name from structure, a template with {container}
+    # (the element of container_type whose source directory holds the candidate, else its
+    # top-level module), {subject} (the candidate's structure name) and {role} (the role name),
+    # each word once; empty keeps the candidate's own name as written
+    name_template: str = ""
+    container_type: str = ""  # Element type whose source directory holds a candidate ({container})
+    show_path: bool = False  # Show each candidate's path in the classification prompt
+    # element_per "candidate" only: the step's naming call (params.naming) may rename each element,
+    # starting from its template name, under the usual uniqueness rules
+    naming_call: bool = False
+
+
+ROLE_SCHEMA: dict[str, Any] = {
+    "name": "role_classification",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}, "role": {"type": "string"}},
+                    "required": ["id", "role"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    },
+}
+
+
+def build_role_prompt(candidates: list[Candidate], instruction: str, names: dict[str, str], show_path: bool = False) -> str:
+    """Prompt for choosing a role per candidate from a closed list; depends only on structure."""
+    roles = "\n".join(f"- {key}: {name}" for key, name in names.items())
+    items = []
+    for c in candidates:
+        item: dict[str, Any] = {"id": c.node_id, "name": c.name}
+        if c.properties.get("techCategory"):
+            item["category"] = c.properties["techCategory"]
+        path = c.properties.get("filePath") or c.properties.get("path")
+        if show_path and path:
+            item["path"] = path
+        items.append(item)
+    items_json = json.dumps(items, separators=(",", ":"), default=str)
+    return f"""{instruction}
+
+## Roles
+{roles}
+- none
+
+## Candidates
+```json
+{items_json}
+```
+
+Return {{"items": [{{"id": "...", "role": "..."}}]}} with one item per candidate: its id and a role key from the list, or none."""
+
+
+def parse_role_answer(content: str, ids: set[str], roles: dict[str, str]) -> dict[str, str | None]:
+    """The role per candidate id in a role classification answer: a role key, or None for none.
+
+    Items with an unknown id or role are left out, so their candidates count as not answered.
+    """
+    decided: dict[str, str | None] = {}
+    for item in parse_json_array(content, "items").data:
+        if not isinstance(item, dict):
+            continue
+        candidate_id, role = item.get("id"), item.get("role")
+        if candidate_id in ids and (role == "none" or role in roles):
+            decided[candidate_id] = None if role == "none" else role
+    return decided
 
 
 def canonical_name(name: str) -> str:
@@ -2256,17 +2222,33 @@ def canonical_name(name: str) -> str:
 
 
 def choose_name(samples: list[str | None]) -> str | None:
-    """Majority name over canonicalized samples (case-insensitive), ties broken deterministically."""
+    """Majority name over canonicalized samples, ties broken deterministically.
+
+    Votes group case- and spacing-insensitively ("HTTPServer" and "HTTP Server" are one
+    name); the most frequent written form of the winning group is returned.
+    """
     names = [canonical_name(s) for s in samples if s and s.strip()]
     names = [n for n in names if n]
     if not names:
         return None
     groups: dict[str, list[str]] = {}
     for n in names:
-        groups.setdefault(n.lower(), []).append(n)
+        groups.setdefault(n.lower().replace(" ", ""), []).append(n)
     best = min(groups, key=lambda k: (-len(groups[k]), k))
     forms = groups[best]
     return min(forms, key=lambda f: (-forms.count(f), f))
+
+
+def source_casing(name: str, source_name: str) -> str:
+    """``name`` with each word spelled as the source spells it, when the source writes that word with capitals (a
+    type name in camel case: "CrudTypeImpl" makes "CRUD Type" read "Crud Type"); a lowercase source (a directory
+    name) carries no casing, so its words keep the name's spelling."""
+    spelled: dict[str, str] = {}
+    for chunk in re.split(r"[_\-.\s]+", source_name or ""):
+        for word in _WORD.findall(chunk):
+            if not word.islower():
+                spelled.setdefault(word.lower(), word)
+    return " ".join(spelled.get(word.lower(), word) for word in name.split(" "))
 
 
 def element_identifier(element_type: str, source_id: str) -> str:
@@ -2303,11 +2285,6 @@ def build_element(
     Returns:
         Dict with success flag and element data
     """
-    from deriva.modules.derivation.refine.normalization import (
-        strip_archimate_suffix,
-        strip_repo_prefix,
-    )
-
     source_id = derived.get("source")
     if not source_id or source_id not in source_names:
         return {
@@ -2315,13 +2292,7 @@ def build_element(
             "errors": [f"Element source {source_id!r} is not a candidate"],
         }
 
-    name = strip_archimate_suffix(
-        name_from_source(
-            source_names[source_id], strip_extension=source_id.startswith("file::")
-        )
-    )
-    if repo_name:
-        name = strip_repo_prefix(name, repo_name)
+    name = structure_element_name(source_id, source_names[source_id], repo_name)
     if not name:
         return {"success": False, "errors": [f"Empty name for source {source_id!r}"]}
 
@@ -2374,6 +2345,7 @@ def build_unified_relationship_prompt(
     outbound_rules: list[RelationshipRule],
     inbound_rules: list[RelationshipRule],
     instruction: str,
+    persona: str,
 ) -> str:
     """
     Build LLM prompt for unified relationship derivation (both directions).
@@ -2389,6 +2361,7 @@ def build_unified_relationship_prompt(
         outbound_rules: Rules for relationships FROM this type
         inbound_rules: Rules for relationships TO this type (from other types)
         instruction: Conventions and rules from the relationship config row
+        persona: Opening line from the relationship config row ({element_type}: the type just created)
 
     Returns:
         Prompt string for LLM
@@ -2409,41 +2382,25 @@ def build_unified_relationship_prompt(
     if outbound_rules:
         outbound_lines = []
         for rule in outbound_rules:
-            targets_of_type = [
-                e
-                for e in existing_elements
-                if e.get("element_type") == rule.target_type
-            ]
+            targets_of_type = [e for e in existing_elements if e.get("element_type") == rule.target_type]
             if targets_of_type:
-                outbound_lines.append(
-                    f"- {element_type} --[{rule.rel_type}]--> {rule.target_type}: {rule.description}"
-                )
+                outbound_lines.append(f"- {element_type} --[{rule.rel_type}]--> {rule.target_type}: {rule.description}")
         if outbound_lines:
-            outbound_text = "OUTBOUND (FROM new elements TO existing):\n" + "\n".join(
-                outbound_lines
-            )
+            outbound_text = "OUTBOUND (FROM new elements TO existing):\n" + "\n".join(outbound_lines)
 
     # Build inbound rules text
     inbound_text = ""
     if inbound_rules:
         inbound_lines = []
         for rule in inbound_rules:
-            sources_of_type = [
-                e
-                for e in existing_elements
-                if e.get("element_type") == rule.target_type
-            ]
+            sources_of_type = [e for e in existing_elements if e.get("element_type") == rule.target_type]
             if sources_of_type:
-                inbound_lines.append(
-                    f"- {rule.target_type} --[{rule.rel_type}]--> {element_type}: {rule.description}"
-                )
+                inbound_lines.append(f"- {rule.target_type} --[{rule.rel_type}]--> {element_type}: {rule.description}")
         if inbound_lines:
-            inbound_text = "INBOUND (FROM existing elements TO new):\n" + "\n".join(
-                inbound_lines
-            )
+            inbound_text = "INBOUND (FROM existing elements TO new):\n" + "\n".join(inbound_lines)
 
     # Note: identifier lists and valid_rel_types removed - they're in the JSON/rules (saves tokens)
-    prompt = f"""You are deriving ArchiMate 3.2 relationships for newly created {element_type} elements.
+    prompt = f"""{persona.replace("{element_type}", element_type)}
 
 ## New {element_type} Elements (just created)
 ```json
@@ -2490,6 +2447,46 @@ def dedupe_relationships(relationships: list[dict[str, Any]]) -> list[dict[str, 
     return kept
 
 
+# ArchiMate's structural relationships: a part or a realized element has one owner
+OWNERSHIP_RELATIONSHIPS = frozenset({"Composition", "Aggregation", "Assignment", "Realization"})
+
+
+def _left_to_containment(
+    relationship: dict[str, Any],
+    type_of: dict[str, str],
+    decided: dict[tuple[str, str], tuple[str, str, set[str], set[str] | None]],
+    owner_pairs: set[frozenset[str]],
+    owner_pair_only: bool = False,
+) -> bool:
+    """Whether structure already decided this relationship, so another tier may not add it.
+
+    Two elements that structure related get no other relationship. Unless
+    ``owner_pair_only``, for a type pair that structure decides (containment,
+    membership, configuration): a member that structure placed gets no further
+    ownership relationship of that pair nor another of the rule's type, and a member
+    it could not place gets only the rule's ownership type, from an element that
+    structure lets own (for membership: a group that lists member technologies).
+    """
+    source, target, kind = relationship["source"], relationship["target"], relationship["relationship_type"]
+    if frozenset((source, target)) in owner_pairs:
+        return True
+    if owner_pair_only:
+        return False
+    a, b = type_of.get(source, ""), type_of.get(target, "")
+    for (from_type, to_type), (rule_type, side, placed, owners) in decided.items():
+        if (a, b) == (from_type, to_type):
+            member, owner = (target, source) if side == "target" else (source, target)
+        elif (b, a) == (from_type, to_type):
+            member, owner = (source, target) if side == "target" else (target, source)
+        else:
+            continue
+        if member in placed and (kind in OWNERSHIP_RELATIONSHIPS or kind == rule_type):
+            return True
+        if member not in placed and kind in OWNERSHIP_RELATIONSHIPS and (kind != rule_type or (owners is not None and owner not in owners)):
+            return True
+    return False
+
+
 def derive_batch_relationships(
     new_elements: list[dict[str, Any]],
     existing_elements: list[dict[str, Any]],
@@ -2499,8 +2496,10 @@ def derive_batch_relationships(
     llm_query_fn: Any,
     temperature: float | None = None,
     max_tokens: int | None = None,
-    graph_manager: "GraphManager | None" = None,
+    graph_manager: GraphManager | None = None,
     llm_config: RelationshipLLMConfig | None = None,
+    decided: dict[tuple[str, str], tuple[str, str, set[str], set[str] | None]] | None = None,
+    owner_pairs: set[frozenset[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for a batch of newly created elements.
@@ -2521,6 +2520,11 @@ def derive_batch_relationships(
                       those with graph proximity to new_elements.
         llm_config: Relationship config row settings. None (row disabled)
                     skips the LLM pass; graph tiers still run.
+        decided: (from type, to type) -> (relationship type, member side, placed
+                    members, possible owners) for the pairs structure decides (see
+                    _left_to_containment)
+        owner_pairs: Element pairs that structure already related: no tier adds
+                    another relationship between them.
 
     Returns:
         List of validated relationship dicts
@@ -2536,45 +2540,27 @@ def derive_batch_relationships(
         return []  # No targets for relationships
 
     # Check if there are any applicable rules with available targets/sources
-    has_outbound_targets = any(
-        any(e.get("element_type") == rule.target_type for e in existing_elements)
-        for rule in outbound_rules
-    )
-    has_inbound_sources = any(
-        any(e.get("element_type") == rule.target_type for e in existing_elements)
-        for rule in inbound_rules
-    )
+    has_outbound_targets = any(any(e.get("element_type") == rule.target_type for e in existing_elements) for rule in outbound_rules)
+    has_inbound_sources = any(any(e.get("element_type") == rule.target_type for e in existing_elements) for rule in inbound_rules)
 
     if not has_outbound_targets and not has_inbound_sources:
         logger.debug("No applicable relationship rules for %s batch", element_type)
         return []
 
     # Filter existing_elements to only include relevant types (reduces prompt size)
-    relevant_types = {r.target_type for r in outbound_rules} | {
-        r.target_type for r in inbound_rules
-    }
-    filtered_existing = [
-        e for e in existing_elements if e.get("element_type") in relevant_types
-    ]
+    relevant_types = {r.target_type for r in outbound_rules} | {r.target_type for r in inbound_rules}
+    filtered_existing = [e for e in existing_elements if e.get("element_type") in relevant_types]
 
     # Phase 4.3: Apply graph-aware pre-filtering if graph_manager provided
     # This keeps only elements with graph proximity to new_elements
     if graph_manager and len(filtered_existing) > 20:
         # Extract source IDs from new elements
-        new_source_ids = [
-            e.get("properties", {}).get("source")
-            for e in new_elements
-            if e.get("properties", {}).get("source")
-        ]
+        new_source_ids = [e.get("properties", {}).get("source") for e in new_elements if e.get("properties", {}).get("source")]
         if new_source_ids:
             # Get connected node IDs (within 2 hops)
-            connected_ids = get_connected_source_ids(
-                graph_manager, new_source_ids, max_hops=2
-            )
+            connected_ids = get_connected_source_ids(graph_manager, new_source_ids, max_hops=2)
             before_count = len(filtered_existing)
-            filtered_existing = filter_by_graph_proximity(
-                filtered_existing, connected_ids
-            )
+            filtered_existing = filter_by_graph_proximity(filtered_existing, connected_ids)
             logger.debug(
                 "Graph-aware filtering: %d -> %d elements (connected to %d sources)",
                 before_count,
@@ -2590,9 +2576,7 @@ def derive_batch_relationships(
             max_per_type=10,
             relevant_types=list(relevant_types),
         )
-        logger.debug(
-            "Stratified sampling: reduced to %d elements", len(filtered_existing)
-        )
+        logger.debug("Stratified sampling: reduced to %d elements", len(filtered_existing))
 
     logger.debug(
         "Filtered existing elements: %d -> %d (relevant types: %s)",
@@ -2607,6 +2591,14 @@ def derive_batch_relationships(
     all_relationships: list[dict[str, Any]] = []
     created_pairs: set[tuple[str, str, str]] = set()
 
+    # What structure decided stays decided: see _left_to_containment
+    decided_pairs = decided or {}
+    related = owner_pairs or set()
+    type_of = {e.get("identifier", ""): e.get("element_type", "") for e in list(new_elements) + list(filtered_existing)}
+
+    def kept(relationships: list[dict[str, Any]], usage_only: bool = False) -> list[dict[str, Any]]:
+        return [r for r in relationships if not _left_to_containment(r, type_of, decided_pairs, related, owner_pair_only=usage_only)]
+
     # -------------------------------------------------------------------------
     # TIER 1a: Community-based relationships (same Louvain community = related)
     # -------------------------------------------------------------------------
@@ -2616,7 +2608,7 @@ def derive_batch_relationships(
         outbound_rules=outbound_rules,
         inbound_rules=inbound_rules,
     )
-    for rel in community_rels:
+    for rel in kept(community_rels):
         key = (rel["source"], rel["target"], rel["relationship_type"])
         if key not in created_pairs:
             all_relationships.append(rel)
@@ -2634,7 +2626,7 @@ def derive_batch_relationships(
             outbound_rules=outbound_rules,
             inbound_rules=inbound_rules,
         )
-        for rel in neighbor_rels:
+        for rel in kept(neighbor_rels):
             key = (rel["source"], rel["target"], rel["relationship_type"])
             if key not in created_pairs:
                 all_relationships.append(rel)
@@ -2653,7 +2645,7 @@ def derive_batch_relationships(
             outbound_rules=outbound_rules,
             inbound_rules=inbound_rules,
         )
-        for rel in edge_rels:
+        for rel in kept(edge_rels, usage_only=True):
             key = (rel["source"], rel["target"], rel["relationship_type"])
             if key not in created_pairs:
                 all_relationships.append(rel)
@@ -2669,7 +2661,7 @@ def derive_batch_relationships(
         outbound_rules=outbound_rules,
         inbound_rules=inbound_rules,
     )
-    for rel in deterministic_rels:
+    for rel in kept(deterministic_rels):
         key = (rel["source"], rel["target"], rel["relationship_type"])
         if key not in created_pairs:
             all_relationships.append(rel)
@@ -2679,8 +2671,7 @@ def derive_batch_relationships(
 
     # Log deterministic results
     logger.info(
-        "Deterministic derivation: %d relationships "
-        "(%d community, %d neighbor, %d edge, %d name/file) for %s",
+        "Deterministic derivation: %d relationships (%d community, %d neighbor, %d edge, %d name/file) for %s",
         len(all_relationships),
         len(community_rels),
         len(neighbor_rels),
@@ -2698,8 +2689,7 @@ def derive_batch_relationships(
     deterministic_types = {r["relationship_type"] for r in all_relationships}
     if len(deterministic_types) >= 2 and len(all_relationships) >= 3:
         logger.info(
-            "Skipping LLM refinement for %s: %d deterministic relationships "
-            "across %d types sufficient",
+            "Skipping LLM refinement for %s: %d deterministic relationships across %d types sufficient",
             element_type,
             len(all_relationships),
             len(deterministic_types),
@@ -2718,6 +2708,7 @@ def derive_batch_relationships(
         outbound_rules=outbound_rules,
         inbound_rules=inbound_rules,
         instruction=llm_config.instruction,
+        persona=llm_config.persona,
     )
 
     if not prompt:
@@ -2740,9 +2731,7 @@ def derive_batch_relationships(
 
     try:
         response = llm_query_fn(prompt, RELATIONSHIP_SCHEMA, **llm_kwargs)
-        response_content = (
-            response.content if hasattr(response, "content") else str(response)
-        )
+        response_content = response.content if hasattr(response, "content") else str(response)
     except Exception as e:
         logger.error("LLM error deriving %s relationships: %s", element_type, e)
         return all_relationships  # Return Tier 1 relationships on LLM error
@@ -2762,10 +2751,8 @@ def derive_batch_relationships(
     existing_ids = {e.get("identifier", "") for e in filtered_existing}
     all_ids = new_ids | existing_ids
 
-    # Build valid relationship type set
-    valid_types = {r.rel_type for r in outbound_rules} | {
-        r.rel_type for r in inbound_rules
-    }
+    # A proposal must match a rule: its source type, target type and relationship type
+    allowed = {(element_type, r.target_type, r.rel_type) for r in outbound_rules} | {(r.target_type, element_type, r.rel_type) for r in inbound_rules}
 
     llm_relationships = []
     for rel_data in parse_result.get("data", []):
@@ -2794,9 +2781,7 @@ def derive_batch_relationships(
 
         # Both endpoints must exist
         if source not in all_ids or target not in all_ids:
-            logger.debug(
-                "Skipping relationship: endpoint not found (%s -> %s)", source, target
-            )
+            logger.debug("Skipping relationship: endpoint not found (%s -> %s)", source, target)
             continue
 
         # At least one endpoint must be from new elements
@@ -2804,9 +2789,11 @@ def derive_batch_relationships(
             logger.debug("Skipping relationship: neither endpoint is new element")
             continue
 
-        # Validate relationship type
-        if rel_type not in valid_types:
-            logger.debug("Skipping relationship: invalid type %s", rel_type)
+        # Validate the type pair and relationship type against the rules
+        if (type_of.get(source), type_of.get(target), rel_type) not in allowed:
+            logger.debug("Skipping relationship: no rule for %s -[%s]-> %s", type_of.get(source), rel_type, type_of.get(target))
+            continue
+        if _left_to_containment({"source": source, "target": target, "relationship_type": rel_type}, type_of, decided_pairs, related):
             continue
 
         # Prevent circular Composition relationships
@@ -2845,10 +2832,7 @@ def derive_batch_relationships(
     # source_node <-> target_node connection within 2 hops in the extraction graph.
     # This prevents "name-based pairing" hallucinations disconnected from the code.
     if graph_manager and llm_relationships:
-        element_by_id = {
-            e.get("identifier", ""): e
-            for e in list(new_elements) + list(filtered_existing)
-        }
+        element_by_id = {e.get("identifier", ""): e for e in list(new_elements) + list(filtered_existing)}
         before = len(llm_relationships)
         grounded: list[dict[str, Any]] = []
         for rel in llm_relationships:
@@ -2887,9 +2871,7 @@ def derive_batch_relationships(
         "Derived %d total relationships for %s batch (deterministic: %d, LLM: %d)",
         len(all_relationships),
         element_type,
-        len(community_rels)
-        + (len(neighbor_rels) if graph_manager else 0)
-        + len(deterministic_rels),
+        len(community_rels) + (len(neighbor_rels) if graph_manager else 0) + len(deterministic_rels),
         len(llm_relationships),
     )
     return dedupe_relationships(all_relationships)
@@ -2900,16 +2882,230 @@ def derive_batch_relationships(
 # =============================================================================
 
 
+def element_source_paths(graph_manager: GraphManager, elements: list[dict[str, Any]]) -> dict[str, str]:
+    """Repository path of each element's source node: a directory's path, a file's, type's or method's file path.
+
+    A source without a path of its own (a concept found in a directory name) lies in the directory
+    that represents it; in the deepest directory shared by several.
+    """
+    ids = sorted({src for e in elements if (src := (e.get("properties") or {}).get("source"))})
+    if not ids:
+        return {}
+    rows = graph_manager.query("MATCH (n) WHERE n.id IN $ids RETURN n.id AS id, n.path AS path, n.filePath AS file_path", {"ids": ids})
+    paths: dict[str, str] = {}
+    for row in rows:
+        path = row.get("file_path") or row.get("path")
+        if row.get("id") and path:
+            paths[row["id"]] = str(path).replace(chr(92), "/").rstrip("/")
+    missing = [i for i in ids if i not in paths]
+    if missing:
+        represented: dict[str, list[list[str]]] = defaultdict(list)
+        for row in graph_manager.query("MATCH (d)-[:`Graph:REPRESENTS`]->(n) WHERE n.id IN $ids RETURN n.id AS id, d.path AS path", {"ids": missing}):
+            if row.get("id") and row.get("path"):
+                represented[row["id"]].append(str(row["path"]).replace(chr(92), "/").rstrip("/").split("/"))
+        for node_id, holders in represented.items():
+            shared = []
+            for parts in zip(*holders, strict=False):
+                if len(set(parts)) != 1:
+                    break
+                shared.append(parts[0])
+            if shared:
+                paths[node_id] = "/".join(shared)
+    return paths
+
+
+def derive_containment_relationships(
+    elements: list[dict[str, Any]],
+    source_paths: dict[str, str],
+    rules: list[ContainmentRule],
+) -> list[dict[str, Any]]:
+    """Relationships from containment: the nearest enclosing container owns each element.
+
+    An element of a contained type is related to the container element whose source
+    directory holds its source most closely (only that one, so composition stays
+    exclusive). Elements without a source path, or outside every container, stay unlinked.
+    """
+    if not rules:
+        return []
+    container_types = {r.container for r in rules}
+    containers: dict[str, list[tuple[str, str]]] = defaultdict(list)  # type -> [(directory path, id)]
+    for e in elements:
+        path = source_paths.get((e.get("properties") or {}).get("source", ""))
+        if path and e.get("element_type") in container_types:
+            containers[e["element_type"]].append((path, e["identifier"]))
+
+    relationships: list[dict[str, Any]] = []
+    for e in sorted(elements, key=lambda x: x.get("identifier", "")):
+        path = source_paths.get((e.get("properties") or {}).get("source", ""))
+        if not path:
+            continue
+        for rule in rules:
+            if e.get("element_type") != rule.contained:
+                continue
+            owners = [(p, cid) for p, cid in containers.get(rule.container, []) if cid != e["identifier"] and path.startswith(p + "/")]
+            if not owners:
+                continue
+            _, owner = max(owners, key=lambda o: len(o[0]))
+            relationships.append({"source": owner, "target": e["identifier"], "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "containment"})
+    return relationships
+
+
+def _member_technologies(element: dict[str, Any]) -> list[str]:
+    """The technologies an element stands for: its listed ``sources``, else its source."""
+    props = element.get("properties") or {}
+    return list(props.get("sources") or ([props["source"]] if props.get("source") else []))
+
+
+def derive_membership_relationships(elements: list[dict[str, Any]], rules: list[MembershipRule]) -> list[dict[str, Any]]:
+    """Relationships between a role element and the elements of its member technologies.
+
+    Only elements that list member technologies (``sources``, as role elements do) are
+    groups; an element made from a single file or candidate groups nothing.
+    """
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        members: dict[str, list[str]] = defaultdict(list)
+        for e in elements:
+            source = (e.get("properties") or {}).get("source")
+            if e.get("element_type") == rule.member and source:
+                members[source].append(e["identifier"])
+        for group in sorted((e for e in elements if e.get("element_type") == rule.group), key=lambda x: x.get("identifier", "")):
+            for tech in (group.get("properties") or {}).get("sources") or []:
+                for member in sorted(members.get(tech, [])):
+                    if member == group["identifier"]:
+                        continue
+                    source, target = (group["identifier"], member) if rule.from_group else (member, group["identifier"])
+                    relationships.append({"source": source, "target": target, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "membership"})
+    return dedupe_relationships(relationships)
+
+
+def configured_technologies(graph_manager: GraphManager) -> dict[str, set[str]]:
+    """File path -> the technologies the file configures (CONFIGURES edges from manifests, build and container files)."""
+    rows = graph_manager.query("MATCH (f:Graph:File)-[r:`Graph:CONFIGURES`]->(t:Graph:Technology) RETURN f.filePath AS file, t.id AS tech")
+    configured: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        if row.get("file") and row.get("tech"):
+            configured[str(row["file"]).replace(chr(92), "/")].add(row["tech"])
+    return dict(configured)
+
+
+def derive_configuration_relationships(
+    elements: list[dict[str, Any]],
+    source_paths: dict[str, str],
+    configured: dict[str, set[str]],
+    rules: list[ConfigurationRule],
+) -> list[dict[str, Any]]:
+    """A provider serves the consumer whose directory (nearest enclosing) holds a file configuring one of its technologies."""
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        consumers = [
+            (source_paths[src], e["identifier"]) for e in elements if e.get("element_type") == rule.consumer and (src := (e.get("properties") or {}).get("source")) in source_paths
+        ]
+        providers = [(e["identifier"], set(_member_technologies(e))) for e in elements if e.get("element_type") == rule.provider]
+        used: dict[str, set[str]] = defaultdict(set)  # consumer id -> configured technologies
+        for path, techs in configured.items():
+            owners = [(p, cid) for p, cid in consumers if path.startswith(p + "/")]
+            if owners:
+                used[max(owners, key=lambda o: len(o[0]))[1]].update(techs)
+        for consumer in sorted(used):
+            for provider, techs in sorted(providers):
+                if techs & used[consumer]:
+                    relationships.append({"source": provider, "target": consumer, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "configuration"})
+    return relationships
+
+
+def _source_name_key(element: dict[str, Any], strip_suffixes: tuple[str, ...]) -> str:
+    """Canonical name key of the last part of the element's source id, without a configured suffix."""
+    name = str((element.get("properties") or {}).get("source") or "").rsplit("::", 1)[-1]
+    for suffix in strip_suffixes:
+        if suffix and name.endswith(suffix) and len(name) > len(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name_key(name)
+
+
+def derive_same_name_relationships(elements: list[dict[str, Any]], rules: list[SameNameRule]) -> list[dict[str, Any]]:
+    """The source element relates to every target element whose structural source carries the same name."""
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        targets: dict[str, list[str]] = defaultdict(list)
+        for e in elements:
+            if e.get("element_type") == rule.target and (key := _source_name_key(e, ())):
+                targets[key].append(e["identifier"])
+        for e in sorted((x for x in elements if x.get("element_type") == rule.source), key=lambda x: x.get("identifier", "")):
+            key = _source_name_key(e, rule.strip_suffixes)
+            for target in sorted(targets.get(key, [])) if key else []:
+                if target != e["identifier"]:
+                    relationships.append({"source": e["identifier"], "target": target, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "same_name"})
+    return relationships
+
+
+def file_imports(graph_manager: GraphManager) -> list[tuple[str, str]]:
+    """(importing file path, imported file path) for every import between files of the repository."""
+    rows = graph_manager.query("MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(b:Graph:File) RETURN a.filePath AS a, b.filePath AS b")
+    return sorted({(str(r["a"]).replace(chr(92), "/"), str(r["b"]).replace(chr(92), "/")) for r in rows if r.get("a") and r.get("b")})
+
+
+def derive_dependency_relationships(
+    elements: list[dict[str, Any]],
+    source_paths: dict[str, str],
+    imports: list[tuple[str, str]],
+    rules: list[DependencyRule],
+) -> list[dict[str, Any]]:
+    """The provider serves the consumer whose files import its files, drawn between siblings.
+
+    Each file belongs to its nearest enclosing element. A dependency between two elements
+    is lifted to the two elements just below the deepest element holding both, so a part
+    that uses a part of another element shows as a dependency between those elements, and
+    imports within one element or between an element and its own parts add nothing.
+    """
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        holders = sorted(
+            (source_paths[src], e["identifier"])
+            for e in elements
+            if e.get("element_type") in (rule.consumer, rule.provider) and (src := (e.get("properties") or {}).get("source")) in source_paths
+        )
+        type_of = {e["identifier"]: e.get("element_type") for e in elements}
+
+        def within(path: str, holder: str) -> bool:
+            return path == holder or path.startswith(holder + "/")
+
+        def nearest(path: str, element_type: str) -> tuple[str, str] | None:
+            owners = [h for h in holders if within(path, h[0]) and type_of[h[1]] == element_type]
+            return max(owners, key=lambda h: len(h[0])) if owners else None
+
+        def lift(owner: tuple[str, str], parent: str | None) -> str:
+            """The outermost element holding ``owner`` below ``parent`` (anywhere when None)."""
+            chain = [h for h in holders if within(owner[0], h[0]) and (parent is None or h[0].startswith(parent + "/"))]
+            return min(chain, key=lambda h: len(h[0]))[1]
+
+        pairs: set[tuple[str, str]] = set()
+        for importer, imported in imports:
+            consumer, provider = nearest(importer, rule.consumer), nearest(imported, rule.provider)
+            if not consumer or not provider or within(consumer[0], provider[0]) or within(provider[0], consumer[0]):
+                continue
+            shared = [h[0] for h in holders if consumer[0].startswith(h[0] + "/") and provider[0].startswith(h[0] + "/")]
+            parent = max(shared, key=lambda p: len(p)) if shared else None
+            pairs.add((lift(provider, parent), lift(consumer, parent)))
+        for provider_id, consumer_id in sorted(pairs):
+            relationships.append({"source": provider_id, "target": consumer_id, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "dependency"})
+    return relationships
+
+
 def derive_consolidated_relationships(
     all_elements: list[dict[str, Any]],
-    relationship_rules: dict[
-        str, tuple[list[RelationshipRule], list[RelationshipRule]]
-    ],
+    relationship_rules: dict[str, tuple[list[RelationshipRule], list[RelationshipRule]]],
     llm_query_fn: Any,
-    graph_manager: "GraphManager | None" = None,
+    graph_manager: GraphManager | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     llm_config: RelationshipLLMConfig | None = None,
+    containment: list[ContainmentRule] | None = None,
+    membership: list[MembershipRule] | None = None,
+    configuration: list[ConfigurationRule] | None = None,
+    dependency: list[DependencyRule] | None = None,
+    same_name: list[SameNameRule] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for all elements in a single consolidated pass.
@@ -2926,6 +3122,21 @@ def derive_consolidated_relationships(
         temperature: Optional temperature override
         max_tokens: Optional max_tokens override
         llm_config: Relationship config row settings (None skips the LLM pass)
+        containment: Ownership decided by containment (relationship config
+            ``params.containment``). For an element that containment places under an
+            owner, the other tiers add no ownership relationship of those type pairs and
+            nothing between it and its owner; usage to other elements stays. None: no
+            containment tier
+        membership: Relationships from role membership (``params.membership``), decided
+            the same way. None: no membership tier
+        configuration: Relationships from configuration files (``params.configuration``),
+            decided the same way. None: no configuration tier
+        dependency: Dependencies from file imports between siblings (``params.dependency``);
+            usage, so no tier adds another relationship between the two. None: no
+            dependency tier
+        same_name: Relationships between elements whose sources carry the same name
+            (``params.same_name``); no tier adds another relationship between the two.
+            None: no same-name tier
 
     Returns:
         List of all derived relationship dicts
@@ -2934,6 +3145,46 @@ def derive_consolidated_relationships(
         return []
 
     all_relationships = []
+    type_of = {e.get("identifier", ""): e.get("element_type", "") for e in all_elements}
+    # (from type, to type) -> (relationship type, member side, members placed by structure,
+    # elements that may own a member; None: any)
+    decided: dict[tuple[str, str], tuple[str, str, set[str], set[str] | None]] = {}
+    structural: list[dict[str, Any]] = []
+
+    def decide(rels: list[dict[str, Any]], from_type: str, to_type: str, kind: str, side: str, owners: set[str] | None = None) -> None:
+        mine = [r for r in rels if (type_of.get(r["source"]), type_of.get(r["target"]), r["relationship_type"]) == (from_type, to_type, kind)]
+        placed = {r[side] for r in mine}
+        if (from_type, to_type) in decided:
+            placed |= decided[(from_type, to_type)][2]
+        decided[(from_type, to_type)] = (kind, side, placed, owners)
+
+    paths = element_source_paths(graph_manager, all_elements) if graph_manager and (containment or configuration or dependency) else {}
+    if containment:
+        rels = derive_containment_relationships(all_elements, paths, containment)
+        structural.extend(rels)
+        for rule in containment:
+            decide(rels, rule.container, rule.contained, rule.relationship, "target")
+    if membership:
+        rels = derive_membership_relationships(all_elements, membership)
+        structural.extend(rels)
+        for rule in membership:
+            # A group that lists no member technologies (a node made from one file) owns nothing
+            groups = {e["identifier"] for e in all_elements if e.get("element_type") == rule.group and (e.get("properties") or {}).get("sources")}
+            if rule.from_group:
+                decide(rels, rule.group, rule.member, rule.relationship, "target", groups)
+            else:
+                decide(rels, rule.member, rule.group, rule.relationship, "source", groups)
+    if configuration and graph_manager:
+        rels = derive_configuration_relationships(all_elements, paths, configured_technologies(graph_manager), configuration)
+        structural.extend(rels)
+        for rule in configuration:
+            decide(rels, rule.provider, rule.consumer, rule.relationship, "target")
+    if dependency and graph_manager:
+        structural.extend(derive_dependency_relationships(all_elements, paths, file_imports(graph_manager), dependency))
+    if same_name:
+        structural.extend(derive_same_name_relationships(all_elements, same_name))
+    all_relationships.extend(structural)
+    owner_pairs = {frozenset((r["source"], r["target"])) for r in structural}
 
     # Group elements by type
     by_type: dict[str, list[dict[str, Any]]] = {}
@@ -2959,9 +3210,7 @@ def derive_consolidated_relationships(
             continue
 
         # Get all other elements as potential targets
-        other_elements = [
-            e for e in all_elements if e.get("element_type") != element_type
-        ]
+        other_elements = [e for e in all_elements if e.get("element_type") != element_type]
 
         relationships = derive_batch_relationships(
             new_elements=type_elements,
@@ -2974,6 +3223,8 @@ def derive_consolidated_relationships(
             max_tokens=max_tokens,
             graph_manager=graph_manager,
             llm_config=llm_config,
+            decided=decided,
+            owner_pairs=owner_pairs,
         )
 
         all_relationships.extend(relationships)
@@ -3029,7 +3280,6 @@ __all__ = [
     # Enrichment
     "get_enrichments",
     "get_enrichments_from_graph",
-    "clear_enrichment_cache",
     "enrich_candidate",
     # Filtering
     "filter_by_pagerank",
@@ -3058,6 +3308,7 @@ __all__ = [
     "RELATIONSHIP_SCHEMA",
     # Prompts
     "build_derivation_prompt",
+    "ElementPrompt",
     "build_single_candidate_prompt",
     "build_unified_relationship_prompt",
     # Response handling
@@ -3069,6 +3320,11 @@ __all__ = [
     "clamp_confidence",
     "sanitize_identifier",
     "build_element",
+    "structure_element_name",
+    "RoleConfig",
+    "ROLE_SCHEMA",
+    "build_role_prompt",
+    "parse_role_answer",
     # Relationship derivation
     "derive_batch_relationships",
     "derive_consolidated_relationships",

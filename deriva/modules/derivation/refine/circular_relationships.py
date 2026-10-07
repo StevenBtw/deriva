@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, Any
 from .base import RefineResult, register_refine_step
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager
-    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
 
 logger = logging.getLogger(__name__)
 
@@ -72,20 +72,13 @@ class CircularRelationshipsStep:
             ns = archimate_manager.namespace
 
             # Step 1: Find and handle bidirectional Composition pairs
-            self._handle_bidirectional_compositions(
-                archimate_manager, ns, result, delete_cycles
-            )
+            self._handle_bidirectional_compositions(archimate_manager, ns, result, delete_cycles)
 
             # Step 2: Find longer cycles (optional, more expensive)
             if max_cycle_length > 2:
-                self._handle_longer_cycles(
-                    archimate_manager, ns, result, max_cycle_length, delete_cycles
-                )
+                self._handle_longer_cycles(archimate_manager, ns, result, max_cycle_length, delete_cycles)
 
-            logger.info(
-                f"Circular relationship detection complete: "
-                f"{result.issues_found} found, {result.relationships_deleted} deleted"
-            )
+            logger.info(f"Circular relationship detection complete: {result.issues_found} found, {result.relationships_deleted} deleted")
 
         except Exception as e:
             logger.exception(f"Error in circular relationship detection: {e}")
@@ -169,9 +162,7 @@ class CircularRelationshipsStep:
             deleted_count = archimate_manager.delete_relationships(to_delete)
             result.relationships_deleted += deleted_count
             result.issues_fixed += deleted_count
-            logger.info(
-                f"Deleted {deleted_count} bidirectional Composition relationships"
-            )
+            logger.info(f"Deleted {deleted_count} bidirectional Composition relationships")
 
     def _handle_longer_cycles(
         self,

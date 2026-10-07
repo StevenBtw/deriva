@@ -127,8 +127,7 @@ def run_migrations(conn: duckdb.DuckDBPyConnection | None = None) -> int:
         [
             f
             for f in SCRIPTS_DIR.glob("*.sql")
-            if f.stem[0].isdigit()
-            and int(f.stem.split("_")[0]) >= 7  # Migrations start at 7
+            if f.stem[0].isdigit() and int(f.stem.split("_")[0]) >= 7  # Migrations start at 7
         ]
     )
 
@@ -138,12 +137,7 @@ def run_migrations(conn: duckdb.DuckDBPyConnection | None = None) -> int:
 
         # Process ALTER TABLE ADD COLUMN statements safely; drop comment lines so a
         # comment above a statement does not hide the statement itself
-        statements = [
-            "\n".join(
-                line for line in s.splitlines() if not line.strip().startswith("--")
-            ).strip()
-            for s in sql.split(";")
-        ]
+        statements = ["\n".join(line for line in s.splitlines() if not line.strip().startswith("--")).strip() for s in sql.split(";")]
 
         for statement in statements:
             if not statement:
@@ -183,9 +177,7 @@ def run_migrations(conn: duckdb.DuckDBPyConnection | None = None) -> int:
                     logger.info("Added column %s.%s", table_name, col_name)
 
                 except Exception as e:
-                    logger.warning(
-                        "Migration statement failed: %s - %s", statement[:50], e
-                    )
+                    logger.warning("Migration statement failed: %s - %s", statement[:50], e)
             else:
                 # Non-ALTER statements, just run them
                 try:

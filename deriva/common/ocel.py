@@ -30,11 +30,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-import uuid
 
 __all__ = [
     "OCELEvent",
@@ -130,9 +130,7 @@ class OCELLog:
     events: list[OCELEvent] = field(default_factory=list)
     object_types: set[str] = field(default_factory=set)
     _object_index: dict[str, list[int]] = field(default_factory=dict, repr=False)
-    _last_exported_index: int = field(
-        default=0, repr=False
-    )  # Track incremental exports
+    _last_exported_index: int = field(default=0, repr=False)  # Track incremental exports
 
     def add_event(self, event: OCELEvent) -> None:
         """Add an event to the log and update indices."""
@@ -249,9 +247,7 @@ class OCELLog:
     # QUERY METHODS
     # =========================================================================
 
-    def get_events_for_object(
-        self, object_type: str, object_id: str
-    ) -> list[OCELEvent]:
+    def get_events_for_object(self, object_type: str, object_id: str) -> list[OCELEvent]:
         """Get all events related to a specific object."""
         key = f"{object_type}:{object_id}"
         indices = self._object_index.get(key, [])
@@ -370,15 +366,11 @@ class OCELLog:
             return 1.0
 
         # Count objects that appear in ALL runs
-        consistent_count = sum(
-            1 for obj in all_objects if all(obj in objs for objs in by_run.values())
-        )
+        consistent_count = sum(1 for obj in all_objects if all(obj in objs for objs in by_run.values()))
 
         return consistent_count / len(all_objects)
 
-    def compare_runs(
-        self, run_id_1: str, run_id_2: str, object_type: str
-    ) -> dict[str, Any]:
+    def compare_runs(self, run_id_1: str, run_id_2: str, object_type: str) -> dict[str, Any]:
         """
         Compare two runs for a specific object type.
 
@@ -520,9 +512,5 @@ def load_benchmark_ocel(benchmarks_dir: Path | str, session_id: str) -> OCELLog:
         session_dir / "events.jsonl",
     ):
         if path.exists():
-            return (
-                OCELLog.from_jsonl(path)
-                if path.suffix == ".jsonl"
-                else OCELLog.from_json(path)
-            )
+            return OCELLog.from_jsonl(path) if path.suffix == ".jsonl" else OCELLog.from_json(path)
     return OCELLog()

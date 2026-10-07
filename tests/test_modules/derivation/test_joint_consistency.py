@@ -18,7 +18,7 @@ def element(identifier, name, source=None, community=None, element_type="Applica
 
 
 class TestMergeCandidates:
-    ctx = RepoContext(repo_name="", business_objects=[])
+    ctx = RepoContext(repo_name="")
 
     def test_normalized_name_is_tier_1(self):
         (m,) = merge_candidates([element("a", "Claims"), element("b", "Claims Component")], self.ctx, set(), 0.85)

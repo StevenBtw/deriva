@@ -112,10 +112,13 @@ class BusinessEventDerivation(HybridDerivation):
 
         Strategy:
         1. Enrich with graph metrics
-        2. Detect event-related decorators (webhook, event, signal, etc.)
-        3. Filter by event patterns
-        4. Apply graph filtering (PageRank threshold)
-        5. Prioritize decorator-detected handlers in final selection
+        2. Business concepts were chosen by the query: they keep the query order, come
+           first and skip the name patterns and the PageRank threshold
+        3. Other candidates: detect event-related decorators (webhook, event, signal, etc.)
+        4. Filter them by event patterns
+        5. Apply graph filtering (PageRank threshold)
+        6. Order: concepts, decorator-detected handlers, pattern matches, then the rest
+           while places remain
         """
         include_patterns = include_patterns or set()
         exclude_patterns = exclude_patterns or set()
@@ -123,7 +126,14 @@ class BusinessEventDerivation(HybridDerivation):
         for c in candidates:
             enrich_candidate(c, enrichments)
 
-        filtered = [c for c in candidates if c.name]
+        named = [c for c in candidates if c.name]
+
+        # Business concepts were chosen by the query: no method patterns or pagerank threshold
+        # apply to them; they keep the query order and come first. Other candidates take the method path
+        concepts = [c for c in named if "BusinessConcept" in c.labels]
+        filtered = [c for c in named if "BusinessConcept" not in c.labels]
+        if not filtered:
+            return concepts[:max_candidates]
 
         # Detect event handlers from decorators
         decorator_handlers = []
@@ -136,27 +146,15 @@ class BusinessEventDerivation(HybridDerivation):
                 non_decorator.append(c)
 
         # Apply pattern matching to non-decorator candidates
-        likely_events = [
-            c
-            for c in non_decorator
-            if self.matches_patterns(c.name, include_patterns, exclude_patterns)
-        ]
-        others = [
-            c
-            for c in non_decorator
-            if not self.matches_patterns(c.name, include_patterns, exclude_patterns)
-        ]
+        likely_events = [c for c in non_decorator if self.matches_patterns(c.name, include_patterns, exclude_patterns)]
+        others = [c for c in non_decorator if not self.matches_patterns(c.name, include_patterns, exclude_patterns)]
 
         # Apply graph filtering to each group
-        decorator_handlers = self.apply_graph_filtering(
-            decorator_handlers, enrichments, max_candidates // 3
-        )
-        likely_events = self.apply_graph_filtering(
-            likely_events, enrichments, max_candidates // 3
-        )
+        decorator_handlers = self.apply_graph_filtering(decorator_handlers, enrichments, max_candidates // 3)
+        likely_events = self.apply_graph_filtering(likely_events, enrichments, max_candidates // 3)
 
-        # Combine: decorator handlers first, then pattern-matched, then others
-        combined = decorator_handlers + likely_events
+        # Combine: concepts first, then decorator handlers, then pattern-matched, then others
+        combined = concepts + decorator_handlers + likely_events
 
         remaining_slots = max_candidates - len(combined)
         if remaining_slots > 0 and others:

@@ -217,8 +217,8 @@ class TestAddEdge:
 
         edge_id = graph_manager.add_edge(src, dst, "CONTAINS", properties={"order": 1})
 
-        rows = graph_manager.query("MATCH (s)-[r:`Graph:CONTAINS`]->(d) RETURN s.id AS s, d.id AS d, r.id AS id, r.properties_json AS pj")
-        assert rows == [{"s": src, "d": dst, "id": edge_id, "pj": '{"order": 1}'}]
+        rows = graph_manager.query("MATCH (s)-[r:`Graph:CONTAINS`]->(d) RETURN s.id AS s, d.id AS d, properties(r) AS p")
+        assert rows == [{"s": src, "d": dst, "p": {"id": edge_id, "order": 1}}]
         assert edge_id == f"{src}_CONTAINS_{dst}"
 
     def test_adding_the_same_edge_twice_keeps_one_edge(self, graph_manager):
@@ -227,8 +227,8 @@ class TestAddEdge:
         graph_manager.add_edge(src, dst, "CONTAINS", properties={"v": 1})
         graph_manager.add_edge(src, dst, "CONTAINS", properties={"v": 2})
 
-        rows = graph_manager.query("MATCH ()-[r:`Graph:CONTAINS`]->() RETURN r.properties_json AS pj")
-        assert rows == [{"pj": '{"v": 2}'}]
+        rows = graph_manager.query("MATCH ()-[r:`Graph:CONTAINS`]->() RETURN properties(r) AS p")
+        assert rows == [{"p": {"id": f"{src}_CONTAINS_{dst}", "v": 2}}]
 
     def test_missing_endpoint_raises(self, graph_manager):
         src, _ = self._nodes(graph_manager)
@@ -239,14 +239,12 @@ class TestAddEdge:
     def test_endpoints_are_found_by_index_not_by_a_second_match(self, graph_manager):
         src, dst = self._nodes(graph_manager)
 
-        with (
-            patch.object(graph_manager.db, "execute", wraps=graph_manager.db.execute) as execute,
-            patch.object(graph_manager.db, "_find_nodes", wraps=graph_manager.db._find_nodes) as find_nodes,
-        ):
+        with patch.object(graph_manager.db, "execute", wraps=graph_manager.db.execute) as execute:
             graph_manager.add_edge(src, dst, "CONTAINS")
 
-        assert [c.args for c in find_nodes.call_args_list] == [("id", src), ("id", dst)]
-        assert not [c for c in execute.call_args_list if "MATCH (dst)" in c.args[0]]
+        # grafeo's upsert helper finds both endpoints through the id index; no Cypher query runs
+        assert execute.call_args_list == []
+        assert graph_manager.query("MATCH (s)-[r:`Graph:CONTAINS`]->(d) RETURN s.id AS s, d.id AS d") == [{"s": src, "d": dst}]
 
 
 class TestAddNode:
@@ -278,22 +276,99 @@ class TestAddNode:
         assert not [c for c in write.call_args_list if "MERGE" in c.args[0]]
 
 
-class TestGraphHash:
-    """The enrichment cache key changes whenever the graph structure does."""
+class TestEdgeReAdd:
+    """Re-adding an edge replaces its properties, including when the new edge has none."""
 
-    def test_adding_an_edge_changes_the_hash(self, graph_manager):
-        from deriva.adapters.graph.cache import compute_graph_hash
+    def test_readd_without_properties_clears_the_old_ones(self, graph_manager):
+        _add_repo(graph_manager, "r")
+        src, dst = "repo::r", "dir::r::src"
+        graph_manager.add_edge(src, dst, "USES", properties={"weight": 2})
+        graph_manager.add_edge(src, dst, "USES")
 
-        _add_repo(graph_manager, "repo_a")
-        before = compute_graph_hash(graph_manager)
-        graph_manager.add_edge("dir::repo_a::src", "file::repo_a::src/main.py", "CONTAINS")
+        rows = graph_manager.query("MATCH (a)-[r]->(b) WHERE a.id = $s AND b.id = $d AND type(r) CONTAINS 'USES' RETURN properties(r) AS p", {"s": src, "d": dst})
 
-        assert compute_graph_hash(graph_manager) != before
+        assert rows == [{"p": {"id": f"{src}_USES_{dst}"}}]
 
-    def test_hash_is_stable_without_changes(self, graph_manager):
-        from deriva.adapters.graph.cache import compute_graph_hash
 
-        _add_repo(graph_manager, "repo_a")
-        graph_manager.add_edge("dir::repo_a::src", "file::repo_a::src/main.py", "CONTAINS")
+@pytest.mark.grafeo_dev
+class TestGraphMetric:
+    """One grafeo algorithm over the graph namespace, values keyed by Deriva's node ids."""
 
-        assert compute_graph_hash(graph_manager) == compute_graph_hash(graph_manager)
+    def _path(self, gm):
+        # a - b - c - d, plus an isolated e; a model element next to it must not count
+        for name in "abcde":
+            gm.add_node(DirectoryNode(name=name, path=name, repository_name="r"), node_id=f"dir::r::{name}")
+        for src, dst in [("a", "b"), ("b", "c"), ("c", "d")]:
+            gm.add_edge(f"dir::r::{src}", f"dir::r::{dst}", "CONTAINS")
+        gm.query("CREATE (:Model:ApplicationComponent {identifier: 'x'})")
+
+    def test_nodes_and_edges_of_the_namespace(self, graph_manager):
+        self._path(graph_manager)
+
+        metric = graph_manager.graph_metric("degree_centrality")
+
+        assert metric["node_ids"] == [f"dir::r::{n}" for n in "abcde"]
+        assert metric["edge_count"] == 3
+        assert metric["values"]["dir::r::b"] == {"in_degree": 1, "out_degree": 1}
+
+    def test_undirected_pagerank_by_node_id(self, graph_manager):
+        self._path(graph_manager)
+
+        scores = graph_manager.graph_metric("pagerank", directed=False)["values"]
+
+        assert set(scores) == {f"dir::r::{n}" for n in "abcde"}
+        assert abs(scores["dir::r::a"] - scores["dir::r::d"]) < 1e-12 and scores["dir::r::b"] > scores["dir::r::a"]
+
+    def test_communities_cores_and_articulation_points_by_node_id(self, graph_manager):
+        self._path(graph_manager)
+
+        communities = graph_manager.graph_metric("louvain")["values"]
+        cores = graph_manager.graph_metric("kcore")["values"]
+        points = graph_manager.graph_metric("articulation_points")["values"]
+
+        assert set(communities) == set(cores) == {f"dir::r::{n}" for n in "abcde"}
+        assert all(isinstance(c, int) for c in communities.values())
+        assert cores["dir::r::b"] == 1 and cores["dir::r::e"] == 0
+        assert points == ["dir::r::b", "dir::r::c"]
+
+
+@pytest.mark.grafeo_dev
+class TestGraphMetricInsertionOrder:
+    """Metrics depend only on graph content and node ids, not on the order extraction wrote the nodes."""
+
+    @staticmethod
+    def _metrics(order):
+        from deriva.adapters.grafeo.manager import close_database
+
+        close_database()
+        gm = GraphManager()
+        gm.connect()
+        try:
+            names = [f"n{i:02d}" for i in range(30)]
+            for name in order(names):
+                gm.add_node(DirectoryNode(name=name, path=name, repository_name="r"), node_id=f"dir::r::{name}")
+            # two loosely joined rings plus a chord: ties for Louvain and near-equal PageRank scores
+            edges = [(names[i], names[(i + 1) % 15]) for i in range(15)] + [(names[15 + i], names[15 + (i + 1) % 15]) for i in range(15)] + [("n00", "n15"), ("n03", "n07")]
+            for src, dst in order(edges):
+                gm.add_edge(f"dir::r::{src}", f"dir::r::{dst}", "CONTAINS")
+            metrics = [("pagerank", {"directed": False}), ("louvain", {}), ("kcore", {}), ("articulation_points", {}), ("degree_centrality", {})]
+            return {name: gm.graph_metric(name, **kwargs)["values"] for name, kwargs in metrics}
+        finally:
+            gm.disconnect()
+            close_database()
+
+    def test_reversed_insertion_gives_identical_metrics(self):
+        forward = self._metrics(list)
+        backward = self._metrics(lambda items: list(reversed(items)))
+
+        assert forward == backward
+
+
+class TestReaderOrder:
+    """Readers return nodes in id order: the graph's result order is unspecified, and callers pick the first match."""
+
+    def test_nodes_by_type_come_in_id_order(self, graph_manager):
+        for name in ("c", "a", "b"):
+            graph_manager.add_node(DirectoryNode(name=name, path=name, repository_name="r"), node_id=f"dir::r::{name}")
+
+        assert [n["id"] for n in graph_manager.get_nodes_by_type("Directory")] == ["dir::r::a", "dir::r::b", "dir::r::c"]

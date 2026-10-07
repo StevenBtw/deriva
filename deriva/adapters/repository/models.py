@@ -86,8 +86,5 @@ class FileNode:
             "size_bytes": self.size_bytes,
         }
         if self.children:
-            result["children"] = [
-                child.to_dict() if hasattr(child, "to_dict") else child
-                for child in self.children
-            ]
+            result["children"] = [child.to_dict() if hasattr(child, "to_dict") else child for child in self.children]
         return result

@@ -283,3 +283,27 @@ class TestInterModelMetrics:
         assert isinstance(result, dict)
         assert result["repository"] == "test-repo"
         assert result["jaccard_similarity"] == 1.0
+
+
+class TestBenchmarkReportAnswerStability:
+    """The report shows raw LLM answer stability next to output consistency."""
+
+    def _report(self):
+        from deriva.modules.analysis.types import AnswerStability, BenchmarkReport
+
+        return BenchmarkReport(
+            session_ids=["s"],
+            repositories=["repo"],
+            models=["m"],
+            generated_at="now",
+            answer_stability={"repo": [AnswerStability(step="DeriveStep", prompts=2, identical=1)]},
+        )
+
+    def test_json_includes_answer_stability(self):
+        assert self._report().to_dict()["answer_stability"] == {"repo": [{"step": "DeriveStep", "prompts": 2, "identical": 1, "score": 0.5}]}
+
+    def test_markdown_includes_answer_stability(self):
+        markdown = self._report().to_markdown()
+
+        assert "LLM Answer Stability" in markdown
+        assert "| DeriveStep | 2 | 1 | 50.0% |" in markdown

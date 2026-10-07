@@ -12,12 +12,10 @@ if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
 # Valid provider names
-VALID_PROVIDERS = frozenset(
-    {"azure", "openai", "anthropic", "ollama", "mistral", "lmstudio"}
-)
+VALID_PROVIDERS = frozenset({"azure", "openai", "anthropic", "ollama", "mistral", "lmstudio"})
 
 
-def get_pydantic_ai_model(config: dict[str, Any]) -> "Model | str":
+def get_pydantic_ai_model(config: dict[str, Any]) -> Model | str:
     """
     Convert Deriva config to PydanticAI model.
 
@@ -65,16 +63,12 @@ def get_pydantic_ai_model(config: dict[str, Any]) -> "Model | str":
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider
 
-        base_url = (
-            _normalize_openai_url(api_url) if api_url else "http://localhost:1234/v1"
-        )
+        base_url = _normalize_openai_url(api_url) if api_url else "http://localhost:1234/v1"
         openai_provider = OpenAIProvider(base_url=base_url)
         return OpenAIChatModel(model, provider=openai_provider)
 
     else:
-        raise ValueError(
-            f"Unknown provider: {provider}. Valid providers: {VALID_PROVIDERS}"
-        )
+        raise ValueError(f"Unknown provider: {provider}. Valid providers: {VALID_PROVIDERS}")
 
 
 def _normalize_azure_url(url: str) -> str:

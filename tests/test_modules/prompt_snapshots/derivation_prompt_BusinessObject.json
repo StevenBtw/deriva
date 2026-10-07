@@ -1,0 +1,8 @@
+{
+ "prompt": {
+  "persona": "You are deriving ArchiMate BusinessObject elements from source code graph data.",
+  "candidates": "These nodes have been pre-filtered as potential BusinessObject candidates.\nEach includes graph metrics (pagerank, degree) to help assess importance.",
+  "rules": "1. Evaluate each candidate individually. Include candidates that fit the\n   ArchiMate BusinessObject definition. For candidates that do not fit,\n   set confidence below 0.5 so they are dropped by the confidence gate.\n{abstention}3. Use the node \"id\" as the \"source\" field to link back.\n4. Provide meaningful names; do not append ArchiMate type suffixes like\n   \" Component\", \" Service\", \" Interface\", or \" API\" to names.\n5. Add documentation explaining the element's purpose.\n6. Set confidence realistic to how well the candidate matches the definition.\n7. Output stable, deterministic results — same inputs should produce same outputs.",
+  "abstention": "2. The code may not support elements of this type at all. If no candidate clearly fits the BusinessObject definition, returning an empty list is a valid, correct answer.\n"
+ }
+}

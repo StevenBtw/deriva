@@ -28,8 +28,8 @@ from deriva.common import (
     extract_llm_details,
     parse_json_array,
 )
+from deriva.common.naming import singularize
 from deriva.common.types import LLMDetails, PipelineResult
-
 
 # =============================================================================
 # Node/Edge ID Generation
@@ -153,9 +153,7 @@ def generate_dir_node_id(repo_name: str, dir_path: str) -> str:
     return f"dir::{repo_name}::{safe_path}"
 
 
-def generate_method_node_id(
-    repo_name: str, file_path: str, method_name: str, class_name: str | None = None
-) -> str:
+def generate_method_node_id(repo_name: str, file_path: str, method_name: str, class_name: str | None = None) -> str:
     """
     Generate a method node ID from repo name, file path, and method name.
 
@@ -185,14 +183,24 @@ def generate_method_node_id(
     file_path_slug = file_path.replace("/", "_").replace("\\", "_")
     method_name_slug = method_name.replace(" ", "_").replace("-", "_")
     type_name_slug = (class_name or "module").replace(" ", "_").replace("-", "_")
-    return (
-        f"method::{repo_name}::{file_path_slug}::{type_name_slug}::{method_name_slug}"
-    )
+    return f"method::{repo_name}::{file_path_slug}::{type_name_slug}::{method_name_slug}"
 
 
 # =============================================================================
 # JSON Response Parsing
 # =============================================================================
+
+
+def prompt_texts(config: dict[str, Any], step: str) -> dict[str, str]:
+    """The step's prompt texts from its config row (``params.prompt``: ``persona`` and ``task``).
+
+    Text that steers the LLM lives in versioned config; a missing text is an error, not a default.
+    """
+    texts = (config.get("params") or {}).get("prompt") or {}
+    missing = [name for name in ("persona", "task") if not isinstance(texts.get(name), str) or not texts[name].strip()]
+    if missing:
+        raise ValueError(f"{step} params.prompt needs {', '.join(missing)}")
+    return texts
 
 
 def parse_json_response(response_content: str, array_key: str) -> dict[str, Any]:
@@ -212,9 +220,7 @@ def parse_json_response(response_content: str, array_key: str) -> dict[str, Any]
     return parse_json_array(response_content, array_key).to_dict()
 
 
-def validate_required_fields(
-    data: dict[str, Any], required_fields: list[str]
-) -> list[str]:
+def validate_required_fields(data: dict[str, Any], required_fields: list[str]) -> list[str]:
     """
     Validate that required fields are present and non-empty.
 
@@ -232,9 +238,7 @@ def validate_required_fields(
     return errors
 
 
-def deduplicate_nodes(
-    nodes: list[dict[str, Any]], key: str = "node_id"
-) -> list[dict[str, Any]]:
+def deduplicate_nodes(nodes: list[dict[str, Any]], key: str = "node_id") -> list[dict[str, Any]]:
     """
     Deduplicate nodes by a key field, preserving order.
 
@@ -324,9 +328,11 @@ def is_excluded_path(rel_path: str, excluded_dirs: Collection[str]) -> bool:
     return any(part in excluded_dirs for part in rel_path.replace("\\", "/").split("/"))
 
 
-def sample_llm(
-    llm_query_fn: Callable[..., Any], prompt: str, schema: dict[str, Any], samples: int
-) -> list[Any]:
+# Upper bound on parallel sample threads (the rate limiter still paces the calls)
+MAX_SAMPLE_WORKERS = 8
+
+
+def sample_llm(llm_query_fn: Callable[..., Any], prompt: str, schema: dict[str, Any], samples: int) -> list[Any]:
     """Ask the same prompt ``samples`` times (in parallel) and return the answers in call order.
 
     Used to stabilize open LLM extraction by majority vote. A call that raises
@@ -341,8 +347,17 @@ def sample_llm(
         except Exception:  # noqa: BLE001 - a failed sample is simply not counted
             return None
 
-    with ThreadPoolExecutor(max_workers=samples) as pool:
+    with ThreadPoolExecutor(max_workers=min(samples, MAX_SAMPLE_WORKERS)) as pool:
         return list(pool.map(lambda _: _call(), range(samples)))
+
+
+def sample_usage(responses: list[Any]) -> tuple[int, int]:
+    """Prompt and completion tokens summed over every answered sample."""
+    usages = [r.usage for r in responses if r is not None and getattr(r, "usage", None)]
+    return (
+        sum(u.get("prompt_tokens", 0) for u in usages),
+        sum(u.get("completion_tokens", 0) for u in usages),
+    )
 
 
 def parse_input_sources(input_sources_json: str | None) -> dict[str, Any]:
@@ -365,9 +380,7 @@ def parse_input_sources(input_sources_json: str | None) -> dict[str, Any]:
         return {"files": [], "nodes": []}
 
 
-def matches_file_spec(
-    file_type: str, file_subtype: str | None, file_specs: list[dict[str, str]]
-) -> bool:
+def matches_file_spec(file_type: str, file_subtype: str | None, file_specs: list[dict[str, str]]) -> bool:
     """
     Check if a file matches any of the file specifications.
 
@@ -397,9 +410,7 @@ def matches_file_spec(
     return False
 
 
-def filter_files_by_input_sources(
-    classified_files: list[dict[str, Any]], input_sources: dict[str, Any]
-) -> list[dict[str, Any]]:
+def filter_files_by_input_sources(classified_files: list[dict[str, Any]], input_sources: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Filter classified files based on input_sources file specs.
 
@@ -415,11 +426,7 @@ def filter_files_by_input_sources(
     if not file_specs:
         return []
 
-    return [
-        f
-        for f in classified_files
-        if matches_file_spec(f.get("file_type", ""), f.get("subtype"), file_specs)
-    ]
+    return [f for f in classified_files if matches_file_spec(f.get("file_type", ""), f.get("subtype"), file_specs)]
 
 
 def get_node_sources(input_sources: dict[str, Any]) -> list[dict[str, str]]:
@@ -547,91 +554,6 @@ REDUNDANT_SUFFIXES = [
 
 
 # =============================================================================
-# Singularization Rules
-# =============================================================================
-
-# Words that shouldn't be singularized (mass nouns, collective nouns).
-# Used by singularize() to avoid incorrect transformations like "data" -> "datum".
-UNCOUNTABLE_WORDS = {
-    "data",
-    "information",
-    "software",
-    "hardware",
-    "middleware",
-    "metadata",
-    "analytics",
-    "logistics",
-    "news",
-    "status",
-}
-
-# Irregular plurals mapping (plural -> singular).
-# Used by singularize() to handle words that don't follow standard rules.
-# Example: "indices" -> "index", "criteria" -> "criterion"
-IRREGULAR_PLURALS: dict[str, str] = {
-    "indices": "index",
-    "matrices": "matrix",
-    "vertices": "vertex",
-    "analyses": "analysis",
-    "bases": "base",
-    "crises": "crisis",
-    "criteria": "criterion",
-    "phenomena": "phenomenon",
-    "data": "data",  # Keep as is
-    "media": "medium",
-    "children": "child",
-    "people": "person",
-}
-
-
-def singularize(word: str) -> str:
-    """
-    Convert a plural word to singular form.
-
-    Args:
-        word: Word to singularize
-
-    Returns:
-        Singular form of the word
-    """
-    lower_word = word.lower()
-
-    # Check uncountable words
-    if lower_word in UNCOUNTABLE_WORDS:
-        return word
-
-    # Check irregular plurals
-    if lower_word in IRREGULAR_PLURALS:
-        # Preserve original case pattern
-        singular = IRREGULAR_PLURALS[lower_word]
-        if word[0].isupper():
-            return singular.capitalize()
-        return singular
-
-    # Apply regular rules
-    if lower_word.endswith("ies") and len(lower_word) > 3:
-        # cities -> city, but not "series"
-        if lower_word[-4] not in "aeiou":
-            return word[:-3] + ("Y" if word[-3].isupper() else "y")
-
-    if lower_word.endswith("es"):
-        # Check for -ses, -xes, -zes, -ches, -shes
-        if lower_word.endswith(("ses", "xes", "zes", "ches", "shes")):
-            return word[:-2]
-
-    # Words that only look plural: analysis, basis, status, bus
-    if lower_word.endswith(("sis", "us")):
-        return word
-
-    if lower_word.endswith("s") and not lower_word.endswith("ss"):
-        # Simple plural - remove s
-        if len(lower_word) > 2:
-            return word[:-1]
-
-    return word
-
-
-# =============================================================================
 # Normalization Functions
 # =============================================================================
 
@@ -666,64 +588,13 @@ def normalize_package_name(name: str) -> str:
     return normalized
 
 
-def normalize_concept_name(name: str) -> str:
-    """
-    Normalize a business concept name.
-
-    Applies:
-    - Singularization
-    - CamelCase conversion for multi-word names
-    - Removal of redundant prefixes/suffixes
-
-    Args:
-        name: Concept name to normalize
-
-    Returns:
-        Normalized concept name
-    """
-    if not name:
-        return name
-
-    # Split on underscores and spaces
-    parts = [p for p in re.split(r"[_\s]+", name) if p]
-
-    # Singularize the last word (usually the noun); for PascalCase input that
-    # is the last camel-case word ("DataSources" -> "DataSource")
-    if parts:
-        words = re.findall(
-            r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+", parts[-1]
-        ) or [parts[-1]]
-        words[-1] = singularize(words[-1])
-        parts[-1] = "".join(words)
-
-    # Convert to CamelCase, keeping the case of the rest of each part so existing
-    # word boundaries survive ("RealTimeDataStreaming" stays as it is)
-    return "".join(part[:1].upper() + part[1:] for part in parts)
-
-
-def normalize_technology_name(name: str) -> str:
-    """
-    Normalize a technology name.
-
-    Args:
-        name: Technology name to normalize
-
-    Returns:
-        Canonical technology name
-    """
-    # Use package normalization (technologies are often packages)
-    return normalize_package_name(name)
-
-
-def normalize_node(
-    node: dict[str, Any], node_type: str, repo_name: str | None = None
-) -> dict[str, Any]:
+def normalize_node(node: dict[str, Any], node_type: str, repo_name: str | None = None) -> dict[str, Any]:
     """
     Normalize names in an extracted node based on its type.
 
     Args:
         node: Node dictionary with 'properties' containing the name
-        node_type: Type of node (ExternalDependency, BusinessConcept, etc.)
+        node_type: Type of node (ExternalDependency, Technology, etc.)
         repo_name: Repository name for generating consistent node IDs
 
     Returns:
@@ -737,33 +608,19 @@ def normalize_node(
     if node_type == "ExternalDependency":
         if "dependencyName" in props:
             props["dependencyName"] = normalize_package_name(props["dependencyName"])
-    elif node_type == "BusinessConcept":
-        if "conceptName" in props:
-            props["conceptName"] = normalize_concept_name(props["conceptName"])
-    elif node_type == "Technology":
-        if "techName" in props:
-            props["techName"] = normalize_technology_name(props["techName"])
 
     node_copy = node.copy()
     node_copy["properties"] = props
 
     # Update node_id if name changed and we have repo_name
     if node_type == "ExternalDependency" and "dependencyName" in props and repo_name:
-        name_slug = (
-            props["dependencyName"]
-            .lower()
-            .replace("-", "_")
-            .replace(" ", "_")
-            .replace("/", "_")
-        )
+        name_slug = props["dependencyName"].lower().replace("-", "_").replace(" ", "_").replace("/", "_")
         node_copy["node_id"] = f"extdep::{repo_name}::{name_slug}"
 
     return node_copy
 
 
-def normalize_nodes(
-    nodes: list[dict[str, Any]], node_type: str, repo_name: str | None = None
-) -> list[dict[str, Any]]:
+def normalize_nodes(nodes: list[dict[str, Any]], node_type: str, repo_name: str | None = None) -> list[dict[str, Any]]:
     """
     Normalize names in a list of extracted nodes.
 
@@ -778,9 +635,7 @@ def normalize_nodes(
     return [normalize_node(node, node_type, repo_name) for node in nodes]
 
 
-def deduplicate_by_normalized_name(
-    nodes: list[dict[str, Any]], name_key: str
-) -> list[dict[str, Any]]:
+def deduplicate_by_normalized_name(nodes: list[dict[str, Any]], name_key: str) -> list[dict[str, Any]]:
     """
     Deduplicate nodes by their normalized name.
 
@@ -850,8 +705,6 @@ __all__ = [
     "has_node_sources",
     # Normalization
     "normalize_package_name",
-    "normalize_concept_name",
-    "normalize_technology_name",
     "normalize_node",
     "normalize_nodes",
     "deduplicate_by_normalized_name",

@@ -482,9 +482,7 @@ class JavaExtractor(LanguageExtractor):
 
         return tree_sitter_java.language()
 
-    def extract_types(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedType]:
+    def extract_types(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedType]:
         """Extract type definitions (classes, interfaces, enums, records)."""
         types: list[ExtractedType] = []
         root = tree.root_node
@@ -502,9 +500,7 @@ class JavaExtractor(LanguageExtractor):
 
         return types
 
-    def extract_methods(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedMethod]:
+    def extract_methods(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedMethod]:
         """Extract methods and constructors."""
         methods: list[ExtractedMethod] = []
         root = tree.root_node
@@ -524,15 +520,11 @@ class JavaExtractor(LanguageExtractor):
                     if child.type == "method_declaration":
                         methods.append(self._extract_method(child, source, class_name))
                     elif child.type == "constructor_declaration":
-                        methods.append(
-                            self._extract_constructor(child, source, class_name)
-                        )
+                        methods.append(self._extract_constructor(child, source, class_name))
 
         return methods
 
-    def extract_imports(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedImport]:
+    def extract_imports(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedImport]:
         """Extract import declarations."""
         imports: list[ExtractedImport] = []
         root = tree.root_node
@@ -543,9 +535,7 @@ class JavaExtractor(LanguageExtractor):
 
         return imports
 
-    def extract_calls(
-        self, tree: tree_sitter.Tree, source: bytes
-    ) -> list[ExtractedCall]:
+    def extract_calls(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedCall]:
         """Extract method and constructor calls from Java source code."""
         calls: list[ExtractedCall] = []
         root = tree.root_node
@@ -565,23 +555,11 @@ class JavaExtractor(LanguageExtractor):
                 for child in body.children:
                     if child.type == "method_declaration":
                         method_name = self._get_method_name(child, source)
-                        calls.extend(
-                            self._extract_calls_from_body(
-                                child, source, method_name, class_name
-                            )
-                        )
+                        calls.extend(self._extract_calls_from_body(child, source, method_name, class_name))
                     elif child.type == "constructor_declaration":
                         name_node = self.find_child_by_field(child, "name")
-                        constructor_name = (
-                            self.get_node_text(name_node, source)
-                            if name_node
-                            else class_name
-                        )
-                        calls.extend(
-                            self._extract_calls_from_body(
-                                child, source, constructor_name, class_name
-                            )
-                        )
+                        constructor_name = self.get_node_text(name_node, source) if name_node else class_name
+                        calls.extend(self._extract_calls_from_body(child, source, constructor_name, class_name))
 
         return calls
 
@@ -601,9 +579,7 @@ class JavaExtractor(LanguageExtractor):
         # Find all method invocations and object creations in the body
         call_types = {"method_invocation", "object_creation_expression"}
         for call_node in self.walk_tree(body, call_types):
-            call = self._extract_single_call(
-                call_node, source, caller_name, caller_class
-            )
+            call = self._extract_single_call(call_node, source, caller_name, caller_class)
             if call:
                 calls.append(call)
 
@@ -690,9 +666,7 @@ class JavaExtractor(LanguageExtractor):
             visibility=visibility,
         )
 
-    def _extract_method(
-        self, node: tree_sitter.Node, source: bytes, class_name: str
-    ) -> ExtractedMethod:
+    def _extract_method(self, node: tree_sitter.Node, source: bytes, class_name: str) -> ExtractedMethod:
         """Extract a method declaration."""
         name_node = self.find_child_by_field(node, "name")
         name = self.get_node_text(name_node, source) if name_node else ""
@@ -703,9 +677,7 @@ class JavaExtractor(LanguageExtractor):
 
         # Get return type
         return_type_node = self.find_child_by_field(node, "type")
-        return_annotation = (
-            self.get_node_text(return_type_node, source) if return_type_node else None
-        )
+        return_annotation = self.get_node_text(return_type_node, source) if return_type_node else None
 
         # Check modifiers
         is_static = self._has_modifier(node, source, "static")
@@ -729,9 +701,7 @@ class JavaExtractor(LanguageExtractor):
             visibility=visibility,
         )
 
-    def _extract_constructor(
-        self, node: tree_sitter.Node, source: bytes, class_name: str
-    ) -> ExtractedMethod:
+    def _extract_constructor(self, node: tree_sitter.Node, source: bytes, class_name: str) -> ExtractedMethod:
         """Extract a constructor declaration."""
         name_node = self.find_child_by_field(node, "name")
         name = self.get_node_text(name_node, source) if name_node else class_name
@@ -760,9 +730,7 @@ class JavaExtractor(LanguageExtractor):
     def _extract_import(self, node: tree_sitter.Node, source: bytes) -> ExtractedImport:
         """Extract an import declaration."""
         # Check for static import
-        is_static = any(
-            self.get_node_text(child, source) == "static" for child in node.children
-        )
+        is_static = any(self.get_node_text(child, source) == "static" for child in node.children)
 
         # Get the full import path
         path_node = self.find_child_by_type(node, "scoped_identifier")
@@ -772,10 +740,7 @@ class JavaExtractor(LanguageExtractor):
         full_path = self.get_node_text(path_node, source) if path_node else ""
 
         # Check for wildcard
-        is_wildcard = any(
-            child.type == "asterisk" or self.get_node_text(child, source) == "*"
-            for child in node.children
-        )
+        is_wildcard = any(child.type == "asterisk" or self.get_node_text(child, source) == "*" for child in node.children)
 
         # Split into module and imported name
         if "." in full_path:
@@ -876,9 +841,7 @@ class JavaExtractor(LanguageExtractor):
                     return text
         return None
 
-    def _has_modifier(
-        self, node: tree_sitter.Node, source: bytes, modifier: str
-    ) -> bool:
+    def _has_modifier(self, node: tree_sitter.Node, source: bytes, modifier: str) -> bool:
         """Check if a node has a specific modifier."""
         modifiers = self.find_child_by_type(node, "modifiers")
         if modifiers:
@@ -894,9 +857,7 @@ class JavaExtractor(LanguageExtractor):
         # This is a simplified approach
         return None  # TODO: Implement Javadoc extraction if needed
 
-    def _extract_parameters(
-        self, node: tree_sitter.Node, source: bytes
-    ) -> list[dict[str, Any]]:
+    def _extract_parameters(self, node: tree_sitter.Node, source: bytes) -> list[dict[str, Any]]:
         """Extract method parameters."""
         params: list[dict[str, Any]] = []
 

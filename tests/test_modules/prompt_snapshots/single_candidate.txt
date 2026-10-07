@@ -8,9 +8,6 @@ INSTRUCTION TEXT
 {"id":"n9","name":"Cand","labels":["Graph","Method"],"properties":{},"pagerank":0.0,"in_degree":0,"out_degree":0}
 ```
 
-## Existing Elements (for naming alignment)
-- BusinessProcess: Alpha, Beta
-
 ## Rules
 1. The candidate has already been selected as an BusinessProcess by upstream
    graph filtering. Your job is to name and document it, not to re-judge whether

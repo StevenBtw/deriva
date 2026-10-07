@@ -3,6 +3,10 @@
 # Services act as the API layer, providing orchestrated functionality.
 # CLI must NOT directly access: managers, modules, or common.
 
+# Inherit the project rules (select, line length, per-file ignores); the ban table
+# below replaces the root one (the CLI may import itself, so no 'deriva.cli' ban).
+extend = "../../pyproject.toml"
+
 [lint.flake8-tidy-imports.banned-api]
 "deriva.adapters" = { msg = "Architecture violation: CLI should only import from services (use services as the API layer)" }
 "deriva.modules" = { msg = "Architecture violation: CLI should only import from services (use services as the API layer)" }

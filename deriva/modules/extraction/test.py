@@ -14,6 +14,7 @@ from .base import (
     create_empty_llm_details,
     current_timestamp,
     parse_json_response,
+    prompt_texts,
     strip_chunk_suffix,
 )
 
@@ -91,9 +92,7 @@ TEST_SCHEMA = {
 }
 
 
-def build_extraction_prompt(
-    file_content: str, file_path: str, instruction: str, example: str
-) -> str:
+def build_extraction_prompt(file_content: str, file_path: str, instruction: str, example: str, texts: dict[str, str]) -> str:
     """
     Build the LLM prompt for test extraction.
 
@@ -102,6 +101,7 @@ def build_extraction_prompt(
         file_path: Path to the file being analyzed
         instruction: Extraction instruction from config
         example: Example output from config
+        texts: The step's prompt texts (``params.prompt``: persona and task)
 
     Returns:
         Formatted prompt string
@@ -110,7 +110,7 @@ def build_extraction_prompt(
     lines = file_content.split("\n")
     numbered_content = "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(lines))
 
-    prompt = f"""You are analyzing a test file to extract test definitions.
+    prompt = f"""{texts["persona"]}
 
 ## Context
 - **File Path:** {file_path}
@@ -126,14 +126,12 @@ def build_extraction_prompt(
 {numbered_content}
 ```
 
-Extract all test definitions from this file. Return ONLY a JSON object with a "tests" array. If no tests are found, return {{"tests": []}}.
+{texts["task"]} Return ONLY a JSON object with a "tests" array. If no tests are found, return {{"tests": []}}.
 """
     return prompt
 
 
-def build_test_node(
-    test_data: dict[str, Any], file_path: str, repo_name: str
-) -> dict[str, Any]:
+def build_test_node(test_data: dict[str, Any], file_path: str, repo_name: str) -> dict[str, Any]:
     """
     Build a Test graph node from extracted test data.
 
@@ -265,6 +263,7 @@ def extract_tests(
             file_path=file_path,
             instruction=instruction,
             example=example,
+            texts=prompt_texts(config, "Test"),
         )
         llm_details["prompt"] = prompt
 
@@ -278,9 +277,7 @@ def extract_tests(
             llm_details["tokens_in"] = response.usage.get("prompt_tokens", 0)
             llm_details["tokens_out"] = response.usage.get("completion_tokens", 0)
         if hasattr(response, "response_type"):
-            llm_details["cache_used"] = (
-                str(response.response_type) == "ResponseType.CACHED"
-            )
+            llm_details["cache_used"] = str(response.response_type) == "ResponseType.CACHED"
 
         # Check for failed response
         if hasattr(response, "error"):
@@ -312,9 +309,7 @@ def extract_tests(
         file_node_id = f"file::{repo_name}::{safe_path}"
 
         for test_data in parse_result["data"]:
-            node_result = build_test_node(
-                test_data=test_data, file_path=file_path, repo_name=repo_name
-            )
+            node_result = build_test_node(test_data=test_data, file_path=file_path, repo_name=repo_name)
 
             if node_result["success"]:
                 node_data = node_result["data"]

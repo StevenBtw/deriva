@@ -1281,6 +1281,20 @@ class TestPipelineSessionBenchmarking:
             mock_config.assert_called_once()
             assert result.session_id == "bench_123"
 
+    def test_run_benchmark_returns_to_the_session_database(self, connected_session):
+        """The benchmark switches to each repository's database; the session gets its own back, also after an error."""
+        with (
+            patch("deriva.services.benchmarking.BenchmarkConfig"),
+            patch("deriva.services.benchmarking.BenchmarkOrchestrator") as orchestrator,
+            patch("deriva.services.session.use_database") as use_database,
+        ):
+            orchestrator.return_value.run.side_effect = RuntimeError("boom")
+
+            with pytest.raises(RuntimeError, match="boom"):
+                connected_session.run_benchmark(repositories=["repo1"], models=["model1"])
+
+        use_database.assert_called_once_with(connected_session.repository)
+
     def test_run_benchmark_with_all_options(self, connected_session):
         """Should pass all options to benchmark config."""
         with patch("deriva.services.benchmarking.BenchmarkConfig") as mock_config, patch("deriva.services.benchmarking.BenchmarkOrchestrator") as mock_orch:
@@ -1300,8 +1314,6 @@ class TestPipelineSessionBenchmarking:
                 bench_hash=True,
                 defer_relationships=True,
                 per_repo=True,
-                use_enrichment_cache=False,
-                nocache_enrichment_configs=["SomeConfig"],
             )
 
             config_call = mock_config.call_args
@@ -1309,6 +1321,28 @@ class TestPipelineSessionBenchmarking:
             assert config_call.kwargs["models"] == ["model1", "model2"]
             assert config_call.kwargs["runs_per_combination"] == 5
             assert config_call.kwargs["use_cache"] is False
+
+    def test_run_step_benchmark(self, connected_session):
+        """One step, repeated per repository with one model."""
+        with patch("deriva.services.step_benchmark.StepBenchmark") as step_benchmark:
+            step_benchmark.return_value.run_step.return_value = "result"
+
+            result = connected_session.run_step_benchmark("BusinessConcept", repositories=["repo1", "repo2"], model="model1", runs=3, verbose=True)
+
+        config = step_benchmark.call_args.kwargs["config"]
+        assert (config.repositories, config.models, config.runs_per_combination) == (["repo1", "repo2"], ["model1"], 3)
+        step_benchmark.return_value.run_step.assert_called_once_with("BusinessConcept", verbose=True)
+        assert result == "result"
+
+    def test_run_step_benchmark_returns_to_the_session_database(self, connected_session):
+        """The benchmark works in its own database; the session gets its repository's back, also after an error."""
+        with patch("deriva.services.step_benchmark.StepBenchmark") as step_benchmark, patch("deriva.services.session.use_database") as use_database:
+            step_benchmark.return_value.run_step.side_effect = RuntimeError("boom")
+
+            with pytest.raises(RuntimeError, match="boom"):
+                connected_session.run_step_benchmark("BusinessConcept", repositories=["repo1"], model="model1")
+
+        use_database.assert_called_once_with(connected_session.repository)
 
     def test_analyze_benchmark(self, connected_session):
         """Should create and return BenchmarkAnalyzer."""

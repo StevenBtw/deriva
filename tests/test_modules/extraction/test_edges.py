@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from deriva.modules.extraction.edges import (
     ALL_EDGE_TYPES,
     PYTHON_STDLIB,
@@ -664,6 +666,119 @@ class TestExtractImportEdges:
         # Should only have IMPORTS edge, not USES
         assert len(edges) == 1
         assert edges[0]["relationship_type"] == "IMPORTS"
+
+
+class TestJavaAndScriptImports:
+    """Java imports resolve to the repository file that declares the class; script imports by relative path."""
+
+    @staticmethod
+    def _edges(imports, file_path, all_files, stdlib=None):
+        from deriva.adapters.treesitter.models import FilterConstants
+        from deriva.modules.extraction.edges import _extract_import_edges
+
+        return _extract_import_edges(
+            imports=imports,
+            file_path=file_path,
+            repo_name="r",
+            all_file_paths=all_files,
+            external_packages=set(),
+            edge_types={EdgeType.IMPORTS, EdgeType.USES},
+            filter_constants=FilterConstants(stdlib_modules=stdlib or set()),
+        )
+
+    @staticmethod
+    def _targets(edges):
+        return {(e["relationship_type"], e["to_node_id"]) for e in edges}
+
+    def test_a_java_import_resolves_to_the_class_file_under_any_source_root(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"core/src/main/java/org/acme/crud/Op.java", "util/src/main/java/org/acme/util/Error.java"}
+        edges, nodes, stats = self._edges([ExtractedImport(module="org.acme.util", names=["Error"])], "core/src/main/java/org/acme/crud/Op.java", files)
+
+        assert self._targets(edges) == {("IMPORTS", "file::r::util_src_main_java_org_acme_util_Error.java")}
+        assert nodes == [] and stats["internal"] == 1
+
+    def test_the_same_class_in_two_modules_resolves_to_the_nearest(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"a/src/main/java/org/acme/Op.java", "a/src/main/java/org/acme/util/Error.java", "b/src/main/java/org/acme/util/Error.java"}
+        edges, _, _ = self._edges([ExtractedImport(module="org.acme.util", names=["Error"])], "a/src/main/java/org/acme/Op.java", files)
+
+        assert self._targets(edges) == {("IMPORTS", "file::r::a_src_main_java_org_acme_util_Error.java")}
+
+    def test_nested_and_static_imports_resolve_to_the_declaring_file(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"src/org/acme/Op.java", "src/org/acme/util/Outer.java", "src/org/acme/util/Errors.java"}
+        imports = [ExtractedImport(module="org.acme.util.Outer", names=["Inner"]), ExtractedImport(module="org.acme.util.Errors", names=["fail"], is_from_import=True)]
+        edges, _, _ = self._edges(imports, "src/org/acme/Op.java", files)
+
+        assert self._targets(edges) == {("IMPORTS", "file::r::src_org_acme_util_Outer.java"), ("IMPORTS", "file::r::src_org_acme_util_Errors.java")}
+
+    def test_a_static_wildcard_import_resolves_to_the_declaring_file(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"src/org/acme/Op.java", "src/org/acme/util/Errors.java"}
+        edges, nodes, _ = self._edges([ExtractedImport(module="org.acme.util.Errors", names=["*"], is_from_import=True)], "src/org/acme/Op.java", files)
+
+        assert self._targets(edges) == {("IMPORTS", "file::r::src_org_acme_util_Errors.java")}
+        assert nodes == []
+
+    def test_the_java_standard_library_is_no_dependency(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        imports = [ExtractedImport(module="java.util", names=["List"]), ExtractedImport(module="java.util.concurrent", names=["Future"])]
+        edges, nodes, _ = self._edges(imports, "src/org/acme/Op.java", {"src/org/acme/Op.java"}, stdlib={"java.util"})
+
+        assert edges == [] and nodes == []
+
+    def test_a_wildcard_import_of_an_own_package_is_no_external_dependency(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"src/org/acme/Op.java", "src/org/acme/util/Error.java"}
+        edges, nodes, _ = self._edges([ExtractedImport(module="org.acme.util", names=["*"])], "src/org/acme/Op.java", files)
+
+        assert edges == [] and nodes == []
+
+    def test_other_java_imports_stay_external(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        edges, _, _ = self._edges([ExtractedImport(module="com.fasterxml.jackson.databind", names=["ObjectMapper"])], "src/org/acme/Op.java", {"src/org/acme/Op.java"})
+
+        assert self._targets(edges) == {("USES", "extdep::r::com")}
+
+    def test_a_relative_script_import_resolves_with_extension_or_index(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"app/src/pages/home.component.ts", "app/src/core/data/state.service.ts", "app/src/pages/widgets/index.ts"}
+        imports = [ExtractedImport(module="../core/data/state.service", names=["StateService"]), ExtractedImport(module="./widgets", names=["Chart"])]
+        edges, _, _ = self._edges(imports, "app/src/pages/home.component.ts", files)
+
+        assert self._targets(edges) == {("IMPORTS", "file::r::app_src_core_data_state.service.ts"), ("IMPORTS", "file::r::app_src_pages_widgets_index.ts")}
+
+    def test_a_relative_script_import_above_the_repository_root_is_unresolved(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        edges, nodes, stats = self._edges([ExtractedImport(module="../foo", names=["x"])], "main.ts", {"main.ts", "foo.ts"})
+
+        assert edges == [] and nodes == [] and stats["unresolved"] == 1
+
+    @pytest.mark.parametrize("extension", [".mts", ".cts"])
+    def test_relative_imports_of_module_typescript_files_resolve(self, extension):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {f"src/main{extension}", f"src/util{extension}"}
+        edges, _, _ = self._edges([ExtractedImport(module="./util", names=["x"])], f"src/main{extension}", files)
+
+        assert self._targets(edges) == {("IMPORTS", f"file::r::src_util{extension}")}
+
+    def test_a_script_package_import_stays_external(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        edges, _, _ = self._edges([ExtractedImport(module="@angular/core", names=["Component"])], "app/src/pages/home.component.ts", {"app/src/pages/home.component.ts"})
+
+        assert self._targets(edges) == {("USES", "extdep::r::@angular/core")}
 
 
 # =============================================================================

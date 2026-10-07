@@ -50,6 +50,41 @@ def _affected_rows(result: Any) -> int:
     return int(row[0]) if row else 0
 
 
+def validate_params(params: str) -> None:
+    """Raise ValueError unless ``params`` is a JSON object (consumers read it with .get())."""
+    try:
+        value = json.loads(params)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"params must be valid JSON: {e}") from e
+    if not isinstance(value, dict):
+        raise ValueError(f"params must be a JSON object, got {type(value).__name__}")
+
+
+def llm_samples_per_step(engine: Any) -> dict[str, int]:
+    """LLM answers asked per decision, per step (above 1 means majority voting).
+
+    Recorded with every benchmark session so any voting is visible next to the
+    consistency it produces. Extraction LLM steps use ``params.samples``, element
+    naming uses ``params.naming.samples`` (reported as ``<Type>.naming``).
+    """
+    samples: dict[str, int] = {}
+    for cfg in get_extraction_configs(engine, enabled_only=True):
+        if cfg.extraction_method == "llm":
+            samples[cfg.node_type] = int((json.loads(cfg.params) if cfg.params else {}).get("samples", 1))
+    for cfg in get_derivation_configs(engine, enabled_only=True, phase="generate"):
+        naming = (json.loads(cfg.params) if cfg.params else {}).get("naming")
+        if naming:
+            samples[f"{cfg.step_name}.naming"] = int(naming.get("samples", 1))
+    return samples
+
+
+def read_only_connection() -> Any:
+    """Open the config database read-only (safe while a benchmark holds the write lock)."""
+    from deriva.adapters.database import get_connection
+
+    return get_connection(read_only=True)
+
+
 @lru_cache
 def get_settings() -> DerivaSettings:
     """
@@ -554,17 +589,14 @@ def add_derivation_step(
     """Add a new derivation step as version 1, disabled. Returns False if it exists.
 
     Raises:
-        ValueError: phase is not a derivation phase, sequence is negative, or params is not JSON.
+        ValueError: phase is not a derivation phase, sequence is negative, or params is not a JSON object.
     """
     if phase not in DERIVATION_PHASES:
         raise ValueError(f"phase must be one of {', '.join(DERIVATION_PHASES)}, got {phase!r}")
     if sequence < 0:
         raise ValueError(f"sequence must be >= 0, got {sequence}")
     if params is not None:
-        try:
-            json.loads(params)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"params must be valid JSON: {e}") from e
+        validate_params(params)
     exists = engine.execute("SELECT 1 FROM derivation_config WHERE step_name = ? LIMIT 1", [step_name]).fetchone()
     if exists:
         return False
@@ -1446,6 +1478,55 @@ def update_derivation_patterns(
         [next_id, step_name, pattern_type, pattern_category, patterns_json],
     )
     return True
+
+
+def list_derivation_patterns(engine: Any, step_name: str | None = None) -> list[dict[str, Any]]:
+    """Active derivation pattern rows (of one step, or all), ordered by step, type and category."""
+    import json
+
+    query = "SELECT step_name, pattern_type, pattern_category, patterns FROM derivation_patterns WHERE is_active = TRUE"
+    params: list[Any] = []
+    if step_name is not None:
+        query += " AND step_name = ?"
+        params.append(step_name)
+    query += " ORDER BY step_name, pattern_type, pattern_category"
+    return [
+        {"step_name": step, "pattern_type": ptype, "pattern_category": category, "patterns": json.loads(patterns) if patterns else []}
+        for step, ptype, category, patterns in engine.execute(query, params).fetchall()
+    ]
+
+
+def remove_derivation_patterns(
+    engine: Any,
+    step_name: str,
+    pattern_type: str,
+    pattern_category: str | None = None,
+    patterns: list[str] | None = None,
+) -> int:
+    """Remove patterns from a step's active rows of one type (one category, or every category).
+
+    Without ``patterns`` every pattern of the matching rows is removed. A row left without
+    patterns is deactivated. Returns the number of rows changed.
+    """
+    import json
+
+    changed = 0
+    for row in list_derivation_patterns(engine, step_name):
+        if row["pattern_type"] != pattern_type or (pattern_category is not None and row["pattern_category"] != pattern_category):
+            continue
+        kept = [p for p in row["patterns"] if patterns is not None and p not in patterns]
+        if kept == row["patterns"]:
+            continue
+        engine.execute(
+            """
+            UPDATE derivation_patterns
+            SET patterns = ?, is_active = ?
+            WHERE step_name = ? AND pattern_type = ? AND pattern_category IS NOT DISTINCT FROM ? AND is_active = TRUE
+            """,
+            [json.dumps(kept), bool(kept), step_name, pattern_type, row["pattern_category"]],
+        )
+        changed += 1
+    return changed
 
 
 # =============================================================================
