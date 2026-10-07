@@ -8,7 +8,7 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.7.x is all about stability, portability, user experience, documentation and clean architecture/code standards.
 
-## v0.7.1 - Stability and Consistency (Unreleased)
+## v0.7.1 - Stability and Consistency (October 7 2026)
 
 ### Code Quality
 
