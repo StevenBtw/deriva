@@ -47,8 +47,12 @@ def test_sessions_and_views_are_served(make_client):
         benchmark_steps=lambda ids: {"r": [{"step": "Node", "score": 1.0}]},
         benchmark_flips=lambda ids, repo: [{"source": f"{repo}:{len(ids)}"}],
         benchmark_inspector=lambda ids, repo: {"repository": repo, "runs": ids},
+        benchmark_trace=lambda ids, repo, element_type, source: [{"run": f"{ids[0]}/1", "repo": repo, "type": element_type, "source": source}],
     )
     client = make_client(session)
+
+    traced = client.get("/api/benchmarks/trace?sessions=s_a&repo=r&type=Node&source=tech::r::queue").json()
+    assert traced == [{"run": "s_a/1", "repo": "r", "type": "Node", "source": "tech::r::queue"}]
 
     assert client.get("/api/benchmarks?limit=5").json() == [{"session_id": "s_a", "status": "completed"}]
     assert session.called("list_benchmarks") == [((5,), {})]

@@ -2350,6 +2350,23 @@ class TestCanonicalName:
 
         assert canonical_name(raw) == expected
 
+    def test_words_the_source_writes_whole_are_not_split(self):
+        from deriva.modules.derivation.base import canonical_name
+
+        assert canonical_name("LedgerKit3 Report Schema", frozenset({"ledgerkit3", "report"})) == "LedgerKit3 Report Schema"
+        assert canonical_name("EntityProcessor", frozenset({"entity", "processor"})) == "Entity Processor"
+
+    def test_source_words_follow_the_sources_own_word_boundaries(self):
+        """Separators split; a mixed-case token splits at its humps; a single-case token stays one word."""
+        from deriva.modules.derivation.base import source_words
+
+        schema = source_words({"kind": "File", "name": "ledgerkit3_Report.xsd", "path": "repo/libs/ledgerkit/ledgerkit3_Report.xsd"})
+        code = source_words({"kind": "TypeDefinition", "name": "EntityProcessor", "path": "repo/src/EntityProcessor.java"})
+
+        assert {"ledgerkit3", "ledgerkit", "report", "xsd"} <= schema
+        assert {"entity", "processor", "java"} <= code and "entityprocessor" not in code
+        assert "file" not in schema  # the kind is not part of the source's spelling
+
     def test_formatting_variants_vote_together(self):
         from deriva.modules.derivation.base import choose_name
 

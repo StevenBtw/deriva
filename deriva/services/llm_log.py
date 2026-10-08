@@ -20,7 +20,7 @@ from typing import Any
 Listener = Callable[[dict[str, Any]], None]
 
 # What lists of calls show; prompt, system prompt and answer are fetched per call
-SUMMARY_FIELDS = ("call_id", "seq", "step", "schema", "cache_hit", "latency_ms", "tokens_in", "tokens_out", "error")
+SUMMARY_FIELDS = ("call_id", "seq", "step", "schema", "cache_hit", "latency_ms", "tokens_in", "tokens_out", "temperature", "error")
 
 
 def summarize_call(call: dict[str, Any]) -> dict[str, Any]:
@@ -122,6 +122,10 @@ def record_call(
         response=content,
         error=error or getattr(response, "error", None),
         cache_key=metrics.get("cache_key"),
+        provider=metrics.get("provider"),
+        model=metrics.get("model"),
+        temperature=metrics.get("temperature"),
+        max_tokens=metrics.get("max_tokens"),
         cache_hit=metrics.get("cache_hit"),
         latency_ms=metrics.get("latency_ms"),
         tokens_in=metrics.get("input_tokens"),

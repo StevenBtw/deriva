@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from deriva.common.ocel import create_run_id
-from deriva.services.benchmark_views import flips, inspector, results, session_runs
+from deriva.services.benchmark_views import element_trace, flips, inspector, results, session_runs
 from deriva.services.llm_log import LlmCallLog, run_log_path
 
 QUEUE = {"identifier": "n_queue", "name": "Queue Server", "type": "Node", "source": "tech::r::queue"}
@@ -92,3 +92,11 @@ def test_inspector_lists_occurrences_with_layer_keys_and_flip_causes(benchmarks)
 def test_an_unknown_session_is_an_error(benchmarks):
     with pytest.raises(FileNotFoundError):
         session_runs(benchmarks, ["s_a", "nope"], ["azure-gpt4"])
+
+
+def test_an_element_is_traced_over_the_runs_of_several_sessions(benchmarks):
+    trace = element_trace(benchmarks, ["s_a", "s_b"], ["azure-gpt4"], "my_repo", "Node", "tech::r::queue")
+
+    assert [(t["run"], t["present"], t["stage"]) for t in trace] == [("s_a/1", True, "created"), ("s_a/2", False, "llm_rejected"), ("s_b/1", True, "created")]
+    assert [c["response"] for c in trace[1]["calls"]] == ['{"keep": false}']
+    assert trace[2]["calls"] == []  # s_b kept no call log

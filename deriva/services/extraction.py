@@ -1451,6 +1451,8 @@ def _extract_business_concepts(
         "phrases": phrases,
         "tool": found["tool"],
         "decisions": decisions,
+        # What each decision does to the graph (reject labels alike), for output-level stability
+        "outcomes": {key: concept_candidates.outcome(label) for key, label in decisions.items()},
     }
     return {"nodes_created": len(nodes), "edges_created": len(edge_ids), "edge_ids": edge_ids, "errors": errors, "stats": stats}
 

@@ -2211,23 +2211,42 @@ def parse_role_answer(content: str, ids: set[str], roles: dict[str, str]) -> dic
     return decided
 
 
-def canonical_name(name: str) -> str:
+def canonical_name(name: str, whole_words: frozenset[str] = frozenset()) -> str:
     """Formatting-independent form of an LLM name: quotes trimmed, camel humps split, spacing normalized.
 
     Splits only at a lowercase-to-uppercase boundary ("EntityProcessor" ->
-    "Entity Processor"), so acronyms and forms like "OAuth" or "REST API" stay.
+    "Entity Processor"), so acronyms and forms like "OAuth" or "REST API" stay. A word
+    whose lowercase form is in ``whole_words`` (the source writes it as one word) is not split.
     """
     name = name.strip().strip("\"'`").strip()
-    return " ".join(re.sub(r"(?<=[a-z])(?=[A-Z])", " ", word) for word in name.split())
+    return " ".join(word if word.lower() in whole_words else re.sub(r"(?<=[a-z])(?=[A-Z])", " ", word) for word in name.split())
 
 
-def choose_name(samples: list[str | None]) -> str | None:
+def source_words(source: dict[str, Any]) -> frozenset[str]:
+    """The words of a naming source (its name and path) as the source spells them, lowercased.
+
+    Separators split; a mixed-case token splits at its own camel humps ("EntityProcessor" ->
+    entity, processor); a token in one case stays one word ("ledgerkit3", "XSD").
+    """
+    words: set[str] = set()
+    for key in ("name", "path"):
+        for token in re.split(r"[^0-9A-Za-z]+", str(source.get(key) or "")):
+            if not token:
+                continue
+            mixed = any(c.isupper() for c in token) and any(c.islower() for c in token)
+            parts = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", token).split() if mixed else [token]
+            words.update(p.lower() for p in parts)
+    return frozenset(words)
+
+
+def choose_name(samples: list[str | None], whole_words: frozenset[str] = frozenset()) -> str | None:
     """Majority name over canonicalized samples, ties broken deterministically.
 
     Votes group case- and spacing-insensitively ("HTTPServer" and "HTTP Server" are one
-    name); the most frequent written form of the winning group is returned.
+    name); the most frequent written form of the winning group is returned. ``whole_words``
+    are kept whole when canonicalizing (see ``canonical_name``).
     """
-    names = [canonical_name(s) for s in samples if s and s.strip()]
+    names = [canonical_name(s, whole_words) for s in samples if s and s.strip()]
     names = [n for n in names if n]
     if not names:
         return None

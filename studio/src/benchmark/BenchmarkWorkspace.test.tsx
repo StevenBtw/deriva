@@ -29,6 +29,7 @@ vi.mock("../api/client", async () => {
       steps: vi.fn(),
       flips: vi.fn(),
       inspector: vi.fn(),
+      trace: vi.fn(),
       exportUrl: actual.benchmarks.exportUrl,
     },
   };
@@ -95,6 +96,10 @@ describe("BenchmarkWorkspace", () => {
       { type: "Node", source: "tech::r::queue", names: { "bench_2/1": "Queue Server" }, present: ["bench_2/1"], missing: { "bench_2/2": "candidate llm_rejected" }, also_from: {}, llm: "same prompt, different answer", cause: "Node: candidate llm_rejected in bench_2/2 (same prompt, different answer)" },
     ]);
     vi.mocked(benchmarks.inspector).mockResolvedValue(VIEW);
+    vi.mocked(benchmarks.trace).mockResolvedValue([
+      { run: "bench_2/1", present: true, name: "Queue Server", stage: "created", refine: null, cause: null, calls: [{ call_id: "c1", step: "Node", schema: "selection", cache_key: "k1", cache_hit: false, model: "gpt", temperature: 0, prompt: "Candidates: tech::r::queue", response: '{"keep": true}', error: null }] },
+      { run: "bench_2/2", present: false, name: null, stage: "llm_rejected", refine: null, cause: "candidate llm_rejected", calls: [{ call_id: "c2", step: "Node", schema: "selection", cache_key: "k1", cache_hit: false, model: "gpt", temperature: 0, prompt: "Candidates: tech::r::queue", response: '{"keep": false}', error: null }] },
+    ]);
     vi.mocked(benchmarks.start).mockResolvedValue({ run_id: "b1" });
   });
 
@@ -156,8 +161,10 @@ describe("BenchmarkWorkspace", () => {
     await screen.findByText("repo_a");
 
     await userEvent.click(screen.getByRole("tab", { name: "Steps" }));
-    const cell = await within(screen.getByRole("tabpanel")).findByText("75.0");
+    // The counts behind the share are on the cell: 1 of 2 and 21 of 22 read very differently
+    const cell = await within(screen.getByRole("tabpanel")).findByText("75.0 (3/4)");
     expect(cell).toHaveAttribute("title", "3 of 4 prompts answered identically");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("one changed label in a batched classification makes the whole answer differ");
 
     await userEvent.click(screen.getByRole("tab", { name: /Flips/ }));
     expect(await within(screen.getByRole("tabpanel")).findByText(/candidate llm_rejected in bench_2\/2 \(same prompt, different answer\)/)).toBeInTheDocument();
@@ -178,6 +185,22 @@ describe("BenchmarkWorkspace", () => {
     expect(screen.getByText(/bench_2\/1 vs bench_2\/2 · 1 difference/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "by cause" }));
     expect(screen.getAllByText(/candidate llm_rejected in bench_2\/2/).length).toBeGreaterThan(0);
+  });
+
+  it("traces a picked element per run from the session files, with its deciding calls", async () => {
+    render(<BenchmarkWorkspace />);
+    await screen.findByText("repo_a");
+    await userEvent.click(screen.getByRole("button", { name: /View model/ }));
+    await screen.findByText(/elements differ by source/);
+
+    await userEvent.click(screen.getByText("Queue Server"));
+
+    await waitFor(() => expect(benchmarks.trace).toHaveBeenCalledWith(["bench_2"], "repo_a", "Node", "tech::r::queue"));
+    const trace = await screen.findByTestId("element-trace");
+    expect(trace).toHaveTextContent("bench_2/1: in the model as \"Queue Server\" · candidate created");
+    expect(trace).toHaveTextContent("bench_2/2: missing · candidate llm_rejected");
+    await userEvent.click(within(trace).getAllByRole("button", { name: /answer/ })[1]);
+    expect(within(trace).getByText('{"keep": false}')).toBeInTheDocument();
   });
 
   it("draws the runs' models as an ArchiMate diagram with each element's comparison status", async () => {

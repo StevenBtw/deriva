@@ -111,6 +111,8 @@ class StepBenchmarkResult:
     answer_stability: dict[str, list[AnswerStability]] = field(default_factory=dict)
     # Steps that report one decision per item (their stats' ``decisions``)
     decision_stability: dict[str, DecisionStability] = field(default_factory=dict)
+    # Steps that also report what each decision does (their stats' ``outcomes``): labels with the same effect alike
+    output_stability: dict[str, DecisionStability] = field(default_factory=dict)
     llm_calls: dict[str, list[int]] = field(default_factory=dict)  # live calls per run
     errors: list[str] = field(default_factory=list)
     duration_seconds: float = 0.0
@@ -133,6 +135,7 @@ class StepBenchmarkResult:
                     "llm_calls": self.llm_calls.get(repo, []),
                     "answer_stability": [s.to_dict() for s in self.answer_stability.get(repo, [])],
                     "decision_stability": self.decision_stability[repo].to_dict() if repo in self.decision_stability else None,
+                    "output_stability": self.output_stability[repo].to_dict() if repo in self.output_stability else None,
                 }
                 for repo, consistency in self.repositories.items()
             },
@@ -177,9 +180,11 @@ class StepBenchmark(benchmarking.BenchmarkOrchestrator):
             print(f"\nSTEP BENCHMARK {self.session_id}: {step}, {self.config.runs_per_combination} runs per repository")
         for repo in self.config.repositories:
             try:
-                result.repositories[repo], decisions = self._repeat(repo, step, plan, verbose)
+                result.repositories[repo], decisions, outcomes = self._repeat(repo, step, plan, verbose)
                 if decisions:
                     result.decision_stability[repo] = decision_stability(decisions)
+                if outcomes:
+                    result.output_stability[repo] = decision_stability(outcomes)
                 result.llm_calls[repo] = self._live_calls(repo, step)
             except Exception as e:
                 result.errors.append(f"{repo}: {e}")
@@ -219,11 +224,11 @@ class StepBenchmark(benchmarking.BenchmarkOrchestrator):
             outputs.update(model_outputs(self.archimate_manager))
         return outputs
 
-    def _repeat(self, repo: str, step: str, plan: _Plan, verbose: bool) -> tuple[StepConsistency, list[dict[str, Any]]]:
+    def _repeat(self, repo: str, step: str, plan: _Plan, verbose: bool) -> tuple[StepConsistency, list[dict[str, Any]], list[dict[str, Any]]]:
         """Build the step's input once, then run the step on a fresh copy of it each time.
 
         Returns the consistency of the outputs and, when the step reports them in every run,
-        its per-item decisions per run (else an empty list).
+        its per-item decisions and their outcomes per run (else empty lists).
         """
         work_key = f"{repo}.step"
         work_file = database_file(work_key)
@@ -253,6 +258,7 @@ class StepBenchmark(benchmarking.BenchmarkOrchestrator):
             self.config.nocache_configs = plan.extraction_step + plan.derivation_step
             outputs = []
             decisions: list[dict[str, Any] | None] = []
+            outcomes: list[dict[str, Any] | None] = []
             for run in range(1, self.config.runs_per_combination + 1):
                 close_database()
                 shutil.copyfile(input_file, work_file)
@@ -266,7 +272,9 @@ class StepBenchmark(benchmarking.BenchmarkOrchestrator):
                     raise RuntimeError(f"run {run} failed: {done.get('errors')}")
                 outputs.append(step_output(before, self._outputs(plan)))
                 if plan.extraction_step:
-                    decisions.append((done.get("step_stats") or {}).get(repo, {}).get(step, {}).get("decisions"))
+                    step_stats = (done.get("step_stats") or {}).get(repo, {}).get(step, {})
+                    decisions.append(step_stats.get("decisions"))
+                    outcomes.append(step_stats.get("outcomes"))
                 else:
                     # An element step decides per candidate: the stage it reached and the element it became
                     decisions.append({d["node_id"]: [d["stage"], d.get("element_id")] for d in done.get("candidate_decisions") or []} or None)
@@ -284,8 +292,12 @@ class StepBenchmark(benchmarking.BenchmarkOrchestrator):
         consistency = compare_step_outputs(outputs, unscored=plan.unscored)
         if verbose:
             print(f"  {repo}: presence {consistency.presence_score:.1%} ({consistency.present}/{consistency.total}), exact {consistency.exact_score:.1%}")
-        reported = [d for d in decisions if d is not None]
-        return consistency, reported if len(reported) == len(decisions) else []
+
+        def in_every_run(per_run: list[dict[str, Any] | None]) -> list[dict[str, Any]]:
+            reported = [d for d in per_run if d is not None]
+            return reported if per_run and len(reported) == len(per_run) else []
+
+        return consistency, in_every_run(decisions), in_every_run(outcomes)
 
     def _derive_repo(self, repo_name: str, config_versions: dict[str, dict[str, int]] | None, steps: list[str], verbose: bool = False, run_id: str | None = None) -> dict[str, Any]:
         """Run the named derivation steps on the current model, logging their steps and LLM calls."""

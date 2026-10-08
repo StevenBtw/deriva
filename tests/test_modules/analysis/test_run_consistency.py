@@ -136,3 +136,40 @@ def test_stable_elements_are_no_flips():
     runs = {"s/1": snapshot([QUEUE, WORKER]), "s/2": snapshot([QUEUE, WORKER])}
 
     assert element_flips(runs, {}) == []
+
+
+def test_an_element_is_traced_per_run_from_the_session_files():
+    """Per run: present or not, under which name, the candidate's stage, a refine rule, and the calls that decided it."""
+    from deriva.modules.analysis.run_consistency import element_trace
+
+    runs = {
+        "s/1": snapshot([QUEUE], candidates=[{"type": "Node", "source": "tech::r::queue", "stage": "created"}]),
+        "s/2": snapshot([], candidates=[{"type": "Node", "source": "tech::r::queue", "stage": "created", "refine": "no_cross_layer_anchor"}]),
+        "s/3": snapshot([], candidates=[{"type": "Node", "source": "tech::r::queue", "stage": "llm_rejected"}]),
+    }
+    deciding = call("Node", "Candidates: tech::r::queue (Queue)", "k1", '{"keep": true}')
+    calls = {
+        "s/1": [deciding, call("DataObject", "Candidates: tech::r::queue", "k2")],
+        "s/2": [deciding],
+        "s/3": [call("Node", "Candidates: tech::r::queue", "k3", '{"keep": false}')],
+    }
+
+    trace = element_trace(runs, calls, "Node", "tech::r::queue")
+
+    assert [(t["run"], t["present"], t["name"], t["stage"], t["refine"]) for t in trace] == [
+        ("s/1", True, "Queue Server", "created", None),
+        ("s/2", False, None, "created", "no_cross_layer_anchor"),
+        ("s/3", False, None, "llm_rejected", None),
+    ]
+    assert [c["cache_key"] for c in trace[0]["calls"]] == ["k1"]  # only the element's own step decides
+    assert trace[2]["calls"][0]["response"] == '{"keep": false}'
+    assert trace[1]["cause"] == "disabled in refine (no_cross_layer_anchor)"
+    assert trace[0]["cause"] is None
+
+
+def test_a_source_that_was_no_candidate_says_so():
+    from deriva.modules.analysis.run_consistency import element_trace
+
+    (only,) = element_trace({"s/1": snapshot([], graph={"technologies": []})}, {}, "Node", "tech::r::queue")
+
+    assert (only["present"], only["stage"], only["cause"], only["calls"]) == (False, None, "source not extracted", [])

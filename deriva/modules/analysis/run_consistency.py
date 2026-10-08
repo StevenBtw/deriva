@@ -136,6 +136,34 @@ def element_flips(runs: dict[str, dict[str, Any]], calls: dict[str, list[dict[st
     return flips
 
 
+# What a trace shows of a deciding call
+TRACE_CALL_FIELDS = ("call_id", "step", "schema", "cache_key", "cache_hit", "model", "temperature", "prompt", "response", "error")
+
+
+def element_trace(runs: dict[str, dict[str, Any]], calls: dict[str, list[dict[str, Any]]], element_type: str, source: str) -> list[dict[str, Any]]:
+    """Per run, why the element (by type and source) is or is not in that run's model, from the session files alone:
+    present and under which name, the candidate's last stage, the refine rule that disabled it, the cause when
+    it is missing, and the calls of the element's own step whose prompt names the source."""
+    trace = []
+    for label, snapshot in runs.items():
+        element = next((e for e in snapshot.get("elements", []) if e.get("type") == element_type and e.get("source") == source), None)
+        candidates = [c for c in snapshot.get("candidates", []) if c.get("type") == element_type and c.get("source") == source]
+        last = candidates[-1] if candidates else {}
+        deciding = [{key: c.get(key) for key in TRACE_CALL_FIELDS} for c in calls.get(label, []) if c.get("step") == element_type and mentions(c.get("prompt") or "", source)]
+        trace.append(
+            {
+                "run": label,
+                "present": element is not None,
+                "name": element["name"] if element else None,
+                "stage": last.get("stage"),
+                "refine": last.get("refine"),
+                "cause": None if element else _missing_cause(snapshot, element_type, source),
+                "calls": deciding,
+            }
+        )
+    return trace
+
+
 def _sources_by_name(elements: list[dict[str, Any]]) -> dict[tuple[str, str], set[str]]:
     out: dict[tuple[str, str], set[str]] = defaultdict(set)
     for e in elements:

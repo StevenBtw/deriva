@@ -94,6 +94,13 @@ def test_model_configs_keep_no_secrets():
     assert public_model_config(config) == {"name": "m", "provider": "azure", "model": "gpt", "api_url": "https://example.test", "api_key_env": "AZURE_KEY"}
 
 
+def test_generation_limits_are_not_taken_for_secrets():
+    """max_tokens names a token count, not a token: it belongs in the record."""
+    config = {"name": "m", "max_tokens": 4000, "auth_token": "t", "secret_key": "s", "password": "p", "access_token": "a"}
+
+    assert public_model_config(config) == {"name": "m", "max_tokens": 4000}
+
+
 def test_environment_names_versions_platform_and_models(tmp_path):
     env = environment_info(models={"m": {"name": "m", "provider": "azure", "model": "gpt", "api_key": "sk-secret"}}, repo_root=tmp_path)
 

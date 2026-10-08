@@ -34,6 +34,13 @@ LABEL_TYPES = {
 }
 REJECT_LABELS = ("technical", "attribute", "quality", "generic", "documentation")
 LABELS = (*LABEL_TYPES, *REJECT_LABELS)
+
+
+def outcome(label: str | None) -> str | None:
+    """What a label does to the graph: the concept type it creates, or "rejected" for every reject label (None: no decision)."""
+    return None if label is None else LABEL_TYPES.get(label, "rejected")
+
+
 LANGUAGE_NAMES = {"en": "English", "de": "German", "fr": "French"}
 
 CLASSIFICATION_SCHEMA: dict[str, Any] = {

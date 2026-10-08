@@ -1394,10 +1394,12 @@ class BenchmarkOrchestrator:
         record = {
             "session_id": self.session_id,
             "captured_at": self.session_start.isoformat(),
-            "config_versions": self._config_versions_snapshot,
-            "llm_samples": self._llm_samples,
-            "inputs": config_service.input_snapshot(self.engine),
-            "environment": export_bundle.environment_info(models={name: models[name] for name in self.config.models if name in models}),
+            **export_bundle.run_inputs(
+                self.engine,
+                {name: models[name] for name in self.config.models if name in models},
+                config_versions=self._config_versions_snapshot,
+                llm_samples=self._llm_samples,
+            ),
         }
         folder = Path("workspace/benchmarks") / str(self.session_id)
         folder.mkdir(parents=True, exist_ok=True)

@@ -79,6 +79,7 @@ export type RunEvent = {
     latency_ms?: number | null;
     tokens_in?: number | null;
     tokens_out?: number | null;
+    temperature?: number | null;
     error?: string | null;
     sessions?: string[];
   };
@@ -94,6 +95,8 @@ export type LlmCallSummary = {
   latency_ms: number | null;
   tokens_in: number | null;
   tokens_out: number | null;
+  /** The temperature the call ran with (absent in logs written before it was recorded). */
+  temperature?: number | null;
   error: string | null;
 };
 /** Where a model element comes from: its source graph nodes, relationships and the LLM calls that mention its sources. */
@@ -147,6 +150,20 @@ export type Flip = {
   llm: string | null;
   cause: string;
 };
+/** One run's answer to "why is this element (not) in the model": from the run's snapshot and call log. */
+export type RunTraceCall = {
+  call_id: string | null;
+  step: string | null;
+  schema: string | null;
+  cache_key: string | null;
+  cache_hit: boolean | null;
+  model: string | null;
+  temperature: number | null;
+  prompt: string | null;
+  response: string | null;
+  error: string | null;
+};
+export type ElementTrace = { run: string; present: boolean; name: string | null; stage: string | null; refine: string | null; cause: string | null; calls: RunTraceCall[] };
 export type InspectorElement = { run: string; identifier: string; name: string; type: string; layer: string; source: string; by_source: string; by_name: string };
 export type InspectorRelationship = {
   run: string;

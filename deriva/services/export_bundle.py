@@ -20,10 +20,12 @@ from pathlib import Path
 from typing import Any
 
 from deriva.adapters.grafeo import engine_info
+from deriva.services import config
 
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 CHUNK = 1 << 20
-SECRET = re.compile(r"key|token|secret|password", re.IGNORECASE)
+# A secret's name ends in key, token, secret or password (api_key, auth_token); max_tokens is a count, not a token
+SECRET = re.compile(r"(^|_)(key|token|secret|password)$", re.IGNORECASE)
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SUFFIXES = (".py", ".sql")
@@ -148,6 +150,20 @@ def source_digest(package_root: str | Path = PACKAGE_ROOT) -> dict[str, Any]:
     for path in files:
         digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0" + hashlib.sha256(path.read_bytes()).digest())
     return {"files": len(files), "sha256": digest.hexdigest()}
+
+
+def run_inputs(engine: Any, models: dict[str, Any], config_versions: dict[str, Any] | None = None, llm_samples: dict[str, int] | None = None) -> dict[str, Any]:
+    """What a run or session ran on: config versions, LLM samples per step, the tables without version
+    history (file types, name patterns, settings) and the environment (code digest, versions, models without secrets).
+
+    ``config_versions`` and ``llm_samples`` default to the active ones (a session passes the snapshot it took).
+    """
+    return {
+        "config_versions": config_versions if config_versions is not None else config.get_active_config_versions(engine),
+        "llm_samples": llm_samples if llm_samples is not None else config.llm_samples_per_step(engine),
+        "inputs": config.input_snapshot(engine),
+        "environment": environment_info(models=models),
+    }
 
 
 def environment_info(models: dict[str, Any] | None = None, repo_root: str | Path = REPO_ROOT, package_root: str | Path = PACKAGE_ROOT) -> dict[str, Any]:

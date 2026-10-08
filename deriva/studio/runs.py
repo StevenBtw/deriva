@@ -152,6 +152,8 @@ class RunManager:
                 if run.repository:
                     session.use_repository(run.repository)
                 log = self._open_log(session, run)
+                # What the run is about to run on, next to its call log
+                session.write_run_inputs(self._runs_dir / run.run_id, run.run_id)
                 steps = self._steps(session, run, no_llm)
             while True:
                 if run.cancel_requested:

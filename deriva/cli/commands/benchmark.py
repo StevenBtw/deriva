@@ -245,6 +245,9 @@ def benchmark_step(
         if repo in result.decision_stability:
             decided = result.decision_stability[repo]
             typer.echo(f"  decision stability: {decided.stable}/{decided.items} ({decided.score:.1%})")
+        if repo in result.output_stability:
+            effect = result.output_stability[repo]
+            typer.echo(f"  output stability: {effect.stable}/{effect.items} ({effect.score:.1%})")
     presence, exact = result.average("presence_score"), result.average("exact_score")
     if presence is not None and exact is not None:
         typer.echo(f"{'Average':30} {presence:9.1%} {exact:8.1%}")

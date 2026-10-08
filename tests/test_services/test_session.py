@@ -1582,7 +1582,10 @@ class TestPipelineSessionBenchmarkViews:
             assert session.benchmark_results(["s_a", "s_b"], benchmarks_dir=tmp_path) == [{"repository": "r"}]
             session.benchmark_flips(["s_a"], "r", benchmarks_dir=tmp_path)
             session.benchmark_inspector(["s_a"], "r", benchmarks_dir=tmp_path)
+        with patch("deriva.services.benchmark_views.element_trace", return_value=[]) as trace:
+            session.benchmark_trace(["s_a"], "r", "Node", "tech::r::queue", benchmarks_dir=tmp_path)
 
+        trace.assert_called_once_with(tmp_path, ["s_a"], ["azure-gpt4"], "r", "Node", "tech::r::queue")
         results.assert_called_once_with(tmp_path, ["s_a", "s_b"], ["azure-gpt4"])
         flips.assert_called_once_with(tmp_path, ["s_a"], ["azure-gpt4"], "r")
         inspector.assert_called_once_with(tmp_path, ["s_a"], ["azure-gpt4"], "r")
@@ -2228,3 +2231,41 @@ def test_connect_applies_pending_migrations():
         PipelineSession(auto_connect=True)
 
     migrate.assert_called_once_with(engine)
+
+
+class TestRunInputs:
+    """A studio run records what it ran on in its folder, in the format of a benchmark session's inputs."""
+
+    def test_a_run_folder_records_what_the_run_ran_on(self, tmp_path):
+        from types import SimpleNamespace
+
+        import duckdb
+
+        from deriva.adapters.database.manager import SCRIPTS_DIR
+        from deriva.services import config as config_service
+
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+        engine = duckdb.connect(":memory:")
+        engine.execute((SCRIPTS_DIR / "schema.sql").read_text(encoding="utf-8"))
+        engine.execute("INSERT INTO file_type_registry (extension, file_type, subtype) VALUES ('license', 'meta', 'license')")
+        engine.execute(
+            "INSERT INTO extraction_config (id, node_type, version, sequence, enabled, instruction, example, is_active) VALUES (1, 'BusinessConcept', 20, 1, TRUE, 'i', 'e', TRUE)"
+        )
+        session._engine = engine
+        session._llm_manager = SimpleNamespace(provider_name="mistral", model="devstral", temperature=0.6, max_tokens=4000, api_key="sk-secret")
+
+        path = session.write_run_inputs(tmp_path / "r1", "r1")
+
+        recorded = json.loads(path.read_text(encoding="utf-8"))
+        assert (path.name, recorded["run_id"]) == ("inputs.json", "r1")
+        assert recorded["config_versions"] == {"extraction": {"BusinessConcept": 20}, "derivation": {}}
+        assert recorded["inputs"] == config_service.input_snapshot(engine)
+        assert recorded["environment"]["models"] == {"session": {"provider": "mistral", "model": "devstral", "temperature": 0.6, "max_tokens": 4000}}
+        assert {"git", "source", "grafeo", "python"} <= set(recorded["environment"])
+        assert "sk-secret" not in path.read_text(encoding="utf-8")

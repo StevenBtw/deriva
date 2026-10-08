@@ -228,6 +228,19 @@ def test_run_calls_are_kept_on_disk_and_served(make_client, tmp_path):
     assert client.get(f"/api/runs/{run_id}/calls/unknown").status_code == 404
 
 
+def test_a_run_records_its_inputs_in_its_folder_before_the_first_step(make_client, tmp_path):
+    session = llm_session()
+    client = make_client(session)
+
+    run_id = client.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
+    wait_for(lambda: finished(client, run_id))
+
+    ((args, _),) = session.called("write_run_inputs")
+    assert args == (tmp_path / "runs" / run_id, run_id)
+    names = [name for name, _, _ in session.calls]
+    assert names.index("write_run_inputs") < names.index("run_extraction_iter")
+
+
 def test_unknown_run_and_kind(make_client):
     client = make_client(FakeSession())
 

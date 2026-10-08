@@ -3991,6 +3991,7 @@ class TestBenchmarkStepCommand:
             repositories={"repo1": consistency},
             answer_stability={"repo1": [AnswerStability(step="BusinessConcept", prompts=4, identical=3)]},
             decision_stability={"repo1": DecisionStability(items=573, stable=549)},
+            output_stability={"repo1": DecisionStability(items=573, stable=566)},
             llm_calls={"repo1": [4, 4]},
             errors=errors or [],
             unscored=unscored or [],
@@ -4019,6 +4020,7 @@ class TestBenchmarkStepCommand:
         assert "kind" in result.stdout  # the property that differs
         assert "3/4" in result.stdout  # answer stability of the step
         assert "549/573" in result.stdout  # decision stability of the step's items
+        assert "566/573" in result.stdout  # output stability: labels with the same effect alike
         assert "bench_1" in result.stdout
 
     @patch("deriva.cli.commands.benchmark.PipelineSession")

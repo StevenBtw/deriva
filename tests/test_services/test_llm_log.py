@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 
-from deriva.services.llm_log import LlmCallLog, record_call, run_log_path
+from deriva.services.llm_log import LlmCallLog, record_call, run_log_path, summarize_call
 
 
 def lines(path):
@@ -137,6 +137,18 @@ def test_record_call_keeps_prompt_answer_call_kind_and_metrics(tmp_path):
         '{"a": 1}',
     )
     assert (call["cache_key"], call["cache_hit"], call["latency_ms"], call["tokens_in"], call["tokens_out"], call["error"]) == ("k1", True, 0.4, 120, 9, None)
+
+
+def test_record_call_keeps_the_generation_settings(tmp_path):
+    """Provider, model, temperature and max tokens per call: the call log alone says how each answer was generated."""
+    log = LlmCallLog(tmp_path / "llm.jsonl", run_id="r1")
+    metrics = {**METRICS, "provider": "mistral", "model": "devstral-2512", "temperature": 0.0, "max_tokens": 4000}
+
+    record_call(log, metrics, prompt="Classify", schema=None, system_prompt=None, response=Answer("{}"), step="BusinessConcept")
+
+    (call,) = LlmCallLog.read(tmp_path / "llm.jsonl")
+    assert (call["provider"], call["model"], call["temperature"], call["max_tokens"]) == ("mistral", "devstral-2512", 0.0, 4000)
+    assert summarize_call(call)["temperature"] == 0.0
 
 
 def test_record_call_keeps_structured_answers_and_errors(tmp_path):

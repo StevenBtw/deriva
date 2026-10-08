@@ -100,7 +100,7 @@ export function StepsHeatmap({ steps }: { steps: Record<string, StepStability[]>
                 const s = cell(repo, step);
                 return s ? (
                   <td key={repo} className={band(s.score)} title={`${s.identical} of ${s.prompts} prompts answered identically`}>
-                    {(s.score * 100).toFixed(1)}
+                    {(s.score * 100).toFixed(1)} ({s.identical}/{s.prompts})
                   </td>
                 ) : (
                   <td key={repo} className="faint">
@@ -113,7 +113,8 @@ export function StepsHeatmap({ steps }: { steps: Record<string, StepStability[]>
         </tbody>
       </table>
       <div className="note" style={{ maxWidth: 340 }}>
-        Where variance starts: the first cell below 95 in pipeline order. Same prompt, different answer means the LLM itself varies.
+        Where variance starts: the first cell below 95 in pipeline order. Same prompt, different answer means the LLM itself varies. Whole answers are compared:
+        one changed label in a batched classification makes the whole answer differ, so read the counts; step benchmarks report per-item decision stability.
       </div>
     </div>
   );

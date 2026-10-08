@@ -807,6 +807,19 @@ class TestLastCall:
 
         assert manager.last_call["error_type"] == "RuntimeError"
 
+    def test_the_generation_settings_of_each_call_are_recorded(self, tmp_path):
+        """The values the call ran with: a step's own temperature, else the manager's default."""
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as mock_agent_class:
+            mock_agent_class.return_value.run_sync.return_value = MagicMock(output="ok")
+            manager.query("Hello", temperature=0.0, max_tokens=500)
+            own = dict(manager.last_call)
+            manager.query("Hello again")
+            default = dict(manager.last_call)
+
+        assert (own["provider"], own["model"], own["temperature"], own["max_tokens"]) == ("ollama", "llama3", 0.0, 500)
+        assert (default["temperature"], default["max_tokens"]) == (manager.temperature, manager.max_tokens)
+
 
 class TestAgentReuse:
     """Building a pydantic-ai Agent costs ~0.2 s; one agent per output type and system prompt."""

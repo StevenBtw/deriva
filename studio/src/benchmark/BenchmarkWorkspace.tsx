@@ -8,6 +8,7 @@ import { LiveLog } from "../workspace/LiveLog";
 import { BenchmarkPanel } from "./BenchmarkPanel";
 import { FlipsList, ResultsTable, StepsHeatmap } from "./BenchmarkTabs";
 import type { Item } from "./inspect";
+import { ElementTrace } from "./ElementTrace";
 import { Inspector } from "./Inspector";
 import { useBenchmarkRun } from "./useBenchmarkRun";
 
@@ -132,6 +133,7 @@ export function BenchmarkWorkspace() {
                 </b>
                 {Object.entries(picked.byRun).map(([run, e]) => ` · ${run}: ${e.name} from ${e.source}`)}
                 {picked.cause && <div>{picked.cause}</div>}
+                <ElementTrace sessions={selected} repo={repo} item={picked} />
               </div>
             )}
             <Inspector view={view} onSelect={setPicked} />

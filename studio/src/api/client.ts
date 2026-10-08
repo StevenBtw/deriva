@@ -7,6 +7,7 @@ import type {
   ConfigRow,
   ConfigVersion,
   DryRunResult,
+  ElementTrace,
   FileType,
   Flip,
   GraphView,
@@ -147,6 +148,8 @@ export const benchmarks = {
   steps: (sessions: string[]) => api.get<Record<string, StepStability[]>>(`/api/benchmarks/steps?sessions=${ids(sessions)}`),
   flips: (sessions: string[], repo: string) => api.get<Flip[]>(`/api/benchmarks/flips?sessions=${ids(sessions)}&repo=${encodeURIComponent(repo)}`),
   inspector: (sessions: string[], repo: string) => api.get<InspectorView>(`/api/benchmarks/inspector?sessions=${ids(sessions)}&repo=${encodeURIComponent(repo)}`),
+  trace: (sessions: string[], repo: string, type: string, source: string) =>
+    api.get<ElementTrace[]>(`/api/benchmarks/trace?sessions=${ids(sessions)}&repo=${encodeURIComponent(repo)}&type=${encodeURIComponent(type)}&source=${encodeURIComponent(source)}`),
   exportUrl: (session: string) => `/api/benchmarks/${encodeURIComponent(session)}/export`,
 };
 

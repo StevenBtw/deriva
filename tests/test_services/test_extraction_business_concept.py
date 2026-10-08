@@ -228,6 +228,7 @@ class TestBusinessConceptStep:
         assert stats["issues"] == {"unmatched": 0, "duplicates": 0, "missing": 0}
         assert stats["tool"] == {"spacy": "3.8.16"}
         assert stats["decisions"] == {"data": "generic", "ledger": "business_object"}
+        assert stats["outcomes"] == {"data": "rejected", "ledger": "entity"}
         assert stats["retries"] == {"calls": 0, "recovered": 0}
         assert stats["phrases"] == 0
 

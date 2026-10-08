@@ -92,6 +92,13 @@ def inspector(sessions: str, repo: str, session: Any = Depends(get_session)) -> 
     return _view(lambda: session.benchmark_inspector(ids, repo))
 
 
+@router.get("/trace")
+def trace(sessions: str, repo: str, type: str, source: str, session: Any = Depends(get_session)) -> Any:  # noqa: A002 - the query parameter is named type
+    """Per run, why an element (by type and source) is or is not in the model, with the calls that decided it."""
+    ids = _sessions(sessions)
+    return _view(lambda: session.benchmark_trace(ids, repo, type, source))
+
+
 @router.get("/{session_id}/export")
 def export_benchmark(session_id: str, session: Any = Depends(get_session)) -> FileResponse:
     """The session as one zip (logs, LLM calls, models, config texts, environment, sha256 manifest)."""

@@ -11,6 +11,7 @@ export type CallFacts = {
   cache_hit?: boolean | null;
   latency_ms?: number | null;
   tokens_in?: number | null;
+  temperature?: number | null;
   error?: string | null;
 };
 
@@ -21,9 +22,10 @@ function milliseconds(ms?: number | null): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ms`;
 }
 
-/** Step, tokens, latency and cache state of one call, plus its error. */
+/** Step, tokens, latency, cache state and temperature (where recorded) of one call, plus its error. */
 function facts(d: CallFacts): string[] {
   const parts = [d.step ?? "no step", `${number.format(d.tokens_in ?? 0)} tokens in`, milliseconds(d.latency_ms), d.cache_hit ? "cache hit" : "cache miss"];
+  if (d.temperature != null) parts.push(`temperature ${d.temperature}`);
   return d.error ? [...parts, `error: ${d.error}`] : parts;
 }
 

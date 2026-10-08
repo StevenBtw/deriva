@@ -302,3 +302,11 @@ class TestNodes:
             "business_event": "event",
             "business_service": "service",
         }
+
+
+class TestOutcome:
+    def test_labels_with_the_same_effect_share_an_outcome(self):
+        """What a label does to the graph: the concept type it creates, or nothing (every reject label alike)."""
+        assert [cc.outcome(label) for label in ("business_actor", "business_role", "business_object")] == ["actor", "actor", "entity"]
+        assert {cc.outcome(label) for label in cc.REJECT_LABELS} == {"rejected"}
+        assert cc.outcome(None) is None

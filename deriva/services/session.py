@@ -24,6 +24,7 @@ import os
 import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -252,6 +253,22 @@ class PipelineSession:
                 "model": str(self._llm_manager.model),
             }
         return None
+
+    def write_run_inputs(self, folder: str | Path, run_id: str) -> Path:
+        """Write what a run is about to run on into ``folder/inputs.json``: the active config versions, LLM
+        samples, the tables without version history and the environment, with the session's LLM settings
+        (provider, model, default temperature and max tokens; no keys). Same format as a benchmark session's inputs."""
+        self._ensure_connected()
+        if self._llm_manager is None:
+            self._get_llm_query_fn()
+        manager = self._llm_manager
+        settings = (("provider", "provider_name"), ("model", "model"), ("temperature", "temperature"), ("max_tokens", "max_tokens"))
+        models = {"session": {key: getattr(manager, attr, None) for key, attr in settings}} if manager is not None else {}
+        record = {"run_id": run_id, "captured_at": datetime.now().isoformat(), **export_bundle.run_inputs(self._engine, models)}
+        path = Path(folder) / "inputs.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, indent=1, default=str), encoding="utf-8")
+        return path
 
     # =========================================================================
     # QUERIES (for reactive UI)
@@ -1408,6 +1425,13 @@ class PipelineSession:
             _check_session_id(session_id)
         self._ensure_connected()
         return benchmark_views.inspector(benchmarks_dir, session_ids, self._benchmark_models(session_ids), repository)
+
+    def benchmark_trace(self, session_ids: list[str], repository: str, element_type: str, source: str, benchmarks_dir: str | Path = "workspace/benchmarks") -> list[dict[str, Any]]:
+        """Per run of the sessions, why an element (by type and source) is or is not in the model, with its deciding calls."""
+        for session_id in session_ids:
+            _check_session_id(session_id)
+        self._ensure_connected()
+        return benchmark_views.element_trace(benchmarks_dir, session_ids, self._benchmark_models(session_ids), repository, element_type, source)
 
     def benchmark_steps(self, session_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         """Raw LLM answer stability per step and repository (same prompt, same decision in every run)."""

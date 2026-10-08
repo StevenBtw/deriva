@@ -17,6 +17,7 @@ from typing import Any
 from deriva.adapters.archimate.models import APPLICATION_LAYER, BUSINESS_LAYER, TECHNOLOGY_LAYER
 from deriva.common.ocel import create_run_id
 from deriva.modules.analysis.run_consistency import consistency_rows, element_flips, run_sets
+from deriva.modules.analysis.run_consistency import element_trace as run_element_trace
 from deriva.services.llm_log import LlmCallLog, run_log_path
 
 
@@ -99,6 +100,14 @@ def flips(benchmarks_dir: str | Path, session_ids: list[str], models: list[str],
     """Elements of the repository that are not in every run, with their causes (call logs where recorded)."""
     group = _of(session_runs(benchmarks_dir, session_ids, models), repository, model)
     return element_flips({r.label: _snapshot(r) for r in group}, {r.label: LlmCallLog.read(r.calls) for r in group})
+
+
+def element_trace(
+    benchmarks_dir: str | Path, session_ids: list[str], models: list[str], repository: str, element_type: str, source: str, model: str | None = None
+) -> list[dict[str, Any]]:
+    """Per run of the sessions, why an element (by type and source) is or is not in the model, with its deciding calls."""
+    group = _of(session_runs(benchmarks_dir, session_ids, models), repository, model)
+    return run_element_trace({r.label: _snapshot(r) for r in group}, {r.label: LlmCallLog.read(r.calls) for r in group}, element_type, source)
 
 
 def inspector(benchmarks_dir: str | Path, session_ids: list[str], models: list[str], repository: str, model: str | None = None) -> dict[str, Any]:

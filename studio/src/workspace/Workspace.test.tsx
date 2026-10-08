@@ -185,6 +185,10 @@ describe("Workspace", () => {
     expect(within(log).getByText(/LLM #2 · .* · cache hit/)).toBeInTheDocument();
     expect(runs.call).not.toHaveBeenCalled();
 
+    // The temperature the call ran with, where the log records it
+    act(() => handlers.onEvent?.(llm(3, "c3", { temperature: 0 })));
+    expect(within(log).getByText(/LLM #3 · .* · cache miss · temperature 0/)).toBeInTheDocument();
+
     await userEvent.click(within(log).getAllByRole("button", { name: /prompt/ })[0]);
 
     expect(await within(log).findByText("Classify these directories (c1)")).toBeInTheDocument();
