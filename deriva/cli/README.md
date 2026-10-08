@@ -4,7 +4,7 @@ Headless command-line interface for Deriva pipeline operations.
 
 ## Purpose
 
-The CLI enables automation and scripting of Deriva operations without the Marimo UI. Useful for CI/CD pipelines, batch processing, and headless environments.
+The CLI enables automation and scripting of Deriva operations without the studio. Useful for CI/CD pipelines, batch processing, and headless environments.
 
 ## Running the CLI
 
@@ -36,6 +36,11 @@ deriva config update extraction BusinessConcept \
 
 # Update extraction batch size (files per LLM call)
 deriva config update extraction BusinessConcept --batch-size 5
+
+# LLM model configs in .env (keys shown masked; other lines kept)
+deriva config model list
+deriva config model set mistral-small --provider mistral --model mistral-small-latest --key <key>
+deriva config model delete mistral-small
 ```
 
 ### Pipeline Execution
@@ -94,6 +99,9 @@ deriva benchmark run --repos my-repo -n 3 \
 # List sessions and analyze
 deriva benchmark list
 deriva benchmark analyze bench_20260101_150724
+
+# Export a session as one zip (logs, LLM calls, models, config texts, environment, sha256 manifest)
+deriva benchmark export bench_20260101_150724 -o workspace/exports/bench_20260101_150724.zip
 ```
 
 ## Common Options
@@ -108,7 +116,7 @@ deriva benchmark analyze bench_20260101_150724
 
 ## Architecture
 
-Like the Marimo app, the CLI uses `PipelineSession` as its single interface to the backend:
+Like the studio, the CLI uses `PipelineSession` as its single interface to the backend:
 
 ```python
 from deriva.services.session import PipelineSession

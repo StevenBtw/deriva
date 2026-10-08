@@ -56,3 +56,43 @@ def test_other_connect_errors_are_not_reported_as_held():
 
     with pytest.raises(ValueError), provider.session():
         pass
+
+
+def test_the_session_can_be_released_from_another_thread():
+    """FastAPI runs a generator dependency's setup and teardown on thread-pool threads, which may differ."""
+    import threading
+
+    from deriva.studio.provider import SessionProvider
+
+    provider = SessionProvider(factory=FakeSession)
+    context = provider.session()
+    context.__enter__()
+    released: list[bool] = []
+
+    def release() -> None:
+        context.__exit__(None, None, None)
+        released.append(True)
+
+    worker = threading.Thread(target=release)
+    worker.start()
+    worker.join()
+
+    assert released == [True]
+    with provider.session(wait=0.5) as session:
+        assert session.connected
+
+
+def test_status_answers_while_a_step_holds_the_session(make_client, fake_session):
+    client = make_client(fake_session)
+    provider = client.app.state.provider
+    assert client.get("/api/status").json()["db"]["state"] == "owned"
+
+    with provider.session():
+        import threading
+
+        answers: list[dict] = []
+        reader = threading.Thread(target=lambda: answers.append(client.get("/api/status").json()))
+        reader.start()
+        reader.join(5)
+
+    assert answers[0]["db"] == {"state": "owned", "busy": True}

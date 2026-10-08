@@ -141,6 +141,29 @@ class TestSelect:
         assert [c.key for c in boosted] == ["zeta", "alpha"]
         assert boosted[0].score == pytest.approx(2 * boosted[1].score)
 
+    def _tied(self):
+        # "big" alone holds less than the share; the prefix ends on the first of three equal candidates
+        return [self._candidate("big", 20, documents=2), self._candidate("tie_c", 2), self._candidate("tie_a", 2), self._candidate("tie_b", 2)]
+
+    def test_without_keeping_ties_the_cut_splits_equal_evidence_by_key(self):
+        """The behaviour of config versions without the switch: the key order decides inside the tie."""
+        selected, stats = cc.select_candidates(self._tied(), evidence_min_count=2, evidence_share=0.65, max_candidates=100, support_factor=1.5)
+
+        assert [c.key for c in selected] == ["big", "tie_a"]
+        assert stats["ties_added"] == 0
+
+    def test_keeping_ties_the_cut_takes_its_whole_tie_group(self):
+        """Equal evidence, same decision: the prefix runs to the end of the tie group at the cut."""
+        selected, stats = cc.select_candidates(self._tied(), evidence_min_count=2, evidence_share=0.65, max_candidates=100, support_factor=1.5, keep_ties=True)
+
+        assert [c.key for c in selected] == ["big", "tie_a", "tie_b", "tie_c"]
+        assert (stats["share_size"], stats["ties_added"], stats["selected"]) == (2, 2, 4)
+
+    def test_the_budget_cap_still_binds_over_a_kept_tie(self):
+        selected, stats = cc.select_candidates(self._tied(), evidence_min_count=2, evidence_share=0.65, max_candidates=3, support_factor=1.5, keep_ties=True)
+
+        assert (len(selected), stats["capped"]) == (3, True)
+
 
 class TestBatches:
     @staticmethod

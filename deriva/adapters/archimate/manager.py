@@ -458,6 +458,12 @@ class ArchimateManager:
             logger.error(f"Query failed: {e}")
             raise
 
+    def query_read_only(self, cypher_query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Run a Cypher query whose writes are rolled back (queries typed by a user)."""
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+        return self.db.execute_rolled_back(cypher_query, params)
+
     def disable_element(self, identifier: str, reason: str | None = None) -> bool:
         """Disable an element (soft delete for refine phase).
 
@@ -542,6 +548,35 @@ class ArchimateManager:
         except Exception as e:
             logger.error(f"Failed to disable elements: {e}")
             raise
+
+    def get_disabled_elements(self) -> list[dict[str, Any]]:
+        """The disabled elements with the reason they were disabled, by identifier (what refine took out and why)."""
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+
+        query = f"""
+            MATCH (e:`{self.namespace}`)
+            WHERE e.enabled = false
+            RETURN e.identifier as identifier,
+                   [lbl IN labels(e) WHERE lbl <> '{self.namespace}'][0] as element_type,
+                   e.name as name,
+                   e.properties as properties,
+                   e.disabled_reason as reason
+        """
+        rows = self.db.execute_read(query)
+        return sorted(
+            (
+                {
+                    "identifier": row["identifier"],
+                    "type": row["element_type"],
+                    "name": row["name"],
+                    "source": (row.get("properties") or {}).get("source"),
+                    "reason": row.get("reason"),
+                }
+                for row in rows
+            ),
+            key=lambda e: str(e["identifier"]),
+        )
 
     def delete_relationship(self, identifier: str) -> bool:
         """Delete a relationship by identifier.

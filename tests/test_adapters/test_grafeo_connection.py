@@ -318,3 +318,39 @@ class TestAlgorithm:
         conn.algorithm("kcore")
 
         assert any(q["query"] == "algorithm(kcore)" for q in query_stats.top())
+
+
+class TestEngineInfo:
+    def test_engine_info_names_the_grafeo_build(self):
+        import grafeo
+
+        from deriva.adapters.grafeo import engine_info
+
+        info = engine_info()
+
+        assert info["version"] == grafeo.__version__
+        assert {"commit", "dirty"} <= set(info)
+
+
+class TestExecuteRolledBack:
+    """Reads run normally; writes inside never persist (the studio's free-form query endpoint)."""
+
+    def test_reads_return_rows(self, conn):
+        conn.execute("CREATE (n:Graph:Directory {id: 'd1'})")
+
+        rows = conn.execute_rolled_back("MATCH (n:Graph:Directory) RETURN n.id AS id")
+
+        assert rows == [{"id": "d1"}]
+
+    def test_writes_are_rolled_back(self, conn):
+        conn.execute("CREATE (n:Graph:Directory {id: 'd1'})")
+
+        conn.execute_rolled_back("CREATE (n:Graph:Directory {id: 'd2'})")
+        conn.execute_rolled_back("MATCH (n:Graph:Directory {id: 'd1'}) SET n.id = 'changed'")
+
+        assert conn.execute("MATCH (n:Graph:Directory) RETURN n.id AS id ORDER BY id") == [{"id": "d1"}]
+
+    def test_parameters_are_passed(self, conn):
+        conn.execute("CREATE (n:Graph:Directory {id: 'd1'})")
+
+        assert conn.execute_rolled_back("MATCH (n:Graph:Directory) WHERE n.id = $id RETURN n.id AS id", {"id": "d1"}) == [{"id": "d1"}]

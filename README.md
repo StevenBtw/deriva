@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 [![Grafeo](https://img.shields.io/badge/Grafeo-embedded-green.svg)](https://github.com/StevenBtw/grafeo)
-[![Marimo](https://img.shields.io/badge/Marimo-notebook-orange.svg)](https://marimo.io/)
+[![Studio](https://img.shields.io/badge/Studio-FastAPI%20%2B%20React-blue.svg)](#studio)
 
 **Automatically generate ArchiMate enterprise architecture models from software repositories.**
 
@@ -82,14 +82,22 @@ uv sync
 
 The business concept step finds candidate terms in the documentation with pinned spaCy pipelines (English, German, French), which `uv sync` installs with the other dependencies. It gives German and French terms an English form with pinned translation models, which the step downloads into `workspace/cache/nlp` on its first run and checks by SHA-256. `DERIVA_NLP_MODELS_DIR` in `.env` moves that folder.
 
-### 6. Launch Deriva
+### 6. Launch the Studio
 
 ```bash
 cd ../../..  # Back to Deriva root
-uv run marimo edit deriva/app/app.py
+uv run deriva-studio
 ```
 
-The marimo notebook opens in your browser at: http://127.0.0.1:2718
+The studio opens at http://127.0.0.1:8765 (API documentation at http://127.0.0.1:8765/docs). It binds to this machine only; `--port` picks another port.
+
+The front end ships inside the package once built. From a source checkout, build it once (Node 22):
+
+```bash
+cd studio
+npm install
+npm run build   # writes deriva/studio/static/, which deriva-studio serves
+```
 
 ---
 
@@ -258,9 +266,9 @@ The rate limiter automatically:
 
 If you encounter **undefined extensions** during extraction:
 
-**Via UI (Marimo):**
+**Via the studio:**
 
-1. Navigate to **Column 2** → **Undefined Extensions**
+1. Open **General & file types** in the menu
 2. Add them to the registry:
    - Extension (e.g., `.tsx`, `Dockerfile`)
    - Type (source, config, docs, test, build, asset, data, exclude)
@@ -305,7 +313,7 @@ Deriva uses a **versioning system** for configurations. When you update a config
 
 **Correct ways to update configs:**
 
-1. **Via UI (Marimo)**: Navigate to the config section, edit, and click **"Save Config"**
+1. **Via the studio**: open **Extraction config** or **Derivation config**, edit the instruction or example, and click **"Save as new version"**
 2. **Via CLI**: Use the `config update` command
 
 ```bash
@@ -340,18 +348,20 @@ All prompts follow the **Input + Instruction + Example** pattern.
 
 ---
 
-## UI Layout
+## Studio
 
-Deriva uses a multi-column marimo notebook layout:
+The studio is Deriva's local web UI (`uv run deriva-studio`): a FastAPI backend over `PipelineSession` and a React front end.
 
-| Column | Purpose |
-|--------|---------|
-| **0** | **Run Deriva**: Pipeline execution buttons, status display |
-| **1** | **Configuration**: Runs, repositories, graph database, graph stats, ArchiMate, LLM |
-| **2** | **Extraction Settings**: File type registry, extraction step configuration |
-| **3** | **Derivation Settings**: Element type configuration (13 types across Business/Application/Technology layers), relationship derivation |
+| Area | Purpose |
+|------|---------|
+| **Workspace** | Run the pipeline (repository, scope, structural steps only), follow it live, see the intermediate graph and the output graph side by side, open the ArchiMate model |
+| **Repositories** | Clone, inspect and delete repositories |
+| **General & file types** | System settings (excluded directories) and the file type registry |
+| **Extraction / Derivation config** | Step tables with versions; edit instructions and examples, save as a new version, switch steps on or off |
 
-The UI is powered by `PipelineSession` from the services layer, providing a clean separation between presentation and business logic.
+The graphs use [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) (its query bar runs read-only Cypher against the embedded databases) and the model uses [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate). While a CLI run holds the databases, the studio says so and shows what it can.
+
+For front-end development, run `uv run deriva-studio` and, in `studio/`, `npm run dev` (Vite forwards the API to port 8765); `npm test`, `npm run lint` and `npm run typecheck` check it.
 
 ---
 
@@ -364,7 +374,7 @@ The UI is powered by `PipelineSession` from the services layer, providing a clea
 
 ### Clearing Data
 
-**Column 0: Run Overview**
+**Via the API** (`DELETE /api/graph`, `DELETE /api/model`) or the CLI (`deriva-cli clear graph|model`):
 
 - **Clear Graph**: Removes all nodes/edges from Graph namespace
 - **Clear Model**: Removes all ArchiMate elements and relationships
@@ -373,7 +383,7 @@ The UI is powered by `PipelineSession` from the services layer, providing a clea
 
 ## Querying the Graph
 
-You can query the embedded grafeo graph database using Cypher via the CLI or Marimo notebook:
+You can query the embedded grafeo graph database using Cypher via the CLI or the studio's graph query bar (read-only):
 
 ```cypher
 // See all repositories
@@ -501,7 +511,7 @@ OCEL files can be analyzed with process mining tools like PM4Py, Celonis, or cus
 
 The business concept step downloads its translation models on the first run. If the download fails, check that the machine can reach the model host and run the step again; a model folder that was not verified is replaced. A SHA-256 mismatch means the downloaded file is not the pinned model (a changed upload or a damaged download), and the step refuses it.
 
-### Marimo Issues
+### Studio Issues
 
 ```bash
 # Check Python version
@@ -510,9 +520,11 @@ python --version  # Should be 3.14+
 # Reinstall dependencies
 uv sync --reinstall
 
-# Run without watch mode
-uv run marimo edit deriva/app/app.py
+# Front end missing ("not built yet" page): build it
+cd studio && npm install && npm run build
 ```
+
+A banner saying the databases are held by another process means a CLI run (for example a benchmark) has the config database open; the studio continues when it finishes.
 
 ---
 
@@ -532,7 +544,8 @@ See [LICENSE](LICENSE) for the full license text.
 
 ## Acknowledgments
 
-- [Marimo](https://marimo.io) - Reactive Python notebooks
+- [FastAPI](https://fastapi.tiangolo.com) and [React](https://react.dev) - The studio
+- [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) and [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate) - Graph and model views
 - [Grafeo](https://github.com/GrafeoDB/grafeo) - Embedded graph database
 - [ArchiMate](https://www.opengroup.org/archimate-forum) - Enterprise architecture standard
 - [Archi](https://www.archimatetool.com) - Open source ArchiMate modeling tool

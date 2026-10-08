@@ -32,7 +32,9 @@ class SessionProvider:
     def __init__(self, factory: Callable[[], Any] = PipelineSession) -> None:
         self._factory = factory
         self._session: Any | None = None
-        self._lock = threading.RLock()
+        # A plain Lock: FastAPI may enter and leave a request's session on different pool threads,
+        # and an RLock can only be released by the thread that took it (nothing here nests).
+        self._lock = threading.Lock()
         self.held_by: int | None = None
         self.error: str | None = None
 

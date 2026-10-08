@@ -47,6 +47,23 @@ def _in_memory_graph_database(monkeypatch):
     monkeypatch.setattr(llm_manager, "load_dotenv", load_dotenv_keeping_memory_graph)
 
 
+@pytest.fixture(scope="session")
+def _llm_log_roots(tmp_path_factory):
+    """A fresh folder per test under one session folder (created only when a test writes a call log)."""
+    import itertools
+
+    base = tmp_path_factory.mktemp("benchmarks")
+    return (base / str(n) for n in itertools.count(1))
+
+
+@pytest.fixture(autouse=True)
+def _llm_call_logs_outside_the_workspace(monkeypatch, _llm_log_roots):
+    """Benchmark LLM call logs go to a temporary folder, never into workspace/benchmarks."""
+    from deriva.services import benchmarking
+
+    monkeypatch.setattr(benchmarking, "LLM_LOG_ROOT", next(_llm_log_roots))
+
+
 # =============================================================================
 # Sample Data Fixtures
 # =============================================================================

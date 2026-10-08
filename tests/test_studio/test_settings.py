@@ -23,12 +23,12 @@ def test_file_types_with_stats(make_client):
 
 
 def test_add_update_delete_file_types(make_client):
-    session = FakeSession(add_file_type=lambda e, t, s: e == ".cbl", update_file_type=lambda e, t, s: e == ".cbl", delete_file_type=lambda e: e == ".cbl")
+    session = FakeSession(add_file_type=lambda e, t, s: e == ".rs", update_file_type=lambda e, t, s: e == ".rs", delete_file_type=lambda e: e == ".rs")
     client = make_client(session)
 
-    assert client.post("/api/filetypes", json={"extension": ".cbl", "file_type": "source", "subtype": "cobol"}).status_code == 201
+    assert client.post("/api/filetypes", json={"extension": ".rs", "file_type": "source", "subtype": "rust"}).status_code == 201
     assert client.post("/api/filetypes", json={"extension": ".java", "file_type": "source", "subtype": "java"}).status_code == 409
-    assert client.put("/api/filetypes/.cbl", json={"file_type": "source", "subtype": "cobol"}).status_code == 200
+    assert client.put("/api/filetypes/.rs", json={"file_type": "source", "subtype": "rust"}).status_code == 200
     assert client.put("/api/filetypes/.zzz", json={"file_type": "source", "subtype": "x"}).status_code == 404
-    assert client.delete("/api/filetypes/.cbl").status_code == 200
+    assert client.delete("/api/filetypes/.rs").status_code == 200
     assert client.delete("/api/filetypes/.zzz").status_code == 404

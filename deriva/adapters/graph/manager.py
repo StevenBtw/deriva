@@ -555,6 +555,12 @@ class GraphManager:
             logger.error(f"Query failed: {e}")
             raise
 
+    def query_read_only(self, cypher_query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Run a Cypher query whose writes are rolled back (queries typed by a user)."""
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+        return self.db.execute_rolled_back(cypher_query, params)
+
     def clear_graph(self) -> None:
         """Clear all nodes and edges from the graph."""
         if self.db is None:

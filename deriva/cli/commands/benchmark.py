@@ -400,6 +400,22 @@ def benchmark_analyze(
         typer.echo("Metrics saved to database.")
 
 
+@app.command("export")
+def benchmark_export(
+    session_id: Annotated[str, typer.Argument(help="Benchmark session ID")],
+    output: Annotated[str, typer.Option("-o", "--output", help="Zip file to write")],
+) -> None:
+    """Export a benchmark session as one zip: logs, LLM calls, models, config texts, environment, sha256 manifest."""
+    with PipelineSession() as session:
+        try:
+            manifest = session.export_benchmark(session_id, output)
+        except (FileNotFoundError, ValueError) as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+
+    typer.echo(f"Exported {manifest['session_id']}: {len(manifest['files'])} files with sha256 manifest -> {output}")
+
+
 @app.command("models")
 def benchmark_models() -> None:
     """List available model configurations."""

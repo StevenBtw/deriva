@@ -8,3 +8,7 @@ deriva/adapters/database/sql.db.wal
 .coverage
 coverage.xml
 walt/*
+
+# Built studio front end (npm run build in studio/)
+deriva/studio/static/
+studio/node_modules/

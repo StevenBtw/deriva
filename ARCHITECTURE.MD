@@ -16,10 +16,10 @@ Repository --> Extraction --> Graph --> Derivation --> ArchiMate Model --> Expor
 +-----------------------------------------------------------------------------+
 |                              PRESENTATION LAYER                              |
 |  +-----------------------------+    +-------------------------------------+ |
-|  |         CLI (cli/)          |    |        Marimo App (app/)            | |
-|  |  - Command parsing          |    |  - Interactive notebook UI          | |
-|  |  - Progress display         |    |  - Reactive components              | |
-|  |  - Benchmark orchestration  |    |  - Configuration forms              | |
+|  |         CLI (cli/)          |    |        Studio (studio/)             | |
+|  |  - Command parsing          |    |  - FastAPI backend + web UI         | |
+|  |  - Progress display         |    |  - Live runs (server-sent events)   | |
+|  |  - Benchmark orchestration  |    |  - Graphs, model, configuration     | |
 |  +--------------+--------------+    +------------------+------------------+ |
 |                 |                                      |                    |
 |                 +------------------+-------------------+                    |
@@ -77,14 +77,14 @@ Repository --> Extraction --> Graph --> Derivation --> ArchiMate Model --> Expor
 
 ## Layer Responsibilities
 
-### Presentation Layer (CLI / App)
+### Presentation Layer (CLI / Studio)
 
 | Component | Purpose |
 |-----------|---------|
 | `cli/` | Headless command-line interface for automation and scripting |
-| `app/` | Interactive Marimo notebook for visual configuration and monitoring |
+| `studio/` | Local web UI (`deriva-studio`): a FastAPI backend that serves the pipeline, both graphs, the model and the configuration, with live run progress; the React front end is built into `studio/static/` |
 
-Both components use `PipelineSession` as the sole interface to the backend.
+Both use `PipelineSession` as the sole interface to the backend.
 
 ### Services Layer
 
@@ -146,25 +146,25 @@ Deriva uses **per-directory ruff.toml files** to enforce layer separation at lin
 +------------------------------------------------------------------+
 |  Services                                                         |
 |  - Can import: adapters, modules, common                          |
-|  - CANNOT import: cli, app                                        |
+|  - CANNOT import: cli, studio                                     |
 +------------------------------------------------------------------+
 |  Adapters                                                         |
 |  - Can import: common                                             |
-|  - CANNOT import: modules, services, cli, app                     |
+|  - CANNOT import: modules, services, cli, studio                  |
 +------------------------------------------------------------------+
 |  Modules                                                          |
 |  - Can import: common                                             |
-|  - CANNOT import: adapters, services, cli, app                    |
+|  - CANNOT import: adapters, services, cli, studio                 |
 +------------------------------------------------------------------+
 |  Common                                                           |
 |  - Can import: stdlib, third-party only                           |
-|  - CANNOT import: adapters, modules, services, cli, app           |
+|  - CANNOT import: adapters, modules, services, cli, studio        |
 +------------------------------------------------------------------+
 ```
 
 ### Enforcement via ruff.toml
 
-The CLI, adapters, common and modules layers each have a `ruff.toml` file that extends the project configuration (`extend = "../../pyproject.toml"`, so the project rules apply everywhere) and adds the layer's banned imports. Services and app have no `ruff.toml` of their own; only the project's bans apply there. The layer's ban table replaces the project one, so the adapters, common and modules files repeat the project's `deriva.cli` ban:
+The CLI, studio, adapters, common and modules layers each have a `ruff.toml` file that extends the project configuration (`extend = "../../pyproject.toml"`, so the project rules apply everywhere) and adds the layer's banned imports. Services have no `ruff.toml` of their own; only the project's bans apply there. The layer's ban table replaces the project one, so the adapters, common and modules files repeat the project's `deriva.cli` ban:
 
 **deriva/cli/ruff.toml:**
 
@@ -174,6 +174,8 @@ The CLI, adapters, common and modules layers each have a `ruff.toml` file that e
 "deriva.modules" = { msg = "Architecture violation: CLI should only import from services" }
 "deriva.common" = { msg = "Architecture violation: CLI should only import from services" }
 ```
+
+**deriva/studio/ruff.toml** bans the same three packages plus `deriva.cli`: the studio talks to the pipeline through `PipelineSession` only.
 
 **deriva/adapters/ruff.toml:**
 
@@ -248,7 +250,7 @@ The derivation and extraction modules still import manager and model types from 
 
 ## Key Design Decisions
 
-1. **Services as API Layer**: CLI and App only interact with the backend through `PipelineSession`, ensuring consistent behavior and single point of change.
+1. **Services as API Layer**: The CLI and the studio only interact with the backend through `PipelineSession`, ensuring consistent behavior and single point of change.
 
 2. **Namespace Isolation**: Grafeo uses label prefixes (`Graph:`, `Model:`) to separate extraction data from ArchiMate model data in a single embedded database.
 

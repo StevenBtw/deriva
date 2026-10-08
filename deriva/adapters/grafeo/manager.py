@@ -128,6 +128,13 @@ def close_database() -> None:
         _db = None
 
 
+def engine_info() -> dict[str, Any]:
+    """The grafeo engine's build (version, commit, dirty flag, features), for run records."""
+    import grafeo
+
+    return dict(grafeo.build_info())
+
+
 # ---------------------------------------------------------------------------
 # GrafeoConnection
 # ---------------------------------------------------------------------------
@@ -262,6 +269,21 @@ class GrafeoConnection:
         to ``execute()``.
         """
         return self.execute(query, parameters, database)
+
+    def execute_rolled_back(self, query: str, parameters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Run a query inside a transaction that is always rolled back: reads see the data, writes never persist.
+
+        Used for queries typed by a user (the studio's graph view), where nothing may change the graph.
+        """
+        if self.db is None:
+            raise RuntimeError(f"Not connected to grafeo. Call connect() first. (Namespace: {self.namespace})")
+        started = time.perf_counter()
+        transaction = self.db.begin_transaction()
+        try:
+            return transaction.execute_cypher(query, parameters if parameters is not None else {}).to_list()
+        finally:
+            transaction.rollback()
+            _record_query(query, started)
 
     def set_node_properties(self, key: str, updates: dict[Any, dict[str, Any]]) -> int:
         """Set properties on the nodes whose ``key`` property matches, via an index.

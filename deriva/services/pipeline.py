@@ -4,7 +4,7 @@ Pipeline service for Deriva.
 Orchestrates the full pipeline:
 Classification → Extraction → Derivation (enrich/generate/refine) → Export
 
-Used by both Marimo (visual) and CLI (headless).
+Used by both the studio (web UI) and the CLI (headless).
 
 Usage:
     from deriva.services import pipeline

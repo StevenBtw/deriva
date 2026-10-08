@@ -253,6 +253,9 @@ deriva benchmark deviations <session_id>
   -o, --output    Output file path
   -s, --sort-by   Sort by: deviation_count, consistency_score, total_objects
 
+# Export a session as one zip with a sha256 manifest
+deriva benchmark export <session_id> -o <zip>
+
 # List available models
 deriva benchmark models
 ```
@@ -348,8 +351,11 @@ Benchmark results are stored in `workspace/benchmarks/<session_id>/`:
 | `analysis/summary.json` | Consistency analysis results |
 | `config_deviations.json` | Per-config deviation report |
 | `models/*.archimate` | ArchiMate model files per run |
+| `llm/<run>.jsonl` | Every LLM call of the run: step, prompt, system prompt, answer, call kind, cache key, tokens, latency, cache hit, error |
 
 Use `--no-export-models` to disable model export and save disk space.
+
+`deriva benchmark export <session_id> -o <zip>` bundles the whole session folder with the full config texts at the session's versions (`config_snapshot.json`), the environment (`environment.json`: Deriva version and git commit, grafeo build, solvOR, Python, platform, model configs without API keys) and `manifest.json` with the sha256 and size of every file. Entries are sorted and carry a fixed timestamp, so exporting the same session twice gives identical bytes.
 
 ---
 

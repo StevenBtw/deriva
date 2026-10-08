@@ -1,5 +1,5 @@
 """
-PipelineSession - Unified API for CLI and Marimo.
+PipelineSession - Unified API for the CLI and the studio.
 
 This module provides a single entry point for all pipeline operations,
 managing the lifecycle of all managers and exposing both orchestration
@@ -10,19 +10,21 @@ Usage (CLI):
         result = session.run_extraction(repo_name="my-repo")
         session.export_model("output.xml")
 
-Usage (Marimo):
+Usage (studio, one session per process):
     session = PipelineSession(auto_connect=True)
-    # In reactive cells:
     stats = session.get_graph_stats()
     elements = session.get_archimate_elements()
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from deriva.common.types import ProgressUpdate
@@ -42,11 +44,28 @@ from deriva.adapters.repository import RepoManager
 from deriva.common.logging import RunLogger
 from deriva.common.types import HasToDict, RunLoggerProtocol
 
-from . import benchmarking, config, derivation, extraction, pipeline
+from . import benchmark_views, benchmarking, config, derivation, export_bundle, extraction, model_configs, ontology, overfit, pipeline, trace
+from .llm_log import record_call
+
+
+def _plain(value: Any) -> Any:
+    """A graph node or edge without the engine's internal keys, labels without the namespace."""
+    if isinstance(value, dict) and ("_labels" in value or "_id" in value):
+        plain = {k: v for k, v in value.items() if not k.startswith("_")}
+        if "_labels" in value:
+            return {"labels": [label for label in value["_labels"] if label not in ("Graph", "Model")], **plain}
+        return {"type": value.get("_type"), **plain}
+    return value
+
+
+def _check_session_id(session_id: str) -> None:
+    """Session ids name folders under the benchmarks folder; anything that could leave it is refused."""
+    if not re.fullmatch(r"[\w.-]+", session_id) or set(session_id) == {"."}:
+        raise ValueError(f"Not a benchmark session id: {session_id}")
 
 
 class PipelineSession:
-    """Unified session for CLI and Marimo pipeline operations.
+    """Unified session for CLI and studio pipeline operations.
 
     Manages all manager lifecycles and provides a clean API for:
     - Lifecycle: connect/disconnect, context manager support
@@ -67,7 +86,7 @@ class PipelineSession:
 
         Args:
             db_path: Path to DuckDB database (default: deriva/adapters/database/sql.db)
-            auto_connect: If True, connect immediately (useful for Marimo)
+            auto_connect: If True, connect immediately
             workspace_dir: Repository workspace directory (default: from env)
             repository: Graph database to work in: a repository name, or the joined
                 names of a combined run (default: the shared "default" database)
@@ -82,6 +101,7 @@ class PipelineSession:
         self._archimate_manager: ArchimateManager | None = None
         self._repo_manager: RepoManager | None = None
         self._llm_manager: Any | None = None  # Lazy loaded
+        self._call_log: Any | None = None  # LlmCallLog of the running studio run, if any
 
         # Test-only mocks (set by tests)
         self._mock_db: Any | None = None
@@ -190,16 +210,36 @@ class PipelineSession:
             response_model: type | None = None,
         ) -> Any:
             assert self._llm_manager is not None
-            return self._llm_manager.query(
-                prompt,
-                schema=schema,
-                response_model=response_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-            )
+            try:
+                response = self._llm_manager.query(
+                    prompt,
+                    schema=schema,
+                    response_model=response_model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system_prompt=system_prompt,
+                )
+            except Exception as exc:
+                self._record_call(prompt, schema, system_prompt, None, str(exc))
+                raise
+            self._record_call(prompt, schema, system_prompt, response, None)
+            return response
 
         return query_fn
+
+    def attach_call_log(self, log: Any) -> None:
+        """Record every LLM call of this session in ``log`` (an LlmCallLog) until detached."""
+        self._call_log = log
+
+    def detach_call_log(self) -> None:
+        self._call_log = None
+
+    def _record_call(self, prompt: str, schema: dict | None, system_prompt: str | None, response: Any, error: str | None) -> None:
+        log = self._call_log
+        if log is None:
+            return
+        metrics = (getattr(self._llm_manager, "last_call", None) or {}) if self._llm_manager is not None else {}
+        record_call(log, metrics, prompt=prompt, schema=schema, system_prompt=system_prompt, response=response, error=error)
 
     @property
     def llm_info(self) -> dict[str, str] | None:
@@ -257,7 +297,7 @@ class PipelineSession:
             if isinstance(elem, dict):
                 elem_type = cast(dict[str, Any], elem).get("type", "Unknown")
             else:
-                elem_type = getattr(elem, "type", "Unknown")
+                elem_type = getattr(elem, "element_type", None) or getattr(elem, "type", "Unknown")
             by_type[elem_type] = by_type.get(elem_type, 0) + 1
 
         return {
@@ -291,6 +331,30 @@ class PipelineSession:
         self._ensure_connected()
         assert self._archimate_manager is not None
         return self._archimate_manager.query(cypher)
+
+    def query_graph_read_only(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
+        """Run a user-typed Cypher query on the Graph namespace; writes are rolled back."""
+        self._ensure_connected()
+        assert self._graph_manager is not None
+        return self._graph_manager.query_read_only(cypher, params)
+
+    def query_model_read_only(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
+        """Run a user-typed Cypher query on the Model namespace; writes are rolled back."""
+        self._ensure_connected()
+        assert self._archimate_manager is not None
+        return self._archimate_manager.query_read_only(cypher, params)
+
+    def trace_element(self, element_id: str, calls: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+        """Where a model element comes from: sources, relationships and the given run calls that mention its sources."""
+        return trace.trace_element(self, element_id, calls or [])
+
+    def intermediate_ontology(self) -> dict[str, Any]:
+        """The graph's node and edge types with the extraction steps that produce them and the derivation steps that read them."""
+        return ontology.intermediate_ontology(self)
+
+    def output_ontology(self) -> dict[str, Any]:
+        """ArchiMate as Deriva derives it: element types with their steps, relationship types and the allowed relationships."""
+        return ontology.output_ontology(self)
 
     def get_repositories(self, detailed: bool = False) -> list[dict]:
         """Get list of repositories."""
@@ -444,8 +508,7 @@ class PipelineSession:
         """
         Run extraction pipeline as a generator, yielding progress updates.
 
-        Designed for use with Marimo's mo.status.progress_bar iterator pattern
-        to provide real-time visual feedback during extraction.
+        The studio's run manager iterates it and streams each update to the browser.
 
         Args:
             repo_name: Specific repo to extract, or None for all
@@ -455,13 +518,9 @@ class PipelineSession:
         Yields:
             ProgressUpdate objects for each step in the pipeline
 
-        Example (Marimo):
-            for update in mo.status.progress_bar(
-                session.run_extraction_iter(),
-                title="Extraction",
-                subtitle="Starting...",
-            ):
-                pass  # Marimo renders between yields
+        Example:
+            for update in session.run_extraction_iter():
+                print(update)
 
             # Get final result from last update
             final_stats = update.stats
@@ -531,8 +590,7 @@ class PipelineSession:
         """
         Run derivation pipeline as a generator, yielding progress updates.
 
-        Designed for use with Marimo's mo.status.progress_bar iterator pattern
-        to provide real-time visual feedback during derivation.
+        The studio's run manager iterates it and streams each update to the browser.
 
         Args:
             verbose: Print progress to stdout
@@ -834,6 +892,8 @@ class PipelineSession:
                 "instruction": c.instruction,
                 "example": c.example,
                 "extraction_method": c.extraction_method,
+                "params": c.params,
+                "batch_size": c.batch_size,
             }
             for c in configs
         ]
@@ -890,9 +950,14 @@ class PipelineSession:
         *,
         enabled: bool | None = None,
         instruction: str | None = None,
+        example: str | None = None,
         input_sources: str | None = None,
+        params: str | None = None,
+        batch_size: int | None = None,
     ) -> dict[str, Any]:
-        """Save extraction config with version tracking."""
+        """Save extraction config with version tracking (``params`` must be a JSON object)."""
+        if params is not None:
+            config.validate_params(params)
         self._ensure_connected()
         assert self._engine is not None
         return config.create_extraction_config_version(
@@ -900,7 +965,10 @@ class PipelineSession:
             node_type,
             enabled=enabled,
             instruction=instruction,
+            example=example,
             input_sources=input_sources,
+            params=params,
+            batch_size=batch_size,
         )
 
     def get_derivation_configs(self, enabled_only: bool = False) -> list[dict]:
@@ -918,6 +986,8 @@ class PipelineSession:
                 "example": c.example,
                 "phase": c.phase,
                 "llm": c.llm,
+                "params": c.params,
+                "batch_size": c.batch_size,
             }
             for c in configs
         ]
@@ -956,8 +1026,13 @@ class PipelineSession:
         enabled: bool | None = None,
         input_graph_query: str | None = None,
         instruction: str | None = None,
+        example: str | None = None,
+        params: str | None = None,
+        batch_size: int | None = None,
     ) -> dict[str, Any]:
-        """Save derivation config with version tracking."""
+        """Save derivation config with version tracking (``params`` must be a JSON object)."""
+        if params is not None:
+            config.validate_params(params)
         self._ensure_connected()
         assert self._engine is not None
         return config.create_derivation_config_version(
@@ -966,7 +1041,25 @@ class PipelineSession:
             enabled=enabled,
             input_graph_query=input_graph_query,
             instruction=instruction,
+            example=example,
+            params=params,
+            batch_size=batch_size,
         )
+
+    def get_config_history(self, step_type: str, name: str) -> list[dict[str, Any]]:
+        """Every version of a step, newest first."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.get_config_history(self._engine, step_type, name)
+
+    def scan_prompt_texts(self, texts: dict[str, str]) -> dict[str, Any]:
+        """Overfit scan of draft texts (golden names, held-out and development repository terms) before a save."""
+        return overfit.scan_texts(texts)
+
+    def dry_run_graph_query(self, cypher: str, limit: int = 20) -> dict[str, Any]:
+        """Run a candidate query read-only (writes rolled back, no LLM): the row count and the first rows."""
+        rows = self.query_graph_read_only(cypher)
+        return {"count": len(rows), "rows": [{k: _plain(v) for k, v in row.items()} for row in rows[:limit]]}
 
     def get_config_versions(self) -> dict[str, dict[str, int]]:
         """Get current active versions for all configs."""
@@ -1032,6 +1125,31 @@ class PipelineSession:
             self._llm_manager.nocache = not enabled
             return {"success": True, "cache_enabled": enabled}
         return {"success": False, "error": "LLM not configured"}
+
+    def list_model_configs(self, env_path: str | Path | None = None) -> list[dict[str, Any]]:
+        """Model configs in .env, keys masked (no database connection needed)."""
+        return model_configs.list_models(env_path or model_configs.default_env_path())
+
+    def save_model_config(
+        self,
+        name: str,
+        *,
+        provider: str,
+        model: str,
+        url: str | None = None,
+        key: str | None = None,
+        key_env: str | None = None,
+        structured_output: str | None = None,
+        env_path: str | Path | None = None,
+    ) -> None:
+        """Add or change a model config in .env; a blank key keeps the stored key."""
+        model_configs.set_model(
+            env_path or model_configs.default_env_path(), name, provider=provider, model=model, url=url, key=key, key_env=key_env, structured_output=structured_output
+        )
+
+    def delete_model_config(self, name: str, env_path: str | Path | None = None) -> None:
+        """Remove a model config's keys from .env."""
+        model_configs.delete_model(env_path or model_configs.default_env_path(), name)
 
     def list_benchmark_models(self) -> dict[str, Any]:
         """List available benchmark model configurations.
@@ -1229,6 +1347,77 @@ class PipelineSession:
         from deriva.services import config_deviation
 
         return config_deviation.ConfigDeviationAnalyzer(session_id, self._engine)
+
+    def export_benchmark(self, session_id: str, out_path: str | Path, benchmarks_dir: str | Path = "workspace/benchmarks") -> dict[str, Any]:
+        """Export a benchmark session as one verifiable zip.
+
+        Holds the session folder (event logs, LLM call logs, models, step results), the full
+        config texts at the session's versions, and the environment (versions, git commit,
+        grafeo build, model configs without keys). Returns the manifest (sha256 per file).
+        """
+        _check_session_id(session_id)
+        self._ensure_connected()
+        assert self._engine is not None
+        row = self._engine.execute("SELECT config, config_versions_snapshot FROM benchmark_sessions WHERE session_id = ?", [session_id]).fetchone()
+        settings = json.loads(row[0]) if row and row[0] else {}
+        versions = json.loads(row[1]) if row and row[1] else {}
+        extraction_versions = versions.get("extraction") or {}
+        derivation_versions = versions.get("derivation") or {}
+        snapshot = {
+            "session_id": session_id,
+            "versions": versions or None,
+            "extraction": [{**vars(c), "version": extraction_versions[c.node_type]} for c in config.get_extraction_configs_by_version(self._engine, extraction_versions)]
+            if extraction_versions
+            else [],
+            "derivation": [{**vars(c), "version": derivation_versions[c.step_name]} for c in config.get_derivation_configs_by_version(self._engine, derivation_versions)]
+            if derivation_versions
+            else [],
+        }
+        models = self.list_benchmark_models()
+        used = {name: models[name] for name in settings.get("models", []) if name in models}
+        extras = {"config_snapshot.json": snapshot, "environment.json": export_bundle.environment_info(models=used)}
+        return export_bundle.export_session(Path(benchmarks_dir) / session_id, out_path, extras)
+
+    def _benchmark_models(self, session_ids: list[str]) -> list[str]:
+        """Model config names of the sessions (from their recorded config), else the configured ones."""
+        assert self._engine is not None
+        names: set[str] = set()
+        for session_id in session_ids:
+            row = self._engine.execute("SELECT config FROM benchmark_sessions WHERE session_id = ?", [session_id]).fetchone()
+            if row and row[0]:
+                names |= set(json.loads(row[0]).get("models", []))
+        return sorted(names or set(self.list_benchmark_models()))
+
+    def benchmark_results(self, session_ids: list[str], benchmarks_dir: str | Path = "workspace/benchmarks") -> list[dict[str, Any]]:
+        """Consistency per repository and model over the runs of one or more sessions (by name and by source)."""
+        for session_id in session_ids:
+            _check_session_id(session_id)
+        self._ensure_connected()
+        return benchmark_views.results(benchmarks_dir, session_ids, self._benchmark_models(session_ids))
+
+    def benchmark_flips(self, session_ids: list[str], repository: str, benchmarks_dir: str | Path = "workspace/benchmarks") -> list[dict[str, Any]]:
+        """Elements of a repository that are not in every run, with the cause per missing run."""
+        for session_id in session_ids:
+            _check_session_id(session_id)
+        self._ensure_connected()
+        return benchmark_views.flips(benchmarks_dir, session_ids, self._benchmark_models(session_ids), repository)
+
+    def benchmark_inspector(self, session_ids: list[str], repository: str, benchmarks_dir: str | Path = "workspace/benchmarks") -> dict[str, Any]:
+        """Element and relationship occurrences per run of a repository, for the model inspector."""
+        for session_id in session_ids:
+            _check_session_id(session_id)
+        self._ensure_connected()
+        return benchmark_views.inspector(benchmarks_dir, session_ids, self._benchmark_models(session_ids), repository)
+
+    def benchmark_steps(self, session_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Raw LLM answer stability per step and repository (same prompt, same decision in every run)."""
+        for session_id in session_ids:
+            _check_session_id(session_id)
+        self._ensure_connected()
+        from deriva.services import analysis
+
+        stability = analysis.BenchmarkAnalyzer(session_ids, self._engine).analyze_answer_stability()
+        return {repo: [s.to_dict() for s in steps] for repo, steps in stability.items()}
 
     def list_benchmarks(self, limit: int = 10) -> list[dict]:
         """

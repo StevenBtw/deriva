@@ -47,14 +47,14 @@ def fake_session() -> FakeSession:
 
 
 @pytest.fixture
-def make_client() -> Iterator[Callable[[FakeSession], TestClient]]:
+def make_client(tmp_path) -> Iterator[Callable[[FakeSession], TestClient]]:
     from deriva.studio.app import create_app
     from deriva.studio.provider import SessionProvider
 
     clients: list[TestClient] = []
 
     def make(session: FakeSession) -> TestClient:
-        client = TestClient(create_app(provider=SessionProvider(factory=lambda: session), static_dir=None))
+        client = TestClient(create_app(provider=SessionProvider(factory=lambda: session), static_dir=None, runs_dir=tmp_path / "runs"))
         client.__enter__()
         clients.append(client)
         return client
