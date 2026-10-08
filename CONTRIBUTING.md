@@ -29,7 +29,7 @@ cp .env.example .env
 uv sync --all-extras
 
 # Run the studio (build the front end once: cd studio && npm install && npm run build)
-uv run deriva-studio
+uv run deriva
 
 # Run linter
 uv run ruff check .
@@ -1674,7 +1674,7 @@ The studio is the local web UI: `deriva/studio/` (FastAPI backend, a top layer t
 ### Running it
 
 ```bash
-uv run deriva-studio                 # API + built front end on http://127.0.0.1:8765
+uv run deriva                        # API + built front end on http://127.0.0.1:8765
 cd studio && npm run dev             # front-end development; Vite forwards /api, /grafeo, /widgets to 8765
 npm test && npm run lint && npm run typecheck
 npm run build                        # writes deriva/studio/static/ (git-ignored, shipped in the wheel)

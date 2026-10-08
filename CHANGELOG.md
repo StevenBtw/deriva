@@ -12,7 +12,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ### Studio
 
-- **Deriva Studio replaces the marimo app**: `uv run deriva-studio` starts a local web UI (FastAPI backend, React front end, own design) on http://127.0.0.1:8765, with the API documented at `/docs`. The marimo app, its `deriva-app` command and the marimo dependency are removed
+- **Deriva Studio replaces the marimo app**: `uv run deriva` starts a local web UI (FastAPI backend, React front end, own design) on http://127.0.0.1:8765, with the API documented at `/docs`. The marimo app, its `deriva-app` command and the marimo dependency are removed
 - **Workspace**: pick a repository and a scope (everything, extraction, derivation, or structural steps only), start and cancel runs, and follow them live; the intermediate graph and the output graph sit side by side (anywidget-graph) and refresh after each step; the output model opens in anywidget-archimate, with XML export
 - **Repositories, settings and file types**: clone, inspect and delete repositories; edit the excluded directories and the file type registry
 - **Configuration**: extraction and derivation steps with their versions; instructions and examples are edited in a code editor and saved as a new version (earlier versions stay); steps can be switched on and off

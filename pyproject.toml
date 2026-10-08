@@ -105,7 +105,7 @@ Changelog = "https://github.com/StevenBtw/deriva/blob/main/CHANGELOG.md"
 
 [project.scripts]
 deriva-cli = "deriva.cli.cli:main"
-deriva-studio = "deriva.studio.__main__:main"
+deriva = "deriva.studio.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

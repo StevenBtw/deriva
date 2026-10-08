@@ -2,7 +2,7 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// The studio API (deriva-studio) runs on 8765; the dev server forwards the API paths to it.
+// The studio API (deriva) runs on 8765; the dev server forwards the API paths to it.
 const api = "http://127.0.0.1:8765";
 
 export default defineConfig({

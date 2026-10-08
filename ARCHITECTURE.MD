@@ -82,7 +82,7 @@ Repository --> Extraction --> Graph --> Derivation --> ArchiMate Model --> Expor
 | Component | Purpose |
 |-----------|---------|
 | `cli/` | Headless command-line interface for automation and scripting |
-| `studio/` | Local web UI (`deriva-studio`): a FastAPI backend that serves the pipeline, both graphs, the model and the configuration, with live run progress; the React front end is built into `studio/static/` |
+| `studio/` | Local web UI (`uv run deriva`): a FastAPI backend that serves the pipeline, both graphs, the model and the configuration, with live run progress; the React front end is built into `studio/static/` |
 
 Both use `PipelineSession` as the sole interface to the backend.
 

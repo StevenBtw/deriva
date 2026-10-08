@@ -86,7 +86,7 @@ The business concept step finds candidate terms in the documentation with pinned
 
 ```bash
 cd ../../..  # Back to Deriva root
-uv run deriva-studio
+uv run deriva
 ```
 
 The studio opens at http://127.0.0.1:8765 (API documentation at http://127.0.0.1:8765/docs). It binds to this machine only; `--port` picks another port.
@@ -96,7 +96,7 @@ The front end ships inside the package once built. From a source checkout, build
 ```bash
 cd studio
 npm install
-npm run build   # writes deriva/studio/static/, which deriva-studio serves
+npm run build   # writes deriva/studio/static/, which the studio serves
 ```
 
 ---
@@ -350,7 +350,7 @@ All prompts follow the **Input + Instruction + Example** pattern.
 
 ## Studio
 
-The studio is Deriva's local web UI (`uv run deriva-studio`): a FastAPI backend over `PipelineSession` and a React front end.
+The studio is Deriva's local web UI (`uv run deriva`): a FastAPI backend over `PipelineSession` and a React front end.
 
 | Area | Purpose |
 |------|---------|
@@ -361,7 +361,7 @@ The studio is Deriva's local web UI (`uv run deriva-studio`): a FastAPI backend 
 
 The graphs use [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) (its query bar runs read-only Cypher against the embedded databases) and the model uses [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate). While a CLI run holds the databases, the studio says so and shows what it can.
 
-For front-end development, run `uv run deriva-studio` and, in `studio/`, `npm run dev` (Vite forwards the API to port 8765); `npm test`, `npm run lint` and `npm run typecheck` check it.
+For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` (Vite forwards the API to port 8765); `npm test`, `npm run lint` and `npm run typecheck` check it.
 
 ---
 
