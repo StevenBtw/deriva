@@ -102,7 +102,7 @@ class TestNestedDirectoriesLeaveTheList:
 
         stages = {d.node_id: d.stage for d in result.candidate_decisions}
         assert stages[GUI_SRC] == "nested_removed"
-        assert stages[UTIL] == "filtered_out"
+        assert stages[UTIL] == "over_cap"
 
     def test_an_ancestor_without_files_of_the_type_represents_nothing(self):
         result = self._generate([_dir(GUI), _dir(GUI_SRC)], self.CONTAINS, {}, SOURCE)

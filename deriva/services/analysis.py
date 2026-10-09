@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from deriva.common.ocel import OCELLog, load_benchmark_ocel
+from deriva.modules.analysis import decision_content
 from deriva.modules.analysis.cross_repo_analysis import (
     compare_across_repos,
     generate_cross_repo_recommendations,
@@ -42,6 +43,7 @@ from deriva.modules.analysis.types import (
     ReferenceRelationship,
     SemanticMatchReport,
 )
+from deriva.services.llm_log import LlmCallLog
 
 __all__ = ["BenchmarkAnalyzer"]
 
@@ -95,9 +97,15 @@ class BenchmarkAnalyzer:
         self.ocel_logs: dict[str, OCELLog] = {}
         self.session_infos: dict[str, dict] = {}
 
+        # Every LLM call with its answer, where the session kept them (llm/<run>.jsonl, sessions from 0.8.0)
+        self.call_logs: dict[str, list[dict[str, Any]]] = {}
+
         for session_id in session_ids:
             self.ocel_logs[session_id] = self._load_ocel(session_id)
             self.session_infos[session_id] = self._load_session_info(session_id)
+            calls = [call for path in sorted((Path("workspace/benchmarks") / session_id / "llm").glob("*.jsonl")) for call in LlmCallLog.read(path)]
+            if calls:
+                self.call_logs[session_id] = calls
 
         # Extract unique repositories and models
         self.repositories = self._extract_repositories()
@@ -283,28 +291,41 @@ class BenchmarkAnalyzer:
     def analyze_answer_stability(self) -> dict[str, list[AnswerStability]]:
         """Raw LLM answer stability per repository: the same prompt answered identically in every run.
 
-        Answers are compared on their decisions (``decision_hash``); sessions recorded
-        before that have only the full response hash.
+        Answers are compared on their decisions. Where a session kept its LLM calls the
+        decision is computed from each recorded answer (``decision_content``), so the current
+        rule applies to old sessions too; otherwise the event log's ``decision_hash`` is used,
+        and in sessions recorded before that the full response hash.
 
         Extraction runs (``session:extraction:repo``) and derivation runs
         (``session:repo:model:iteration``) are compared separately, since their prompts differ.
         """
         answers: dict[str, dict[str, dict[str, dict[tuple[str, str], list[str | None]]]]] = {}
-        for ocel in self.ocel_logs.values():
+        call_logs: dict[str, list[dict[str, Any]]] = getattr(self, "call_logs", {})
+
+        def add(run_id: str, step: str, key: str, decision: str | None) -> None:
+            parts = run_id.split(":")
+            if len(parts) == 3 and parts[1] == "extraction":
+                family, repo = "extraction", parts[2]
+            elif len(parts) >= 2:
+                family, repo = "derivation", parts[1]
+            else:
+                return
+            runs = answers.setdefault(repo, {}).setdefault(family, {})
+            runs.setdefault(run_id, {}).setdefault((step, key), []).append(decision)
+
+        for session_id, ocel in self.ocel_logs.items():
+            if session_id in call_logs:
+                continue
             for event in ocel.events:
                 step, key = event.attributes.get("config_id"), event.attributes.get("cache_key")
                 if event.activity != "LLMQuery" or not step or not key:
                     continue
                 for run_id in event.objects.get("BenchmarkRun", []):
-                    parts = run_id.split(":")
-                    if len(parts) == 3 and parts[1] == "extraction":
-                        family, repo = "extraction", parts[2]
-                    elif len(parts) >= 2:
-                        family, repo = "derivation", parts[1]
-                    else:
-                        continue
-                    runs = answers.setdefault(repo, {}).setdefault(family, {})
-                    runs.setdefault(run_id, {}).setdefault((step, key), []).append(event.attributes.get("decision_hash") or event.attributes.get("response_hash"))
+                    add(run_id, step, key, event.attributes.get("decision_hash") or event.attributes.get("response_hash"))
+        for calls in call_logs.values():
+            for call in calls:
+                if call.get("step") and call.get("cache_key") and call.get("run_id"):
+                    add(call["run_id"], call["step"], call["cache_key"], decision_content(call.get("response") or ""))
         # A combined session derives once over all repositories, under their joined name
         names = list(self.repositories) + (["_".join(sorted(self.repositories))] if len(self.repositories) > 1 else [])
         return {repo: [s for family in ("extraction", "derivation") for s in compute_answer_stability(answers[repo].get(family, {}))] for repo in names if repo in answers}

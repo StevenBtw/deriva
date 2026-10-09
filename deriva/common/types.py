@@ -133,7 +133,7 @@ class ProgressUpdate:
     """
     Progress update yielded by generator-based pipeline functions.
 
-    Used with Marimo's mo.status.progress_bar iterator pattern for real-time updates.
+    The studio streams these to the browser as run events; the CLI prints them.
 
     Attributes:
         phase: Current phase name (e.g., 'extraction', 'derivation')
@@ -345,7 +345,7 @@ class ProgressReporter(Protocol):
     """
     Protocol for progress reporting during pipeline operations.
 
-    Implementations can use different backends (Rich for CLI, Marimo native, etc.)
+    Implementations can use different backends (Rich for the CLI, run events for the studio, etc.)
     while services remain UI-agnostic.
     """
 

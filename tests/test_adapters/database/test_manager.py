@@ -84,3 +84,66 @@ class TestExtractionParamsMigration:
         assert "params" in columns
         assert (first, second) == (1, 0)
         conn.execute("SELECT 1")  # a passed-in connection stays open
+
+
+class TestEnsureDatabase:
+    """A fresh install creates the schema and seeds the shipped configuration on first use."""
+
+    CONFIG_TABLES = ("file_type_registry", "extraction_config", "derivation_config", "derivation_patterns", "system_settings")
+
+    def test_a_missing_database_is_created_and_seeded(self, tmp_path):
+        import duckdb
+
+        from deriva.adapters.database.manager import ensure_database
+
+        db = tmp_path / "sql.db"
+        assert ensure_database(db) is True
+
+        conn = duckdb.connect(str(db), read_only=True)
+        counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in self.CONFIG_TABLES}
+        conn.close()
+        assert all(n > 0 for n in counts.values()), counts
+
+    def test_seeded_steps_are_the_active_versions(self, tmp_path):
+        import duckdb
+
+        from deriva.adapters.database.manager import ensure_database
+
+        db = tmp_path / "sql.db"
+        ensure_database(db)
+
+        conn = duckdb.connect(str(db), read_only=True)
+        for table in ("extraction_config", "derivation_config"):
+            inactive = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE NOT is_active").fetchone()[0]
+            versions = conn.execute(f"SELECT MIN(version) FROM {table}").fetchone()[0]
+            assert inactive == 0
+            assert versions >= 1
+        conn.close()
+
+    def test_an_existing_database_is_left_alone(self, tmp_path):
+        import duckdb
+
+        from deriva.adapters.database.manager import ensure_database
+
+        db = tmp_path / "sql.db"
+        ensure_database(db)
+        conn = duckdb.connect(str(db))
+        conn.execute("UPDATE system_settings SET value = '42' WHERE key = 'default_batch_size'")
+        conn.close()
+
+        assert ensure_database(db) is False
+
+        conn = duckdb.connect(str(db), read_only=True)
+        assert conn.execute("SELECT value FROM system_settings WHERE key = 'default_batch_size'").fetchone()[0] == "42"
+        conn.close()
+
+    def test_get_connection_seeds_a_missing_database(self, tmp_path):
+        from deriva.adapters.database import manager
+
+        db = tmp_path / "sql.db"
+        with patch.object(manager, "DB_PATH", db):
+            conn = manager.get_connection(read_only=True)
+            try:
+                assert conn.execute("SELECT COUNT(*) FROM extraction_config").fetchone()[0] > 0
+            finally:
+                conn.close()

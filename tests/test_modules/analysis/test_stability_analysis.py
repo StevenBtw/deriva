@@ -510,6 +510,17 @@ class TestDecisionContent:
 
         assert decision_content('{"items": [{"name": "Alpha", "kind": "entity"}]}') != decision_content('{"items": [{"name": "Alpha", "kind": "process"}]}')
 
+    def test_answers_in_a_markdown_code_block_are_compared_on_their_decisions(self):
+        """Models often wrap the JSON in a ```json fence; the fence must not turn wording into a decision."""
+        from deriva.modules.analysis import decision_content
+
+        fenced = '```json\n{"elements": [{"name": "Alpha", "documentation": "One wording", "confidence": 0.9}]}\n```'
+        other = '```json\n{"elements": [{"name": "Alpha", "documentation": "Another wording", "confidence": 0.7}]}\n```'
+        bare = '{"elements": [{"name": "Alpha"}]}'
+
+        assert decision_content(fenced) == decision_content(other) == decision_content(bare)
+        assert decision_content(fenced) != decision_content(other.replace("Alpha", "Beta"))
+
     def test_text_that_is_not_json_is_compared_as_is(self):
         from deriva.modules.analysis import decision_content
 

@@ -245,6 +245,9 @@ def benchmark_step(
         if repo in result.decision_stability:
             decided = result.decision_stability[repo]
             typer.echo(f"  decision stability: {decided.stable}/{decided.items} ({decided.score:.1%})")
+        if repo in result.output_stability:
+            effect = result.output_stability[repo]
+            typer.echo(f"  output stability: {effect.stable}/{effect.items} ({effect.score:.1%})")
     presence, exact = result.average("presence_score"), result.average("exact_score")
     if presence is not None and exact is not None:
         typer.echo(f"{'Average':30} {presence:9.1%} {exact:8.1%}")
@@ -398,6 +401,22 @@ def benchmark_analyze(
         # Save to DB
         analyzer.save_metrics_to_db()
         typer.echo("Metrics saved to database.")
+
+
+@app.command("export")
+def benchmark_export(
+    session_id: Annotated[str, typer.Argument(help="Benchmark session ID")],
+    output: Annotated[str, typer.Option("-o", "--output", help="Zip file to write")],
+) -> None:
+    """Export a benchmark session as one zip: logs, LLM calls, models, config texts, environment, sha256 manifest."""
+    with PipelineSession() as session:
+        try:
+            manifest = session.export_benchmark(session_id, output)
+        except (FileNotFoundError, ValueError) as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+
+    typer.echo(f"Exported {manifest['session_id']}: {len(manifest['files'])} files with sha256 manifest -> {output}")
 
 
 @app.command("models")

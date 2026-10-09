@@ -72,6 +72,7 @@ from deriva.modules.derivation.base import (
     parse_role_answer,
     query_candidates,
     source_casing,
+    source_words,
     structure_element_name,
 )
 from deriva.modules.derivation.refine.base import normalize_name, similarity_ratio
@@ -526,6 +527,13 @@ class ElementDerivationBase(ABC):
         result.candidates_filtered = len(filtered)
         filtered_ids = {c.node_id for c in filtered}
 
+        # Candidates the filter's rules kept but the cap left out are told apart from filtered ones.
+        # Only when the list reached the cap; the uncapped pass is structural (no LLM call) and changes nothing
+        over_cap: set[str] = set()
+        if eligible and len(filtered) - len(marked) >= max_candidates:
+            uncapped = self.filter_candidates(eligible, enrichments, len(eligible), **filter_kwargs)
+            over_cap = {c.node_id for c in uncapped if c.node_id not in filtered_ids}
+
         self.logger.info("Filtered to %d candidates for LLM (%s)", len(filtered), self.ELEMENT_TYPE)
 
         # Track candidates filtered out at this stage
@@ -541,7 +549,7 @@ class ElementDerivationBase(ABC):
                         in_degree=c.in_degree,
                         out_degree=c.out_degree,
                         confidence=c.properties.get("confidence"),
-                        stage="not_a_unit" if c.node_id in not_units else "filtered_out",
+                        stage="not_a_unit" if c.node_id in not_units else "over_cap" if c.node_id in over_cap else "filtered_out",
                         became_element=False,
                     )
                 )
@@ -1036,7 +1044,8 @@ class ElementDerivationBase(ABC):
         """
         from deriva.modules.derivation.refine.normalization import strip_repo_prefix
 
-        prompt = build_naming_prompt(naming_source(candidate), self.ELEMENT_TYPE, naming.instruction)
+        source = naming_source(candidate)
+        prompt = build_naming_prompt(source, self.ELEMENT_TYPE, naming.instruction)
         answers: list[str | None] = []
         for _ in range(naming.samples):
             try:
@@ -1047,7 +1056,8 @@ class ElementDerivationBase(ABC):
                 answers.append(json.loads(text).get("name"))
             except (ValueError, AttributeError) as e:
                 self.logger.debug("Unusable naming answer for %s: %s", candidate.node_id, e)
-        name = choose_name(answers)
+        # A word the source writes as one word keeps its inner capitals (a proper name), others split where the source splits
+        name = choose_name(answers, source_words(source))
         # No type-suffix stripping here: the configured convention governs suffixes,
         # and words like "Service" or "API" are often part of the right name
         if name and repo_name:

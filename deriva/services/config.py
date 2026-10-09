@@ -2,7 +2,7 @@
 Configuration service for Deriva.
 
 Provides CRUD operations for pipeline configuration stored in DuckDB.
-Used by both Marimo (visual UI) and CLI (headless) for consistent config management.
+Used by both the studio (web UI) and the CLI (headless) for consistent config management.
 
 Tables managed:
     - extraction_config: LLM extraction step configurations
@@ -33,6 +33,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
@@ -1055,6 +1056,29 @@ def create_extraction_config_version(
     }
 
 
+HISTORY_COLUMNS = {
+    "extraction": (
+        "extraction_config",
+        "node_type",
+        ("version", "is_active", "enabled", "sequence", "instruction", "example", "params", "batch_size", "input_sources", "created_at"),
+    ),
+    "derivation": (
+        "derivation_config",
+        "step_name",
+        ("version", "is_active", "enabled", "sequence", "phase", "instruction", "example", "params", "batch_size", "input_graph_query", "created_at"),
+    ),
+}
+
+
+def get_config_history(engine: Any, step_type: str, name: str) -> list[dict[str, Any]]:
+    """Every version of a step, newest first (texts, params, query, state, when it was created)."""
+    if step_type not in HISTORY_COLUMNS:
+        raise ValueError(f"Unknown step type: {step_type}")
+    table, key, columns = HISTORY_COLUMNS[step_type]
+    rows = engine.execute(f"SELECT {', '.join(columns)} FROM {table} WHERE {key} = ? ORDER BY version DESC", [name]).fetchall()
+    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+
 def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
     """
     Get current active versions for all enabled configs.
@@ -1078,6 +1102,31 @@ def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
         versions["derivation"][r[0]] = r[1]
 
     return versions
+
+
+def input_snapshot(engine: Any) -> dict[str, Any]:
+    """The result-changing tables that keep no version history, as they are now, with a digest per table.
+
+    File type registry (which files feed which step), derivation name patterns and system settings
+    (e.g. excluded directories). Recorded when a session starts, so sessions can be compared table by table.
+    """
+    file_types = engine.execute("SELECT extension, file_type, subtype, chunk_delimiter, chunk_max_tokens, chunk_overlap FROM file_type_registry ORDER BY extension").fetchall()
+    patterns = engine.execute(
+        "SELECT step_name, pattern_type, pattern_category, patterns, is_active FROM derivation_patterns ORDER BY step_name, pattern_type, pattern_category NULLS FIRST"
+    ).fetchall()
+    settings = engine.execute("SELECT key, value FROM system_settings ORDER BY key").fetchall()
+    snapshot: dict[str, Any] = {
+        "file_types": [{"extension": r[0], "file_type": r[1], "subtype": r[2], "chunk_delimiter": r[3], "chunk_max_tokens": r[4], "chunk_overlap": r[5]} for r in file_types],
+        "derivation_patterns": [
+            {"step_name": r[0], "pattern_type": r[1], "pattern_category": r[2], "patterns": json.loads(r[3]) if r[3] else [], "is_active": r[4]} for r in patterns
+        ],
+        "system_settings": {r[0]: r[1] for r in settings},
+    }
+    snapshot["sha256"] = {
+        name: hashlib.sha256(json.dumps(snapshot[name], sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        for name in ("file_types", "derivation_patterns", "system_settings")
+    }
+    return snapshot
 
 
 # =============================================================================

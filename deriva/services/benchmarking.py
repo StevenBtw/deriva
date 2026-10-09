@@ -61,7 +61,11 @@ from deriva.modules.analysis import decision_content
 from deriva.modules.analysis.model_quality import compute_model_quality
 from deriva.modules.analysis.semantic_matching import match_elements, parse_archi_xml, parse_exchange_format_xml
 from deriva.services import config as config_service
-from deriva.services import derivation, extraction
+from deriva.services import derivation, export_bundle, extraction
+from deriva.services.llm_log import LlmCallLog, record_call, run_log_path
+
+# Per-run LLM call logs: <root>/<session>/llm/<run>.jsonl
+LLM_LOG_ROOT = Path("workspace/benchmarks")
 
 # =============================================================================
 # OCEL RUN LOGGER - Per-config event logging for benchmarks
@@ -207,6 +211,15 @@ def _node_routes(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
         if route:
             routes.setdefault(row["id"], set()).add(route)
     return {node: sorted(found) for node, found in sorted(routes.items())}
+
+
+def _candidate_record(decision: dict[str, Any], refined: dict[tuple[str, str], str]) -> dict[str, Any]:
+    """A candidate decision for the run snapshot; a created candidate whose element refine disabled names the reason."""
+    record = {"type": decision.get("element_type"), "source": decision.get("node_id"), "stage": decision.get("stage")}
+    reason = refined.get((str(record["type"]), str(record["source"])))
+    if reason and record["stage"] == "created":
+        record["refine"] = reason
+    return record
 
 
 def _incoming_routes(graph_manager: GraphManager, label: str) -> dict[str, list[str]]:
@@ -437,6 +450,8 @@ class BenchmarkOrchestrator:
 
         # Current context for OCEL events
         self._current_run_id: str | None = None
+        # Per-run LLM call logs (prompt and answer of every call), by run id
+        self._call_logs: dict[str, LlmCallLog] = {}
         # LLM answers per decision per step, recorded in the session metadata
         self._llm_samples: dict[str, int] = {}
         self._current_model: str | None = None
@@ -1138,7 +1153,12 @@ class BenchmarkOrchestrator:
             }
             if response_model is not None:
                 kwargs["response_model"] = response_model
-            response = llm.query(prompt, **kwargs)
+            try:
+                response = llm.query(prompt, **kwargs)
+            except Exception as exc:
+                self._record_llm_call(llm, current_config, prompt, schema, system_prompt, None, str(exc))
+                raise
+            self._record_llm_call(llm, current_config, prompt, schema, system_prompt, response, None)
 
             # Per-call metrics recorded by the manager (cache key, latency, waits, tokens)
             call = llm.last_call or {}
@@ -1178,6 +1198,18 @@ class BenchmarkOrchestrator:
         # Attach cache keys list to function for retrieval after run
         query_fn.used_cache_keys = used_cache_keys  # type: ignore[attr-defined]
         return query_fn
+
+    def _record_llm_call(self, llm: Any, step: str | None, prompt: str, schema: dict | None, system_prompt: str | None, response: Any, error: str | None) -> None:
+        """Keep the call with prompt and answer in workspace/benchmarks/<session>/llm/<run>.jsonl."""
+        run_id = self._current_run_id
+        if not self.session_id or not run_id:
+            return
+        log = self._call_logs.get(run_id)
+        if log is None:
+            log = self._call_logs[run_id] = LlmCallLog(run_log_path(LLM_LOG_ROOT / self.session_id / "llm", run_id), run_id)
+        record_call(log, getattr(llm, "last_call", None) or {}, prompt=prompt, schema=schema, system_prompt=system_prompt, response=response, error=error, step=step)
+        if step is None:
+            log.close()  # no step to wait for: write it now
 
     def _log_extraction_results(self, result: dict[str, Any]) -> None:
         """Log extraction results as OCEL events."""
@@ -1279,6 +1311,9 @@ class BenchmarkOrchestrator:
             technology_rows = self.graph_manager.query("MATCH (n:Graph:Technology) RETURN n.id AS id, n.techName AS name")
             concept_routes = _incoming_routes(self.graph_manager, "BusinessConcept")
             technology_routes = _incoming_routes(self.graph_manager, "Technology")
+            # What refine took out and why: a created candidate can still be missing from the model
+            disabled = list(self.archimate_manager.get_disabled_elements())
+            refined = {(d["type"], d["source"]): d["reason"] for d in disabled if d.get("source")}
             snapshot = {
                 "elements": [{"identifier": e.identifier, "type": e.element_type, "name": e.name, "source": (e.properties or {}).get("source")} for e in elements],
                 "relationships": [
@@ -1302,9 +1337,11 @@ class BenchmarkOrchestrator:
                     "concept_routes": concept_routes,
                     "technology_routes": technology_routes,
                 },
-                # Every candidate's fate per element type (created, llm_rejected, filtered_out, ...), for keep rates
+                "disabled": disabled,
+                # Every candidate's fate per element type (created, llm_rejected, filtered_out, ...), for keep rates;
+                # "refine" names the rule that disabled the created element afterwards
                 "candidates": sorted(
-                    ({"type": d.get("element_type"), "source": d.get("node_id"), "stage": d.get("stage")} for d in candidate_decisions or []),
+                    (_candidate_record(d, refined) for d in candidate_decisions or []),
                     key=lambda c: (str(c["type"]), str(c["source"]), str(c["stage"])),
                 ),
             }
@@ -1343,6 +1380,30 @@ class BenchmarkOrchestrator:
                 self.session_start.isoformat(),
             ],
         )
+        self._write_session_inputs()
+
+    def _write_session_inputs(self) -> None:
+        """Everything that changes results, as it is when the session starts, into the session folder.
+
+        Config versions, LLM samples per step, the tables without version history (file types, name
+        patterns, settings) and the environment (code digest, versions, model configs without secrets).
+        Written before the first run, so a session that fails still says what it ran on.
+        """
+        assert self.session_start is not None, "session_start must be set"
+        models = getattr(self, "_model_configs", None) or {}
+        record = {
+            "session_id": self.session_id,
+            "captured_at": self.session_start.isoformat(),
+            **export_bundle.run_inputs(
+                self.engine,
+                {name: models[name] for name in self.config.models if name in models},
+                config_versions=self._config_versions_snapshot,
+                llm_samples=self._llm_samples,
+            ),
+        }
+        folder = Path("workspace/benchmarks") / str(self.session_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "session_inputs.json").write_text(json.dumps(record, indent=1, default=str), encoding="utf-8")
 
     def _complete_session(self, runs_completed: int, runs_failed: int) -> None:
         """Mark session as complete in database."""

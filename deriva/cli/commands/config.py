@@ -23,6 +23,8 @@ setting_app = typer.Typer(name="setting", help="Manage system settings (e.g. exc
 app.add_typer(setting_app)
 pattern_app = typer.Typer(name="pattern", help="Manage derivation name patterns (include and exclude)")
 app.add_typer(pattern_app)
+model_app = typer.Typer(name="model", help="Manage LLM model configs in .env (keys shown masked)")
+app.add_typer(model_app)
 
 PATTERN_TYPES = ("include", "exclude")
 
@@ -630,3 +632,54 @@ def setting_set(
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1) from e
         typer.echo(f"Set {key} = {value}")
+
+
+# =============================================================================
+# Model Config Commands
+# =============================================================================
+
+
+@model_app.command("list")
+def model_list() -> None:
+    """List the model configs in .env (API keys masked)."""
+    models = PipelineSession().list_model_configs()
+    if not models:
+        typer.echo("No model configs in .env.")
+        return
+    for m in models:
+        key = m["key"] or (f"from ${m['key_env']}" if m["key_env"] else "no key")
+        typer.echo(f"  {m['name']:<28} {m['provider']:<10} {m['model'] or '':<32} {key}")
+        if m["url"]:
+            typer.echo(f"  {'':<28} {m['url']}")
+
+
+@model_app.command("set")
+def model_set(
+    name: Annotated[str, typer.Argument(help="Model config name (e.g. 'anthropic-haiku')")],
+    provider: Annotated[str, typer.Option("--provider", help="azure, openai, anthropic, ollama, mistral, lmstudio")],
+    model: Annotated[str, typer.Option("--model", help="Model id")],
+    url: Annotated[str | None, typer.Option("--url", help="API URL ('' removes it)")] = None,
+    key: Annotated[str | None, typer.Option("--key", help="API key (omit to keep the stored key)")] = None,
+    key_env: Annotated[str | None, typer.Option("--key-env", help="Environment variable that holds the key")] = None,
+    structured_output: Annotated[str | None, typer.Option("--structured-output", help="Structured output mode")] = None,
+) -> None:
+    """Add or change a model config in .env (other lines and comments are kept)."""
+    try:
+        PipelineSession().save_model_config(name, provider=provider, model=model, url=url, key=key, key_env=key_env, structured_output=structured_output)
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1) from e
+    typer.echo(f"Saved model config {name}")
+
+
+@model_app.command("delete")
+def model_delete(
+    name: Annotated[str, typer.Argument(help="Model config name")],
+) -> None:
+    """Remove a model config's keys from .env."""
+    try:
+        PipelineSession().delete_model_config(name)
+    except KeyError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1) from e
+    typer.echo(f"Deleted model config {name}")

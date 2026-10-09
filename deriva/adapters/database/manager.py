@@ -34,6 +34,9 @@ def get_connection(read_only: bool = False) -> duckdb.DuckDBPyConnection:
     Returns:
         DuckDB connection
     """
+    # A fresh install has no database yet: create it from the schema and the shipped seed data
+    if not DB_PATH.exists():
+        ensure_database(DB_PATH)
     return duckdb.connect(str(DB_PATH), read_only=read_only)
 
 
@@ -102,6 +105,38 @@ def seed_database() -> bool:
     from deriva.adapters.database.db_tool import seed_from_json
 
     return seed_from_json(DB_PATH)
+
+
+def ensure_database(db_path: Path | None = None) -> bool:
+    """Create and seed the configuration database when it has no schema yet (a fresh install).
+
+    Runs the schema, the migrations and the seed from the shipped JSON files in ``data/``
+    (the active configuration rows with their version numbers). An existing database is
+    never changed.
+
+    Args:
+        db_path: Database file (defaults to DB_PATH)
+
+    Returns:
+        True when the database was created, False when it already had a schema
+    """
+    path = db_path or DB_PATH
+    conn = duckdb.connect(str(path))
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'extraction_config'").fetchone()
+        if row and row[0] > 0:
+            return False
+        run_sql_file(SCRIPTS_DIR / "schema.sql", conn)
+        run_migrations(conn)
+    finally:
+        conn.close()
+
+    # Import here to avoid circular imports
+    from deriva.adapters.database.db_tool import seed_from_json
+
+    seed_from_json(path)
+    logger.info("Created the configuration database %s from the shipped seed data", path)
+    return True
 
 
 def run_migrations(conn: duckdb.DuckDBPyConnection | None = None) -> int:

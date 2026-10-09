@@ -14,7 +14,7 @@ keywords = [
     "code-analysis",
     "llm",
     "grafeo",
-    "marimo",
+    "fastapi",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -45,7 +45,6 @@ dependencies = [
     "grafeo>=0.5.44",
     "sqlglot>=30",
     # UI
-    "marimo>=0.25",
     "anywidget-graph>=0.3",
     # Code Analysis (tree-sitter)
     "tree-sitter>=0.26",
@@ -82,6 +81,9 @@ dependencies = [
     "prek>=0.5",
     "httpx>=0.28.1",
     "pydantic-ai-slim[mistral]>=2",
+    "fastapi>=0.142.4",
+    "uvicorn>=0.41.0",
+    "anywidget-archimate>=0.2.0",
 ]
 
 [project.optional-dependencies]
@@ -103,7 +105,7 @@ Changelog = "https://github.com/StevenBtw/deriva/blob/main/CHANGELOG.md"
 
 [project.scripts]
 deriva-cli = "deriva.cli.cli:main"
-deriva-app = "deriva.app.app:main"
+deriva = "deriva.studio.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -111,6 +113,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["deriva"]
+# The built studio front end is git-ignored but must ship in the wheel
+artifacts = ["deriva/studio/static/**"]
 
 # The spaCy language models are wheels from their GitHub releases, not on PyPI
 [tool.hatch.metadata]
@@ -119,6 +123,10 @@ allow-direct-references = true
 # ============================================================================
 # Tool Configuration
 # ============================================================================
+
+[tool.uv.sources]
+# grafeo 0.6.0 development build (native graph metrics); back to PyPI when 0.6.0 is released
+grafeo = { path = "H:/GrafeoDB/wheels/0.6.0-dev-ff9cca65/grafeo-0.5.44-cp312-abi3-win_amd64.whl" }
 
 [tool.ruff]
 line-length = 180
@@ -170,8 +178,6 @@ docstring-quotes = "double"
 [tool.ruff.lint.per-file-ignores]
 # Tests can import from any layer for testing purposes
 "tests/**/*.py" = ["E402", "TID251"]
-# Marimo app: allow long lines for UI code
-"deriva/app/app.py" = ["E501"]
 # Files with long strings (SQL, LLM prompts)
 "deriva/modules/validation/__init__.py" = ["E402"]
 "deriva/modules/derivation/__init__.py" = ["E402"]
@@ -181,19 +187,16 @@ docstring-quotes = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-v -m 'not integration and not grafeo_dev'"
+addopts = "-v -m 'not integration'"
 markers = [
     "integration: integration tests (run locally with -m integration)",
-    "grafeo_dev: needs the grafeo 0.6.0 development build (algorithm projections)",
 ]
 
 [tool.coverage.run]
-source = ["deriva/adapters", "deriva/modules", "deriva/common", "deriva/services", "deriva/cli"]
+source = ["deriva/adapters", "deriva/modules", "deriva/common", "deriva/services", "deriva/cli", "deriva/studio"]
 omit = [
     "*/__init__.py",
     "*/tests/*",
-    # Marimo app (interactive UI, not unit testable)
-    "deriva/app/*",
     # Graph database adapters
     "deriva/adapters/grafeo/*",
     "deriva/adapters/graph/*",

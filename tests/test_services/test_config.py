@@ -1935,3 +1935,94 @@ class TestLlmSamplesPerStep:
         monkeypatch.setattr(config, "get_derivation_configs", lambda engine, enabled_only=False, phase=None, llm_only=None: derivation)
 
         assert config.llm_samples_per_step(object()) == {"DocConcepts": 3, "DirClasses": 1, "TypeA.naming": 1}
+
+
+class TestConfigHistory:
+    """Every version of a step, newest first, from the real schema."""
+
+    @pytest.fixture
+    def engine(self):
+        from pathlib import Path
+
+        import duckdb
+
+        con = duckdb.connect()
+        con.execute((Path(__file__).resolve().parents[2] / "deriva/adapters/database/scripts/schema.sql").read_text(encoding="utf-8"))
+        con.execute(
+            "INSERT INTO extraction_config (id, node_type, version, sequence, enabled, instruction, params, is_active) "
+            "VALUES (1, 'Concept', 1, 1, TRUE, 'first', NULL, FALSE), (2, 'Concept', 2, 1, TRUE, 'second', '{\"k\": 1}', TRUE)"
+        )
+        con.execute(
+            "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, input_graph_query, instruction, is_active) "
+            "VALUES (1, 'Node', 'generate', 1, 3, TRUE, 'MATCH (n) RETURN n', 'pick', TRUE)"
+        )
+        yield con
+        con.close()
+
+    def test_history_lists_every_version_newest_first(self, engine):
+        from deriva.services import config
+
+        rows = config.get_config_history(engine, "extraction", "Concept")
+
+        assert [(r["version"], r["is_active"], r["instruction"], r["params"]) for r in rows] == [(2, True, "second", '{"k": 1}'), (1, False, "first", None)]
+        assert rows[0]["created_at"] is not None
+
+    def test_derivation_history_carries_the_candidate_query(self, engine):
+        from deriva.services import config
+
+        (row,) = config.get_config_history(engine, "derivation", "Node")
+
+        assert (row["version"], row["input_graph_query"], row["phase"]) == (1, "MATCH (n) RETURN n", "generate")
+
+    def test_unknown_step_type_is_refused(self, engine):
+        from deriva.services import config
+
+        with pytest.raises(ValueError):
+            config.get_config_history(engine, "prep", "Node")
+
+
+class TestInputSnapshot:
+    """The result-changing tables without version history, captured as they are when a session starts."""
+
+    @pytest.fixture
+    def engine(self):
+        import duckdb
+
+        from deriva.adapters.database.manager import SCRIPTS_DIR
+
+        con = duckdb.connect(":memory:")
+        con.execute((SCRIPTS_DIR / "schema.sql").read_text(encoding="utf-8"))
+        con.execute("INSERT INTO file_type_registry (extension, file_type, subtype) VALUES ('.py', 'source', 'python'), ('license', 'meta', 'license')")
+        con.execute(
+            "INSERT INTO derivation_patterns (id, step_name, pattern_type, pattern_category, patterns, is_active) "
+            "VALUES (1, 'ApplicationService', 'include', 'http', '[\"get\", \"post\"]', TRUE), (2, 'ApplicationService', 'exclude', NULL, '[\"_\"]', FALSE)"
+        )
+        con.execute("INSERT INTO system_settings (key, value) VALUES ('excluded_directories', '[\"node_modules\"]')")
+        yield con
+        con.close()
+
+    def test_every_table_is_captured_in_a_fixed_order(self, engine):
+        from deriva.services import config
+
+        snapshot = config.input_snapshot(engine)
+
+        assert [(f["extension"], f["file_type"], f["subtype"]) for f in snapshot["file_types"]] == [(".py", "source", "python"), ("license", "meta", "license")]
+        assert snapshot["derivation_patterns"] == [
+            {"step_name": "ApplicationService", "pattern_type": "exclude", "pattern_category": None, "patterns": ["_"], "is_active": False},
+            {"step_name": "ApplicationService", "pattern_type": "include", "pattern_category": "http", "patterns": ["get", "post"], "is_active": True},
+        ]
+        assert snapshot["system_settings"] == {"excluded_directories": '["node_modules"]'}
+
+    def test_each_section_has_a_digest_that_follows_its_content(self, engine):
+        """Two sessions can be compared section by section: only the changed table gets another digest."""
+        from deriva.services import config
+
+        before = config.input_snapshot(engine)
+        config.add_file_type(engine, "notice", "meta", "license")
+        after = config.input_snapshot(engine)
+
+        assert set(before["sha256"]) == {"file_types", "derivation_patterns", "system_settings"}
+        assert before["sha256"]["file_types"] != after["sha256"]["file_types"]
+        assert before["sha256"]["derivation_patterns"] == after["sha256"]["derivation_patterns"]
+        assert before["sha256"]["system_settings"] == after["sha256"]["system_settings"]
+        assert config.input_snapshot(engine) == after

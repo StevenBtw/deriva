@@ -62,6 +62,19 @@ def test_disabled_element_can_be_enabled_again(am):
     assert am.query("MATCH (e:Model {identifier: 'ac_claims'}) RETURN e.disabled_reason AS r") == [{"r": None}]
 
 
+def test_disabled_elements_are_read_with_their_reason(am):
+    """Refine steps disable rather than delete: the run record needs what they took out and why."""
+    am.add_element(Element(name="Ledger", element_type="BusinessObject", identifier="bo_ledger", properties={"source": "concept::r::ledger"}))
+    am.add_element(Element(name="Journal", element_type="BusinessObject", identifier="bo_journal", properties={"source": "concept::r::journal"}))
+    am.add_element(Element(name="Kept", element_type="BusinessObject", identifier="bo_kept"))
+    am.disable_elements(["bo_ledger", "bo_journal"], reason="no_cross_layer_anchor")
+
+    assert am.get_disabled_elements() == [
+        {"identifier": "bo_journal", "type": "BusinessObject", "name": "Journal", "source": "concept::r::journal", "reason": "no_cross_layer_anchor"},
+        {"identifier": "bo_ledger", "type": "BusinessObject", "name": "Ledger", "source": "concept::r::ledger", "reason": "no_cross_layer_anchor"},
+    ]
+
+
 def test_enabling_an_unknown_element_returns_false(am):
     assert am.enable_element("nope") is False
 

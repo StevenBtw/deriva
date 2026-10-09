@@ -2049,6 +2049,65 @@ class TestLLMQueryEvent:
         assert first["response_hash"] != second["response_hash"]
         assert first["decision_hash"] == second["decision_hash"]
 
+    @staticmethod
+    def _logging_orchestrator(tmp_path, monkeypatch):
+        from deriva.services.benchmarking import BenchmarkConfig
+
+        monkeypatch.chdir(tmp_path)
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(),
+            graph_manager=MagicMock(),
+            archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["r"], models=["m"]),
+        )
+        orchestrator.session_id = "bench_1"
+        llm = MagicMock()
+        llm.query.return_value = MagicMock(content='{"roles": {"a": "x"}}', error=None, usage=None)
+        llm.last_call = {"cache_key": "k1", "cache_hit": False, "latency_ms": 812.5, "input_tokens": 100, "output_tokens": 20}
+        return orchestrator, llm
+
+    def test_calls_are_kept_per_run_with_prompt_answer_and_step(self, tmp_path, monkeypatch):
+        """Every call of a run lands in llm/<run>.jsonl with its prompt and answer (the cache keeps only the last answer)."""
+        from deriva.services.llm_log import LlmCallLog
+
+        orchestrator, llm = self._logging_orchestrator(tmp_path, monkeypatch)
+        run_logger = MagicMock(current_config="Node")
+        query_fn = orchestrator._create_logging_query_fn(llm, llm, run_logger)
+
+        orchestrator._current_run_id = "bench_1:TeaStore:m:1"
+        query_fn("Choose roles", schema={"name": "role_classification", "schema": {}}, system_prompt="You classify.")
+        orchestrator._current_run_id = "bench_1:TeaStore:m:2"
+        run_logger.current_config = "SystemSoftware"
+        query_fn("Choose roles again")
+
+        from deriva.services import benchmarking
+
+        llm_dir = benchmarking.LLM_LOG_ROOT / "bench_1" / "llm"
+        first = LlmCallLog.read(llm_dir / "bench_1_TeaStore_m_1.jsonl")
+        second = LlmCallLog.read(llm_dir / "bench_1_TeaStore_m_2.jsonl")
+        assert [(c["run_id"], c["step"], c["prompt"], c["schema"], c["response"]) for c in first] == [
+            ("bench_1:TeaStore:m:1", "Node", "Choose roles", "role_classification", '{"roles": {"a": "x"}}')
+        ]
+        assert first[0]["system_prompt"] == "You classify."
+        assert (first[0]["cache_key"], first[0]["latency_ms"], first[0]["tokens_in"]) == ("k1", 812.5, 100)
+        assert [(c["step"], c["seq"]) for c in second] == [("SystemSoftware", 1)]
+
+    def test_failing_calls_are_kept_and_raised(self, tmp_path, monkeypatch):
+        from deriva.services.llm_log import LlmCallLog
+
+        orchestrator, llm = self._logging_orchestrator(tmp_path, monkeypatch)
+        llm.query.side_effect = RuntimeError("provider down")
+        query_fn = orchestrator._create_logging_query_fn(llm, llm, MagicMock(current_config="Node"))
+        orchestrator._current_run_id = "bench_1:TeaStore:m:1"
+
+        with pytest.raises(RuntimeError):
+            query_fn("Choose roles")
+
+        from deriva.services import benchmarking
+
+        (call,) = LlmCallLog.read(benchmarking.LLM_LOG_ROOT / "bench_1" / "llm" / "bench_1_TeaStore_m_1.jsonl")
+        assert (call["prompt"], call["error"], call["response"]) == ("Choose roles", "provider down", None)
+
 
 class TestTimingsExport:
     def test_export_writes_timings_per_run_with_top_queries(self, tmp_path, monkeypatch):
@@ -2130,6 +2189,8 @@ class TestDatabasePerRepo:
 
 class TestExtractionLLMLogging:
     def test_extraction_llm_calls_are_logged_under_the_extraction_run(self):
+        from pathlib import Path
+
         from deriva.services.benchmarking import BenchmarkConfig
 
         orchestrator = BenchmarkOrchestrator(
@@ -2158,6 +2219,8 @@ class TestExtractionLLMLogging:
         (event,) = [e for e in orchestrator.ocel_log.events if e.activity == "LLMQuery"]
         assert event.objects["BenchmarkRun"] == ["s1:extraction:repo1"]
         assert event.attributes["config_id"] == "BusinessConcept"
+        # the suite keeps call logs out of the real workspace (tests/conftest.py)
+        assert not Path("workspace/benchmarks/s1").exists()
         assert event.attributes["latency_ms"] == 5.0
 
     def test_extraction_llm_calls_name_the_benchmark_model(self):
@@ -2307,6 +2370,40 @@ class TestRunSnapshotCandidates:
             {"type": "ApplicationComponent", "source": "dir::r::b", "stage": "llm_rejected"},
         ]
 
+    def test_elements_a_refine_step_disabled_are_recorded_with_their_reason(self, tmp_path, monkeypatch):
+        """A created candidate can still be missing from the model: the snapshot says which refine rule took it out."""
+        import json
+        from pathlib import Path
+
+        monkeypatch.chdir(tmp_path)
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [Element(name="A", element_type="ApplicationComponent", identifier="ac_a")]
+        archimate_manager.get_relationships.return_value = []
+        archimate_manager.get_disabled_elements.return_value = [
+            {"identifier": "bo_b", "type": "BusinessObject", "name": "B", "source": "concept::r::b", "reason": "no_cross_layer_anchor"}
+        ]
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(),
+            graph_manager=MagicMock(query=MagicMock(return_value=[])),
+            archimate_manager=archimate_manager,
+            config=BenchmarkConfig(repositories=["r"], models=["m"], export_models=True),
+        )
+        orchestrator.session_id = "s"
+        decisions = [
+            {"node_id": "dir::r::a", "element_type": "ApplicationComponent", "stage": "created", "name": "a"},
+            {"node_id": "concept::r::b", "element_type": "BusinessObject", "stage": "created", "name": "b"},
+        ]
+
+        with patch("deriva.services.benchmarking.ArchiMateXMLExporter"):
+            xml_path = orchestrator._export_run_model("r", "m", 1, candidate_decisions=decisions)
+
+        snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
+        assert snapshot["disabled"] == [{"identifier": "bo_b", "type": "BusinessObject", "name": "B", "source": "concept::r::b", "reason": "no_cross_layer_anchor"}]
+        assert snapshot["candidates"] == [
+            {"type": "ApplicationComponent", "source": "dir::r::a", "stage": "created"},
+            {"type": "BusinessObject", "source": "concept::r::b", "stage": "created", "refine": "no_cross_layer_anchor"},
+        ]
+
 
 class TestExtractionHonoursNoCache:
     """--no-cache must also make extraction's LLM calls live, or extraction variance is never measured."""
@@ -2419,3 +2516,40 @@ class TestIncomingRoutes:
 
         assert _incoming_routes(graph_manager, "BusinessConcept") == {"concept::r::alpha": ["directory"]}
         assert _incoming_routes(graph_manager, "Technology") == {"tech::r::beta": ["llm"]}
+
+
+class TestSessionInputs:
+    """Everything that changes results is written into the session folder when the session starts."""
+
+    def test_the_session_folder_records_its_inputs_at_the_start(self, tmp_path, monkeypatch):
+        import json
+        from datetime import datetime
+
+        import duckdb
+
+        from deriva.adapters.database.manager import SCRIPTS_DIR
+        from deriva.services import config as config_service
+        from deriva.services.benchmarking import BenchmarkConfig
+
+        monkeypatch.chdir(tmp_path)
+        engine = duckdb.connect(":memory:")
+        engine.execute((SCRIPTS_DIR / "schema.sql").read_text(encoding="utf-8"))
+        engine.execute("INSERT INTO file_type_registry (extension, file_type, subtype) VALUES ('license', 'meta', 'license')")
+        engine.execute(
+            "INSERT INTO extraction_config (id, node_type, version, sequence, enabled, instruction, example, is_active) VALUES (1, 'BusinessConcept', 20, 1, TRUE, 'i', 'e', TRUE)"
+        )
+        orchestrator = BenchmarkOrchestrator(engine=engine, graph_manager=MagicMock(), archimate_manager=MagicMock(), config=BenchmarkConfig(repositories=["repo"], models=["m"]))
+        orchestrator.session_start = datetime(2026, 10, 8, 9, 0, 0)
+        orchestrator.session_id = "bench_20261008_090000"
+        orchestrator._model_configs = {"m": {"name": "m", "provider": "mistral", "model": "devstral", "api_key": "sk-secret"}, "unused": {"name": "unused"}}
+
+        orchestrator._create_session()
+
+        path = tmp_path / "workspace" / "benchmarks" / "bench_20261008_090000" / "session_inputs.json"
+        recorded = json.loads(path.read_text(encoding="utf-8"))
+        assert recorded["captured_at"] == "2026-10-08T09:00:00"
+        assert recorded["config_versions"] == {"extraction": {"BusinessConcept": 20}, "derivation": {}}
+        assert recorded["inputs"] == config_service.input_snapshot(engine)
+        assert recorded["environment"]["models"] == {"m": {"name": "m", "provider": "mistral", "model": "devstral"}}
+        assert {"git", "source", "grafeo", "python"} <= set(recorded["environment"])
+        assert "sk-secret" not in path.read_text(encoding="utf-8")

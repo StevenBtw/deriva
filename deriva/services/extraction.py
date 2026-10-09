@@ -7,7 +7,7 @@ Orchestrates the extraction pipeline by:
 3. Calling extraction module functions
 4. Persisting results to GraphManager
 
-Used by both Marimo (visual) and CLI (headless).
+Used by both the studio (web UI) and the CLI (headless).
 
 Usage:
     from deriva.services import extraction
@@ -1391,6 +1391,10 @@ def _extract_business_concepts(
         return {"nodes_created": 0, "edges_created": 0, "errors": [f"BusinessConcept params.system_description_chars must be a non-negative integer, got {description_chars!r}"]}
     if not isinstance(context_sources, bool):
         return {"nodes_created": 0, "edges_created": 0, "errors": [f"BusinessConcept params.context_sources must be true or false, got {context_sources!r}"]}
+    # Absent in config versions before the switch: the key order decides inside the tie group at the cut
+    keep_ties = params.get("evidence_keep_ties", False)
+    if not isinstance(keep_ties, bool):
+        return {"nodes_created": 0, "edges_created": 0, "errors": [f"BusinessConcept params.evidence_keep_ties must be true or false, got {keep_ties!r}"]}
     input_sources = extraction.parse_input_sources(cfg.input_sources) if cfg.input_sources else None
     if not input_sources:
         return {"nodes_created": 0, "edges_created": 0, "errors": ["No input sources for BusinessConcept"]}
@@ -1410,7 +1414,7 @@ def _extract_business_concepts(
     candidates = concept_candidates.merge_candidates(found["candidates"], repo.name)
     candidates = concept_candidates.add_support(candidates, _code_names(graph_manager, repo.name))
     selected, selection = concept_candidates.select_candidates(
-        candidates, int(params["evidence_min_count"]), float(params["evidence_share"]), int(params["max_candidates"]), float(params["support_factor"])
+        candidates, int(params["evidence_min_count"]), float(params["evidence_share"]), int(params["max_candidates"]), float(params["support_factor"]), keep_ties
     )
     selected, phrases = concept_candidates.without_phrases(selected, frozenset(params["stop_words"]))
 
@@ -1447,6 +1451,8 @@ def _extract_business_concepts(
         "phrases": phrases,
         "tool": found["tool"],
         "decisions": decisions,
+        # What each decision does to the graph (reject labels alike), for output-level stability
+        "outcomes": {key: concept_candidates.outcome(label) for key, label in decisions.items()},
     }
     return {"nodes_created": len(nodes), "edges_created": len(edge_ids), "edge_ids": edge_ids, "errors": errors, "stats": stats}
 
@@ -1778,8 +1784,8 @@ def run_extraction_iter(
     """
     Run extraction pipeline as a generator, yielding progress updates.
 
-    This is the generator version of run_extraction() designed for use with
-    Marimo's mo.status.progress_bar iterator pattern.
+    This is the generator version of run_extraction() the studio streams its
+    updates to the browser as run events.
 
     Args:
         engine: DuckDB connection for config
@@ -1793,11 +1799,8 @@ def run_extraction_iter(
         ProgressUpdate objects for each step in the pipeline
 
     Example:
-        for update in mo.status.progress_bar(
-            run_extraction_iter(engine, graph_manager),
-            title="Extraction"
-        ):
-            pass  # Marimo renders between yields
+        for update in run_extraction_iter(engine, graph_manager):
+            print(update)
     """
     stats = {
         "repos_processed": 0,

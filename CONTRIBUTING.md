@@ -28,8 +28,8 @@ cp .env.example .env
 # Install with dev dependencies
 uv sync --all-extras
 
-# Run the marimo notebook
-uv run marimo edit deriva/app/app.py
+# Run the studio (build the front end once: cd studio && npm install && npm run build)
+uv run deriva
 
 # Run linter
 uv run ruff check .
@@ -42,13 +42,13 @@ uv run ty check .
 
 Deriva follows a **layered architecture** with strict separation of concerns:
 
-- **app/app.py (Marimo)**: Visual UI for configuration and pipeline execution
+- **studio/ (FastAPI + React)**: Local web UI for running the pipeline, the graphs, the model and configuration
 - **cli/cli.py**: Headless CLI for automation and scripting
 - **Services**: Shared orchestration layer with `PipelineSession` as the unified API
 - **Adapters**: Stateful services for I/O, persistence, connections
 - **Modules**: Pure functions for business logic transformations
 
-**Key Principle**: Both Marimo and CLI use `PipelineSession` from the services layer. This provides a unified API for lifecycle management, queries, and orchestration. Configuration lives in DuckDB (single source of truth). Data flows through pure transformations, with I/O isolated to adapters.
+**Key Principle**: Both the studio and the CLI use `PipelineSession` from the services layer. This provides a unified API for lifecycle management, queries, and orchestration. Configuration lives in DuckDB (single source of truth). Data flows through pure transformations, with I/O isolated to adapters.
 
 ### Architectural Boundaries (Enforced by Ruff)
 
@@ -70,14 +70,15 @@ These boundaries are enforced at lint time via Ruff's `TID251` rule with per-lay
 
 ```
 deriva/
-├── app/
-│   ├── app.py               - Marimo Notebook: Visual UI + uses PipelineSession
-│   └── layouts/             - Marimo UI layout components
+├── studio/
+│   ├── app.py               - FastAPI app factory (studio layer, services only)
+│   ├── routers/             - API routes (repositories, configs, graph, model, runs, grafeo)
+│   └── static/              - Built React front end (from studio/ at the repo root)
 ├── cli/
 │   └── cli.py               - Headless CLI + uses PipelineSession
 │
 ├── services/ (Shared orchestration layer)
-│   ├── session.py           - PipelineSession: unified API for CLI + Marimo
+│   ├── session.py           - PipelineSession: unified API for the CLI and the studio
 │   ├── config.py            - Config CRUD (read/write DuckDB settings)
 │   ├── extraction.py        - Run extraction step
 │   ├── derivation.py        - Run derivation step
@@ -140,8 +141,8 @@ deriva/
 
 ```
 ┌─────────────────┐         ┌─────────────────┐
-│     Marimo      │         │      CLI        │
-│  (config + UI)  │         │   (headless)    │
+│     Studio      │         │      CLI        │
+│  (web UI)       │         │   (headless)    │
 └────────┬────────┘         └────────┬────────┘
          │                           │
          └───────────┬───────────────┘
@@ -165,17 +166,17 @@ deriva/
 ### Data Flow Pattern
 
 ```
-User clicks "Run Pipeline" in app/app.py  OR  runs `deriva run` in CLI
+User clicks "Run" in the studio  OR  runs `deriva-cli run` in the CLI
     ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ PIPELINESESSION (unified API for CLI + Marimo)              │
+│ PIPELINESESSION (unified API for the CLI and the studio)    │
 ├─────────────────────────────────────────────────────────────┤
 │ with PipelineSession() as session:                          │
 │     session.run_extraction(repo_name="my-repo")             │
 │     session.run_derivation()                                │
 │     session.export_model("output.xml")                      │
 │                                                             │
-│ # For reactive UI (Marimo):                                 │
+│ # For the studio (one session per process):                 │
 │     stats = session.get_graph_stats()                       │
 │     elements = session.get_archimate_elements()             │
 └─────────────────────────────────────────────────────────────┘
@@ -205,25 +206,25 @@ User clicks "Run Pipeline" in app/app.py  OR  runs `deriva run` in CLI
     ↓
 Export via ArchimateManager.export_to_xml() [I/O]
     ↓
-Marimo: displays results in UI  |  CLI: prints summary to stdout
+Studio: streams progress and shows results  |  CLI: prints summary to stdout
 ```
 
-### Notebook Structure
+### Studio Structure
 
-| Column | Purpose |
-|--------|---------|
-| Column 0 | Run Deriva (pipeline buttons, status callouts) |
-| Column 1 | Configuration (runs, repos, graph database, graph stats, ArchiMate, LLM) |
-| Column 2 | Extraction Settings (file types, extraction step config) |
-| Column 3 | Derivation Settings (13 element types across Business/Application/Technology layers) |
+| Area | Purpose |
+|------|---------|
+| Workspace | Run configuration, live log, intermediate and output graph (anywidget-graph), ArchiMate model (anywidget-archimate) |
+| Repositories | Clone, inspect, delete |
+| General & file types | Settings and the file type registry |
+| Extraction / Derivation config | Steps with versions, prompt editing, saves as new versions |
 
-The app/app.py uses PipelineSession for all operations.
+The studio backend uses PipelineSession for all operations.
 
 ### Quick Reference
 
 | Component | Purpose | Can Do | Cannot Do |
 |-----------|---------|--------|-----------|
-| **app/app.py** | Visual UI | Display UI, use PipelineSession | Import adapters/modules directly |
+| **studio/** | Web UI (FastAPI + React) | Serve the API and the front end, use PipelineSession | Import adapters/modules/common directly |
 | **cli/cli.py** | Headless CLI | Parse args, use PipelineSession, print output | Import adapters/modules directly |
 | **PipelineSession** | Unified API | Lifecycle, queries, orchestration | Business logic |
 | **Services** | Orchestration | Load config, run pipeline steps, coordinate adapters | Direct I/O, pure business logic |
@@ -655,8 +656,7 @@ name = 'Deriva'
 
 ### Lifecycle
 
-- **Singleton pattern**: One instance per adapter per marimo session
-- Initialized **once** in app.py, passed to cells that need them
+- **One instance per session**: `PipelineSession` creates the adapters and keeps them for its lifetime
 - Maintain **persistent connections** for session lifetime
 - Support **auto-reconnect** with retry logic (max 3 attempts, exponential backoff)
 - Cleanup via `__del__` or `__exit__` methods
@@ -685,7 +685,7 @@ name = 'Deriva'
 - Export via `__init__.py` (e.g., `from .manager import GraphManager`)
 - Consistent method naming: `add_*`, `get_*`, `update_*`, `delete_*`, `query_*`
 - Return **data** (dicts, lists, dataclasses), not side effects
-- Accept **parameters** from marimo (don't read global state)
+- Accept **parameters** from the services (don't read global state)
 
 ### Adapter Structure
 
@@ -868,7 +868,7 @@ LLM_OLLAMA_NEMOTRON_STRUCTURED_OUTPUT=true
 ### Purpose
 
 - **Pure business logic** - data transformations only
-- Abstracts complex operations from marimo cells
+- Abstracts complex operations away from the services and the UI
 - Do **NOT** manage state, connections, or I/O
 
 ### Purity
@@ -878,7 +878,7 @@ LLM_OLLAMA_NEMOTRON_STRUCTURED_OUTPUT=true
 - **No state**: No class variables, no module-level state
 - Return **data** (dicts, lists, dataclasses), never `None`
 - **No adapter imports** (receive adapter data via parameters)
-- **No I/O operations** (marimo handles all I/O via adapters)
+- **No I/O operations** (the services do I/O through adapters)
 
 ### Dependencies
 
@@ -886,7 +886,6 @@ LLM_OLLAMA_NEMOTRON_STRUCTURED_OUTPUT=true
 - Can import **each other** (e.g., orchestration ← classification)
 - Can use **external libs** if pure (e.g., polars for data transforms)
 - **Cannot** import adapters
-- **Cannot** import marimo
 - **Cannot** import UI libraries
 
 ### Error Handling
@@ -1383,6 +1382,12 @@ deriva config versions
 
 **Never update configs by editing JSON and importing.** The `db_tool import` command is for **backup restoration only** - it overwrites the database including version history. This defeats the purpose of versioning and makes rollback impossible.
 
+**Shipped configuration (seed data).** The database itself (`deriva/adapters/database/sql.db`) is not in the repository. A fresh install creates it on first use from the schema, the migrations and the seed files in `deriva/adapters/database/data/`: the active config rows with their version numbers, the file types, the name patterns and the settings (no version history). An existing database is never touched. Before a release, refresh the seed files from the active configuration:
+
+```bash
+uv run python -m deriva.adapters.database.db_tool export --active-only
+```
+
 ### Prompts and LLM Calls
 
 Prompt text is configuration, not code: a run must be fully described by its config versions.
@@ -1467,13 +1472,13 @@ class BenchmarkProgressReporter(Protocol):
 | Layer | File | Implementation |
 |-------|------|----------------|
 | **CLI** | `cli/progress.py` | Rich-based reporters with fallback to no-op |
-| **Marimo** | `app/progress.py` | State-collecting reporter + `mo.status.spinner()` |
+| **Studio** | `studio/runs.py` | Iterates the run generators and streams each update as a server-sent event |
 | **Services** | `extraction.py`, `derivation.py`, `benchmarking.py` | Accept optional `progress` parameter |
 
-The services layer is UI-agnostic—it accepts any object implementing the protocol. This allows:
+The services layer is UI-agnostic: it accepts any object implementing the protocol. This allows:
 
 - CLI to use Rich progress bars with real-time updates
-- Marimo to collect events and display summary after completion with spinner during execution
+- The studio to stream every update to the browser as it happens
 - Tests to use no-op reporters
 
 ### Adding Progress to New Services
@@ -1668,140 +1673,29 @@ Group: stdlib, then third-party, then local. Blank line between groups.
 
 ---
 
-## Marimo
+## Studio
 
-Deriva uses [Marimo](https://marimo.io) as its reactive notebook framework. All UI and orchestration lives in `app/app.py`.
+The studio is the local web UI: `deriva/studio/` (FastAPI backend, a top layer that imports `deriva.services` only, enforced by `deriva/studio/ruff.toml`) and `studio/` at the repo root (React 19, Vite, TypeScript, CodeMirror 6, own CSS).
 
-**Documentation**: [docs.marimo.io](https://docs.marimo.io) | **Examples**: [github.com/marimo-team/marimo/examples](https://github.com/marimo-team/marimo/tree/main/examples)
-
-<details>
-<summary><strong>Editing app/app.py - Critical Quirks</strong></summary>
-
-### Cell Editing Format
-
-When editing `app/app.py`, only modify the contents inside the `@app.cell` decorator. Marimo auto-generates function parameters and return statements:
-
-```python
-@app.cell
-def _():
-    # Your code here - marimo handles the rest
-    return
-```
-
-### Reactivity Gotchas
-
-| Quirk | Why It Matters |
-|-------|----------------|
-| **No variable redeclaration** | Each variable name can only be defined in ONE cell across the entire notebook |
-| **`.value` access in separate cell** | You cannot access `button.value` in the same cell where `button` is defined |
-| **Underscore prefix = cell-local** | Variables like `_temp` are local to that cell and won't trigger downstream updates |
-| **Last expression auto-displays** | No need for `print()` or `display()` - the last expression renders automatically |
-| **No `global` keyword** | Never use `global` - marimo's DAG handles state |
-| **No callbacks** | Don't write callbacks - marimo's reactivity handles UI updates automatically |
-
-### DAG Dependencies
-
-Marimo builds a Directed Acyclic Graph from cell dependencies:
-- Cell parameters declare dependencies (e.g., `def _(mo, data):` depends on `mo` and `data`)
-- When a variable changes, all downstream cells automatically re-execute
-- Circular dependencies will error - reorganize code to break cycles
-
-### SQL Cells
-
-When using `mo.sql()` for DuckDB queries:
-- Don't add comments inside SQL cells
-- Use f-strings for dynamic values: `mo.sql(f"SELECT * FROM t WHERE x > {slider.value}")`
-- Configure output format in app init: `marimo.App(sql_output="polars")`
-
-### Visualization
-
-- **matplotlib**: use `plt.gca()` as last expression (not `plt.show()`)
-- **plotly/altair**: return the figure/chart object directly
-- Polars DataFrames render as interactive tables automatically
-
-</details>
-
-<details>
-<summary><strong>PipelineSession Integration Pattern</strong></summary>
-
-### Rules
-
-1. **Create PipelineSession ONCE** in an early cell (singleton pattern)
-2. Pass the **session** to cells via function parameters
-3. Use **session methods** for all operations (queries and orchestration)
-4. **Never** import adapters directly in app/app.py
-
-### Usage in Marimo
-
-```python
-# Cell 1: Create session (runs once)
-from services.session import PipelineSession
-session = PipelineSession(auto_connect=True)
-
-# Cell 2: Status display (reactive)
-def _(session, mo):
-    if session.is_connected():
-        stats = session.get_graph_stats()
-        mo.callout(mo.md(f"**Graph:** {stats['total_nodes']} nodes"), kind="success")
-    else:
-        mo.callout(mo.md("**Disconnected**"), kind="danger")
-
-# Cell 3: Run extraction (button click)
-def _(session, mo, run_button, selected_repo):
-    if run_button.value:
-        result = session.run_extraction(repo_name=selected_repo.value)
-        mo.callout(mo.md(f"Created {result['stats']['nodes_created']} nodes"))
-
-# Cell 4: Show elements table (reactive, updates after operations)
-def _(session, mo):
-    elements = session.get_archimate_elements()
-    mo.ui.table(elements)
-```
-
-### PipelineSession API
-
-| Method | Purpose |
-|--------|---------|
-| `connect()` / `disconnect()` | Lifecycle management |
-| `is_connected()` | Connection status |
-| `get_graph_stats()` | Node/edge counts for display |
-| `get_graph_nodes(type)` | Get nodes for table display |
-| `get_archimate_elements()` | Get elements for table display |
-| `query_graph(cypher)` | Run arbitrary Graph queries |
-| `query_model(cypher)` | Run arbitrary Model queries |
-| `run_extraction(...)` | Run extraction pipeline |
-| `run_derivation(...)` | Run derivation pipeline |
-| `run_pipeline(...)` | Run full pipeline |
-| `export_model(path, name)` | Export ArchiMate XML |
-| `start_graph_db()` / `stop_graph_db()` | Graph database control |
-| `clear_graph()` / `clear_model()` | Clear data |
-
-</details>
-
-<details>
-<summary><strong>Validation & Troubleshooting</strong></summary>
-
-### After Editing
+### Running it
 
 ```bash
-marimo check deriva/app/app.py --fix
+uv run deriva                        # API + built front end on http://127.0.0.1:8765
+cd studio && npm run dev             # front-end development; Vite forwards /api, /grafeo, /widgets to 8765
+npm test && npm run lint && npm run typecheck
+npm run build                        # writes deriva/studio/static/ (git-ignored, shipped in the wheel)
 ```
 
-This catches and auto-resolves common formatting issues.
+### Backend rules
 
-### Common Issues
+- One `PipelineSession` per process, behind a lock (`SessionProvider`); request handlers and the run worker take it (the worker once per pipeline step). A database held by another process answers 503 with the holder's PID.
+- Config edits go through the versioned service functions only (`save_*_config`), never in-place updates.
+- Free-form graph queries (the widget's query bar) run read-only: a write guard plus a grafeo transaction that is always rolled back.
+- Tests inject a fake session (`tests/test_studio/conftest.py`); they never open the real databases.
 
-| Issue | Solution |
-|-------|----------|
-| Circular dependencies | Reorganize code to remove cycles in DAG |
-| UI element value access error | Move `.value` access to separate cell from definition |
-| Visualization not showing | Ensure visualization object is the last expression |
-| Variable redeclaration error | Use unique names or underscore prefix for cell-local |
-| Cell not re-executing | Check that the variable is in the cell's function parameters |
+### Widgets
 
-</details>
-
----
+The studio mounts anywidget-graph and anywidget-archimate without Jupyter, through `studio/src/widgets/host.ts` (the model API a widget's front-end module expects). The backend serves each widget's module from the installed Python package (`/widgets/<name>/index.js`). anywidget-graph runs in grafeo server mode against `/grafeo` (health, query, schema), answered from the embedded databases.
 
 ## Testing
 
@@ -1876,7 +1770,6 @@ Adapter tests may require external services (DuckDB) - use fixtures for setup/te
 | Modules with I/O | Breaks purity, hard to test | Pass data as parameters |
 | Direct .env access in modules | Violates purity | Receive config as parameters |
 | YAML configuration files | Multiple config sources | Use .env for all config |
-| Manual state management in marimo | Fights reactivity | Let marimo handle state |
 | Creating adapters in individual cells | Multiple instances, connection issues | Create PipelineSession once |
 
 ---
@@ -1904,7 +1797,7 @@ This project includes several specialized documentation files:
 | Grafeo Adapter | [deriva/adapters/grafeo/README.md](deriva/adapters/grafeo/README.md) |
 | ArchiMate Adapter | [deriva/adapters/archimate/README.md](deriva/adapters/archimate/README.md) |
 | Repository Adapter | [deriva/adapters/repository/README.md](deriva/adapters/repository/README.md) |
-| Marimo App | [deriva/app/README.md](deriva/app/README.md) |
+| Studio | [README.md#studio](README.md#studio) |
 
 ---
 

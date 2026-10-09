@@ -616,6 +616,32 @@ class TestBenchmarkCommands:
         assert "bench_001" in result.stdout
 
     @patch("deriva.cli.commands.benchmark.PipelineSession")
+    def test_benchmark_export(self, mock_session_class):
+        """Should write the session bundle and say how many files it holds."""
+        mock_session = MagicMock()
+        mock_session.export_benchmark.return_value = {"session_id": "bench_001", "files": [{}, {}, {}]}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["benchmark", "export", "bench_001", "-o", "out/bench_001.zip"])
+
+        assert result.exit_code == 0
+        mock_session.export_benchmark.assert_called_once_with("bench_001", "out/bench_001.zip")
+        assert "3 files" in result.stdout
+        assert "out/bench_001.zip" in result.stdout
+
+    @patch("deriva.cli.commands.benchmark.PipelineSession")
+    def test_benchmark_export_unknown_session(self, mock_session_class):
+        """Should fail with the reason when the session folder does not exist."""
+        mock_session = MagicMock()
+        mock_session.export_benchmark.side_effect = FileNotFoundError("Benchmark session not found: bench_404")
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["benchmark", "export", "bench_404", "-o", "x.zip"])
+
+        assert result.exit_code == 1
+        assert "bench_404" in result.output
+
+    @patch("deriva.cli.commands.benchmark.PipelineSession")
     def test_benchmark_models_empty(self, mock_session_class):
         """Should show message when no models configured."""
         mock_session = MagicMock()
@@ -3785,6 +3811,48 @@ class TestRepositoryDatabaseSelection:
         assert [c.kwargs["repository"] for c in mock_session_class.call_args_list] == ["bigdata", "lightblue"]
 
 
+class TestModelConfigCommands:
+    """`config model list|set|delete` edit the model configs in .env (keys shown masked)."""
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_model_list(self, mock_session_class):
+        mock_session_class.return_value.list_model_configs.return_value = [
+            {"name": "anthropic-haiku", "provider": "anthropic", "model": "claude-haiku", "url": None, "key": "sk-...abcd", "key_env": None, "structured_output": None}
+        ]
+
+        result = runner.invoke(app, ["config", "model", "list"])
+
+        assert result.exit_code == 0
+        assert "anthropic-haiku" in result.stdout
+        assert "sk-...abcd" in result.stdout
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_model_set(self, mock_session_class):
+        result = runner.invoke(app, ["config", "model", "set", "mistral-small", "--provider", "mistral", "--model", "mistral-small-latest", "--key", "sk-x"])
+
+        assert result.exit_code == 0
+        mock_session_class.return_value.save_model_config.assert_called_once_with(
+            "mistral-small", provider="mistral", model="mistral-small-latest", url=None, key="sk-x", key_env=None, structured_output=None
+        )
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_model_set_refused(self, mock_session_class):
+        mock_session_class.return_value.save_model_config.side_effect = ValueError("Unknown provider 'nope'")
+
+        result = runner.invoke(app, ["config", "model", "set", "m", "--provider", "nope", "--model", "x"])
+
+        assert result.exit_code == 1
+        assert "Unknown provider" in result.output
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_model_delete_unknown(self, mock_session_class):
+        mock_session_class.return_value.delete_model_config.side_effect = KeyError("No model config named 'm'")
+
+        result = runner.invoke(app, ["config", "model", "delete", "m"])
+
+        assert result.exit_code == 1
+
+
 class TestSettingCommands:
     """`config setting show|set` read and write system settings through the session."""
 
@@ -3923,6 +3991,7 @@ class TestBenchmarkStepCommand:
             repositories={"repo1": consistency},
             answer_stability={"repo1": [AnswerStability(step="BusinessConcept", prompts=4, identical=3)]},
             decision_stability={"repo1": DecisionStability(items=573, stable=549)},
+            output_stability={"repo1": DecisionStability(items=573, stable=566)},
             llm_calls={"repo1": [4, 4]},
             errors=errors or [],
             unscored=unscored or [],
@@ -3951,6 +4020,7 @@ class TestBenchmarkStepCommand:
         assert "kind" in result.stdout  # the property that differs
         assert "3/4" in result.stdout  # answer stability of the step
         assert "549/573" in result.stdout  # decision stability of the step's items
+        assert "566/573" in result.stdout  # output stability: labels with the same effect alike
         assert "bench_1" in result.stdout
 
     @patch("deriva.cli.commands.benchmark.PipelineSession")

@@ -189,3 +189,41 @@ class TestImportTable:
         assert final_result[0] == original_count
 
         conn.close()
+
+
+class TestExportActiveOnly:
+    """Seed data holds the active configuration rows only; the version history stays local."""
+
+    def test_active_only_leaves_out_inactive_versions(self, tmp_path):
+        from deriva.adapters.database.db_tool import export_table
+
+        conn = get_connection(tmp_path / "test.db")
+        conn.execute("CREATE TABLE extraction_config (id INTEGER, node_type VARCHAR, version INTEGER, sequence INTEGER, is_active BOOLEAN)")
+        conn.execute("INSERT INTO extraction_config VALUES (1, 'File', 1, 1, false), (2, 'File', 2, 1, true), (3, 'Method', 1, 2, true)")
+
+        everything = json.loads(export_table(conn, "extraction_config", tmp_path / "all").read_text(encoding="utf-8"))
+        active = json.loads(export_table(conn, "extraction_config", tmp_path / "active", active_only=True).read_text(encoding="utf-8"))
+        conn.close()
+
+        assert [r["id"] for r in everything] == [1, 2, 3]
+        assert [(r["node_type"], r["version"]) for r in active] == [("File", 2), ("Method", 1)]
+
+    def test_tables_without_versions_export_every_row(self, tmp_path):
+        from deriva.adapters.database.db_tool import export_table
+
+        conn = get_connection(tmp_path / "test.db")
+        conn.execute("CREATE TABLE system_settings (key VARCHAR, value VARCHAR)")
+        conn.execute("INSERT INTO system_settings VALUES ('a', '1'), ('b', '2')")
+
+        rows = json.loads(export_table(conn, "system_settings", tmp_path, active_only=True).read_text(encoding="utf-8"))
+        conn.close()
+
+        assert [r["key"] for r in rows] == ["a", "b"]
+
+    def test_shipped_seed_data_holds_active_rows_only(self):
+        from deriva.adapters.database.db_tool import DATA_DIR
+
+        for name in ("extraction_config.json", "derivation_config.json", "derivation_patterns.json"):
+            rows = json.loads((DATA_DIR / name).read_text(encoding="utf-8"))
+            assert rows, name
+            assert all(r["is_active"] for r in rows), name

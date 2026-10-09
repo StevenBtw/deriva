@@ -77,6 +77,7 @@ def export_table(
     conn: duckdb.DuckDBPyConnection,
     table_name: str,
     output_dir: Path | None = None,
+    active_only: bool = False,
 ) -> Path:
     """Export a single table to JSON.
 
@@ -84,6 +85,7 @@ def export_table(
         conn: Database connection
         table_name: Name of the table to export
         output_dir: Output directory (defaults to DATA_DIR)
+        active_only: Leave out inactive config versions (tables with ``is_active``); the seed data holds the active rows only
 
     Returns:
         Path to the exported JSON file
@@ -110,7 +112,8 @@ def export_table(
     column_names = [col[0] for col in columns]
 
     # Query data
-    query = f"SELECT * FROM {table_name} ORDER BY {config['order_by']}"
+    where = " WHERE is_active" if active_only and "is_active" in column_names else ""
+    query = f"SELECT * FROM {table_name}{where} ORDER BY {config['order_by']}"
     rows = conn.execute(query).fetchall()
 
     # Convert to list of dicts
@@ -133,8 +136,10 @@ def export_table(
 
     # Write JSON
     output_dir.mkdir(parents=True, exist_ok=True)
-    with open(output_file, "w", encoding="utf-8") as f:
+    # LF and a final newline on every OS, so the shipped seed files are identical everywhere
+    with open(output_file, "w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
 
     logger.info("Exported %s: %d records -> %s", table_name, len(data), output_file.name)
     return output_file
@@ -143,12 +148,14 @@ def export_table(
 def export_all(
     db_path: Path | None = None,
     output_dir: Path | None = None,
+    active_only: bool = False,
 ) -> list[Path]:
     """Export all configured tables to JSON files.
 
     Args:
         db_path: Database file path (defaults to DB_PATH)
         output_dir: Output directory (defaults to DATA_DIR)
+        active_only: Leave out inactive config versions (see ``export_table``)
 
     Returns:
         List of exported file paths
@@ -159,7 +166,7 @@ def export_all(
 
     try:
         for table_name in TABLES:
-            path = export_table(conn, table_name, output_dir)
+            path = export_table(conn, table_name, output_dir, active_only)
             exported.append(path)
     finally:
         conn.close()
@@ -330,6 +337,11 @@ def main(args: Sequence[str] | None = None) -> int:
         type=Path,
         help=f"Database file (default: {DB_PATH})",
     )
+    export_parser.add_argument(
+        "--active-only",
+        action="store_true",
+        help="Leave out inactive config versions (how the shipped seed data is made)",
+    )
 
     # Import command
     import_parser = subparsers.add_parser(
@@ -378,11 +390,11 @@ def main(args: Sequence[str] | None = None) -> int:
         if parsed.table:
             conn = get_connection(parsed.db, read_only=True)
             try:
-                export_table(conn, parsed.table, parsed.output)
+                export_table(conn, parsed.table, parsed.output, parsed.active_only)
             finally:
                 conn.close()
         else:
-            export_all(parsed.db, parsed.output)
+            export_all(parsed.db, parsed.output, parsed.active_only)
         print("\n[OK] Export complete!")
 
     elif parsed.command == "import":

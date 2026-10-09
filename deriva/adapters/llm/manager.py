@@ -510,8 +510,8 @@ class LLMManager:
     def last_call(self) -> dict[str, Any] | None:
         """Metrics of the latest query() on the current thread.
 
-        Keys: cache_key, cache_hit, latency_ms, wait_ms, requests, input_tokens,
-        output_tokens, error_type.
+        Keys: cache_key, provider, model, temperature, max_tokens (the settings the call
+        ran with), cache_hit, latency_ms, wait_ms, requests, input_tokens, output_tokens, error_type.
         """
         return getattr(self._call_store(), "call", None)
 
@@ -632,6 +632,11 @@ class LLMManager:
         # Filled in along the way so every return path leaves complete metrics
         call: dict[str, Any] = {
             "cache_key": cache_key,
+            # The generation settings the call ran with (after defaults), as in the cache key
+            "provider": self.provider_name,
+            "model": self.model,
+            "temperature": effective_temperature,
+            "max_tokens": effective_max_tokens,
             "cache_hit": False,
             "latency_ms": 0.0,
             "wait_ms": 0.0,

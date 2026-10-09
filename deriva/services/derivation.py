@@ -6,7 +6,7 @@ Orchestrates the derivation pipeline with phases:
 2. generate: LLM-based element and relationship derivation
 3. refine: Post-generation model refinement (dedup, orphans, etc.)
 
-Used by both Marimo (visual) and CLI (headless).
+Used by both the studio (web UI) and the CLI (headless).
 
 Usage:
     from deriva.services import derivation
@@ -1228,8 +1228,8 @@ def run_derivation_iter(
     """
     Run derivation pipeline as a generator, yielding progress updates.
 
-    This is the generator version of run_derivation() designed for use with
-    Marimo's mo.status.progress_bar iterator pattern.
+    This is the generator version of run_derivation() the studio streams its
+    updates to the browser as run events.
 
     Args:
         engine: DuckDB connection for config

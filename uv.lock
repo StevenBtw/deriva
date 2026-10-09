@@ -78,6 +78,18 @@ wheels = [
 ]
 
 [[package]]
+name = "anywidget-archimate"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anywidget" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4b/cf/ff5f97f70037eb34751c4c9058f07e45bdd9831e73ed963fea542f0e518c/anywidget_archimate-0.2.0.tar.gz", hash = "sha256:3dcc4ce6dbc7fa1c8e2ca6e4ef248f3208465b0261cbf69e97fdc4494e2db863", size = 148711, upload-time = "2026-03-16T14:51:54.013Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/df/58/0bdc415d9756415d95d896e683ae7a0ff40b811932dbbbddc536a46331bb/anywidget_archimate-0.2.0-py3-none-any.whl", hash = "sha256:0951c20401ea07638592a07badcecbd56e0abf5564210ae2f6ae82dcf00ed957", size = 26865, upload-time = "2026-03-16T14:51:52.903Z" },
+]
+
+[[package]]
 name = "anywidget-graph"
 version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -538,6 +550,7 @@ name = "deriva"
 version = "0.7.1"
 source = { editable = "." }
 dependencies = [
+    { name = "anywidget-archimate" },
     { name = "anywidget-graph" },
     { name = "authlib" },
     { name = "backoff" },
@@ -546,11 +559,11 @@ dependencies = [
     { name = "diskcache" },
     { name = "duckdb" },
     { name = "en-core-web-sm" },
+    { name = "fastapi" },
     { name = "fr-core-news-sm" },
     { name = "grafeo" },
     { name = "httpx" },
     { name = "lxml" },
-    { name = "marimo" },
     { name = "nest-asyncio" },
     { name = "prek" },
     { name = "pyasn1" },
@@ -575,6 +588,7 @@ dependencies = [
     { name = "tree-sitter-javascript" },
     { name = "tree-sitter-python" },
     { name = "typer" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -589,6 +603,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anywidget-archimate", specifier = ">=0.2.0" },
     { name = "anywidget-graph", specifier = ">=0.3" },
     { name = "authlib", specifier = ">=1.8.0" },
     { name = "backoff", specifier = ">=2.2.1" },
@@ -597,11 +612,11 @@ requires-dist = [
     { name = "diskcache", specifier = ">=5.6.3" },
     { name = "duckdb", specifier = ">=1.5" },
     { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
+    { name = "fastapi", specifier = ">=0.142.4" },
     { name = "fr-core-news-sm", url = "https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl" },
-    { name = "grafeo", specifier = ">=0.5.44" },
+    { name = "grafeo", path = "H:/GrafeoDB/wheels/0.6.0-dev-ff9cca65/grafeo-0.5.44-cp312-abi3-win_amd64.whl" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "lxml", specifier = ">=6" },
-    { name = "marimo", specifier = ">=0.25" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2" },
     { name = "prek", specifier = ">=0.5" },
@@ -632,6 +647,7 @@ requires-dist = [
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0" },
     { name = "typer", specifier = ">=0.27" },
     { name = "types-lxml", marker = "extra == 'dev'", specifier = ">=2026.2" },
+    { name = "uvicorn", specifier = ">=0.41.0" },
 ]
 provides-extras = ["dev"]
 
@@ -741,6 +757,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cc/28/c14e053b6762b1044f34a13aab6859bbf40456d37d23aa286ac24cfd9a5d/executing-2.2.1.tar.gz", hash = "sha256:3632cc370565f6648cc328b32435bd120a1e4ebb20c77e3fdde9a13cd1e533c4", size = 1129488, upload-time = "2025-09-01T09:48:10.866Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/ea/53f2148663b321f21b5a606bd5f191517cf40b7072c0497d3c92c4a13b1e/executing-2.2.1-py2.py3-none-any.whl", hash = "sha256:760643d3452b4d777d295bb167ccc74c64a81df23fb5e08eff250c425a4b2017", size = 28317, upload-time = "2025-09-01T09:48:08.5Z" },
+]
+
+[[package]]
+name = "fastapi"
+version = "0.142.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b8/2c/d69ce63c27bf9c5e574ab425118390102924503b4b3cdf33c07a69744dd2/fastapi-0.142.4.tar.gz", hash = "sha256:7fe2e254a0a948b88f432b02b8f627463285248233bba0998ed9640191e2ff57", size = 467841, upload-time = "2026-10-07T21:22:13.046Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/75/6a/c3e85c05b2ec12e9d352b6f1700e29e0fb3f0fff2511b9c44cdf8837577d/fastapi-0.142.4-py3-none-any.whl", hash = "sha256:8a651aa071a9f92c8217cca1d0b044bf9c326f336578be0a728a1a1f22ec52d2", size = 144456, upload-time = "2026-10-07T21:22:11.386Z" },
 ]
 
 [[package]]
@@ -856,21 +889,24 @@ wheels = [
 [[package]]
 name = "grafeo"
 version = "0.5.44"
-source = { registry = "https://pypi.org/simple" }
+source = { path = "H:/GrafeoDB/wheels/0.6.0-dev-ff9cca65/grafeo-0.5.44-cp312-abi3-win_amd64.whl" }
 dependencies = [
     { name = "solvor" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2d/e0/33a02244bfe0c69ab75f7689e0e6be8e4b0a6a946aae6e3c8423fd30c6b3/grafeo-0.5.44.tar.gz", hash = "sha256:c2f936755392ebd0fc01a7a6440079ab58d8c8cb9c4a5b570c16974589031fac", size = 2766110, upload-time = "2026-10-04T12:32:21.158Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d2/0b/ad03ad4ffc9e8e2bcb5a544c3fe3205d3933c23fb122643a57f96c3c80f6/grafeo-0.5.44-cp312-abi3-macosx_10_12_x86_64.whl", hash = "sha256:0d4fa382fb227621aeea2b534aca15c801963c4d7b2d71b9299cc8d4f341df83", size = 5362442, upload-time = "2026-10-04T12:32:03.654Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/95/27c3aa5ca59a14e7d2d3183474773249f33de4fd78952ad93b868aa31e2d/grafeo-0.5.44-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:563a68b6684928edac6f77a7e80c2d6ac918721754df120c5bf33589348f533e", size = 5028415, upload-time = "2026-10-04T12:32:06.171Z" },
-    { url = "https://files.pythonhosted.org/packages/5f/9a/9d2cb291fac608ab843f6b7c6a9f3d723100870fac8ab0c76df21ae284a7/grafeo-0.5.44-cp312-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:006e0e81d934845a217cae4733ac0d88eeb261bd58685f9b41b73170d11ec330", size = 5352405, upload-time = "2026-10-04T12:32:08.028Z" },
-    { url = "https://files.pythonhosted.org/packages/44/a8/250d95dd47a8b83a79d278ec713ffb3256d7bf3ef908e721dda3e766b53c/grafeo-0.5.44-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:52a5569a2df3bb5a18f426a2eea4b9a22a4ca739f5f2bb9a7a237a49c351d687", size = 5578598, upload-time = "2026-10-04T12:32:10.459Z" },
-    { url = "https://files.pythonhosted.org/packages/67/46/e92a0745c3c065e360f728f998167009dcd0b5d6857eeaf22fc098d520e5/grafeo-0.5.44-cp312-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:2e3fd31ae8296f88c06d7eb1785969996f71e23325d369478a160cbcbc280c4e", size = 5530918, upload-time = "2026-10-04T12:32:12.692Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/e4/965162f4c1e18ad5353d3e43348c33110dbf2ad859420052a995a1010b12/grafeo-0.5.44-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:71ca6b799dc9ee7280fa5515fee2bbe603484961aed5a9c7da98e7d5f969fa3d", size = 5844349, upload-time = "2026-10-04T12:32:15.032Z" },
-    { url = "https://files.pythonhosted.org/packages/f9/85/1d4a88a9e450e83112a350ec9a061e4e9f8dea21b8761a3031d94e6715b0/grafeo-0.5.44-cp312-abi3-win32.whl", hash = "sha256:ce32d9fd9ba463be8b2ee72973e4afe1b56424c8be2681fe3c44d15be70bbf6e", size = 5011007, upload-time = "2026-10-04T12:32:16.991Z" },
-    { url = "https://files.pythonhosted.org/packages/25/51/cc1b49151629daf67b1dc7d2e07c2c4b68c9e2c69c768bd5a93d7132bed7/grafeo-0.5.44-cp312-abi3-win_amd64.whl", hash = "sha256:ad26a6bc8dcf96d6fd2aecdf6f818bfa0b1deecebea3ec37667da5c2a1ca8956", size = 5489503, upload-time = "2026-10-04T12:32:18.922Z" },
+    { filename = "grafeo-0.5.44-cp312-abi3-win_amd64.whl", hash = "sha256:e4a6d27d112a1c1bfa295e2eb7651623651d249beaf77a3343a890177a997975" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "grafeo-cli", marker = "extra == 'cli'", specifier = ">=0.5.40,<0.6" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.3" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
+    { name = "solvor", specifier = ">=0.6.1" },
+    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.24" },
+]
+provides-extras = ["cli", "dev"]
 
 [[package]]
 name = "griffelib"

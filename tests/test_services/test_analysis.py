@@ -76,6 +76,25 @@ class TestAnswerStability:
 
         assert {s.step: (s.prompts, s.identical) for s in result["alpha_beta"]} == {"DeriveStep": (1, 1)}
 
+    def test_recorded_answers_are_recomputed_from_the_call_logs(self):
+        """Where a session kept its LLM calls, decisions come from the answers themselves (the event log's
+        hash froze an older rule: a code fence made reworded documentation count as a new decision)."""
+        stale = OCELLog()
+        for session, stale_hash in (("s1", "h1"), ("s2", "h2")):
+            stale.create_event("LLMQuery", objects={"BenchmarkRun": [f"{session}:repo:m:1"]}, config_id="Step", cache_key="k", decision_hash=stale_hash)
+        analyzer = BenchmarkAnalyzer.__new__(BenchmarkAnalyzer)
+        analyzer.ocel_logs = {"s1": stale, "s2": OCELLog()}
+        analyzer.repositories = ["repo"]
+        fence = '```json\n{{"elements": [{{"name": "Alpha", "documentation": "{}"}}]}}\n```'
+        analyzer.call_logs = {
+            "s1": [{"run_id": "s1:repo:m:1", "step": "Step", "cache_key": "k", "response": fence.format("One wording")}],
+            "s2": [{"run_id": "s2:repo:m:1", "step": "Step", "cache_key": "k", "response": fence.format("Another wording")}],
+        }
+
+        result = {s.step: (s.prompts, s.identical) for s in analyzer.analyze_answer_stability()["repo"]}
+
+        assert result == {"Step": (1, 1)}
+
 
 class TestSessionInfo:
     """The analyzer reads the benchmark's session metadata (it was renamed from summary.json)."""

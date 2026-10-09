@@ -1,5 +1,6 @@
 """Tests for deriva.services.session module (PipelineSession)."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -813,6 +814,23 @@ class TestPipelineSessionConfigMethods:
 
         assert result["success"] is True
 
+    def test_save_extraction_config_passes_the_example(self, connected_session):
+        connected_session._mock_config.create_extraction_config_version.return_value = {"success": True, "new_version": 3}
+
+        connected_session.save_extraction_config("BusinessConcept", instruction="i", example="e")
+
+        kwargs = connected_session._mock_config.create_extraction_config_version.call_args.kwargs
+        assert kwargs["instruction"] == "i"
+        assert kwargs["example"] == "e"
+
+    def test_save_derivation_config_passes_the_example(self, connected_session):
+        connected_session._mock_config.create_derivation_config_version.return_value = {"success": True, "new_version": 3}
+
+        connected_session.save_derivation_config("Node", instruction="i", example="e")
+
+        kwargs = connected_session._mock_config.create_derivation_config_version.call_args.kwargs
+        assert kwargs["example"] == "e"
+
     def test_get_derivation_configs(self, connected_session):
         """Should return derivation configs as dicts."""
         mock_config = MagicMock()
@@ -1145,6 +1163,22 @@ class TestPipelineSessionCypherQueries:
         assert len(result) == 1
         assert result[0]["e.name"] == "MyComponent"
 
+    def test_query_graph_read_only_uses_the_rolled_back_path(self, connected_session):
+        connected_session._mock_graph.query_read_only.return_value = [{"id": "d1"}]
+
+        rows = connected_session.query_graph_read_only("MATCH (n) RETURN n.id AS id", {"x": 1})
+
+        assert rows == [{"id": "d1"}]
+        connected_session._mock_graph.query_read_only.assert_called_once_with("MATCH (n) RETURN n.id AS id", {"x": 1})
+        connected_session._mock_graph.query.assert_not_called()
+
+    def test_query_model_read_only_uses_the_rolled_back_path(self, connected_session):
+        connected_session._mock_archimate.query_read_only.return_value = []
+
+        connected_session.query_model_read_only("MATCH (e) RETURN e")
+
+        connected_session._mock_archimate.query_read_only.assert_called_once_with("MATCH (e) RETURN e", None)
+
     def test_query_graph_raises_when_not_connected(self):
         """Should raise RuntimeError when not connected."""
         session = PipelineSession()
@@ -1385,6 +1419,271 @@ class TestPipelineSessionBenchmarking:
 
         with pytest.raises(RuntimeError, match="not connected"):
             session.list_benchmarks()
+
+
+class TestPipelineSessionCallLog:
+    """The session's LLM calls go to an attached per-run call log (prompt, answer, metrics)."""
+
+    @pytest.fixture
+    def session(self):
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+            manager = MagicMock()
+            manager.query.return_value = MagicMock(content='{"roles": {"jboss": "application_server"}}', error=None)
+            manager.last_call = {"cache_key": "k1", "cache_hit": False, "latency_ms": 12.5, "input_tokens": 100, "output_tokens": 20, "error_type": None}
+            session._llm_manager = manager
+            yield session
+
+    def test_calls_are_recorded_with_prompt_answer_and_metrics(self, session, tmp_path):
+        from deriva.services.llm_log import LlmCallLog
+
+        log = LlmCallLog(tmp_path / "llm.jsonl", run_id="r1")
+        session.attach_call_log(log)
+        query = session._get_llm_query_fn()
+
+        query("Choose a role for jboss", {"name": "role_classification", "strict": True, "schema": {"type": "object"}}, system_prompt="You classify.")
+        log.assign_step("Node")
+
+        call = LlmCallLog.read(tmp_path / "llm.jsonl")[0]
+        assert call["step"] == "Node"
+        assert call["prompt"] == "Choose a role for jboss"
+        assert call["system_prompt"] == "You classify."
+        assert call["schema"] == "role_classification"
+        assert call["response"] == '{"roles": {"jboss": "application_server"}}'
+        assert (call["cache_key"], call["cache_hit"], call["latency_ms"], call["tokens_in"], call["tokens_out"]) == ("k1", False, 12.5, 100, 20)
+
+    def test_failing_calls_are_recorded_and_raised(self, session, tmp_path):
+        from deriva.services.llm_log import LlmCallLog
+
+        session._llm_manager.query.side_effect = RuntimeError("provider down")
+        log = LlmCallLog(tmp_path / "llm.jsonl", run_id="r1")
+        session.attach_call_log(log)
+        query = session._get_llm_query_fn()
+
+        with pytest.raises(RuntimeError):
+            query("p", None)
+        log.close()
+
+        assert LlmCallLog.read(tmp_path / "llm.jsonl")[0]["error"] == "provider down"
+
+    def test_without_a_log_nothing_is_written(self, session, tmp_path):
+        from deriva.services.llm_log import LlmCallLog
+
+        log = LlmCallLog(tmp_path / "llm.jsonl", run_id="r1")
+        session.attach_call_log(log)
+        session.detach_call_log()
+        query = session._get_llm_query_fn()
+
+        query("p", None)
+        log.close()
+
+        assert LlmCallLog.read(tmp_path / "llm.jsonl") == []
+
+
+class TestPipelineSessionTrace:
+    def test_trace_element_hands_the_session_and_calls_to_the_trace_service(self):
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+        calls = [{"call_id": "c1", "prompt": "p"}]
+
+        with patch("deriva.services.trace.trace_element", return_value={"element": {}}) as trace:
+            assert session.trace_element("e1", calls) == {"element": {}}
+
+        trace.assert_called_once_with(session, "e1", calls)
+
+
+class TestPipelineSessionExportBenchmark:
+    @pytest.fixture
+    def session(self):
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+        session._engine = MagicMock()
+        session._engine.execute.return_value.fetchone.return_value = (
+            json.dumps({"models": ["m"]}),
+            json.dumps({"extraction": {"Repository": 2}, "derivation": {"Node": 7}}),
+        )
+        return session
+
+    def test_bundle_has_config_texts_at_the_session_versions_and_no_keys(self, session, tmp_path):
+        import zipfile
+
+        from deriva.adapters.llm.models import BenchmarkModelConfig
+        from deriva.services.config import DerivationConfig, ExtractionConfig
+        from deriva.services.export_bundle import verify_bundle
+
+        (tmp_path / "bench_1").mkdir()
+        (tmp_path / "bench_1" / "session_metadata.json").write_text("{}", encoding="utf-8")
+        extraction = [ExtractionConfig("Repository", 1, True, None, "Describe the repository", None)]
+        derivation = [DerivationConfig("Node", "generate", 3, True, True, "MATCH (n) RETURN n", None, "Choose the nodes", None, "{}")]
+        model = BenchmarkModelConfig(name="m", provider="azure", model="gpt", api_key="sk-secret")
+
+        with (
+            patch("deriva.services.config.get_extraction_configs_by_version", return_value=extraction) as by_version,
+            patch("deriva.services.config.get_derivation_configs_by_version", return_value=derivation),
+            patch.object(session, "list_benchmark_models", return_value={"m": model, "other": model}),
+        ):
+            manifest = session.export_benchmark("bench_1", tmp_path / "out.zip", benchmarks_dir=tmp_path)
+
+        by_version.assert_called_once_with(session._engine, {"Repository": 2})
+        with zipfile.ZipFile(tmp_path / "out.zip") as bundle:
+            snapshot = json.loads(bundle.read("config_snapshot.json"))
+            environment = bundle.read("environment.json")
+        assert (snapshot["extraction"][0]["node_type"], snapshot["extraction"][0]["version"], snapshot["extraction"][0]["instruction"]) == (
+            "Repository",
+            2,
+            "Describe the repository",
+        )
+        assert (snapshot["derivation"][0]["step_name"], snapshot["derivation"][0]["version"]) == ("Node", 7)
+        assert list(json.loads(environment)["models"]) == ["m"]
+        assert b"sk-secret" not in environment
+        assert manifest["session_id"] == "bench_1"
+        assert verify_bundle(tmp_path / "out.zip") == []
+
+    def test_session_ids_cannot_leave_the_benchmarks_folder(self, session, tmp_path):
+        with pytest.raises(ValueError):
+            session.export_benchmark("../outside", tmp_path / "out.zip", benchmarks_dir=tmp_path / "benchmarks")
+
+
+class TestPipelineSessionBenchmarkViews:
+    @pytest.fixture
+    def session(self):
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+        session._engine = MagicMock()
+        session._engine.execute.return_value.fetchone.return_value = (json.dumps({"models": ["azure-gpt4"]}),)
+        return session
+
+    def test_views_use_the_model_names_of_the_sessions(self, session, tmp_path):
+        with (
+            patch("deriva.services.benchmark_views.results", return_value=[{"repository": "r"}]) as results,
+            patch("deriva.services.benchmark_views.flips", return_value=[]) as flips,
+            patch("deriva.services.benchmark_views.inspector", return_value={}) as inspector,
+        ):
+            assert session.benchmark_results(["s_a", "s_b"], benchmarks_dir=tmp_path) == [{"repository": "r"}]
+            session.benchmark_flips(["s_a"], "r", benchmarks_dir=tmp_path)
+            session.benchmark_inspector(["s_a"], "r", benchmarks_dir=tmp_path)
+        with patch("deriva.services.benchmark_views.element_trace", return_value=[]) as trace:
+            session.benchmark_trace(["s_a"], "r", "Node", "tech::r::queue", benchmarks_dir=tmp_path)
+
+        trace.assert_called_once_with(tmp_path, ["s_a"], ["azure-gpt4"], "r", "Node", "tech::r::queue")
+        results.assert_called_once_with(tmp_path, ["s_a", "s_b"], ["azure-gpt4"])
+        flips.assert_called_once_with(tmp_path, ["s_a"], ["azure-gpt4"], "r")
+        inspector.assert_called_once_with(tmp_path, ["s_a"], ["azure-gpt4"], "r")
+
+    def test_steps_report_answer_stability_per_repository(self, session):
+        from deriva.modules.analysis.types import AnswerStability
+
+        with patch("deriva.services.analysis.BenchmarkAnalyzer") as analyzer:
+            analyzer.return_value.analyze_answer_stability.return_value = {"r": [AnswerStability(step="Node", prompts=4, identical=3)]}
+            steps = session.benchmark_steps(["s_a"])
+
+        analyzer.assert_called_once_with(["s_a"], session._engine)
+        assert steps == {"r": [{"step": "Node", "prompts": 4, "identical": 3, "score": 0.75}]}
+
+    def test_session_ids_are_checked(self, session, tmp_path):
+        with pytest.raises(ValueError):
+            session.benchmark_results(["s_a", "../x"], benchmarks_dir=tmp_path)
+
+
+class TestPipelineSessionModelConfigs:
+    """Model configs live in .env; the session reads and writes them without a database connection."""
+
+    def test_models_round_trip_through_the_env_file_in_the_working_directory(self, tmp_path, monkeypatch):
+        (tmp_path / ".env").write_text("# keep me\nLLM_TEMPERATURE=0\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        session = PipelineSession()
+
+        session.save_model_config("mistral-small", provider="mistral", model="mistral-small-latest", key="sk-new-key-0000wxyz")
+
+        assert [(m["name"], m["key"]) for m in session.list_model_configs()] == [("mistral-small", "sk-...wxyz")]
+        session.delete_model_config("mistral-small")
+        assert session.list_model_configs() == []
+        assert (tmp_path / ".env").read_text(encoding="utf-8").startswith("# keep me\nLLM_TEMPERATURE=0\n")
+
+
+class TestPipelineSessionConfigEditor:
+    @pytest.fixture
+    def session(self):
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+        session._engine = MagicMock()
+        return session
+
+    def test_saves_pass_params_and_batch_size_and_refuse_bad_params(self, session):
+        with patch("deriva.services.config.create_derivation_config_version", return_value={"success": True}) as create:
+            session.save_derivation_config("Node", params='{"k": 2}', batch_size=5, input_graph_query="MATCH (n) RETURN n")
+            with pytest.raises(ValueError):
+                session.save_derivation_config("Node", params="[1, 2]")
+
+        assert create.call_count == 1
+        assert (create.call_args.kwargs["params"], create.call_args.kwargs["batch_size"], create.call_args.kwargs["input_graph_query"]) == ('{"k": 2}', 5, "MATCH (n) RETURN n")
+
+        with patch("deriva.services.config.create_extraction_config_version", return_value={"success": True}) as create_extraction:
+            session.save_extraction_config("Concept", params='{"a": 1}', batch_size=3)
+        assert (create_extraction.call_args.kwargs["params"], create_extraction.call_args.kwargs["batch_size"]) == ('{"a": 1}', 3)
+
+    def test_history_scan_and_dry_run(self, session):
+        with patch("deriva.services.config.get_config_history", return_value=[{"version": 2}]) as history:
+            assert session.get_config_history("derivation", "Node") == [{"version": 2}]
+        history.assert_called_once_with(session._engine, "derivation", "Node")
+
+        with patch("deriva.services.overfit.scan_texts", return_value={"available": True, "findings": []}) as scan:
+            assert session.scan_prompt_texts({"instruction": "x"}) == {"available": True, "findings": []}
+        scan.assert_called_once_with({"instruction": "x"})
+
+        rows = [{"n": {"_id": i, "_labels": ["Graph", "Directory"], "id": f"dir::r::{i}", "name": f"d{i}"}} for i in range(25)]
+        with patch.object(session, "query_graph_read_only", return_value=rows) as query:
+            result = session.dry_run_graph_query("MATCH (n:Graph:Directory) RETURN n", limit=20)
+        query.assert_called_once_with("MATCH (n:Graph:Directory) RETURN n")
+        assert result["count"] == 25
+        assert len(result["rows"]) == 20
+        assert result["rows"][0] == {"n": {"labels": ["Directory"], "id": "dir::r::0", "name": "d0"}}
+
+
+class TestPipelineSessionOntology:
+    def test_ontology_views_are_built_from_the_session(self):
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+
+        with (
+            patch("deriva.services.ontology.intermediate_ontology", return_value={"node_types": []}) as inner,
+            patch("deriva.services.ontology.output_ontology", return_value={"rules": []}) as outer,
+        ):
+            assert session.intermediate_ontology() == {"node_types": []}
+            assert session.output_ontology() == {"rules": []}
+
+        inner.assert_called_once_with(session)
+        outer.assert_called_once_with(session)
 
 
 class TestPipelineSessionLLMQueryFn:
@@ -1662,6 +1961,28 @@ class TestPipelineSessionArchimateStatsEdgeCases:
             assert result["total_elements"] == 2
             assert result["by_type"]["ApplicationService"] == 2
 
+    def test_get_archimate_stats_counts_real_elements_by_their_element_type(self):
+        """The archimate manager returns Element objects, whose type is ``element_type``."""
+        from deriva.adapters.archimate import Element
+
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager") as mock_archimate,
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+            mock_archimate.return_value.get_elements.return_value = [
+                Element(name="A", element_type="Node", identifier="n_a"),
+                Element(name="B", element_type="Node", identifier="n_b"),
+                Element(name="C", element_type="DataObject", identifier="do_c"),
+            ]
+            mock_archimate.return_value.get_relationships.return_value = []
+
+            result = session.get_archimate_stats()
+
+        assert result["by_type"] == {"Node": 2, "DataObject": 1}
+
     def test_get_archimate_stats_with_unknown_type(self):
         """Should handle elements without type."""
         with (
@@ -1910,3 +2231,41 @@ def test_connect_applies_pending_migrations():
         PipelineSession(auto_connect=True)
 
     migrate.assert_called_once_with(engine)
+
+
+class TestRunInputs:
+    """A studio run records what it ran on in its folder, in the format of a benchmark session's inputs."""
+
+    def test_a_run_folder_records_what_the_run_ran_on(self, tmp_path):
+        from types import SimpleNamespace
+
+        import duckdb
+
+        from deriva.adapters.database.manager import SCRIPTS_DIR
+        from deriva.services import config as config_service
+
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+        engine = duckdb.connect(":memory:")
+        engine.execute((SCRIPTS_DIR / "schema.sql").read_text(encoding="utf-8"))
+        engine.execute("INSERT INTO file_type_registry (extension, file_type, subtype) VALUES ('license', 'meta', 'license')")
+        engine.execute(
+            "INSERT INTO extraction_config (id, node_type, version, sequence, enabled, instruction, example, is_active) VALUES (1, 'BusinessConcept', 20, 1, TRUE, 'i', 'e', TRUE)"
+        )
+        session._engine = engine
+        session._llm_manager = SimpleNamespace(provider_name="mistral", model="devstral", temperature=0.6, max_tokens=4000, api_key="sk-secret")
+
+        path = session.write_run_inputs(tmp_path / "r1", "r1")
+
+        recorded = json.loads(path.read_text(encoding="utf-8"))
+        assert (path.name, recorded["run_id"]) == ("inputs.json", "r1")
+        assert recorded["config_versions"] == {"extraction": {"BusinessConcept": 20}, "derivation": {}}
+        assert recorded["inputs"] == config_service.input_snapshot(engine)
+        assert recorded["environment"]["models"] == {"session": {"provider": "mistral", "model": "devstral", "temperature": 0.6, "max_tokens": 4000}}
+        assert {"git", "source", "grafeo", "python"} <= set(recorded["environment"])
+        assert "sk-secret" not in path.read_text(encoding="utf-8")

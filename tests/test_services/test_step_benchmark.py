@@ -361,6 +361,28 @@ class TestRunStep:
         data = json.loads((Path("workspace/benchmarks") / result.session_id / "step_results.json").read_text(encoding="utf-8"))
         assert data["repositories"]["r"]["decision_stability"] == {"items": 2, "stable": 1, "score": 0.5}
 
+    def test_output_stability_compares_what_the_decisions_do(self, workspace, graph_manager):
+        """Two reject labels give the same output: a step that reports outcomes gets their stability next to the raw labels'."""
+        runs = iter(
+            [
+                ({"a": "generic", "b": "business_object"}, {"a": "rejected", "b": "entity"}),
+                ({"a": "technical", "b": "business_object"}, {"a": "rejected", "b": "entity"}),
+                ({"a": "generic", "b": "business_object"}, {"a": "rejected", "b": "entity"}),
+            ]
+        )
+
+        def fake_extraction(benchmark, *, steps, repo_name, **kwargs):
+            if steps == ["BusinessConcept"]:
+                decisions, outcomes = next(runs)
+                return {"success": True, "stats": {}, "errors": [], "step_stats": {repo_name: {"BusinessConcept": {"decisions": decisions, "outcomes": outcomes}}}}
+            return {"success": True, "stats": {}, "errors": []}
+
+        result, _ = self._run(graph_manager, "BusinessConcept", fake_extraction)
+
+        assert (result.decision_stability["r"].stable, result.output_stability["r"].stable) == (1, 2)
+        data = json.loads((Path("workspace/benchmarks") / result.session_id / "step_results.json").read_text(encoding="utf-8"))
+        assert data["repositories"]["r"]["output_stability"] == {"items": 2, "stable": 2, "score": 1.0}
+
     def test_a_step_without_decisions_has_no_decision_stability(self, workspace, graph_manager):
         result, _ = self._run(graph_manager, "BusinessConcept", lambda benchmark, **kwargs: {"success": True, "stats": {}, "errors": []})
 

@@ -295,6 +295,35 @@ class TestPerCandidateMode:
         assert stages.get("0") != "filtered_out"
         assert [("CONFIG NAMING RULES" in c.args[0]) for c in llm.call_args_list] == [True]
 
+    def test_candidates_the_cap_leaves_out_are_told_apart_from_filtered_ones(self):
+        """A rule judged the one; the budget (max_candidates) the other: the run record must say which."""
+
+        class NameFiltered(ConcreteDerivation):
+            def filter_candidates(self, candidates, enrichments, max_candidates, **kwargs):
+                return sorted((c for c in candidates if c.name.endswith("Data")), key=lambda c: c.node_id)[:max_candidates]
+
+        candidates = [Candidate(node_id=str(i), name=name, labels=["TypeDefinition"], properties={}) for i, name in enumerate(["AData", "BData", "CData", "Helper"])]
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            result = NameFiltered().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                llm_query_fn=MagicMock(return_value=SimpleNamespace(content=self.RESPONSE)),
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=2,
+                batch_size=5,
+                existing_elements=[],
+                prompt=TEST_PROMPT,
+            )
+
+        stages = {d.node_id: d.stage for d in result.candidate_decisions}
+        assert (stages["2"], stages["3"]) == ("over_cap", "filtered_out")
+        assert stages.get("0") not in ("over_cap", "filtered_out") and stages.get("1") not in ("over_cap", "filtered_out")
+
     def test_with_an_annotation_pattern_only_marked_candidates_are_named_per_candidate(self):
         """An annotation that shows what a candidate is decides; the LLM only names it. The others are judged in a batch."""
         per_candidate = PerCandidateConfig(min_pool=1, rules="CONFIG NAMING RULES", persona="P", decorators=r"^Entity(\(.*)?$")
@@ -1015,6 +1044,21 @@ class TestStructureDecidesUniqueness:
                 naming=NamingConfig(instruction="NAMING RULES", samples=1),
             )
         return result, prompts
+
+    def test_a_proper_name_the_source_writes_as_one_word_keeps_its_inner_capitals(self):
+        """The source spells "ledgerkit3" as one word: the LLM's "LedgerKit3" is not split into "Ledger Kit3"."""
+        candidates = [Candidate(node_id="file_schema", name="ledgerkit3_Report.xsd", labels=["File"], properties={"path": "repo/schemas/ledgerkit3_Report.xsd"})]
+
+        result, _ = self._generate(candidates, ["LedgerKit3 Report Schema"], per_candidate=True)
+
+        assert [e["name"] for e in result.created_elements] == ["LedgerKit3 Report Schema"]
+
+    def test_a_code_name_the_llm_copies_is_split_where_the_source_splits_it(self):
+        candidates = [Candidate(node_id="type_proc", name="EntityProcessor", labels=["TypeDefinition"], properties={"path": "repo/src/EntityProcessor.java"})]
+
+        result, _ = self._generate(candidates, ["EntityProcessor"], per_candidate=True)
+
+        assert [e["name"] for e in result.created_elements] == ["Entity Processor"]
 
     @pytest.mark.parametrize("per_candidate", [True, False])
     def test_a_name_that_is_another_candidates_structure_name_is_not_taken(self, per_candidate):

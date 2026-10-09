@@ -223,11 +223,12 @@ class TestBusinessConceptStep:
         result = _run(tmp_path, graph, _ledger_tool(), FakeLlm({"Ledger": "business_object", "Data": "generic"}))
 
         stats = result["stats"]
-        assert stats["selection"] == {"candidates": 2, "qualified": 2, "share_size": 2, "selected": 2, "capped": False}
+        assert stats["selection"] == {"candidates": 2, "qualified": 2, "share_size": 2, "ties_added": 0, "selected": 2, "capped": False}
         assert (stats["batches"], stats["labels"]) == (1, {"business_object": 1, "generic": 1})
         assert stats["issues"] == {"unmatched": 0, "duplicates": 0, "missing": 0}
         assert stats["tool"] == {"spacy": "3.8.16"}
         assert stats["decisions"] == {"data": "generic", "ledger": "business_object"}
+        assert stats["outcomes"] == {"data": "rejected", "ledger": "entity"}
         assert stats["retries"] == {"calls": 0, "recovered": 0}
         assert stats["phrases"] == 0
 
@@ -325,7 +326,22 @@ class TestBusinessConceptStep:
 
         assert '   context (docs/a.md): "Ledger in docs/a.md"' in llm.calls[0]["prompt"]
 
-    @pytest.mark.parametrize("option", [{"system_description_chars": -1}, {"system_description_chars": "many"}, {"context_sources": "yes"}])
+    def test_the_evidence_cut_keeps_its_tie_group_when_configured(self, tmp_path, graph):
+        """Three terms with equal evidence sit at the cut: all of them or (older versions) the first by key."""
+        tool = FakeNlpTool(
+            [_tool_candidate("Journal", "en", "journal", ["docs/a.md"] * 3 + ["docs/b.md"] * 3 + ["docs/c.md"] * 3)]
+            + [_tool_candidate(term, "en", term.lower(), ["docs/a.md"] * 2) for term in ("Ledger", "Account", "Booking")]
+        )
+        params = {**PARAMS, "evidence_share": 0.65}
+        older, kept = FakeLlm({}), FakeLlm({})
+
+        _run(tmp_path, graph, tool, older, cfg=_cfg(params=params))
+        _run(tmp_path, graph, tool, kept, cfg=_cfg(params={**params, "evidence_keep_ties": True}))
+
+        assert older.prompted_terms() == ["Account", "Journal"]
+        assert kept.prompted_terms() == ["Account", "Booking", "Journal", "Ledger"]
+
+    @pytest.mark.parametrize("option", [{"system_description_chars": -1}, {"system_description_chars": "many"}, {"context_sources": "yes"}, {"evidence_keep_ties": "yes"}])
     def test_invalid_prompt_options_are_an_error_before_any_work(self, tmp_path, graph, option):
         tool, llm = _ledger_tool(), FakeLlm({})
 
