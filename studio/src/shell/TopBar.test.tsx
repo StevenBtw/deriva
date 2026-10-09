@@ -32,6 +32,15 @@ describe("TopBar", () => {
     expect(screen.getByText("DB busy")).toBeInTheDocument();
   });
 
+  it("shows the Deriva mark next to the name", () => {
+    const { container } = render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned" }} />);
+
+    const logo = container.querySelector(".logo");
+    expect(logo).toHaveTextContent("Deriva Studio");
+    // Decorative: the name next to it is the accessible label
+    expect(logo?.querySelector("svg.mark")).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("links the API docs", () => {
     render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned" }} />);
 

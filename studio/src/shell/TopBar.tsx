@@ -1,5 +1,6 @@
 import type { DbStatus } from "../api/types";
 import { nextTheme, useTheme } from "../theme/theme";
+import { Logo } from "./Logo";
 
 export type Mode = "run" | "benchmark";
 
@@ -21,7 +22,7 @@ export function TopBar({ mode, onModeChange, db, status, onOpenDocs, onOpenLlm }
   return (
     <header className="topbar">
       <div className="logo">
-        <i aria-hidden="true" />
+        <Logo />
         Deriva Studio
       </div>
       <div className="seg" role="group" aria-label="Mode">

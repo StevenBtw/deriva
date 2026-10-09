@@ -1382,6 +1382,12 @@ deriva config versions
 
 **Never update configs by editing JSON and importing.** The `db_tool import` command is for **backup restoration only** - it overwrites the database including version history. This defeats the purpose of versioning and makes rollback impossible.
 
+**Shipped configuration (seed data).** The database itself (`deriva/adapters/database/sql.db`) is not in the repository. A fresh install creates it on first use from the schema, the migrations and the seed files in `deriva/adapters/database/data/`: the active config rows with their version numbers, the file types, the name patterns and the settings (no version history). An existing database is never touched. Before a release, refresh the seed files from the active configuration:
+
+```bash
+uv run python -m deriva.adapters.database.db_tool export --active-only
+```
+
 ### Prompts and LLM Calls
 
 Prompt text is configuration, not code: a run must be fully described by its config versions.

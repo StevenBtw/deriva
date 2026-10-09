@@ -11,8 +11,13 @@
   --text: #e7e9ee;
   --muted: #9aa2b0;
   --faint: #6b7380;
-  --accent: #4c8dff;
-  --accent-soft: rgba(76, 141, 255, 0.16);
+  --accent: #5bb8a9;
+  --accent-soft: rgba(91, 184, 169, 0.16);
+  --on-accent: #0d1416;
+  --brand-ring1: #6cc5a9;
+  --brand-ring2: #4f9ca6;
+  --brand-ring3: #5e88ad;
+  --brand-core: #a8ecd1;
   --ok: #3fb950;
   --warn: #e3a33b;
   --bad: #f85149;
@@ -34,8 +39,13 @@
     --text: #1c2027;
     --muted: #5d6573;
     --faint: #8b93a0;
-    --accent: #2f6fe4;
-    --accent-soft: rgba(47, 111, 228, 0.12);
+    --accent: #2a7680;
+    --accent-soft: rgba(42, 118, 128, 0.12);
+    --on-accent: #ffffff;
+    --brand-ring1: #2f9c7f;
+    --brand-ring2: #34858f;
+    --brand-ring3: #4a78a0;
+    --brand-core: #1f7a5f;
     --ok: #1f8f3a;
     --warn: #b9770e;
     --bad: #cf222e;
@@ -57,8 +67,13 @@
   --text: #1c2027;
   --muted: #5d6573;
   --faint: #8b93a0;
-  --accent: #2f6fe4;
-  --accent-soft: rgba(47, 111, 228, 0.12);
+  --accent: #2a7680;
+  --accent-soft: rgba(42, 118, 128, 0.12);
+  --on-accent: #ffffff;
+  --brand-ring1: #2f9c7f;
+  --brand-ring2: #34858f;
+  --brand-ring3: #4a78a0;
+  --brand-core: #1f7a5f;
   --ok: #1f8f3a;
   --warn: #b9770e;
   --bad: #cf222e;
@@ -108,7 +123,7 @@ button:disabled {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 button.go {
   background: var(--ok);
@@ -265,12 +280,24 @@ tbody tr.clickable:hover td {
   align-items: center;
   gap: 8px;
 }
-.logo i {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  background: linear-gradient(135deg, var(--inter), var(--app) 55%, var(--tech));
-  display: inline-block;
+/* The Deriva mark (small form): rings messy at the edge, calm at the solid core */
+.mark {
+  flex: none;
+}
+.mark path {
+  fill: none;
+  stroke-width: 3.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.mark .mark-outer {
+  stroke: var(--brand-ring3);
+}
+.mark .mark-inner {
+  stroke: var(--brand-ring1);
+}
+.mark .mark-core {
+  fill: var(--brand-core);
 }
 .seg {
   display: inline-flex;
@@ -286,7 +313,7 @@ tbody tr.clickable:hover td {
 }
 .seg button.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .runstatus {
   color: var(--muted);

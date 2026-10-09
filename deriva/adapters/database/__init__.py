@@ -29,6 +29,7 @@ from .db_tool import export_all as export_database
 from .db_tool import import_all as import_database
 from .manager import (
     DB_PATH,
+    ensure_database,
     get_connection,
     init_database,
     reset_database,
@@ -37,6 +38,7 @@ from .manager import (
 )
 
 __all__ = [
+    "ensure_database",
     "get_connection",
     "init_database",
     "seed_database",

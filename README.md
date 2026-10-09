@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/deriva-banner-dark.svg">
+  <img alt="Deriva: from code repositories to ArchiMate models" src="assets/brand/deriva-banner-light.svg">
+</picture>
+
 # Deriva
 [![Research Project](https://img.shields.io/badge/Research-Project-blueviolet.svg)](#)
 [![Build Status](https://github.com/StevenBtw/Deriva/actions/workflows/ci.yml/badge.svg)](https://github.com/StevenBtw/Deriva/actions/workflows/ci.yml)
@@ -6,189 +11,152 @@
 [![Grafeo](https://img.shields.io/badge/Grafeo-embedded-green.svg)](https://github.com/StevenBtw/grafeo)
 [![Studio](https://img.shields.io/badge/Studio-FastAPI%20%2B%20React-blue.svg)](#studio)
 
-**Automatically generate ArchiMate enterprise architecture models from software repositories.**
+**From code repositories to ArchiMate models.**
 
-Deriva analyzes code repositories and transforms them into [ArchiMate](https://www.opengroup.org/archimate-forum) models that can be opened in the [Archi modeling tool](https://www.archimatetool.com/).
+Deriva reads a software repository, builds a graph of what is in it, and derives an [ArchiMate](https://www.opengroup.org/archimate-forum) enterprise architecture model you can open in [Archi](https://www.archimatetool.com/).
 
-![Deriva App](assets/app.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/studio-dark.png">
+  <img alt="Deriva Studio: the intermediate graph on the left, the output graph on the right" src="assets/studio-light.png">
+</picture>
 
 ## How It Works
 
-1. **Clone** a Git repository
-2. **Extraction** - Build a graph representation:
-   - **Classify phase**: Categorize files by type and subtype using registry
-   - **Parse phase**: Extract semantic nodes (TypeDefinitions, Methods, BusinessConcepts, etc.)
-   - Python files use fast AST parsing; other languages use LLM
-3. **Derivation** - Generate ArchiMate elements using a hybrid approach:
-   - **Prep phase**: Graph enrichment (PageRank, Louvain communities, k-core)
-   - **Generate phase**: LLM-based element derivation with graph metrics
-   - **Refine phase**: Relationship derivation and quality assurance
-4. **Export** to `.xml` file (ArchiMate format)
+Deriva works from the outside in, like its mark: repository, intermediate graph, output graph, ArchiMate model. Parsing and graph algorithms find the structure; an LLM reads what needs reading. Every prompt is versioned configuration you can open and change.
+
+1. **Repository** (clone): the code as it is, a Git repository cloned locally. Deriva classifies every file by type, from source and config to docs, tests and build files.
+2. **Intermediate graph** (extract): parsing (tree-sitter for most languages) turns the code into a graph of directories, files, types, methods, dependencies, technologies and business concepts. Graph metrics (PageRank, Louvain communities, k-core) then rank what matters.
+3. **Output graph** (derive): graph structure picks the candidates; an LLM classifies and names them within ArchiMate's rules, then refine steps tidy the result. The studio shows both graphs side by side.
+4. **ArchiMate model** (export): the output graph exports in the Open Group ArchiMate exchange format, ready to open in Archi.
 
 ## Quick Setup
 
-### Prerequisites
+Deriva runs on your own machine: Deriva Studio in your browser, the pipeline and its embedded databases locally. Nothing is sent anywhere except the prompts to the LLM you choose.
 
-- **Python 3.14+**
-- **uv** (Python package manager)
+### Requirements
+
+- **Python 3.14**. uv downloads it for you if it is missing.
+- **uv**, the Python package manager (step 1).
+- **Git**, to clone Deriva and the repositories you analyse.
+- **Node 22**, to build the studio's front end from a source checkout.
+- **An LLM**: an API key for Azure OpenAI, OpenAI, Anthropic or Mistral, or a local model in Ollama or LM Studio.
 
 ### 1. Install uv
 
-```bash
-# Windows (PowerShell)
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+Windows (PowerShell):
 
-# macOS/Linux
+```bash
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+macOS and Linux:
+
+```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### 2. Clone and Configure
+### 2. Clone Deriva and create your settings
 
 ```bash
 git clone https://github.com/StevenBtw/Deriva.git
 cd Deriva
-
-# Create environment configuration
 cp .env.example .env
-# Edit .env with your settings (LLM API keys, etc.)
 ```
 
-### 3. Create Python Environment
+All settings live in `.env`. Set up an LLM there before your first run ([how](#set-up-an-llm)).
 
-```bash
-uv venv --python 3.14
-```
-
-Activate the virtual environment:
-
-```bash
-# Windows PowerShell
-.venv\Scripts\Activate.ps1
-
-# Windows Command Prompt
-.venv\Scripts\activate.bat
-
-# macOS/Linux
-source .venv/bin/activate
-```
-
-### 4. Install Dependencies
+### 3. Install the dependencies
 
 ```bash
 uv sync
 ```
 
-### 5. NLP Models (Business Concepts)
+This creates `.venv` with Python 3.14 and installs everything, including the spaCy pipelines (English, German and French) that find business concepts in documentation.
 
-The business concept step finds candidate terms in the documentation with pinned spaCy pipelines (English, German, French), which `uv sync` installs with the other dependencies. It gives German and French terms an English form with pinned translation models, which the step downloads into `workspace/cache/nlp` on its first run and checks by SHA-256. `DERIVA_NLP_MODELS_DIR` in `.env` moves that folder.
-
-### 6. Launch the Studio
-
-```bash
-cd ../../..  # Back to Deriva root
-uv run deriva
-```
-
-The studio opens at http://127.0.0.1:8765 (API documentation at http://127.0.0.1:8765/docs). It binds to this machine only; `--port` picks another port.
-
-The front end ships inside the package once built. From a source checkout, build it once (Node 22):
+### 4. Build the studio, once
 
 ```bash
 cd studio
 npm install
-npm run build   # writes deriva/studio/static/, which the studio serves
+npm run build
+cd ..
 ```
+
+This writes the front end into the Python package, which serves it. Build again after you pull changes to `studio/`.
+
+### 5. Start Deriva Studio
+
+```bash
+uv run deriva
+```
+
+Open http://127.0.0.1:8765. On its first start Deriva sets up its configuration database with the default steps; nothing to do. The studio listens on this machine only; `--port` picks another port, and the API documentation is at `/docs`.
 
 ---
 
-## First Time Setup
+## Set Up an LLM
 
-When you first open Deriva, you need to seed the configuration database.
-
-### 1. Seed File Type Registry
-
-Navigate to **Column 2: Manage Extraction** → **File Type Registry**
-
-1. Click **"Seed from JSON"**
-2. This loads default file type mappings from `extraction_config.json`
-3. Categories include: Source, Config, Docs, Test, Build, Asset, Data, Exclude
-
-### 2. Enable Extraction Steps
-
-Navigate to **Column 2: Manage Extraction** → **Extraction Step Configuration**
-
-Enable the extraction steps you need:
-
-| Step | Purpose | Recommended |
-|------|---------|-------------|
-| Repository | Creates root node for the repo | Always |
-| Directory | Creates directory structure nodes | Always |
-| File | Creates file nodes with classification | Always |
-| TypeDefinition | Extracts classes, functions (AST for Python) | Yes |
-| Method | Extracts methods from type definitions | Optional |
-| Edge | Extracts relationships (IMPORTS, USES, CALLS, DECORATED_BY, REFERENCES) | Yes |
-| Technology | Finds infrastructure (runtimes, databases, brokers, container platforms) from manifests, build and container files | Optional |
-| ExternalDependency | Maps external dependencies | Optional |
-| Test | Extracts test definitions | Optional |
-
-### 3. Configure LLM (Optional)
-
-If using LLM-assisted extraction, configure your provider in `.env`:
+Each model gets a block of `LLM_{NAME}_*` settings in `.env`, and `LLM_DEFAULT_MODEL` picks the one Deriva uses. The default model is the name in lowercase with hyphens: `LLM_MISTRAL_DEVSTRAL_*` becomes `mistral-devstral`.
 
 ```bash
-# Set default model to use
+# .env: a cloud model
 LLM_DEFAULT_MODEL=mistral-devstral
-
-# Configure the model (naming: LLM_{NAME}_*)
 LLM_MISTRAL_DEVSTRAL_PROVIDER=mistral
 LLM_MISTRAL_DEVSTRAL_MODEL=devstral-2512
 LLM_MISTRAL_DEVSTRAL_URL=https://api.mistral.ai/v1/chat/completions
-LLM_MISTRAL_DEVSTRAL_KEY=your-key-here
+LLM_MISTRAL_DEVSTRAL_KEY=your-mistral-api-key
 LLM_MISTRAL_DEVSTRAL_STRUCTURED_OUTPUT=true
 ```
+
+A local model needs no key:
+
+```bash
+# .env: a local model in Ollama
+LLM_DEFAULT_MODEL=ollama-devstral
+LLM_OLLAMA_DEVSTRAL_PROVIDER=ollama
+LLM_OLLAMA_DEVSTRAL_MODEL=devstral-small-2
+LLM_OLLAMA_DEVSTRAL_URL=http://localhost:11434/api/chat
+```
+
+| Provider | For |
+|----------|-----|
+| `azure` | Azure OpenAI |
+| `openai` | OpenAI |
+| `anthropic` | Anthropic |
+| `mistral` | Mistral |
+| `ollama` | Ollama, local |
+| `lmstudio` | LM Studio, local |
+
+`STRUCTURED_OUTPUT=true` lets the API enforce the JSON schema (OpenAI, Anthropic, Mistral and Ollama). Rate limits, retries and the response cache have defaults; `.env.example` lists every setting.
 
 ---
 
 ## Using Deriva
 
-### Basic Workflow
+### Analyse your first repository
 
-#### 1. Clone a Repository
+1. Open **Repositories** in the studio's menu and choose **+ Clone repository**. Enter the Git URL; a name and a branch are optional.
+2. Open the **Workspace**, pick the repository and a scope, and press **Run**. **Structural steps only (without LLM)** gives a first look without any LLM calls.
+3. Follow the run in the tabs at the bottom: **Live**, **Trace**, **Prompts** and **Errors**. The intermediate graph and the output graph fill in side by side.
+4. **View model**, on the right edge, opens the output graph as an ArchiMate diagram; click an element for its details.
 
-**Column 1: Configuration → Repositories**
+### Export to Archi
 
-1. Enter repository URL (e.g., `https://github.com/user/repo.git`)
-2. Optionally specify a target name
-3. Click **"Clone"**
+Deriva writes the model in the Open Group ArchiMate exchange format. From the studio: open **View model** and press **Export XML**; it writes `workspace/output/model.xml` on the machine that runs the studio. Or from the command line:
 
-#### 2. Run the Pipeline
-
-**Column 0: Run Deriva**
-
-- Click **"Run Deriva"** to run the full pipeline (extraction → derivation)
-- Or use individual step buttons: **Extraction**, **Derivation**
-
-Results display in a status callout showing nodes/elements created and any errors.
-
-#### 3. View Results
-
-**Column 1: Configuration**
-
-- **Graph Statistics**: Node counts by type (Repository, Directory, File, etc.)
-- **ArchiMate Model**: Element and relationship counts by type
-
-#### 4. Export to Archi
-
-**Column 1: Configuration → ArchiMate Model**
-
-1. Set export path (default: `workspace/output/model.xml`)
-2. Click **"Export Model"**
-3. Open the file with [Archi](https://www.archimatetool.com/)
-
-**Via CLI:**
 ```bash
-deriva export -o workspace/output/model.xml
+uv run deriva-cli export -o workspace/output/model.xml --repo my-repo
 ```
+
+In Archi, choose **File**, **Import**, **Open Exchange XML Model** and pick the file.
+
+### Change a prompt
+
+1. Open **Extraction config** or **Derivation config** in the menu.
+2. Pick a step and edit its instruction or example. Every LLM step follows the same pattern: input, instruction, example.
+3. Press **Save as new version**. Earlier versions stay in the history, and each step can be switched on or off.
+
+Run the repository again to see the effect.
 
 ---
 
@@ -278,16 +246,16 @@ If you encounter **undefined extensions** during extraction:
 
 ```bash
 # List all registered file types
-deriva config filetype list
+uv run deriva-cli config filetype list
 
 # Add a new file type
-deriva config filetype add ".tsx" source typescript
+uv run deriva-cli config filetype add ".tsx" source typescript
 
 # Delete a file type
-deriva config filetype delete ".tsx"
+uv run deriva-cli config filetype delete ".tsx"
 
 # Show file type statistics by category
-deriva config filetype stats
+uv run deriva-cli config filetype stats
 ```
 
 > **Note:** Files with unrecognized extensions are automatically classified as `file_type="unknown"` with their extension as the subtype. This ensures all files get proper classification even without explicit registry entries.
@@ -295,16 +263,16 @@ deriva config filetype stats
 **Excluded directories:** dependency and tool directories are skipped by every repository walk (no Directory or File nodes, no LLM calls), matched as whole path segments. The list is the `excluded_directories` system setting (JSON list); by default `.git`, `__pycache__`, `node_modules`, `bower_components`, `vendor`, `.venv`, `venv` and `site-packages`. Changing it triggers re-extraction.
 
 ```bash
-deriva config setting show excluded_directories
-deriva config setting set excluded_directories '[".git", "node_modules", "third_party"]'
+uv run deriva-cli config setting show excluded_directories
+uv run deriva-cli config setting set excluded_directories '[".git", "node_modules", "third_party"]'
 ```
 
 **Derivation name patterns:** some derivation steps use include and exclude patterns on the names of their code candidates; business concepts are already classified and skip them. Most of these steps reject a name that contains an exclude pattern and keep one that contains an include pattern, and a name that matches neither follows the step's default (rejected by most steps, kept by BusinessFunction, ApplicationInterface, SystemSoftware and TechnologyService). BusinessObject (type definitions) and BusinessEvent (methods) use the patterns to rank candidates instead, and fill their remaining slots with names that did not match. A step that uses the default candidate filter (ApplicationComponent, ApplicationInterface, BusinessFunction, DataObject, Device, Node, SystemSoftware, TechnologyService) can limit the patterns to candidates with given graph labels with its `pattern_labels` param, and set a k-core threshold with `graph_filter`. Patterns are stored per step, type and category.
 
 ```bash
-deriva config pattern list Node
-deriva config pattern add Node include deployment helm
-deriva config pattern delete Node include --category deployment helm   # a category left empty is deactivated
+uv run deriva-cli config pattern list Node
+uv run deriva-cli config pattern add Node include deployment helm
+uv run deriva-cli config pattern delete Node include --category deployment helm   # a category left empty is deactivated
 ```
 
 ### Updating Configurations (Versioning)
@@ -318,19 +286,19 @@ Deriva uses a **versioning system** for configurations. When you update a config
 
 ```bash
 # Update extraction config instruction
-deriva config update extraction BusinessConcept \
+uv run deriva-cli config update extraction BusinessConcept \
   -i "New instruction text..."
 
 # Update extraction config with batch size for multi-file LLM calls
-deriva config update extraction BusinessConcept \
+uv run deriva-cli config update extraction BusinessConcept \
   --batch-size 5
 
 # Update derivation config from file
-deriva config update derivation ApplicationComponent \
+uv run deriva-cli config update derivation ApplicationComponent \
   --instruction-file prompts/app_component.txt
 
 # View all versions
-deriva config versions
+uv run deriva-cli config versions
 ```
 
 **Do NOT use JSON import/export for config updates.** The `db_tool import` command is only for backup restoration or migration - it overwrites version history. See [BENCHMARKS.md](BENCHMARKS.md) for the optimization workflow.
@@ -339,10 +307,9 @@ deriva config versions
 
 For LLM-assisted extraction steps:
 
-1. Navigate to **Column 2** → **Extraction Step Configuration**
-2. Expand a node type (e.g., TypeDefinition)
-3. Edit: Input File Types, Input Graph Elements, Instruction, Example
-4. Click **"Save Config"** (this creates a new version)
+1. Open **Extraction config** in the studio's menu and pick a step (e.g., BusinessConcept)
+2. Edit its input sources, instruction, example or params
+3. Press **Save as new version**; earlier versions stay in the history
 
 All prompts follow the **Input + Instruction + Example** pattern.
 
@@ -368,9 +335,9 @@ For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` 
 ## Data Storage
 
 - **Grafeo** (embedded graph database):
-  - **Graph namespace**: Intermediate representation (Modules, Files, Dependencies)
-  - **Model namespace**: ArchiMate elements and relationships
-- **DuckDB** (`deriva/adapters/database/sql.db`): File type registry, extraction configs, settings
+  - **Graph namespace**: the intermediate graph (directories, files, types, methods, dependencies, technologies, business concepts)
+  - **Model namespace**: the output graph (ArchiMate elements and relationships)
+- **DuckDB** (`deriva/adapters/database/sql.db`): step configurations with their versions, file types, name patterns and settings; created on first use from the shipped seed data
 
 ### Clearing Data
 
@@ -383,71 +350,69 @@ For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` 
 
 ## Querying the Graph
 
-You can query the embedded grafeo graph database using Cypher via the CLI or the studio's graph query bar (read-only):
+Each graph panel in the Workspace has a query bar that runs read-only Cypher against the embedded Grafeo database. A few to start with:
 
 ```cypher
-// See all repositories
-MATCH (r:Graph:Repository) RETURN r
+// All repositories
+MATCH (r:Graph:Repository) RETURN r.repoName, r.url
 
-// See files in a repo
-MATCH (repo:Graph:Repository)-[:Graph:CONTAINS*]->(f:Graph:File)
-WHERE repo.name = 'my-repo'
-RETURN f.name, f.file_type
+// The files of one repository, with their type
+MATCH (repo:Graph:Repository)-[:`Graph:CONTAINS`*]->(f:Graph:File)
+WHERE repo.repoName = 'my-repo'
+RETURN f.filePath, f.fileType
 
-// See type definitions
-MATCH (td:Graph:TypeDefinition) RETURN td.name, td.type_category
+// Type definitions
+MATCH (td:Graph:TypeDefinition) RETURN td.typeName, td.category, td.filePath
 ```
 
 ---
 
 ## CLI (Headless Mode)
 
-Deriva includes a full CLI for headless operation and automation:
+`uv run deriva` starts the studio; `uv run deriva-cli` runs the same pipeline without it, for scripts and automation.
 
 ```bash
-# Help
-deriva --help
+uv run deriva-cli repo clone https://github.com/user/my-repo.git
+uv run deriva-cli repo list
+uv run deriva-cli run all --repo my-repo -v
+uv run deriva-cli run extraction --repo my-repo --no-llm
+uv run deriva-cli status
+uv run deriva-cli export -o workspace/output/model.xml --repo my-repo
+uv run deriva-cli --help
+```
 
+| Option | Does |
+|--------|------|
+| `--repo NAME` | Runs one repository (default: all) |
+| `--phase PHASE` | Runs one phase: classify or parse (extraction), prep, generate or refine (derivation) |
+| `--only-step STEP` | Runs a single step |
+| `--no-llm` | Skips the LLM steps (structure only) |
+| `-v` | Prints detailed progress |
+| `-o PATH` | Where `export` writes the model |
+
+Configuration from the command line:
+
+```bash
 # View configuration
-deriva config list extraction
-deriva config show extraction BusinessConcept
-deriva status
+uv run deriva-cli config list extraction
+uv run deriva-cli config show extraction BusinessConcept
 
 # Add a derivation step (created disabled, then enable it); a refine step
 # must also be implemented and registered in code under the same name
-deriva config add derivation my_refine_step --phase refine --sequence 4 --params '{"dry_run": true}'
-deriva config enable derivation my_refine_step
+uv run deriva-cli config add derivation my_refine_step --phase refine --sequence 4 --params '{"dry_run": true}'
+uv run deriva-cli config enable derivation my_refine_step
 
 # Manage file types
-deriva config filetype list
-deriva config filetype add ".lock" dependency lock
-deriva config filetype stats
+uv run deriva-cli config filetype list
+uv run deriva-cli config filetype add ".lock" dependency lock
+uv run deriva-cli config filetype stats
 
 # System settings (e.g. directories skipped during extraction)
-deriva config setting show excluded_directories
+uv run deriva-cli config setting show excluded_directories
 
 # Derivation name patterns (include and exclude, per step and category)
-deriva config pattern list SystemSoftware
-
-# Run pipeline stages
-deriva run extraction --repo flask_invoice_generator -v
-deriva run derivation -v
-deriva run derivation --phase generate -v  # Run specific phase (prep, generate, refine)
-deriva run all --repo myrepo
-
-# Export ArchiMate model
-deriva export -o workspace/output/model.xml
+uv run deriva-cli config pattern list SystemSoftware
 ```
-
-**CLI Options:**
-
-| Option | Description |
-|--------|-------------|
-| `--repo NAME` | Process specific repository (default: all) |
-| `--phase PHASE` | Run specific derivation phase: prep, generate, or refine |
-| `-v, --verbose` | Print detailed progress |
-| `--no-llm` | Skip LLM-based steps (structural extraction only) |
-| `-o, --output PATH` | Output file path for export |
 
 ---
 
@@ -459,10 +424,10 @@ Deriva includes a multi-model benchmarking system for comparing LLM performance 
 
 ```bash
 # List available benchmark models
-deriva benchmark models
+uv run deriva-cli benchmark models
 
 # Run a benchmark with specific models
-deriva benchmark run \
+uv run deriva-cli benchmark run \
   --repos flask_invoice_generator \
   --models openai-gptx,ollama-devstral \
   -n 3 \
@@ -470,10 +435,10 @@ deriva benchmark run \
   -v
 
 # List benchmark sessions
-deriva benchmark list
+uv run deriva-cli benchmark list
 
 # Analyze a benchmark session
-deriva benchmark analyze bench_20260101_150724
+uv run deriva-cli benchmark analyze bench_20260101_150724
 ```
 
 ### Configuring Benchmark Models
@@ -507,24 +472,24 @@ OCEL files can be analyzed with process mining tools like PM4Py, Celonis, or cus
 
 ## Troubleshooting
 
-### NLP Model Issues
+### The studio shows a "not built yet" page
 
-The business concept step downloads its translation models on the first run. If the download fails, check that the machine can reach the model host and run the step again; a model folder that was not verified is replaced. A SHA-256 mismatch means the downloaded file is not the pinned model (a changed upload or a damaged download), and the step refuses it.
+The front end is missing: build it ([step 4](#4-build-the-studio-once)) and reload.
 
-### Studio Issues
+### A banner says the databases are held
+
+A command line run, for example a benchmark, has the databases open. The studio shows what it can and carries on when that run finishes.
+
+### The wrong Python, or a broken install
 
 ```bash
-# Check Python version
-python --version  # Should be 3.14+
-
-# Reinstall dependencies
+uv run python --version  # 3.14 or newer
 uv sync --reinstall
-
-# Front end missing ("not built yet" page): build it
-cd studio && npm install && npm run build
 ```
 
-A banner saying the databases are held by another process means a CLI run (for example a benchmark) has the config database open; the studio continues when it finishes.
+### The business concept step cannot download its models
+
+On its first run this step downloads translation models into `workspace/cache/nlp` and checks them by SHA-256. Check that the machine can reach the model host and run the step again. `DERIVA_NLP_MODELS_DIR` in `.env` moves the folder.
 
 ---
 
