@@ -202,3 +202,13 @@ class TestRunsOfARepository:
         analyzer = self._analyzer(log, ["repo"])
 
         assert [e["id"] for e in analyzer._get_derived_elements("repo")] == ["ac_both", "ac_new"]
+
+
+def test_a_model_filter_keeps_the_extraction_runs_of_the_repository():
+    """session:extraction:repo holds the repository where other run ids hold the model."""
+    log = OCELLog()
+    log.create_event("ExtractNodes", objects={"BenchmarkRun": ["s1:extraction:repo"], "Repository": ["repo"], "GraphNode": ["n1"]})
+    log.create_event("ExtractNodes", objects={"BenchmarkRun": ["s1:extraction:other"], "Repository": ["other"], "GraphNode": ["n2"]})
+    analyzer = TestRunsOfARepository._analyzer(log, ["repo", "other"], models=("m1", "m2"))
+
+    assert analyzer._get_objects_by_run("GraphNode", "repo", "m1") == {"s1:extraction:repo": {"n1"}}

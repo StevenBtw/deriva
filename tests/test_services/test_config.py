@@ -2051,4 +2051,6 @@ def test_config_versions_can_include_the_disabled_steps():
     config.get_active_config_versions(Engine())
     config.get_active_config_versions(Engine(), include_disabled=True)
 
+    # Two tables per call
+    assert len(queries) == 4
     assert all("enabled = TRUE" in q for q in queries[:2]) and all("enabled" not in q for q in queries[2:])

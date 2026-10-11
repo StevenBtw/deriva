@@ -1208,9 +1208,33 @@
     "chunk_overlap": 0
   },
   {
+    "extension": ".bms",
+    "file_type": "source",
+    "subtype": "bms",
+    "chunk_delimiter": null,
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
     "extension": ".c",
     "file_type": "source",
     "subtype": "c",
+    "chunk_delimiter": null,
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
+    "extension": ".cbl",
+    "file_type": "source",
+    "subtype": "cobol",
+    "chunk_delimiter": null,
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
+    "extension": ".cob",
+    "file_type": "source",
+    "subtype": "cobol",
     "chunk_delimiter": null,
     "chunk_max_tokens": null,
     "chunk_overlap": 0
@@ -1227,6 +1251,14 @@
     "extension": ".cpp",
     "file_type": "source",
     "subtype": "cpp",
+    "chunk_delimiter": null,
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
+    "extension": ".cpy",
+    "file_type": "source",
+    "subtype": "cobol",
     "chunk_delimiter": null,
     "chunk_max_tokens": null,
     "chunk_overlap": 0
@@ -1280,6 +1312,14 @@
     "chunk_overlap": 0
   },
   {
+    "extension": ".jcl",
+    "file_type": "source",
+    "subtype": "jcl",
+    "chunk_delimiter": null,
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
     "extension": ".js",
     "file_type": "source",
     "subtype": "javascript",
@@ -1291,6 +1331,14 @@
     "extension": ".php",
     "file_type": "source",
     "subtype": "php",
+    "chunk_delimiter": null,
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
+    "extension": ".prc",
+    "file_type": "source",
+    "subtype": "jcl",
     "chunk_delimiter": null,
     "chunk_max_tokens": null,
     "chunk_overlap": 0

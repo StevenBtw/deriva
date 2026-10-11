@@ -207,13 +207,14 @@ class BenchmarkAnalyzer:
             session_objects = ocel.get_objects_by_run(object_type)
 
             for run_id, objects in session_objects.items():
-                # Filter by repository if specified
-                if repo:
-                    # Extract repo from run_id (format: session:repo:model:iteration)
-                    parts = run_id.split(":")
-                    if len(parts) >= 2 and not self._is_run_of(parts[1], repo):
-                        continue
-                if model and len(run_id.split(":")) >= 3 and run_id.split(":")[2] != model:
+                # Run ids: session:repo:model:iteration, and session:extraction:repo for a repository's
+                # extraction (which belongs to no model, so a model filter keeps it)
+                parts = run_id.split(":")
+                extraction = len(parts) >= 3 and parts[1] == "extraction"
+                run_repository = parts[2] if extraction else parts[1] if len(parts) >= 2 else ""
+                if repo and len(parts) >= 2 and not self._is_run_of(run_repository, repo):
+                    continue
+                if model and not extraction and len(parts) >= 3 and parts[2] != model:
                     continue
 
                 if run_id not in objects_by_run:

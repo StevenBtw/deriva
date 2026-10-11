@@ -149,6 +149,7 @@ def test_provider_keys_reach_the_llm_libraries(dotenv, monkeypatch):
     for name in ("MISTRAL_API_KEY", "OPENAI_API_KEY", "PYPI_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(settings, "_ORIGINAL_ENVIRONMENT", frozenset({"OPENAI_API_KEY"}))
+    monkeypatch.setattr(settings, "_EXPORTED", set())
     monkeypatch.setenv("OPENAI_API_KEY", "sk-process")
     dotenv("MISTRAL_API_KEY=sk-file\nOPENAI_API_KEY=sk-file-openai\nPYPI_TOKEN=secret\n")
 
@@ -161,6 +162,7 @@ def test_provider_keys_reach_the_llm_libraries(dotenv, monkeypatch):
 
 def test_a_saved_provider_key_applies_to_the_next_export(dotenv, monkeypatch):
     monkeypatch.setattr(settings, "_ORIGINAL_ENVIRONMENT", settings._ORIGINAL_ENVIRONMENT - {"MISTRAL_API_KEY"})
+    monkeypatch.setattr(settings, "_EXPORTED", set())
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
 
     dotenv("MISTRAL_API_KEY=one\n")

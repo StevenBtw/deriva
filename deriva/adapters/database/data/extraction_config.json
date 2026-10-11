@@ -68,26 +68,26 @@
     "params": "{\n \"prompt\": {\n  \"persona\": \"You are analyzing a file to extract external dependencies.\",\n  \"task\": \"Extract external dependencies.\"\n }\n}"
   },
   {
-    "id": 68,
+    "id": 81,
     "node_type": "TypeDefinition",
-    "version": 6,
+    "version": 7,
     "sequence": 5,
     "enabled": true,
-    "input_sources": "{\"files\": [{\"type\": \"source\", \"subtype\": \"c\"}, {\"type\": \"source\", \"subtype\": \"coffeescript\"}, {\"type\": \"source\", \"subtype\": \"cpp\"}, {\"type\": \"source\", \"subtype\": \"csharp\"}, {\"type\": \"source\", \"subtype\": \"golang\"}, {\"type\": \"source\", \"subtype\": \"java\"}, {\"type\": \"source\", \"subtype\": \"javascript\"}, {\"type\": \"source\", \"subtype\": \"php\"}, {\"type\": \"source\", \"subtype\": \"python\"}, {\"type\": \"source\", \"subtype\": \"ruby\"}, {\"type\": \"source\", \"subtype\": \"rust\"}, {\"type\": \"source\", \"subtype\": \"sql\"}, {\"type\": \"source\", \"subtype\": \"typescript\"}], \"nodes\": []}",
+    "input_sources": "{\"files\": [{\"type\": \"source\", \"subtype\": \"bms\"}, {\"type\": \"source\", \"subtype\": \"c\"}, {\"type\": \"source\", \"subtype\": \"cobol\"}, {\"type\": \"source\", \"subtype\": \"coffeescript\"}, {\"type\": \"source\", \"subtype\": \"cpp\"}, {\"type\": \"source\", \"subtype\": \"csharp\"}, {\"type\": \"source\", \"subtype\": \"golang\"}, {\"type\": \"source\", \"subtype\": \"java\"}, {\"type\": \"source\", \"subtype\": \"javascript\"}, {\"type\": \"source\", \"subtype\": \"jcl\"}, {\"type\": \"source\", \"subtype\": \"php\"}, {\"type\": \"source\", \"subtype\": \"python\"}, {\"type\": \"source\", \"subtype\": \"ruby\"}, {\"type\": \"source\", \"subtype\": \"rust\"}, {\"type\": \"source\", \"subtype\": \"sql\"}, {\"type\": \"source\", \"subtype\": \"typescript\"}], \"nodes\": []}",
     "instruction": "Extract type definitions (classes, structs, interfaces) from source code.\n\nWHAT TO EXTRACT:\nType definitions that represent data structures, models, or contracts in the codebase.\n\nNAMING RULES (MANDATORY):\n1. Use the exact class/type name as defined in code\n2. Preserve original casing (PascalCase, snake_case as found)\n3. Include module prefix if needed for disambiguation\n\nSELECTION CRITERIA:\n- Include: Classes, dataclasses, TypedDict, NamedTuple, Protocols\n- Include: Database models, API schemas, domain entities\n- Exclude: Test fixtures, mock classes, abstract base classes without implementations\n\nLIMIT: Maximum 10 type definitions per file.\n\nOutput stable, deterministic results.",
     "example": "{\"types\": [{\"typeName\": \"UserRepository\", \"category\": \"class\", \"description\": \"Data access layer for User entities\", \"interfaceType\": \"repository\", \"startLine\": 15, \"endLine\": 45, \"confidence\": 0.95}]}",
     "is_active": true,
     "extraction_method": "treesitter",
     "temperature": 0.30000001192092896,
     "max_tokens": 4000,
-    "created_at": "2026-09-29T23:00:14.043707",
+    "created_at": "2026-10-10T13:45:14.668223",
     "batch_size": 1,
     "params": "{\n \"prompt\": {\n  \"persona\": \"You are analyzing a source code file to extract type definitions.\",\n  \"task\": \"Extract all type definitions from this file.\"\n }\n}"
   },
   {
-    "id": 73,
+    "id": 82,
     "node_type": "Method",
-    "version": 4,
+    "version": 5,
     "sequence": 6,
     "enabled": true,
     "input_sources": "{\"files\": [], \"nodes\": [{\"label\": \"TypeDefinition\", \"property\": \"codeSnippet\"}]}",
@@ -97,9 +97,9 @@
     "extraction_method": "treesitter",
     "temperature": 0.30000001192092896,
     "max_tokens": 4000,
-    "created_at": "2026-10-02T12:12:00.501990",
+    "created_at": "2026-10-10T13:45:16.359634",
     "batch_size": 1,
-    "params": "{\"languages\": [\"python\", \"java\", \"javascript\", \"typescript\", \"csharp\"]}"
+    "params": "{\"languages\": [\"python\", \"java\", \"javascript\", \"typescript\", \"csharp\", \"cobol\", \"jcl\"]}"
   },
   {
     "id": 34,
