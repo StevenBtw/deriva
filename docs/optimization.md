@@ -20,7 +20,7 @@ Each step is a row in Deriva's configuration database with these fields:
 | Batch size, max candidates | How many files go into one LLM call (extraction), and how many candidates a step considers (derivation) |
 | Sequence, enabled | Where the step runs in the pipeline, and whether it runs at all |
 
-All text that steers the LLM lives in these fields. The code only adds structure: the order of the prompt's sections, the candidate data and the required output format. So a configuration, together with Deriva's version, fully describes what a run asked the LLM.
+All text that steers the LLM lives in these fields. The code only adds structure: the order of the prompt's sections, the candidate data and the required output format. So a configuration, together with Deriva's version, fully describes the rules a run gave the LLM; the request itself also holds the candidates of that run, which come from the repository.
 
 ### Look and change
 

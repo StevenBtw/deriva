@@ -12,7 +12,7 @@ deriva
 Or try it without installing: `uvx --python 3.14 deriva-studio`.
 
 - Includes the command line tool `deriva-cli`; benchmarking comes with [deriva-dev](https://pypi.org/project/deriva-dev/).
-- Runs locally: the studio listens on this machine only, and nothing leaves it except the prompts to the LLM you configure (cloud or local).
+- Runs locally: the studio listens on this machine only, and nothing leaves it except the prompts to the LLM you configure (cloud or local). Those prompts can hold content of the repository you analyse (names, paths, documentation and code excerpts).
 - Keeps its files in `~/.deriva` (`DERIVA_HOME` moves it).
 - Install it as a tool or in its own environment: its Python package is named `deriva`, like ISI's `deriva-py`, and the two cannot share an environment.
 

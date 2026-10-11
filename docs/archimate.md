@@ -241,13 +241,14 @@ Each element's identifier is made of the initials of its type and the identifier
 
 ### Order of derivation
 
-Deriva derives elements in aspect order, so that the elements later steps refer to already exist: active structure first, then behavior, then passive structure. The default order is:
+Deriva derives elements in aspect order, so that the elements later steps refer to already exist: active structure first, then behavior, then passive structure. Application services come last: a service is built from the components, interfaces and objects derived before it. The default order is:
 
 | Phase | Element types |
 | --- | --- |
-| Active structure | ApplicationComponent, Node, Device, SystemSoftware, BusinessActor |
-| Behavior | ApplicationService, ApplicationInterface, TechnologyService, BusinessFunction, BusinessProcess, BusinessEvent |
+| Active structure | ApplicationComponent, Node, Device, SystemSoftware, BusinessActor, ApplicationInterface |
+| Behavior | TechnologyService, BusinessFunction, BusinessProcess, BusinessEvent |
 | Passive structure | DataObject, BusinessObject |
+| Behavior built from the above | ApplicationService |
 
 Before the elements, a preparation phase runs graph algorithms (PageRank, Louvain communities, k-core, articulation points, degree) on the extracted graph. After them, Deriva derives the relationships in one pass over the complete set of elements and then runs refine steps that remove duplicates and check structure. `deriva-cli config list derivation` shows the steps in their order, and `deriva-cli config sequence` changes it.
 
