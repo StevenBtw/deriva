@@ -32,16 +32,22 @@ function withHeaders(events: RunEvent[]): { event: RunEvent; header: string | nu
 }
 
 /** The run's events as log lines, with a header whenever the phase changes; scrolls along. */
-export function LiveLog({ events, runId = null }: { events: RunEvent[]; runId?: string | null }) {
+export function LiveLog({ events, runId = null, runStatus = "idle" }: { events: RunEvent[]; runId?: string | null; runStatus?: string }) {
   const end = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: "end" });
   }, [events.length]);
 
-  if (!events.length) return <div className="muted">Start a run to follow its progress here.</div>;
+  if (!events.length) {
+    if (!runId) return <div className="muted">Start a run to follow its progress here.</div>;
+    if (runStatus === "running") return <div className="muted">Waiting for the run's first step…</div>;
+    // A run from before the studio restarted: only its summary and its LLM calls were saved
+    return <div className="muted">This run's live log is not kept after the studio restarts; its LLM calls are under Prompts.</div>;
+  }
+  // A log region: screen readers announce the lines as the run adds them
   return (
-    <div>
+    <div role="log" aria-label="Run log">
       {withHeaders(events).map(({ event, header }) => {
         return (
           <div key={event.seq}>

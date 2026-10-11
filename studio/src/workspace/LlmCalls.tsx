@@ -18,13 +18,15 @@ export type CallFacts = {
 const number = new Intl.NumberFormat("en-US");
 
 function milliseconds(ms?: number | null): string {
-  const value = ms ?? 0;
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ms`;
+  if (ms == null) return "latency not recorded";
+  return `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
 }
 
-/** Step, tokens, latency, cache state and temperature (where recorded) of one call, plus its error. */
+/** Step, tokens, latency, cache state and temperature of one call, plus its error; a metric the call did not record says so. */
 function facts(d: CallFacts): string[] {
-  const parts = [d.step ?? "no step", `${number.format(d.tokens_in ?? 0)} tokens in`, milliseconds(d.latency_ms), d.cache_hit ? "cache hit" : "cache miss"];
+  const tokens = d.tokens_in == null ? "tokens not recorded" : `${number.format(d.tokens_in)} tokens in`;
+  const cache = d.cache_hit == null ? "cache not recorded" : d.cache_hit ? "cache hit" : "cache miss";
+  const parts = [d.step ?? "no step", tokens, milliseconds(d.latency_ms), cache];
   if (d.temperature != null) parts.push(`temperature ${d.temperature}`);
   return d.error ? [...parts, `error: ${d.error}`] : parts;
 }

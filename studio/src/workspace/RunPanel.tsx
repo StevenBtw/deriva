@@ -1,47 +1,81 @@
 import { useEffect, useState } from "react";
 
-import { repositories, runs } from "../api/client";
-import type { Repository, RunKind } from "../api/types";
+import { repositories, runs, session } from "../api/client";
+import type { Repository, RunKind, RunSummary } from "../api/types";
 import type { RunState } from "./useRun";
 
 type Props = {
   run: RunState;
-  onStart: (kind: RunKind, repository: string | null, noLlm: boolean) => void;
+  onStart: (kind: RunKind, repository: string | null, noLlm: boolean) => void | Promise<void>;
   onCancel: () => void;
   collapsed: boolean;
   onToggle: () => void;
   onRepositoryChange?: (repository: string) => void;
+  onSelectRun?: (run: RunSummary) => void;
 };
 
-type HistoryRow = { run_id: number; description: string; started_at: string | null };
+/** "derivation · deriva", plus the status when the run did not simply finish. */
+function runLabel(run: RunSummary): string {
+  return [run.kind, run.repository, run.status === "finished" ? null : run.status].filter(Boolean).join(" · ");
+}
 
-export function RunPanel({ run, onStart, onCancel, collapsed, onToggle, onRepositoryChange }: Props) {
+/** Local time as YYYY-MM-DD HH:MM. */
+function runTime(seconds: number): string {
+  const d = new Date(seconds * 1000);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+
+export function RunPanel({ run, onStart, onCancel, collapsed, onToggle, onRepositoryChange, onSelectRun }: Props) {
   const [repos, setRepos] = useState<Repository[]>([]);
   const [repository, setRepository] = useState("");
   const [kind, setKind] = useState<RunKind>("all");
   const [noLlm, setNoLlm] = useState(false);
-  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [history, setHistory] = useState<RunSummary[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Locked from the click on: while the start request runs the server may have started the run already
+  const [starting, setStarting] = useState(false);
+  const running = run.status === "running";
+  const locked = running || starting;
+
+  const begin = async (repositoryName: string | null) => {
+    setStarting(true);
+    try {
+      await onStart(kind, repositoryName, noLlm);
+    } finally {
+      setStarting(false);
+    }
+  };
+
   useEffect(() => {
-    repositories
-      .list()
-      .then((list) => {
+    // The session's repository first (it answers busy while a step runs), then the first one cloned.
+    // A fresh session reads the shared "default" graph, which is no repository and cannot be chosen.
+    Promise.all([repositories.list(), session.current().catch(() => ({ repository: null }))])
+      .then(([list, current]) => {
         setRepos(list);
-        setRepository((current) => current || list[0]?.name || "");
+        setLoadError(null);
+        const cloned = list.some((r) => r.name === current.repository) ? current.repository : null;
+        setRepository((shown) => shown || cloned || list[0]?.name || "");
       })
-      .catch((reason: Error) => setLoadError(reason.message));
+      .catch((reason: Error) => {
+        // While a run holds the databases the list may be unavailable: the run's repository is shown below
+        if (!running) setLoadError(reason.message);
+      });
     runs
       .history(8)
       .then(setHistory)
       .catch(() => setHistory([]));
-  }, [run.status]);
+  }, [run.status, running]);
 
+  // Switching the session's repository waits for the run to end
   useEffect(() => {
-    if (repository) onRepositoryChange?.(repository);
-  }, [repository, onRepositoryChange]);
+    if (repository && !running) onRepositoryChange?.(repository);
+  }, [repository, running, onRepositoryChange]);
 
-  const running = run.status === "running";
+  // A run in progress (also one this page attached to) shows its repository
+  const shown = running && run.repository ? run.repository : repository;
+  const options = shown && !repos.some((r) => r.name === shown) ? [...repos, { name: shown } as Repository] : repos;
 
   return (
     <aside className={`runpanel${collapsed ? " collapsed" : ""}`}>
@@ -54,8 +88,8 @@ export function RunPanel({ run, onStart, onCancel, collapsed, onToggle, onReposi
       <div className="pb">
         <div className="fld">
           <label htmlFor="run-repo">Repository</label>
-          <select id="run-repo" value={repository} onChange={(e) => setRepository(e.target.value)} disabled={running}>
-            {repos.map((r) => (
+          <select id="run-repo" value={shown} onChange={(e) => setRepository(e.target.value)} disabled={locked}>
+            {options.map((r) => (
               <option key={r.name} value={r.name}>
                 {r.name}
               </option>
@@ -64,14 +98,14 @@ export function RunPanel({ run, onStart, onCancel, collapsed, onToggle, onReposi
         </div>
         <div className="fld">
           <label htmlFor="run-scope">Scope</label>
-          <select id="run-scope" value={kind} onChange={(e) => setKind(e.target.value as RunKind)} disabled={running}>
+          <select id="run-scope" value={kind} onChange={(e) => setKind(e.target.value as RunKind)} disabled={locked}>
             <option value="all">Everything (extraction + derivation)</option>
             <option value="extraction">Extraction only</option>
             <option value="derivation">Derivation only (current graph)</option>
           </select>
         </div>
         <label className="note" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input type="checkbox" checked={noLlm} onChange={(e) => setNoLlm(e.target.checked)} disabled={running} />
+          <input type="checkbox" checked={noLlm} onChange={(e) => setNoLlm(e.target.checked)} disabled={locked} />
           Structural steps only (without LLM)
         </label>
         {running ? (
@@ -79,7 +113,7 @@ export function RunPanel({ run, onStart, onCancel, collapsed, onToggle, onReposi
             ■ Cancel
           </button>
         ) : (
-          <button type="button" className="go" onClick={() => onStart(kind, repository || null, noLlm)} disabled={!repository}>
+          <button type="button" className="go" onClick={() => void begin(shown || null)} disabled={!shown || starting}>
             Run
           </button>
         )}
@@ -90,10 +124,17 @@ export function RunPanel({ run, onStart, onCancel, collapsed, onToggle, onReposi
           <div className="runlist">
             {history.length === 0 && <div className="faint">No runs recorded yet</div>}
             {history.map((h) => (
-              <div key={h.run_id}>
-                <span>{h.description || `run ${h.run_id}`}</span>
-                <span className="faint">{h.started_at?.slice(0, 16) ?? ""}</span>
-              </div>
+              <button
+                key={h.run_id}
+                type="button"
+                className={`runrow${run.runId === h.run_id ? " on" : ""}`}
+                aria-pressed={run.runId === h.run_id}
+                onClick={() => onSelectRun?.(h)}
+                disabled={running && run.runId !== h.run_id}
+              >
+                <span>{runLabel(h)}</span>
+                <span className="faint">{runTime(h.started_at)}</span>
+              </button>
             ))}
           </div>
         </div>

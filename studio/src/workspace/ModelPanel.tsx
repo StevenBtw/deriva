@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { model as modelApi } from "../api/client";
 import type { Model } from "../api/types";
@@ -7,19 +7,41 @@ import { ArchimateWidget } from "../widgets/ArchimateWidget";
 /** The output model in anywidget-archimate, with export and the selected element's details. */
 export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh: number; onSelect?: (elementId: string | null) => void }) {
   const [model, setModel] = useState<Model>({ elements: [], relationships: [] });
-  const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
+  // The selection is an id: its details come from the model as it is now (a refresh can rename or remove it)
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const current = useRef<{ id: string | null; onSelect?: (elementId: string | null) => void }>({ id: null, onSelect });
 
   useEffect(() => {
+    current.current = { id: selectedId, onSelect };
+  }, [selectedId, onSelect]);
+
+  useEffect(() => {
+    // A slower, older answer must not replace a newer model
+    let live = true;
     modelApi
       .get()
-      .then(setModel)
-      .catch((reason: Error) => setMessage(reason.message));
+      .then((found) => {
+        if (!live) return;
+        setModel(found);
+        const { id, onSelect: notify } = current.current;
+        if (id !== null && !found.elements.some((e) => String(e.id) === id)) {
+          setSelectedId(null);
+          notify?.(null);
+        }
+      })
+      .catch((reason: Error) => live && setMessage(reason.message));
+    return () => {
+      live = false;
+    };
   }, [refresh]);
 
+  const selected = selectedId === null ? null : (model.elements.find((e) => String(e.id) === selectedId) ?? null);
+
   const select = (element: Record<string, unknown> | null) => {
-    setSelected(element);
-    onSelect?.(element?.id ? String(element.id) : null);
+    const id = element?.id ? String(element.id) : null;
+    setSelectedId(id);
+    onSelect?.(id);
   };
 
   const exportXml = async () => {
@@ -50,13 +72,13 @@ export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh
         {selected && (
           <aside className="card" style={{ width: 240 }}>
             <div className="hd">
-              <h3>{String(selected.name ?? selected.id)}</h3>
+              <h3>{selected.name || selected.id}</h3>
             </div>
             <div className="bd kv" style={{ gridTemplateColumns: "80px 1fr" }}>
               <span className="muted">Type</span>
-              <span>{String(selected.type ?? "")}</span>
+              <span>{selected.type}</span>
               <span className="muted">Id</span>
-              <span className="mono">{String(selected.id ?? "")}</span>
+              <span className="mono">{selected.id}</span>
               <span className="muted">Trace</span>
               <span className="note">Sources, relationships and LLM calls in the Trace tab below.</span>
             </div>
