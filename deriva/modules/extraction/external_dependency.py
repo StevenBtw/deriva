@@ -341,7 +341,7 @@ def get_extraction_method(file_path: str, subtype: str | None) -> str:
         return "package_json"
 
     # Tree-sitter extraction for supported languages
-    treesitter_languages = {"python", "javascript", "typescript", "java", "csharp"}
+    treesitter_languages = {"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms"}
     if subtype and subtype.lower() in treesitter_languages:
         return "treesitter"
 
@@ -546,7 +546,7 @@ def _extract_from_python_ast(
     repo_name: str,
 ) -> dict[str, Any]:
     """Extract external dependencies from Python imports using tree-sitter."""
-    from deriva.adapters.treesitter import TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.treesitter import TreeSitterManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []

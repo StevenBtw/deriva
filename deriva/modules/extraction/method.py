@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from deriva.adapters.treesitter import ExtractedMethod, TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+from deriva.adapters.treesitter import ExtractedMethod, TreeSitterManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
 from .base import (
     create_empty_llm_details,

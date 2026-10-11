@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from deriva.adapters.treesitter import ExtractedType, TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+from deriva.adapters.treesitter import ExtractedType, TreeSitterManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
 from .base import (
     create_empty_llm_details,
@@ -615,6 +615,12 @@ def _build_type_node_from_treesitter(
         "class": "class",
         "function": "function",
         "type_alias": "alias",
+        # Structural sources (mainframe): the kind is the category
+        "program": "program",
+        "record": "record",
+        "job": "job",
+        "procedure": "procedure",
+        "screen": "screen",
     }
     category = category_map.get(ext_type.kind, "other")
 
