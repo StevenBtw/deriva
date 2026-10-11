@@ -1,6 +1,6 @@
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
@@ -13,11 +13,17 @@ type Props = {
   readOnly?: boolean;
 };
 
+/** Read only in the state and in the DOM (the readOnly facet alone leaves the content editable). */
+function locked(readOnly: boolean) {
+  return [EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)];
+}
+
 /** A controlled CodeMirror 6 editor (prompt text as markdown, examples and params as JSON). */
 export function CodeEditor({ label, value, onChange, language = "markdown", readOnly = false }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
   const change = useRef(onChange);
+  const lock = useRef(new Compartment());
 
   useEffect(() => {
     change.current = onChange;
@@ -33,7 +39,7 @@ export function CodeEditor({ label, value, onChange, language = "markdown", read
           basicSetup,
           language === "json" ? json() : markdown(),
           EditorView.lineWrapping,
-          EditorState.readOnly.of(readOnly),
+          lock.current.of(locked(readOnly)),
           EditorView.contentAttributes.of({ "aria-label": label }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) change.current(update.state.doc.toString());
@@ -46,9 +52,13 @@ export function CodeEditor({ label, value, onChange, language = "markdown", read
       editor.destroy();
       view.current = null;
     };
-    // The editor is created once per language/readOnly; value changes are applied below
+    // The editor is created once per language; value and read-only changes are applied below
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language, readOnly, label]);
+  }, [language, label]);
+
+  useEffect(() => {
+    view.current?.dispatch({ effects: lock.current.reconfigure(locked(readOnly)) });
+  }, [readOnly]);
 
   useEffect(() => {
     const editor = view.current;
