@@ -5,7 +5,10 @@ Provides utilities to:
 - Import JSON files into the database (seed/restore)
 
 Usage:
-    # Export all tables to JSON
+    # Refresh the shipped seed files (data/) from the active configuration
+    python -m deriva.adapters.database.db_tool export --active-only
+
+    # Export all tables to JSON, with every version (into data/ unless --output names another folder)
     python -m deriva.adapters.database.db_tool export
 
     # Export specific table
@@ -28,13 +31,15 @@ from typing import TYPE_CHECKING
 
 import duckdb
 
+from deriva.common.paths import config_db
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 # Paths
-DB_PATH = Path(__file__).parent / "sql.db"
+DB_PATH = config_db()
 DATA_DIR = Path(__file__).parent / "data"
 
 # Table configuration: maps table names to their JSON filenames and primary keys

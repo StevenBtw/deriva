@@ -12,14 +12,17 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import duckdb
 
+from deriva.common.paths import config_db
+
 logger = logging.getLogger(__name__)
 
 # Database location
-DB_PATH = Path(__file__).parent / "sql.db"
+DB_PATH = config_db()
 SCRIPTS_DIR = Path(__file__).parent / "scripts"
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -112,7 +115,8 @@ def ensure_database(db_path: Path | None = None) -> bool:
 
     Runs the schema, the migrations and the seed from the shipped JSON files in ``data/``
     (the active configuration rows with their version numbers). An existing database is
-    never changed.
+    never changed. The new one is made in a file next to it and moved into place once
+    seeded, so a setup that fails or breaks off leaves no half-made database behind.
 
     Args:
         db_path: Database file (defaults to DB_PATH)
@@ -120,21 +124,36 @@ def ensure_database(db_path: Path | None = None) -> bool:
     Returns:
         True when the database was created, False when it already had a schema
     """
-    path = db_path or DB_PATH
-    conn = duckdb.connect(str(path))
-    try:
-        row = conn.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'extraction_config'").fetchone()
+    path = Path(db_path or DB_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        conn = duckdb.connect(str(path))
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'extraction_config'").fetchone()
+        finally:
+            conn.close()
         if row and row[0] > 0:
             return False
-        run_sql_file(SCRIPTS_DIR / "schema.sql", conn)
-        run_migrations(conn)
-    finally:
-        conn.close()
 
     # Import here to avoid circular imports
     from deriva.adapters.database.db_tool import seed_from_json
 
-    seed_from_json(path)
+    partial = path.with_name(path.name + ".partial")
+    leftovers = (partial, partial.with_name(partial.name + ".wal"))
+    for leftover in leftovers:
+        leftover.unlink(missing_ok=True)
+    try:
+        conn = duckdb.connect(str(partial))
+        try:
+            run_sql_file(SCRIPTS_DIR / "schema.sql", conn)
+            run_migrations(conn)
+        finally:
+            conn.close()
+        seed_from_json(partial)
+        os.replace(partial, path)
+    finally:
+        for leftover in leftovers:
+            leftover.unlink(missing_ok=True)
     logger.info("Created the configuration database %s from the shipped seed data", path)
     return True
 
