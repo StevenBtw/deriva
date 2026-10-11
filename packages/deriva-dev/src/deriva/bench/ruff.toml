@@ -6,6 +6,5 @@ extend = "../../../../../pyproject.toml"
 "deriva.cli" = { msg = "Architecture violation: only deriva/bench/cli.py (the benchmark command) imports the CLI" }
 "deriva.studio" = { msg = "Architecture violation: only deriva/bench/router.py (the benchmark API) imports the studio" }
 
-[lint.per-file-ignores]
-"cli.py" = ["TID251"]
-"router.py" = ["TID251"]
+# No file-wide exemption: each authorized import carries its own `# noqa: TID251`, so cli.py cannot
+# reach into the studio and router.py cannot reach into the CLI without a diagnostic

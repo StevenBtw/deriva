@@ -1187,3 +1187,4 @@ class TestCandidateActivity:
 
         assert events[0] == ("candidates", ["dir_a", "dir_b"])
         assert sum(1 for e in events if isinstance(e, tuple)) == 1
+        assert "llm" in events[1:]

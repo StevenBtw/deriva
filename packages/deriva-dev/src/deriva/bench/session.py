@@ -20,6 +20,11 @@ if TYPE_CHECKING:
 BENCHMARKS_DIR = workspace() / "benchmarks"
 
 
+def _folder(benchmarks_dir: str | Path | None) -> Path:
+    """The folder given, else the benchmark folder (read when called, so it can be pointed elsewhere)."""
+    return Path(benchmarks_dir) if benchmarks_dir is not None else Path(BENCHMARKS_DIR)
+
+
 def _check_session_id(session_id: str) -> None:
     """Session ids name folders under the benchmarks folder; anything that could leave it is refused."""
     if not re.fullmatch(r"[\w.-]+", session_id) or set(session_id) == {"."}:
@@ -111,7 +116,7 @@ class BenchmarkSession:
             repositories=repositories,
             models=models,
             runs_per_combination=runs,
-            stages=stages or ["classification", "extraction", "derivation"],
+            stages=stages or ["extraction", "derivation"],
             description=description,
             use_cache=use_cache,
             nocache_configs=nocache_configs or [],
@@ -205,13 +210,13 @@ class BenchmarkSession:
         engine, _, _ = self.session.managers()
         return benchmarking.mark_session_failed(engine, session_id)
 
-    def export_process_logs(self, session_ids: list[str], out_dir: str | Path, benchmarks_dir: str | Path = BENCHMARKS_DIR) -> list[Path]:
+    def export_process_logs(self, session_ids: list[str], out_dir: str | Path, benchmarks_dir: str | Path | None = None) -> list[Path]:
         """The event logs of the sessions as OCEL 2.0 and a flat case log (CSV, XES) in one folder."""
         for session_id in session_ids:
             _check_session_id(session_id)
-        return benchmarking.export_process_logs(benchmarks_dir, session_ids, out_dir)
+        return benchmarking.export_process_logs(_folder(benchmarks_dir), session_ids, out_dir)
 
-    def export_benchmark(self, session_id: str, out_path: str | Path, benchmarks_dir: str | Path = BENCHMARKS_DIR) -> dict[str, Any]:
+    def export_benchmark(self, session_id: str, out_path: str | Path, benchmarks_dir: str | Path | None = None) -> dict[str, Any]:
         """Export a benchmark session as one verifiable zip.
 
         Holds the session folder (event logs, LLM call logs, models, step results), the full
@@ -238,7 +243,7 @@ class BenchmarkSession:
         models = self.session.list_benchmark_models()
         used = {name: models[name] for name in settings.get("models", []) if name in models}
         extras = {"config_snapshot.json": snapshot, "environment.json": export_bundle.environment_info(models=used)}
-        return export_bundle.export_session(Path(benchmarks_dir) / session_id, out_path, extras)
+        return export_bundle.export_session(_folder(benchmarks_dir) / session_id, out_path, extras)
 
     def _benchmark_models(self, session_ids: list[str]) -> list[str]:
         """Model config names of the sessions (from their recorded config), else the configured ones."""
@@ -250,31 +255,31 @@ class BenchmarkSession:
                 names |= set(json.loads(row[0]).get("models", []))
         return sorted(names or set(self.session.list_benchmark_models()))
 
-    def benchmark_results(self, session_ids: list[str], benchmarks_dir: str | Path = BENCHMARKS_DIR) -> list[dict[str, Any]]:
+    def benchmark_results(self, session_ids: list[str], benchmarks_dir: str | Path | None = None) -> list[dict[str, Any]]:
         """Consistency per repository and model over the runs of one or more sessions (by name and by source)."""
         for session_id in session_ids:
             _check_session_id(session_id)
-        return benchmark_views.results(benchmarks_dir, session_ids, self._benchmark_models(session_ids))
+        return benchmark_views.results(_folder(benchmarks_dir), session_ids, self._benchmark_models(session_ids))
 
-    def benchmark_flips(self, session_ids: list[str], repository: str, benchmarks_dir: str | Path = BENCHMARKS_DIR) -> list[dict[str, Any]]:
+    def benchmark_flips(self, session_ids: list[str], repository: str, benchmarks_dir: str | Path | None = None) -> list[dict[str, Any]]:
         """Elements of a repository that are not in every run, with the cause per missing run."""
         for session_id in session_ids:
             _check_session_id(session_id)
-        return benchmark_views.flips(benchmarks_dir, session_ids, self._benchmark_models(session_ids), repository)
+        return benchmark_views.flips(_folder(benchmarks_dir), session_ids, self._benchmark_models(session_ids), repository)
 
-    def benchmark_inspector(self, session_ids: list[str], repository: str, benchmarks_dir: str | Path = BENCHMARKS_DIR, model: str | None = None) -> dict[str, Any]:
+    def benchmark_inspector(self, session_ids: list[str], repository: str, benchmarks_dir: str | Path | None = None, model: str | None = None) -> dict[str, Any]:
         """Element and relationship occurrences per run of a repository (of one model when given), for the model inspector."""
         for session_id in session_ids:
             _check_session_id(session_id)
-        return benchmark_views.inspector(benchmarks_dir, session_ids, self._benchmark_models(session_ids), repository, model)
+        return benchmark_views.inspector(_folder(benchmarks_dir), session_ids, self._benchmark_models(session_ids), repository, model)
 
     def benchmark_trace(
-        self, session_ids: list[str], repository: str, element_type: str, source: str, benchmarks_dir: str | Path = BENCHMARKS_DIR, model: str | None = None
+        self, session_ids: list[str], repository: str, element_type: str, source: str, benchmarks_dir: str | Path | None = None, model: str | None = None
     ) -> list[dict[str, Any]]:
         """Per run of the sessions (of one model when given), why an element (by type and source) is or is not in the model, with its deciding calls."""
         for session_id in session_ids:
             _check_session_id(session_id)
-        return benchmark_views.element_trace(benchmarks_dir, session_ids, self._benchmark_models(session_ids), repository, element_type, source, model)
+        return benchmark_views.element_trace(_folder(benchmarks_dir), session_ids, self._benchmark_models(session_ids), repository, element_type, source, model)
 
     def benchmark_steps(self, session_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         """Raw LLM answer stability per step and repository (same prompt, same decision in every run)."""

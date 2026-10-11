@@ -24,8 +24,12 @@ def test_a_models_own_key_is_used(no_provider_environment, provider, model):
     assert resolved.model_name == model
 
 
-def test_without_a_key_the_providers_environment_variable_still_applies(no_provider_environment):
-    assert get_pydantic_ai_model({"provider": "mistral", "model": "devstral-2512"}) == "mistral:devstral-2512"
+def test_without_a_key_the_providers_environment_variable_still_applies(no_provider_environment, monkeypatch):
+    identifier = get_pydantic_ai_model({"provider": "mistral", "model": "devstral-2512"})
+
+    assert identifier == "mistral:devstral-2512"
+    monkeypatch.setenv("MISTRAL_API_KEY", "sk-env-0000")
+    assert infer_model(identifier).model_name == "devstral-2512"
 
 
 def test_an_ollama_model_uses_its_configured_url(no_provider_environment):

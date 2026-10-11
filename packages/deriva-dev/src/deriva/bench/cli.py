@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from deriva.bench.session import BenchmarkSession
-from deriva.cli.progress import create_benchmark_progress_reporter
+from deriva.cli.progress import create_benchmark_progress_reporter  # noqa: TID251 - the benchmark command is the one module that may use the CLI
 from deriva.common.paths import workspace
 from deriva.services.session import PipelineSession
 

@@ -1073,16 +1073,23 @@ def test_benchmark_models_and_rpm_come_from_the_merged_environment(monkeypatch):
 
 def test_a_string_model_finds_its_provider_key_in_the_home_env(monkeypatch, tmp_path):
     """mistral, openai, anthropic and ollama models are strings; pydantic-ai reads their key from os.environ."""
+    import os
+
     from pydantic_ai.models import infer_model
 
     from deriva.adapters.llm.manager import LLMManager
     from deriva.adapters.llm.models import BenchmarkModelConfig
+    from deriva.common import settings
 
-    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
-    config = BenchmarkModelConfig(name="m", provider="mistral", model="devstral-2512", api_key="sk-config")
+    # Set first, so the variable the export writes is taken out again after the test
+    monkeypatch.setenv("MISTRAL_API_KEY", "sk-process")
+    monkeypatch.delenv("MISTRAL_API_KEY")
+    monkeypatch.setattr(settings, "_ORIGINAL_ENVIRONMENT", settings._ORIGINAL_ENVIRONMENT - {"MISTRAL_API_KEY"})
+    config = BenchmarkModelConfig(name="m", provider="mistral", model="devstral-2512")  # no key of its own
     with patch("deriva.common.settings.read_env_file", return_value={"MISTRAL_API_KEY": "sk-from-file"}):
         manager = LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"))
 
+    assert os.environ["MISTRAL_API_KEY"] == "sk-from-file"
     assert type(infer_model(manager._pydantic_model)).__name__ == "MistralModel"
 
 

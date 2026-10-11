@@ -1102,12 +1102,13 @@ def get_config_history(engine: Any, step_type: str, name: str) -> list[dict[str,
     return [dict(zip(columns, row, strict=True)) for row in rows]
 
 
-def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
+def get_active_config_versions(engine: Any, include_disabled: bool = False) -> dict[str, dict[str, int]]:
     """
     Get current active versions for all enabled configs.
 
     Only includes configs that are both active (current version) AND enabled.
     This ensures benchmark snapshots don't include disabled configs.
+    ``include_disabled`` adds the disabled steps (a listing shows every step with its version).
 
     Returns:
         Dict with extraction and derivation (prep/generate/refine) versions
@@ -1115,12 +1116,13 @@ def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
     versions = {"extraction": {}, "derivation": {}}
 
     # Extraction - only enabled configs
-    rows = engine.execute("SELECT node_type, version FROM extraction_config WHERE is_active = TRUE AND enabled = TRUE").fetchall()
+    enabled = "" if include_disabled else " AND enabled = TRUE"
+    rows = engine.execute(f"SELECT node_type, version FROM extraction_config WHERE is_active = TRUE{enabled}").fetchall()
     for r in rows:
         versions["extraction"][r[0]] = r[1]
 
     # Derivation (includes all phases: prep, generate, refine) - only enabled configs
-    rows = engine.execute("SELECT step_name, version FROM derivation_config WHERE is_active = TRUE AND enabled = TRUE").fetchall()
+    rows = engine.execute(f"SELECT step_name, version FROM derivation_config WHERE is_active = TRUE{enabled}").fetchall()
     for r in rows:
         versions["derivation"][r[0]] = r[1]
 

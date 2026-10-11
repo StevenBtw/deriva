@@ -82,7 +82,8 @@ def test_the_pipeline_folder_is_unpacked_from_the_verified_wheel(tmp_path, monke
 
     assert folder == tmp_path / "models" / "xx_test_sm-1.0.0"
     assert sorted(p.name for p in folder.iterdir() if not p.name.startswith(".")) == ["config.cfg", "meta.json"]
-    assert ensure_spacy_package(package, tmp_path / "models", download=False) == folder  # cached, no download
+    monkeypatch.setattr(models, "_download", lambda *_: pytest.fail("a cached pipeline was downloaded again"))
+    assert ensure_spacy_package(package, tmp_path / "models") == folder
 
 
 def test_a_wrong_spacy_checksum_is_refused(tmp_path, monkeypatch):

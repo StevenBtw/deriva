@@ -45,7 +45,7 @@ def test_nothing_searches_for_a_dotenv_from_the_current_folder():
 
 
 def test_no_folder_is_built_from_the_current_folder():
-    offenders = [f"{f}:{n}" for f, n, line in _lines() if re.search(r"""Path\(\s*["']\.?/?workspace""", line)]
+    offenders = [f"{f}:{n}" for f, n, line in _lines() if re.search(r"""(?:Path\.cwd\(\)|os\.getcwd\(\)|Path\(\s*["']\.?/?workspace)""", line)]
     assert offenders == []
 
 

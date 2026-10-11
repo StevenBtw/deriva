@@ -1109,11 +1109,11 @@ class PipelineSession:
         rows = self.query_graph_read_only(cypher)
         return {"count": len(rows), "rows": [{k: _plain(v) for k, v in row.items()} for row in rows[:limit]]}
 
-    def get_config_versions(self) -> dict[str, dict[str, int]]:
-        """Get current active versions for all configs."""
+    def get_config_versions(self, include_disabled: bool = False) -> dict[str, dict[str, int]]:
+        """Get current active versions for all enabled configs (also the disabled ones with ``include_disabled``)."""
         self._ensure_connected()
         assert self._engine is not None
-        return config.get_active_config_versions(self._engine)
+        return config.get_active_config_versions(self._engine, include_disabled=include_disabled)
 
     def get_setting(self, key: str) -> str | None:
         """Get a system setting value (None when not set)."""

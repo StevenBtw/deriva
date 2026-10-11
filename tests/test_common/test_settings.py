@@ -130,7 +130,8 @@ def test_booleans_accept_the_usual_words_and_refuse_others(dotenv, monkeypatch):
 
 
 def test_named_model_configs(dotenv, monkeypatch):
-    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    for name in [n for n in os.environ if n.startswith("LLM_")]:
+        monkeypatch.delenv(name)
     dotenv("LLM_PROVIDER=azure\nLLM_MISTRAL_DEVSTRAL_PROVIDER=mistral\nLLM_MISTRAL_DEVSTRAL_MODEL=devstral-2512\nLLM_MISTRAL_DEVSTRAL_KEY=sk-1\n")
     monkeypatch.setenv("LLM_LOCAL_PROVIDER", "ollama")
     monkeypatch.setenv("LLM_LOCAL_MODEL", "llama3.2")
@@ -159,6 +160,7 @@ def test_provider_keys_reach_the_llm_libraries(dotenv, monkeypatch):
 
 
 def test_a_saved_provider_key_applies_to_the_next_export(dotenv, monkeypatch):
+    monkeypatch.setattr(settings, "_ORIGINAL_ENVIRONMENT", settings._ORIGINAL_ENVIRONMENT - {"MISTRAL_API_KEY"})
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
 
     dotenv("MISTRAL_API_KEY=one\n")

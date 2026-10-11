@@ -294,6 +294,15 @@ class TestConfigDeviationAnalyzerExportJson:
         assert result == str(output_file)
 
 
+def _DEVIATIONS() -> list[ConfigDeviation]:
+    """Three configs whose order differs per sort key."""
+    return [
+        ConfigDeviation(config_type="derivation", config_id="middle", deviation_count=1, total_objects=2, consistency_score=0.5),
+        ConfigDeviation(config_type="derivation", config_id="high", deviation_count=0, total_objects=9, consistency_score=1.0),
+        ConfigDeviation(config_type="derivation", config_id="low", deviation_count=4, total_objects=5, consistency_score=0.2),
+    ]
+
+
 class TestConfigDeviationAnalyzerExportSortedJson:
     """Tests for sorted JSON export."""
 
@@ -305,9 +314,13 @@ class TestConfigDeviationAnalyzerExportSortedJson:
 
         with patch.object(ConfigDeviationAnalyzer, "_load_ocel", return_value=OCELLog()):
             analyzer = ConfigDeviationAnalyzer("session_123", engine)
-            result = analyzer.export_sorted_json(output_file, sort_by="consistency_score")
+            report = analyzer.analyze()
+            report.config_deviations = _DEVIATIONS()
+            with patch.object(analyzer, "analyze", return_value=report):
+                result = analyzer.export_sorted_json(output_file, sort_by="consistency_score")
 
-        assert Path(result).exists()
+        # Least consistent first
+        assert [d["config_id"] for d in json.loads(Path(result).read_text(encoding="utf-8"))["config_deviations"]] == ["low", "middle", "high"]
 
     def test_export_sorted_by_total_objects(self, tmp_path):
         """Should export sorted by total_objects."""
@@ -317,9 +330,13 @@ class TestConfigDeviationAnalyzerExportSortedJson:
 
         with patch.object(ConfigDeviationAnalyzer, "_load_ocel", return_value=OCELLog()):
             analyzer = ConfigDeviationAnalyzer("session_123", engine)
-            result = analyzer.export_sorted_json(output_file, sort_by="total_objects")
+            report = analyzer.analyze()
+            report.config_deviations = _DEVIATIONS()
+            with patch.object(analyzer, "analyze", return_value=report):
+                result = analyzer.export_sorted_json(output_file, sort_by="total_objects")
 
-        assert Path(result).exists()
+        # Most objects first
+        assert [d["config_id"] for d in json.loads(Path(result).read_text(encoding="utf-8"))["config_deviations"]] == ["high", "low", "middle"]
 
 
 class TestConfigDeviationAnalyzerLoadOcelFiles:

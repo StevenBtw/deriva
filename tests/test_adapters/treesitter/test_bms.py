@@ -6,7 +6,6 @@ import pytest
 
 from deriva.adapters.treesitter import TreeSitterManager
 from deriva.adapters.treesitter.languages import get_extractor
-from deriva.adapters.treesitter.languages.bms import BmsExtractor
 
 
 def line(text: str, continued: bool = False) -> str:
@@ -47,7 +46,7 @@ def manager():
 class TestRegistration:
     def test_extractor_is_registered(self):
         extractor = get_extractor("bms")
-        assert isinstance(extractor, BmsExtractor)
+        assert type(extractor).__name__ == "BmsExtractor"
         assert extractor.language_name == "bms"
         assert extractor.get_language() is None
 

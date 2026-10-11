@@ -13,8 +13,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from deriva.studio.deps import get_session
-from deriva.studio.runs import RunBusy
+from deriva.studio.deps import get_session  # noqa: TID251 - the benchmark API is the one module that may use the studio
+from deriva.studio.runs import RunBusy  # noqa: TID251 - as above
 
 router = APIRouter(prefix="/api/benchmarks", tags=["benchmarks"])
 
