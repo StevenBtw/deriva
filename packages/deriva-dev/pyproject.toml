@@ -1,0 +1,31 @@
+[project]
+name = "deriva-dev"
+version = "0.7.1"
+description = "Deriva with benchmarking: the studio, the CLI and multi-model consistency benchmarks."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "AGPL-3.0-or-later"
+# A copy of the repository LICENSE (a package cannot point outside its folder); tests/test_packaging.py keeps it identical
+license-files = ["LICENSE"]
+authors = [{ name = "S. T. Grond", email = "steven@deriva.dev" }]
+dependencies = ["deriva-studio==0.7.1"]
+
+[project.urls]
+Homepage = "https://deriva.dev"
+Documentation = "https://docs.deriva.dev"
+Repository = "https://github.com/StevenBtw/deriva"
+Issues = "https://github.com/StevenBtw/deriva/issues"
+Changelog = "https://github.com/StevenBtw/deriva/blob/main/CHANGELOG.md"
+
+[project.scripts]
+deriva = "deriva.studio.__main__:main"
+deriva-cli = "deriva.cli.cli:main"
+deriva-dev = "deriva.studio.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "deriva.bench"
+source-exclude = [".mypy_cache", ".ruff_cache", "ruff.toml"]
