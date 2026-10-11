@@ -8,7 +8,8 @@ type Callback = (...args: unknown[]) => void;
 
 export type WidgetModel = {
   get: (key: string) => unknown;
-  set: (key: string, value: unknown) => void;
+  /** One key, or several at once (every listener then sees all of them); changes are announced at once, as in Backbone. */
+  set: (key: string | Record<string, unknown>, value?: unknown) => void;
   on: (event: string, callback: Callback) => void;
   off: (event?: string, callback?: Callback) => void;
   save_changes: () => void;
@@ -17,7 +18,6 @@ export type WidgetModel = {
 
 export function createModel(initial: Record<string, unknown>, onSend?: (content: unknown) => void): WidgetModel {
   const state: Record<string, unknown> = { ...initial };
-  const pending = new Set<string>();
   const listeners = new Map<string, Set<Callback>>();
 
   const emit = (event: string, ...args: unknown[]) => {
@@ -27,8 +27,12 @@ export function createModel(initial: Record<string, unknown>, onSend?: (content:
   const model: WidgetModel = {
     get: (key) => state[key],
     set: (key, value) => {
-      state[key] = value;
-      pending.add(key);
+      const changes = typeof key === "string" ? { [key]: value } : key;
+      // A value that stays the same is no change (a widget that sets it again in its listener does not loop)
+      const changed = Object.keys(changes).filter((name) => !Object.is(state[name], changes[name]));
+      Object.assign(state, changes);
+      for (const name of changed) emit(`change:${name}`, model, state[name]);
+      if (changed.length) emit("change", model);
     },
     on: (event, callback) => {
       if (!listeners.has(event)) listeners.set(event, new Set());
@@ -39,12 +43,8 @@ export function createModel(initial: Record<string, unknown>, onSend?: (content:
       else if (callback === undefined) listeners.delete(event);
       else listeners.get(event)?.delete(callback);
     },
-    save_changes: () => {
-      const keys = [...pending];
-      pending.clear();
-      for (const key of keys) emit(`change:${key}`, model, state[key]);
-      if (keys.length) emit("change", model);
-    },
+    // No kernel to sync with: set has announced every change already
+    save_changes: () => {},
     send: (content) => onSend?.(content),
   };
   return model;

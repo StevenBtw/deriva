@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createModel, mountWidget } from "./host";
 
 describe("createModel", () => {
-  it("notifies listeners only when changes are saved", () => {
+  it("announces a change as soon as it is set, as a Backbone model does (also without a save)", () => {
     const model = createModel({ nodes: [], dark_mode: true });
     const onNodes = vi.fn();
     const onAny = vi.fn();
@@ -11,12 +11,32 @@ describe("createModel", () => {
     model.on("change", onAny);
 
     model.set("nodes", [{ id: "a" }]);
-    expect(model.get("nodes")).toEqual([{ id: "a" }]);
-    expect(onNodes).not.toHaveBeenCalled();
 
-    model.save_changes();
+    expect(model.get("nodes")).toEqual([{ id: "a" }]);
     expect(onNodes).toHaveBeenCalledTimes(1);
     expect(onAny).toHaveBeenCalledTimes(1);
+    model.save_changes();
+    expect(onNodes).toHaveBeenCalledTimes(1);
+  });
+
+  it("sets several keys at once, so each listener sees all of them", () => {
+    const model = createModel({ nodes: [], edges: [] });
+    const seen: unknown[] = [];
+    model.on("change:nodes", () => seen.push(model.get("edges")));
+
+    model.set({ nodes: [{ id: "a" }], edges: [{ source: "a", target: "a" }] });
+
+    expect(seen).toEqual([[{ source: "a", target: "a" }]]);
+  });
+
+  it("announces nothing for a value that did not change", () => {
+    const model = createModel({ dark_mode: true });
+    const cb = vi.fn();
+    model.on("change:dark_mode", cb);
+
+    model.set("dark_mode", true);
+
+    expect(cb).not.toHaveBeenCalled();
   });
 
   it("removes listeners with off", () => {

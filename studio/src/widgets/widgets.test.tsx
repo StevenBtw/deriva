@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ArchimateWidget } from "./ArchimateWidget";
 import { GraphWidget } from "./GraphWidget";
+import { LinkedGraphWidget } from "./LinkedGraphWidget";
 import type { WidgetModel } from "./host";
 
 function capturingLoader() {
@@ -33,6 +34,8 @@ describe("GraphWidget", () => {
     expect(model.get("nodes")).toEqual([{ id: "1", label: "Core" }]);
     expect(model.get("dark_mode")).toBe(true);
     expect(model.get("fill")).toBe(true);
+    // The shim has no Python defaults: a trait the studio leaves out reads as undefined (labels would stay off)
+    expect(model.get("show_labels")).toBe(true);
   });
 
   it("updates nodes and edges when the view changes", async () => {
@@ -46,6 +49,18 @@ describe("GraphWidget", () => {
     expect(models[0].get("edges")).toEqual([{ source: "a", target: "a" }]);
   });
 
+  it("passes the totals of a sampled graph and the colours per type", async () => {
+    const { loader, models } = capturingLoader();
+    const totals = { nodes: { File: 40 }, edges: { CONTAINS: 39 } };
+    const typeColors = { nodes: { File: "#999fa8" } };
+
+    render(<GraphWidget database="graph" view={{ nodes: [], edges: [], totals }} typeColors={typeColors} dark={false} loader={loader} />);
+
+    await waitFor(() => expect(models).toHaveLength(1));
+    expect(models[0].get("totals")).toEqual(totals);
+    expect(models[0].get("type_colors")).toEqual(typeColors);
+  });
+
   it("shows a message when the widget cannot be loaded", async () => {
     const loader = vi.fn(async () => {
       throw new Error("Failed to fetch https://esm.sh/graphology");
@@ -57,7 +72,46 @@ describe("GraphWidget", () => {
   });
 });
 
+describe("useWidget", () => {
+  const writing = (text: string) => async () => ({ default: { render: ({ el }: { el: HTMLElement }) => void (el.textContent = text) } });
+
+  it("keeps a mount that finishes late out of the widget that replaced it", async () => {
+    let finish: () => void = () => {};
+    const late = () => new Promise<unknown>((resolve) => (finish = () => resolve(writing("old widget")())));
+    const { container, rerender } = render(<ArchimateWidget elements={[]} relationships={[]} dark={false} loader={late} />);
+
+    rerender(<ArchimateWidget elements={[]} relationships={[]} dark={false} loader={writing("new widget")} />);
+    await waitFor(() => expect(container).toHaveTextContent("new widget"));
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(container).not.toHaveTextContent("old widget");
+  });
+
+  it("drops an old load error once another load starts", async () => {
+    const failing = vi.fn(async () => {
+      throw new Error("Failed to fetch the widget");
+    });
+    const { rerender } = render(<ArchimateWidget elements={[]} relationships={[]} dark={false} loader={failing} />);
+    expect(await screen.findByText(/Widget could not be loaded/)).toBeInTheDocument();
+
+    rerender(<ArchimateWidget elements={[]} relationships={[]} dark={false} loader={() => new Promise(() => {})} />);
+
+    expect(screen.queryByText(/Widget could not be loaded/)).not.toBeInTheDocument();
+  });
+});
+
 describe("ArchimateWidget", () => {
+  it("follows a new height", async () => {
+    const { loader, models } = capturingLoader();
+    const { rerender } = render(<ArchimateWidget elements={[]} relationships={[]} dark={false} height={300} loader={loader} />);
+    await waitFor(() => expect(models).toHaveLength(1));
+
+    rerender(<ArchimateWidget elements={[]} relationships={[]} dark={false} height={480} loader={loader} />);
+
+    await waitFor(() => expect(models[0].get("height")).toBe(480));
+  });
+
   it("passes the model and reports selected elements", async () => {
     const { loader, models } = capturingLoader();
     const onSelect = vi.fn();
@@ -70,5 +124,103 @@ describe("ArchimateWidget", () => {
     models[0].set("selected_element", { id: "n1", name: "Application Server" });
     models[0].save_changes();
     expect(onSelect).toHaveBeenCalledWith({ id: "n1", name: "Application Server" });
+  });
+});
+
+describe("LinkedGraphWidget", () => {
+  const view = {
+    lanes: [
+      { id: "intermediate", title: "Intermediate graph" },
+      { id: "output", title: "Output graph" },
+    ],
+    nodes: [{ id: "1", lane: "intermediate" }],
+    edges: [],
+    missing_links: 0,
+  };
+
+  function featuredLoader(features: string[] | null) {
+    const models: WidgetModel[] = [];
+    const loader = vi.fn(async () => ({
+      default: {
+        render: ({ model }: { model: WidgetModel }) => {
+          if (features) model.set("_features", features);
+          models.push(model);
+        },
+      },
+    }));
+    return { loader, models };
+  }
+
+  it("mounts one widget with lanes, the studio theme and no query bar", async () => {
+    const { loader, models } = featuredLoader(["lanes", "append", "pulse", "theme"]);
+    render(<LinkedGraphWidget view={view} batch={null} pulse={[]} dark loader={loader} />);
+    await waitFor(() => expect(models).toHaveLength(1));
+    expect(models[0].get("lanes")).toEqual(view.lanes);
+    expect(models[0].get("nodes")).toEqual(view.nodes);
+    expect(models[0].get("theme")).toHaveProperty("accent");
+    expect(models[0].get("show_query_input")).toBe(false);
+    expect(models[0].get("show_labels")).toBe(true);
+  });
+
+  it("sends append batches and pulse ids, and a theme change without reloading nodes", async () => {
+    const { loader, models } = featuredLoader(["lanes", "append", "pulse", "theme"]);
+    const { rerender } = render(<LinkedGraphWidget view={view} batch={null} pulse={[]} dark loader={loader} />);
+    await waitFor(() => expect(models).toHaveLength(1));
+    const model = models[0];
+    const setSpy = vi.spyOn(model, "set");
+    const batch = { seq: 1, nodes: [{ id: "2", lane: "output" }], edges: [{ source: "2", target: "1", cross: true }] };
+
+    rerender(<LinkedGraphWidget view={view} batch={batch} pulse={["1"]} dark loader={loader} />);
+    await waitFor(() => expect(model.get("append_batch")).toEqual(batch));
+    expect(model.get("pulse_nodes")).toEqual(["1"]);
+
+    setSpy.mockClear();
+    rerender(<LinkedGraphWidget view={view} batch={batch} pulse={["1"]} dark={false} loader={loader} />);
+    await waitFor(() => expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ dark_mode: false, theme: expect.any(Object) })));
+    const keys = setSpy.mock.calls.flatMap(([key]) => (typeof key === "string" ? [key] : Object.keys(key)));
+    expect(keys).not.toContain("nodes");
+  });
+
+  it("reports a click on an action lane's glyph", async () => {
+    const { loader, models } = featuredLoader(["lanes", "lane_actions"]);
+    const onLaneAction = vi.fn();
+    render(<LinkedGraphWidget view={view} batch={null} pulse={[]} dark loader={loader} onLaneAction={onLaneAction} />);
+    await waitFor(() => expect(models).toHaveLength(1));
+
+    models[0].set("lane_action", { lane: "model", seq: 1 });
+    models[0].save_changes();
+
+    expect(onLaneAction).toHaveBeenCalledWith("model");
+  });
+
+  it("tells the host what the widget supports and passes the sample's totals", async () => {
+    const { loader, models } = featuredLoader(["lanes", "append", "remove", "totals", "action_edges"]);
+    const onFeatures = vi.fn();
+    const totals = { nodes: { File: 40 }, edges: { CONTAINS: 39 } };
+    const { rerender } = render(<LinkedGraphWidget view={view} batch={null} pulse={[]} dark loader={loader} onFeatures={onFeatures} />);
+    await waitFor(() => expect(onFeatures).toHaveBeenCalledWith(["lanes", "append", "remove", "totals", "action_edges"]));
+
+    rerender(<LinkedGraphWidget view={view} batch={null} pulse={[]} totals={totals} dark loader={loader} onFeatures={onFeatures} />);
+
+    await waitFor(() => expect(models[0].get("totals")).toEqual(totals));
+  });
+
+  it("sends the colours per type, again when they change (a theme switch)", async () => {
+    const { loader, models } = featuredLoader(["lanes", "type_colors"]);
+    const dark = { nodes: { Method: "#8b87d8" } };
+    const light = { nodes: { Method: "#7f79d1" } };
+    const { rerender } = render(<LinkedGraphWidget view={view} batch={null} pulse={[]} typeColors={dark} dark loader={loader} />);
+    await waitFor(() => expect(models[0]?.get("type_colors")).toEqual(dark));
+
+    rerender(<LinkedGraphWidget view={view} batch={null} pulse={[]} typeColors={light} dark={false} loader={loader} />);
+
+    await waitFor(() => expect(models[0].get("type_colors")).toEqual(light));
+  });
+
+  it("reports an older widget without lanes", async () => {
+    const { loader } = featuredLoader(null);
+    const onUnsupported = vi.fn();
+    render(<LinkedGraphWidget view={view} batch={null} pulse={[]} dark loader={loader} onUnsupported={onUnsupported} />);
+    await waitFor(() => expect(onUnsupported).toHaveBeenCalled());
   });
 });

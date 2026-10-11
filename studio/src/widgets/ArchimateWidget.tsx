@@ -36,10 +36,16 @@ export function ArchimateWidget({ elements, relationships, dark, height = 620, o
 
   useEffect(() => {
     if (!model) return;
-    model.set("elements", elements);
-    model.set("relationships", relationships);
+    // Together: the widget never draws relationships between elements it does not have yet
+    model.set({ elements, relationships });
     model.save_changes();
   }, [model, elements, relationships]);
+
+  useEffect(() => {
+    if (!model) return;
+    model.set("height", height);
+    model.save_changes();
+  }, [model, height]);
 
   useEffect(() => {
     if (!model) return;

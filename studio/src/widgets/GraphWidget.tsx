@@ -1,25 +1,28 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
-import type { GraphView } from "../api/types";
+import type { GraphView, TypeColors } from "../api/types";
 import type { Loader } from "./host";
 import { useWidget } from "./useWidget";
 
 type Props = {
   database: "graph" | "model";
   view: GraphView;
+  typeColors?: TypeColors;
   dark: boolean;
   height?: number;
   loader?: Loader;
 };
 
 /** anywidget-graph in grafeo server mode against the studio (/grafeo answers read-only from the embedded databases). */
-export function GraphWidget({ database, view, dark, height = 420, loader }: Props) {
+export function GraphWidget({ database, view, typeColors, dark, height = 420, loader }: Props) {
   const { ref, model, error } = useWidget(
     "/widgets/anywidget-graph/index.js",
     "/widgets/anywidget-graph/styles.css",
     (el) => ({
       nodes: view.nodes,
       edges: view.edges,
+      totals: view.totals ?? {},
+      type_colors: typeColors ?? {},
       width: el.clientWidth || 600,
       height,
       // Newer anywidget-graph builds fill the host and follow its size; older ones ignore it
@@ -31,6 +34,8 @@ export function GraphWidget({ database, view, dark, height = 420, loader }: Prop
       connection_database: database,
       query_language: "cypher",
       show_query_input: true,
+      // The shim has no Python trait defaults: left out, labels would stay off
+      show_labels: true,
       show_toolbar: true,
       show_settings: true,
       max_nodes: 300,
@@ -40,8 +45,7 @@ export function GraphWidget({ database, view, dark, height = 420, loader }: Prop
 
   useEffect(() => {
     if (!model) return;
-    model.set("nodes", view.nodes);
-    model.set("edges", view.edges);
+    model.set({ nodes: view.nodes, edges: view.edges, totals: view.totals ?? {} });
     model.save_changes();
   }, [model, view]);
 
@@ -50,6 +54,17 @@ export function GraphWidget({ database, view, dark, height = 420, loader }: Prop
     model.set("dark_mode", dark);
     model.save_changes();
   }, [model, dark]);
+
+  // Colours per type follow the theme; only a different set is sent
+  const sentColors = useRef("");
+  useEffect(() => {
+    if (!model) return;
+    const key = JSON.stringify(typeColors ?? {});
+    if (key === sentColors.current) return;
+    sentColors.current = key;
+    model.set("type_colors", typeColors ?? {});
+    model.save_changes();
+  }, [model, typeColors]);
 
   return (
     <div className="widget-host">
