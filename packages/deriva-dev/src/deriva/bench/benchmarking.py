@@ -1977,9 +1977,9 @@ def model_quality_for_session(
     at most once, so a duplicate costs precision.
     """
     if reference_models is None:
-        from deriva.bench.analysis import REFERENCE_MODELS
+        from deriva.bench.analysis import known_reference_models
 
-        reference_models = REFERENCE_MODELS
+        reference_models = known_reference_models()
     rows: list[dict[str, Any]] = []
     models_dir = Path(session_dir) / "models"
     names = list(repositories) + (["_".join(sorted(repositories))] if len(repositories) > 1 else [])

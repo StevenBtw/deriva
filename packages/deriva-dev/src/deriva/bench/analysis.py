@@ -49,12 +49,11 @@ from deriva.services.llm_log import LlmCallLog
 
 __all__ = ["BenchmarkAnalyzer"]
 
-# Known reference model locations
-REFERENCE_MODELS = {
-    "lightblue": str(workspace() / "repositories" / "lightblue" / "docs" / "lightblue.archimate"),
-    "bigdata": str(workspace() / "repositories" / "bigdata" / "docs" / "MyWorkspace.archimate"),
-    "Cloudbased-S-BPM-WfMS": str(workspace() / "repositories" / "Cloudbased-S-BPM-WfMS" / "AIM18 Documentation/ist_analyse_v0.7.archimate"),
-}
+
+def known_reference_models() -> dict[str, str]:
+    """Reference models by repository name: ``workspace/reference/<repository>.archimate`` in the home folder."""
+    folder = workspace() / "reference"
+    return {path.stem: str(path) for path in sorted(folder.glob("*.archimate"))} if folder.is_dir() else {}
 
 
 logger = logging.getLogger(__name__)
@@ -96,7 +95,7 @@ class BenchmarkAnalyzer:
         """
         self.session_ids = session_ids
         self.engine = engine
-        self.reference_model_paths = reference_models or REFERENCE_MODELS
+        self.reference_model_paths = reference_models or known_reference_models()
 
         # Load OCEL logs for all sessions
         self.ocel_logs: dict[str, OCELLog] = {}

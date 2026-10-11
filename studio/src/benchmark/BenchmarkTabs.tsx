@@ -79,7 +79,7 @@ export function ResultsTable({ groups }: { groups: BenchmarkGroup[] }) {
         </details>
       ))}
       {groups.some((g) => !measured(g)) && <div className="note">n/a: {UNMEASURED}</div>}
-      <div className="note">Target: at least 90% consistency by source. Every LLM call is made once (no repeated samples, no voting).</div>
+      <div className="note">Consistency is counted by source: the share of elements and relationships that every run of a group produced.</div>
     </div>
   );
 }

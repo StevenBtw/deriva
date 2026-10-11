@@ -2,7 +2,7 @@
 
 Reads the model snapshots a benchmark writes (``models/{repo}_{model}_run{n}.json``) and the
 runs' LLM call logs (``llm/<run>.jsonl``), for one or more sessions: end-to-end measurements
-are separate one-run sessions (rule 7), so a view may combine several. The set logic lives
+are separate one-run sessions, so a view may combine several. The set logic lives
 in ``deriva.modules.analysis.run_consistency``.
 """
 
