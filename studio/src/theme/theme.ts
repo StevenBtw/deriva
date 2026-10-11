@@ -5,6 +5,8 @@ export type EffectiveTheme = "light" | "dark";
 
 const KEY = "deriva.theme";
 const ORDER: ThemeChoice[] = ["system", "light", "dark"];
+// Every useTheme hears a change made anywhere on the page (the top bar's toggle, the graphs that follow it)
+const CHANGED = "deriva:theme";
 
 export function getTheme(): ThemeChoice {
   try {
@@ -28,6 +30,7 @@ export function setTheme(choice: ThemeChoice): void {
     // storage blocked: the choice still applies for this page
   }
   applyTheme(choice);
+  window.dispatchEvent(new CustomEvent<ThemeChoice>(CHANGED, { detail: choice }));
 }
 
 export function effectiveTheme(choice: ThemeChoice = getTheme()): EffectiveTheme {
@@ -51,11 +54,17 @@ export function useTheme(): [ThemeChoice, (choice: ThemeChoice) => void, Effecti
     return () => media.removeEventListener?.("change", update);
   }, [choice]);
 
-  const change = useCallback((next: ThemeChoice) => {
-    setTheme(next);
-    setChoice(next);
-    setShown(effectiveTheme(next));
+  useEffect(() => {
+    const changed = (event: Event) => {
+      const next = (event as CustomEvent<ThemeChoice>).detail;
+      setChoice(next);
+      setShown(effectiveTheme(next));
+    };
+    window.addEventListener(CHANGED, changed);
+    return () => window.removeEventListener(CHANGED, changed);
   }, []);
+
+  const change = useCallback((next: ThemeChoice) => setTheme(next), []);
 
   return [choice, change, shown];
 }

@@ -1,6 +1,7 @@
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { effectiveTheme, getTheme, nextTheme, setTheme } from "./theme";
+import { effectiveTheme, getTheme, nextTheme, setTheme, useTheme } from "./theme";
 
 describe("theme", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -40,5 +41,36 @@ describe("theme", () => {
     });
 
     expect(getTheme()).toBe("system");
+  });
+
+  it("still applies a choice when storage refuses to write", () => {
+    const blocked = () => {
+      throw new Error("blocked");
+    };
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(blocked);
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(blocked);
+
+    setTheme("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    setTheme("system");
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+  });
+});
+
+describe("useTheme", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setTheme("system");
+  });
+
+  it("tells every component when the theme changes, not only the one that changed it", () => {
+    vi.spyOn(window, "matchMedia").mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} } as unknown as MediaQueryList);
+    const toggle = renderHook(() => useTheme());
+    const graphs = renderHook(() => useTheme());
+
+    act(() => toggle.result.current[1]("dark"));
+
+    expect(graphs.result.current[0]).toBe("dark");
+    expect(graphs.result.current[2]).toBe("dark");
   });
 });

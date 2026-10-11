@@ -10,7 +10,7 @@
   --line: #353b46;
   --text: #e7e9ee;
   --muted: #9aa2b0;
-  --faint: #6b7380;
+  --faint: #8e96a3;
   --accent: #5bb8a9;
   --accent-soft: rgba(91, 184, 169, 0.16);
   --on-accent: #0d1416;
@@ -24,6 +24,9 @@
   --biz: #f2d264;
   --app: #7fc4f5;
   --tech: #9bd88a;
+  --biz-text: #f2d264;
+  --app-text: #7fc4f5;
+  --tech-text: #9bd88a;
   --inter: #b3a6ff;
   --code: #1a1d23;
   color-scheme: dark;
@@ -38,7 +41,7 @@
     --line: #d4d8df;
     --text: #1c2027;
     --muted: #5d6573;
-    --faint: #8b93a0;
+    --faint: #646c79;
     --accent: #2a7680;
     --accent-soft: rgba(42, 118, 128, 0.12);
     --on-accent: #ffffff;
@@ -52,6 +55,9 @@
     --biz: #e8c547;
     --app: #4fa3df;
     --tech: #6cbf5b;
+    --biz-text: #7a5a00;
+    --app-text: #1d5e8c;
+    --tech-text: #2d6b21;
     --inter: #7d6be0;
     --code: #f7f8fa;
     color-scheme: light;
@@ -66,7 +72,7 @@
   --line: #d4d8df;
   --text: #1c2027;
   --muted: #5d6573;
-  --faint: #8b93a0;
+  --faint: #646c79;
   --accent: #2a7680;
   --accent-soft: rgba(42, 118, 128, 0.12);
   --on-accent: #ffffff;
@@ -80,6 +86,9 @@
   --biz: #e8c547;
   --app: #4fa3df;
   --tech: #6cbf5b;
+  --biz-text: #7a5a00;
+  --app-text: #1d5e8c;
+  --tech-text: #2d6b21;
   --inter: #7d6be0;
   --code: #f7f8fa;
   color-scheme: light;
@@ -360,6 +369,17 @@ tbody tr.clickable:hover td {
 }
 .banner.warn {
   background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
+.banner a {
+  color: var(--accent);
+  margin-left: 6px;
+}
+/* The installed version next to the name in the top bar */
+.logo .version {
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--muted);
 }
 .body {
   /* Row 3 even when the banner (row 2) renders nothing */
@@ -749,6 +769,8 @@ tbody tr.clickable:hover td {
   border: 1px solid var(--line);
   border-radius: 6px;
   min-height: 240px;
+  /* Long prompts scroll inside the box, so the save row below stays in view */
+  max-height: calc(100vh - 290px);
   overflow: auto;
 }
 .codebox .cm-editor {
@@ -940,7 +962,7 @@ table.results th {
 }
 
 .layer.biz .lt {
-  color: var(--biz);
+  color: var(--biz-text);
 }
 
 .layer.appl {
@@ -948,7 +970,7 @@ table.results th {
 }
 
 .layer.appl .lt {
-  color: var(--app);
+  color: var(--app-text);
 }
 
 .layer.tech {
@@ -956,7 +978,7 @@ table.results th {
 }
 
 .layer.tech .lt {
-  color: var(--tech);
+  color: var(--tech-text);
 }
 
 .layer.other,
@@ -1147,4 +1169,33 @@ table.rules tbody th {
 .lane-body .widget-host,
 .lane-body .widget-host > div:last-child {
   height: 100%;
+}
+
+/* Graph view switch (Linked | Separate) and the linked lane filling the centre */
+.lanes-host {
+  position: relative;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+}
+.lanes-switch {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 3;
+  background: var(--bg2);
+}
+.lane-linked {
+  flex: 1;
+  margin: 8px;
+}
+
+/* A checkbox with its label on one line (settings switches) */
+label.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+label.check + .note {
+  margin-top: 6px;
 }
