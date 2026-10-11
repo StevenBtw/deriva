@@ -7,4 +7,4 @@ Deriva reads a code repository and builds an ArchiMate model of its architecture
 - [Optimization](optimization.md): change prompts and step settings so the model improves on any repository
 - [Architecture](architecture.md): the layers, the pipeline and where data is stored
 
-Commands are shown as `deriva-cli ...`. From a source checkout, which is how Deriva is installed today, put `uv run` in front of them.
+Commands are shown as `deriva-cli ...`, as the PyPI packages install them. From a source checkout, put `uv run` in front of them.
