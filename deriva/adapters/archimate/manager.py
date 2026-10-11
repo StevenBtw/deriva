@@ -26,11 +26,10 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from deriva.adapters.grafeo import GrafeoConnection
-from dotenv import load_dotenv
+from deriva.common.settings import ArchimateSettings
 
 from .models import ArchiMateMetamodel, Element, Relationship
 from .validation import ArchiMateValidator, ValidationError
@@ -53,14 +52,14 @@ class ArchimateManager:
     def __init__(self):
         """Initialize the ArchimateManager.
 
-        Configuration is loaded from .env file.
+        Configuration comes from the settings (home .env under the process environment).
         """
-        load_dotenv()
+        archimate = ArchimateSettings()
 
         self.db: GrafeoConnection | None = None
-        self.namespace = os.getenv("ARCHIMATE_NAMESPACE", "Model")
+        self.namespace = archimate.namespace
         self.metamodel = ArchiMateMetamodel()
-        self.validator = ArchiMateValidator(strict_mode=os.getenv("ARCHIMATE_VALIDATION_STRICT_MODE", "false").lower() == "true")
+        self.validator = ArchiMateValidator(strict_mode=archimate.validation_strict_mode)
 
         logger.info(f"Initialized ArchimateManager with namespace: {self.namespace}")
 
