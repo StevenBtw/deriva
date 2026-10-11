@@ -1,4 +1,4 @@
-## Version v0.7.
+## Version v0.8.
 
 ## Description
 Brief description of changes.
