@@ -64,7 +64,7 @@ def strip_repo_prefix(name: str, repo_name: str) -> str:
 
     Repo name is compared with separators stripped, so a hyphenated or
     mixed-case repo name matches its prefix regardless of formatting, also
-    when it is spread over several words ("Tea Store Registry" for TeaStore).
+    when it is spread over several words ("Tool Shed Registry" for ToolShed).
     A name that is only the repo name stays.
     """
     if not name or not repo_name:
