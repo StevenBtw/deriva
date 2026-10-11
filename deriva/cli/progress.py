@@ -239,7 +239,8 @@ if RICH_AVAILABLE:
 
             # Mark step as complete
             if self._step_task is not None:
-                task = self._progress.tasks[self._step_task]
+                # A task id is not a list index once earlier steps were removed
+                task = next(t for t in self._progress.tasks if t.id == self._step_task)
                 if task.total is not None:
                     self._progress.update(self._step_task, completed=task.total)
                 self._progress.remove_task(self._step_task)

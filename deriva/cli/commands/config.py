@@ -7,6 +7,7 @@ Provides commands for managing pipeline configurations.
 from __future__ import annotations
 
 import json
+import sys
 from typing import Annotated
 
 import typer
@@ -648,9 +649,20 @@ def model_list() -> None:
         return
     for m in models:
         key = m["key"] or (f"from ${m['key_env']}" if m["key_env"] else "no key")
-        typer.echo(f"  {m['name']:<28} {m['provider']:<10} {m['model'] or '':<32} {key}")
+        name = f"{m['name']} (default)" if m.get("default") else m["name"]
+        typer.echo(f"  {name:<28} {m['provider']:<10} {m['model'] or '':<32} {key}")
         if m["url"]:
             typer.echo(f"  {'':<28} {m['url']}")
+
+
+def _read_key() -> str:
+    """The API key from a hidden prompt, or the first line of stdin when it is piped.
+
+    Never an argument: that would land in the shell history and the process list.
+    """
+    if sys.stdin.isatty():
+        return typer.prompt("API key", hide_input=True)
+    return sys.stdin.readline().strip()
 
 
 @model_app.command("set")
@@ -659,17 +671,32 @@ def model_set(
     provider: Annotated[str, typer.Option("--provider", help="azure, openai, anthropic, ollama, mistral, lmstudio")],
     model: Annotated[str, typer.Option("--model", help="Model id")],
     url: Annotated[str | None, typer.Option("--url", help="API URL ('' removes it)")] = None,
-    key: Annotated[str | None, typer.Option("--key", help="API key (omit to keep the stored key)")] = None,
+    key: Annotated[bool, typer.Option("--key", help="Ask for the API key (hidden; read from stdin when piped). Without it the stored key stays")] = False,
     key_env: Annotated[str | None, typer.Option("--key-env", help="Environment variable that holds the key")] = None,
-    structured_output: Annotated[str | None, typer.Option("--structured-output", help="Structured output mode")] = None,
+    sampling: Annotated[str | None, typer.Option("--sampling", help="false for models that take no temperature ('' removes it)")] = None,
+    reasoning: Annotated[str | None, typer.Option("--reasoning", help="Reasoning level: none (off), low, medium, high ... ('' removes it)")] = None,
 ) -> None:
     """Add or change a model config in .env (other lines and comments are kept)."""
+    secret = _read_key() if key else None
     try:
-        PipelineSession().save_model_config(name, provider=provider, model=model, url=url, key=key, key_env=key_env, structured_output=structured_output)
+        PipelineSession().save_model_config(name, provider=provider, model=model, url=url, key=secret, key_env=key_env, sampling=sampling, reasoning=reasoning)
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from e
     typer.echo(f"Saved model config {name}")
+
+
+@model_app.command("default")
+def model_default(
+    name: Annotated[str, typer.Argument(help="Model config name")],
+) -> None:
+    """Make a configured model the one Deriva uses (LLM_DEFAULT_MODEL in .env)."""
+    try:
+        PipelineSession().set_default_model(name)
+    except KeyError as e:
+        typer.echo(f"Error: {e.args[0]}", err=True)
+        raise typer.Exit(1) from e
+    typer.echo(f"Default model: {name}")
 
 
 @model_app.command("delete")
