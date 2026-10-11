@@ -25,11 +25,15 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 from deriva.adapters.grafeo import GrafeoConnection
-from dotenv import load_dotenv
+from deriva.common.ocel import create_edge_id
+from deriva.common.settings import GraphSettings
 
 from .models import (
     BusinessConceptNode,
@@ -62,6 +66,9 @@ GraphNode = (
 
 logger = logging.getLogger(__name__)
 
+# A node type (label) as queries name it
+_LABEL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
 # Keys the adapter stores next to a node's model properties; readers leave them out
 SYSTEM_PROPERTIES = frozenset({"id", "repository_name", "active"})
 
@@ -84,6 +91,14 @@ _NODE_ID_PREFIXES = frozenset(
         "module",
     }
 )
+
+
+@dataclass
+class GraphWrites:
+    """The nodes and edges written inside a ``GraphManager.recording()`` block, in write order (repeats included)."""
+
+    nodes: list[str] = field(default_factory=list)
+    edges: list[str] = field(default_factory=list)  # {relationship}_{source}_{target}, the edge ids of the run log
 
 
 def _extract_repo_from_node_id(node_id: str) -> str | None:
@@ -159,9 +174,9 @@ class GraphManager:
 
     def __init__(self):
         """Initialize the GraphManager using .env configuration."""
-        load_dotenv()
         self.db: GrafeoConnection | None = None
-        self.namespace = os.getenv("GRAPH_NAMESPACE", "Graph")
+        self.namespace = GraphSettings().namespace
+        self._recorders: list[GraphWrites] = []  # open recording() blocks
 
         logger.info(f"Initializing GraphManager with namespace: {self.namespace}")
 
@@ -232,11 +247,23 @@ class GraphManager:
             # (such as enrichment scores) are dropped.
             self.db.merge_node("id", node_id, [self.namespace, node_label], {**properties, **system}, replace=True)
             logger.debug(f"Added node: {node_id} ({node_label})")
+            for recorder in self._recorders:
+                recorder.nodes.append(node_id)
             return node_id
 
         except Exception as e:
             logger.error(f"Failed to add node {node_id}: {e}")
             raise
+
+    @contextmanager
+    def recording(self) -> Iterator[GraphWrites]:
+        """The nodes and edges written inside the block (for the run log); failed writes are left out."""
+        recorder = GraphWrites()
+        self._recorders.append(recorder)
+        try:
+            yield recorder
+        finally:
+            self._recorders.remove(recorder)
 
     def add_edge(
         self,
@@ -275,6 +302,8 @@ class GraphManager:
             if not self.db.merge_edge("id", src_id, dst_id, edge_label, edge_id, properties):
                 raise RuntimeError(f"Failed to add edge. Make sure nodes {src_id} and {dst_id} exist.")
             logger.debug(f"Added edge: {src_id} -{relationship}-> {dst_id}")
+            for recorder in self._recorders:
+                recorder.edges.append(create_edge_id(src_id, relationship, dst_id))
             return edge_id
 
         except Exception as e:
@@ -478,17 +507,20 @@ class GraphManager:
             logger.error(f"Failed to check node existence {node_id}: {e}")
             return False
 
-    def get_nodes_by_type(self, node_type: str) -> list[dict[str, Any]]:
-        """Retrieve all nodes of a specific type.
+    def get_nodes_by_type(self, node_type: str, limit: int | None = None) -> list[dict[str, Any]]:
+        """Retrieve the nodes of a specific type (the first ``limit`` by id when given).
 
         Args:
-            node_type: Node type/label to filter by
+            node_type: Node type/label to filter by (a plain name: it goes into the query as a label)
+            limit: Maximum number of nodes
 
         Returns:
             List of node dictionaries
         """
         if self.db is None:
             raise RuntimeError("Not connected to grafeo. Call connect() first.")
+        if not _LABEL.fullmatch(node_type):
+            raise ValueError(f"Not a node type: {node_type!r}")
 
         try:
             # Query by node type label directly
@@ -497,6 +529,8 @@ class GraphManager:
                 MATCH (n:`{node_type}`)
                 RETURN labels(n) AS labels, properties(n) AS props
             """
+            if limit is not None:
+                query += f" ORDER BY n.id LIMIT {int(limit)}"
 
             # In id order: the graph's result order is unspecified, and callers take the first match
             return sorted((self._node_from_row(row) for row in self.db.execute_read(query)), key=lambda node: node["id"])
