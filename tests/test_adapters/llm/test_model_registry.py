@@ -1,0 +1,53 @@
+"""Each model config reaches pydantic-ai with its own key and URL, not only through the providers' environment variables."""
+
+from __future__ import annotations
+
+import pytest
+from pydantic_ai.models import infer_model
+
+from deriva.adapters.llm.model_registry import get_pydantic_ai_model
+
+PROVIDER_VARIABLES = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY", "MISTRAL_API_KEY", "OLLAMA_BASE_URL", "OLLAMA_API_KEY")
+
+
+@pytest.fixture
+def no_provider_environment(monkeypatch):
+    for name in PROVIDER_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize(("provider", "model"), [("mistral", "devstral-2512"), ("openai", "gpt-4o-mini"), ("anthropic", "claude-haiku")])
+def test_a_models_own_key_is_used(no_provider_environment, provider, model):
+    """A key saved in the studio (LLM_{NAME}_KEY) works without the provider's own environment variable."""
+    resolved = infer_model(get_pydantic_ai_model({"provider": provider, "model": model, "api_key": "sk-test-0000"}))
+
+    assert resolved.model_name == model
+
+
+def test_without_a_key_the_providers_environment_variable_still_applies(no_provider_environment):
+    assert get_pydantic_ai_model({"provider": "mistral", "model": "devstral-2512"}) == "mistral:devstral-2512"
+
+
+def test_an_ollama_model_uses_its_configured_url(no_provider_environment):
+    """The native chat URL of the model config becomes the OpenAI-compatible base URL pydantic-ai talks to."""
+    resolved = infer_model(get_pydantic_ai_model({"provider": "ollama", "model": "llama3.2", "api_url": "http://localhost:11434/api/chat"}))
+
+    assert str(resolved.base_url).rstrip("/") == "http://localhost:11434/v1"
+
+
+def test_a_reasoning_level_becomes_each_providers_setting():
+    """``none`` turns reasoning off (OpenAI keeps the temperature then); other levels set the effort."""
+    from deriva.adapters.llm.model_registry import reasoning_settings
+
+    assert reasoning_settings("openai", "none") == {"openai_reasoning_effort": "none"}
+    assert reasoning_settings("azure", "low") == {"openai_reasoning_effort": "low"}
+    assert reasoning_settings("anthropic", "none") == {"anthropic_thinking": {"type": "disabled"}}
+    assert reasoning_settings("anthropic", "low") == {"anthropic_thinking": {"type": "adaptive"}, "extra_body": {"output_config": {"effort": "low"}}}
+    assert reasoning_settings("mistral", None) == {}
+
+
+def test_reasoning_is_refused_for_providers_deriva_cannot_set_it_for():
+    from deriva.adapters.llm.model_registry import reasoning_settings
+
+    with pytest.raises(ValueError, match="mistral"):
+        reasoning_settings("mistral", "none")
