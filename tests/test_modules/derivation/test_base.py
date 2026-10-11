@@ -2245,6 +2245,11 @@ class TestNamesFromStructure:
             ("Node.js", False, "Node.js"),
             ("Apache Kafka", False, "Apache Kafka"),
             ("web-app", False, "Web App"),
+            # All capitals over several words: the case says nothing, so the words are title-cased
+            ("LEDGER-ENTRY-RECORD", False, "Ledger Entry Record"),
+            ("MAX_RETRY_COUNT", False, "Max Retry Count"),
+            # One word in capitals may be an acronym: kept
+            ("HTTP", False, "HTTP"),
         ],
     )
     def test_name_from_source(self, source_name, is_file, expected):
