@@ -96,10 +96,20 @@ export function LinkedGraphWidget({ view, batch, pulse, totals, typeColors, dark
     model.save_changes();
   }, [model, view]);
 
+  // Batches that arrive before the widget is ready wait here and go in order once it is
+  const waiting = useRef<NonNullable<typeof batch>[]>([]);
   useEffect(() => {
-    if (!model || !batch) return;
-    model.set("append_batch", batch);
-    model.save_changes();
+    if (!batch) return;
+    if (!model) {
+      waiting.current.push(batch);
+      return;
+    }
+    const queue = waiting.current.splice(0);
+    if (queue[queue.length - 1] !== batch) queue.push(batch);
+    for (const item of queue) {
+      model.set("append_batch", item);
+      model.save_changes();
+    }
   }, [model, batch]);
 
   // Only a different set of candidates is sent: every set redraws the canvas

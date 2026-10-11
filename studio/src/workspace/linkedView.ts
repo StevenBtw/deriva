@@ -5,7 +5,7 @@ export type HostTheme = { background: string; panel: string; text: string; muted
 
 /** The key the widget merges edges by: source, target and label. */
 export function edgeKey(edge: WidgetEdge): string {
-  return `${edge.source}|${edge.target}|${edge.label ?? ""}`;
+  return JSON.stringify([edge.source, edge.target, edge.label ?? ""]);
 }
 
 /** The nodes and edges of `next` that `shown` lacks, in their order in `next`: one append batch. */

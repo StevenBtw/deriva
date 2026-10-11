@@ -74,7 +74,7 @@ function LinkedLanes({
         const removed = previous ? removedItems(previous, next) : null;
         const changed = previous ? changedElements(previous, next) : [];
         const leaving = Boolean(removed && (removed.nodes.length || removed.edges.length || changed.length));
-        if (!previous || !removed || lanesChanged(previous, next) || (leaving && !features.current.includes("remove"))) {
+        if (!previous || !removed || lanesChanged(previous, next) || !features.current.includes("append") || (leaving && !features.current.includes("remove"))) {
           setBase({ ...next, lanes: withModelLane(withLaneLayouts(next.lanes)), nodes: withLayerColors(next.nodes) });
           return;
         }

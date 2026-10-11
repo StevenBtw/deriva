@@ -41,7 +41,9 @@ describe("linked view diff", () => {
       ["3", "1", "DERIVED_FROM"],
     ]);
     expect(newItems(shown, next)).toEqual({ nodes: [{ id: "3", deriva_id: "d-3" }], edges: [{ source: "3", target: "1", label: "DERIVED_FROM" }] });
-    expect(edgeKey({ source: "a", target: "b" })).toBe("a|b|");
+    expect(edgeKey({ source: "a", target: "b" })).toBe('["a","b",""]');
+    // An id with a delimiter in it gives no key another edge could have
+    expect(edgeKey({ source: "a|b", target: "c" })).not.toBe(edgeKey({ source: "a", target: "b|c" }));
   });
 
   it("maps Deriva ids to the widget's node ids", () => {

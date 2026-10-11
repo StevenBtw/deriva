@@ -292,6 +292,7 @@ describe("Workspace", () => {
   });
 
   it("appends what a completed step added instead of redrawing the linked view", async () => {
+    widget.features = ["lanes", "append"];
     render(<Workspace />);
     await screen.findByRole("option", { name: "deriva" });
     await waitFor(() => expect(session.useRepository).toHaveBeenCalled());

@@ -56,12 +56,12 @@ export function GraphWidget({ database, view, typeColors, dark, height = 420, lo
   }, [model, dark]);
 
   // Colours per type follow the theme; only a different set is sent
-  const sentColors = useRef("");
+  const sentColors = useRef<{ model: unknown; key: string } | null>(null);
   useEffect(() => {
     if (!model) return;
     const key = JSON.stringify(typeColors ?? {});
-    if (key === sentColors.current) return;
-    sentColors.current = key;
+    if (sentColors.current?.model === model && sentColors.current.key === key) return;
+    sentColors.current = { model, key };
     model.set("type_colors", typeColors ?? {});
     model.save_changes();
   }, [model, typeColors]);

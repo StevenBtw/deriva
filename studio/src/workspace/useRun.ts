@@ -35,12 +35,13 @@ export function useRun(onStepComplete?: () => void) {
 
   useEffect(() => () => stop.current?.(), []);
 
-  const follow = useCallback((runId: string) => {
+  const follow = useCallback((runId: string, live = true) => {
     stop.current = followRun(
       runId,
       (event) => {
         setState((s) => (s.runId === runId ? { ...s, events: [...s.events, event] } : s));
-        if (event.event === "progress" && event.data.status === "complete") stepDone.current?.();
+        // The replay of a run that has ended refreshes the views once, at its end
+        if (live && event.event === "progress" && event.data.status === "complete") stepDone.current?.();
       },
       (name, lost) => {
         // A lost stream ends only a run still running (the server lost it); a run that had ended keeps its own status
@@ -73,7 +74,7 @@ export function useRun(onStepComplete?: () => void) {
     (run: RunSummary) => {
       stop.current?.();
       setState({ runId: run.run_id, status: statusOf(run), events: [], error: null, repository: run.repository });
-      follow(run.run_id);
+      follow(run.run_id, statusOf(run) === "running");
     },
     [follow],
   );

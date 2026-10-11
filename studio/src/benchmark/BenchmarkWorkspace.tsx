@@ -194,8 +194,13 @@ export function BenchmarkWorkspace() {
           {error && <div className="logline error">{error}</div>}
           {tab === "results" && <ResultsTable groups={groups} />}
           {tab === "steps" && <StepsHeatmap steps={steps} />}
-          {tab === "flips" && <FlipsList flips={flips} loading={!flipsNow} failed={flipsNow?.failed} repos={repos} repo={repo} onRepo={setRepo} />}
-          {tab === "live" && <LiveLog events={state.events} runId={state.runId} />}
+          {tab === "flips" &&
+            (!selected.length || !repo ? (
+              <div className="muted">Select benchmark sessions with a repository to see flips.</div>
+            ) : (
+              <FlipsList flips={flips} loading={!flipsNow} failed={flipsNow?.failed} repos={repos} repo={repo} onRepo={setRepo} />
+            ))}
+          {tab === "live" && <LiveLog events={state.events} runId={state.runId} runStatus={state.status} />}
         </div>
       </div>
     </section>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { runs, session } from "../api/client";
 import { BenchmarkWorkspace } from "../benchmark/BenchmarkWorkspace";
@@ -27,6 +27,10 @@ function RunWorkspace() {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const onStepComplete = useCallback(() => setRefresh((n) => n + 1), []);
   const { state, start, attach, cancel } = useRun(onStepComplete);
+  const shownRun = useRef(state.runId);
+  useEffect(() => {
+    shownRun.current = state.runId;
+  }, [state.runId]);
   // A reload shows the run in progress, else the last one (its stream replays from the start)
   useEffect(() => {
     let gone = false;
@@ -34,7 +38,8 @@ function RunWorkspace() {
       .current()
       .then((current) => current ?? runs.history(1).then((list) => list[0] ?? null))
       .then((run) => {
-        if (run && !gone) attach(run);
+        // Not over a run the user started or picked while the lookup was under way
+        if (run && !gone && shownRun.current === null) attach(run);
       })
       .catch(() => {});
     return () => {

@@ -25,6 +25,7 @@ describe("lineDiff", () => {
       { op: " ", text: "tail" },
     ]);
     expect(lines.filter((l) => l.op === "-")).toHaveLength(4000);
+    expect(lines.filter((l) => l.op === "+")).toHaveLength(4000);
   });
 
   it("treats empty text as no lines", () => {
