@@ -101,7 +101,7 @@ describe("diagram for the ArchiMate widget", () => {
     expect(byId["Node|tech::r::queue"].documentation).toContain("llm_rejected");
     expect(byId["ApplicationComponent|dir::r::worker"]).toMatchObject({ status: "changed", badge: "name differs" });
     expect(relationships).toEqual([
-      { id: "Serving|Node|tech::r::queue|ApplicationComponent|dir::r::worker", type: "Serving", source: "Node|tech::r::queue", target: "ApplicationComponent|dir::r::worker", name: "", status: "partial" },
+      { id: JSON.stringify(["Serving", "Node|tech::r::queue", "ApplicationComponent|dir::r::worker"]), type: "Serving", source: "Node|tech::r::queue", target: "ApplicationComponent|dir::r::worker", name: "", status: "partial" },
     ]);
   });
 
@@ -113,5 +113,18 @@ describe("diagram for the ArchiMate widget", () => {
     expect(byId["Node|tech::r::bus"]).toMatchObject({ status: "partial", badge: "missing in 2 runs" });
     expect(relationships).toEqual([]);
     expect(diagramOf(VIEW, "source", { kind: "union" }, "stable").elements).toEqual([]);
+  });
+
+  it("applies the filter to relationships too", () => {
+    const stable: InspectorView = {
+      ...VIEW,
+      runs: ["s/1", "s/3"],
+      elements: VIEW.elements.filter((e) => e.run !== "s/2" && e.name !== "Workers").concat([el("s/3", "Worker", "ApplicationComponent", "dir::r::worker")]),
+      relationships: VIEW.relationships.filter((r) => r.run === "s/1"),
+    };
+
+    expect(diagramOf(stable, "source", { kind: "union" }, "all").relationships.map((r) => r.status)).toEqual(["partial"]);
+    expect(diagramOf(stable, "source", { kind: "union" }, "stable").elements).toHaveLength(2);
+    expect(diagramOf(stable, "source", { kind: "union" }, "stable").relationships).toEqual([]);
   });
 });

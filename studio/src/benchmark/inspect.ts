@@ -112,7 +112,8 @@ export function diagramOf(view: InspectorView, identity: Identity, shown: Diagra
   for (const r of view.relationships) {
     const source = identity === "source" ? r.source_by_source : r.source_by_name;
     const target = identity === "source" ? r.target_by_source : r.target_by_name;
-    const id = `${r.type}|${source}|${target}`;
+    // Element keys hold "|" themselves: a joined string could make two pairs one
+    const id = JSON.stringify([r.type, source, target]);
     const entry = grouped.get(id) ?? { type: r.type, source, target, runs: new Set<string>() };
     entry.runs.add(r.run);
     grouped.set(id, entry);
@@ -121,7 +122,9 @@ export function diagramOf(view: InspectorView, identity: Identity, shown: Diagra
   for (const [id, r] of grouped) {
     if (!shownIds.has(r.source) || !shownIds.has(r.target)) continue;
     if (shown.kind === "run" && !r.runs.has(shown.run)) continue;
-    relationships.push({ id, type: r.type, source: r.source, target: r.target, name: "", status: r.runs.size === runs.length ? "stable" : "partial" });
+    const partial = r.runs.size !== runs.length;
+    if (!keep({ cls: partial ? "d-partial" : "", text: "", diff: partial }, filter)) continue;
+    relationships.push({ id, type: r.type, source: r.source, target: r.target, name: "", status: partial ? "partial" : "stable" });
   }
   return { elements, relationships };
 }

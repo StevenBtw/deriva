@@ -18,10 +18,10 @@ function Call({ call }: { call: RunTraceCall }) {
     <div className="logline">
       <span className="k">◆</span>
       {facts.filter(Boolean).join(" · ")}
-      <button type="button" className="linkbtn" onClick={() => toggle("prompt")}>
+      <button type="button" className="linkbtn" aria-expanded={open === "prompt"} onClick={() => toggle("prompt")}>
         prompt ▸
       </button>
-      <button type="button" className="linkbtn" onClick={() => toggle("answer")}>
+      <button type="button" className="linkbtn" aria-expanded={open === "answer"} onClick={() => toggle("answer")}>
         answer ▸
       </button>
       {open && <div className="expand">{open === "prompt" ? call.prompt : (call.response ?? call.error ?? "")}</div>}
@@ -30,23 +30,33 @@ function Call({ call }: { call: RunTraceCall }) {
 }
 
 /** Per run of the selected sessions, why the picked element is or is not in the model, with the calls that decided it (from the session files). */
-export function ElementTrace({ sessions, repo, item }: { sessions: string[]; repo: string; item: Item }) {
-  const source = Object.values(item.byRun)[0]?.source ?? "";
-  const request = [sessions.join(","), repo, item.type, source].join("|");
+export function ElementTrace({ sessions, repo, item, model }: { sessions: string[]; repo: string; item: Item; model?: string }) {
+  // A by-name element can come from another source in some runs: each source is traced, and each run
+  // reads the trace of the source it has (a run without the element reads the first source's)
+  const sources = [...new Set(Object.values(item.byRun).map((e) => e.source))].filter(Boolean);
+  const sourceKey = sources.join("\n");
+  const request = [sessions.join(","), repo, item.type, sourceKey, model ?? ""].join("|");
+  const byRun = item.byRun;
   // The answer keeps the request it belongs to: an answer to an earlier pick is not shown
   const [answer, setAnswer] = useState<{ request: string; trace?: Trace[]; failed?: string } | null>(null);
 
   useEffect(() => {
-    if (!source) return;
+    const wanted = sourceKey ? sourceKey.split("\n") : [];
+    if (!wanted.length) return;
     let live = true;
-    benchmarks
-      .trace(sessions, repo, item.type, source)
-      .then((trace) => live && setAnswer({ request, trace }))
+    Promise.all(wanted.map((source) => benchmarks.trace(sessions, repo, item.type, source, model)))
+      .then((traces) => {
+        const trace = traces[0].map((t) => {
+          const own = byRun[t.run]?.source;
+          return (own ? traces[wanted.indexOf(own)]?.find((other) => other.run === t.run) : undefined) ?? t;
+        });
+        if (live) setAnswer({ request, trace });
+      })
       .catch((reason: Error) => live && setAnswer({ request, failed: reason.message }));
     return () => {
       live = false;
     };
-  }, [request, sessions, repo, item.type, source]);
+  }, [request, sessions, repo, item.type, sourceKey, model, byRun]);
 
   const current = answer?.request === request ? answer : null;
   if (current?.failed) return <div className="logline error">{current.failed}</div>;

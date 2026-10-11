@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type KeyboardEvent, useMemo, useState } from "react";
 
 import type { InspectorView } from "../api/types";
 import { useTheme } from "../theme/theme";
@@ -27,7 +27,23 @@ function Box({ item, status, run, onSelect }: { item: Item; status: Status; run?
   const layer = LAYERS.find(([name]) => name === item.layer)?.[1] ?? "other";
   const name = (run && item.byRun[run]?.name) || item.name;
   return (
-    <div className={`el ${layer} ${status.cls}`} onClick={() => onSelect?.(item)}>
+    <div
+      className={`el ${layer} ${status.cls}`}
+      onClick={onSelect ? () => onSelect(item) : undefined}
+      // A pickable element is a button for the keyboard too (Enter or Space)
+      {...(onSelect
+        ? {
+            role: "button",
+            tabIndex: 0,
+            onKeyDown: (e: KeyboardEvent) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect(item);
+              }
+            },
+          }
+        : {})}
+    >
       <div className="t">{item.type}</div>
       {name}
       {status.text && <div className={`st ${status.diff ? "warn" : "faint"}`}>{status.text}</div>}
@@ -87,16 +103,19 @@ export function Inspector({ view, onSelect }: { view: InspectorView | null; onSe
   const [pair, setPair] = useState<{ a?: string; b?: string }>({});
   const [asDiagram, setAsDiagram] = useState(false);
   const [, , shownTheme] = useTheme();
+  // A new view (other sessions) has other runs: a run or pair it lacks falls back to all runs and its first two runs
+  const runs = useMemo(() => view?.runs ?? [], [view]);
+  const current = useMemo<View>(() => (shown.kind === "run" && !runs.includes(shown.run) ? { kind: "union" } : shown), [shown, runs]);
+  // The same data keeps the same arrays: the widget redraws (and resets zoom and pan) only when the diagram changes
+  const diagram = useMemo(() => (view && current.kind !== "side" ? diagramOf(view, identity, current, filter) : null), [view, identity, current, filter]);
 
   if (!view) return <div className="diffsum">Pick a session to inspect its models.</div>;
-  const runs = view.runs;
   const items = itemsOf(view, identity);
-  const a = pair.a ?? runs[0];
-  const b = pair.b ?? runs[1] ?? runs[0];
+  const a = pair.a && runs.includes(pair.a) ? pair.a : runs[0];
+  const b = pair.b && runs.includes(pair.b) ? pair.b : (runs[1] ?? runs[0]);
 
   let body;
-  if (asDiagram && shown.kind !== "side") {
-    const diagram = diagramOf(view, identity, shown, filter);
+  if (asDiagram && current.kind !== "side" && diagram) {
     const byKey = new Map(items.map((item) => [item.key, item]));
     body = (
       <ArchimateWidget
@@ -109,7 +128,7 @@ export function Inspector({ view, onSelect }: { view: InspectorView | null; onSe
         }}
       />
     );
-  } else if (shown.kind === "side") {
+  } else if (current.kind === "side") {
     const side = (s: "a" | "b") => items.map((item) => [item, statusPair(item, s, a, b, identity)] as [Item, Status | null]).filter((row): row is [Item, Status] => keep(row[1], filter));
     const differences = items.filter((item) => statusPair(item, "a", a, b, identity)?.diff).length;
     body = (
@@ -128,16 +147,16 @@ export function Inspector({ view, onSelect }: { view: InspectorView | null; onSe
       </>
     );
   } else {
-    const status = (item: Item) => (shown.kind === "run" ? statusRun(item, shown.run, runs, identity) : statusUnion(item, runs, identity));
+    const status = (item: Item) => (current.kind === "run" ? statusRun(item, current.run, runs, identity) : statusUnion(item, runs, identity));
     const rows = items.map((item) => [item, status(item)] as [Item, Status]).filter(([, st]) => keep(st, filter));
     const differences = items.filter((item) => status(item).diff).length;
     body = (
       <>
         <div className="diffsum">
-          {shown.kind === "run" ? shown.run : `All ${runs.length} runs`} · {differences} of {items.length} elements differ by {identity}
+          {current.kind === "run" ? current.run : `All ${runs.length} runs`} · {differences} of {items.length} elements differ by {identity}
           {identity === "name" ? " (source flips count as the same element)" : ""}
         </div>
-        <Layers rows={rows} group={group} run={shown.kind === "run" ? shown.run : undefined} onSelect={onSelect} />
+        <Layers rows={rows} group={group} run={current.kind === "run" ? current.run : undefined} onSelect={onSelect} />
       </>
     );
   }
@@ -147,19 +166,19 @@ export function Inspector({ view, onSelect }: { view: InspectorView | null; onSe
       <div className="modelbar">
         <div className="grp2">
           <span>Model</span>
-          <Pill on={shown.kind === "union"} onClick={() => setShown({ kind: "union" })}>
+          <Pill on={current.kind === "union"} onClick={() => setShown({ kind: "union" })}>
             All runs
           </Pill>
           {runs.map((run) => (
-            <Pill key={run} on={shown.kind === "run" && shown.run === run} onClick={() => setShown({ kind: "run", run })}>
+            <Pill key={run} on={current.kind === "run" && current.run === run} onClick={() => setShown({ kind: "run", run })}>
               {run}
             </Pill>
           ))}
-          <Pill on={shown.kind === "side"} onClick={() => setShown({ kind: "side" })}>
+          <Pill on={current.kind === "side"} onClick={() => setShown({ kind: "side" })}>
             Side by side
           </Pill>
         </div>
-        {shown.kind === "side" && (
+        {current.kind === "side" && (
           <div className="grp2">
             <span>A</span>
             <select aria-label="Run A" value={a} onChange={(e) => setPair((p) => ({ ...p, a: e.target.value }))}>
@@ -196,7 +215,7 @@ export function Inspector({ view, onSelect }: { view: InspectorView | null; onSe
             by name
           </Pill>
         </div>
-        {shown.kind !== "side" && (
+        {current.kind !== "side" && (
           <div className="grp2">
             <span>Show as</span>
             <Pill on={!asDiagram} onClick={() => setAsDiagram(false)}>

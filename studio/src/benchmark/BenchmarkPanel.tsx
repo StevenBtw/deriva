@@ -87,7 +87,7 @@ export function BenchmarkPanel({ run, sessions, selected, onToggleSession, onSta
         </div>
         <div className="fld">
           <label htmlFor="bench-runs">Runs per repository</label>
-          <input id="bench-runs" type="number" min={1} max={20} value={runCount} onChange={(e) => setRunCount(Math.max(1, Number(e.target.value) || 1))} disabled={running} />
+          <input id="bench-runs" type="number" min={1} max={20} value={runCount} onChange={(e) => setRunCount(Math.min(20, Math.max(1, Math.trunc(Number(e.target.value)) || 1)))} disabled={running} />
         </div>
         <div className="fld">
           <label htmlFor="bench-model">Model</label>
@@ -108,7 +108,7 @@ export function BenchmarkPanel({ run, sessions, selected, onToggleSession, onSta
         </div>
         <div className="fld">
           <label htmlFor="bench-samples">Samples per LLM call</label>
-          <input id="bench-samples" type="text" value="1 (locked, rule 7)" disabled />
+          <input id="bench-samples" type="text" value="1 (fixed)" disabled />
         </div>
         {running ? (
           <button type="button" className="danger" onClick={onCancel}>
@@ -143,6 +143,11 @@ export function BenchmarkPanel({ run, sessions, selected, onToggleSession, onSta
         {selected.length === 1 && (
           <a className="util" href={benchmarks.exportUrl(selected[0])} download>
             ⤓ Export logs
+          </a>
+        )}
+        {selected.length > 0 && (
+          <a className="util" href={benchmarks.ocelUrl(selected)} download title="OCEL 2.0 and a case log (one case per run, CSV and XES) for PM4Py, ProM or Disco">
+            ⤓ Process mining logs
           </a>
         )}
       </div>

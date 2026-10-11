@@ -2,6 +2,7 @@ import type { BenchmarkGroup, ConsistencyRow, Flip, StepStability } from "../api
 
 const HEADLINE: [string, string][] = [
   ["graph_concepts", "Concepts"],
+  ["graph_concept_types", "Concept types"],
   ["graph_technologies", "Technologies"],
 ];
 
@@ -14,9 +15,13 @@ function band(score: number): string {
   return score >= 0.95 ? "hm-ok" : score >= 0.8 ? "hm-fair" : score >= 0.6 ? "hm-warn" : "hm-bad";
 }
 
+const UNMEASURED = "Consistency needs at least 2 runs of a repository with a model.";
+
 /** Consistency per repository and model: elements and relationships by name / by source, and the LLM-created graph nodes. */
 export function ResultsTable({ groups }: { groups: BenchmarkGroup[] }) {
   if (!groups.length) return <div className="muted">Pick a session to see its results.</div>;
+  // One run compares with nothing: its scores say nothing about consistency
+  const measured = (g: BenchmarkGroup) => g.runs.length >= 2;
   return (
     <div>
       <table className="results">
@@ -35,19 +40,24 @@ export function ResultsTable({ groups }: { groups: BenchmarkGroup[] }) {
         <tbody>
           {groups.map((g) => {
             const rows = Object.fromEntries(g.rows.map((r) => [r.key, r]));
+            const score = (row?: ConsistencyRow) => (measured(g) ? pct(row) : "n/a");
             return (
               <tr key={`${g.repository}|${g.model}`}>
                 <td>{g.repository}</td>
                 <td>{g.model}</td>
-                <td title={g.counts.map((c) => `${c.label}: ${c.elements} elements, ${c.relationships} relationships`).join("\n")}>{g.runs.length} runs</td>
-                {HEADLINE.map(([key]) => (
-                  <td key={key}>{pct(rows[key])}</td>
-                ))}
-                <td title={`${rows.el_source?.common ?? 0} of ${rows.el_source?.union ?? 0} by source in every run`}>
-                  {pct(rows.el_name)} / {pct(rows.el_source)}
+                <td title={g.counts.map((c) => `${c.label}: ${c.elements} elements, ${c.relationships} relationships`).join("\n")}>
+                  {g.runs.length} {g.runs.length === 1 ? "run" : "runs"}
                 </td>
-                <td title={`${rows.rel_source?.common ?? 0} of ${rows.rel_source?.union ?? 0} by source in every run`}>
-                  {pct(rows.rel_name)} / {pct(rows.rel_source)}
+                {HEADLINE.map(([key]) => (
+                  <td key={key} title={measured(g) ? undefined : UNMEASURED}>
+                    {score(rows[key])}
+                  </td>
+                ))}
+                <td title={measured(g) ? `${rows.el_source?.common ?? 0} of ${rows.el_source?.union ?? 0} by source in every run` : UNMEASURED}>
+                  {score(rows.el_name)} / {score(rows.el_source)}
+                </td>
+                <td title={measured(g) ? `${rows.rel_source?.common ?? 0} of ${rows.rel_source?.union ?? 0} by source in every run` : UNMEASURED}>
+                  {score(rows.rel_name)} / {score(rows.rel_source)}
                 </td>
               </tr>
             );
@@ -63,12 +73,13 @@ export function ResultsTable({ groups }: { groups: BenchmarkGroup[] }) {
             .filter((r) => r.key.includes(":"))
             .map((r) => (
               <div key={r.key} className="logline">
-                {r.key} · {pct(r)} ({r.common}/{r.union})
+                {r.key} · {measured(g) ? `${pct(r)} (${r.common}/${r.union})` : "n/a"}
               </div>
             ))}
         </details>
       ))}
-      <div className="note">Budget: 90% by source. Samples per LLM call are 1 in every step (rule 7).</div>
+      {groups.some((g) => !measured(g)) && <div className="note">n/a: {UNMEASURED}</div>}
+      <div className="note">Target: at least 90% consistency by source. Every LLM call is made once (no repeated samples, no voting).</div>
     </div>
   );
 }
@@ -121,7 +132,23 @@ export function StepsHeatmap({ steps }: { steps: Record<string, StepStability[]>
 }
 
 /** Elements that are not in every run, with the cause per run that misses them. */
-export function FlipsList({ flips, repos, repo, onRepo }: { flips: Flip[]; repos: string[]; repo: string; onRepo: (repo: string) => void }) {
+export function FlipsList({
+  flips,
+  loading = false,
+  failed,
+  repos,
+  repo,
+  onRepo,
+}: {
+  flips: Flip[];
+  loading?: boolean;
+  failed?: string;
+  repos: string[];
+  repo: string;
+  onRepo: (repo: string) => void;
+}) {
+  // Flips are found per model: with sessions of several models each one says whose runs it compares
+  const severalModels = new Set(flips.map((f) => f.model)).size > 1;
   return (
     <div>
       {repos.length > 1 && (
@@ -131,15 +158,23 @@ export function FlipsList({ flips, repos, repo, onRepo }: { flips: Flip[]; repos
           ))}
         </select>
       )}
-      {!flips.length && <div className="muted">Every element is in every run.</div>}
+      {/* "Every element is in every run" only from an answer that says so */}
+      {failed ? (
+        <div className="logline error">Flips could not be read: {failed}</div>
+      ) : loading ? (
+        <div className="muted">Reading flips…</div>
+      ) : (
+        !flips.length && <div className="muted">Every element is in every run.</div>
+      )}
       <div className="trace">
         {flips.map((f, i) => (
-          <div key={`${f.type}|${f.source}`} className="step">
+          <div key={`${f.model ?? ""}|${f.type}|${f.source}`} className="step">
             <span className="n">{i + 1}</span>
             <div>
               <b>
                 {f.type} "{Object.values(f.names)[0] ?? f.source}"
               </b>
+              {severalModels && f.model && <span className="faint"> · {f.model}</span>}
               : source {f.source} in {f.present.join(", ")}
               {Object.keys(f.also_from).length > 0 && <span className="faint"> (elsewhere from {Object.entries(f.also_from).map(([run, src]) => `${src} in ${run}`).join(", ")})</span>}
               <div className="muted">{f.cause}</div>

@@ -19,8 +19,8 @@ vi.mock("../api/client", async () => {
   return {
     ...actual,
     repositories: { list: vi.fn() },
-    graph: { view: vi.fn() },
-    runs: { cancel: vi.fn(), call: vi.fn() },
+    graph: { view: vi.fn(), linked: vi.fn() },
+    runs: { cancel: vi.fn(), call: vi.fn(), current: vi.fn() },
     benchmarks: {
       list: vi.fn(),
       models: vi.fn(),
@@ -31,11 +31,13 @@ vi.mock("../api/client", async () => {
       inspector: vi.fn(),
       trace: vi.fn(),
       exportUrl: actual.benchmarks.exportUrl,
+      ocelUrl: actual.benchmarks.ocelUrl,
     },
   };
 });
 
 vi.mock("../widgets/GraphWidget", () => ({ GraphWidget: () => <div data-testid="graph" /> }));
+vi.mock("../widgets/LinkedGraphWidget", () => ({ LinkedGraphWidget: () => <div data-testid="linked-graph" /> }));
 
 vi.mock("../widgets/ArchimateWidget", () => ({
   ArchimateWidget: ({ elements }: { elements: { id: string; name: string; status?: string; badge?: string }[] }) => (
@@ -47,7 +49,8 @@ vi.mock("../widgets/ArchimateWidget", () => ({
   ),
 }));
 
-import { benchmarks, graph, repositories } from "../api/client";
+import { benchmarks, graph, repositories, runs } from "../api/client";
+import { followRun } from "../api/events";
 import { BenchmarkWorkspace } from "./BenchmarkWorkspace";
 
 const GROUP: BenchmarkGroup = {
@@ -85,6 +88,7 @@ describe("BenchmarkWorkspace", () => {
   beforeEach(() => {
     vi.mocked(repositories.list).mockResolvedValue([{ name: "repo_a" }, { name: "repo_b" }]);
     vi.mocked(graph.view).mockResolvedValue({ nodes: [], edges: [] });
+    vi.mocked(graph.linked).mockResolvedValue({ lanes: [], nodes: [], edges: [], missing_links: 0 });
     vi.mocked(benchmarks.list).mockResolvedValue([
       { session_id: "bench_2", description: "", status: "completed", started_at: "2026-10-08T01:00:00", completed_at: null },
       { session_id: "bench_1", description: "", status: "completed", started_at: "2026-10-07T01:00:00", completed_at: null },
@@ -101,6 +105,23 @@ describe("BenchmarkWorkspace", () => {
       { run: "bench_2/2", present: false, name: null, stage: "llm_rejected", refine: null, cause: "candidate llm_rejected", calls: [{ call_id: "c2", step: "Node", schema: "selection", cache_key: "k1", cache_hit: false, model: "gpt", temperature: 0, prompt: "Candidates: tech::r::queue", response: '{"keep": false}', error: null }] },
     ]);
     vi.mocked(benchmarks.start).mockResolvedValue({ run_id: "b1" });
+    vi.mocked(runs.current).mockResolvedValue(null);
+  });
+
+  it("follows a benchmark still running when the workspace opens again (back from run mode, or a reload)", async () => {
+    vi.mocked(runs.current).mockResolvedValue({ run_id: "b9", kind: "benchmark", repository: null, status: "running", events: 4, started_at: 1, finished_at: null });
+    render(<BenchmarkWorkspace />);
+
+    expect(await screen.findByText(/benchmark running · b9/)).toBeInTheDocument();
+    expect(followRun).toHaveBeenCalledWith("b9", expect.any(Function), expect.any(Function));
+  });
+
+  it("leaves a single run in progress to the run workspace", async () => {
+    vi.mocked(runs.current).mockResolvedValue({ run_id: "r3", kind: "extraction", repository: "repo_a", status: "running", events: 2, started_at: 1, finished_at: null });
+    render(<BenchmarkWorkspace />);
+    await screen.findByText("repo_a");
+
+    expect(followRun).not.toHaveBeenCalled();
   });
 
   it("selects the newest session and shows its consistency per repository", async () => {
@@ -113,6 +134,20 @@ describe("BenchmarkWorkspace", () => {
     expect(row).toHaveTextContent("50.0 / 50.0");
     expect(row).toHaveTextContent("0.0 / 0.0");
     expect(row).toHaveTextContent("2 runs");
+  });
+
+  it("does not call one run consistent: consistency needs two runs", async () => {
+    vi.mocked(benchmarks.results).mockResolvedValue([
+      { ...GROUP, runs: ["bench_2/1"], counts: [GROUP.counts[0]], rows: GROUP.rows.map((r) => ({ ...r, common: r.union, score: 1 })) },
+    ]);
+    render(<BenchmarkWorkspace />);
+
+    const panel = screen.getByRole("tabpanel");
+    const row = (await within(panel).findByText("repo_a")).closest("tr")!;
+    expect(row).toHaveTextContent("1 run");
+    expect(row).not.toHaveTextContent("100.0");
+    expect(row).toHaveTextContent("n/a / n/a");
+    expect(within(panel).getByText(/needs at least 2 runs/)).toBeInTheDocument();
   });
 
   it("combines the sessions picked in the list", async () => {
@@ -133,11 +168,24 @@ describe("BenchmarkWorkspace", () => {
     expect(link).toHaveAttribute("href", "/api/benchmarks/bench_2/export");
   });
 
+  it("offers the process mining logs of the picked sessions", async () => {
+    render(<BenchmarkWorkspace />);
+    expect(await screen.findByRole("link", { name: /Process mining logs/ })).toHaveAttribute("href", "/api/benchmarks/ocel?sessions=bench_2");
+
+    await userEvent.click(screen.getByRole("button", { name: /bench_1/ }));
+
+    // One OCEL 2.0 log and one case log for all picked sessions, so their runs compare side by side
+    await waitFor(() => expect(screen.getByRole("link", { name: /Process mining logs/ })).toHaveAttribute("href", "/api/benchmarks/ocel?sessions=bench_2,bench_1"));
+  });
+
   it("starts a benchmark with samples locked at one and follows its progress", async () => {
     render(<BenchmarkWorkspace />);
     await screen.findByRole("option", { name: "m" });
     await userEvent.click(await screen.findByRole("button", { name: "repo_b" }));
     expect(screen.getByLabelText(/Samples per LLM call/)).toBeDisabled();
+    // Plain words for users: no references to the project's internal rules
+    expect(screen.getByLabelText(/Samples per LLM call/)).toHaveValue("1 (fixed)");
+    expect(document.body.textContent).not.toMatch(/rule \d/);
 
     await userEvent.click(screen.getByRole("button", { name: /Start benchmark/ }));
 
@@ -156,6 +204,20 @@ describe("BenchmarkWorkspace", () => {
     expect(screen.getByRole("tabpanel")).toHaveTextContent("run 1 · repo_b · m · 1");
   });
 
+  it("keeps the runs per repository within what the API takes (1 to 20)", async () => {
+    render(<BenchmarkWorkspace />);
+    await screen.findByRole("option", { name: "m" });
+    await userEvent.click(await screen.findByRole("button", { name: "repo_b" }));
+    const runs = screen.getByLabelText("Runs per repository");
+
+    await userEvent.clear(runs);
+    await userEvent.type(runs, "25");
+    expect(runs).toHaveValue(20);
+    await userEvent.click(screen.getByRole("button", { name: /Start benchmark/ }));
+
+    expect(benchmarks.start).toHaveBeenCalledWith(expect.objectContaining({ runs: 20 }));
+  });
+
   it("shows answer stability per step and the flips with their cause", async () => {
     render(<BenchmarkWorkspace />);
     await screen.findByText("repo_a");
@@ -169,6 +231,63 @@ describe("BenchmarkWorkspace", () => {
     await userEvent.click(screen.getByRole("tab", { name: /Flips/ }));
     expect(await within(screen.getByRole("tabpanel")).findByText(/candidate llm_rejected in bench_2\/2 \(same prompt, different answer\)/)).toBeInTheDocument();
     expect(benchmarks.flips).toHaveBeenCalledWith(["bench_2"], "repo_a");
+  });
+
+  it("says the flips could not be read instead of calling every element stable", async () => {
+    vi.mocked(benchmarks.flips).mockRejectedValue(new Error("flips failed"));
+    render(<BenchmarkWorkspace />);
+    await screen.findByText("repo_a");
+
+    await userEvent.click(screen.getByRole("tab", { name: /Flips/ }));
+
+    const panel = screen.getByRole("tabpanel");
+    expect(await within(panel).findByText(/flips failed/)).toBeInTheDocument();
+    expect(within(panel).queryByText("Every element is in every run.")).not.toBeInTheDocument();
+  });
+
+  it("drops the picked element and the comparison when the inspected runs change", async () => {
+    vi.mocked(benchmarks.results).mockResolvedValue([GROUP, { ...GROUP, model: "m2" }]);
+    render(<BenchmarkWorkspace />);
+    await screen.findByText("repo_a");
+    await userEvent.click(screen.getByRole("button", { name: /View model/ }));
+    await screen.findByText(/elements differ by source/);
+    await userEvent.click(screen.getByText("Queue Server"));
+    await screen.findByTestId("element-trace");
+
+    vi.mocked(benchmarks.inspector).mockImplementation(() => new Promise(() => {}));
+    await userEvent.selectOptions(screen.getByLabelText("Model to inspect"), "m2");
+
+    expect(screen.queryByTestId("element-trace")).not.toBeInTheDocument();
+    expect(screen.queryByText(/elements differ by source/)).not.toBeInTheDocument();
+  });
+
+  it("names the model of each flip when the sessions use several models", async () => {
+    const flip = { source: "tech::r::queue", names: { "bench_2/1": "Queue Server" }, present: ["bench_2/1"], missing: {}, also_from: {}, llm: null, cause: "Node: no candidate" };
+    vi.mocked(benchmarks.flips).mockResolvedValue([
+      { ...flip, type: "Node", model: "luna" },
+      { ...flip, type: "Node", model: "small" },
+    ]);
+    render(<BenchmarkWorkspace />);
+    await screen.findByText("repo_a");
+
+    await userEvent.click(screen.getByRole("tab", { name: /Flips/ }));
+
+    const panel = screen.getByRole("tabpanel");
+    expect(await within(panel).findByText(/· luna/)).toBeInTheDocument();
+    expect(within(panel).getByText(/· small/)).toBeInTheDocument();
+  });
+
+  it("inspects one model at a time when the sessions use several", async () => {
+    vi.mocked(benchmarks.results).mockResolvedValue([GROUP, { ...GROUP, model: "m2" }]);
+    render(<BenchmarkWorkspace />);
+    await screen.findByText("repo_a");
+
+    await userEvent.click(screen.getByRole("button", { name: /View model/ }));
+
+    const picker = await screen.findByLabelText("Model to inspect");
+    await waitFor(() => expect(benchmarks.inspector).toHaveBeenLastCalledWith(["bench_2"], "repo_a", "m"));
+    await userEvent.selectOptions(picker, "m2");
+    await waitFor(() => expect(benchmarks.inspector).toHaveBeenLastCalledWith(["bench_2"], "repo_a", "m2"));
   });
 
   it("inspects the runs' models and narrows them to the differences", async () => {
@@ -195,7 +314,8 @@ describe("BenchmarkWorkspace", () => {
 
     await userEvent.click(screen.getByText("Queue Server"));
 
-    await waitFor(() => expect(benchmarks.trace).toHaveBeenCalledWith(["bench_2"], "repo_a", "Node", "tech::r::queue"));
+    // The trace reads the inspected model's runs
+    await waitFor(() => expect(benchmarks.trace).toHaveBeenCalledWith(["bench_2"], "repo_a", "Node", "tech::r::queue", "m"));
     const trace = await screen.findByTestId("element-trace");
     expect(trace).toHaveTextContent("bench_2/1: in the model as \"Queue Server\" · candidate created");
     expect(trace).toHaveTextContent("bench_2/2: missing · candidate llm_rejected");
