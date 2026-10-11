@@ -64,10 +64,18 @@ def test_database_key_must_be_a_plain_file_name(key, tmp_path, monkeypatch):
         database_file(key)
 
 
-def test_slow_query_is_logged(conn, caplog, monkeypatch):
+def test_slow_query_is_logged(caplog, monkeypatch):
+    """The threshold is read when the connection is created."""
     monkeypatch.setenv("GRAFEO_SLOW_QUERY_MS", "0")
-    with caplog.at_level(logging.WARNING, logger="deriva.adapters.grafeo.manager"):
-        conn.execute("MATCH (n) RETURN count(n) AS c")
+    close_database()
+    slow = GrafeoConnection(namespace="Graph")
+    slow.connect()
+    try:
+        with caplog.at_level(logging.WARNING, logger="deriva.adapters.grafeo.manager"):
+            slow.execute("MATCH (n) RETURN count(n) AS c")
+    finally:
+        slow.disconnect()
+        close_database()
 
     assert any("Slow graph query" in r.message for r in caplog.records)
 
@@ -174,17 +182,15 @@ def test_tests_never_use_a_persistent_database():
     assert os.environ.get("GRAFEO_DB_DIR") == ""
 
 
-def test_llm_manager_dotenv_cannot_restore_the_database_dir(tmp_path):
-    """LLMManager reloads .env with override=True; that must not undo the in-memory guard."""
-    import os
-
-    from deriva.adapters.llm import manager
+def test_a_dotenv_database_dir_cannot_reach_a_test(tmp_path, monkeypatch):
+    """The test environment's empty GRAFEO_DB_DIR wins over any .env value."""
+    from deriva.common import settings
 
     env = tmp_path / ".env"
-    env.write_text("GRAFEO_DB_DIR=workspace/graphs", encoding="utf-8")
-    manager.load_dotenv(env, override=True)
+    env.write_text("GRAFEO_DB_DIR=workspace/graphs\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "env_file", lambda: env)
 
-    assert os.environ.get("GRAFEO_DB_DIR") == ""
+    assert settings.GrafeoSettings().db_dir == ""
 
 
 class TestMergeEdge:
@@ -354,3 +360,11 @@ class TestExecuteRolledBack:
         conn.execute("CREATE (n:Graph:Directory {id: 'd1'})")
 
         assert conn.execute_rolled_back("MATCH (n:Graph:Directory) WHERE n.id = $id RETURN n.id AS id", {"id": "d1"}) == [{"id": "d1"}]
+
+
+def test_the_slow_query_threshold_is_read_once_per_connection(monkeypatch):
+    from deriva.adapters.grafeo.manager import GrafeoConnection
+
+    monkeypatch.setenv("GRAFEO_SLOW_QUERY_MS", "250")
+
+    assert GrafeoConnection("Graph")._slow_query_ms == 250.0
