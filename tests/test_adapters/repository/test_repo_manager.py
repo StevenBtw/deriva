@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 
@@ -138,7 +139,8 @@ class TestStateManager:
         retrieved = state_mgr.get_repository("test-repo")
         assert retrieved is not None
         assert retrieved["name"] == "test-repo"
-        assert "github.com" in retrieved["url"]
+        parsed_url = urlparse(retrieved["url"])
+        assert parsed_url.hostname == "github.com"
 
     def test_removes_repository(self, tmp_path):
         """Should remove repository from state."""
