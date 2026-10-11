@@ -29,16 +29,14 @@ Deriva works from the outside in, like its mark: repository, intermediate graph,
 3. **Output graph** (derive): graph structure picks the candidates; an LLM classifies and names them within ArchiMate's rules, then refine steps tidy the result. The studio shows both graphs side by side.
 4. **ArchiMate model** (export): the output graph exports in the Open Group ArchiMate exchange format, ready to open in Archi.
 
-## Quick Setup
+## Install
 
 Deriva runs on your own machine: Deriva Studio in your browser, the pipeline and its embedded databases locally. Nothing is sent anywhere except the prompts to the LLM you choose.
 
 ### Requirements
 
-- **Python 3.14**. uv downloads it for you if it is missing.
-- **uv**, the Python package manager (step 1).
-- **Git**, to clone Deriva and the repositories you analyse.
-- **Node 22**, to build the studio's front end from a source checkout.
+- **uv**, the Python package manager (below). It downloads Python 3.14 for you.
+- **Git**, to clone the repositories you analyse.
 - **An LLM**: an API key for Azure OpenAI, OpenAI, Anthropic or Mistral, or a local model in Ollama or LM Studio.
 
 ### 1. Install uv
@@ -55,58 +53,119 @@ macOS and Linux:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### 2. Clone Deriva and create your settings
+### 2. Install Deriva Studio
+
+```bash
+uv tool install --python 3.14 deriva-studio
+deriva
+```
+
+`deriva` starts the studio and opens it in your browser at http://127.0.0.1:8765. It listens on this machine only; `--port` picks another port, `--no-browser` leaves the browser closed, and the API documentation is at `/docs`.
+
+To try Deriva without installing it:
+
+```bash
+uvx --python 3.14 deriva-studio
+```
+
+`--python 3.14` matters: Deriva needs Python 3.14, and without it uv may pick an older Python and refuse the install.
+
+### 3. Add a model
+
+On its first start the studio shows a banner until an LLM model is configured. Open **General**, add a model under **Models** and save; [Set Up an LLM](#set-up-an-llm) explains the fields. Structural steps run without a model, so **Structural steps only (without LLM)** in the Workspace gives a first look right away.
+
+### Which package
+
+| Package | Gives you | Commands |
+|---------|-----------|----------|
+| `deriva-studio` | the studio and the command line | `deriva`, `deriva-studio`, `deriva-cli` |
+| `deriva-cli` | the command line only, for scripts, CI and servers | `deriva-cli` |
+| `deriva-dev` | everything, plus benchmarking | `deriva`, `deriva-dev`, `deriva-cli` |
+
+All three release together with the same version number.
+
+### Where Deriva keeps its files
+
+An installed Deriva keeps everything in one folder, `~/.deriva` (on Windows `%USERPROFILE%\.deriva`):
+
+| In the home folder | Holds |
+|--------------------|-------|
+| `.env` | your settings and model configs; the studio writes it when you save the first model |
+| `sql.db` | the step configurations with their versions, file types, name patterns and settings; created from the defaults on first start |
+| `workspace/` | cloned repositories, the graphs, caches, runs, benchmark sessions and exports |
+
+The environment variable `DERIVA_HOME` moves this folder, for example to keep projects apart or to try something in a sandbox. `deriva-cli status` shows which home folder is in use. Relative paths in `.env` are read from the home folder, so Deriva finds the same files from any working directory.
+
+### Upgrade and uninstall
+
+```bash
+uv tool upgrade deriva-studio
+uv tool uninstall deriva-studio
+```
+
+An upgrade keeps your work: the configuration database only gets the schema changes a new version needs, and your own step versions stay as they are. Uninstalling leaves the home folder in place; delete `~/.deriva` to remove your data too.
+
+The packages share the `deriva` and `deriva-cli` commands, so install one of them. To switch, for example to get benchmarking, uninstall the other first; your home folder stays:
+
+```bash
+uv tool uninstall deriva-studio
+uv tool install --python 3.14 deriva-dev
+```
+
+### Reproduce a release exactly
+
+Every GitHub release has a `constraints.txt` with the exact version of every dependency:
+
+```bash
+uv tool install --python 3.14 deriva-dev==0.8.0 -c constraints.txt
+```
+
+### Next to other Python packages
+
+Deriva's Python package is named `deriva`, like the client of ISI's DERIVA platform (`deriva-py`, on PyPI as `deriva`). The two cannot share one Python environment. Install Deriva as a tool, as above, or in a virtual environment of its own.
+
+### From source
+
+For development, or to follow the latest changes:
 
 ```bash
 git clone https://github.com/StevenBtw/Deriva.git
 cd Deriva
-cp .env.example .env
-```
-
-All settings live in `.env`. Set up an LLM there before your first run ([how](#set-up-an-llm)).
-
-### 3. Install the dependencies
-
-```bash
 uv sync
-```
-
-This creates `.venv` with Python 3.14 and installs everything, including the spaCy pipelines (English, German and French) that find business concepts in documentation.
-
-### 4. Build the studio, once
-
-```bash
-cd studio
-npm install
-npm run build
-cd ..
-```
-
-This writes the front end into the Python package, which serves it. Build again after you pull changes to `studio/`.
-
-### 5. Start Deriva Studio
-
-```bash
+cd studio && npm install && npm run build && cd ..
 uv run deriva
 ```
 
-Open http://127.0.0.1:8765. On its first start Deriva sets up its configuration database with the default steps; nothing to do. The studio listens on this machine only; `--port` picks another port, and the API documentation is at `/docs`.
+`uv sync` installs all three packages from the checkout, with the development tools. The checkout is its own home folder: `.env` and `workspace/` sit in the repository root, and the configuration database in `deriva/adapters/database/sql.db`. Building the front end needs Node 22; build again after you pull changes to `studio/`. [CONTRIBUTING.md](CONTRIBUTING.md) has the details.
 
 ---
 
 ## Set Up an LLM
 
-Each model gets a block of `LLM_{NAME}_*` settings in `.env`, and `LLM_DEFAULT_MODEL` picks the one Deriva uses. The default model is the name in lowercase with hyphens: `LLM_MISTRAL_DEVSTRAL_*` becomes `mistral-devstral`.
+Each model gets a block of `LLM_{NAME}_*` settings in `.env` in your home folder (the studio's **General** page writes them for you), and `LLM_DEFAULT_MODEL` picks the one Deriva uses. The default model is the name in lowercase with hyphens: `LLM_MISTRAL_SMALL_*` becomes `mistral-small`.
 
 ```bash
 # .env: a cloud model
-LLM_DEFAULT_MODEL=mistral-devstral
-LLM_MISTRAL_DEVSTRAL_PROVIDER=mistral
-LLM_MISTRAL_DEVSTRAL_MODEL=devstral-2512
-LLM_MISTRAL_DEVSTRAL_URL=https://api.mistral.ai/v1/chat/completions
-LLM_MISTRAL_DEVSTRAL_KEY=your-mistral-api-key
-LLM_MISTRAL_DEVSTRAL_STRUCTURED_OUTPUT=true
+LLM_DEFAULT_MODEL=mistral-small
+LLM_MISTRAL_SMALL_PROVIDER=mistral
+LLM_MISTRAL_SMALL_MODEL=mistral-small-2603
+LLM_MISTRAL_SMALL_KEY=your-mistral-api-key
 ```
+
+Name a dated model version (`mistral-small-2603`) rather than a `-latest` alias, so a run says which model answered; each LLM call also records the model the provider reports. Some models need two more settings:
+
+```bash
+# .env: models without a temperature, or with reasoning to switch off
+LLM_ANTHROPIC_HAIKU_PROVIDER=anthropic
+LLM_ANTHROPIC_HAIKU_MODEL=claude-haiku-5-5
+LLM_ANTHROPIC_HAIKU_SAMPLING=false    # takes no temperature: Deriva leaves it out
+LLM_ANTHROPIC_HAIKU_REASONING=none    # thinking off
+LLM_OPENAI_LUNA_PROVIDER=openai
+LLM_OPENAI_LUNA_MODEL=gpt-6-luna
+LLM_OPENAI_LUNA_REASONING=none        # reasoning off, so the step temperatures apply
+```
+
+`REASONING` is a level (`none`, `low`, `medium`, `high`) for OpenAI, Azure and Anthropic models. A model with `SAMPLING=false` runs at its provider's default sampling, so its answers can vary more than those of a model at temperature 0. `deriva-cli config model set <name> --sampling false --reasoning none` writes both.
 
 A local model needs no key:
 
@@ -127,7 +186,7 @@ LLM_OLLAMA_DEVSTRAL_URL=http://localhost:11434/api/chat
 | `ollama` | Ollama, local |
 | `lmstudio` | LM Studio, local |
 
-`STRUCTURED_OUTPUT=true` lets the API enforce the JSON schema (OpenAI, Anthropic, Mistral and Ollama). Rate limits, retries and the response cache have defaults; `.env.example` lists every setting.
+Rate limits, retries and the response cache have defaults; `.env.example` lists every setting.
 
 ---
 
@@ -164,18 +223,16 @@ Run the repository again to see the effect.
 
 ### Environment Variables (.env)
 
-All configuration lives in `.env`. Key settings:
+All configuration lives in `.env` in your [home folder](#where-deriva-keeps-its-files); a variable set in the environment wins over the file. Key settings:
 
 ```bash
 # Graph database (grafeo embedded)
-GRAFEO_DB_DIR=           # Empty = in-memory; directory = one <repo>.grafeo database per repository
+GRAFEO_DB_DIR=workspace/graphs  # Default: one <repo>.grafeo database per repository in the home folder; empty = in-memory
 
 # LLM Provider (mistral, openai, azure, anthropic, ollama, lmstudio)
-LLM_MISTRAL_DEVSTRAL_PROVIDER=mistral
-LLM_MISTRAL_DEVSTRAL_MODEL=devstral-2512
-LLM_MISTRAL_DEVSTRAL_URL=https://api.mistral.ai/v1/chat/completions
-LLM_MISTRAL_DEVSTRAL_KEY=your-mistral-api-key
-LLM_MISTRAL_DEVSTRAL_STRUCTURED_OUTPUT=true
+LLM_MISTRAL_SMALL_PROVIDER=mistral
+LLM_MISTRAL_SMALL_MODEL=mistral-small-2603
+LLM_MISTRAL_SMALL_KEY=your-mistral-api-key
 
 # Namespaces
 GRAPH_NAMESPACE=Graph
@@ -275,6 +332,12 @@ uv run deriva-cli config pattern add Node include deployment helm
 uv run deriva-cli config pattern delete Node include --category deployment helm   # a category left empty is deactivated
 ```
 
+**Full derivation runs start from an empty model:** a derivation run skips every candidate the model already has, so a run on top of an earlier model derives less than a run from scratch. A full run (`run derivation` or `run all` without `--phase` or `--only-step`, and the studio's run scopes) therefore clears the model first, as benchmarks do. Runs of one phase or one step keep the model. The `derivation_clear_model` system setting (default `true`) switches this off; with benchmarking installed, the studio shows it as a switch in **General**.
+
+```bash
+uv run deriva-cli config setting set derivation_clear_model false
+```
+
 ### Updating Configurations (Versioning)
 
 Deriva uses a **versioning system** for configurations. When you update a config, a new version is created while preserving previous versions for rollback.
@@ -301,7 +364,7 @@ uv run deriva-cli config update derivation ApplicationComponent \
 uv run deriva-cli config versions
 ```
 
-**Do NOT use JSON import/export for config updates.** The `db_tool import` command is only for backup restoration or migration - it overwrites version history. See [BENCHMARKS.md](BENCHMARKS.md) for the optimization workflow.
+**Do NOT use JSON import/export for config updates.** The `db_tool import` command is only for backup restoration or migration - it overwrites version history. See [docs/benchmarks.md](docs/benchmarks.md) for the optimization workflow.
 
 ### Customizing Extraction Prompts
 
@@ -321,14 +384,14 @@ The studio is Deriva's local web UI (`uv run deriva`): a FastAPI backend over `P
 
 | Area | Purpose |
 |------|---------|
-| **Workspace** | Run the pipeline (repository, scope, structural steps only), follow it live, see the intermediate graph and the output graph side by side, open the ArchiMate model |
+| **Workspace** | Run the pipeline (repository, scope, structural steps only), follow it live, see the repository, the intermediate graph and the output graph linked live in one canvas (or separately), open the ArchiMate model |
 | **Repositories** | Clone, inspect and delete repositories |
 | **General & file types** | System settings (excluded directories) and the file type registry |
 | **Extraction / Derivation config** | Step tables with versions; edit instructions and examples, save as a new version, switch steps on or off |
 
 The graphs use [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) (its query bar runs read-only Cypher against the embedded databases) and the model uses [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate). While a CLI run holds the databases, the studio says so and shows what it can.
 
-For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` (Vite forwards the API to port 8765); `npm test`, `npm run lint` and `npm run typecheck` check it.
+For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` (Vite forwards the API to port 8765, or to `DERIVA_STUDIO_API` for a studio on another port); `npm test`, `npm run lint` and `npm run typecheck` check it.
 
 ---
 
@@ -337,7 +400,7 @@ For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` 
 - **Grafeo** (embedded graph database):
   - **Graph namespace**: the intermediate graph (directories, files, types, methods, dependencies, technologies, business concepts)
   - **Model namespace**: the output graph (ArchiMate elements and relationships)
-- **DuckDB** (`deriva/adapters/database/sql.db`): step configurations with their versions, file types, name patterns and settings; created on first use from the shipped seed data
+- **DuckDB** (`sql.db` in your home folder; in a source checkout `deriva/adapters/database/sql.db`): step configurations with their versions, file types, name patterns and settings; created on first use from the shipped defaults
 
 ### Clearing Data
 
@@ -350,7 +413,7 @@ For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` 
 
 ## Querying the Graph
 
-Each graph panel in the Workspace has a query bar that runs read-only Cypher against the embedded Grafeo database. A few to start with:
+In the Workspace's Separate view, each graph panel has a query bar that runs read-only Cypher against the embedded Grafeo database. A few to start with:
 
 ```cypher
 // All repositories
@@ -369,7 +432,7 @@ MATCH (td:Graph:TypeDefinition) RETURN td.typeName, td.category, td.filePath
 
 ## CLI (Headless Mode)
 
-`uv run deriva` starts the studio; `uv run deriva-cli` runs the same pipeline without it, for scripts and automation.
+`uv run deriva` starts the studio; `uv run deriva-cli` runs the same pipeline without it, for scripts and automation. Installed as a tool, the commands run without `uv run` (`deriva-cli run all --repo my-repo -v`); the examples here are for a source checkout.
 
 ```bash
 uv run deriva-cli repo clone https://github.com/user/my-repo.git
@@ -386,7 +449,7 @@ uv run deriva-cli --help
 | `--repo NAME` | Runs one repository (default: all) |
 | `--phase PHASE` | Runs one phase: classify or parse (extraction), prep, generate or refine (derivation) |
 | `--only-step STEP` | Runs a single step |
-| `--no-llm` | Skips the LLM steps (structure only) |
+| `--no-llm` | Makes no LLM call: extraction runs its parsers, derivation only its prep phase (graph metrics), and the model is kept |
 | `-v` | Prints detailed progress |
 | `-o PATH` | Where `export` writes the model |
 
@@ -418,7 +481,9 @@ uv run deriva-cli config pattern list SystemSoftware
 
 ## Benchmarking
 
-Deriva includes a multi-model benchmarking system for comparing LLM performance across different providers and models. See [BENCHMARKS.md](BENCHMARKS.md) for the full guide and [OPTIMIZATION.md](OPTIMIZATION.md) for detailed case studies.
+Benchmarking comes with the `deriva-dev` package (`uv tool install --python 3.14 deriva-dev`); in a source checkout it is always there.
+
+Deriva includes a multi-model benchmarking system for comparing LLM performance across different providers and models. See [docs/benchmarks.md](docs/benchmarks.md) for the full guide and [docs/optimization.md](docs/optimization.md) for detailed case studies.
 
 ### Running Benchmarks
 
@@ -441,32 +506,9 @@ uv run deriva-cli benchmark list
 uv run deriva-cli benchmark analyze bench_20260101_150724
 ```
 
-### Configuring Benchmark Models
+### Benchmark models and session files
 
-Add models to `.env` using the pattern:
-
-```bash
-# Azure GPT-4o-mini
-LLM_AZURE_GPT4MINI_PROVIDER=azure
-LLM_AZURE_GPT4MINI_MODEL=gpt-4
-LLM_AZURE_GPT4MINI_URL=https://your-resource.openai.azure.com/...
-LLM_AZURE_GPT4MINI_KEY=your-api-key
-
-# Ollama local model
-LLM_OLLAMA_LLAMA_PROVIDER=ollama
-LLM_OLLAMA_LLAMA_MODEL=devstral
-LLM_OLLAMA_LLAMA_URL=http://localhost:11434/api/chat
-```
-
-### OCEL Event Logging
-
-Benchmark runs are logged in **OCEL 2.0** (Object-Centric Event Log) format for process mining analysis:
-
-- Events capture pipeline stages, LLM calls, and results
-- Object types: `BenchmarkSession`, `BenchmarkRun`, `Repository`, `Model`
-- Logs are saved to `workspace/benchmarks/{session_id}/events.ocel.json`
-
-OCEL files can be analyzed with process mining tools like PM4Py, Celonis, or custom analysis scripts.
+The benchmark models are the models from [Set Up an LLM](#set-up-an-llm): each `LLM_{NAME}_*` block in `.env` is one. Every session writes its models, LLM calls and event logs for process mining (OCEL 2.0, and a log with one case per run as CSV and XES) into `workspace/benchmarks/<session_id>/`; [docs/benchmarks.md](docs/benchmarks.md#session-files) lists the files, and `deriva-cli benchmark ocel` exports the logs of several sessions together.
 
 ---
 
@@ -474,13 +516,21 @@ OCEL files can be analyzed with process mining tools like PM4Py, Celonis, or cus
 
 ### The studio shows a "not built yet" page
 
-The front end is missing: build it ([step 4](#4-build-the-studio-once)) and reload.
+The front end is missing (source checkouts only; the installed studio ships its front end): build it ([from source](#from-source)) and start the studio again (it looks for the front end when it starts).
 
 ### A banner says the databases are held
 
 A command line run, for example a benchmark, has the databases open. The studio shows what it can and carries on when that run finishes.
 
 ### The wrong Python, or a broken install
+
+An installed tool:
+
+```bash
+uv tool install --reinstall --python 3.14 deriva-studio
+```
+
+A source checkout:
 
 ```bash
 uv run python --version  # 3.14 or newer
@@ -489,7 +539,7 @@ uv sync --reinstall
 
 ### The business concept step cannot download its models
 
-On its first run this step downloads translation models into `workspace/cache/nlp` and checks them by SHA-256. Check that the machine can reach the model host and run the step again. `DERIVA_NLP_MODELS_DIR` in `.env` moves the folder.
+On its first run this step downloads its language models (the spaCy pipelines and the translation models) into `workspace/cache/nlp` in your home folder and checks them by SHA-256. Check that the machine can reach the model hosts and run the step again. `DERIVA_NLP_MODELS_DIR` in `.env` moves the folder.
 
 ---
 
@@ -501,7 +551,7 @@ For development setup, architecture details, and contribution guidelines, see [C
 
 ## License
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+This project is licensed under the **GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)**.
 
 This means you can freely use, modify, and distribute this software, but if you run a modified version as a network service, you must make the source code available to users of that service.
 
