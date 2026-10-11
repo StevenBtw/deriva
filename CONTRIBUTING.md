@@ -25,8 +25,8 @@ cd Deriva
 cp .env.example .env
 # Edit .env with your configuration (LLM keys, etc.)
 
-# Install with dev dependencies
-uv sync --all-extras
+# Install all three packages (editable) and the development tools
+uv sync
 
 # Run the studio (build the front end once: cd studio && npm install && npm run build)
 uv run deriva
@@ -37,6 +37,37 @@ uv run ruff check .
 # Run type checker
 uv run ty check .
 ```
+
+### Workspace and packages
+
+The repository is a uv workspace that builds three packages, released together with one version number. They share one Python namespace, `deriva` (a namespace package: there is no `deriva/__init__.py`).
+
+| Package | Source | Holds |
+|---------|--------|-------|
+| `deriva-cli` | the root, `deriva/` | adapters, modules, common, services and the CLI |
+| `deriva-studio` | `packages/deriva-studio/src/deriva/studio/` | the studio backend and its built front end (`static/`, from `studio/`) |
+| `deriva-dev` | `packages/deriva-dev/src/deriva/bench/` | benchmarking, with its CLI commands and its studio API |
+
+`uv sync` installs all three as editable, so a checkout always has benchmarking. The CLI and the studio load `deriva.bench` only when it is installed (`deriva.services.about.features()`); without it, `deriva-cli benchmark` says how to install deriva-dev.
+
+Build the packages the way users get them:
+
+```bash
+cd studio && npm ci && npm run build && cd ..
+uv build --all-packages --no-sources        # dist/: three wheels and three sdists
+```
+
+`--no-sources` builds without the local overrides in `[tool.uv.sources]`, as uv recommends before publishing. `tests/test_packaging.py` builds the wheels and checks that each holds exactly its own files.
+
+To try a build as a user would, install it as a tool with every workspace wheel by path; uv otherwise reuses a cached build of the same version number:
+
+```bash
+uv tool install --python 3.14 dist/deriva_studio-<version>-py3-none-any.whl --with dist/deriva_cli-<version>-py3-none-any.whl
+```
+
+Point `DERIVA_HOME` at an empty folder to see a first start.
+
+To release, set the same version in the three `pyproject.toml` files and in the two pins between them (`deriva-studio` pins `deriva-cli==<version>`, `deriva-dev` pins `deriva-studio==<version>`), then push the tag `v<version>`. The release workflow checks the versions and pins, builds and smoke tests the packages, publishes them to PyPI with trusted publishing and attaches `constraints.txt` to the GitHub release.
 
 ## Architecture
 
@@ -55,6 +86,7 @@ Deriva follows a **layered architecture** with strict separation of concerns:
 ```
 CLI      → services only (PipelineSession is the API)
 App      → services only (PipelineSession is the API)
+Bench    → services, adapters, modules, common (deriva-dev; only the CLI and studio entry points load it)
 Services → adapters, modules, common
 Adapters → common only (NOT modules or services)
 Modules  → common only (NOT adapters or services)
@@ -832,33 +864,9 @@ All queries return one of three Pydantic response types:
 - Disable with `LLM_NOCACHE=true` or `use_cache=False`
 - Errors are also cached to prevent retry storms
 
-### Structured Output (JSON Schema Enforcement)
+### Structured Output
 
-Enable API-level JSON schema enforcement for guaranteed valid responses:
-
-```bash
-# In .env - per model configuration
-LLM_OPENAI_GPT41MINI_STRUCTURED_OUTPUT=true
-LLM_ANTHROPIC_HAIKU_STRUCTURED_OUTPUT=true
-LLM_MISTRAL_DEVSTRAL_STRUCTURED_OUTPUT=true
-LLM_OLLAMA_NEMOTRON_STRUCTURED_OUTPUT=true
-```
-
-**Supported Providers:**
-
-| Provider | Implementation |
-|----------|---------------|
-| OpenAI | `response_format: {type: "json_schema", json_schema: {...}}` |
-| Anthropic | `output_format` + beta header `structured-outputs-2025-11-13` |
-| Mistral | `response_format: {type: "json_schema", json_schema: {...}}` |
-| Ollama | `format: <schema>` (direct schema in format param) |
-| Azure | Same as OpenAI |
-| LMStudio | Same as OpenAI |
-
-**Behavior:**
-
-- `structured_output=true`: JSON schema passed to API for server-side enforcement
-- `structured_output=false` (default): Only `json_mode` enabled, schema used for client-side validation
+Each call's output mode follows from what it asks for; there is no setting per model. Calls with a response model (the extraction classifications) use pydantic-ai's tool output and are validated against the model. Derivation calls ask for JSON in the prompt, and the pipeline reads the answer: a whole JSON answer, a code fence, or the JSON after a short explanation.
 
 </details>
 
@@ -1328,11 +1336,11 @@ Deriva splits configuration by **ownership** - who needs to change it and why:
 
 ### .env File (Adapter Configuration)
 
-- **Single source of truth** for adapter configuration
-- **Required** for all adapters to initialize
-- Loaded via `python-dotenv` at adapter initialization
+- Lives in the Deriva home folder (`deriva/common/paths.py`): the repository root in a checkout, `~/.deriva` for an installed tool, or the folder in `DERIVA_HOME`
+- **Read in one place**: `deriva/common/settings.py` merges the `.env` file with the process environment (a variable set in the environment wins) and offers typed groups (`LlmSettings`, `GrafeoSettings`, `GraphSettings`, `ArchimateSettings`, `NlpSettings`, `RepositorySettings`); `tests/test_common/test_no_cwd_paths.py` fails on any other `os.getenv`, `os.environ` or `load_dotenv` in the three packages
+- Each field of a group has a default; an empty number or switch counts as unset (the `LLM_{NAME}_*` model blocks are read by name, `settings.model_configs()`)
 - Values **cached** by adapters on init (not re-read on every call)
-- Must have `.env.example` as template
+- `.env.example` is the template
 - **No YAML files** for configuration
 - **Never commit** .env to git (keep in .gitignore)
 
@@ -1347,16 +1355,17 @@ Deriva splits configuration by **ownership** - who needs to change it and why:
 
 ```python
 # adapters/some_adapter/manager.py
-import os
-from dotenv import load_dotenv
+from deriva.common.settings import GrafeoSettings
 
 class SomeManager:
     def __init__(self):
-        load_dotenv()
-        self.setting = os.getenv('SOME_SETTING', 'default')
+        grafeo = GrafeoSettings()
+        self.slow_query_ms = grafeo.slow_query_ms
         # Read all config in __init__
         # Cache values as instance variables
 ```
+
+A new setting is a field in its group (or a new group with its own `env_prefix`); `settings.get(name, default)` reads a single value.
 
 ### Database Configs (Pipeline Configuration)
 
@@ -1373,16 +1382,16 @@ Pipeline configs (extraction steps, derivation prompts) are stored in DuckDB wit
 
 ```bash
 # Via CLI (creates new version)
-deriva config update extraction BusinessConcept \
+deriva-cli config update extraction BusinessConcept \
   -i "New instruction..."
 
 # View version history
-deriva config versions
+deriva-cli config versions
 ```
 
 **Never update configs by editing JSON and importing.** The `db_tool import` command is for **backup restoration only** - it overwrites the database including version history. This defeats the purpose of versioning and makes rollback impossible.
 
-**Shipped configuration (seed data).** The database itself (`deriva/adapters/database/sql.db`) is not in the repository. A fresh install creates it on first use from the schema, the migrations and the seed files in `deriva/adapters/database/data/`: the active config rows with their version numbers, the file types, the name patterns and the settings (no version history). An existing database is never touched. Before a release, refresh the seed files from the active configuration:
+**Shipped configuration (seed data).** The database itself (`deriva/adapters/database/sql.db`) is not in the repository. A fresh install creates it on first use from the schema, the migrations and the seed files in `deriva/adapters/database/data/`: the active config rows with their version numbers, the file types, the name patterns and the settings (no version history). An existing database is never touched. Before a release, refresh the seed files from the active configuration (the export reads the configuration database, so a fresh checkout needs it first: any `deriva-cli` command or the studio creates it):
 
 ```bash
 uv run python -m deriva.adapters.database.db_tool export --active-only
@@ -1392,14 +1401,14 @@ uv run python -m deriva.adapters.database.db_tool export --active-only
 
 Prompt text is configuration, not code: a run must be fully described by its config versions.
 
-- **Text that steers the LLM lives in the database.** Persona, instructions, rules, conventions, naming guidance, examples and thresholds told to the model belong in the step's `instruction`, `example` or `params`, changed with `deriva config update`. The relationship prompt rules live in the `relationship` phase row (`GlobalRelationships`: `instruction` plus `params.min_confidence`; disabling it skips the LLM relationship pass). Per-candidate naming is switched on per element with `params.per_candidate` (`min_pool`, `rules`).
+- **Text that steers the LLM lives in the database.** Persona, instructions, rules, conventions, naming guidance, examples and thresholds told to the model belong in the step's `instruction`, `example` or `params`, changed with `deriva-cli config update`. The relationship prompt rules live in the `relationship` phase row (`GlobalRelationships`: `instruction` plus `params.min_confidence`; disabling it skips the LLM relationship pass). Per-candidate naming is switched on per element with `params.per_candidate` (`min_pool`, `rules`).
 - **Prompt builders hold only structure.** `build_*prompt*` functions in `modules/` contain section order and headings, serialisation of input data (candidates, elements, metamodel rules from `OUTBOUND_RULES`/`INBOUND_RULES`) and the output contract that matches the schema. Do not add rules, examples or domain words there. This is the target for every builder; some older builders (for example in `modules/extraction/method.py` and `modules/derivation/base.py`) still embed role text and are being migrated.
 - **Settings that change results** (cutoffs, mode switches) go in `params` or `system_settings`, not in class constants or literals.
 - **Where the text goes:** `instruction` and `example` for the main prompt, `params` (JSON, both extraction and derivation steps) for extra prompt texts and switches, e.g. `params.prompt` for the Technology headings.
 - **Every LLM call has a config row.** Services load the row and pass the text in; modules stay pure and only call the `llm_query_fn` they receive.
 - **Moving text between code and config must not change the prompt.** Pin the exact prompt with a test before the move, and check that a cached benchmark run hits the cache for every call and yields an identical model. Changing text is a result change: new config version, benchmark before and after.
 
-See [BENCHMARKS.md](BENCHMARKS.md) for running benchmarks and [OPTIMIZATION.md](OPTIMIZATION.md) for the recommended config optimization workflow.
+See [docs/benchmarks.md](docs/benchmarks.md) for running benchmarks and [docs/optimization.md](docs/optimization.md) for the recommended config optimization workflow.
 
 </details>
 
@@ -1428,19 +1437,19 @@ uv sync --extra progress
 
 ```bash
 # Default: progress bars shown (if Rich installed)
-deriva run -r my-repo
+deriva-cli run all --repo my-repo
 
 # Quiet mode: disable progress display
-deriva run -r my-repo -q
+deriva-cli run all --repo my-repo -q
 
 # Verbose mode: detailed text output (also disables progress bar)
-deriva run -r my-repo -v
+deriva-cli run all --repo my-repo -v
 
 # Benchmark with progress
-deriva benchmark run --repos my-repo --models my-model -n 3
+deriva-cli benchmark run --repos my-repo --models my-model -n 3
 
 # Benchmark quiet mode
-deriva benchmark run --repos my-repo --models my-model -n 3 -q
+deriva-cli benchmark run --repos my-repo --models my-model -n 3 -q
 ```
 
 ### Architecture
@@ -1520,7 +1529,7 @@ def my_service_function(
 The benchmarking system enables multi-model comparison for evaluating LLM performance on the ArchiMate derivation pipeline.
 
 **Key Components:**
-- `services/benchmarking.py` - `BenchmarkOrchestrator` for running benchmarks, `BenchmarkAnalyzer` for analysis
+- `deriva/bench/benchmarking.py` (in `packages/deriva-dev/src/`) - `BenchmarkOrchestrator` for running benchmarks, `BenchmarkAnalyzer` for analysis
 - OCEL 2.0 event logging for process mining analysis
 
 ### Architecture
@@ -1543,34 +1552,34 @@ BenchmarkAnalyzer
 
 ### OCEL Event Logging
 
-Benchmark runs are logged in **OCEL 2.0** (Object-Centric Event Log) format:
+Benchmark sessions log their events with `OCELLog` (`deriva/common/ocel.py`). An event has an activity, a time, its objects grouped by type and its attributes:
 
 ```python
-# Event structure
-{
-    "ocel:eid": "unique-event-id",
-    "ocel:activity": "StartBenchmark|EndRun|LLMCall|...",
-    "ocel:timestamp": "2026-01-01T15:45:09.148583",
-    "ocel:omap": ["bench_20260101_154509"],  # Related objects
-    "ocel:vmap": {  # Event attributes
-        "tokens_in": 1234,
-        "tokens_out": 567,
-        "cache_hit": false
-    }
-}
+log.create_event(
+    "LLMQuery",
+    objects={"BenchmarkRun": [run_id], "Model": [model], "Config": [step]},
+    cache_hit=False, tokens_in=1234, latency_ms=850.0,
+)
 ```
 
-**Object Types:**
-- `BenchmarkSession` - Top-level benchmark session
-- `BenchmarkRun` - Individual run (repo × model × iteration)
-- `Repository` - Target repository
-- `Model` - LLM model configuration
+Each session writes, in `ocel/`:
+
+- `benchmark_events.jsonl`: the stream, appended after each run; the analyzers read it back (nested attributes such as run stats are kept)
+- `benchmark_events.json`: the OCEL 2.0 JSON layout (`objectTypes`, `eventTypes`, `objects`, `events` with qualified relationships, typed scalar attributes) for PM4Py, ProM and other tools
+- `cases.csv`, `cases.xes`: the flat case log (`OCELLog.case_events`, one case per run) for Disco
+
+**Object Types** (the qualifier of each relationship names the role):
+- `BenchmarkSession` (session), `BenchmarkRun` (run: repo × model × iteration; `session:extraction:repo` for a repository's shared extraction)
+- `Repository` (repository), `Model` (model: the benchmark model's config name), `Config` (step)
+- `GraphNode` (node) and `Edge` (edge) per extraction step, `Element` (element) per derivation step and run, `Relationship` (relationship)
+
+Steps report what they create through their step context (`add_object`, `add_edge`, `add_relationship`); extraction records the nodes a step wrote with `GraphManager.recording_nodes()`. Consistency compares the runs of one repository with one model (the session's `benchmark_runs`); the shared extraction is not a run.
 
 ### Adding New Metrics
 
 To add a new consistency metric:
 
-1. Add method to `BenchmarkAnalyzer` in `services/benchmarking.py`
+1. Add method to `BenchmarkAnalyzer` in `deriva/bench/benchmarking.py`
 2. Define result dataclass in the module
 3. Integrate into `compute_full_analysis()`
 4. Add database table in schema if persisting
@@ -1580,7 +1589,7 @@ To add a new consistency metric:
 Benchmark models are configured via environment variables:
 
 ```bash
-LLM_{NAME}_PROVIDER=azure|openai|anthropic|ollama
+LLM_{NAME}_PROVIDER=azure|openai|anthropic|mistral|ollama|lmstudio
 LLM_{NAME}_MODEL=model-identifier
 LLM_{NAME}_URL=api-endpoint  # Optional
 LLM_{NAME}_KEY=api-key      # Optional
@@ -1675,21 +1684,22 @@ Group: stdlib, then third-party, then local. Blank line between groups.
 
 ## Studio
 
-The studio is the local web UI: `deriva/studio/` (FastAPI backend, a top layer that imports `deriva.services` only, enforced by `deriva/studio/ruff.toml`) and `studio/` at the repo root (React 19, Vite, TypeScript, CodeMirror 6, own CSS).
+The studio is the local web UI: `packages/deriva-studio/src/deriva/studio/` (FastAPI backend, a top layer that imports `deriva.services` only, enforced by its `ruff.toml`) and `studio/` at the repo root (React 19, Vite, TypeScript, CodeMirror 6, own CSS).
 
 ### Running it
 
 ```bash
 uv run deriva                        # API + built front end on http://127.0.0.1:8765
 cd studio && npm run dev             # front-end development; Vite forwards /api, /grafeo, /widgets to 8765
+DERIVA_STUDIO_API=http://127.0.0.1:9000 npm run dev   # the same for a studio started with --port 9000
 npm test && npm run lint && npm run typecheck
-npm run build                        # writes deriva/studio/static/ (git-ignored, shipped in the wheel)
+npm run build                        # writes packages/deriva-studio/src/deriva/studio/static/ (git-ignored, shipped in the wheel)
 ```
 
 ### Backend rules
 
 - One `PipelineSession` per process, behind a lock (`SessionProvider`); request handlers and the run worker take it (the worker once per pipeline step). A database held by another process answers 503 with the holder's PID.
-- Config edits go through the versioned service functions only (`save_*_config`), never in-place updates.
+- Step config edits go through the versioned service functions only (`save_extraction_config`, `save_derivation_config`), never in-place updates. Model configs are not versioned: they live in `.env` (`save_model_config`).
 - Free-form graph queries (the widget's query bar) run read-only: a write guard plus a grafeo transaction that is always rolled back.
 - Tests inject a fake session (`tests/test_studio/conftest.py`); they never open the real databases.
 
@@ -1781,8 +1791,10 @@ This project includes several specialized documentation files:
 | Document | Description |
 |----------|-------------|
 | [README.md](README.md) | Main project overview, setup, and usage guide |
-| [BENCHMARKS.md](BENCHMARKS.md) | User guide for running benchmarks and analyzing consistency |
-| [optimization_guide.md](optimization_guide.md) | Developer guide: prompt engineering, case studies, optimization log |
+| [docs/architecture.md](docs/architecture.md) | Layers, packages, the home folder and the settings layer |
+| [docs/benchmarks.md](docs/benchmarks.md) | User guide for running benchmarks and analyzing consistency |
+| [docs/optimization.md](docs/optimization.md) | Prompt engineering and the config optimization workflow |
+| [docs/archimate.md](docs/archimate.md) | ArchiMate elements, relationships and metamodel rules |
 | [CHANGELOG.md](CHANGELOG.md) | Version history and release notes |
 | [.github/SECURITY.md](.github/SECURITY.md) | Security policy and vulnerability reporting |
 
