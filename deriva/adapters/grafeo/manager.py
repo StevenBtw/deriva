@@ -8,8 +8,9 @@ Features:
 - Embedded graph database (no external server)
 - Cypher query language support
 - Namespace isolation via label prefixes
-- Configurable storage: in-memory (default) or one persistent `.grafeo` file per
-  workspace key (a repository, or the joined names for a combined run)
+- Configurable storage: one persistent `.grafeo` file per workspace key (a repository,
+  or the joined names for a combined run) in `workspace/graphs` of the home folder
+  (default), or in-memory
 
 Usage:
     from deriva.adapters.grafeo import GrafeoConnection
@@ -26,23 +27,22 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 import time
 import weakref
-from pathlib import Path
 from typing import Any
 
+from deriva.common.paths import resolve
+from deriva.common.settings import GrafeoSettings
 from deriva.common.timing import query_stats
-from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
 
-def _record_query(label: str, started: float) -> None:
-    """Add a query's time to the run totals; warn above GRAFEO_SLOW_QUERY_MS (default 1000)."""
+def _record_query(label: str, started: float, slow_ms: float) -> None:
+    """Add a query's time to the run totals; warn above the connection's GRAFEO_SLOW_QUERY_MS (default 1000)."""
     elapsed_ms = (time.perf_counter() - started) * 1000
     query_stats.record(label, elapsed_ms)
-    if elapsed_ms > float(os.getenv("GRAFEO_SLOW_QUERY_MS", "1000")):
+    if elapsed_ms > slow_ms:
         logger.warning("Slow graph query (%.0f ms): %s", elapsed_ms, " ".join(label.split())[:300])
 
 
@@ -61,18 +61,20 @@ _connections: weakref.WeakSet[GrafeoConnection] = weakref.WeakSet()
 def database_file(key: str) -> str | None:
     """Path of the key's database file, or None for in-memory.
 
-    GRAFEO_DB_DIR (e.g. ``workspace/graphs``) holds one ``<key>.grafeo`` file per
-    workspace key; empty or unset means in-memory.
+    GRAFEO_DB_DIR (e.g. ``workspace/graphs``, relative to the Deriva home folder) holds one ``<key>.grafeo`` file per
+    workspace key (the default); an empty value means in-memory.
     """
-    if os.getenv("GRAFEO_DB_PATH"):
+    grafeo = GrafeoSettings()
+    if grafeo.db_path:
         raise RuntimeError("GRAFEO_DB_PATH is no longer supported: set GRAFEO_DB_DIR to a directory (one <repository>.grafeo database per repository) and remove GRAFEO_DB_PATH.")
-    directory = os.getenv("GRAFEO_DB_DIR", "")
+    directory = grafeo.db_dir
     if not directory:
         return None
     if not key or key in (".", "..") or any(sep in key for sep in ("/", "\\")):
         raise ValueError(f"Invalid database key {key!r}: must be a plain file name")
-    Path(directory).mkdir(parents=True, exist_ok=True)
-    return str(Path(directory) / f"{key}.grafeo")
+    folder = resolve(directory)
+    folder.mkdir(parents=True, exist_ok=True)
+    return str(folder / f"{key}.grafeo")
 
 
 def get_database() -> Any:
@@ -90,7 +92,6 @@ def get_database() -> Any:
             raise RuntimeError(
                 "This grafeo build has no Cypher support, which Deriva uses for every query: install the released wheel, or build the Python binding with its default features"
             )
-        load_dotenv()
         path = database_file(_db_key)
         _db = grafeo.GrafeoDB(path)
         # Node lookups by id (Graph) and identifier (Model) must use an index
@@ -163,8 +164,9 @@ class GrafeoConnection:
         self.db: Any | None = None
         self._log_queries = False
 
-        load_dotenv()
-        self._log_queries = os.getenv("GRAFEO_LOG_QUERIES", "false").lower() == "true"
+        grafeo = GrafeoSettings()
+        self._log_queries = grafeo.log_queries
+        self._slow_query_ms = grafeo.slow_query_ms
 
         logger.info("Initialized GrafeoConnection with namespace: %s", namespace)
 
@@ -242,7 +244,7 @@ class GrafeoConnection:
             raise
 
         finally:
-            _record_query(query, started)
+            _record_query(query, started, self._slow_query_ms)
 
     def execute_write(
         self,
@@ -283,7 +285,7 @@ class GrafeoConnection:
             return transaction.execute_cypher(query, parameters if parameters is not None else {}).to_list()
         finally:
             transaction.rollback()
-            _record_query(query, started)
+            _record_query(query, started, self._slow_query_ms)
 
     def set_node_properties(self, key: str, updates: dict[Any, dict[str, Any]]) -> int:
         """Set properties on the nodes whose ``key`` property matches, via an index.
@@ -312,7 +314,7 @@ class GrafeoConnection:
                 for name, prop in props.items():
                     self.db.set_node_property(node, name, prop)
                 count += 1
-        _record_query(f"set_node_properties({key})", started)
+        _record_query(f"set_node_properties({key})", started, self._slow_query_ms)
         return count
 
     def _find_nodes(self, key: str, value: Any) -> list[int]:
@@ -331,7 +333,7 @@ class GrafeoConnection:
 
         started = time.perf_counter()
         self.db.upsert_nodes(labels, [{key: value, **properties}], key=key, replace=replace)
-        _record_query(f"merge_node({':'.join(labels)})", started)
+        _record_query(f"merge_node({':'.join(labels)})", started, self._slow_query_ms)
 
     def merge_edge(
         self,
@@ -354,7 +356,7 @@ class GrafeoConnection:
         # Endpoint fields named so that no edge property can collide with them
         row = {"__src": src_value, "__dst": dst_value, "id": edge_id, **properties}
         result = self.db.upsert_edges(edge_type, [row], key="id", endpoint_key=key, endpoint_labels=[self.namespace], src_field="__src", dst_field="__dst", replace=True)
-        _record_query(f"merge_edge({edge_type})", started)
+        _record_query(f"merge_edge({edge_type})", started, self._slow_query_ms)
         return not result["skipped"]
 
     def algorithm(self, name: str, **kwargs: Any) -> Any:
@@ -371,7 +373,7 @@ class GrafeoConnection:
             self.db.create_projection(self.namespace, node_labels=[self.namespace])  # False when it exists
             return getattr(self.db.algorithms, name)(projection=self.namespace, **kwargs)
         finally:
-            _record_query(f"algorithm({name})", started)
+            _record_query(f"algorithm({name})", started, self._slow_query_ms)
 
     # ------------------------------------------------------------------
     # Namespace helpers
