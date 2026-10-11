@@ -18,14 +18,14 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from deriva.adapters.archimate.models import validate_relationship_rule  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-from deriva.adapters.llm import FailedResponse, ResponseType  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+from deriva.adapters.archimate.models import validate_relationship_rule  # noqa: TID251 - known layer exception (see docs/architecture.md)
+from deriva.adapters.llm import FailedResponse, ResponseType  # noqa: TID251 - known layer exception (see docs/architecture.md)
 from deriva.common import current_timestamp, parse_json_array
-from deriva.common.naming import name_key
+from deriva.common.naming import _words, name_key, singularize
 from deriva.common.types import PipelineResult
 
 if TYPE_CHECKING:
-    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
 
 def extract_response_content(response: Any) -> tuple[str, str | None]:
@@ -249,6 +249,55 @@ class SameNameRule:
     target: str  # e.g. BusinessObject
     relationship: str  # e.g. Realization
     strip_suffixes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class GraphLinkRule:
+    """Relationships from links the graph holds between source nodes (``params.graph_links``).
+
+    ``query`` returns pairs of source node ids as ``a`` and ``b``; the element of the ``source``
+    type made from ``a`` relates to the element of the ``target`` type made from ``b``.
+    """
+
+    source: str  # e.g. ApplicationComponent
+    target: str  # e.g. ApplicationInterface
+    relationship: str  # e.g. Composition
+    query: str  # Graph query returning a, b (source node ids)
+
+
+@dataclass(frozen=True)
+class ListedMembersRule:
+    """Relationships between an element and the members it lists (``params.listed_members``).
+
+    An element of the ``holder`` type that lists members in ``list_property`` (source node ids when
+    ``by`` is "source", element identifiers when "identifier") relates to each listed element of
+    the ``member`` type: from the member to the holder, or from the holder when ``from_holder``.
+    """
+
+    holder: str  # e.g. ApplicationService
+    list_property: str  # e.g. sources
+    member: str  # e.g. ApplicationComponent
+    relationship: str  # e.g. Realization
+    by: str = "identifier"  # "source" or "identifier"
+    from_holder: bool = False
+
+
+@dataclass(frozen=True)
+class NamedInCodeRule:
+    """Relationships from the code that names a concept (``params.named_in_code``).
+
+    An element of the ``named`` type relates to the ``owner`` element whose source directory holds the
+    most type and directory names that carry the words of the named element's source name in a row
+    (at least ``min_names`` distinct names), and to every other owner with at least ``share`` of that
+    number (a concept can live in two components; a stray mention is no home). A name counts for the
+    nearest owner above it only.
+    """
+
+    owner: str  # e.g. ApplicationComponent
+    named: str  # e.g. BusinessObject
+    relationship: str  # e.g. Access
+    min_names: int = 2
+    share: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -2003,9 +2052,19 @@ def name_from_source(source_name: str, strip_extension: bool = False) -> str:
     if " " in base or ("." in base and not strip_extension):
         return " ".join(base.split())
     words = []
-    for chunk in re.split(r"[_\-.]+", base.lstrip(".")):
+    chunks = [chunk for chunk in re.split(r"[_\-.]+", base.lstrip(".")) if chunk]
+    # Several words all in capitals (LEDGER-ENTRY-RECORD): the case carries no information
+    shouting = len(chunks) > 1 and base.upper() == base and any(ch.isalpha() for ch in base)
+    for chunk in chunks:
+        # Capitals with digits are a code (an id as written): it stays whole
+        if chunk.upper() == chunk and chunk.isalnum() and any(ch.isdigit() for ch in chunk) and any(ch.isalpha() for ch in chunk):
+            words.append(chunk)
+            continue
         for part in _WORD.findall(chunk):
-            words.append(part if len(part) > 1 and part.isupper() else part[:1].upper() + part[1:])
+            if shouting:
+                words.append(part.capitalize())
+            else:
+                words.append(part if len(part) > 1 and part.isupper() else part[:1].upper() + part[1:])
     return " ".join(words)
 
 
@@ -2145,6 +2204,12 @@ class RoleConfig:
     # element_per "candidate" only: the step's naming call (params.naming) may rename each element,
     # starting from its template name, under the usual uniqueness rules
     naming_call: bool = False
+    # Roles the source itself shows: (property, pattern, role key). A candidate whose property
+    # ("decorators": any of its annotations; any other property: its value) matches the pattern in
+    # full gets that role without a call; the first matching rule decides
+    structural: tuple[tuple[str, str, str], ...] = ()
+    # A candidate with a structural role keeps its own name as written: no template, no naming call
+    structural_as_written: bool = False
 
 
 ROLE_SCHEMA: dict[str, Any] = {
@@ -2167,6 +2232,16 @@ ROLE_SCHEMA: dict[str, Any] = {
         "additionalProperties": False,
     },
 }
+
+
+def structural_role(candidate: Candidate, rules: tuple[tuple[str, str, str], ...]) -> str | None:
+    """The role key the candidate's own structure shows (``RoleConfig.structural``), or None."""
+    for prop, pattern, role in rules:
+        value = candidate.properties.get(prop)
+        values = value if isinstance(value, list) else [value]
+        if any(v is not None and re.fullmatch(pattern, str(v)) for v in values):
+            return role
+    return None
 
 
 def build_role_prompt(candidates: list[Candidate], instruction: str, names: dict[str, str], show_path: bool = False) -> str:
@@ -3059,6 +3134,114 @@ def derive_same_name_relationships(elements: list[dict[str, Any]], rules: list[S
     return relationships
 
 
+def graph_link_pairs(graph_manager: GraphManager, query: str) -> list[tuple[str, str]]:
+    """The (a, b) source node id pairs a link query returns, each pair once, in order."""
+    pairs = {(str(row["a"]), str(row["b"])) for row in graph_manager.query(query) if row.get("a") and row.get("b")}
+    return sorted(pairs)
+
+
+def derive_graph_link_relationships(elements: list[dict[str, Any]], rules: list[GraphLinkRule], links: dict[str, list[tuple[str, str]]]) -> list[dict[str, Any]]:
+    """Elements whose source nodes are linked relate as the rule says. ``links``: query -> its (a, b) pairs."""
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        of_source: dict[str, dict[str, list[str]]] = {rule.source: defaultdict(list), rule.target: defaultdict(list)}
+        for e in elements:
+            source = (e.get("properties") or {}).get("source")
+            if source and e.get("element_type") in of_source:
+                of_source[e["element_type"]][str(source)].append(e["identifier"])
+        found = {(s, t) for a, b in links.get(rule.query, []) for s in of_source[rule.source].get(a, []) for t in of_source[rule.target].get(b, []) if s != t}
+        relationships.extend({"source": s, "target": t, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "graph_link"} for s, t in sorted(found))
+    return relationships
+
+
+def derive_listed_member_relationships(elements: list[dict[str, Any]], rules: list[ListedMembersRule]) -> list[dict[str, Any]]:
+    """Each holder relates to the elements it lists (by source node or by identifier)."""
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        members: dict[str, list[str]] = defaultdict(list)
+        for e in elements:
+            if e.get("element_type") == rule.member:
+                key = (e.get("properties") or {}).get("source") if rule.by == "source" else e.get("identifier")
+                if key:
+                    members[str(key)].append(e["identifier"])
+        for holder in sorted((e for e in elements if e.get("element_type") == rule.holder), key=lambda e: e.get("identifier", "")):
+            listed = (holder.get("properties") or {}).get(rule.list_property) or []
+            for member in sorted({m for key in listed for m in members.get(str(key), []) if m != holder["identifier"]}):
+                source, target = (holder["identifier"], member) if rule.from_holder else (member, holder["identifier"])
+                relationships.append({"source": source, "target": target, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "listed_members"})
+    return relationships
+
+
+def _code_words(name: str) -> tuple[str, ...]:
+    return tuple(singularize(w.lower()) for w in _words(name or "") if w)
+
+
+def code_names_with_paths(graph_manager: GraphManager) -> list[tuple[str, str]]:
+    """(name, repository path) of the repository's own type definitions (their file) and its directories."""
+    queries = (
+        "MATCH (t:Graph:TypeDefinition) WHERE t.category <> 'external_reference' RETURN t.typeName AS name, t.filePath AS path",
+        "MATCH (d:Graph:Directory) RETURN d.name AS name, d.path AS path",
+    )
+    found = {
+        (str(row["name"]), str(row["path"]).replace(chr(92), "/").rstrip("/")) for query in queries for row in graph_manager.query(query) if row.get("name") and row.get("path")
+    }
+    return sorted(found)
+
+
+def source_concept_names(graph_manager: GraphManager, elements: list[dict[str, Any]]) -> dict[str, str]:
+    """The concept name of each element's source node, where the source is a concept."""
+    ids = sorted({src for e in elements if (src := (e.get("properties") or {}).get("source"))})
+    if not ids:
+        return {}
+    rows = graph_manager.query("MATCH (n) WHERE n.id IN $ids RETURN n.id AS id, n.conceptName AS name", {"ids": ids})
+    return {row["id"]: row["name"] for row in rows if row.get("id") and row.get("name")}
+
+
+def derive_named_in_code_relationships(
+    elements: list[dict[str, Any]],
+    source_paths: dict[str, str],
+    code_names: list[tuple[str, str]],
+    rules: list[NamedInCodeRule],
+    concept_names: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """The owner whose directory holds the most code names carrying a named element's words relates to it.
+
+    Args:
+        elements: The model's elements (owners need a source with a path, see ``element_source_paths``)
+        source_paths: Source node id -> repository path
+        code_names: (name, repository path) of types and directories (``code_names_with_paths``)
+        rules: The configured rules
+        concept_names: Source node id -> concept name; an element without one is matched by its own name
+    """
+    relationships: list[dict[str, Any]] = []
+    for rule in rules:
+        owners = sorted(
+            ((path, e["identifier"]) for e in elements if e.get("element_type") == rule.owner and (path := source_paths.get((e.get("properties") or {}).get("source", "")))),
+            key=lambda owner: (-len(owner[0]), owner[1]),
+        )
+        if not owners:
+            continue
+        # Each code name belongs to the nearest owner above it (the longest owner path that holds it)
+        held: dict[str, set[tuple[str, ...]]] = defaultdict(set)
+        for name, path in code_names:
+            owner = next((identifier for owner_path, identifier in owners if path == owner_path or path.startswith(owner_path + "/")), None)
+            words = _code_words(name)
+            if owner and words:
+                held[owner].add(words)
+        for e in sorted((x for x in elements if x.get("element_type") == rule.named), key=lambda x: x.get("identifier", "")):
+            source = (e.get("properties") or {}).get("source", "")
+            part = _code_words((concept_names or {}).get(source) or e.get("name", ""))
+            if not part:
+                continue
+            counts = {owner: sum(1 for words in names if any(words[i : i + len(part)] == part for i in range(len(words) - len(part) + 1))) for owner, names in held.items()}
+            best = max(counts.values(), default=0)
+            if best < rule.min_names:
+                continue
+            for owner in sorted(owner for owner, count in counts.items() if count >= rule.min_names and count >= best * rule.share):
+                relationships.append({"source": owner, "target": e["identifier"], "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "named_in_code"})
+    return relationships
+
+
 def file_imports(graph_manager: GraphManager) -> list[tuple[str, str]]:
     """(importing file path, imported file path) for every import between files of the repository."""
     rows = graph_manager.query("MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(b:Graph:File) RETURN a.filePath AS a, b.filePath AS b")
@@ -3125,6 +3308,9 @@ def derive_consolidated_relationships(
     configuration: list[ConfigurationRule] | None = None,
     dependency: list[DependencyRule] | None = None,
     same_name: list[SameNameRule] | None = None,
+    named_in_code: list[NamedInCodeRule] | None = None,
+    listed_members: list[ListedMembersRule] | None = None,
+    graph_links: list[GraphLinkRule] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for all elements in a single consolidated pass.
@@ -3177,9 +3363,19 @@ def derive_consolidated_relationships(
             placed |= decided[(from_type, to_type)][2]
         decided[(from_type, to_type)] = (kind, side, placed, owners)
 
-    paths = element_source_paths(graph_manager, all_elements) if graph_manager and (containment or configuration or dependency) else {}
+    paths = element_source_paths(graph_manager, all_elements) if graph_manager and (containment or configuration or dependency or named_in_code) else {}
+    # A link the graph holds says more than a path: the element it places is not placed again by containment
+    linked: set[tuple[str, str, str, str]] = set()
+    if graph_links and graph_manager:
+        rels = derive_graph_link_relationships(all_elements, graph_links, {query: graph_link_pairs(graph_manager, query) for query in sorted({r.query for r in graph_links})})
+        structural.extend(rels)
+        linked = {(type_of.get(r["source"], ""), r["relationship_type"], type_of.get(r["target"], ""), r["target"]) for r in rels}
     if containment:
-        rels = derive_containment_relationships(all_elements, paths, containment)
+        rels = [
+            r
+            for r in derive_containment_relationships(all_elements, paths, containment)
+            if (type_of.get(r["source"], ""), r["relationship_type"], type_of.get(r["target"], ""), r["target"]) not in linked
+        ]
         structural.extend(rels)
         for rule in containment:
             decide(rels, rule.container, rule.contained, rule.relationship, "target")
@@ -3202,6 +3398,12 @@ def derive_consolidated_relationships(
         structural.extend(derive_dependency_relationships(all_elements, paths, file_imports(graph_manager), dependency))
     if same_name:
         structural.extend(derive_same_name_relationships(all_elements, same_name))
+    if listed_members:
+        structural.extend(derive_listed_member_relationships(all_elements, listed_members))
+    if named_in_code and graph_manager:
+        structural.extend(
+            derive_named_in_code_relationships(all_elements, paths, code_names_with_paths(graph_manager), named_in_code, source_concept_names(graph_manager, all_elements))
+        )
     all_relationships.extend(structural)
     owner_pairs = {frozenset((r["source"], r["target"])) for r in structural}
 
