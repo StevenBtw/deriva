@@ -5,10 +5,10 @@
 
 [![Research Project](https://img.shields.io/badge/Research-Project-blueviolet.svg)](#)
 [![Build Status](https://github.com/StevenBtw/Deriva/actions/workflows/ci.yml/badge.svg)](https://github.com/StevenBtw/Deriva/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 [![Grafeo](https://img.shields.io/badge/Grafeo-embedded-green.svg)](https://github.com/StevenBtw/grafeo)
 [![Studio](https://img.shields.io/badge/Studio-FastAPI%20%2B%20React-blue.svg)](#studio)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE) 
 
 Deriva reads a software repository, builds a graph of what is in it, and derives an [ArchiMate](https://www.opengroup.org/archimate-forum) enterprise architecture model you can open in [Archi](https://www.archimatetool.com/).
 
