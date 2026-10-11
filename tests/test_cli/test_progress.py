@@ -227,6 +227,18 @@ if RICH_AVAILABLE:
                 reporter.start_step("step1", 10)
                 reporter.complete_step()
 
+        def test_steps_after_a_completed_step_complete_too(self):
+            """A task id is not a list index once a task was removed: the second step of a run used to crash."""
+            reporter = RichProgressReporter()
+            with reporter:
+                reporter.start_phase("extraction", 3)
+                for name in ("Repository", "Directory", "File"):
+                    reporter.start_step(name, 4)
+                    reporter.complete_step()
+                reporter.start_step("Indeterminate")
+                reporter.complete_step()
+                assert reporter._step_task is None
+
         def test_complete_phase(self):
             """Should complete phase."""
             reporter = RichProgressReporter()
