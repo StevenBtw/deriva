@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from importlib.metadata import version
-
 import pytest
 
+from deriva.services import about
 from tests.test_studio.conftest import FakeSession
 
 HELD = OSError(
@@ -18,7 +17,7 @@ def test_health_reports_ok_and_version(client):
     response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": version("Deriva")}
+    assert response.json() == {"status": "ok", "version": about.version()}
 
 
 def test_status_reports_an_owned_database(client, fake_session):
@@ -27,6 +26,10 @@ def test_status_reports_an_owned_database(client, fake_session):
     assert response.status_code == 200
     assert response.json()["db"] == {"state": "owned"}
     assert fake_session.connected
+
+
+def test_status_reports_the_optional_features(client):
+    assert client.get("/api/status").json()["features"] == {"benchmark": True}
 
 
 def test_status_reports_a_held_database_with_the_pid(make_client):
@@ -96,3 +99,13 @@ def test_status_answers_while_a_step_holds_the_session(make_client, fake_session
         reader.join(5)
 
     assert answers[0]["db"] == {"state": "owned", "busy": True}
+
+
+def test_the_linux_lock_message_also_means_held(make_client):
+    held = OSError('IO Error: Could not set lock on file "/home/u/.deriva/sql.db": Conflicting lock is held in /usr/bin/python3.14 (PID 4242) by user u.')
+    client = make_client(FakeSession(connect_error=held))
+
+    response = client.get("/api/status")
+
+    assert response.json()["db"]["state"] == "held"
+    assert response.json()["db"]["held_by"] == 4242

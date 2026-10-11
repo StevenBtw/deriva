@@ -34,3 +34,15 @@ def test_unknown_element_or_run_is_404(make_client):
 
     assert client.get("/api/trace/missing").status_code == 404
     assert client.get("/api/trace/e1?run_id=nope").status_code == 404
+
+
+def test_trace_reads_the_calls_of_a_run_from_before_a_restart(make_client):
+    """A run of an earlier studio process is in no memory, but its calls are in its folder (as under Prompts)."""
+    first = make_client(llm_session())
+    run_id = first.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
+    wait_for(lambda: finished(first, run_id))
+    restarted = make_client(FakeSession(trace_element=lambda element_id, calls: {"prompts": [c["prompt"] for c in calls]}))
+
+    response = restarted.get(f"/api/trace/e1?run_id={run_id}")
+
+    assert response.json() == {"prompts": ["classify a", "classify b", "name it"]}

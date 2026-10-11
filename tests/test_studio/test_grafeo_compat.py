@@ -72,6 +72,25 @@ def test_node_without_name_gets_a_display_name_from_its_deriva_property():
     assert value["properties"]["name"] == "Jboss"
 
 
+def test_a_method_is_named_by_itself_not_by_its_class():
+    from deriva.studio.grafeo_compat import to_widget_value
+
+    # Method nodes carry their class in typeName too
+    value = to_widget_value({"_id": 3, "_labels": ["Graph", "Method"], "id": "method::x::a", "methodName": "generateOrderItem", "typeName": "DataGenerator"})
+
+    assert value["properties"]["name"] == "generateOrderItem"
+
+
+def test_repositories_and_dependencies_are_named_by_their_own_names():
+    from deriva.studio.grafeo_compat import to_widget_value
+
+    repository = to_widget_value({"_id": 4, "_labels": ["Graph", "Repository"], "id": "repo::TeaStore", "repoName": "TeaStore"})
+    dependency = to_widget_value({"_id": 5, "_labels": ["Graph", "ExternalDependency"], "id": "extdep::x::org", "dependencyName": "org"})
+
+    assert repository["properties"]["name"] == "TeaStore"
+    assert dependency["properties"]["name"] == "org"
+
+
 def test_edge_becomes_type_start_end_without_the_namespace_prefix():
     from deriva.studio.grafeo_compat import to_widget_value
 
@@ -93,3 +112,12 @@ def test_empty_result():
     from deriva.studio.grafeo_compat import to_widget_result
 
     assert to_widget_result([]) == {"columns": [], "rows": []}
+
+
+def test_write_words_in_comments_do_not_make_a_query_a_write():
+    from deriva.studio.grafeo_compat import is_write_query
+
+    assert not is_write_query("MATCH (n) // DELETE them later\nRETURN n")
+    assert not is_write_query("/* SET up a view */ MATCH (n) RETURN n")
+    assert is_write_query("MATCH (n {url: 'http://x'}) DELETE n")  # // inside a string is no comment
+    assert is_write_query("MATCH (n) /* note */ DETACH DELETE n")

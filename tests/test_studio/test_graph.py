@@ -46,7 +46,7 @@ def test_model_endpoint_returns_the_widget_model(make_client):
 def test_graph_stats_nodes_and_clear(make_client):
     session = FakeSession(
         get_graph_stats={"total_nodes": 3, "by_type": {"Directory": 3}},
-        get_graph_nodes=lambda node_type: [{"id": f"d{i}"} for i in range(5)],
+        get_graph_nodes=lambda node_type, limit=None: [{"id": f"d{i}"} for i in range(5)][:limit],
         clear_graph={"success": True},
     )
     client = make_client(session)
@@ -67,4 +67,27 @@ def test_model_stats_clear_and_export(make_client):
     assert client.get("/api/model/stats").json()["total_elements"] == 2
     assert client.delete("/api/model").json() == {"success": True}
     assert client.post("/api/model/export", json={"path": "workspace/output/model.xml"}).json()["success"] is True
-    assert session.called("export_model") == [((), {"output_path": "workspace/output/model.xml"})]
+    assert session.called("export_model") == [((), {"output_path": "workspace/output/model.xml", "confined": True})]
+
+
+def test_a_node_type_must_be_a_label_and_the_limit_is_passed_on(make_client):
+    """The node type becomes a Cypher label: anything but a plain name could end the label and add clauses."""
+    session = FakeSession(get_graph_nodes=lambda node_type, limit=None: [{"id": "d0"}])
+    client = make_client(session)
+
+    assert client.get("/api/graph/nodes/Directory`) DETACH DELETE n //").status_code == 400
+    assert client.get("/api/graph/nodes/Directory?limit=-1").status_code == 422
+    assert client.get("/api/graph/nodes/Directory?limit=2").status_code == 200
+    assert session.called("get_graph_nodes") == [(("Directory",), {"limit": 2})]
+
+
+def test_the_model_is_exported_only_into_the_workspace_output_folder(make_client):
+    def export_model(output_path=None, confined=False):
+        if confined and output_path and ".." in output_path:
+            raise ValueError("The studio exports into workspace/output only")
+        return {"success": True, "path": output_path}
+
+    client = make_client(FakeSession(export_model=export_model))
+
+    assert client.post("/api/model/export", json={"path": "workspace/output/model.xml"}).status_code == 200
+    assert client.post("/api/model/export", json={"path": "workspace/output/../../evil.xml"}).status_code == 400

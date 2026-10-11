@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 from tests.test_studio.conftest import FakeSession
 from tests.test_studio.test_grafeo_compat import EDGE, NODE
 
@@ -62,26 +64,78 @@ def test_query_errors_are_400_with_the_message(make_client):
     assert "Syntax error" in response.json()["detail"]
 
 
-def test_graph_view_reads_the_derivation_relevant_types_and_their_edges(make_client):
-    calls = []
+def graph_db(nodes: dict[str, str], edges: list[tuple[str, str, str]]):
+    """A fake extraction graph (Deriva id to node type; source, target, edge type) answering the view's read-only queries."""
+    engine_id = {node: number for number, node in enumerate(nodes, start=100)}
+
+    def node(deriva_id: str) -> dict:
+        return {"_id": engine_id[deriva_id], "_labels": ["Graph", nodes[deriva_id]], "id": deriva_id}
 
     def answer(query, params):
-        calls.append((query, params))
+        if "RETURN n.id AS id, labels(n) AS labels" in query:
+            return [{"id": deriva_id, "labels": ["Graph", kind]} for deriva_id, kind in nodes.items()]
+        if "RETURN a.id AS source, b.id AS target, type(r) AS type" in query:
+            return [{"source": a, "target": b, "type": f"Graph:{kind}"} for a, b, kind in edges]
+        if "WHERE n.id IN $ids RETURN n" in query:
+            return [{"n": node(deriva_id)} for deriva_id in nodes if deriva_id in params["ids"]]
         if "RETURN a, r, b" in query:
-            return [{"a": NODE, "r": EDGE, "b": {"_id": 6, "_labels": ["Graph", "Directory"], "id": "dir::deriva::x"}}]
-        if ":Directory" in query:
-            return [{"n": NODE}]
+            ids = set(params["ids"])
+            return [
+                {"a": node(a), "r": {"_id": f"e{i}", "_type": f"Graph:{kind}", "_source": engine_id[a], "_target": engine_id[b]}, "b": node(b)}
+                for i, (a, b, kind) in enumerate(edges)
+                if a in ids and b in ids
+            ]
         return []
 
-    client = make_client(FakeSession(query_graph_read_only=answer))
+    return answer
 
-    view = client.get("/grafeo/view/graph?limit=50").json()
 
-    assert [n["id"] for n in view["nodes"]] == ["1", "6"]
-    assert view["edges"] == [{"source": "1", "target": "6", "label": "CONTAINS", "edge_id": "e1"}]
-    assert any("LIMIT 50" in q for q, _ in calls)
-    edge_query = [p for q, p in calls if "RETURN a, r, b" in q][0]
-    assert edge_query == {"ids": ["dir::deriva::src"]}
+def small_repository() -> tuple[dict[str, str], list[tuple[str, str, str]]]:
+    """One repository, two directories, six files and twelve methods, as CONTAINS trees."""
+    nodes = {"repo::r": "Repository", "dir::r::a": "Directory", "dir::r::b": "Directory"}
+    edges = [("repo::r", "dir::r::a", "CONTAINS"), ("repo::r", "dir::r::b", "CONTAINS")]
+    for f in range(6):
+        nodes[f"file::r::{f}"] = "File"
+        edges.append((f"dir::r::{'ab'[f % 2]}", f"file::r::{f}", "CONTAINS"))
+        for m in range(2):
+            nodes[f"method::r::{f}.{m}"] = "Method"
+            edges.append((f"file::r::{f}", f"method::r::{f}.{m}", "CONTAINS"))
+    return nodes, edges
+
+
+def test_graph_view_samples_every_node_type_with_the_repositories_always_in(make_client):
+    nodes, edges = small_repository()
+    client = make_client(FakeSession(query_graph_read_only=graph_db(nodes, edges)))
+
+    view = client.get("/grafeo/view/graph?limit=8").json()
+
+    kinds = Counter(node["labels"][0] for node in view["nodes"])
+    assert len(view["nodes"]) == 8
+    assert kinds["Repository"] == 1
+    assert {"Directory", "File", "Method"} <= set(kinds)
+    assert kinds["Method"] > kinds["File"] > kinds["Directory"]
+    assert view["totals"] == {"nodes": {"Repository": 1, "Directory": 2, "File": 6, "Method": 12}, "edges": {"CONTAINS": 20}}
+
+
+def test_graph_view_keeps_the_relationships_of_its_sample(make_client):
+    nodes, edges = small_repository()
+    client = make_client(FakeSession(query_graph_read_only=graph_db(nodes, edges)))
+
+    view = client.get("/grafeo/view/graph?limit=8").json()
+
+    touched = {end for edge in view["edges"] for end in (edge["source"], edge["target"])}
+    assert len(view["nodes"]) == 8
+    assert touched == {node["id"] for node in view["nodes"]}
+
+
+def test_a_graph_within_the_limit_is_shown_whole(make_client):
+    nodes, edges = small_repository()
+    client = make_client(FakeSession(query_graph_read_only=graph_db(nodes, edges)))
+
+    view = client.get("/grafeo/view/graph?limit=300").json()
+
+    assert len(view["nodes"]) == len(nodes)
+    assert len(view["edges"]) == len(edges)
 
 
 def test_model_view_reads_elements_and_relationships(make_client):
@@ -120,3 +174,18 @@ def test_schema_lists_labels_and_edge_types_with_counts(make_client):
         "labels": [{"name": "Directory", "count": 2}, {"name": "File", "count": 1}],
         "edge_types": [{"name": "CONTAINS", "count": 4}],
     }
+
+
+def test_a_query_answers_from_the_chosen_database_only(make_client):
+    """Both namespaces share one graph file: MATCH (n) would return the model's nodes in the graph pane too."""
+    rows = [
+        {"n": {"_id": 1, "_labels": ["Graph", "File"], "id": "file_a"}},
+        {"n": {"_id": 2, "_labels": ["Model", "Node"], "id": "n_server"}},
+    ]
+    client = make_client(FakeSession(query_graph_read_only=lambda q, p: rows, query_model_read_only=lambda q, p: rows))
+
+    graph = client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "database": "graph"}).json()
+    model = client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "database": "model"}).json()
+
+    assert [row[0]["id"] for row in graph["rows"]] == ["1"]
+    assert [row[0]["id"] for row in model["rows"]] == ["2"]

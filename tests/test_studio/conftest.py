@@ -55,6 +55,7 @@ def make_client(tmp_path) -> Iterator[Callable[[FakeSession], TestClient]]:
 
     def make(session: FakeSession) -> TestClient:
         client = TestClient(create_app(provider=SessionProvider(factory=lambda: session), static_dir=None, runs_dir=tmp_path / "runs"))
+        client.app.state.bench = lambda session: session  # a FakeSession answers the benchmark calls itself
         client.__enter__()
         clients.append(client)
         return client
