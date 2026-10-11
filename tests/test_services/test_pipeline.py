@@ -55,6 +55,16 @@ class TestRunFullPipeline:
         assert result["results"]["extraction"] is not None
         assert result["results"]["derivation"] is not None
 
+    def test_derivation_phases_reach_the_derivation_service(self):
+        """--no-llm runs derivation's structural prep phase only."""
+        with patch("deriva.services.pipeline.run_classification", return_value={"success": True, "stats": {}}):
+            with patch("deriva.services.pipeline.extraction.run_extraction", return_value={"success": True, "stats": {}}) as mock_extract:
+                with patch("deriva.services.pipeline.derivation.run_derivation", return_value={"success": True, "stats": {}}) as mock_derive:
+                    run_full_pipeline(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=None, derivation_phases=["prep"])
+
+        assert mock_extract.call_args.kwargs["llm_query_fn"] is None
+        assert mock_derive.call_args.kwargs["phases"] == ["prep"]
+
     def test_skips_classification(self):
         """Should skip classification when requested."""
         engine = MagicMock()

@@ -166,3 +166,27 @@ def test_run_log_path_is_a_safe_file_name_per_run(tmp_path):
     path = run_log_path(tmp_path, "bench_20261008_013000:TeaStore:mistral-devstral2:1")
 
     assert path == tmp_path / "bench_20261008_013000_TeaStore_mistral-devstral2_1.jsonl"
+
+
+def test_a_call_keeps_its_reasoning_and_the_model_that_served_it(tmp_path):
+    log = LlmCallLog(tmp_path / "run.jsonl", "run-1")
+
+    call = record_call(
+        log,
+        {"provider": "mistral", "model": "devstral-2512", "served_model": "mistral-medium-3-5", "temperature": None, "reasoning": "none"},
+        prompt="p",
+        schema=None,
+        system_prompt=None,
+        response=None,
+        step="Node",
+    )
+
+    assert (call["model"], call["served_model"], call["temperature"], call["reasoning"]) == ("devstral-2512", "mistral-medium-3-5", None, "none")
+
+
+def test_read_skips_a_line_that_does_not_parse(tmp_path):
+    """A run still appending (or one that stopped mid-line) leaves a partial last line; the calls before it are read."""
+    path = tmp_path / "calls.jsonl"
+    path.write_text('{"call_id": "a", "seq": 1}\n[1, 2]\n{"call_id": "b", "se', encoding="utf-8")
+
+    assert [c["call_id"] for c in LlmCallLog.read(path)] == ["a"]

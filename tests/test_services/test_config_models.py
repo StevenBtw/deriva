@@ -1,95 +1,18 @@
-"""Tests for config_models module (pydantic-settings integration)."""
-
-from typing import Any
+"""Tests for config_models module (configuration row models)."""
 
 import pytest
 from pydantic import ValidationError
-from pydantic_settings import SettingsConfigDict
 
 from deriva.services.config_models import (
     BenchmarkModelConfigModel,
     ConfidenceThresholds,
-    DerivaSettings,
     DerivationConfigModel,
     DerivationLimits,
     ExtractionConfigModel,
     FileTypeModel,
-    GrafeoSettings,
-    LLMSettings,
     LouvainConfig,
     PageRankConfig,
 )
-
-# Type alias to help with BaseSettings._env_file parameter which isn't in the type signature
-_GrafeoSettings: Any = GrafeoSettings
-_LLMSettings: Any = LLMSettings
-_DerivaSettings: Any = DerivaSettings
-
-
-class TestGrafeoSettings:
-    """Tests for GrafeoSettings."""
-
-    def test_default_values(self):
-        """Should have sensible defaults."""
-        settings = _GrafeoSettings(_env_file=None)
-        assert settings.db_dir == ""
-        assert settings.log_queries is False
-
-    def test_loads_from_env(self, monkeypatch):
-        """Should load values from environment."""
-        monkeypatch.setenv("GRAFEO_DB_DIR", "/tmp/graphs")
-        monkeypatch.setenv("GRAFEO_LOG_QUERIES", "true")
-        settings = _GrafeoSettings(_env_file=None)
-        assert settings.db_dir == "/tmp/graphs"
-        assert settings.log_queries is True
-
-
-class TestLLMSettings:
-    """Tests for LLMSettings."""
-
-    def test_default_values(self):
-        """Should have sensible defaults."""
-        settings = _LLMSettings(_env_file=None)
-        assert settings.temperature == 0.6
-        assert settings.max_retries == 3
-        assert settings.timeout == 60
-        assert settings.nocache is False
-
-    def test_temperature_validation(self, monkeypatch):
-        """Should validate temperature range."""
-        monkeypatch.setenv("LLM_TEMPERATURE", "1.5")
-        settings = _LLMSettings(_env_file=None)
-        assert settings.temperature == 1.5
-
-    def test_loads_from_env(self, monkeypatch):
-        """Should load values from environment."""
-        monkeypatch.setenv("LLM_DEFAULT_MODEL", "test-model")
-        monkeypatch.setenv("LLM_TEMPERATURE", "0.3")
-        settings = _LLMSettings(_env_file=None)
-        assert settings.default_model == "test-model"
-        assert settings.temperature == 0.3
-
-
-class TestDerivaSettings:
-    """Tests for DerivaSettings master class."""
-
-    def test_default_values(self):
-        """Should have sensible defaults."""
-        settings = _DerivaSettings(_env_file=None)
-        assert settings.repository_workspace_dir == "workspace/repositories"
-
-    def test_nested_settings(self, monkeypatch):
-        """Should provide access to nested settings.
-
-        Nested settings properties create fresh instances that read .env,
-        so we must clear the env var to isolate the test.
-        """
-        monkeypatch.delenv("GRAFEO_DB_DIR", raising=False)
-        monkeypatch.setattr(GrafeoSettings, "model_config", SettingsConfigDict(env_prefix="GRAFEO_", env_file=None, extra="ignore"))
-        settings = _DerivaSettings(_env_file=None)
-        assert settings.grafeo.db_dir == ""
-        assert settings.llm.temperature == 0.6
-        assert settings.graph.namespace == "Graph"
 
 
 class TestExtractionConfigModel:

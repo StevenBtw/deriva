@@ -865,23 +865,6 @@ class TestListSteps:
             assert mock_fn.call_args[1].get("phase") == "prep"
 
 
-class TestGetSettings:
-    """Tests for get_settings function."""
-
-    def test_returns_cached_settings(self):
-        """Should return cached DerivaSettings instance."""
-        from deriva.services.config import get_settings
-
-        # Clear cache for testing
-        get_settings.cache_clear()
-
-        settings = get_settings()
-        assert settings is not None
-        # Should return same instance on subsequent calls
-        settings2 = get_settings()
-        assert settings is settings2
-
-
 class TestUpdateExtractionConfigTemperatureAndTokens:
     """Tests for update_extraction_config with temperature and max_tokens."""
 
@@ -1980,6 +1963,16 @@ class TestConfigHistory:
         with pytest.raises(ValueError):
             config.get_config_history(engine, "prep", "Node")
 
+    def test_history_carries_the_settings_a_version_can_change(self, engine):
+        """Versioned updates change temperature, token limit and candidate cap too: the history must show them."""
+        from deriva.services import config
+
+        (derivation,) = config.get_config_history(engine, "derivation", "Node")
+        latest, _ = config.get_config_history(engine, "extraction", "Concept")
+
+        assert (derivation["max_candidates"], derivation["temperature"], derivation["max_tokens"], derivation["input_model_query"]) == (30, None, None, None)
+        assert {"temperature", "max_tokens"} <= set(latest)
+
 
 class TestInputSnapshot:
     """The result-changing tables without version history, captured as they are when a session starts."""
@@ -2026,3 +2019,17 @@ class TestInputSnapshot:
         assert before["sha256"]["derivation_patterns"] == after["sha256"]["derivation_patterns"]
         assert before["sha256"]["system_settings"] == after["sha256"]["system_settings"]
         assert config.input_snapshot(engine) == after
+
+    def test_a_setting_named_like_a_secret_is_recorded_without_its_value(self, engine):
+        """The snapshot goes into session folders and export bundles: a setting named like a secret keeps its name only."""
+        import json
+
+        from deriva.services import config
+
+        engine.execute("INSERT INTO system_settings (key, value) VALUES ('webhook_token', 'tok-123'), ('max_tokens', '4000')")
+
+        snapshot = config.input_snapshot(engine)
+
+        assert snapshot["system_settings"]["webhook_token"] == "<redacted>"
+        assert snapshot["system_settings"]["max_tokens"] == "4000"
+        assert "tok-123" not in json.dumps(snapshot)

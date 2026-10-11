@@ -225,6 +225,61 @@ class TestExtractFiles:
             graph_manager.add_node.assert_called()
 
 
+class TestStructuralStepsWithoutLLM:
+    """--no-llm: TypeDefinition, Method and ExternalDependency still parse what tree-sitter and the manifest parsers read."""
+
+    @staticmethod
+    def _cfg(node_type: str, subtype: str) -> MagicMock:
+        import json as json_module
+
+        cfg = MagicMock()
+        cfg.node_type = node_type
+        cfg.input_sources = json_module.dumps({"files": [{"type": "source", "subtype": subtype}]})
+        cfg.params = None
+        cfg.instruction = ""
+        cfg.example = ""
+        return cfg
+
+    @staticmethod
+    def _run(cfg: MagicMock, tmpdir: str, files: list[dict]) -> dict:
+        repo = MagicMock()
+        repo.name = "myproject"
+        return _run_extraction_step(
+            cfg=cfg,
+            repo=repo,
+            repo_path=Path(tmpdir),
+            classified_files=files,
+            undefined_files=[],
+            graph_manager=MagicMock(),
+            llm_query_fn=None,
+            engine=MagicMock(),
+        )
+
+    def test_type_definitions_come_from_tree_sitter(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "service.py").write_text("class OrderService:\n    pass\n", encoding="utf-8")
+            result = self._run(self._cfg("TypeDefinition", "python"), tmpdir, [{"path": "service.py", "file_type": "source", "subtype": "python"}])
+
+        assert result["nodes_created"] >= 1
+        assert not any("LLM required" in e for e in result["errors"])
+
+    def test_files_without_a_parser_are_skipped_with_a_warning(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "batch.pas").write_text("program Batch;\n", encoding="utf-8")
+            result = self._run(self._cfg("TypeDefinition", "pascal"), tmpdir, [{"path": "batch.pas", "file_type": "source", "subtype": "pascal"}])
+
+        assert result["nodes_created"] == 0
+        assert result["errors"] == ["LLM required for TypeDefinition in 1 file without a parser (skipped)"]
+
+    def test_external_dependencies_come_from_the_manifest_parsers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "requirements.txt").write_text("requests>=2\n", encoding="utf-8")
+            result = self._run(self._cfg("ExternalDependency", "requirements"), tmpdir, [{"path": "requirements.txt", "file_type": "source", "subtype": "requirements"}])
+
+        assert result["nodes_created"] >= 1
+        assert not any("LLM required" in e for e in result["errors"])
+
+
 class TestExtractLLMBased:
     """Tests for _extract_llm_based function."""
 
@@ -1841,7 +1896,7 @@ class TestMethodLanguages:
         assert result["errors"] == []
         assert self._methods(graph) == ["handle", "place"]
 
-    @pytest.mark.parametrize("languages", [["cobol"], "java", []])
+    @pytest.mark.parametrize("languages", [["pascal"], "java", []])
     def test_unknown_or_malformed_languages_are_an_error(self, graph, languages):
         result = self._extract(graph, {"languages": languages})
 
@@ -2198,3 +2253,41 @@ def test_concept_node_keeps_the_voted_types():
     )
 
     assert node.to_dict()["conceptTypes"] == ["actor", "entity"]
+
+
+def test_the_nodes_and_edges_a_step_writes_reach_the_run_log(tmp_path):
+    """The run log names every node and edge a step wrote (GraphNode and Edge objects of a benchmark's event log), each once."""
+    from contextlib import contextmanager
+
+    from deriva.adapters.graph.manager import GraphWrites
+
+    run_logger = MagicMock()
+    step_ctx = MagicMock()
+    run_logger.step_start.return_value = step_ctx
+    repo = SimpleNamespace(name="test_repo", path=str(tmp_path), url="u", branch="main")
+    graph_manager = MagicMock()
+    written = GraphWrites()
+
+    @contextmanager
+    def recording():
+        yield written
+
+    graph_manager.recording = recording
+
+    def step(**kwargs):
+        # A step may write a node twice (merge); the step function reports only some of its edges
+        written.nodes.extend(["dir::test_repo::a", "dir::test_repo::b", "dir::test_repo::a"])
+        written.edges.extend(["CONTAINS_dir::test_repo::a_dir::test_repo::b", "IMPORTS_dir::test_repo::b_dir::test_repo::a"])
+        return {"nodes_created": 2, "edges_created": 2, "edge_ids": ["CONTAINS_dir::test_repo::a_dir::test_repo::b"], "errors": []}
+
+    with (
+        patch("deriva.services.extraction.RepoManager") as repo_mgr,
+        patch("deriva.services.extraction.config.get_extraction_configs", return_value=[SimpleNamespace(node_type="Directory", extraction_method="structural")]),
+        patch("deriva.services.extraction.config.get_file_types", return_value=[]),
+        patch("deriva.services.extraction._run_extraction_step", side_effect=step),
+    ):
+        repo_mgr.return_value.list_repositories.return_value = [repo]
+        run_extraction(MagicMock(), graph_manager, run_logger=run_logger)
+
+    assert [c.args[0] for c in step_ctx.add_object.call_args_list] == ["dir::test_repo::a", "dir::test_repo::b"]
+    assert [c.args[0] for c in step_ctx.add_edge.call_args_list] == ["CONTAINS_dir::test_repo::a_dir::test_repo::b", "IMPORTS_dir::test_repo::b_dir::test_repo::a"]

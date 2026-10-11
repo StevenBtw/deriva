@@ -18,7 +18,7 @@ class FakeSession:
             return [{"labels": ["Graph", "Directory"]}, {"labels": ["Graph", "Directory"]}, {"labels": ["Graph", "Technology"]}]
         if "count(r) AS count" in cypher:
             return [{"type": "Graph:CONTAINS", "count": 4}]
-        if "RETURN labels(a) AS source, labels(b) AS target" in cypher:
+        if "labels(a) AS source, labels(b) AS target" in cypher:
             return [{"source": ["Graph", "Directory"], "target": ["Graph", "Directory"]}, {"source": ["Graph", "Directory"], "target": ["Graph", "Technology"]}]
         if ":`Directory`" in cypher:
             return [{"n": DIRECTORY}]
@@ -81,3 +81,13 @@ def test_output_ontology_lists_types_per_layer_with_their_step_and_the_rules():
     assert "Serving" in rules[("ApplicationService", "ApplicationComponent")]["direct"]
     assert "Realization" in rules[("ApplicationComponent", "ApplicationService")]["derived"]
     assert "Realization" not in rules[("ApplicationComponent", "ApplicationService")]["direct"]
+
+
+def test_endpoint_pairs_are_read_distinct_and_without_a_row_limit():
+    """A row limit before the pairs are made distinct could hide rare pairs behind a frequent one."""
+    session = FakeSession()
+
+    intermediate_ontology(session)
+
+    (query,) = [q for q in session.queries if "labels(b) AS target" in q]
+    assert "RETURN DISTINCT" in query and "LIMIT" not in query

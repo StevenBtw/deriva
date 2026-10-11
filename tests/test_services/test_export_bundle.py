@@ -128,3 +128,47 @@ def test_the_source_digest_identifies_the_code_that_ran(tmp_path):
     assert first["files"] == 2
     assert unchanged == first
     assert changed["sha256"] != first["sha256"]
+
+
+def test_the_source_digest_spans_every_part_of_the_namespace(tmp_path):
+    """deriva is one namespace over three packages: moving a subpackage between them keeps the digest."""
+    one = tmp_path / "one"
+    (one / "core").mkdir(parents=True)
+    (one / "studio").mkdir()
+    (one / "core" / "a.py").write_text("a = 1\n", encoding="utf-8")
+    (one / "studio" / "b.py").write_text("b = 1\n", encoding="utf-8")
+    core, member = tmp_path / "core-root", tmp_path / "member-root"
+    (core / "core").mkdir(parents=True)
+    (member / "studio").mkdir(parents=True)
+    (core / "core" / "a.py").write_text("a = 1\n", encoding="utf-8")
+    (member / "studio" / "b.py").write_text("b = 1\n", encoding="utf-8")
+
+    assert source_digest([core, member]) == source_digest(one)
+    assert source_digest(one)["files"] == 2
+
+
+def test_the_environment_names_the_installed_deriva_version(tmp_path):
+    from deriva.services import about
+
+    assert environment_info(repo_root=tmp_path)["deriva"] == about.version()
+
+
+def test_links_in_the_session_folder_are_not_followed(tmp_path):
+    """A link in a session folder can point anywhere (a file with keys): its target never enters the bundle."""
+    import os
+
+    session = make_session(tmp_path)
+    outside = tmp_path / "private"
+    outside.mkdir()
+    (outside / "keys.txt").write_text("api key", encoding="utf-8")
+    try:
+        os.symlink(outside / "keys.txt", session / "link.txt")
+        os.symlink(outside, session / "linked", target_is_directory=True)
+    except OSError:
+        pytest.skip("symbolic links need extra rights on this system")
+
+    manifest = export_session(session, tmp_path / "out.zip", EXTRAS)
+
+    assert not [f["path"] for f in manifest["files"] if "link" in f["path"]]
+    with zipfile.ZipFile(tmp_path / "out.zip") as bundle:
+        assert all(b"api key" not in bundle.read(name) for name in bundle.namelist())
