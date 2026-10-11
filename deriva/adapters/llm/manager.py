@@ -35,7 +35,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
-import os
 import random
 import threading
 import time
@@ -43,15 +42,18 @@ from pathlib import Path
 from typing import Any, TypeVar, cast, overload
 
 import httpx
-from deriva.common.exceptions import CircuitOpenError
-from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
 
+from deriva.common import settings
+from deriva.common.exceptions import CircuitOpenError
+from deriva.common.paths import resolve
+from deriva.common.settings import LlmSettings
+
 from .cache import CacheManager
-from .model_registry import VALID_PROVIDERS, get_pydantic_ai_model
+from .model_registry import VALID_PROVIDERS, get_pydantic_ai_model, parse_sampling, reasoning_settings
 from .models import (
     BenchmarkModelConfig,
     CachedResponse,
@@ -153,7 +155,7 @@ def get_model_rpm(model_name: str, provider: str) -> int:
     """
     # Check for model-specific RPM: LLM_{MODEL_NAME}_RPM
     model_key = model_name.upper().replace("-", "_")
-    model_rpm_str = os.getenv(f"LLM_{model_key}_RPM")
+    model_rpm_str = settings.get(f"LLM_{model_key}_RPM")
     if model_rpm_str:
         try:
             return int(model_rpm_str)
@@ -161,13 +163,9 @@ def get_model_rpm(model_name: str, provider: str) -> int:
             pass
 
     # Check global RPM setting
-    global_rpm_str = os.getenv("LLM_RATE_LIMIT_RPM", "0")
-    try:
-        global_rpm = int(global_rpm_str)
-        if global_rpm > 0:
-            return global_rpm
-    except ValueError:
-        pass
+    global_rpm = LlmSettings().rate_limit_rpm
+    if global_rpm > 0:
+        return global_rpm
 
     # Fall back to provider default
     return get_default_rate_limit(provider)
@@ -183,43 +181,35 @@ def load_benchmark_models() -> dict[str, BenchmarkModelConfig]:
         LLM_{NAME}_URL (optional)
         LLM_{NAME}_KEY (optional, direct key)
         LLM_{NAME}_KEY_ENV (optional, env var name for key)
+        LLM_{NAME}_SAMPLING (optional, false: the model takes no temperature)
+        LLM_{NAME}_REASONING (optional, reasoning level; none turns reasoning off)
 
     Returns:
         Dict mapping config name to BenchmarkModelConfig
     """
-    load_dotenv(override=True)
-
     configs: dict[str, BenchmarkModelConfig] = {}
 
-    prefix = "LLM_"
-    suffix = "_PROVIDER"
+    for name, fields in settings.model_configs().items():
+        provider = fields["provider"] or ""
+        model = fields["model"] or ""
+        if not model:
+            continue
 
-    for key, value in os.environ.items():
-        if key.startswith(prefix) and key.endswith(suffix) and key != "LLM_PROVIDER":
-            name = key[len(prefix) : -len(suffix)]
+        friendly_name = name.lower().replace("_", "-")
 
-            provider = value
-            model = os.getenv(f"{prefix}{name}_MODEL", "")
-            api_url = os.getenv(f"{prefix}{name}_URL")
-            api_key = os.getenv(f"{prefix}{name}_KEY")
-            api_key_env = os.getenv(f"{prefix}{name}_KEY_ENV")
-
-            if not model:
-                continue
-
-            friendly_name = name.lower().replace("_", "-")
-
-            try:
-                configs[friendly_name] = BenchmarkModelConfig(
-                    name=friendly_name,
-                    provider=provider.lower(),
-                    model=model,
-                    api_url=api_url,
-                    api_key=api_key,
-                    api_key_env=api_key_env,
-                )
-            except ValueError:
-                continue
+        try:
+            configs[friendly_name] = BenchmarkModelConfig(
+                name=friendly_name,
+                provider=provider.lower(),
+                model=model,
+                api_url=fields["url"],
+                api_key=fields["key"],
+                api_key_env=fields["key_env"],
+                sampling=parse_sampling(fields.get("sampling")),
+                reasoning=(fields.get("reasoning") or "").strip().lower() or None,
+            )
+        except ValueError:
+            continue
 
     return configs
 
@@ -230,6 +220,11 @@ def _serialize_output(output: object) -> str:
     if callable(dump):
         return dump()
     return str(output)
+
+
+def _cache_path(cache_dir: str | None) -> Path:
+    """The LLM cache folder: LLM_CACHE_DIR or the given folder, relative values against the home folder."""
+    return resolve(cache_dir or "workspace/cache/llm")
 
 
 class LLMManager:
@@ -266,18 +261,19 @@ class LLMManager:
         Raises:
             ConfigurationError: If configuration is invalid
         """
-        load_dotenv(override=True)
-
+        settings.export_provider_keys()  # pydantic-ai providers read their keys from the process environment
         self.config = self._load_config_from_env()
-        self._validate_config()
+        try:
+            self._validate_config()
+        except ConfigurationError as e:
+            if LlmSettings().default_model:
+                raise
+            raise ConfigurationError(
+                f"No LLM model is configured ({e}): add one in the studio's General page, or set LLM_{{NAME}}_* settings and LLM_DEFAULT_MODEL in .env in the home folder"
+            ) from e
 
         # Initialize cache manager
-        cache_dir = self.config.get("cache_dir", "workspace/cache/llm")
-        cache_path = Path(cache_dir)
-        if not cache_path.is_absolute():
-            project_root = Path(__file__).parent.parent.parent.parent
-            cache_path = project_root / cache_path
-        self.cache = CacheManager(str(cache_path))
+        self.cache = CacheManager(str(_cache_path(self.config.get("cache_dir"))))
 
         # Initialize rate limiter with model-specific RPM and adaptive features
         rpm = get_model_rpm(self.config["model"], self.config["provider"])
@@ -306,12 +302,14 @@ class LLMManager:
         self.nocache = self.config.get("nocache", False)
         self.temperature = self.config.get("temperature", 0.7)
         self.max_tokens = self.config.get("max_tokens")
+        self.sampling = self.config.get("sampling", True)
+        self.reasoning = self.config.get("reasoning")
 
     @classmethod
     def from_config(
         cls,
         config: BenchmarkModelConfig,
-        cache_dir: str = "workspace/cache/llm",
+        cache_dir: str | None = None,
         max_retries: int = 3,
         timeout: int = 60,
         temperature: float | None = None,
@@ -322,7 +320,7 @@ class LLMManager:
 
         Args:
             config: BenchmarkModelConfig with provider/model settings
-            cache_dir: Directory for response caching
+            cache_dir: Directory for response caching (default: workspace/cache/llm in the Deriva home folder)
             max_retries: Number of retry attempts
             timeout: Request timeout in seconds
             temperature: Sampling temperature, defaults to LLM_TEMPERATURE from env
@@ -331,9 +329,9 @@ class LLMManager:
         Returns:
             Configured LLMManager instance
         """
-        load_dotenv(override=True)
-
-        effective_temperature = temperature if temperature is not None else float(os.getenv("LLM_TEMPERATURE", "0.7"))
+        settings.export_provider_keys()  # pydantic-ai providers read their keys from the process environment
+        llm = LlmSettings()
+        effective_temperature = temperature if temperature is not None else llm.temperature
 
         instance = object.__new__(cls)
 
@@ -347,29 +345,27 @@ class LLMManager:
             "timeout": timeout,
             "temperature": effective_temperature,
             "nocache": nocache,
+            "sampling": config.sampling,
+            "reasoning": config.reasoning,
         }
 
         instance._validate_config()
 
-        cache_path = Path(cache_dir)
-        if not cache_path.is_absolute():
-            project_root = Path(__file__).parent.parent.parent.parent
-            cache_path = project_root / cache_path
-        instance.cache = CacheManager(str(cache_path))
+        instance.cache = CacheManager(str(_cache_path(cache_dir)))
 
         rpm = get_model_rpm(config.model, config.provider)
         instance._rate_limiter = RateLimiter(
             config=RateLimitConfig(
                 requests_per_minute=rpm,
-                min_request_delay=float(os.getenv("LLM_RATE_LIMIT_DELAY", "0.0")),
+                min_request_delay=llm.rate_limit_delay,
                 # Adaptive throttling
-                throttle_enabled=os.getenv("LLM_THROTTLE_ENABLED", "true").lower() == "true",
-                throttle_min_factor=float(os.getenv("LLM_THROTTLE_MIN_FACTOR", "0.25")),
-                throttle_recovery_time=float(os.getenv("LLM_THROTTLE_RECOVERY_TIME", "60.0")),
+                throttle_enabled=llm.throttle_enabled,
+                throttle_min_factor=llm.throttle_min_factor,
+                throttle_recovery_time=llm.throttle_recovery_time,
                 # Circuit breaker
-                circuit_breaker_enabled=os.getenv("LLM_CIRCUIT_BREAKER_ENABLED", "true").lower() == "true",
-                circuit_failure_threshold=int(os.getenv("LLM_CIRCUIT_FAILURE_THRESHOLD", "5")),
-                circuit_recovery_time=float(os.getenv("LLM_CIRCUIT_RECOVERY_TIME", "30.0")),
+                circuit_breaker_enabled=llm.circuit_breaker_enabled,
+                circuit_failure_threshold=llm.circuit_failure_threshold,
+                circuit_recovery_time=llm.circuit_recovery_time,
             )
         )
 
@@ -381,6 +377,8 @@ class LLMManager:
         instance.nocache = nocache
         instance.temperature = effective_temperature
         instance.max_tokens = None
+        instance.sampling = config.sampling
+        instance.reasoning = config.reasoning
 
         return instance
 
@@ -390,8 +388,9 @@ class LLMManager:
         return self.config.get("provider", "unknown")
 
     def _load_config_from_env(self) -> dict[str, Any]:
-        """Load configuration from environment variables."""
-        default_model = os.getenv("LLM_DEFAULT_MODEL")
+        """Load configuration from the settings (home .env under the process environment)."""
+        llm = LlmSettings()
+        default_model = llm.default_model
         if default_model:
             benchmark_models = load_benchmark_models()
             if default_model not in benchmark_models:
@@ -402,64 +401,67 @@ class LLMManager:
             api_url = config.get_api_url()
             api_key = config.get_api_key()
             model = config.model
+            sampling, reasoning = config.sampling, config.reasoning
         else:
-            provider = os.getenv("LLM_PROVIDER", "azure")
+            provider = llm.provider
+            sampling, reasoning = True, None
 
             if provider == "azure":
-                api_url = os.getenv("LLM_AZURE_API_URL")
-                api_key = os.getenv("LLM_AZURE_API_KEY")
-                model = os.getenv("LLM_AZURE_MODEL", "gpt-4o-mini")
+                api_url = llm.azure_api_url
+                api_key = llm.azure_api_key
+                model = llm.azure_model
             elif provider == "openai":
                 api_url = "https://api.openai.com/v1/chat/completions"
-                api_key = os.getenv("LLM_OPENAI_API_KEY")
-                model = os.getenv("LLM_OPENAI_MODEL", "gpt-4o-mini")
+                api_key = llm.openai_api_key
+                model = llm.openai_model
             elif provider == "anthropic":
                 api_url = "https://api.anthropic.com/v1/messages"
-                api_key = os.getenv("LLM_ANTHROPIC_API_KEY")
-                model = os.getenv("LLM_ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+                api_key = llm.anthropic_api_key
+                model = llm.anthropic_model
             elif provider == "ollama":
-                api_url = os.getenv("LLM_OLLAMA_API_URL", "http://localhost:11434/api/chat")
+                api_url = llm.ollama_api_url
                 api_key = None
-                model = os.getenv("LLM_OLLAMA_MODEL", "llama3.2")
+                model = llm.ollama_model
             elif provider == "mistral":
                 api_url = "https://api.mistral.ai/v1/chat/completions"
-                api_key = os.getenv("LLM_MISTRAL_API_KEY")
-                model = os.getenv("LLM_MISTRAL_MODEL", "mistral-large-latest")
+                api_key = llm.mistral_api_key
+                model = llm.mistral_model
             elif provider == "lmstudio":
-                api_url = os.getenv("LLM_LMSTUDIO_API_URL", "http://localhost:1234/v1/chat/completions")
+                api_url = llm.lmstudio_api_url
                 api_key = None
-                model = os.getenv("LLM_LMSTUDIO_MODEL", "local-model")
+                model = llm.lmstudio_model
             else:
                 raise ConfigurationError(f"Unknown LLM provider: {provider}")
 
-        max_tokens_str = os.getenv("LLM_MAX_TOKENS", "")
-        max_tokens = int(max_tokens_str) if max_tokens_str else None
+        max_tokens = llm.max_tokens
 
         return {
             "provider": provider,
             "api_url": api_url,
             "api_key": api_key,
             "model": model,
-            "cache_dir": os.getenv("LLM_CACHE_DIR", "workspace/cache/llm"),
-            "cache_ttl": int(os.getenv("LLM_CACHE_TTL", "0")),
-            "max_retries": int(os.getenv("LLM_MAX_RETRIES", "3")),
-            "timeout": int(os.getenv("LLM_TIMEOUT", "60")),
-            "temperature": float(os.getenv("LLM_TEMPERATURE", "0.7")),
+            "cache_dir": llm.cache_dir,
+            "cache_ttl": llm.cache_ttl,
+            "max_retries": llm.max_retries,
+            "timeout": llm.timeout,
+            "temperature": llm.temperature,
             "max_tokens": max_tokens,
-            "nocache": os.getenv("LLM_NOCACHE", "false").strip("'\"").lower() == "true",
-            "requests_per_minute": int(os.getenv("LLM_RATE_LIMIT_RPM", "0")),
-            "min_request_delay": float(os.getenv("LLM_RATE_LIMIT_DELAY", "0.0")),
+            "nocache": llm.nocache,
+            "sampling": sampling,
+            "reasoning": reasoning,
+            "requests_per_minute": llm.rate_limit_rpm,
+            "min_request_delay": llm.rate_limit_delay,
             # Retry configuration
-            "retry_base_delay": float(os.getenv("LLM_RETRY_BASE_DELAY", "2.0")),
-            "retry_max_delay": float(os.getenv("LLM_RETRY_MAX_DELAY", "60.0")),
+            "retry_base_delay": llm.retry_base_delay,
+            "retry_max_delay": llm.retry_max_delay,
             # Adaptive throttling
-            "throttle_enabled": os.getenv("LLM_THROTTLE_ENABLED", "true").lower() == "true",
-            "throttle_min_factor": float(os.getenv("LLM_THROTTLE_MIN_FACTOR", "0.25")),
-            "throttle_recovery_time": float(os.getenv("LLM_THROTTLE_RECOVERY_TIME", "60.0")),
+            "throttle_enabled": llm.throttle_enabled,
+            "throttle_min_factor": llm.throttle_min_factor,
+            "throttle_recovery_time": llm.throttle_recovery_time,
             # Circuit breaker
-            "circuit_breaker_enabled": os.getenv("LLM_CIRCUIT_BREAKER_ENABLED", "true").lower() == "true",
-            "circuit_failure_threshold": int(os.getenv("LLM_CIRCUIT_FAILURE_THRESHOLD", "5")),
-            "circuit_recovery_time": float(os.getenv("LLM_CIRCUIT_RECOVERY_TIME", "30.0")),
+            "circuit_breaker_enabled": llm.circuit_breaker_enabled,
+            "circuit_failure_threshold": llm.circuit_failure_threshold,
+            "circuit_recovery_time": llm.circuit_recovery_time,
         }
 
     def _validate_config(self) -> None:
@@ -612,7 +614,8 @@ class LLMManager:
             If response_model is provided: Validated Pydantic model instance or FailedResponse
             Otherwise: LiveResponse, CachedResponse, or FailedResponse
         """
-        effective_temperature = temperature if temperature is not None else self.temperature
+        # A model that takes no temperature (sampling off) gets none: the key and the record say so
+        effective_temperature = (temperature if temperature is not None else self.temperature) if self.sampling else None
         effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
 
         # Generate cache key
@@ -624,6 +627,7 @@ class LLMManager:
             system_prompt=system_prompt,
             temperature=effective_temperature,
             max_tokens=effective_max_tokens,
+            reasoning=self.reasoning,
         )
 
         read_cache = use_cache and not self.nocache
@@ -637,6 +641,9 @@ class LLMManager:
             "model": self.model,
             "temperature": effective_temperature,
             "max_tokens": effective_max_tokens,
+            "reasoning": self.reasoning,
+            # The model the provider says answered (a retired id can be served by another model)
+            "served_model": None,
             "cache_hit": False,
             "latency_ms": 0.0,
             "wait_ms": 0.0,
@@ -693,12 +700,14 @@ class LLMManager:
 
             # Run query
             settings: ModelSettings = {
-                "temperature": effective_temperature,
                 # pydantic-ai's Mistral model only accepts a float timeout
                 "timeout": float(self.config.get("timeout", 60)),
             }
+            if effective_temperature is not None:
+                settings["temperature"] = effective_temperature
             if effective_max_tokens is not None:
                 settings["max_tokens"] = effective_max_tokens
+            settings.update(cast("ModelSettings", reasoning_settings(self.provider_name, self.reasoning)))
 
             # Handle event loop conflict (e.g., running inside marimo/Jupyter)
             # pydantic_ai's run_sync() uses run_until_complete() which fails
@@ -710,6 +719,7 @@ class LLMManager:
             finally:
                 call["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
             self._rate_limiter.record_success()
+            call["served_model"] = getattr(getattr(result, "response", None), "model_name", None)
 
             # Extract usage (pydantic-ai: result.usage() returns RunUsage)
             usage = None
