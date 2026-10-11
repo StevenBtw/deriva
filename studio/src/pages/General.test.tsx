@@ -30,7 +30,7 @@ describe("General", () => {
     vi.mocked(fileTypes.update).mockResolvedValue({ extension: ".md", file_type: "docs", subtype: "md" });
     vi.mocked(fileTypes.remove).mockResolvedValue({ extension: ".md", deleted: true });
     vi.mocked(modelConfigs.list).mockResolvedValue([
-      { name: "anthropic-haiku", provider: "anthropic", model: "claude-haiku", url: null, key: "sk-...abcd", key_env: null, structured_output: null },
+      { name: "anthropic-haiku", provider: "anthropic", model: "claude-haiku", url: null, key: "sk-...abcd", key_env: null },
     ]);
     vi.mocked(modelConfigs.save).mockResolvedValue({ name: "x", saved: true });
     vi.mocked(modelConfigs.remove).mockResolvedValue(null);
@@ -45,6 +45,52 @@ describe("General", () => {
     await userEvent.click(screen.getByRole("button", { name: /Save settings/ }));
 
     expect(settings.set).toHaveBeenCalledWith("excluded_directories", '["node_modules","dist"]');
+  });
+
+  it("starts from the built-in list while the setting is not set", async () => {
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: null, default: key === "excluded_directories" ? '[".git", "node_modules"]' : null }));
+    render(<General />);
+
+    expect(await screen.findByText(".git")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Add excluded directory"), "dist{enter}");
+    await userEvent.click(screen.getByRole("button", { name: /Save settings/ }));
+
+    expect(settings.set).toHaveBeenCalledWith("excluded_directories", '[".git","node_modules","dist"]');
+  });
+
+  it("lets a stored value that is no list of names be replaced", async () => {
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "{}" : null }));
+    render(<General />);
+
+    expect(await screen.findByText(/not a JSON list/)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Add excluded directory"), "dist{enter}");
+    await userEvent.click(screen.getByRole("button", { name: /Save settings/ }));
+
+    expect(settings.set).toHaveBeenCalledWith("excluded_directories", '["dist"]');
+  });
+
+  it("lets deriva-dev switch off that full derivation runs start from an empty model", async () => {
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "[]" : null }));
+    render(<General benchmark />);
+
+    const toggle = await screen.findByRole("checkbox", { name: "Full derivation runs start from an empty model" });
+    await waitFor(() => expect(toggle).toBeChecked());
+    await userEvent.click(toggle);
+
+    await waitFor(() => expect(settings.set).toHaveBeenCalledWith("derivation_clear_model", "false"));
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("shows the stored setting and has no switch without benchmarking", async () => {
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "[]" : "false" }));
+    const { unmount } = render(<General benchmark />);
+    const toggle = await screen.findByRole("checkbox", { name: "Full derivation runs start from an empty model" });
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    unmount();
+
+    render(<General benchmark={false} />);
+    await screen.findByRole("heading", { name: "Settings" });
+    expect(screen.queryByRole("checkbox", { name: "Full derivation runs start from an empty model" })).not.toBeInTheDocument();
   });
 
   it("lists file types with a filter", async () => {
@@ -102,7 +148,7 @@ describe("General", () => {
     await userEvent.type(model, "claude-haiku-2");
     await userEvent.click(screen.getByRole("button", { name: "Save model" }));
 
-    expect(modelConfigs.save).toHaveBeenCalledWith("anthropic-haiku", { provider: "anthropic", model: "claude-haiku-2", url: "", key: null, key_env: null, structured_output: null });
+    expect(modelConfigs.save).toHaveBeenCalledWith("anthropic-haiku", { provider: "anthropic", model: "claude-haiku-2", url: "", key: null, key_env: "" });
     await waitFor(() => expect(modelConfigs.list).toHaveBeenCalledTimes(2));
   });
 
@@ -117,7 +163,7 @@ describe("General", () => {
     await userEvent.type(screen.getByLabelText("Model id"), "mistral-small-latest");
     await userEvent.type(screen.getByLabelText("API key"), "sk-new-key");
     await userEvent.click(screen.getByRole("button", { name: "Save model" }));
-    expect(modelConfigs.save).toHaveBeenCalledWith("mistral-small", { provider: "mistral", model: "mistral-small-latest", url: "", key: "sk-new-key", key_env: null, structured_output: null });
+    expect(modelConfigs.save).toHaveBeenCalledWith("mistral-small", { provider: "mistral", model: "mistral-small-latest", url: "", key: "sk-new-key", key_env: "" });
 
     await userEvent.click(within(screen.getByText("anthropic-haiku").closest("tr")!).getByRole("button", { name: "Delete" }));
     expect(modelConfigs.remove).toHaveBeenCalledWith("anthropic-haiku");

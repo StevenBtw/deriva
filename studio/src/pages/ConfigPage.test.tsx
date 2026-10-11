@@ -57,6 +57,12 @@ describe("ConfigPage", () => {
     await waitFor(() => expect(configs.list).toHaveBeenCalledTimes(2));
   });
 
+  it("explains the overfit scan without internal rule numbers", async () => {
+    render(<ConfigPage stepType="derivation" title="Derivation config" />);
+    expect(await screen.findByText("Changed texts are scanned for overfitting before they are saved.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/rule \d/);
+  });
+
   it("switches a step on or off", async () => {
     render(<ConfigPage stepType="extraction" title="Extraction config" />);
 
@@ -103,12 +109,60 @@ describe("ConfigPage", () => {
     await waitFor(() => expect(configs.save).toHaveBeenCalled());
   });
 
+  it("saves once and locks the editor while the scan and save run", async () => {
+    let finishScan: (value: { available: boolean; findings: never[] }) => void = () => {};
+    vi.mocked(configs.scan).mockImplementation(() => new Promise((resolve) => (finishScan = resolve)));
+    render(<ConfigPage stepType="extraction" title="Extraction config" />);
+    const instruction = await screen.findByLabelText("Instruction");
+    await userEvent.type(instruction, "!");
+
+    const button = screen.getByRole("button", { name: /Save as new version/ });
+    await userEvent.click(button);
+    expect(button).toBeDisabled();
+    await userEvent.type(instruction, "?");
+    expect(instruction).toHaveValue("Classify each directory.!");
+    finishScan({ available: true, findings: [] });
+
+    await waitFor(() => expect(configs.save).toHaveBeenCalledTimes(1));
+    expect(configs.save).toHaveBeenCalledWith("extraction", "DirectoryClassification", { instruction: "Classify each directory.!" });
+  });
+
+  it("asks before switching off a step with unsaved changes", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<ConfigPage stepType="extraction" title="Extraction config" />);
+    await userEvent.type(await screen.findByLabelText("Instruction"), "!");
+
+    await userEvent.click(screen.getByRole("switch", { name: "Enable DirectoryClassification" }));
+
+    expect(confirm).toHaveBeenCalled();
+    expect(configs.setEnabled).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Instruction")).toHaveValue("Classify each directory.!");
+    confirm.mockRestore();
+  });
+
+  it("history shows batch size and the settings a version changed", async () => {
+    vi.mocked(configs.versions).mockResolvedValue([
+      { version: 9, is_active: true, enabled: true, sequence: 11, instruction: "Classify each directory.", example: '{"classifications": []}', params: null, batch_size: 1, temperature: 0, max_tokens: null, created_at: "2026-10-08T01:00:00" },
+      { version: 8, is_active: false, enabled: true, sequence: 11, instruction: "Classify each directory.", example: '{"classifications": []}', params: null, batch_size: 4, temperature: 0.2, max_tokens: null, created_at: "2026-10-01T01:00:00" },
+    ]);
+    render(<ConfigPage stepType="extraction" title="Extraction config" />);
+    await screen.findByLabelText("Instruction");
+    await userEvent.click(screen.getByRole("tab", { name: "History" }));
+    await userEvent.click(await screen.findByRole("button", { name: /v8/ }));
+
+    expect(screen.getByText("+ 4")).toBeInTheDocument();
+    expect(screen.getByText("- Temperature: 0")).toBeInTheDocument();
+    expect(screen.getByText("+ Temperature: 0.2")).toBeInTheDocument();
+  });
+
   it("edits params as JSON and refuses anything but an object", async () => {
     render(<ConfigPage stepType="extraction" title="Extraction config" />);
     await screen.findByLabelText("Instruction");
     await userEvent.click(screen.getByRole("tab", { name: "Params" }));
 
+    // user-event types "[[" as one literal "[": the draft is the valid JSON array [1], no object
     await userEvent.type(screen.getByLabelText("Params"), "[[1]");
+    expect(screen.getByLabelText("Params")).toHaveValue("[1]");
     await userEvent.click(screen.getByRole("button", { name: /Save as new version/ }));
 
     expect(await screen.findByText(/params must be a JSON object/)).toBeInTheDocument();

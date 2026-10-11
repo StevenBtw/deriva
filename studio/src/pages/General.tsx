@@ -7,6 +7,16 @@ function message(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
+/** A JSON list of directory names, or null for anything else (a stored ``{}`` must not reach the chips). */
+function directoryList(text: string): string[] | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    return Array.isArray(value) && value.every((d) => typeof d === "string") ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function ExcludedDirectories() {
   const [dirs, setDirs] = useState<string[] | null>(null);
   const [draft, setDraft] = useState("");
@@ -15,13 +25,15 @@ function ExcludedDirectories() {
   useEffect(() => {
     settings
       .get("excluded_directories")
-      .then(({ value }) => {
-        try {
-          setDirs(value ? (JSON.parse(value) as string[]) : []);
-        } catch {
-          setDirs([]);
-          setNote("The stored value is not a JSON list; saving replaces it.");
+      .then(({ value, default: fallback }) => {
+        if (value == null) {
+          // Not set: the built-in list applies, so the editor starts from it (saving keeps those directories out)
+          setDirs(fallback ? (directoryList(fallback) ?? []) : []);
+          return;
         }
+        const list = directoryList(value);
+        setDirs(list ?? []);
+        if (list === null) setNote("The stored value is not a JSON list of names; saving replaces it.");
       })
       .catch((reason) => setNote(message(reason)));
   }, []);
@@ -245,8 +257,8 @@ function Models() {
         model: draft.model,
         url: draft.url,
         key: draft.key || null,
-        key_env: draft.keyEnv || null,
-        structured_output: null,
+        // An emptied field removes the variable ("" removes, null would keep it)
+        key_env: draft.keyEnv,
       });
       setNote(`Saved ${draft.name}`);
       setDraft(null);
@@ -356,7 +368,52 @@ function Models() {
   );
 }
 
-export function General() {
+const CLEAR_MODEL = "derivation_clear_model";
+
+/** Whether full derivation runs start from an empty model (the default, as benchmarks do); a switch for deriva-dev. */
+function DerivationRuns() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    settings
+      .get(CLEAR_MODEL)
+      .then(({ value }) => setOn(value === null || !["false", "0", "no", "off"].includes(value.trim().toLowerCase())))
+      .catch((reason) => setNote(message(reason)));
+  }, []);
+
+  const change = async (next: boolean) => {
+    setOn(next);
+    try {
+      await settings.set(CLEAR_MODEL, next ? "true" : "false");
+      setNote(null);
+    } catch (reason) {
+      setOn(!next);
+      setNote(message(reason));
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="hd">
+        <h3>Derivation runs</h3>
+      </div>
+      <div className="bd">
+        <label className="check">
+          <input type="checkbox" checked={on ?? true} disabled={on === null} onChange={(e) => void change(e.target.checked)} />
+          Full derivation runs start from an empty model
+        </label>
+        <div className="note">
+          As benchmarks do. Switched off, a run builds on the model of an earlier run and skips every candidate that model already has, so it
+          derives less. Runs of one phase or one step always keep the model.
+        </div>
+      </div>
+      {note && <div className="bd note">{note}</div>}
+    </div>
+  );
+}
+
+export function General({ benchmark = true }: { benchmark?: boolean }) {
   return (
     <section className="page">
       <div className="pagehead">
@@ -366,6 +423,7 @@ export function General() {
       <div className="pad cols" style={{ gridTemplateColumns: "1fr 1.3fr", alignItems: "start" }}>
         <div className="stack">
           <ExcludedDirectories />
+          {benchmark && <DerivationRuns />}
           <Models />
         </div>
         <FileTypes />

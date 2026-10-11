@@ -70,8 +70,42 @@ describe("Intermediate ontology", () => {
     expect(configs.setEnabled).toHaveBeenCalledWith("extraction", "Technology", false);
     await waitFor(() => expect(ontology.intermediate).toHaveBeenCalledTimes(2));
 
-    await userEvent.click(within(row).getByRole("cell", { name: "Technology" }));
+    await userEvent.click(within(row).getByRole("button", { name: "Technology" }));
     expect(await screen.findByText(/tech::r::queue/)).toBeInTheDocument();
+  });
+
+  it("opens a node type from the keyboard", async () => {
+    render(<IntermediateOntologyPage />);
+    const technology = await screen.findByRole("button", { name: "Technology" });
+
+    technology.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(await screen.findByText(/tech::r::queue/)).toBeInTheDocument();
+  });
+
+  it("offers a retry when the ontology could not be loaded", async () => {
+    vi.mocked(ontology.intermediate).mockRejectedValueOnce(new Error("graph busy"));
+    render(<IntermediateOntologyPage />);
+
+    expect(await screen.findByText(/graph busy/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByRole("cell", { name: "Technology" })).toBeInTheDocument();
+    expect(screen.queryByText(/graph busy/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the page when a switch fails and lets the message be dismissed", async () => {
+    vi.mocked(configs.setEnabled).mockRejectedValueOnce(new Error("config is read only"));
+    render(<IntermediateOntologyPage />);
+    const row = (await screen.findByRole("cell", { name: "Technology" })).closest("tr")!;
+
+    await userEvent.click(within(row).getByRole("switch", { name: "Enable Technology" }));
+
+    expect(await screen.findByText(/config is read only/)).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "Technology" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText(/config is read only/)).not.toBeInTheDocument();
   });
 });
 
@@ -98,5 +132,20 @@ describe("Output ontology", () => {
     expect(await screen.findByText("Serving")).toBeInTheDocument();
     const cell = screen.getByTitle("ApplicationService → Node: direct Serving; derived Flow");
     expect(cell).toHaveTextContent("V");
+  });
+
+  it("keeps the layer in the matrix headers, so same-named types of two layers stay apart", async () => {
+    vi.mocked(ontology.output).mockResolvedValue({
+      ...OUTPUT,
+      rules: [
+        { source: "Node", target: "ApplicationService", direct: ["Serving"], derived: [] },
+        { source: "Node", target: "TechnologyService", direct: ["Realization"], derived: [] },
+      ],
+    });
+    render(<OutputOntologyPage />);
+
+    const headers = (await screen.findAllByRole("columnheader")).map((h) => h.textContent);
+    expect(headers).toContain("A·Service");
+    expect(headers).toContain("T·Service");
   });
 });

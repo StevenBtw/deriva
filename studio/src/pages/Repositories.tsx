@@ -112,7 +112,19 @@ export function Repositories() {
             </thead>
             <tbody>
               {list.map((r) => (
-                <tr key={r.name} className={`clickable${r.name === selected ? " sel" : ""}`} onClick={() => setSelected(r.name)}>
+                <tr
+                  key={r.name}
+                  className={`clickable${r.name === selected ? " sel" : ""}`}
+                  // A tab stop per row: Enter or Space selects it, as a click does
+                  tabIndex={0}
+                  onClick={() => setSelected(r.name)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelected(r.name);
+                    }
+                  }}
+                >
                   <td>{r.name}</td>
                   <td className="mono">
                     {r.branch ?? ""} · {(r.last_commit ?? "").slice(0, 7)}

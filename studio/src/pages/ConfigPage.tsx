@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
 import { configs } from "../api/client";
 import type { ConfigChange, ConfigRow, ConfigVersion, DryRunResult, ScanResult, StepType } from "../api/types";
@@ -55,6 +55,20 @@ function paramsError(params: string): string | null {
   }
 }
 
+/** Version settings outside the texts: shown when the picked version differs from the active one. */
+const SETTINGS: [keyof ConfigVersion, string][] = [
+  ["max_candidates", "Candidate cap"],
+  ["temperature", "Temperature"],
+  ["max_tokens", "Token limit"],
+  ["input_model_query", "Model query"],
+  ["llm", "Uses the LLM"],
+  ["extraction_method", "Method"],
+];
+
+function shown(value: unknown): string {
+  return value == null || value === "" ? "not set" : String(value);
+}
+
 function History({ stepType, name, draft }: { stepType: StepType; name: string; draft: Draft }) {
   const [versions, setVersions] = useState<ConfigVersion[] | null>(null);
   const [picked, setPicked] = useState<ConfigVersion | null>(null);
@@ -75,8 +89,11 @@ function History({ stepType, name, draft }: { stepType: StepType; name: string; 
         ["example", "Example", picked.example],
         ["params", "Params", picked.params],
         ["query", "Candidate query", picked.input_graph_query],
+        ["batchSize", "Batch size", picked.batch_size == null ? "" : String(picked.batch_size)],
       ]
     : [];
+  const active = versions.find((v) => v.is_active) ?? null;
+  const settingChanges = picked && active ? SETTINGS.filter(([key]) => (picked[key] ?? null) !== (active[key] ?? null)) : [];
 
   return (
     <div className="history">
@@ -107,6 +124,19 @@ function History({ stepType, name, draft }: { stepType: StepType; name: string; 
           </div>
         );
       })}
+      {picked && active && settingChanges.length > 0 && (
+        <div className="diff">
+          <div className="diff-head">
+            Settings (- active v{active.version}, + v{picked.version})
+          </div>
+          {settingChanges.map(([key, label]) => (
+            <Fragment key={key}>
+              <div className="diff-line diff-del">{`- ${label}: ${shown(active[key])}`}</div>
+              <div className="diff-line diff-add">{`+ ${label}: ${shown(picked[key])}`}</div>
+            </Fragment>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -117,6 +147,8 @@ function DryRun({ name, query }: { name: string; query?: string }) {
 
   const run = () => {
     setFailed(null);
+    // A rerun shows only its own result (a failed one no older count)
+    setResult(null);
     configs
       .dryRun(name, query)
       .then(setResult)
@@ -150,6 +182,8 @@ function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: Edito
   const [draft, setDraft] = useState<Draft>(() => draftOf(row));
   const [tab, setTab] = useState<Tab>("instruction");
   const [findings, setFindings] = useState<ScanResult["findings"] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const busy = useRef(false);
 
   const changes = changesOf(row, draft, stepType);
   const dirty = Object.keys(changes).length > 0;
@@ -162,6 +196,8 @@ function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: Edito
   ];
 
   const update = (key: keyof Draft, value: string) => {
+    // Locked while saving: the draft that was scanned is the one saved
+    if (busy.current) return;
     const next = { ...draft, [key]: value };
     setDraft(next);
     setFindings(null);
@@ -208,6 +244,19 @@ function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: Edito
     await store();
   };
 
+  // One save at a time (a second click creates no second version)
+  const guarded = async (action: () => Promise<void>) => {
+    if (busy.current) return;
+    busy.current = true;
+    setSaving(true);
+    try {
+      await action();
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="card">
       <div className="hd">
@@ -216,7 +265,7 @@ function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: Edito
         {dirty && <span className="pill warn">unsaved changes</span>}
         <label className="note" style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
           Batch size
-          <input type="number" min={1} style={{ width: 64 }} aria-label="Batch size" value={draft.batchSize} onChange={(e) => update("batchSize", e.target.value)} />
+          <input type="number" min={1} style={{ width: 64 }} aria-label="Batch size" value={draft.batchSize} disabled={saving} onChange={(e) => update("batchSize", e.target.value)} />
         </label>
       </div>
       <div className="bd">
@@ -227,12 +276,12 @@ function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: Edito
             </button>
           ))}
         </div>
-        {tab === "instruction" && <CodeEditor label="Instruction" value={draft.instruction} onChange={(v) => update("instruction", v)} />}
-        {tab === "example" && <CodeEditor label="Example" language="json" value={draft.example} onChange={(v) => update("example", v)} />}
-        {tab === "params" && <CodeEditor label="Params" language="json" value={draft.params} onChange={(v) => update("params", v)} />}
+        {tab === "instruction" && <CodeEditor label="Instruction" readOnly={saving} value={draft.instruction} onChange={(v) => update("instruction", v)} />}
+        {tab === "example" && <CodeEditor label="Example" language="json" readOnly={saving} value={draft.example} onChange={(v) => update("example", v)} />}
+        {tab === "params" && <CodeEditor label="Params" language="json" readOnly={saving} value={draft.params} onChange={(v) => update("params", v)} />}
         {tab === "query" && (
           <>
-            <CodeEditor label="Candidate query" value={draft.query} onChange={(v) => update("query", v)} />
+            <CodeEditor label="Candidate query" readOnly={saving} value={draft.query} onChange={(v) => update("query", v)} />
             <DryRun name={row.name} query={changes.input_graph_query} />
           </>
         )}
@@ -245,15 +294,15 @@ function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: Edito
                 {f.field}: {f.finding}
               </div>
             ))}
-            <button type="button" className="danger" onClick={() => void store()}>
+            <button type="button" className="danger" disabled={saving} onClick={() => void guarded(store)}>
               Save anyway
             </button>
           </div>
         )}
         <div className="row-actions">
           {status && <span className={status.kind === "ok" ? "ok" : "error-text"}>{status.text}</span>}
-          <span className="note">Changed texts are scanned for overfitting before they are saved (rule 5).</span>
-          <button type="button" className="primary" style={{ marginLeft: "auto" }} onClick={() => void save()} disabled={!dirty}>
+          <span className="note">Changed texts are scanned for overfitting before they are saved.</span>
+          <button type="button" className="primary" style={{ marginLeft: "auto" }} onClick={() => void guarded(save)} disabled={!dirty || saving}>
             Save as new version
           </button>
         </div>
@@ -292,8 +341,11 @@ export function ConfigPage({ stepType, title }: Props) {
   };
 
   const toggle = async (target: ConfigRow) => {
+    // Switching the selected step reloads its editor from the stored texts
+    if (target.name === selected && dirty.current && !window.confirm("Discard the unsaved changes to this step?")) return;
     try {
       await configs.setEnabled(stepType, target.name, !target.enabled);
+      if (target.name === selected) dirty.current = false;
       load();
     } catch (reason) {
       setStatus({ kind: "error", text: message(reason) });

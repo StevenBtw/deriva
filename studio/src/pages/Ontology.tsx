@@ -9,28 +9,67 @@ function message(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
-/** Load an ontology view and reload it after a step is switched. */
+/** Load an ontology view and reload it after a step is switched; a failed load can be retried, a failed switch is a notice. */
 function useOntology<T>(load: () => Promise<T>) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
+    let live = true;
     load()
-      .then(setData)
-      .catch((reason) => setError(message(reason)));
+      .then((found) => {
+        if (!live) return;
+        setData(found);
+        setError(null);
+      })
+      .catch((reason) => live && setError(message(reason)));
+    return () => {
+      live = false;
+    };
   }, [load, reload]);
+
+  const retry = useCallback(() => {
+    setError(null);
+    setReload((n) => n + 1);
+  }, []);
 
   const toggle = useCallback(async (stepType: StepType, name: string, enabled: boolean) => {
     try {
       await configs.setEnabled(stepType, name, enabled);
+      setNotice(null);
       setReload((n) => n + 1);
     } catch (reason) {
-      setError(message(reason));
+      setNotice(message(reason));
     }
   }, []);
 
-  return { data, error, toggle };
+  return { data, error, notice, retry, toggle, dismiss: useCallback(() => setNotice(null), []) };
+}
+
+/** A failed load (with Retry) or a failed switch (dismissable) above the page, which stays usable. */
+function Problems({ error, notice, onRetry, onDismiss }: { error: string | null; notice: string | null; onRetry: () => void; onDismiss: () => void }) {
+  return (
+    <>
+      {error && (
+        <div className="banner warn" role="alert">
+          {error}{" "}
+          <button type="button" onClick={onRetry}>
+            Retry
+          </button>
+        </div>
+      )}
+      {notice && (
+        <div className="banner warn" role="alert">
+          {notice}{" "}
+          <button type="button" className="ghost" aria-label="Dismiss" onClick={onDismiss}>
+            ×
+          </button>
+        </div>
+      )}
+    </>
+  );
 }
 
 function StepSwitch({ step, onToggle }: { step: OntologyStep; onToggle: () => void }) {
@@ -47,12 +86,12 @@ const loadOutput = () => ontology.output();
 
 /** The graph extraction builds: node types with the steps that produce and read them, edge types, and the schema as a graph. */
 export function IntermediateOntologyPage() {
-  const { data, error, toggle } = useOntology<IntermediateOntology>(loadIntermediate);
+  const { data, error, notice, retry, toggle, dismiss } = useOntology<IntermediateOntology>(loadIntermediate);
   const [picked, setPicked] = useState<string | null>(null);
   const [, , shownTheme] = useTheme();
+  const problems = <Problems error={error} notice={notice} onRetry={retry} onDismiss={dismiss} />;
 
-  if (error) return <div className="page pad error-text">{error}</div>;
-  if (!data) return <div className="page pad muted">Loading the intermediate ontology…</div>;
+  if (!data) return <div className="page pad">{error ? problems : <span className="muted">Loading the intermediate ontology…</span>}</div>;
   const selected = data.node_types.find((t) => t.name === picked) ?? data.node_types[0];
   const schema: GraphView = {
     nodes: data.node_types.map((t) => ({ id: t.name, label: t.name, count: t.count })),
@@ -65,6 +104,7 @@ export function IntermediateOntologyPage() {
         <h2>Intermediate ontology</h2>
         <span className="sub">The graph extraction builds; the switches turn a step on or off in its active version (as config enable/disable)</span>
       </div>
+      {problems}
       <div className="pad cols" style={{ gridTemplateColumns: "1.2fr 1fr" }}>
         <div className="card">
           <div className="hd">
@@ -82,7 +122,11 @@ export function IntermediateOntologyPage() {
             <tbody>
               {data.node_types.map((t) => (
                 <tr key={t.name} className={`clickable${t.name === selected?.name ? " sel" : ""}`}>
-                  <td onClick={() => setPicked(t.name)}>{t.name}</td>
+                  <td>
+                    <button type="button" className="linkbtn" aria-pressed={t.name === selected?.name} onClick={() => setPicked(t.name)}>
+                      {t.name}
+                    </button>
+                  </td>
                   <td>{t.count}</td>
                   <td>
                     {t.producers.map((p) => (
@@ -157,12 +201,18 @@ function ruleCell(rule?: RelationshipRule): { text: string; title: string } {
   return { text, title };
 }
 
+/** A matrix header: the layer's initial and the type (ApplicationService and TechnologyService stay apart); the title has the full name. */
+function header(type: string): string {
+  const match = /^(Business|Application|Technology)(.+)$/.exec(type);
+  return match ? `${match[1][0]}·${match[2].slice(0, 10)}` : type.slice(0, 10);
+}
+
 /** ArchiMate as Deriva derives it: element types per layer with their derivation step, relationship types, and the rules matrix. */
 export function OutputOntologyPage() {
-  const { data, error, toggle } = useOntology<OutputOntology>(loadOutput);
+  const { data, error, notice, retry, toggle, dismiss } = useOntology<OutputOntology>(loadOutput);
+  const problems = <Problems error={error} notice={notice} onRetry={retry} onDismiss={dismiss} />;
 
-  if (error) return <div className="page pad error-text">{error}</div>;
-  if (!data) return <div className="page pad muted">Loading the output ontology…</div>;
+  if (!data) return <div className="page pad">{error ? problems : <span className="muted">Loading the output ontology…</span>}</div>;
   const sources = [...new Set(data.rules.map((r) => r.source))];
   const targets = [...new Set(data.rules.map((r) => r.target))];
   const rule = (s: string, t: string) => data.rules.find((r) => r.source === s && r.target === t);
@@ -173,6 +223,7 @@ export function OutputOntologyPage() {
         <h2>Output ontology</h2>
         <span className="sub">The ArchiMate types derivation may create; the switches turn a type's step on or off in its active version (as config enable/disable)</span>
       </div>
+      {problems}
       <div className="pad cols" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
         {LAYERS.map((layer) => (
           <div key={layer} className="card">
@@ -239,7 +290,7 @@ export function OutputOntologyPage() {
                 <th />
                 {targets.map((t) => (
                   <th key={t} title={t}>
-                    {t.replace(/(Business|Application|Technology)/, "").slice(0, 6) || t.slice(0, 6)}
+                    {header(t)}
                   </th>
                 ))}
               </tr>

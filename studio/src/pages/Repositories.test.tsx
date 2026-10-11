@@ -31,6 +31,16 @@ describe("Repositories", () => {
     expect(screen.getByText(/uncommitted changes/i)).toBeInTheDocument();
   });
 
+  it("selects a repository from the keyboard", async () => {
+    render(<Repositories />);
+    const row = (await screen.findByRole("cell", { name: "TeaStore" })).closest("tr")!;
+
+    row.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(screen.getByRole("heading", { name: "TeaStore" })).toBeInTheDocument();
+  });
+
   it("clones a repository and refreshes the list", async () => {
     render(<Repositories />);
     await screen.findByRole("cell", { name: "deriva" });
