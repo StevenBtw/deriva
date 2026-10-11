@@ -2,6 +2,13 @@ version = 1
 revision = 3
 requires-python = ">=3.14"
 
+[manifest]
+members = [
+    "deriva-cli",
+    "deriva-dev",
+    "deriva-studio",
+]
+
 [[package]]
 name = "aiofile"
 version = "3.9.0"
@@ -79,27 +86,27 @@ wheels = [
 
 [[package]]
 name = "anywidget-archimate"
-version = "0.2.0"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/cf/ff5f97f70037eb34751c4c9058f07e45bdd9831e73ed963fea542f0e518c/anywidget_archimate-0.2.0.tar.gz", hash = "sha256:3dcc4ce6dbc7fa1c8e2ca6e4ef248f3208465b0261cbf69e97fdc4494e2db863", size = 148711, upload-time = "2026-03-16T14:51:54.013Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/3e/f1f75da7ed72b7990c40e13767a04a0bc4f696d896e567c4b7979d85a404/anywidget_archimate-0.3.0.tar.gz", hash = "sha256:eab05d2eee6b51b2155fc3bf057e1b540f41459fe29f1c8fff856ac385a581cf", size = 241201, upload-time = "2026-10-09T09:51:34.181Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/58/0bdc415d9756415d95d896e683ae7a0ff40b811932dbbbddc536a46331bb/anywidget_archimate-0.2.0-py3-none-any.whl", hash = "sha256:0951c20401ea07638592a07badcecbd56e0abf5564210ae2f6ae82dcf00ed957", size = 26865, upload-time = "2026-03-16T14:51:52.903Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/f7/984614d2d2666d833e2297acb076de754117811dca6c252d8caf063e6c2f/anywidget_archimate-0.3.0-py3-none-any.whl", hash = "sha256:0eecbc54b97ba859e59177c3b8def8048e86781bec0e29f35690fdcbf0e09546", size = 96245, upload-time = "2026-10-09T09:51:32.641Z" },
 ]
 
 [[package]]
 name = "anywidget-graph"
-version = "0.3.1"
+version = "0.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
     { name = "marimo" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/34/63/aa0c1cc6df2bff177ff59f7ac9c1d11c946e7f984c33cc397a9b51d48886/anywidget_graph-0.3.1.tar.gz", hash = "sha256:a13306c330e590744c75eef5025db3137327f7a0f364dfc89da7d99a45e02ece", size = 355713, upload-time = "2026-03-16T14:52:51.25Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e9/2b/d3460662a87b041a967cc34868952641e3390ae8cd70910632fbe8927f90/anywidget_graph-0.4.2.tar.gz", hash = "sha256:5f9abf742cb5aeffa08281295fbec28244d63d10cc1c3800e22d552bd9607725", size = 461839, upload-time = "2026-10-09T12:49:30.187Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cc/21/7a386e7f6a0dc1b01b6bfdd5979238171741add95faafe5faa3bc1f24639/anywidget_graph-0.3.1-py3-none-any.whl", hash = "sha256:f2412e858dd4389bd5ba02cd15f7b63adeed0d0a2bf47114826b520c82d7492b", size = 75362, upload-time = "2026-03-16T14:52:49.435Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/78/f744b2b7278f913e1825d166031e1c921aab8fef6c74f92c6f4392c5fc42/anywidget_graph-0.4.2-py3-none-any.whl", hash = "sha256:521b1019e251b7ef0f7b61161e4f363be3e083ca18b4244c3d63be8a96da568d", size = 110041, upload-time = "2026-10-09T12:49:28.281Z" },
 ]
 
 [[package]]
@@ -520,14 +527,6 @@ wheels = [
 ]
 
 [[package]]
-name = "de-core-news-sm"
-version = "3.8.0"
-source = { url = "https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl" }
-wheels = [
-    { url = "https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl", hash = "sha256:fec69fec52b1780f2d269d5af7582a5e28028738bd3190532459aeb473bfa3e7" },
-]
-
-[[package]]
 name = "decorator"
 version = "5.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -546,26 +545,19 @@ wheels = [
 ]
 
 [[package]]
-name = "deriva"
+name = "deriva-cli"
 version = "0.7.1"
 source = { editable = "." }
 dependencies = [
-    { name = "anywidget-archimate" },
-    { name = "anywidget-graph" },
     { name = "authlib" },
     { name = "backoff" },
     { name = "ctranslate2" },
-    { name = "de-core-news-sm" },
     { name = "diskcache" },
     { name = "duckdb" },
-    { name = "en-core-web-sm" },
-    { name = "fastapi" },
-    { name = "fr-core-news-sm" },
     { name = "grafeo" },
     { name = "httpx" },
     { name = "lxml" },
     { name = "nest-asyncio" },
-    { name = "prek" },
     { name = "pyasn1" },
     { name = "pydantic" },
     { name = "pydantic-ai" },
@@ -588,12 +580,13 @@ dependencies = [
     { name = "tree-sitter-javascript" },
     { name = "tree-sitter-python" },
     { name = "typer" },
-    { name = "uvicorn" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
+    { name = "deriva-dev" },
     { name = "pip-audit" },
+    { name = "prek" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -603,23 +596,15 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anywidget-archimate", specifier = ">=0.2.0" },
-    { name = "anywidget-graph", specifier = ">=0.3" },
     { name = "authlib", specifier = ">=1.8.0" },
     { name = "backoff", specifier = ">=2.2.1" },
     { name = "ctranslate2", specifier = "==4.8.2" },
-    { name = "de-core-news-sm", url = "https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl" },
     { name = "diskcache", specifier = ">=5.6.3" },
     { name = "duckdb", specifier = ">=1.5" },
-    { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
-    { name = "fastapi", specifier = ">=0.142.4" },
-    { name = "fr-core-news-sm", url = "https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl" },
     { name = "grafeo", path = "H:/GrafeoDB/wheels/0.6.0-dev-ff9cca65/grafeo-0.5.44-cp312-abi3-win_amd64.whl" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "lxml", specifier = ">=6" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
-    { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2" },
-    { name = "prek", specifier = ">=0.5" },
     { name = "pyasn1", specifier = ">=0.6.4" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pydantic-ai", specifier = ">=2" },
@@ -627,13 +612,10 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2" },
     { name = "pyjwt", specifier = ">=2.15" },
     { name = "pypdf", specifier = ">=6" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7" },
     { name = "python-docx", specifier = ">=1.2" },
     { name = "python-dotenv", specifier = ">=1.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=15" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16" },
     { name = "sentencepiece", specifier = "==0.2.2" },
     { name = "solvor", specifier = ">=0.6.3" },
     { name = "spacy", specifier = "==3.8.16" },
@@ -644,12 +626,52 @@ requires-dist = [
     { name = "tree-sitter-java", specifier = ">=0.23.0" },
     { name = "tree-sitter-javascript", specifier = ">=0.23.0" },
     { name = "tree-sitter-python", specifier = ">=0.23.0" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0" },
     { name = "typer", specifier = ">=0.27" },
-    { name = "types-lxml", marker = "extra == 'dev'", specifier = ">=2026.2" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "deriva-dev", editable = "packages/deriva-dev" },
+    { name = "pip-audit", specifier = ">=2" },
+    { name = "prek", specifier = ">=0.5" },
+    { name = "pytest", specifier = ">=9" },
+    { name = "pytest-cov", specifier = ">=7" },
+    { name = "ruff", specifier = ">=0.16" },
+    { name = "ty", specifier = ">=0.0" },
+    { name = "types-lxml", specifier = ">=2026.2" },
+]
+
+[[package]]
+name = "deriva-dev"
+version = "0.7.1"
+source = { editable = "packages/deriva-dev" }
+dependencies = [
+    { name = "deriva-studio" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "deriva-studio", editable = "packages/deriva-studio" }]
+
+[[package]]
+name = "deriva-studio"
+version = "0.7.1"
+source = { editable = "packages/deriva-studio" }
+dependencies = [
+    { name = "anywidget-archimate" },
+    { name = "anywidget-graph" },
+    { name = "deriva-cli" },
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anywidget-archimate", specifier = ">=0.3.0" },
+    { name = "anywidget-graph", specifier = ">=0.4.2" },
+    { name = "deriva-cli", editable = "." },
+    { name = "fastapi", specifier = ">=0.142.4" },
     { name = "uvicorn", specifier = ">=0.41.0" },
 ]
-provides-extras = ["dev"]
 
 [[package]]
 name = "diskcache"
@@ -722,14 +744,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f5/22/900cb125c76b7aaa450ce02fd727f452243f2e91a61af068b40adba60ea9/email_validator-2.3.0.tar.gz", hash = "sha256:9fc05c37f2f6cf439ff414f8fc46d917929974a82244c20eb10231ba60c54426", size = 51238, upload-time = "2025-08-26T13:09:06.831Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/de/15/545e2b6cf2e3be84bc1ed85613edd75b8aea69807a71c26f4ca6a9258e82/email_validator-2.3.0-py3-none-any.whl", hash = "sha256:80f13f623413e6b197ae73bb10bf4eb0908faf509ad8362c5edeb0be7fd450b4", size = 35604, upload-time = "2025-08-26T13:09:05.858Z" },
-]
-
-[[package]]
-name = "en-core-web-sm"
-version = "3.8.0"
-source = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
-wheels = [
-    { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl", hash = "sha256:1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85" },
 ]
 
 [[package]]
@@ -812,14 +826,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/77/18/a1fd2231c679dcb9726204645721b12498aeac28e1ad0601038f94b42556/filelock-3.25.0.tar.gz", hash = "sha256:8f00faf3abf9dc730a1ffe9c354ae5c04e079ab7d3a683b7c32da5dd05f26af3", size = 40158, upload-time = "2026-03-01T15:08:45.916Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f9/0b/de6f54d4a8bedfe8645c41497f3c18d749f0bd3218170c667bf4b81d0cdd/filelock-3.25.0-py3-none-any.whl", hash = "sha256:5ccf8069f7948f494968fc0713c10e5c182a9c9d9eef3a636307a20c2490f047", size = 26427, upload-time = "2026-03-01T15:08:44.593Z" },
-]
-
-[[package]]
-name = "fr-core-news-sm"
-version = "3.8.0"
-source = { url = "https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl" }
-wheels = [
-    { url = "https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl", hash = "sha256:7d6ad14cd5078e53147bfbf70fb9d433c6a3865b695fda2657140bbc59a27e29" },
 ]
 
 [[package]]
