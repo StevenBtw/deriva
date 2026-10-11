@@ -43,7 +43,7 @@ dependencies = [
     "lxml>=6",
     # Databases
     "duckdb>=1.5",
-    "grafeo>=0.5.44",
+    "grafeo>=0.6.0b1",
     "sqlglot>=30",
     # Code Analysis (tree-sitter)
     "tree-sitter>=0.26",
@@ -85,7 +85,7 @@ dev = [
     "prek>=0.5",
     "pytest>=9",
     "pytest-cov>=7",
-    "ruff>=0.16",
+    "ruff>=0.17",
     "ty>=0.0",
     "types-lxml>=2026.2",
 ]
@@ -132,8 +132,6 @@ members = ["packages/*"]
 # ============================================================================
 
 [tool.uv.sources]
-# grafeo 0.6.0 development build (native graph metrics); back to PyPI when 0.6.0 is released
-grafeo = { path = "H:/GrafeoDB/wheels/0.6.0-dev-ff9cca65/grafeo-0.5.44-cp312-abi3-win_amd64.whl" }
 # The three packages of this repository (the root is deriva-cli)
 deriva-cli = { workspace = true }
 deriva-dev = { workspace = true }
