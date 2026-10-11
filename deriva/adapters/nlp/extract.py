@@ -8,8 +8,8 @@ from importlib.metadata import version
 from typing import Any
 
 from .language import detect_language
-from .models import MT_PACKAGES
-from .phrases import PIPELINES, Occurrence, extract_occurrences
+from .models import MT_PACKAGES, SPACY_PACKAGES
+from .phrases import Occurrence, extract_occurrences
 from .settings import Settings
 from .text import clean, duplicate_segments, is_binary, is_prose, segments
 from .translate import Translator, english_words
@@ -19,7 +19,7 @@ def tool_versions() -> dict[str, Any]:
     """Versions of everything that decides the output (recorded next to the results)."""
     return {
         "spacy": version("spacy"),
-        "pipelines": {lang: f"{name}-{version(name.replace('_', '-'))}" for lang, name in sorted(PIPELINES.items())},
+        "pipelines": {lang: package.folder for lang, package in sorted(SPACY_PACKAGES.items())},
         "translation": {lang: package.name for lang, package in sorted(MT_PACKAGES.items())},
         "ctranslate2": version("ctranslate2"),
     }
