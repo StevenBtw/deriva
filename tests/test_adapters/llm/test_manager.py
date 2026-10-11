@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -77,7 +78,7 @@ class TestLoadBenchmarkModels:
 
     def test_returns_empty_dict_when_no_env_vars(self, monkeypatch):
         """Should return empty dict when no LLM_*_PROVIDER vars exist."""
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", {}, clear=True):
                 result = load_benchmark_models()
 
@@ -92,7 +93,7 @@ class TestLoadBenchmarkModels:
             "LLM_AZURE_GPT4_KEY": "sk-test-key",
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 result = load_benchmark_models()
 
@@ -113,7 +114,7 @@ class TestLoadBenchmarkModels:
             "LLM_OPENAI_GPT4_URL": "https://api.openai.com/v1",
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 result = load_benchmark_models()
 
@@ -130,7 +131,7 @@ class TestLoadBenchmarkModels:
             "LLM_COMPLETE_MODEL": "gpt-4",
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 result = load_benchmark_models()
 
@@ -144,7 +145,7 @@ class TestLoadBenchmarkModels:
             "LLM_INVALID_MODEL": "some-model",
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 result = load_benchmark_models()
 
@@ -160,7 +161,7 @@ class TestLoadBenchmarkModels:
             "MY_SECRET_KEY": "actual-secret-key",
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 result = load_benchmark_models()
 
@@ -174,7 +175,7 @@ class TestLoadBenchmarkModels:
             "LLM_MY_CUSTOM_MODEL_MODEL": "llama3",
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 result = load_benchmark_models()
 
@@ -198,7 +199,7 @@ class TestLLMManagerInit:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -213,7 +214,7 @@ class TestLLMManagerInit:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -227,7 +228,7 @@ class TestLLMManagerInit:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -241,7 +242,7 @@ class TestLLMManagerInit:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -257,7 +258,7 @@ class TestLLMManagerInit:
             # Missing API URL and key
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 with pytest.raises(ConfigurationError):
                     LLMManager()
@@ -280,7 +281,7 @@ class TestLLMManagerFromConfig:
             api_url="http://localhost:11434/api/chat",
         )
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", {}, clear=True):
                 manager = LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"))
 
@@ -296,7 +297,7 @@ class TestLLMManagerFromConfig:
             api_url="http://localhost:11434/api/chat",
         )
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", {}, clear=True):
                 manager = LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"), temperature=0.5)
 
@@ -313,7 +314,7 @@ class TestLLMManagerFromConfig:
 
         env_vars = {"LLM_TEMPERATURE": "0.9"}
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"))
 
@@ -328,7 +329,7 @@ class TestLLMManagerFromConfig:
             api_url="http://localhost:11434/api/chat",
         )
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", {}, clear=True):
                 manager = LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"))
 
@@ -343,7 +344,7 @@ class TestLLMManagerFromConfig:
             # Missing api_url and api_key for azure
         )
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", {}, clear=True):
                 with pytest.raises(ConfigurationError):
                     LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"))
@@ -367,7 +368,7 @@ class TestLoadConfigFromEnv:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -384,7 +385,7 @@ class TestLoadConfigFromEnv:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -398,9 +399,11 @@ class TestLoadConfigFromEnv:
             "LLM_ANTHROPIC_API_KEY": "sk-ant-test",
             "LLM_ANTHROPIC_MODEL": "claude-3-opus",
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
+            # The Anthropic client looks for its config folder under the home folder when it is built
+            **{name: os.environ[name] for name in ("HOME", "USERPROFILE", "APPDATA") if name in os.environ},
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -415,7 +418,7 @@ class TestLoadConfigFromEnv:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -430,7 +433,7 @@ class TestLoadConfigFromEnv:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -446,7 +449,7 @@ class TestLoadConfigFromEnv:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -460,9 +463,16 @@ class TestLoadConfigFromEnv:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 with pytest.raises(ConfigurationError, match="Unknown LLM provider"):
+                    LLMManager()
+
+    def test_a_fresh_home_without_a_model_says_how_to_add_one(self, tmp_path):
+        """No LLM_DEFAULT_MODEL and no provider settings: the error names the missing model, not a missing api_key."""
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            with patch.dict("os.environ", {"LLM_CACHE_DIR": str(tmp_path / "cache")}, clear=True):
+                with pytest.raises(ConfigurationError, match="No LLM model is configured.*General"):
                     LLMManager()
 
     def test_uses_default_model_reference(self, tmp_path, monkeypatch):
@@ -476,7 +486,7 @@ class TestLoadConfigFromEnv:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -490,7 +500,7 @@ class TestLoadConfigFromEnv:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 with pytest.raises(ConfigurationError, match="not found"):
                     LLMManager()
@@ -504,7 +514,7 @@ class TestLoadConfigFromEnv:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -518,7 +528,7 @@ class TestLoadConfigFromEnv:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -546,7 +556,7 @@ class TestQuery:
         mock_result.output = "Hello back!"
         mock_result.usage = None
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 with patch("deriva.adapters.llm.manager.Agent") as mock_agent_class:
                     mock_agent_class.return_value.run_sync.return_value = mock_result
@@ -572,7 +582,7 @@ class TestQuery:
             "cached_at": "2024-01-01T00:00:00Z",
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
                 manager.cache.get = MagicMock(return_value=cached_data)  # type: ignore[method-assign]
@@ -590,7 +600,7 @@ class TestQuery:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
                 response = manager.query("")
@@ -615,7 +625,7 @@ class TestQuery:
         mock_result.output = ResponseModel(message="Hello!")
         mock_result.usage = None
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 with patch("deriva.adapters.llm.manager.Agent") as mock_agent_class:
                     mock_agent_class.return_value.run_sync.return_value = mock_result
@@ -637,7 +647,7 @@ class TestQuery:
         mock_result.output = "Response"
         mock_result.usage = None
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 with patch("deriva.adapters.llm.manager.Agent") as mock_agent_class:
                     mock_agent_class.return_value.run_sync.return_value = mock_result
@@ -666,7 +676,7 @@ class TestUtilityMethods:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -680,7 +690,7 @@ class TestUtilityMethods:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
                 manager.cache.clear_all = MagicMock()  # type: ignore[method-assign]
@@ -699,7 +709,7 @@ class TestUtilityMethods:
 
         mock_stats = {"total_entries": 10, "cache_size_mb": 1.5}
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
                 manager.cache.get_cache_stats = MagicMock(return_value=mock_stats)  # type: ignore[method-assign]
@@ -716,7 +726,7 @@ class TestUtilityMethods:
             "LLM_CACHE_DIR": str(tmp_path / "cache"),
         }
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
@@ -733,7 +743,7 @@ class TestLastCall:
     ENV = {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true"}
 
     def _manager(self, tmp_path):
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", {**self.ENV, "LLM_CACHE_DIR": str(tmp_path / "cache")}, clear=True):
                 return LLMManager()
 
@@ -825,7 +835,7 @@ class TestAgentReuse:
     """Building a pydantic-ai Agent costs ~0.2 s; one agent per output type and system prompt."""
 
     def test_agent_is_built_once_per_output_type_and_system_prompt(self, tmp_path):
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict(
                 "os.environ",
                 {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
@@ -848,7 +858,7 @@ class TestAgentReuse:
         class Answer(BaseModel):
             text: str
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict(
                 "os.environ",
                 {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
@@ -872,7 +882,7 @@ class TestTimeoutAndRetry:
     ENV = {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_TIMEOUT": "7", "LLM_MAX_RETRIES": "2"}
 
     def _manager(self, tmp_path):
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", {**self.ENV, "LLM_CACHE_DIR": str(tmp_path / "cache")}, clear=True):
                 return LLMManager()
 
@@ -1007,7 +1017,7 @@ class TestAgentPerThread:
     def test_threads_get_separate_agents_and_reuse_their_own(self, tmp_path):
         import threading
 
-        with patch("deriva.adapters.llm.manager.load_dotenv"):
+        with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict(
                 "os.environ",
                 {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
@@ -1033,7 +1043,7 @@ def test_usage_as_property_is_recorded(tmp_path):
 
     from pydantic_ai.usage import RunUsage
 
-    with patch("deriva.adapters.llm.manager.load_dotenv"):
+    with patch("deriva.common.settings.read_env_file", return_value={}):
         with patch.dict(
             "os.environ",
             {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "true", "LLM_CACHE_DIR": str(tmp_path)},
@@ -1047,3 +1057,112 @@ def test_usage_as_property_is_recorded(tmp_path):
         manager.query("Hello")
 
     assert (manager.last_call["input_tokens"], manager.last_call["output_tokens"]) == (11, 7)
+
+
+def test_benchmark_models_and_rpm_come_from_the_merged_environment(monkeypatch):
+    from deriva.adapters.llm.manager import get_model_rpm, load_benchmark_models
+
+    file = {"LLM_FILE_ONLY_PROVIDER": "mistral", "LLM_FILE_ONLY_MODEL": "devstral-2512", "LLM_DEVSTRAL_2512_RPM": "24"}
+    with patch("deriva.common.settings.read_env_file", return_value=file):
+        models = load_benchmark_models()
+        rpm = get_model_rpm("devstral-2512", "mistral")
+
+    assert models["file-only"].model == "devstral-2512"
+    assert rpm == 24
+
+
+def test_a_string_model_finds_its_provider_key_in_the_home_env(monkeypatch, tmp_path):
+    """mistral, openai, anthropic and ollama models are strings; pydantic-ai reads their key from os.environ."""
+    from pydantic_ai.models import infer_model
+
+    from deriva.adapters.llm.manager import LLMManager
+    from deriva.adapters.llm.models import BenchmarkModelConfig
+
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    config = BenchmarkModelConfig(name="m", provider="mistral", model="devstral-2512", api_key="sk-config")
+    with patch("deriva.common.settings.read_env_file", return_value={"MISTRAL_API_KEY": "sk-from-file"}):
+        manager = LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"))
+
+    assert type(infer_model(manager._pydantic_model)).__name__ == "MistralModel"
+
+
+class TestModelSettings:
+    """A model config can take no temperature (``sampling`` off) and set a reasoning level; each call records both and the model that served it."""
+
+    def _manager(self, tmp_path, provider="anthropic", model="claude-haiku-5-5", **fields):
+        from deriva.adapters.llm.models import BenchmarkModelConfig
+
+        config = BenchmarkModelConfig(name="m", provider=provider, model=model, api_key="sk-test-0000", **fields)
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            return LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"), nocache=True)
+
+    def _sent(self, manager, response=None, **kwargs):
+        """The model settings the call was run with."""
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+            agent_class.return_value.run_sync.return_value = response or MagicMock(output="ok")
+            manager.query("Hello", **kwargs)
+            return agent_class.return_value.run_sync.call_args.kwargs["model_settings"]
+
+    def test_a_model_without_sampling_gets_no_temperature(self, tmp_path):
+        from deriva.adapters.llm.cache import CacheManager
+
+        manager = self._manager(tmp_path, sampling=False)
+
+        sent = self._sent(manager, temperature=0.0)
+
+        assert "temperature" not in sent
+        assert manager.last_call["temperature"] is None
+        # The key names what was sent: no temperature
+        assert manager.last_call["cache_key"] == CacheManager.generate_cache_key("Hello", "claude-haiku-5-5", None)
+
+    def test_a_reasoning_level_reaches_the_call_and_its_key(self, tmp_path):
+        plain = self._manager(tmp_path, provider="openai", model="gpt-6-luna")
+        self._sent(plain, temperature=0.0)
+        plain_key = plain.last_call["cache_key"]
+        manager = self._manager(tmp_path, provider="openai", model="gpt-6-luna", reasoning="none")
+
+        sent = self._sent(manager, temperature=0.0)
+
+        assert sent["openai_reasoning_effort"] == "none"
+        assert sent["temperature"] == 0.0  # without reasoning the model takes its temperature
+        assert manager.last_call["reasoning"] == "none"
+        assert manager.last_call["cache_key"] != plain_key
+
+    def test_configs_without_these_settings_keep_their_cache_keys(self, tmp_path):
+        from deriva.adapters.llm.cache import CacheManager
+
+        manager = self._manager(tmp_path, provider="mistral", model="mistral-small-2603")
+
+        sent = self._sent(manager, temperature=0.0, max_tokens=100)
+
+        assert sent["temperature"] == 0.0 and "openai_reasoning_effort" not in sent and "anthropic_thinking" not in sent
+        assert manager.last_call["reasoning"] is None
+        assert manager.last_call["cache_key"] == CacheManager.generate_cache_key("Hello", "mistral-small-2603", None, temperature=0.0, max_tokens=100)
+
+    def test_the_model_that_served_the_call_is_recorded(self, tmp_path):
+        """A provider can serve another model under a retired name (devstral-2512 answers as mistral-medium-3-5)."""
+        from types import SimpleNamespace
+
+        manager = self._manager(tmp_path, provider="mistral", model="devstral-2512")
+
+        self._sent(manager, response=SimpleNamespace(output="ok", usage=None, response=SimpleNamespace(model_name="mistral-medium-3-5")))
+
+        assert manager.last_call["served_model"] == "mistral-medium-3-5"
+
+
+def test_benchmark_models_read_sampling_and_reasoning(monkeypatch):
+    from deriva.adapters.llm.manager import load_benchmark_models
+
+    env = {
+        "LLM_HAIKU_PROVIDER": "anthropic",
+        "LLM_HAIKU_MODEL": "claude-haiku-5-5",
+        "LLM_HAIKU_SAMPLING": "false",
+        "LLM_HAIKU_REASONING": "none",
+        "LLM_SMALL_PROVIDER": "mistral",
+        "LLM_SMALL_MODEL": "mistral-small-2603",
+    }
+    with patch("deriva.common.settings.read_env_file", return_value=env), patch.dict("os.environ", {}, clear=True):
+        models = load_benchmark_models()
+
+    assert (models["haiku"].sampling, models["haiku"].reasoning) == (False, "none")
+    assert (models["small"].sampling, models["small"].reasoning) == (True, None)
