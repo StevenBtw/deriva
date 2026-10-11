@@ -18,8 +18,16 @@ class FakeEventSource {
     (this.listeners[name] ??= []).push(cb);
   }
 
+  readyState = 1;
+  onerror: (() => void) | null = null;
+
   close() {
     this.closed = true;
+  }
+
+  fail(givenUp: boolean) {
+    this.readyState = givenUp ? 2 : 0;
+    this.onerror?.();
   }
 
   emit(name: string, seq: number, data: object) {
@@ -75,6 +83,20 @@ describe("followRun", () => {
     source.emit("progress", 3, {});
 
     expect(seen).toEqual([1, 2, 3]);
+  });
+
+  it("ends the run when the browser gives up the stream, not while it reconnects", () => {
+    const ended: string[] = [];
+    followRun("r4", () => {}, (name) => ended.push(name), FakeEventSource as unknown as typeof EventSource);
+    const source = FakeEventSource.last!;
+
+    source.fail(false);
+    expect(ended).toEqual([]);
+    source.fail(true);
+    source.fail(true);
+
+    expect(ended).toEqual(["error"]);
+    expect(source.closed).toBe(true);
   });
 
   it("can be closed by the caller", () => {

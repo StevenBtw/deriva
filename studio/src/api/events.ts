@@ -11,7 +11,7 @@ const TERMINAL: RunEventName[] = ["finished", "cancelled", "error"];
 export function followRun(
   runId: string,
   onEvent: (event: RunEvent) => void,
-  onEnd: (name: RunEventName) => void,
+  onEnd: (name: RunEventName, lost?: boolean) => void,
   Source: typeof EventSource = EventSource,
 ): () => void {
   const source = new Source(`/api/runs/${encodeURIComponent(runId)}/events`);
@@ -22,6 +22,15 @@ export function followRun(
     if (!closed) {
       closed = true;
       source.close();
+    }
+  };
+
+  // A stream the browser gave up (a run the server no longer knows, after a restart) ends with ``lost``:
+  // the caller decides what that says about the run; while it reconnects (readyState CONNECTING) the run goes on
+  source.onerror = () => {
+    if (!closed && source.readyState === 2) {
+      close();
+      onEnd("error", true);
     }
   };
 

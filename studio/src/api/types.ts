@@ -2,7 +2,8 @@
 
 export type DbStatus = { state: "owned" | "held" | "not_connected"; held_by?: number | null; error?: string | null; busy?: boolean };
 
-export type Status = { version: string; db: DbStatus };
+/** `features` lists optional parts of the install; without it everything is available (older servers). */
+export type Status = { version: string; db: DbStatus; features?: { benchmark?: boolean } };
 
 export type Repository = {
   name: string;
@@ -40,6 +41,12 @@ export type ConfigVersion = {
   params: string | null;
   batch_size: number | null;
   input_graph_query?: string | null;
+  input_model_query?: string | null;
+  max_candidates?: number | null;
+  temperature?: number | null;
+  max_tokens?: number | null;
+  llm?: boolean | null;
+  extraction_method?: string | null;
   created_at: string | null;
 };
 export type ScanResult = { available: boolean; findings: { field: string; finding: string }[] };
@@ -49,14 +56,36 @@ export type SaveResult = { name: string; old_version: number | null; new_version
 
 export type WidgetNode = { id: string; label?: string; [key: string]: unknown };
 export type WidgetEdge = { source: string; target: string; label?: string; [key: string]: unknown };
-export type GraphView = { nodes: WidgetNode[]; edges: WidgetEdge[] };
+/** Counts of the whole graph per node type and edge type, when a view shows a sample of it (anywidget-graph's `totals`). */
+export type Totals = { nodes?: Record<string, number>; edges?: Record<string, number> };
+export type GraphView = { nodes: WidgetNode[]; edges: WidgetEdge[]; totals?: Totals };
+/** A lane of the linked view; everything after `title` is an anywidget-graph lane option. */
+export type Lane = {
+  id: string;
+  title: string;
+  width?: number;
+  arrange?: "column";
+  action?: boolean;
+  glyph?: string[];
+  caption?: string;
+  layout?: "force";
+  // Rows top to bottom by a node field's value (`order`); other values go to a row below them
+  rows?: { field: string; order: string[] };
+  // Lay the lane out again when one batch adds or removes more than this share of its nodes
+  relayout?: number;
+  // Label the lane's `count` largest nodes at the default zoom, where the label has room
+  labels?: { count: number };
+};
+/** anywidget-graph's `type_colors`: one colour per node type (and edge type) for the nodes and the legend. */
+export type TypeColors = { nodes?: Record<string, string>; edges?: Record<string, string> };
+export type LinkedView = { lanes: Lane[]; nodes: WidgetNode[]; edges: WidgetEdge[]; missing_links: number; totals?: Totals };
 
 export type ModelElement = { id: string; name: string; type: string; layer: string; documentation: string; source?: string | null };
 export type ModelRelationship = { id: string; source: string; target: string; type: string; name: string };
 export type Model = { elements: ModelElement[]; relationships: ModelRelationship[] };
 
 export type RunKind = "all" | "extraction" | "derivation";
-export type RunSummary = { run_id: string; kind: RunKind; repository: string | null; status: string; events: number; started_at: number; finished_at: number | null };
+export type RunSummary = { run_id: string; kind: RunKind | "benchmark"; repository: string | null; status: string; events: number; started_at: number; finished_at: number | null };
 export type RunEventName = "started" | "progress" | "llm" | "finished" | "cancelled" | "error";
 export type RunEvent = {
   seq: number;
@@ -69,6 +98,7 @@ export type RunEvent = {
     total?: number;
     message?: string;
     stats?: Record<string, unknown>;
+    candidates?: string[];
     kind?: string;
     repository?: string | null;
     ts?: number;
@@ -149,6 +179,8 @@ export type Flip = {
   also_from: Record<string, string>;
   llm: string | null;
   cause: string;
+  /** The model whose runs were compared (flips are found per model) */
+  model?: string;
 };
 /** One run's answer to "why is this element (not) in the model": from the run's snapshot and call log. */
 export type RunTraceCall = {
@@ -177,9 +209,9 @@ export type InspectorRelationship = {
 export type InspectorView = { repository: string; runs: string[]; elements: InspectorElement[]; relationships: InspectorRelationship[]; causes: Record<string, string> };
 
 /** A model config from .env; ``key`` is masked (``sk-...4f2a``) or null. */
-export type ModelConfigRow = { name: string; provider: string; model: string | null; url: string | null; key: string | null; key_env: string | null; structured_output: string | null };
+export type ModelConfigRow = { name: string; provider: string; model: string | null; url: string | null; key: string | null; key_env: string | null };
 /** A model config to save: null keeps a field, "" removes it (a blank key keeps the stored one). */
-export type ModelConfigInput = { provider: string; model: string; url: string | null; key: string | null; key_env: string | null; structured_output: string | null };
+export type ModelConfigInput = { provider: string; model: string; url: string | null; key: string | null; key_env: string | null };
 
 export type OntologyStep = { name: string; enabled: boolean; version: number | null; method: string | null };
 export type NodeType = { name: string; count: number; properties: string[]; sample: Record<string, unknown>; producers: OntologyStep[]; consumers: string[] };

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, configs, runs, trace } from "./client";
+import { ApiError, api, configs, fileTypes, runs, trace } from "./client";
 
 async function failure(promise: Promise<unknown>): Promise<ApiError> {
   try {
@@ -111,11 +111,28 @@ describe("api client", () => {
   });
 
   it("encodes path segments", async () => {
-    const fetchMock = respond(200, { extension: ".rs", deleted: true });
+    const fetchMock = respond(200, { extension: "docs/a#b", deleted: true });
     vi.stubGlobal("fetch", fetchMock);
 
-    await api.del(`/api/filetypes/${encodeURIComponent(".rs")}`);
+    await fileTypes.remove("docs/a#b");
 
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/filetypes/.rs");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/filetypes/docs%2Fa%23b");
+  });
+
+  it("keeps the status and text of an error answer that is not JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Internal Server Error", { status: 500 })));
+
+    const error = await failure(api.get("/api/graph/stats"));
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect([error.status, error.message]).toEqual([500, "Internal Server Error"]);
+  });
+
+  it("names the fields of a validation error", async () => {
+    vi.stubGlobal("fetch", respond(422, { detail: [{ loc: ["body", "runs"], msg: "Input should be less than or equal to 20", type: "less_than_equal" }] }));
+
+    const error = await failure(api.post("/api/benchmarks", { runs: 21 }));
+
+    expect([error.status, error.message]).toEqual([422, "runs: Input should be less than or equal to 20"]);
   });
 });

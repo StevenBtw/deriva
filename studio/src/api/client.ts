@@ -13,6 +13,7 @@ import type {
   GraphView,
   InspectorView,
   IntermediateOntology,
+  LinkedView,
   LlmCall,
   LlmCallSummary,
   Model,
@@ -69,12 +70,33 @@ async function requestOnce<T>(method: string, path: string, body?: unknown): Pro
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    const detail = (data as { detail?: unknown } | null)?.detail;
-    throw new ApiError(response.status, typeof detail === "string" ? detail : response.statusText || `HTTP ${response.status}`, data);
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      // A plain text body (an unhandled server error) is kept as the message
+      if (response.ok) throw new ApiError(response.status, "The answer is not JSON", text);
+      data = text;
+    }
   }
+  if (!response.ok) throw new ApiError(response.status, errorMessage(response, data), data);
   return data as T;
+}
+
+/** An error answer's message: FastAPI's detail (its text, or the fields a validation error names), the body text, or the status. */
+function errorMessage(response: Response, data: unknown): string {
+  if (typeof data === "string" && data.trim()) return data.trim().slice(0, 300);
+  const detail = (data as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail.map((item: { loc?: unknown[]; msg?: string }) => {
+      const where = (item.loc ?? []).filter((part) => part !== "body").join(".");
+      return where ? `${where}: ${item.msg ?? ""}` : (item.msg ?? "");
+    });
+    if (parts.some(Boolean)) return parts.filter(Boolean).join("; ");
+  }
+  return response.statusText || `HTTP ${response.status}`;
 }
 
 export const api = {
@@ -96,7 +118,8 @@ export const repositories = {
 };
 
 export const settings = {
-  get: (key: string) => api.get<{ key: string; value: string | null }>(`/api/settings/${seg(key)}`),
+  /** ``default`` is the value that applies while the setting is not set */
+  get: (key: string) => api.get<{ key: string; value: string | null; default?: string | null }>(`/api/settings/${seg(key)}`),
   set: (key: string, value: string) => api.put<{ key: string; value: string }>(`/api/settings/${seg(key)}`, { value }),
 };
 
@@ -119,6 +142,7 @@ export const configs = {
 export const graph = {
   stats: () => api.get<{ total_nodes: number; by_type: Record<string, number> }>("/api/graph/stats"),
   view: (database: "graph" | "model", limit = 300) => api.get<GraphView>(`/grafeo/view/${database}?limit=${limit}`),
+  linked: (limit = 300) => api.get<LinkedView>(`/grafeo/view/linked?limit=${limit}`),
   clear: () => api.del<{ success: boolean }>("/api/graph"),
 };
 
@@ -135,7 +159,7 @@ export const runs = {
   cancel: (runId: string) => api.post<{ run_id: string }>(`/api/runs/${seg(runId)}/cancel`),
   calls: (runId: string) => api.get<LlmCallSummary[]>(`/api/runs/${seg(runId)}/calls`),
   call: (runId: string, callId: string) => api.get<LlmCall>(`/api/runs/${seg(runId)}/calls/${seg(callId)}`),
-  history: (limit = 10) => api.get<{ run_id: number; description: string; is_active?: boolean; started_at: string | null }[]>(`/api/runs/history?limit=${limit}`),
+  history: (limit = 10) => api.get<RunSummary[]>(`/api/runs/history?limit=${limit}`),
 };
 
 const ids = (sessions: string[]) => sessions.map(encodeURIComponent).join(",");
@@ -147,10 +171,14 @@ export const benchmarks = {
   results: (sessions: string[]) => api.get<BenchmarkGroup[]>(`/api/benchmarks/results?sessions=${ids(sessions)}`),
   steps: (sessions: string[]) => api.get<Record<string, StepStability[]>>(`/api/benchmarks/steps?sessions=${ids(sessions)}`),
   flips: (sessions: string[], repo: string) => api.get<Flip[]>(`/api/benchmarks/flips?sessions=${ids(sessions)}&repo=${encodeURIComponent(repo)}`),
-  inspector: (sessions: string[], repo: string) => api.get<InspectorView>(`/api/benchmarks/inspector?sessions=${ids(sessions)}&repo=${encodeURIComponent(repo)}`),
-  trace: (sessions: string[], repo: string, type: string, source: string) =>
-    api.get<ElementTrace[]>(`/api/benchmarks/trace?sessions=${ids(sessions)}&repo=${encodeURIComponent(repo)}&type=${encodeURIComponent(type)}&source=${encodeURIComponent(source)}`),
+  inspector: (sessions: string[], repo: string, model?: string) =>
+    api.get<InspectorView>(`/api/benchmarks/inspector?sessions=${ids(sessions)}&repo=${encodeURIComponent(repo)}${model ? `&model=${encodeURIComponent(model)}` : ""}`),
+  trace: (sessions: string[], repo: string, type: string, source: string, model?: string) =>
+    api.get<ElementTrace[]>(
+      `/api/benchmarks/trace?sessions=${ids(sessions)}&repo=${encodeURIComponent(repo)}&type=${encodeURIComponent(type)}&source=${encodeURIComponent(source)}${model ? `&model=${encodeURIComponent(model)}` : ""}`,
+    ),
   exportUrl: (session: string) => `/api/benchmarks/${encodeURIComponent(session)}/export`,
+  ocelUrl: (sessions: string[]) => `/api/benchmarks/ocel?sessions=${ids(sessions)}`,
 };
 
 export const modelConfigs = {
