@@ -82,3 +82,16 @@ def test_a_word_that_differs_in_case_only_is_no_other_code():
 
     assert not differ_in_a_code("User HTTP request", "Users http requests")
     assert differ_in_a_code("User HTTP request", "User CLI request")
+
+
+def test_same_named_files_in_one_container_are_told_apart_by_their_directory():
+    """Two routes files of one component used to plan the same name, and the second was left out."""
+    from tests.test_modules.derivation.test_roles import TestRoleNameTemplate
+
+    a = TestRoleNameTemplate._file("routes.py", "shop/ledgers/routes.py")
+    b = TestRoleNameTemplate._file("routes.py", "shop/parcels/routes.py")
+    other = TestRoleNameTemplate._file("commands.py", "shop/commands.py")
+
+    elements, _ = TestRoleNameTemplate._generate([a, b, other], {a.node_id: "http", b.node_id: "http", other.node_id: "cli"}, [("dir::r::shop", "shop", "Shop")])
+
+    assert sorted(e["name"] for e in elements.values()) == ["Shop Commands CLI", "Shop Ledgers Routes HTTP API", "Shop Parcels Routes HTTP API"]

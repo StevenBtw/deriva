@@ -1085,10 +1085,12 @@ def test_a_string_model_finds_its_provider_key_in_the_home_env(monkeypatch, tmp_
     monkeypatch.setenv("MISTRAL_API_KEY", "sk-process")
     monkeypatch.delenv("MISTRAL_API_KEY")
     monkeypatch.setattr(settings, "_ORIGINAL_ENVIRONMENT", settings._ORIGINAL_ENVIRONMENT - {"MISTRAL_API_KEY"})
-    config = BenchmarkModelConfig(name="m", provider="mistral", model="devstral-2512")  # no key of its own
+    # No key of its own: the config names the variable, and the home .env holds it
+    config = BenchmarkModelConfig(name="m", provider="mistral", model="devstral-2512", api_key_env="MISTRAL_API_KEY")
     with patch("deriva.common.settings.read_env_file", return_value={"MISTRAL_API_KEY": "sk-from-file"}):
         manager = LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"))
 
+    assert manager.config["api_key"] == "sk-from-file"
     assert os.environ["MISTRAL_API_KEY"] == "sk-from-file"
     assert type(infer_model(manager._pydantic_model)).__name__ == "MistralModel"
 

@@ -33,6 +33,7 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -865,12 +866,22 @@ class ElementDerivationBase(ABC):
                 # The name from structure: container + subject + role name, each word once
                 containers = self._containers_of(chosen, roles.container_type, graph_manager, archimate_manager, repo_name)
                 subjects = {c.node_id: structure_element_name(c.node_id, c.name, repo_name) for c in chosen}
-                names = {
-                    c.node_id: c.name
-                    if c.node_id in as_written
-                    else _each_word_once(roles.name_template.format(container=containers[c.node_id], subject=subjects[c.node_id], role=roles.names[role_of[c.node_id] or ""]))
-                    for c in chosen
-                }
+
+                def planned_name(c: Candidate) -> str:
+                    if c.node_id in as_written:
+                        return c.name
+                    return _each_word_once(roles.name_template.format(container=containers[c.node_id], subject=subjects[c.node_id], role=roles.names[role_of[c.node_id] or ""]))
+
+                names = {c.node_id: planned_name(c) for c in chosen}
+                # Files with the same name in one container would get one name: those are told apart
+                # by the directory that differs (the others keep their name)
+                counts = Counter(_display_key(name) for name in names.values())
+                distinct = distinct_candidate_names(chosen)
+                for c in chosen:
+                    if counts[_display_key(names[c.node_id])] > 1 and distinct[c.node_id] != c.name:
+                        directory = distinct[c.node_id][: -len(c.name)].strip()
+                        subjects[c.node_id] = f"{name_from_source(directory)} {subjects[c.node_id]}"
+                        names[c.node_id] = planned_name(c)
             else:
                 # Named as the candidate is (as written)
                 names = {c.node_id: c.name for c in chosen}
