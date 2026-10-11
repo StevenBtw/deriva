@@ -63,6 +63,7 @@ class CacheManager(BaseDiskCache):
         system_prompt: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        reasoning: str | None = None,
     ) -> str:
         """
         Generate a unique cache key from everything that shapes the response.
@@ -80,6 +81,7 @@ class CacheManager(BaseDiskCache):
             system_prompt: Optional system prompt sent with the prompt
             temperature: Effective sampling temperature of the call
             max_tokens: Effective max_tokens of the call
+            reasoning: The model config's reasoning level (keys without one are unchanged)
 
         Returns:
             SHA256 hash as cache key
@@ -103,6 +105,8 @@ class CacheManager(BaseDiskCache):
             parts.append(f"temperature:{temperature}")
         if max_tokens is not None:
             parts.append(f"max_tokens:{max_tokens}")
+        if reasoning is not None:
+            parts.append(f"reasoning:{reasoning}")
 
         return hash_inputs(*parts)
 

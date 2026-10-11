@@ -14,6 +14,40 @@ if TYPE_CHECKING:
 # Valid provider names
 VALID_PROVIDERS = frozenset({"azure", "openai", "anthropic", "ollama", "mistral", "lmstudio"})
 
+# Reasoning levels a model config can set (LLM_{NAME}_REASONING); "none" turns reasoning off
+REASONING_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+_SAMPLING_VALUES = {"true": True, "1": True, "yes": True, "on": True, "false": False, "0": False, "no": False, "off": False}
+
+
+def parse_sampling(value: str | None) -> bool:
+    """LLM_{NAME}_SAMPLING: off for models that take no temperature (unset means on)."""
+    if value is None or not value.strip():
+        return True
+    if value.strip().lower() not in _SAMPLING_VALUES:
+        raise ValueError(f"sampling must be true or false, got {value!r}")
+    return _SAMPLING_VALUES[value.strip().lower()]
+
+
+def reasoning_settings(provider: str, reasoning: str | None) -> dict[str, Any]:
+    """The pydantic-ai settings for a model config's reasoning level.
+
+    OpenAI (and Azure) take it as ``openai_reasoning_effort``; with ``none`` a model such as
+    gpt-6-luna keeps its temperature. Anthropic turns thinking off for ``none`` and sets the
+    effort otherwise. Other providers have no setting here.
+    """
+    if reasoning is None:
+        return {}
+    if reasoning not in REASONING_LEVELS:
+        raise ValueError(f"reasoning must be one of {', '.join(REASONING_LEVELS)}, got {reasoning!r}")
+    if provider in ("openai", "azure"):
+        return {"openai_reasoning_effort": reasoning}
+    if provider == "anthropic":
+        if reasoning == "none":
+            return {"anthropic_thinking": {"type": "disabled"}}
+        return {"anthropic_thinking": {"type": "adaptive"}, "extra_body": {"output_config": {"effort": reasoning}}}
+    raise ValueError(f"A reasoning level cannot be set for provider {provider!r} (openai, azure and anthropic only)")
+
 
 def get_pydantic_ai_model(config: dict[str, Any]) -> Model | str:
     """
@@ -33,17 +67,43 @@ def get_pydantic_ai_model(config: dict[str, Any]) -> Model | str:
     api_url = config.get("api_url")
     api_key = config.get("api_key")
 
+    # A model config's own key (LLM_{NAME}_KEY, as the studio saves it) goes to the provider;
+    # without one, pydantic-ai reads the provider's environment variable (OPENAI_API_KEY and so on)
     if provider == "openai":
-        return f"openai:{model}"
+        if not api_key:
+            return f"openai:{model}"
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        return OpenAIChatModel(model, provider=OpenAIProvider(api_key=api_key))
 
     elif provider == "anthropic":
-        return f"anthropic:{model}"
+        if not api_key:
+            return f"anthropic:{model}"
+        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+
+        return AnthropicModel(model, provider=AnthropicProvider(api_key=api_key))
 
     elif provider == "mistral":
-        return f"mistral:{model}"
+        if not api_key:
+            return f"mistral:{model}"
+        from pydantic_ai.models.mistral import MistralModel
+        from pydantic_ai.providers.mistral import MistralProvider
+
+        return MistralModel(model, provider=MistralProvider(api_key=api_key))
 
     elif provider == "ollama":
-        return f"ollama:{model}"
+        if not api_url:
+            return f"ollama:{model}"
+        # The config holds Ollama's native chat URL; pydantic-ai talks to its OpenAI-compatible /v1
+        from urllib.parse import urlsplit
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.ollama import OllamaProvider
+
+        parts = urlsplit(api_url)
+        return OpenAIChatModel(model, provider=OllamaProvider(base_url=f"{parts.scheme}://{parts.netloc}/v1", api_key=api_key))
 
     elif provider == "azure":
         # Azure uses OpenAI-compatible API with custom endpoint via AzureProvider
