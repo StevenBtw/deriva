@@ -38,7 +38,7 @@ DEFAULT_RATE_LIMITS: dict[str, int] = {
     "azure": 60,  # Azure OpenAI: varies by deployment
     "openai": 60,  # OpenAI: varies by tier (60-10000 RPM)
     "anthropic": 60,  # Anthropic: varies by tier
-    "mistral": 24,  # Mistral: varies by tier
+    "mistral": 60,  # Mistral: varies by tier
     "ollama": 0,  # Local - no limit
     "lmstudio": 0,  # Local - no limit
 }

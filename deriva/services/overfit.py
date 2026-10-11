@@ -1,9 +1,9 @@
 """Overfit scan of draft prompt texts with the local workspace scanner.
 
-The scanner's term lists are golden element names and the held-out and development
-repositories' terms, kept in local workspace files that do not ship with Deriva; so the
-scan runs only where ``workspace/scripts/check_prompt_overfit.py`` exists and reports
-itself unavailable elsewhere.
+The scanner and its term lists (names of the repositories and reference models a prompt is
+tuned on, which must not leak into it) are local workspace files that do not ship with
+Deriva; so the scan runs only where ``workspace/scripts/check_prompt_overfit.py`` exists
+and reports itself unavailable elsewhere.
 """
 
 from __future__ import annotations

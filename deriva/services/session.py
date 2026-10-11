@@ -1101,7 +1101,7 @@ class PipelineSession:
         return config.get_config_history(self._engine, step_type, name)
 
     def scan_prompt_texts(self, texts: dict[str, str]) -> dict[str, Any]:
-        """Overfit scan of draft texts (golden names, held-out and development repository terms) before a save."""
+        """Overfit scan of draft texts (terms of the local scanner, when there is one) before a save."""
         return overfit.scan_texts(texts)
 
     def dry_run_graph_query(self, cypher: str, limit: int = 20) -> dict[str, Any]:
