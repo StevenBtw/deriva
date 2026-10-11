@@ -137,6 +137,21 @@ class TestEnsureDatabase:
         assert conn.execute("SELECT value FROM system_settings WHERE key = 'default_batch_size'").fetchone()[0] == "42"
         conn.close()
 
+    def test_a_failed_seed_leaves_no_database_behind(self, tmp_path):
+        """A half-made database (schema without seed) would be taken for a configured one on every later start."""
+        from unittest.mock import patch
+
+        import pytest
+
+        from deriva.adapters.database.manager import ensure_database
+
+        db = tmp_path / "sql.db"
+        with patch("deriva.adapters.database.db_tool.seed_from_json", side_effect=OSError("seed data missing")), pytest.raises(OSError):
+            ensure_database(db)
+
+        assert list(tmp_path.iterdir()) == []
+        assert ensure_database(db) is True
+
     def test_get_connection_seeds_a_missing_database(self, tmp_path):
         from deriva.adapters.database import manager
 
