@@ -690,6 +690,19 @@ class TestJavaAndScriptImports:
     def _targets(edges):
         return {(e["relationship_type"], e["to_node_id"]) for e in edges}
 
+    def test_a_copybook_is_found_by_its_member_name_nearest_to_the_program(self):
+        """COPY names a member, not a path: the file with that stem, whatever its case or extension, in the nearest folder."""
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"app/cbl/PROGA.cbl", "app/cpy/RECA.cpy", "other/cpy/RECA.cpy", "app/cpy/recb.CPY"}
+        imports = [ExtractedImport(module=m, names=[]) for m in ("RECA", "RECB", "SYSCOPY", "NOWHERE")]
+
+        edges, nodes, stats = self._edges(imports, "app/cbl/PROGA.cbl", files, stdlib={"SYSCOPY"})
+
+        assert self._targets(edges) == {("IMPORTS", "file::r::app_cpy_RECA.cpy"), ("IMPORTS", "file::r::app_cpy_recb.CPY")}
+        # A member that is not in the repository is no package: it makes no external dependency
+        assert nodes == [] and stats["internal"] == 2
+
     def test_a_java_import_resolves_to_the_class_file_under_any_source_root(self):
         from deriva.adapters.treesitter.models import ExtractedImport
 
