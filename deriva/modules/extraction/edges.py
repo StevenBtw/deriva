@@ -31,8 +31,8 @@ from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from deriva.adapters.treesitter import TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-from deriva.adapters.treesitter.models import (  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+from deriva.adapters.treesitter import TreeSitterManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
+from deriva.adapters.treesitter.models import (  # noqa: TID251 - known layer exception (see docs/architecture.md)
     ExtractedCall,
     ExtractedImport,
     ExtractedMethod,
@@ -66,7 +66,9 @@ class EdgeType(str, Enum):  # noqa: UP042 - StrEnum would change str() of member
 ALL_EDGE_TYPES = set(EdgeType)
 
 # Supported languages for tree-sitter extraction
-SUPPORTED_LANGUAGES = ("python", "javascript", "typescript", "java", "csharp")
+SUPPORTED_LANGUAGES = ("python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms")
+# Sources that include other sources by member name (COPY RECA), not by path
+MEMBER_EXTENSIONS = frozenset({".cbl", ".cob", ".cobol", ".cpy", ".jcl", ".prc", ".proc", ".bms"})
 
 # Extensions a relative JavaScript or TypeScript import may leave out
 SCRIPT_EXTENSIONS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
@@ -849,6 +851,8 @@ def _resolve_import(
     suffix = PurePosixPath(current_file).suffix.lower()
     if suffix == ".java":
         return _resolve_java_import(module, names or [], current_file, all_file_paths, stdlib_modules or set(), java_files, is_static=is_from_import)
+    if suffix in MEMBER_EXTENSIONS:
+        return _resolve_member_import(module, current_file, all_file_paths, stdlib_modules or set())
     if suffix in SCRIPT_EXTENSIONS and module.startswith("."):
         script_target = _resolve_script_import(module, current_file, all_file_paths)
         if script_target:
@@ -901,6 +905,29 @@ def _nearest(candidates: list[str], current_file: str) -> str:
         return count
 
     return sorted(candidates, key=lambda path: (-shared(path), path))[0]
+
+
+def _resolve_member_import(member: str, current_file: str, all_file_paths: set[str], system_members: set[str]) -> dict[str, Any]:
+    """An include by member name: the repository member with that stem (any case; a member's extension or none), nearest to the including file.
+
+    A member that is not in the repository is a system member or simply absent; it is no package, so it
+    never becomes an external dependency.
+    """
+    name = member.strip().strip("'\"").upper()
+    if name in {m.upper() for m in system_members}:
+        return {"type": "stdlib", "module": member}
+    here = PurePosixPath(current_file).parent.parts
+    found = [
+        path for path in all_file_paths if PurePosixPath(path).stem.upper() == name and path != current_file and PurePosixPath(path).suffix.lower() in MEMBER_EXTENSIONS | {""}
+    ]
+    if not found:
+        return {"type": "unknown", "reason": "member_not_found"}
+
+    def shared(path: str) -> int:
+        parts = PurePosixPath(path).parent.parts
+        return next((i for i, (a, b) in enumerate(zip(here, parts, strict=False)) if a != b), min(len(here), len(parts)))
+
+    return {"type": "internal", "target_path": min(found, key=lambda path: (-shared(path), path))}
 
 
 def _resolve_java_import(

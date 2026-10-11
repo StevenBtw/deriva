@@ -1,5 +1,5 @@
-"""Shared fixtures. The spaCy pipelines are dependencies; tests that use the translation packages are
-`integration` tests and need them in DERIVA_NLP_MODELS_DIR (default: the repository's workspace/cache/nlp)."""
+"""Shared fixtures. The spaCy pipelines download into DERIVA_NLP_MODELS_DIR (default: the repository's
+workspace/cache/nlp) on first use; tests that use the translation packages are `integration` tests and need them there."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ MODELS_DIR = Path(os.environ.get("DERIVA_NLP_MODELS_DIR", Path(__file__).resolve
 def pipelines():
     from deriva.adapters.nlp.phrases import load_pipelines
 
-    return load_pipelines()
+    return load_pipelines(MODELS_DIR)
 
 
 @pytest.fixture(scope="session")

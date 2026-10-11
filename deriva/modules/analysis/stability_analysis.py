@@ -15,6 +15,8 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
+from deriva.common.json_utils import extract_json_from_response
+
 from .types import AnswerStability, DecisionStability, PhaseStabilityReport, StabilityBreakdown, StepConsistency
 
 __all__ = [
@@ -568,10 +570,12 @@ def decision_content(content: str) -> str:
 
     Free text and scores (``FREE_ANSWER_FIELDS``, at any depth) are left out and the
     rest is serialised with sorted keys, so a reworded description or a different
-    confidence is the same decision. Text that is not JSON is returned as is.
+    confidence is the same decision. The JSON is read as the pipeline reads it (a whole
+    answer as it is, else out of a code fence or the prose around it, which is free text
+    too). Text that is not JSON is returned as is.
     """
     try:
-        answer = json.loads(content)
+        answer = json.loads(extract_json_from_response(content))
     except ValueError:
         return content
 

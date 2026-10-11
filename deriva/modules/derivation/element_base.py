@@ -33,10 +33,11 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from deriva.adapters.archimate.models import Element, Relationship  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+from deriva.adapters.archimate.models import Element, Relationship  # noqa: TID251 - known layer exception (see docs/architecture.md)
 from deriva.common import current_timestamp
 from deriva.modules.derivation.base import (
     DERIVATION_SCHEMA,
@@ -72,18 +73,45 @@ from deriva.modules.derivation.base import (
     parse_role_answer,
     query_candidates,
     source_casing,
+    source_words,
+    structural_role,
     structure_element_name,
 )
-from deriva.modules.derivation.refine.base import normalize_name, similarity_ratio
+from deriva.modules.derivation.refine.base import differ_in_a_code, normalize_name, similarity_ratio
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
 
 def _display_key(name: str) -> str:
     """Element names within a type compare case- and space-insensitively."""
     return " ".join(name.lower().split())
+
+
+def distinct_candidate_names(candidates: list[Candidate]) -> dict[str, str]:
+    """Candidate id -> the name its duplicate checks use.
+
+    Files with one name in several directories are different files (a routes file per service): each
+    gets the first directory that tells it apart in front of its name. Other candidates, and files
+    without a path, keep their name (a type name found in two places may be one concept).
+    """
+    names = {c.node_id: c.name for c in candidates}
+    groups: dict[str, list[tuple[Candidate, tuple[str, ...]]]] = {}
+    for c in candidates:
+        path = str(c.properties.get("filePath") or c.properties.get("path") or "").replace(chr(92), "/")
+        if c.node_id.startswith("file::") and c.name and "/" in path:
+            groups.setdefault(c.name.lower(), []).append((c, tuple(path.split("/")[:-1])))
+    for group in groups.values():
+        if len({parts for _, parts in group}) < 2:
+            continue
+        shared = 0
+        while all(len(parts) > shared for _, parts in group) and len({parts[shared] for _, parts in group}) == 1:
+            shared += 1
+        for c, parts in group:
+            if len(parts) > shared:
+                names[c.node_id] = f"{parts[shared]} {c.name}"
+    return names
 
 
 def _each_word_once(text: str) -> str:
@@ -293,8 +321,10 @@ class ElementDerivationBase(ABC):
         if len(candidates) <= 1:
             return candidates
 
-        # Normalize all names upfront
-        norms = [(c, normalize_name(c.name)) for c in candidates]
+        # Normalize all names upfront (same-named files in different directories are told apart first)
+        distinct = distinct_candidate_names(candidates)
+        qualified = {c.node_id for c in candidates if distinct[c.node_id] != c.name}
+        norms = [(c, normalize_name(distinct[c.node_id])) for c in candidates]
 
         # Union-Find grouping
         parent: dict[int, int] = {i: i for i in range(len(norms))}
@@ -312,6 +342,11 @@ class ElementDerivationBase(ABC):
 
         for i in range(len(norms)):
             for j in range(i + 1, len(norms)):
+                # Files told apart by their directory differ by definition, however alike the rest of the name is
+                if norms[i][0].node_id in qualified and norms[j][0].node_id in qualified and norms[i][1] != norms[j][1]:
+                    continue
+                if norms[i][1] != norms[j][1] and differ_in_a_code(distinct[norms[i][0].node_id], distinct[norms[j][0].node_id]):
+                    continue
                 if similarity_ratio(norms[i][1], norms[j][1]) >= threshold:
                     union(i, j)
 
@@ -374,6 +409,7 @@ class ElementDerivationBase(ABC):
         skip_subtypes: bool = False,
         skip_nested: NestedFilter | None = None,
         deployable_units: UnitFilter | None = None,
+        on_candidates: Callable[[list[str]], None] | None = None,
     ) -> GenerationResult:
         """
         Generate elements of this type.
@@ -422,6 +458,8 @@ class ElementDerivationBase(ABC):
             deployable_units: Components at the deployable-unit level: with enough outermost
                 units among the directory candidates, only those units stay, before the ranking
                 and cut (None: the candidates stay)
+            on_candidates: Called once with the node ids of the candidates the step decides
+                about, after the structural filters and before any LLM call (the studio pulses them)
 
         Returns:
             GenerationResult with success status, counts, and any errors
@@ -499,9 +537,23 @@ class ElementDerivationBase(ABC):
             marked = [c for c in eligible if any(marked_pattern.fullmatch(str(d)) for d in c.properties.get("decorators") or [])]
             marked_ids = {c.node_id for c in marked}
             eligible = [c for c in eligible if c.node_id not in marked_ids]
+        # So is a candidate whose structure shows its role (roles.structural)
+        if roles is not None and roles.structural:
+            shown = [c for c in eligible if structural_role(c, roles.structural) is not None]
+            shown_ids = {c.node_id for c in shown}
+            marked += shown
+            eligible = [c for c in eligible if c.node_id not in shown_ids]
 
         # Filter candidates (module-specific)
         filtered = marked + (self.filter_candidates(eligible, enrichments, max_candidates, **filter_kwargs) if eligible else [])
+        filtered_ids = {c.node_id for c in filtered}
+
+        # Candidates the filter's rules kept but the cap left out are told apart from filtered ones.
+        # Only when the list reached the cap; the uncapped pass is structural (no LLM call) and changes nothing
+        over_cap: set[str] = set()
+        if eligible and len(filtered) - len(marked) >= max_candidates:
+            uncapped = self.filter_candidates(eligible, enrichments, len(eligible), **filter_kwargs)
+            over_cap = {c.node_id for c in uncapped if c.node_id not in filtered_ids}
 
         if not filtered:
             self.logger.info("No candidates passed filtering for %s", self.ELEMENT_TYPE)
@@ -517,14 +569,13 @@ class ElementDerivationBase(ABC):
                         in_degree=c.in_degree,
                         out_degree=c.out_degree,
                         confidence=c.properties.get("confidence"),
-                        stage="not_a_unit" if c.node_id in not_units else "filtered_out",
+                        stage="not_a_unit" if c.node_id in not_units else "over_cap" if c.node_id in over_cap else "filtered_out",
                         became_element=False,
                     )
                 )
             return result
 
         result.candidates_filtered = len(filtered)
-        filtered_ids = {c.node_id for c in filtered}
 
         self.logger.info("Filtered to %d candidates for LLM (%s)", len(filtered), self.ELEMENT_TYPE)
 
@@ -541,7 +592,7 @@ class ElementDerivationBase(ABC):
                         in_degree=c.in_degree,
                         out_degree=c.out_degree,
                         confidence=c.properties.get("confidence"),
-                        stage="not_a_unit" if c.node_id in not_units else "filtered_out",
+                        stage="not_a_unit" if c.node_id in not_units else "over_cap" if c.node_id in over_cap else "filtered_out",
                         became_element=False,
                     )
                 )
@@ -621,8 +672,9 @@ class ElementDerivationBase(ABC):
         # LLM name never takes another candidate's structure name (see _apply_naming)
         repo_name = self._active_repo_name(graph_manager)
         structure_names: dict[str, str] = {}  # candidate id -> key of its structure name
+        distinct = distinct_candidate_names(filtered)
         for c in filtered:
-            key = _display_key(structure_element_name(c.node_id, c.name, repo_name))
+            key = _display_key(structure_element_name(c.node_id, distinct[c.node_id], repo_name))
             if key in structure_names.values():
                 result.candidate_decisions.append(
                     CandidateDecision(
@@ -644,6 +696,8 @@ class ElementDerivationBase(ABC):
 
         # Track candidates sent to LLM
         result.candidates_to_llm = len(filtered)
+        if on_candidates is not None:
+            on_candidates([c.node_id for c in filtered])
 
         llm_kwargs: dict[str, Any] = {}
         if temperature is not None:
@@ -656,8 +710,10 @@ class ElementDerivationBase(ABC):
 
         # Candidates the step classifies into roles leave the keep and naming path
         if roles is not None:
-            role_candidates = [c for c in filtered if roles.labels.intersection(c.labels)]
-            filtered = [c for c in filtered if not roles.labels.intersection(c.labels)]
+            # By label (classified, or given by structure) or by a structural role alone
+            role_ids = {c.node_id for c in filtered if roles.labels.intersection(c.labels) or structural_role(c, roles.structural) is not None}
+            role_candidates = [c for c in filtered if c.node_id in role_ids]
+            filtered = [c for c in filtered if c.node_id not in role_ids]
             if role_candidates:
                 self._process_roles(
                     role_candidates, roles, llm_query_fn, llm_kwargs, graph_manager, archimate_manager, repo_name, batch_size, result, taken, naming, structure_names
@@ -780,9 +836,12 @@ class ElementDerivationBase(ABC):
         candidate with a role is its own element, named as written or by ``name_template``.
         """
         ordered = sorted(candidates, key=lambda c: c.node_id)
-        role_of: dict[str, str | None] = {}
-        for start in range(0, len(ordered), batch_size):
-            pending = ordered[start : start + batch_size]
+        # Structure first: a candidate whose annotation or kind shows its role is not asked
+        role_of: dict[str, str | None] = {c.node_id: role for c in ordered if (role := structural_role(c, roles.structural)) is not None}
+        as_written = set(role_of) if roles.structural_as_written else set()
+        asked = [c for c in ordered if c.node_id not in role_of]
+        for start in range(0, len(asked), batch_size):
+            pending = asked[start : start + batch_size]
             for _ in range(1 + roles.missing_retries):
                 prompt = build_role_prompt(pending, roles.instruction, roles.names, show_path=roles.show_path)
                 try:
@@ -807,10 +866,22 @@ class ElementDerivationBase(ABC):
                 # The name from structure: container + subject + role name, each word once
                 containers = self._containers_of(chosen, roles.container_type, graph_manager, archimate_manager, repo_name)
                 subjects = {c.node_id: structure_element_name(c.node_id, c.name, repo_name) for c in chosen}
-                names = {
-                    c.node_id: _each_word_once(roles.name_template.format(container=containers[c.node_id], subject=subjects[c.node_id], role=roles.names[role_of[c.node_id] or ""]))
-                    for c in chosen
-                }
+
+                def planned_name(c: Candidate) -> str:
+                    if c.node_id in as_written:
+                        return c.name
+                    return _each_word_once(roles.name_template.format(container=containers[c.node_id], subject=subjects[c.node_id], role=roles.names[role_of[c.node_id] or ""]))
+
+                names = {c.node_id: planned_name(c) for c in chosen}
+                # Files with the same name in one container would get one name: those are told apart
+                # by the directory that differs (the others keep their name)
+                counts = Counter(_display_key(name) for name in names.values())
+                distinct = distinct_candidate_names(chosen)
+                for c in chosen:
+                    if counts[_display_key(names[c.node_id])] > 1 and distinct[c.node_id] != c.name:
+                        directory = distinct[c.node_id][: -len(c.name)].strip()
+                        subjects[c.node_id] = f"{name_from_source(directory)} {subjects[c.node_id]}"
+                        names[c.node_id] = planned_name(c)
             else:
                 # Named as the candidate is (as written)
                 names = {c.node_id: c.name for c in chosen}
@@ -853,7 +924,7 @@ class ElementDerivationBase(ABC):
                 "properties": properties,
             }
             # The step's naming call may rename a candidate's element (the usual uniqueness rules apply)
-            if roles.naming_call and naming is not None and roles.element_per == "candidate":
+            if roles.naming_call and naming is not None and roles.element_per == "candidate" and source.node_id not in as_written:
                 try:
                     self._apply_naming(element_data, source, naming, llm_query_fn, llm_kwargs, repo_name, taken, structure_names or {})
                 except Exception as e:
@@ -1036,7 +1107,8 @@ class ElementDerivationBase(ABC):
         """
         from deriva.modules.derivation.refine.normalization import strip_repo_prefix
 
-        prompt = build_naming_prompt(naming_source(candidate), self.ELEMENT_TYPE, naming.instruction)
+        source = naming_source(candidate)
+        prompt = build_naming_prompt(source, self.ELEMENT_TYPE, naming.instruction)
         answers: list[str | None] = []
         for _ in range(naming.samples):
             try:
@@ -1047,7 +1119,8 @@ class ElementDerivationBase(ABC):
                 answers.append(json.loads(text).get("name"))
             except (ValueError, AttributeError) as e:
                 self.logger.debug("Unusable naming answer for %s: %s", candidate.node_id, e)
-        name = choose_name(answers)
+        # A word the source writes as one word keeps its inner capitals (a proper name), others split where the source splits
+        name = choose_name(answers, source_words(source))
         # No type-suffix stripping here: the configured convention governs suffixes,
         # and words like "Service" or "API" are often part of the right name
         if name and repo_name:

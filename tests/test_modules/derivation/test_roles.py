@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -432,3 +433,58 @@ class TestRoleNamingCall:
         elements, _ = self._generate([alpha], {alpha.node_id: "kind"}, {"Alpha": None})
 
         assert elements[alpha.node_id]["name"] == "Alpha"
+
+
+class TestStructuralRoles:
+    """Where the source says what a candidate is (an annotation, its kind), the role comes from structure and no call is made."""
+
+    ROLES = dataclasses.replace(
+        TestRoleNameTemplate.ROLES,
+        labels=frozenset({"File", "TypeDefinition"}),
+        names={"http": "HTTP API", "web": "Web UI", "cli": "CLI"},
+        structural=(("decorators", r"^HttpEndpoint(\(.*)?$", "http"), ("category", r"^screen$", "web")),
+    )
+
+    @staticmethod
+    def _type(name, path, **properties):
+        return Candidate(node_id=f"typedef::r::{path}::{name}", name=name, labels=["Graph", "TypeDefinition"], properties={"filePath": path, **properties})
+
+    def _generate(self, candidates, answer):
+        with patch.object(TestRoleNameTemplate, "ROLES", self.ROLES):
+            return TestRoleNameTemplate._generate(candidates, answer, [("dir::r::shop", "shop", "Shop")])
+
+    def test_an_annotation_or_a_kind_gives_the_role_without_a_call(self):
+        endpoint = self._type("LedgerResource", "shop/src/LedgerResource.java", decorators=['HttpEndpoint("/ledgers")'])
+        screen = self._type("LEDGERMAP", "shop/maps/LEDGER.bms", category="screen")
+
+        elements, prompts = self._generate([endpoint, screen], {})
+
+        assert prompts == []
+        assert {e["name"] for e in elements.values()} == {"Shop Ledger Resource HTTP API", "Shop LEDGERMAP Web UI"}
+
+    def test_the_other_candidates_are_still_asked(self):
+        endpoint = self._type("LedgerResource", "shop/src/LedgerResource.java", decorators=["HttpEndpoint"])
+        plain = TestRoleNameTemplate._file("tool.py", "shop/tool.py")
+
+        elements, prompts = self._generate([endpoint, plain], {plain.node_id: "cli"})
+
+        assert len(prompts) == 1 and endpoint.node_id not in prompts[0] and plain.node_id in prompts[0]
+        assert len(elements) == 2
+
+    def test_a_structural_role_alone_takes_a_candidate_into_the_role_path(self):
+        """With no labels to classify, only candidates whose structure shows a role become role elements; the rest keep their own path."""
+        only_structure = dataclasses.replace(self.ROLES, labels=frozenset(), name_template="{subject}", documentation="{subject} of {container}.")
+        screen = self._type("LEDGER-MAP", "shop/maps/LEDGER.bms", category="screen")
+        with patch.object(TestRoleNameTemplate, "ROLES", only_structure):
+            elements, prompts = TestRoleNameTemplate._generate([screen], {}, [("dir::r::shop", "shop", "Shop")])
+
+        assert prompts == []
+        assert [e["name"] for e in elements.values()] == ["Ledger Map"]
+
+    def test_a_candidate_with_a_structural_role_passes_the_name_filter(self):
+        """What the source shows is not judged by name or cut by rank, as an annotation-marked candidate is not."""
+        endpoint = self._type("LedgerResource", "shop/src/LedgerResource.java", decorators=["HttpEndpoint"])
+        with patch.object(Derivation, "filter_candidates", lambda self, candidates, enrichments, max_candidates, **kwargs: []):
+            elements, prompts = self._generate([endpoint], {})
+
+        assert prompts == [] and len(elements) == 1

@@ -9,6 +9,14 @@ Supported Languages:
     - TypeScript (.ts, .tsx, .mts, .cts) - Limited support (see note below)
     - Java (.java) - Full support
     - C# (.cs) - Full support
+    - COBOL (.cbl, .cob, .cobol, .cpy) - Structural (programs, paragraphs, copybook records)
+    - JCL (.jcl, .prc, .proc) - Structural (jobs, procedures, steps)
+    - BMS (.bms) - Structural (screen maps)
+
+Structural Support Note:
+    COBOL, JCL and BMS have no grammar in the tree-sitter packages. Their
+    extractors read the line-oriented source themselves (see
+    languages/structural.py) and return the same models.
 
 TypeScript Support Note:
     TypeScript files are currently parsed using the JavaScript grammar.
@@ -52,6 +60,7 @@ from typing import Any
 import tree_sitter
 
 from .languages import get_extractor, supported_languages
+from .languages.structural import StructuralExtractor
 from .models import (
     ExtractedCall,
     ExtractedImport,
@@ -74,7 +83,7 @@ class TreeSitterManager:
     """
 
     # Supported languages
-    SUPPORTED_LANGUAGES = {"python", "javascript", "typescript", "java", "csharp"}
+    SUPPORTED_LANGUAGES = {"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms"}
 
     # Extension to language mapping
     EXTENSION_MAP: dict[str, str] = {
@@ -91,6 +100,14 @@ class TreeSitterManager:
         ".cts": "typescript",
         ".java": "java",
         ".cs": "csharp",
+        ".cbl": "cobol",
+        ".cob": "cobol",
+        ".cobol": "cobol",
+        ".cpy": "cobol",
+        ".jcl": "jcl",
+        ".prc": "jcl",
+        ".proc": "jcl",
+        ".bms": "bms",
     }
 
     def __init__(self) -> None:
@@ -116,7 +133,7 @@ class TreeSitterManager:
         if not extractor:
             return []
 
-        tree = self._parse(source, lang, extractor)
+        tree = self._parse(source, lang, extractor, file_path)
         if not tree:
             return []
 
@@ -141,7 +158,7 @@ class TreeSitterManager:
         if not extractor:
             return []
 
-        tree = self._parse(source, lang, extractor)
+        tree = self._parse(source, lang, extractor, file_path)
         if not tree:
             return []
 
@@ -166,7 +183,7 @@ class TreeSitterManager:
         if not extractor:
             return []
 
-        tree = self._parse(source, lang, extractor)
+        tree = self._parse(source, lang, extractor, file_path)
         if not tree:
             return []
 
@@ -191,7 +208,7 @@ class TreeSitterManager:
         if not extractor:
             return []
 
-        tree = self._parse(source, lang, extractor)
+        tree = self._parse(source, lang, extractor, file_path)
         if not tree:
             return []
 
@@ -216,7 +233,7 @@ class TreeSitterManager:
         if not extractor:
             return {"types": [], "methods": [], "imports": [], "calls": []}
 
-        tree = self._parse(source, lang, extractor)
+        tree = self._parse(source, lang, extractor, file_path)
         if not tree:
             return {"types": [], "methods": [], "imports": [], "calls": []}
 
@@ -337,18 +354,23 @@ class TreeSitterManager:
 
         return self._parsers[language]
 
-    def _parse(self, source: str, language: str, extractor: Any) -> tree_sitter.Tree | None:
+    def _parse(self, source: str, language: str, extractor: Any, file_path: str | None = None) -> Any:
         """Parse source code into a tree-sitter tree.
+
+        A structural extractor parses the text itself; its ParsedSource stands in for the tree.
 
         Args:
             source: Source code as string
             language: Language name
             extractor: Language extractor
+            file_path: Optional file path (structural extractors name unnamed members after it)
 
         Returns:
-            Parsed tree or None on failure
+            Parsed tree (or ParsedSource) or None on failure
         """
         try:
+            if isinstance(extractor, StructuralExtractor):
+                return extractor.parse_source(source, file_path)
             parser = self._get_parser(language, extractor)
             return parser.parse(source.encode("utf-8"))
         except Exception:

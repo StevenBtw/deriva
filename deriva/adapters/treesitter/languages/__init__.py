@@ -82,6 +82,13 @@ def _ensure_extractors_loaded() -> None:
     except ImportError:
         pass
 
+    # Structural extractors (no grammar package)
+    from . import (
+        bms,  # noqa: F401
+        cobol,  # noqa: F401
+        jcl,  # noqa: F401
+    )
+
     _EXTRACTORS_LOADED = True
 
 

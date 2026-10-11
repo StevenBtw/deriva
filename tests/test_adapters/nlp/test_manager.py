@@ -12,20 +12,18 @@ from deriva.adapters.nlp import NlpTool, manager, translate
 
 def test_ensure_models_downloads_into_the_models_directory(tmp_path, monkeypatch):
     calls = []
-    monkeypatch.setattr(manager, "ensure_all", lambda models_dir, download: calls.append((models_dir, download)))
+    monkeypatch.setattr(manager, "ensure_spacy", lambda models_dir, download: calls.append(("spacy", models_dir, download)))
+    monkeypatch.setattr(manager, "ensure_all", lambda models_dir, download: calls.append(("translation", models_dir, download)))
 
     NlpTool(models_dir=tmp_path / "models").ensure_models()
 
-    assert calls == [(tmp_path / "models", True)]
+    assert calls == [("spacy", tmp_path / "models", True), ("translation", tmp_path / "models", True)]
 
 
-def test_the_models_directory_is_read_after_loading_dotenv(tmp_path, monkeypatch):
-    """Like the other adapters, the tool loads .env itself, so it also works outside the service bootstrap."""
-    import os
-
-    monkeypatch.setenv("DERIVA_NLP_MODELS_DIR", "unset")  # restored after the test
-    monkeypatch.delenv("DERIVA_NLP_MODELS_DIR")
-    monkeypatch.setattr(manager, "load_dotenv", lambda: os.environ.update(DERIVA_NLP_MODELS_DIR=str(tmp_path / "env")), raising=False)
+def test_the_models_directory_comes_from_the_settings(tmp_path, monkeypatch):
+    """The tool reads DERIVA_NLP_MODELS_DIR from the merged environment (home .env under the process environment)."""
+    monkeypatch.delenv("DERIVA_NLP_MODELS_DIR", raising=False)
+    monkeypatch.setattr("deriva.common.settings.read_env_file", lambda: {"DERIVA_NLP_MODELS_DIR": str(tmp_path / "env")})
 
     assert NlpTool().models_dir == tmp_path / "env"
 

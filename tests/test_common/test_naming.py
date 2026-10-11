@@ -121,10 +121,10 @@ class TestContainsName:
     @pytest.mark.parametrize(
         "text, name",
         [
-            ("Lightblue Ldap", "lightblue"),
-            ("descartesresearch/teastore-persistence", "TeaStore"),
-            ("Big Data Kafka", "bigdata"),
-            ("gcr.io/lakeside-mutual-2020/customer-core", "LakesideMutual"),
+            ("Darkgreen Ldap", "darkgreen"),
+            ("acme/toolshed-persistence", "ToolShed"),
+            ("Big Farm Kafka", "bigfarm"),
+            ("registry.example/hillside-union-2020/customer-core", "HillsideUnion"),
         ],
     )
     def test_the_name_is_found_across_spellings(self, text, name):
@@ -134,9 +134,9 @@ class TestContainsName:
         "text, name",
         [
             ("Application Server", "app"),  # part of a word only
-            ("Data Kafka", "bigdata"),  # part of the name only
-            ("Kafka", "bigdata"),
-            ("", "bigdata"),
+            ("Farm Kafka", "bigfarm"),  # part of the name only
+            ("Kafka", "bigfarm"),
+            ("", "bigfarm"),
             ("Kafka", ""),
         ],
     )

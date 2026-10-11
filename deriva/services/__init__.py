@@ -1,12 +1,12 @@
 """
 Services layer for Deriva.
 
-This module provides shared orchestration for both Marimo (visual UI) and CLI (headless).
+This module provides shared orchestration for both the studio (web UI) and the CLI (headless).
 All pipeline operations should go through PipelineSession rather than directly accessing
 managers or modules.
 
 Primary API:
-    PipelineSession: Unified session for CLI and Marimo
+    PipelineSession: Unified session for the CLI and the studio
         - Lifecycle: connect(), disconnect(), context manager
         - Queries: get_graph_stats(), get_archimate_elements(), etc.
         - Orchestration: run_extraction(), run_derivation(), run_pipeline()
@@ -20,8 +20,8 @@ Usage (CLI):
         result = session.run_extraction(repo_name="my-repo")
         session.export_model("output.xml")
 
-Usage (Marimo):
-    from deriva.services.session import PipelineSession
+Usage (studio, deriva/studio):
+    from deriva.services import PipelineSession
 
     session = PipelineSession(auto_connect=True)
     stats = session.get_graph_stats()
@@ -32,13 +32,13 @@ Internal services (used by PipelineSession):
     extraction: Extraction orchestration
     derivation: Derivation and validation orchestration
     pipeline: Full pipeline orchestration
-    benchmarking: Multi-model benchmarking with OCEL logging and analysis
+
+Benchmarking lives in deriva.bench (deriva-dev).
 """
 
 from __future__ import annotations
 
 from . import config, config_models, derivation, extraction, pipeline
-from .config import get_settings
 from .session import PipelineSession
 
 __all__ = [
@@ -48,5 +48,4 @@ __all__ = [
     "extraction",
     "derivation",
     "pipeline",
-    "get_settings",
 ]

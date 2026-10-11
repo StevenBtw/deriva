@@ -181,6 +181,17 @@ TECHNOLOGY_LAYER: set[str] = {
 }
 
 
+def layer_of(element_type: str) -> str:
+    """The ArchiMate layer of an element type: Business, Application, Technology or Other."""
+    if element_type in BUSINESS_LAYER:
+        return "Business"
+    if element_type in APPLICATION_LAYER:
+        return "Application"
+    if element_type in TECHNOLOGY_LAYER:
+        return "Technology"
+    return "Other"
+
+
 # =============================================================================
 # ArchiMate 3.2 Relationship Table
 # =============================================================================

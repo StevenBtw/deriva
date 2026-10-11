@@ -8,6 +8,7 @@ extend = "../../pyproject.toml"
 
 [lint.flake8-tidy-imports.banned-api]
 "deriva.cli" = { msg = "Architecture violation: cli is a top-level entry point and should not be imported" }
+"deriva.bench" = { msg = "Architecture violation: only the CLI and studio entry points load deriva.bench, behind about.features()" }
 "deriva.adapters" = { msg = "Architecture violation: common cannot import from adapters (common is the base layer)" }
 "deriva.modules" = { msg = "Architecture violation: common cannot import from modules (common is the base layer)" }
 "deriva.services" = { msg = "Architecture violation: common cannot import from services (common is the base layer)" }

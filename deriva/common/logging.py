@@ -21,6 +21,8 @@ from typing import IO, Any
 
 import structlog
 
+from deriva.common.paths import home
+
 __all__ = [
     "LogLevel",
     "LogStatus",
@@ -159,7 +161,7 @@ class RunLogger:
     """
     Logger for a single pipeline run using structlog.
 
-    Creates and appends to a JSONL file in workspace/logs/run_{id}/.
+    Creates and appends to a JSONL file in <home>/workspace/logs/run_{id}/.
     """
 
     def __init__(self, run_id: int, logs_dir: str = "workspace/logs"):
@@ -168,15 +170,14 @@ class RunLogger:
 
         Args:
             run_id: The run ID from the runs table
-            logs_dir: Base directory for logs (default: "workspace/logs" in project root)
+            logs_dir: Base directory for logs (default: "workspace/logs" in the Deriva home folder)
         """
         self.run_id = run_id
 
-        # Resolve logs_dir relative to project root
+        # Resolve logs_dir relative to the Deriva home folder
         logs_path = Path(logs_dir)
         if not logs_path.is_absolute():
-            project_root = Path(__file__).parent.parent.parent
-            logs_path = project_root / logs_path
+            logs_path = home() / logs_path
 
         self.logs_dir = logs_path
         self.run_dir = self.logs_dir / f"run_{run_id}"
@@ -748,7 +749,9 @@ class StepContext:
         self.items_failed = 0
         self.stats: dict[str, Any] | None = None
         self._completed = False
+        self._object_ids: list[str] = []
         self._edge_ids: list[str] = []
+        self._relationship_ids: list[str] = []
 
     def __enter__(self) -> StepContext:
         return self
@@ -789,9 +792,17 @@ class StepContext:
             duration_ms=self._elapsed_ms(),
         )
 
+    def add_object(self, object_id: str) -> None:
+        """Track a created node or element ID for OCEL logging."""
+        self._object_ids.append(object_id)
+
     def add_edge(self, edge_id: str) -> None:
         """Track a created edge ID for OCEL logging (extraction)."""
         self._edge_ids.append(edge_id)
+
+    def add_relationship(self, relationship_id: str) -> None:
+        """Track a created relationship ID for OCEL logging (derivation)."""
+        self._relationship_ids.append(relationship_id)
 
 
 def get_logger_for_active_run(engine, logs_dir: str = "workspace/logs") -> RunLogger | None:
@@ -800,7 +811,7 @@ def get_logger_for_active_run(engine, logs_dir: str = "workspace/logs") -> RunLo
 
     Args:
         engine: DuckDB engine connection
-        logs_dir: Base directory for logs (default: "workspace/logs" in project root)
+        logs_dir: Base directory for logs (default: "workspace/logs" in the Deriva home folder)
 
     Returns:
         RunLogger if there's an active run, None otherwise
@@ -817,7 +828,7 @@ def read_run_logs(run_id: int, logs_dir: str = "workspace/logs", level: int | No
 
     Args:
         run_id: The run ID
-        logs_dir: Base directory for logs (default: "workspace/logs" in project root)
+        logs_dir: Base directory for logs (default: "workspace/logs" in the Deriva home folder)
         level: Optional level filter
 
     Returns:
@@ -825,8 +836,7 @@ def read_run_logs(run_id: int, logs_dir: str = "workspace/logs", level: int | No
     """
     logs_path = Path(logs_dir)
     if not logs_path.is_absolute():
-        project_root = Path(__file__).parent.parent.parent
-        logs_path = project_root / logs_path
+        logs_path = home() / logs_path
 
     run_dir = logs_path / f"run_{run_id}"
     if not run_dir.exists():

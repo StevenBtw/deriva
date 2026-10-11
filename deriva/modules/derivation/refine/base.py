@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
 logger = logging.getLogger(__name__)
 
@@ -379,6 +379,21 @@ def levenshtein_distance(s1: str, s2: str) -> int:
         previous_row = current_row
 
     return previous_row[-1]
+
+
+def _is_code(word: str) -> bool:
+    return any(ch.isdigit() for ch in word) or (len(word) > 1 and word.isupper())
+
+
+def differ_in_a_code(name_a: str, name_b: str) -> bool:
+    """Whether the names differ in a code-like word (one with a digit, or written in capitals).
+
+    Fuzzy matching finds two wordings of one thing; an identifier or acronym that differs
+    (two screen ids, HTTP against CLI) names another thing, however alike the rest is.
+    """
+    words_a, words_b = set(name_a.split()), set(name_b.split())
+    common = {word.casefold() for word in words_a} & {word.casefold() for word in words_b}
+    return any(_is_code(word) for word in words_a ^ words_b if word.casefold() not in common)
 
 
 def similarity_ratio(s1: str, s2: str) -> float:

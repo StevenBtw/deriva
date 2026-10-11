@@ -1,0 +1,38 @@
+[project]
+name = "deriva-studio"
+version = "0.8.0"
+description = "Deriva Studio: derive ArchiMate models from code repositories in your browser (includes the deriva-cli command)."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "AGPL-3.0-or-later"
+# A copy of the repository LICENSE (a package cannot point outside its folder); tests/test_packaging.py keeps it identical
+license-files = ["LICENSE"]
+authors = [{ name = "S. T. Grond", email = "steven@deriva.dev" }]
+dependencies = [
+    "deriva-cli==0.8.0",
+    "fastapi>=0.142.4",
+    "uvicorn>=0.41.0",
+    "anywidget-graph>=0.4.2",
+    "anywidget-archimate>=0.3.0",
+]
+
+[project.urls]
+Homepage = "https://deriva.dev"
+Documentation = "https://docs.deriva.dev"
+Repository = "https://github.com/StevenBtw/deriva"
+Issues = "https://github.com/StevenBtw/deriva/issues"
+Changelog = "https://github.com/StevenBtw/deriva/blob/main/CHANGELOG.md"
+
+[project.scripts]
+deriva = "deriva.studio.__main__:main"
+deriva-cli = "deriva.cli.cli:main"
+deriva-studio = "deriva.studio.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13"]
+build-backend = "uv_build"
+
+# The built front end (static/, from `npm run build` in studio/) is git-ignored but ships in the wheel
+[tool.uv.build-backend]
+module-name = "deriva.studio"
+source-exclude = [".mypy_cache", ".ruff_cache", "ruff.toml"]

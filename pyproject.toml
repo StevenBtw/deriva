@@ -1,20 +1,22 @@
 [project]
-name = "Deriva"
-version = "0.7.1"
+name = "deriva-cli"
+version = "0.8.0"
 description = "Deriva is a research project aimed at enabling digital architects by automating the derivation of enterprise architecture models. Deriva uses dual knowledge graphs, heuristics and LLM's."
-readme = "README.md"
+# The PyPI page; README.md is the repository's own
+readme = "packages/README-deriva-cli.md"
 requires-python = ">=3.14"
 authors = [
     { name = "S. T. Grond", email = "steven@deriva.dev" }
 ]
-license = { text = "AGPL-3.0" }
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 keywords = [
     "archimate",
     "enterprise-architecture",
     "code-analysis",
     "llm",
     "grafeo",
-    "marimo",
+    "fastapi",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -22,7 +24,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Information Technology",
-    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.14",
@@ -42,11 +43,8 @@ dependencies = [
     "lxml>=6",
     # Databases
     "duckdb>=1.5",
-    "grafeo>=0.5.44",
+    "grafeo>=0.6.0b1",
     "sqlglot>=30",
-    # UI
-    "marimo>=0.25",
-    "anywidget-graph>=0.3",
     # Code Analysis (tree-sitter)
     "tree-sitter>=0.26",
     "tree-sitter-python>=0.23.0",
@@ -56,18 +54,16 @@ dependencies = [
     # Document Parsing
     "pypdf>=6",
     "python-docx>=1.2",
-    # NLP (business concept candidate terms; pinned, the versions decide the output)
+    # NLP (business concept candidate terms; pinned, the versions decide the output; the spaCy pipelines download on first use)
     "spacy==3.8.16",
-    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
-    "de-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl",
-    "fr-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl",
     "ctranslate2==4.8.2",
     "sentencepiece==0.2.2",
     # Graph Algorithms
     "solvor>=0.6.3",
     # LLM
     "backoff>=2.2.1",
-    "pydantic-ai>=2",
+    # CVE-2026-107286, CVE-2026-107287 fixed in 2.53
+    "pydantic-ai>=2.55",
     # Utilities
     "authlib>=1.8.0",
     # CVE-2026-27962, CVE-2026-28490 fix (transitive via fastmcp)
@@ -79,49 +75,75 @@ dependencies = [
     "nest-asyncio>=1.6.0",
     "structlog>=26.1.0",
     "typer>=0.27",
-    "prek>=0.5",
     "httpx>=0.28.1",
-    "pydantic-ai-slim[mistral]>=2",
+    "pydantic-ai-slim[mistral]>=2.55",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
+    "deriva-dev",
     "pip-audit>=2",
+    "prek>=0.5",
     "pytest>=9",
     "pytest-cov>=7",
-    "ruff>=0.16",
+    "ruff>=0.17",
     "ty>=0.0",
     "types-lxml>=2026.2",
 ]
 
 [project.urls]
 Homepage = "https://deriva.dev"
-Documentation = "https://deriva.dev/docs"
+Documentation = "https://docs.deriva.dev"
 Repository = "https://github.com/StevenBtw/deriva"
 Issues = "https://github.com/StevenBtw/deriva/issues"
 Changelog = "https://github.com/StevenBtw/deriva/blob/main/CHANGELOG.md"
 
 [project.scripts]
 deriva-cli = "deriva.cli.cli:main"
-deriva-app = "deriva.app.app:main"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.12.21,<0.13"]
+build-backend = "uv_build"
 
-[tool.hatch.build.targets.wheel]
-packages = ["deriva"]
+# deriva is a namespace shared by three packages; this one holds the pipeline and the CLI
+[tool.uv.build-backend]
+module-root = ""
+# deriva.adapters is itself a namespace (no __init__.py), so its subpackages are listed one by one
+module-name = [
+    "deriva.adapters.archimate",
+    "deriva.adapters.database",
+    "deriva.adapters.grafeo",
+    "deriva.adapters.graph",
+    "deriva.adapters.llm",
+    "deriva.adapters.nlp",
+    "deriva.adapters.repository",
+    "deriva.adapters.treesitter",
+    "deriva.cli",
+    "deriva.common",
+    "deriva.modules",
+    "deriva.services",
+]
+source-exclude = [".mypy_cache", ".ruff_cache", "sql.db*", "ruff.toml"]
 
-# The spaCy language models are wheels from their GitHub releases, not on PyPI
-[tool.hatch.metadata]
-allow-direct-references = true
+[tool.uv.workspace]
+members = ["packages/*"]
 
 # ============================================================================
 # Tool Configuration
 # ============================================================================
 
+[tool.uv.sources]
+# The three packages of this repository (the root is deriva-cli)
+deriva-cli = { workspace = true }
+deriva-dev = { workspace = true }
+deriva-studio = { workspace = true }
+
 [tool.ruff]
 line-length = 180
+# deriva has no __init__.py (a namespace shared by three packages); this keeps it first-party for import sorting
+namespace-packages = ["deriva", "packages/deriva-dev/src/deriva", "packages/deriva-studio/src/deriva"]
+# The source roots of the three packages (first-party detection inside the shared namespace)
+src = [".", "packages/deriva-dev/src", "packages/deriva-studio/src"]
 target-version = "py314"
 # Markdown code blocks are documentation examples, formatted by hand
 extend-exclude = ["*.md"]
@@ -165,13 +187,12 @@ docstring-quotes = "double"
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # CLI should never be imported by any layer (it's a top-level entry point)
 "deriva.cli" = { msg = "Architecture violation: cli is a top-level entry point and should not be imported" }
+"deriva.bench" = { msg = "Architecture violation: only the CLI and studio entry points load deriva.bench, behind about.features()" }
 # Note: Layer-specific bans (adapters↔modules, etc.) are in per-directory ruff.toml files
 
 [tool.ruff.lint.per-file-ignores]
 # Tests can import from any layer for testing purposes
 "tests/**/*.py" = ["E402", "TID251"]
-# Marimo app: allow long lines for UI code
-"deriva/app/app.py" = ["E501"]
 # Files with long strings (SQL, LLM prompts)
 "deriva/modules/validation/__init__.py" = ["E402"]
 "deriva/modules/derivation/__init__.py" = ["E402"]
@@ -181,19 +202,16 @@ docstring-quotes = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-v -m 'not integration and not grafeo_dev'"
+addopts = "-v -m 'not integration'"
 markers = [
     "integration: integration tests (run locally with -m integration)",
-    "grafeo_dev: needs the grafeo 0.6.0 development build (algorithm projections)",
 ]
 
 [tool.coverage.run]
-source = ["deriva/adapters", "deriva/modules", "deriva/common", "deriva/services", "deriva/cli"]
+source = ["deriva/adapters", "deriva/modules", "deriva/common", "deriva/services", "deriva/cli", "packages/deriva-studio/src/deriva/studio", "packages/deriva-dev/src/deriva/bench"]
 omit = [
     "*/__init__.py",
     "*/tests/*",
-    # Marimo app (interactive UI, not unit testable)
-    "deriva/app/*",
     # Graph database adapters
     "deriva/adapters/grafeo/*",
     "deriva/adapters/graph/*",
@@ -202,9 +220,9 @@ omit = [
     # Refine steps requiring graph infrastructure
     "deriva/modules/derivation/refine/graph_relationships.py",
     # Benchmarking service (requires LLMs/databases for full testing)
-    "deriva/services/benchmarking.py",
+    "packages/deriva-dev/src/deriva/bench/benchmarking.py",
     # Analysis modules (cross-repo, semantic matching) - require full pipeline integration
-    "deriva/services/analysis.py",
+    "packages/deriva-dev/src/deriva/bench/analysis.py",
     "deriva/modules/analysis/cross_repo_analysis.py",
     "deriva/modules/analysis/semantic_matching.py",
 ]

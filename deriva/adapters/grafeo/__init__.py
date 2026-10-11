@@ -22,6 +22,7 @@ from .manager import (
     GrafeoConnection,
     close_database,
     database_file,
+    engine_info,
     get_database,
     use_database,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "GrafeoConnection",
     "close_database",
     "database_file",
+    "engine_info",
     "get_database",
     "use_database",
 ]

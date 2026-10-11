@@ -290,7 +290,6 @@ class TestEdgeReAdd:
         assert rows == [{"p": {"id": f"{src}_USES_{dst}"}}]
 
 
-@pytest.mark.grafeo_dev
 class TestGraphMetric:
     """One grafeo algorithm over the graph namespace, values keyed by Deriva's node ids."""
 
@@ -332,7 +331,6 @@ class TestGraphMetric:
         assert points == ["dir::r::b", "dir::r::c"]
 
 
-@pytest.mark.grafeo_dev
 class TestGraphMetricInsertionOrder:
     """Metrics depend only on graph content and node ids, not on the order extraction wrote the nodes."""
 

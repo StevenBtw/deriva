@@ -101,7 +101,6 @@ class TestRunPrepStep:
     def _read(self, gm, prop):
         return {r["id"]: r["v"] for r in gm.query(f"MATCH (n:Graph) RETURN n.id AS id, n.{prop} AS v")}
 
-    @pytest.mark.grafeo_dev
     def test_pagerank_is_written_with_percentiles(self, gm):
         result = derivation._run_prep_step(self._cfg("pagerank", '{"damping": 0.85, "max_iter": 100}'), gm)
 
@@ -111,7 +110,6 @@ class TestRunPrepStep:
         assert scores["dir::r::d"] is not None  # nodes without edges are scored too
         assert self._read(gm, "pagerank_percentile")["dir::r::b"] == 100.0
 
-    @pytest.mark.grafeo_dev
     @pytest.mark.parametrize(
         "step, prop, expected_b",
         [
@@ -499,6 +497,46 @@ class TestContainmentConfig:
             )
 
         assert relationships.call_args.kwargs["containment"] == [ContainmentRule(container="ApplicationComponent", contained="ApplicationService", relationship="Realization")]
+
+
+class TestNamedInCodeConfig:
+    """The relationship row's params.named_in_code, checked against the metamodel."""
+
+    @staticmethod
+    def _row(**structure):
+        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
+
+    def test_without_the_key_there_are_no_rules(self):
+        assert derivation._named_in_code_rules([self._row()]) == []
+
+    def test_rules_come_from_params_with_a_default_minimum(self):
+        from deriva.modules.derivation.base import NamedInCodeRule
+
+        row = self._row(
+            named_in_code=[
+                {"owner": "ApplicationComponent", "named": "BusinessObject", "relationship": "Access", "min_names": 3},
+                {"owner": "ApplicationComponent", "named": "BusinessActor", "relationship": "Serving"},
+            ]
+        )
+
+        assert derivation._named_in_code_rules([row]) == [
+            NamedInCodeRule(owner="ApplicationComponent", named="BusinessObject", relationship="Access", min_names=3),
+            NamedInCodeRule(owner="ApplicationComponent", named="BusinessActor", relationship="Serving", min_names=2),
+        ]
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            {"owner": "ApplicationComponent", "named": "BusinessObject"},
+            {"owner": "BusinessObject", "named": "ApplicationComponent", "relationship": "Composition"},
+            {"owner": "ApplicationComponent", "named": "BusinessObject", "relationship": "Access", "min_names": 0},
+            {"owner": "ApplicationComponent", "named": "BusinessObject", "relationship": "Access", "min_names": "2"},
+        ],
+    )
+    def test_invalid_settings_are_an_error(self, item):
+        with pytest.raises(ValueError, match="named_in_code"):
+            derivation._named_in_code_rules([self._row(named_in_code=[item])])
 
 
 class TestSameNameConfig:
@@ -2928,3 +2966,117 @@ class TestRelationshipTemperature:
             runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=True, phases=["generate"])
 
         assert consolidated.call_args.kwargs["temperature"] == 0.0
+
+
+def test_created_elements_and_deferred_relationships_reach_the_run_log():
+    """Each generate step names its elements, the deferred relationship step its relationships ({type}_{source}_{target})."""
+    run_logger = MagicMock()
+    contexts: dict[str, MagicMock] = {}
+    run_logger.step_start.side_effect = lambda step, message="": contexts.setdefault(step, MagicMock())
+    gen_cfg = SimpleNamespace(
+        step_name="gen_app",
+        element_type="ApplicationComponent",
+        input_graph_query="MATCH (n) RETURN n",
+        instruction="Gen",
+        example="{}",
+        max_candidates=10,
+        batch_size=5,
+        temperature=None,
+        max_tokens=None,
+        params=None,
+    )
+    created = [{"identifier": "e1", "properties": {}}, {"identifier": "e2", "properties": {}}]
+
+    with (
+        patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [gen_cfg] if phase == "generate" else []),
+        patch.object(derivation, "generate_element", return_value={"success": True, "elements_created": 2, "relationships_created": 0, "created_elements": created, "errors": []}),
+        patch.object(derivation, "derive_consolidated_relationships", return_value=[{"source": "e1", "target": "e2", "relationship_type": "Access"}]),
+    ):
+        derivation.run_derivation(
+            engine=MagicMock(),
+            graph_manager=MagicMock(),
+            archimate_manager=MagicMock(),
+            llm_query_fn=MagicMock(),
+            defer_relationships=True,
+            phases=["generate"],
+            run_logger=run_logger,
+        )
+
+    assert [c.args[0] for c in contexts["gen_app"].add_object.call_args_list] == ["e1", "e2"]
+    assert [c.args[0] for c in contexts["ConsolidatedRelationships"].add_relationship.call_args_list] == ["Access_e1_e2"]
+
+
+class TestStructuralRoleConfig:
+    """params.roles.structural: roles the source shows; with them alone, labels and instruction may be empty."""
+
+    NAMES = {"record": "Record"}
+
+    def test_structural_rules_alone_are_enough(self):
+        config = derivation._role_config(
+            json.dumps(
+                {
+                    "roles": {
+                        "labels": [],
+                        "instruction": "",
+                        "names": self.NAMES,
+                        "element_per": "candidate",
+                        "structural": [{"property": "category", "pattern": "^record$", "role": "record"}],
+                    }
+                }
+            )
+        )
+
+        assert config is not None and config.structural == (("category", "^record$", "record"),) and config.labels == frozenset()
+
+    @pytest.mark.parametrize(
+        "structural",
+        [
+            [{"property": "category", "pattern": "^record$", "role": "unknown"}],
+            [{"property": "category", "pattern": "(", "role": "record"}],
+            [{"pattern": "x", "role": "record"}],
+            [],
+        ],
+    )
+    def test_invalid_or_missing_rules_are_an_error(self, structural):
+        with pytest.raises(ValueError, match="roles"):
+            derivation._role_config(json.dumps({"roles": {"labels": [], "instruction": "", "names": self.NAMES, "structural": structural}}))
+
+
+class TestGraphLinkConfig:
+    """params.graph_links of the relationship row, the link queries of component services and as-written structural names."""
+
+    QUERY = "MATCH (x)-[:`Graph:CALLS`]->(y) RETURN x.id AS a, y.id AS b"
+
+    def test_rules_come_from_params_and_are_checked_against_the_metamodel(self):
+        from deriva.modules.derivation.base import GraphLinkRule
+
+        row = TestNamedInCodeConfig._row(graph_links=[{"source": "ApplicationComponent", "target": "ApplicationInterface", "relationship": "Composition", "query": self.QUERY}])
+
+        assert derivation._graph_link_rules([TestNamedInCodeConfig._row()]) == []
+        assert derivation._graph_link_rules([row]) == [GraphLinkRule(source="ApplicationComponent", target="ApplicationInterface", relationship="Composition", query=self.QUERY)]
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            {"source": "ApplicationComponent", "target": "ApplicationInterface", "relationship": "Composition"},
+            {"source": "BusinessObject", "target": "ApplicationComponent", "relationship": "Composition", "query": "Q"},
+        ],
+    )
+    def test_an_incomplete_or_invalid_rule_is_an_error(self, item):
+        with pytest.raises(ValueError, match="graph_links"):
+            derivation._graph_link_rules([TestNamedInCodeConfig._row(graph_links=[item])])
+
+    def test_component_services_take_link_queries(self):
+        config = derivation._component_services_config(json.dumps({"component_services": {"interface_links": [self.QUERY], "object_links": [self.QUERY]}}))
+
+        assert config is not None and config.interface_links == (self.QUERY,) and config.object_links == (self.QUERY,)
+        with pytest.raises(ValueError, match="interface_links"):
+            derivation._component_services_config(json.dumps({"component_services": {"interface_links": "Q"}}))
+
+    def test_structural_roles_can_keep_the_name_as_written(self):
+        roles = {"names": {"component": "C"}, "element_per": "candidate", "structural": [{"property": "category", "pattern": "^program$", "role": "component"}]}
+
+        assert derivation._role_config(json.dumps({"roles": roles})).structural_as_written is False
+        assert derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": True}})).structural_as_written is True
+        with pytest.raises(ValueError, match="structural_as_written"):
+            derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": "yes"}}))

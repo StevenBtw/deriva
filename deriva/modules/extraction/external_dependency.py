@@ -318,6 +318,10 @@ PYTHON_STDLIB_MODULES = {
 # =============================================================================
 
 
+# Languages whose includes are members (copybooks, procedures, maps), not packages
+MEMBER_LANGUAGES = frozenset({"cobol", "jcl", "bms"})
+
+
 def get_extraction_method(file_path: str, subtype: str | None) -> str:
     """
     Determine the best extraction method for a file.
@@ -341,7 +345,7 @@ def get_extraction_method(file_path: str, subtype: str | None) -> str:
         return "package_json"
 
     # Tree-sitter extraction for supported languages
-    treesitter_languages = {"python", "javascript", "typescript", "java", "csharp"}
+    treesitter_languages = {"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms"}
     if subtype and subtype.lower() in treesitter_languages:
         return "treesitter"
 
@@ -546,7 +550,7 @@ def _extract_from_python_ast(
     repo_name: str,
 ) -> dict[str, Any]:
     """Extract external dependencies from Python imports using tree-sitter."""
-    from deriva.adapters.treesitter import TreeSitterManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.treesitter import TreeSitterManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -955,6 +959,9 @@ def extract_external_dependencies(
     elif method == "package_json":
         return _extract_from_package_json(file_path, file_content, repo_name)
     elif method == "treesitter":
+        if (subtype or "").lower() in MEMBER_LANGUAGES:
+            # An include names a member of the repository or of the platform, never a package
+            return _build_result([], [], [], "treesitter")
         return _extract_from_python_ast(file_path, file_content, repo_name)
     else:
         # No LLM fallback - only use deterministic and tree-sitter methods

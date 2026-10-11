@@ -6,6 +6,12 @@ enabling multi-object event correlation and process mining analysis.
 
 OCEL 2.0 Specification: https://www.ocel-standard.org/
 
+Outputs:
+- ``export_jsonl``: the lossless stream Deriva reads back (nested attributes kept)
+- ``export_json``: the standard OCEL 2.0 JSON layout for PM4Py, ProM and other OCEL 2.0 tools
+- ``export_case_csv`` / ``export_case_xes``: a flat log with one case per run, for Disco and
+  other case-centric tools
+
 Object Types used in Deriva:
 - BenchmarkSession: Overall benchmark session
 - BenchmarkRun: Single execution (repo × model × iteration)
@@ -28,11 +34,13 @@ Event Types:
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -66,17 +74,6 @@ class OCELEvent:
     attributes: dict[str, Any] = field(default_factory=dict)
     event_id: str = field(default_factory=lambda: str(uuid.uuid4())[:12])
 
-    def to_ocel_dict(self) -> dict[str, Any]:
-        """Convert to OCEL 2.0 JSON format."""
-        return {
-            "ocel:eid": self.event_id,
-            "ocel:activity": self.activity,
-            "ocel:timestamp": self.timestamp.isoformat(),
-            "ocel:omap": self._flatten_objects(),
-            "ocel:vmap": self.attributes,
-            "ocel:typedOmap": self.objects,
-        }
-
     def to_jsonl_dict(self) -> dict[str, Any]:
         """Convert to compact JSONL format for streaming."""
         return {
@@ -86,10 +83,6 @@ class OCELEvent:
             "objects": self.objects,
             "attributes": self.attributes,
         }
-
-    def _flatten_objects(self) -> list[str]:
-        """Flatten objects for OCEL 1.0 compatibility."""
-        return [oid for oids in self.objects.values() for oid in oids]
 
     def has_object(self, object_type: str, object_id: str) -> bool:
         """Check if event relates to a specific object."""
@@ -169,24 +162,147 @@ class OCELLog:
     # =========================================================================
 
     def export_json(self, path: str | Path) -> None:
-        """Export to OCEL 2.0 JSON format."""
+        """Export to the OCEL 2.0 JSON layout (see ``to_ocel2``)."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        ocel_data = {
-            "ocel:global-log": {
-                "ocel:version": "2.0",
-                "ocel:ordering": "timestamp",
-                "ocel:object-types": sorted(self.object_types),
-                "ocel:attribute-names": self._collect_attribute_names(),
-                "ocel:events": len(self.events),
-            },
-            "ocel:events": [e.to_ocel_dict() for e in self.events],
-            "ocel:objects": self._collect_objects(),
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.to_ocel2(), f, indent=2, ensure_ascii=False)
+
+    def to_ocel2(self) -> dict[str, Any]:
+        """The log in the OCEL 2.0 JSON layout: object types, event types, objects, events.
+
+        Events relate their objects with a qualifier naming the object's role (``QUALIFIERS``);
+        a run object relates its session, repository and model. Attributes are typed scalars:
+        nested values become JSON text, empty ones are left out. Object ids stay as logged; an
+        id that a second object type also uses becomes ``type:id`` for that type.
+        """
+        keys = self._ocel2_ids()
+        attribute_types = _attribute_types(self.events)
+
+        run_context: dict[str, list[dict[str, str]]] = {}
+        for event in self.events:
+            runs = [run for run in event.objects.get("BenchmarkRun", []) if run]
+            if len(runs) == 1:
+                context = run_context.setdefault(keys["BenchmarkRun", runs[0]], [])
+                for relationship in _relationships(event, keys, _RUN_CONTEXT):
+                    if relationship not in context:
+                        context.append(relationship)
+
+        events = [
+            {
+                "id": event.event_id,
+                "type": event.activity,
+                "time": _aware(event.timestamp).isoformat(),
+                "attributes": [
+                    {"name": name, "value": _ocel2_value(value, attribute_types[event.activity][name])} for name, value in event.attributes.items() if value is not None
+                ],
+                "relationships": _relationships(event, keys, tuple(event.objects)),
+            }
+            for event in self.events
+        ]
+
+        return {
+            "objectTypes": [{"name": name, "attributes": []} for name in sorted({object_type for object_type, _ in keys})],
+            "eventTypes": [
+                {"name": activity, "attributes": [{"name": name, "type": kind} for name, kind in attribute_types.get(activity, {}).items()]}
+                for activity in sorted({event.activity for event in self.events})
+            ],
+            "objects": [{"id": key, "type": object_type, "attributes": [], "relationships": run_context.get(key, [])} for (object_type, _), key in keys.items()],
+            "events": events,
         }
 
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(ocel_data, f, indent=2, ensure_ascii=False)
+    def _ocel2_ids(self) -> dict[tuple[str, str], str]:
+        """The OCEL 2.0 id of every logged (type, id), in order of first appearance."""
+        owner: dict[str, str] = {}  # id -> the first type that used it
+        keys: dict[tuple[str, str], str] = {}
+        used: set[str] = set()
+        for event in self.events:
+            for object_type, object_ids in event.objects.items():
+                for object_id in object_ids:
+                    if object_id and (object_type, object_id) not in keys:
+                        key = object_id if owner.setdefault(object_id, object_type) == object_type else f"{object_type}:{object_id}"
+                        while key in used:  # an id that already looks like a prefixed one
+                            key = f"{object_type}:{key}"
+                        used.add(key)
+                        keys[object_type, object_id] = key
+        return keys
+
+    def case_events(self) -> list[dict[str, Any]]:
+        """The log flattened to one case per run, ordered by case start, then time.
+
+        Each row has ``case_id`` (the run; a repository's extraction for ``EnsureExtraction``),
+        a readable ``activity`` (``Derive · <step>``, ``LLM · <step> · <call kind>``),
+        ``timestamp`` and ``start_timestamp`` (steps and calls span their own duration; other
+        events are instants), ``resource`` (the model), ``session``, ``repository`` and the
+        event's attributes. Session events (start and end of a benchmark) belong to no run.
+        """
+        rows: list[dict[str, Any]] = []
+        for event in self.events:
+            cases = [run for run in event.objects.get("BenchmarkRun", []) if run]
+            if not cases and event.activity == "EnsureExtraction":
+                cases = [f"{session}:extraction:{repo}" for session in event.objects.get("BenchmarkSession", []) for repo in event.objects.get("Repository", [])]
+            end = _aware(event.timestamp)
+            for case_id in cases:
+                session, repository = _run_context(case_id)
+                rows.append(
+                    {
+                        **event.attributes,
+                        "case_id": case_id,
+                        "activity": _case_activity(event),
+                        "timestamp": end,
+                        "start_timestamp": end - timedelta(seconds=_span_seconds(event)),
+                        "resource": ",".join(event.objects.get("Model", [])),
+                        "session": ",".join(event.objects.get("BenchmarkSession", [])) or session,
+                        "repository": ",".join(event.objects.get("Repository", [])) or repository,
+                    }
+                )
+        case_start: dict[str, datetime] = {}
+        for row in rows:
+            case_start[row["case_id"]] = min(case_start.get(row["case_id"], row["timestamp"]), row["timestamp"])
+        return sorted(rows, key=lambda row: (case_start[row["case_id"]], row["case_id"], row["timestamp"]))
+
+    def export_case_csv(self, path: str | Path) -> None:
+        """Export the case log (``case_events``) as CSV: the fixed columns, then every attribute."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rows = self.case_events()
+        attributes = sorted({name for row in rows for name in row} - set(CASE_COLUMNS))
+
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=[*CASE_COLUMNS, *attributes])
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({name: _csv_value(value) for name, value in row.items()})
+
+    def export_case_xes(self, path: str | Path) -> None:
+        """Export the case log (``case_events``) as XES 1.0: one trace per run, typed attributes."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        root = ET.Element("log", {"xes.version": "1.0", "xes.features": "nested-attributes", "xmlns": XES_NAMESPACE})
+        for name, prefix in (("Concept", "concept"), ("Time", "time"), ("Organizational", "org"), ("Lifecycle", "lifecycle")):
+            ET.SubElement(root, "extension", {"name": name, "prefix": prefix, "uri": f"http://www.xes-standard.org/{prefix}.xesext"})
+        ET.SubElement(root, "classifier", {"name": "Activity", "keys": "concept:name"})
+
+        traces: dict[str, ET.Element] = {}
+        for row in self.case_events():
+            trace = traces.get(row["case_id"])
+            if trace is None:
+                trace = traces[row["case_id"]] = ET.SubElement(root, "trace")
+                _xes_attribute(trace, "concept:name", row["case_id"])
+            event = ET.SubElement(trace, "event")
+            _xes_attribute(event, "concept:name", row["activity"])
+            _xes_attribute(event, "lifecycle:transition", "complete")
+            _xes_attribute(event, "time:timestamp", row["timestamp"])
+            if row["resource"]:
+                _xes_attribute(event, "org:resource", row["resource"])
+            for name, value in row.items():
+                if name not in _XES_MAPPED and value is not None:
+                    _xes_attribute(event, name, value)
+
+        ET.indent(root)
+        ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
 
     def export_jsonl(self, path: str | Path) -> None:
         """Export to line-delimited JSON for streaming."""
@@ -225,23 +341,6 @@ class OCELLog:
         exported_count = len(new_events)
         self._last_exported_index = len(self.events)
         return exported_count
-
-    def _collect_attribute_names(self) -> list[str]:
-        """Collect all attribute names used across events."""
-        attrs: set[str] = set()
-        for event in self.events:
-            attrs.update(event.attributes.keys())
-        return sorted(attrs)
-
-    def _collect_objects(self) -> dict[str, dict[str, Any]]:
-        """Collect all objects with their types for OCEL 2.0 format."""
-        objects: dict[str, dict[str, Any]] = {}
-        for event in self.events:
-            for obj_type, obj_ids in event.objects.items():
-                for obj_id in obj_ids:
-                    if obj_id not in objects:
-                        objects[obj_id] = {"ocel:type": obj_type}
-        return objects
 
     # =========================================================================
     # QUERY METHODS
@@ -407,12 +506,32 @@ class OCELLog:
 
     @classmethod
     def from_json(cls, path: str | Path) -> OCELLog:
-        """Load OCEL log from JSON file."""
+        """Load an OCEL log from JSON: the OCEL 2.0 layout, or the OCEL 1.0-style layout of older sessions.
+
+        From OCEL 2.0, nested attributes come back as the JSON text they were written as.
+        """
         path = Path(path)
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
         log = cls()
+        if "eventTypes" in data or "objectTypes" in data:
+            type_of = {obj["id"]: obj["type"] for obj in data.get("objects", [])}
+            for event_data in data.get("events", []):
+                objects: dict[str, list[str]] = {}
+                for relationship in event_data.get("relationships", []):
+                    objects.setdefault(type_of.get(relationship["objectId"], "Object"), []).append(relationship["objectId"])
+                log.add_event(
+                    OCELEvent(
+                        event_id=event_data["id"],
+                        activity=event_data["type"],
+                        timestamp=datetime.fromisoformat(event_data["time"]),
+                        objects=objects,
+                        attributes={attribute["name"]: attribute["value"] for attribute in event_data.get("attributes", [])},
+                    )
+                )
+            return log
+
         for event_data in data.get("ocel:events", []):
             event = OCELEvent(
                 event_id=event_data.get("ocel:eid", str(uuid.uuid4())[:12]),
@@ -448,6 +567,146 @@ class OCELLog:
                 log.add_event(event)
 
         return log
+
+
+# =============================================================================
+# OCEL 2.0 AND CASE LOG HELPERS
+# =============================================================================
+
+# The role of an object in an event (the OCEL 2.0 qualifier), by object type
+QUALIFIERS = {
+    "BenchmarkSession": "session",
+    "BenchmarkRun": "run",
+    "Repository": "repository",
+    "Model": "model",
+    "Config": "step",
+    "GraphNode": "node",
+    "Edge": "edge",
+    "Element": "element",
+    "Relationship": "relationship",
+}
+
+# The objects a run object relates to (OCEL 2.0 object-to-object relationships)
+_RUN_CONTEXT = ("BenchmarkSession", "Repository", "Model")
+
+# The case log's fixed columns, before the event attributes
+CASE_COLUMNS = ("case_id", "activity", "timestamp", "start_timestamp", "resource", "session", "repository")
+
+XES_NAMESPACE = "http://www.xes-standard.org/"
+
+# Case log columns written as standard XES keys (or as the trace name) instead of plain attributes
+_XES_MAPPED = frozenset({"case_id", "activity", "timestamp", "resource"})
+
+# Readable case log activities: lifecycle events by name, steps and calls with their step
+_CASE_ACTIVITIES = {"StartRun": "Start run", "CompleteRun": "Complete run", "DeriveElements": "Derive elements", "EnsureExtraction": "Ensure extraction"}
+_STEP_ACTIVITIES = {"ExtractConfig": "Extract", "DeriveConfig": "Derive"}
+
+# Events whose duration is their own work (lifecycle events such as a completed run are instants)
+_SPANNED = frozenset({"ExtractConfig", "DeriveConfig", "LLMQuery", "EnsureExtraction"})
+
+
+def _relationships(event: OCELEvent, keys: dict[tuple[str, str], str], object_types: tuple[str, ...]) -> list[dict[str, str]]:
+    """The event's objects of the given types as OCEL 2.0 relationships (object id and role), without repeats."""
+    relationships: list[dict[str, str]] = []
+    for object_type in object_types:
+        for object_id in event.objects.get(object_type, []):
+            relationship = {"objectId": keys[object_type, object_id], "qualifier": QUALIFIERS.get(object_type, object_type.lower())} if object_id else None
+            if relationship and relationship not in relationships:
+                relationships.append(relationship)
+    return relationships
+
+
+def _aware(timestamp: datetime) -> datetime:
+    """The timestamp with its UTC offset (events are logged in local time)."""
+    return timestamp if timestamp.tzinfo else timestamp.astimezone()
+
+
+def _ocel2_type(value: Any) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "float"
+    return "string"
+
+
+def _attribute_types(events: list[OCELEvent]) -> dict[str, dict[str, str]]:
+    """Per activity, the OCEL 2.0 type of each attribute (integers with floats are float, other mixes string)."""
+    seen: dict[str, dict[str, set[str]]] = {}
+    for event in events:
+        for name, value in event.attributes.items():
+            if value is not None:
+                seen.setdefault(event.activity, {}).setdefault(name, set()).add(_ocel2_type(value))
+    return {
+        activity: {name: next(iter(kinds)) if len(kinds) == 1 else "float" if kinds == {"integer", "float"} else "string" for name, kinds in attributes.items()}
+        for activity, attributes in seen.items()
+    }
+
+
+def _ocel2_value(value: Any, kind: str) -> Any:
+    if kind == "float":
+        return float(value)
+    if kind == "string" and not isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return value
+
+
+def _run_context(case_id: str) -> tuple[str, str]:
+    """Session and repository named by a run id (``session:repo:model:i``, ``session:extraction:repo``)."""
+    parts = case_id.split(":")
+    if len(parts) == 3 and parts[1] == "extraction":
+        return parts[0], parts[2]
+    return parts[0], parts[1] if len(parts) >= 4 else ""
+
+
+def _case_activity(event: OCELEvent) -> str:
+    step = event.attributes.get("config_id") or next(iter(event.objects.get("Config", [])), None)
+    if event.activity in _STEP_ACTIVITIES:
+        return " · ".join(part for part in (_STEP_ACTIVITIES[event.activity], step) if part)
+    if event.activity == "LLMQuery":
+        return " · ".join(str(part) for part in ("LLM", step, event.attributes.get("call_kind")) if part)
+    return _CASE_ACTIVITIES.get(event.activity, event.activity)
+
+
+def _number(value: Any) -> float:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0.0
+
+
+def _span_seconds(event: OCELEvent) -> float:
+    """How long the event's own work took: its duration, or an LLM call's latency and rate-limit wait."""
+    if event.activity not in _SPANNED:
+        return 0.0
+    attributes = event.attributes
+    if "duration_seconds" in attributes:
+        return _number(attributes["duration_seconds"])
+    return (_number(attributes.get("latency_ms")) + _number(attributes.get("wait_ms"))) / 1000
+
+
+def _csv_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, dict | list):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return "" if value is None else value
+
+
+def _xes_attribute(parent: ET.Element, key: str, value: Any) -> None:
+    if isinstance(value, bool):
+        tag, text = "boolean", "true" if value else "false"
+    elif isinstance(value, int):
+        tag, text = "int", str(value)
+    elif isinstance(value, float):
+        tag, text = "float", repr(value)
+    elif isinstance(value, datetime):
+        tag, text = "date", value.isoformat()
+    elif isinstance(value, dict | list):
+        tag, text = "string", json.dumps(value, ensure_ascii=False, default=str)
+    else:
+        tag, text = "string", str(value)
+    ET.SubElement(parent, tag, {"key": key, "value": text})
 
 
 # =============================================================================
@@ -501,13 +760,15 @@ def parse_run_id(run_id: str) -> dict[str, str | int]:
 def load_benchmark_ocel(benchmarks_dir: Path | str, session_id: str) -> OCELLog:
     """Load a benchmark session's event log.
 
-    Looks for ``ocel/benchmark_events.json(l)`` (current layout), then the legacy
-    ``events.ocel.json`` / ``events.jsonl`` in the session root. Empty log if none exist.
+    Looks for ``ocel/benchmark_events.jsonl`` (the lossless stream), then the session's
+    ``ocel/benchmark_events.json`` (OCEL 2.0, or the OCEL 1.0-style layout of older
+    sessions), then the legacy ``events.ocel.json`` / ``events.jsonl`` in the session root.
+    Empty log if none exist.
     """
     session_dir = Path(benchmarks_dir) / session_id
     for path in (
-        session_dir / "ocel" / "benchmark_events.json",
         session_dir / "ocel" / "benchmark_events.jsonl",
+        session_dir / "ocel" / "benchmark_events.json",
         session_dir / "events.ocel.json",
         session_dir / "events.jsonl",
     ):

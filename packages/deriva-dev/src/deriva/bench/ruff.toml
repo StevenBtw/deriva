@@ -1,0 +1,10 @@
+# Benchmarking (deriva-dev): services-level code, one CLI command module and one studio router.
+# Only the two entry modules may reach into the CLI and the studio.
+extend = "../../../../../pyproject.toml"
+
+[lint.flake8-tidy-imports.banned-api]
+"deriva.cli" = { msg = "Architecture violation: only deriva/bench/cli.py (the benchmark command) imports the CLI" }
+"deriva.studio" = { msg = "Architecture violation: only deriva/bench/router.py (the benchmark API) imports the studio" }
+
+# No file-wide exemption: each authorized import carries its own `# noqa: TID251`, so cli.py cannot
+# reach into the studio and router.py cannot reach into the CLI without a diagnostic

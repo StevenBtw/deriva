@@ -47,7 +47,7 @@ class TestGetDefaultRateLimit:
         assert get_default_rate_limit("anthropic") == 60
         assert get_default_rate_limit("ollama") == 0
         assert get_default_rate_limit("lmstudio") == 0
-        assert get_default_rate_limit("mistral") == 24
+        assert get_default_rate_limit("mistral") == 60
 
     def test_case_insensitive(self):
         """Should be case insensitive."""

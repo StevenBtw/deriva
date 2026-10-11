@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import spacy
 
 from .language import STOP_WORDS
+from .models import ensure_spacy
 from .settings import Settings
 
 PIPELINES = {"en": "en_core_web_sm", "de": "de_core_news_sm", "fr": "fr_core_news_sm"}
@@ -30,9 +32,9 @@ class Occurrence:
     sentence: tuple[int, int]
 
 
-def load_pipelines() -> dict[str, Any]:
-    """The pinned spaCy pipeline per language."""
-    return {lang: spacy.load(name) for lang, name in PIPELINES.items()}
+def load_pipelines(models_dir: Path, download: bool = True) -> dict[str, Any]:
+    """The pinned spaCy pipeline per language, loaded from the models directory (downloaded on first use)."""
+    return {lang: spacy.load(path) for lang, path in ensure_spacy(models_dir, download).items()}
 
 
 def _valid(token: Any) -> bool:

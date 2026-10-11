@@ -1,0 +1,611 @@
+"""
+Benchmark CLI commands.
+
+Provides commands for multi-model benchmarking.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Annotated
+
+import typer
+
+from deriva.bench.session import BenchmarkSession
+from deriva.cli.progress import create_benchmark_progress_reporter  # noqa: TID251 - the benchmark command is the one module that may use the CLI
+from deriva.common.paths import workspace
+from deriva.services.session import PipelineSession
+
+if TYPE_CHECKING:
+    pass
+
+app = typer.Typer(name="benchmark", help="Multi-model benchmarking")
+
+
+@contextmanager
+def _benchmarks() -> Iterator[BenchmarkSession]:
+    """A connected PipelineSession with the benchmark operations."""
+    with PipelineSession() as session:
+        yield BenchmarkSession(session)
+
+
+def _in_every_run(stable: list[str], unstable: dict[str, int]) -> str:
+    """Objects in every run of all logged: 'stable/total (pct)', or '-' when none were logged."""
+    total = len(stable) + len(unstable)
+    return f"{len(stable)}/{total} ({len(stable) / total:.1%})" if total else "-"
+
+
+@app.command("run")
+def benchmark_run(
+    repos: Annotated[str, typer.Option("--repos", help="Comma-separated list of repository names")],
+    models: Annotated[str, typer.Option("--models", help="Comma-separated list of model config names")],
+    runs: Annotated[int, typer.Option("-n", "--runs", help="Number of runs per combination", min=1)] = 3,
+    stages: Annotated[str | None, typer.Option("--stages", help="Comma-separated list of stages")] = None,
+    description: Annotated[str, typer.Option("-d", "--description", help="Session description")] = "",
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
+    quiet: Annotated[bool, typer.Option("-q", "--quiet", help="Disable progress bar")] = False,
+    no_cache: Annotated[bool, typer.Option("--no-cache", help="Disable LLM response caching")] = False,
+    nocache_configs: Annotated[str | None, typer.Option("--nocache-configs", help="Configs to skip cache for")] = None,
+    no_export_models: Annotated[bool, typer.Option("--no-export-models", help="Disable model export")] = False,
+    no_clear: Annotated[bool, typer.Option("--no-clear", help="Don't clear graph between runs")] = False,
+    bench_hash: Annotated[bool, typer.Option("--bench-hash", help="Per-run cache isolation")] = False,
+    defer_relationships: Annotated[
+        bool,
+        typer.Option(
+            "--defer-relationships/--no-defer-relationships",
+            help="Two-phase derivation: elements first, then the relationship pass (default). "
+            "Without it, relationships come per batch and the structural tiers (containment, membership, configuration, dependency, same name) do not run",
+        ),
+    ] = True,
+    per_repo: Annotated[bool, typer.Option("--per-repo", help="Run each repo separately")] = False,
+    no_cache_extraction: Annotated[
+        bool,
+        typer.Option(
+            "--no-cache-extraction",
+            help="Force full re-extraction (ignore fingerprint cache; LLM answers still come from the LLM cache unless --no-cache)",
+        ),
+    ] = False,
+    no_cache_extraction_llm: Annotated[
+        bool,
+        typer.Option(
+            "--no-cache-extraction-llm",
+            help="Re-run LLM extraction steps only (keep structural/AST cached; LLM answers still come from the LLM cache unless --no-cache)",
+        ),
+    ] = False,
+    only_extraction_step: Annotated[
+        str | None,
+        typer.Option(
+            "--only-extraction-step",
+            help="Only run this extraction step (disables all others)",
+        ),
+    ] = None,
+    only_derivation_step: Annotated[
+        str | None,
+        typer.Option(
+            "--only-derivation-step",
+            help="Only run this derivation step (disables all others)",
+        ),
+    ] = None,
+) -> None:
+    """Run benchmark matrix."""
+    repos_list = [r.strip() for r in repos.split(",")]
+    models_list = [m.strip() for m in models.split(",")]
+    stages_list = [s.strip() for s in stages.split(",")] if stages else None
+    nocache_configs_list = [c.strip() for c in nocache_configs.split(",")] if nocache_configs else None
+
+    use_cache = not no_cache
+    export_models = not no_export_models
+    clear_between_runs = not no_clear
+
+    # Calculate total runs based on mode
+    if per_repo:
+        total_runs = len(repos_list) * len(models_list) * runs
+    else:
+        total_runs = len(models_list) * runs
+
+    typer.echo(f"\n{'=' * 60}")
+    typer.echo("DERIVA - Multi-Model Benchmark")
+    typer.echo(f"{'=' * 60}")
+    typer.echo(f"Repositories: {repos_list}")
+    typer.echo(f"Models: {models_list}")
+    typer.echo(f"Runs per combination: {runs}")
+    typer.echo(f"Mode: {'per-repo' if per_repo else 'combined'}")
+    typer.echo(f"Total runs: {total_runs}")
+    if stages_list:
+        typer.echo(f"Stages: {stages_list}")
+    typer.echo(f"Cache: {'enabled' if use_cache else 'disabled'}")
+    typer.echo(f"Export models: {'enabled' if export_models else 'disabled'}")
+    typer.echo(f"Clear between runs: {'yes' if clear_between_runs else 'no'}")
+    if bench_hash:
+        typer.echo("Bench hash: enabled (per-run cache isolation)")
+    if defer_relationships:
+        typer.echo("Defer relationships: enabled (two-phase derivation)")
+    if nocache_configs_list:
+        typer.echo(f"No-cache configs: {nocache_configs_list}")
+    if no_cache_extraction:
+        typer.echo("Extraction cache: disabled (full re-extraction)")
+    elif no_cache_extraction_llm:
+        typer.echo("Extraction cache: structural/AST only (LLM steps re-run)")
+    typer.echo(f"{'=' * 60}\n")
+
+    with _benchmarks() as session:
+        typer.echo("Connected to grafeo")
+
+        # Handle --only-extraction-step and --only-derivation-step
+        if only_extraction_step:
+            typer.echo(f"Enabling only extraction step: {only_extraction_step}")
+            extraction_configs = session.get_extraction_configs()
+            if only_extraction_step not in {cfg.get("node_type", cfg.get("name", "")) for cfg in extraction_configs}:
+                typer.echo(f"Error: no extraction step named {only_extraction_step!r}", err=True)
+                raise typer.Exit(1)
+            for cfg in extraction_configs:
+                name = cfg.get("node_type", cfg.get("name", ""))
+                if name == only_extraction_step:
+                    session.enable_step("extraction", name)
+                else:
+                    session.disable_step("extraction", name)
+
+        if only_derivation_step:
+            typer.echo(f"Enabling only derivation step: {only_derivation_step}")
+            derivation_configs = session.get_derivation_configs()
+            if only_derivation_step not in {cfg.get("step_name", cfg.get("name", "")) for cfg in derivation_configs}:
+                typer.echo(f"Error: no derivation step named {only_derivation_step!r}", err=True)
+                raise typer.Exit(1)
+            for cfg in derivation_configs:
+                name = cfg.get("step_name", cfg.get("name", ""))
+                if name == only_derivation_step:
+                    session.enable_step("derivation", name)
+                else:
+                    session.disable_step("derivation", name)
+
+        progress_reporter = create_benchmark_progress_reporter(quiet=quiet or verbose)
+
+        with progress_reporter:
+            result = session.run_benchmark(
+                repositories=repos_list,
+                models=models_list,
+                runs=runs,
+                stages=stages_list,
+                description=description,
+                verbose=verbose,
+                use_cache=use_cache,
+                nocache_configs=nocache_configs_list,
+                progress=progress_reporter,
+                export_models=export_models,
+                clear_between_runs=clear_between_runs,
+                bench_hash=bench_hash,
+                defer_relationships=defer_relationships,
+                per_repo=per_repo,
+                no_cache_extraction=no_cache_extraction,
+                no_cache_extraction_llm=no_cache_extraction_llm,
+            )
+
+        typer.echo(f"\n{'=' * 60}")
+        typer.echo("BENCHMARK COMPLETE")
+        typer.echo(f"{'=' * 60}")
+        typer.echo(f"Session ID: {result.session_id}")
+        typer.echo(f"Runs completed: {result.runs_completed}")
+        typer.echo(f"Runs failed: {result.runs_failed}")
+        typer.echo(f"Duration: {result.duration_seconds:.1f}s")
+        typer.echo(f"OCEL log: {result.ocel_path}")
+        if export_models:
+            typer.echo(f"Model files: {workspace() / 'benchmarks' / result.session_id / 'models'}")
+
+        if result.errors:
+            typer.echo(f"\nErrors ({len(result.errors)}):")
+            for err in result.errors[:5]:
+                typer.echo(f"  - {err}")
+            if len(result.errors) > 5:
+                typer.echo(f"  ... and {len(result.errors) - 5} more")
+
+        typer.echo("\nTo analyze results:")
+        typer.echo(f"  deriva benchmark analyze {result.session_id}")
+
+        if not result.success:
+            raise typer.Exit(1)
+
+
+@app.command("step")
+def benchmark_step(
+    step: Annotated[
+        str,
+        typer.Argument(help="Step to repeat: an extraction or derivation step (for example BusinessConcept, DataObject, ConsolidatedRelationships), or prep for the prep phase"),
+    ],
+    repos: Annotated[str, typer.Option("--repos", help="Comma-separated list of repository names")],
+    model: Annotated[str, typer.Option("--model", help="Model config name")],
+    runs: Annotated[int, typer.Option("-n", "--runs", help="Runs per repository", min=1)] = 3,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
+) -> None:
+    """Repeat one step on a fixed input per repository and compare its outputs.
+
+    The step's input (every earlier step) is built once from the LLM cache. Each run
+    starts from a copy of it and calls the LLM for the step without the cache.
+    """
+    repos_list = [r.strip() for r in repos.split(",")]
+    with _benchmarks() as session:
+        result = session.run_step_benchmark(step, repositories=repos_list, model=model, runs=runs, verbose=verbose)
+
+    typer.echo(f"\n{'=' * 60}")
+    typer.echo(f"STEP BENCHMARK: {result.step}")
+    typer.echo(f"{'=' * 60}")
+    typer.echo(f"{'Repository':30} {'Presence':>9} {'Exact':>8}  Objects per run  Live LLM calls per run")
+    for repo, consistency in result.repositories.items():
+        counts = "/".join(str(n) for n in consistency.counts)
+        calls = "/".join(str(n) for n in result.llm_calls.get(repo, []))
+        typer.echo(f"{repo:30} {consistency.presence_score:9.1%} {consistency.exact_score:8.1%}  {counts:15}  {calls}")
+        for group, scores in consistency.groups.items():
+            typer.echo(f"  {group:28} {scores.presence_score:9.1%} {scores.exact_score:8.1%}  {'/'.join(str(n) for n in scores.counts)}")
+        if consistency.property_differences:
+            typer.echo("  differing properties: " + ", ".join(f"{name} {n}" for name, n in consistency.property_differences.items()))
+        for stability in result.answer_stability.get(repo, []):
+            if stability.step == result.step:
+                typer.echo(f"  answer stability: {stability.identical}/{stability.prompts} ({stability.score:.1%})")
+        if repo in result.decision_stability:
+            decided = result.decision_stability[repo]
+            typer.echo(f"  decision stability: {decided.stable}/{decided.items} ({decided.score:.1%})")
+        if repo in result.output_stability:
+            effect = result.output_stability[repo]
+            typer.echo(f"  output stability: {effect.stable}/{effect.items} ({effect.score:.1%})")
+    presence, exact = result.average("presence_score"), result.average("exact_score")
+    if presence is not None and exact is not None:
+        typer.echo(f"{'Average':30} {presence:9.1%} {exact:8.1%}")
+    if result.unscored:
+        typer.echo(f"Reported, not scored in exact: {', '.join(result.unscored)}")
+
+    typer.echo(f"\nSession ID: {result.session_id}")
+    typer.echo(f"Duration: {result.duration_seconds:.1f}s")
+    typer.echo(f"Results: {workspace() / 'benchmarks' / result.session_id / 'step_results.json'}")
+    if result.errors:
+        typer.echo(f"\nErrors ({len(result.errors)}):")
+        for err in result.errors:
+            typer.echo(f"  - {err}")
+        raise typer.Exit(1)
+
+
+@app.command("list")
+def benchmark_list(
+    limit: Annotated[int, typer.Option("-l", "--limit", help="Number of sessions to show")] = 10,
+) -> None:
+    """List benchmark sessions."""
+    with _benchmarks() as session:
+        sessions = session.list_benchmarks(limit=limit)
+
+        if not sessions:
+            typer.echo("No benchmark sessions found.")
+            return
+
+        typer.echo(f"\n{'=' * 60}")
+        typer.echo("BENCHMARK SESSIONS")
+        typer.echo(f"{'=' * 60}")
+
+        for s in sessions:
+            status_icon = "" if s["status"] == "completed" else "" if s["status"] == "failed" else ""
+            typer.echo(f"\n{status_icon} {s['session_id']}")
+            typer.echo(f"    Status: {s['status']}")
+            typer.echo(f"    Started: {s['started_at']}")
+            if s.get("description"):
+                typer.echo(f"    Description: {s['description']}")
+
+        typer.echo("")
+
+
+@app.command("analyze")
+def benchmark_analyze(
+    session_id: Annotated[str, typer.Argument(help="Benchmark session ID to analyze")],
+    output: Annotated[str | None, typer.Option("-o", "--output", help="Output file for analysis")] = None,
+    format: Annotated[str, typer.Option("-f", "--format", help="Output format")] = "json",
+) -> None:
+    """Analyze benchmark results."""
+    if format not in ("json", "markdown"):
+        typer.echo("Error: format must be 'json' or 'markdown'", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"\n{'=' * 60}")
+    typer.echo(f"ANALYZING BENCHMARK: {session_id}")
+    typer.echo(f"{'=' * 60}\n")
+
+    with _benchmarks() as session:
+        try:
+            analyzer = session.analyze_benchmark(session_id)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+
+        # Compute and display summary
+        summary = analyzer.compute_full_analysis()
+
+        # Consistency compares runs of one repository and model; intra-model metrics exist only for pairs with 2 runs or more
+        if not summary.intra_model:
+            typer.echo("CONSISTENCY")
+            typer.echo("-" * 75)
+            typer.echo("  Not measured: consistency needs at least 2 runs of a repository with a model (run with -n 2 or more).")
+            typer.echo("")
+        else:
+            typer.echo("INTRA-MODEL CONSISTENCY (objects created in every run of a repository with a model)")
+            typer.echo("-" * 100)
+            typer.echo(f"  {'Repository':<28} {'Model':<22} {'Runs':>4}  {'Elements':<16} {'Relationships':<16} {'Edges':<16}")
+            typer.echo("-" * 100)
+            for m in summary.intra_model:
+                elements = _in_every_run(m.stable_elements, m.unstable_elements)
+                relationships = _in_every_run(m.stable_relationships, m.unstable_relationships)
+                edges = _in_every_run(m.stable_edges, m.unstable_edges)
+                typer.echo(f"  {m.repository[:28]:<28} {m.model[:22]:<22} {m.runs:>4}  {elements:<16} {relationships:<16} {edges:<16}")
+            typer.echo("  -: none logged.")
+            if all(m.edge_consistency is None for m in summary.intra_model):
+                typer.echo("  Edges are not compared: the runs of a session share one extraction per repository.")
+            typer.echo("")
+
+        # Inter-model consistency
+        if summary.inter_model:
+            typer.echo("INTER-MODEL CONSISTENCY (objects every model created, of all created)")
+            typer.echo("-" * 70)
+            for im in summary.inter_model:
+                typer.echo(f"  {im.repository}:")
+                for label, by_model, overlap in (
+                    ("Elements", im.elements_by_model, im.overlap),
+                    ("Relationships", im.relationships_by_model, im.relationship_overlap),
+                    ("Edges", im.edges_by_model, im.edge_overlap),
+                ):
+                    total = len(set().union(*(set(objects) for objects in by_model.values())))
+                    if total:
+                        typer.echo(f"    {label}: {len(overlap)}/{total} ({len(overlap) / total:.0%})")
+            typer.echo("")
+
+        # Hotspots
+        if summary.model_quality:
+            typer.echo("MODEL QUALITY (structure of each exported model)")
+            header = (
+                f"{'Repository':<24} {'Model':<18} {'Run':>3} {'Elem':>5} {'Rel':>5} {'Per el':>6} {'Orphan%':>7} {'Comp.viol':>9} {'Double':>6} {'Dupl.el':>7} {'Ref P / R':>11}"
+            )
+            typer.echo("-" * len(header))
+            typer.echo(header)
+            typer.echo("-" * len(header))
+            for q in summary.model_quality:
+                ref = q.get("reference")
+                ref_text = f"{ref['precision']:.2f} / {ref['recall']:.2f}" if ref else "-"
+                typer.echo(
+                    f"{q['repository'][:24]:<24} {q['model'][:18]:<18} {q['run']:>3} {q['elements']:>5} {q['relationships']:>5} "
+                    f"{q['relationships_per_element']:>6.2f} {q['orphan_share']:>7.0%} {q['composition_violations']:>9} "
+                    f"{q['duplicate_pairs']:>6} {q['duplicate_elements']:>7} {ref_text:>11}"
+                )
+                chains = ", ".join(f"{name} {linked}/{total}" for name, (linked, total) in q.get("chains", {}).items())
+                if chains:
+                    typer.echo(f"    chains: {chains}")
+            typer.echo("")
+
+        if summary.localization.hotspots:
+            typer.echo("INCONSISTENCY HOTSPOTS")
+            typer.echo("-" * 50)
+            for h in summary.localization.hotspots:
+                typer.echo(f"  [{h['severity'].upper()}] {h['type']}: {h['name']} ({h['consistency']:.1f}%)")
+            typer.echo("")
+
+        # Export
+        output_path = analyzer.export_summary(output, format=format)
+        typer.echo(f"Analysis exported to: {output_path}")
+
+        # Save to DB
+        analyzer.save_metrics_to_db()
+        typer.echo("Metrics saved to database.")
+
+
+@app.command("export")
+def benchmark_export(
+    session_id: Annotated[str, typer.Argument(help="Benchmark session ID")],
+    output: Annotated[str, typer.Option("-o", "--output", help="Zip file to write")],
+) -> None:
+    """Export a benchmark session as one zip: logs, LLM calls, models, config texts, environment, sha256 manifest."""
+    with _benchmarks() as session:
+        try:
+            manifest = session.export_benchmark(session_id, output)
+        except (FileNotFoundError, ValueError) as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+
+    typer.echo(f"Exported {manifest['session_id']}: {len(manifest['files'])} files with sha256 manifest -> {output}")
+
+
+@app.command("mark-failed")
+def benchmark_mark_failed(
+    session_id: Annotated[str, typer.Argument(help="Benchmark session ID")],
+) -> None:
+    """End a session whose process stopped without finishing (still 'running') as failed; its files stay."""
+    with _benchmarks() as session:
+        try:
+            runs = session.mark_benchmark_failed(session_id)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+    typer.echo(f"Marked {session_id} failed ({runs} unfinished run{'s' if runs != 1 else ''} with it).")
+
+
+@app.command("ocel")
+def benchmark_ocel(
+    sessions: Annotated[str, typer.Argument(help="Comma-separated benchmark session IDs")],
+    output: Annotated[str, typer.Option("-o", "--output", help="Folder to write ocel.json, cases.csv and cases.xes to")],
+) -> None:
+    """Export the event logs of sessions for process mining: OCEL 2.0 and a flat case log (one case per run, CSV and XES)."""
+    session_ids = [s.strip() for s in sessions.split(",") if s.strip()]
+    with _benchmarks() as session:
+        try:
+            paths = session.export_process_logs(session_ids, output)
+        except (FileNotFoundError, ValueError) as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+
+    typer.echo(f"Exported the event logs of {len(session_ids)} session{'s' if len(session_ids) != 1 else ''}:")
+    for path in paths:
+        typer.echo(f"  {path}")
+
+
+@app.command("models")
+def benchmark_models() -> None:
+    """List available model configurations."""
+    with _benchmarks() as session:
+        models_dict = session.list_benchmark_models()
+
+    if not models_dict:
+        typer.echo("\nNo benchmark model configurations found.")
+        typer.echo("\nConfigure models in .env with pattern:")
+        typer.echo("  LLM_{NAME}_PROVIDER=azure|openai|anthropic|mistral|ollama|lmstudio")
+        typer.echo("  LLM_{NAME}_MODEL=model-id")
+        typer.echo("  LLM_{NAME}_URL=api-url (optional)")
+        typer.echo("  LLM_{NAME}_KEY=api-key (optional)")
+        return
+
+    typer.echo(f"\n{'=' * 60}")
+    typer.echo("AVAILABLE BENCHMARK MODELS")
+    typer.echo(f"{'=' * 60}\n")
+
+    for name, cfg in sorted(models_dict.items()):
+        typer.echo(f"  {name}")
+        typer.echo(f"    Provider: {cfg.provider}")
+        typer.echo(f"    Model: {cfg.model}")
+        if cfg.api_url:
+            typer.echo(f"    URL: {cfg.api_url[:50]}...")
+        typer.echo("")
+
+
+@app.command("deviations")
+def benchmark_deviations(
+    session_id: Annotated[str, typer.Argument(help="Benchmark session ID to analyze")],
+    output: Annotated[str | None, typer.Option("-o", "--output", help="Output file")] = None,
+    sort_by: Annotated[str, typer.Option("-s", "--sort-by", help="Sort metric")] = "deviation_count",
+) -> None:
+    """Analyze config deviations for a benchmark session."""
+    if sort_by not in ("deviation_count", "consistency_score", "total_objects"):
+        typer.echo(
+            "Error: sort-by must be one of: deviation_count, consistency_score, total_objects",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.echo(f"\n{'=' * 60}")
+    typer.echo(f"CONFIG DEVIATION ANALYSIS: {session_id}")
+    typer.echo(f"{'=' * 60}\n")
+
+    with _benchmarks() as session:
+        try:
+            analyzer = session.analyze_config_deviations(session_id)
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+
+        report = analyzer.analyze()
+
+        typer.echo(f"Total runs analyzed: {report.total_runs}")
+        typer.echo(f"Total deviations: {report.total_deviations}")
+        typer.echo(f"Overall consistency: {report.overall_consistency:.1%}\n")
+
+        if report.config_deviations:
+            typer.echo("CONFIG DEVIATIONS (sorted by deviation count)")
+            typer.echo("-" * 60)
+
+            for cd in report.config_deviations:
+                status = "LOW" if cd.consistency_score >= 0.8 else "MEDIUM" if cd.consistency_score >= 0.5 else "HIGH"
+                typer.echo(f"  [{status}] {cd.config_type}: {cd.config_id}")
+                typer.echo(f"        Consistency: {cd.consistency_score:.1%}")
+                typer.echo(f"        Deviations: {cd.deviation_count}/{cd.total_objects}")
+                if cd.deviating_objects[:3]:
+                    typer.echo(f"        Sample: {', '.join(cd.deviating_objects[:3])}")
+                typer.echo("")
+
+            from deriva.bench.config_deviation import generate_recommendations
+
+            recommendations = generate_recommendations(report.config_deviations)
+            if recommendations:
+                typer.echo("RECOMMENDATIONS")
+                typer.echo("-" * 60)
+                for rec in recommendations:
+                    typer.echo(f"  - {rec}")
+                typer.echo("")
+
+        if sort_by != "deviation_count":
+            output_path = analyzer.export_sorted_json(output, sort_by=sort_by)
+        else:
+            output_path = analyzer.export_json(output)
+
+        typer.echo(f"Report exported to: {output_path}")
+
+
+@app.command("comprehensive-analysis")
+def benchmark_comprehensive(
+    session_ids: Annotated[list[str], typer.Argument(help="Benchmark session IDs to analyze")],
+    output: Annotated[str | None, typer.Option("-o", "--output", help="Output directory (default: workspace/analysis in the Deriva home folder)")] = None,
+    format: Annotated[str, typer.Option("-f", "--format", help="Which report path to print: json, markdown or both (every report file is always written)")] = "both",
+    no_semantic: Annotated[bool, typer.Option("--no-semantic", help="Skip semantic matching")] = False,
+) -> None:
+    """Run comprehensive benchmark analysis."""
+    if format not in ("json", "markdown", "both"):
+        typer.echo("Error: format must be 'json', 'markdown', or 'both'", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"\n{'=' * 60}")
+    typer.echo("BENCHMARK ANALYSIS")
+    typer.echo(f"{'=' * 60}\n")
+    typer.echo(f"Sessions: {', '.join(session_ids)}")
+
+    from deriva.bench.analysis import BenchmarkAnalyzer
+
+    with _benchmarks() as session:
+        try:
+            analyzer = BenchmarkAnalyzer(
+                session_ids=list(session_ids),
+                engine=session._engine,
+            )
+        except ValueError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+
+        typer.echo("\nRunning analysis...")
+        report = analyzer.generate_report(include_semantic=not no_semantic)
+
+        typer.echo(f"\nRepositories: {', '.join(report.repositories)}")
+        typer.echo(f"Models: {', '.join(report.models)}")
+        typer.echo("\nOVERALL METRICS")
+        typer.echo("-" * 40)
+        typer.echo(f"  Consistency: {report.overall_consistency:.1%}")
+        typer.echo(f"  Precision:   {report.overall_precision:.1%}")
+        typer.echo(f"  Recall:      {report.overall_recall:.1%}")
+
+        if report.stability_reports:
+            typer.echo("\nPER-REPOSITORY STABILITY")
+            typer.echo("-" * 40)
+            for repo, phases in report.stability_reports.items():
+                if "derivation" in phases:
+                    typer.echo(f"  {repo}: {phases['derivation'].overall_consistency:.1%} derivation consistency")
+
+        if report.semantic_reports:
+            typer.echo("\nSEMANTIC MATCH SUMMARY")
+            typer.echo("-" * 40)
+            for repo, sr in report.semantic_reports.items():
+                typer.echo(f"  {repo}: P={sr.element_precision:.1%} R={sr.element_recall:.1%} F1={sr.element_f1:.2f}")
+
+        if report.cross_repo:
+            if report.cross_repo.best_element_types:
+                typer.echo("\nBEST ELEMENT TYPES (highest consistency)")
+                typer.echo("-" * 40)
+                for t, score in report.cross_repo.best_element_types[:5]:
+                    typer.echo(f"  {t}: {score:.1%}")
+
+            if report.cross_repo.worst_element_types:
+                typer.echo("\nWORST ELEMENT TYPES (lowest consistency)")
+                typer.echo("-" * 40)
+                for t, score in report.cross_repo.worst_element_types[:5]:
+                    typer.echo(f"  {t}: {score:.1%}")
+
+        if report.recommendations:
+            typer.echo("\nRECOMMENDATIONS")
+            typer.echo("-" * 40)
+            for rec in report.recommendations[:10]:
+                typer.echo(f"  - {rec}")
+
+        output = output or str(workspace() / "analysis")
+        typer.echo(f"\nExporting to: {output}")
+        paths = analyzer.export_all(output)
+
+        if format in ("json", "both"):
+            typer.echo(f"  JSON: {paths.get('inter_model_json', 'N/A')}")
+        if format in ("markdown", "both"):
+            typer.echo(f"  Markdown: {paths.get('markdown', 'N/A')}")

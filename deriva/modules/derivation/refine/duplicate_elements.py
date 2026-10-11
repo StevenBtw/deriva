@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from .base import (
     RefineResult,
+    differ_in_a_code,
     normalize_name,
     register_refine_step,
     similarity_ratio,
@@ -30,8 +31,8 @@ from .base import (
 from .normalization import RepoContext, normalize_for_dedup
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,8 @@ class DuplicateElementsStep:
                         norm_b = normalize_name(canon_b, extra_synonyms, use_lemmatization)
                         similarity = similarity_ratio(norm_a, norm_b)
 
-                        if similarity >= fuzzy_threshold:
+                        # Names that differ in a code (an identifier, an acronym) are different things
+                        if similarity >= fuzzy_threshold and not differ_in_a_code(elem_a.name, elem_b.name):
                             tier2_duplicates.append((elem_a, elem_b, similarity))
 
             # Process Tier 1: Auto-merge exact duplicates

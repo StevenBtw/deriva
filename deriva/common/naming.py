@@ -231,7 +231,7 @@ def name_key(name: str) -> str:
 
 def contains_name(text: str, name: str) -> bool:
     """Whether ``name``, in any spelling, is one or more consecutive words of ``text``: its key equals the joined keys
-    of those words ("Big Data Kafka" holds "bigdata", "acme/teastore-persistence" holds "TeaStore"). Part of a word
+    of those words ("Big Farm Kafka" holds "bigfarm", "acme/toolshed-persistence" holds "ToolShed"). Part of a word
     or part of the name does not count."""
     key = name_key(name)
     keys = [name_key(word) for word in _words(text)]

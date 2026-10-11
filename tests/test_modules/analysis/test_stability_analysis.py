@@ -510,10 +510,37 @@ class TestDecisionContent:
 
         assert decision_content('{"items": [{"name": "Alpha", "kind": "entity"}]}') != decision_content('{"items": [{"name": "Alpha", "kind": "process"}]}')
 
+    def test_answers_in_a_markdown_code_block_are_compared_on_their_decisions(self):
+        """Models often wrap the JSON in a ```json fence; the fence must not turn wording into a decision."""
+        from deriva.modules.analysis import decision_content
+
+        fenced = '```json\n{"elements": [{"name": "Alpha", "documentation": "One wording", "confidence": 0.9}]}\n```'
+        other = '```json\n{"elements": [{"name": "Alpha", "documentation": "Another wording", "confidence": 0.7}]}\n```'
+        bare = '{"elements": [{"name": "Alpha"}]}'
+
+        assert decision_content(fenced) == decision_content(other) == decision_content(bare)
+        assert decision_content(fenced) != decision_content(other.replace("Alpha", "Beta"))
+
     def test_text_that_is_not_json_is_compared_as_is(self):
         from deriva.modules.analysis import decision_content
 
         assert decision_content("plain answer") == "plain answer"
+
+    def test_a_fence_inside_free_text_does_not_hide_the_decisions(self):
+        """Valid JSON is parsed as it is: backticks in a documentation field are not a code fence around the answer."""
+        from deriva.modules.analysis import decision_content
+
+        first = '{"name": "Alpha", "documentation": "Run ```make``` first"}'
+        second = '{"name": "Alpha", "documentation": "Other wording"}'
+
+        assert decision_content(first) == decision_content(second)
+
+    def test_prose_around_the_json_is_free_text(self):
+        """The pipeline reads the object out of the prose, so the prose (like documentation) is no part of the decision."""
+        from deriva.modules.analysis import decision_content
+
+        assert decision_content('The name stays as is.\n\n{"name": "Alpha"}') == decision_content('Two words, title case.\n\n{"name": "Alpha"}')
+        assert decision_content('Keep it: {"keep": true}') != decision_content('Keep it: {"keep": false}')
 
 
 class TestStepOutputConsistency:

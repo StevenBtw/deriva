@@ -4,12 +4,14 @@ Pydantic models for LLM Manager responses and exceptions.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
+from pydantic import BaseModel
+
 # Re-export exceptions for backwards compatibility
+from deriva.common import settings
 from deriva.common.exceptions import APIError as APIError
 from deriva.common.exceptions import CacheError as CacheError
 from deriva.common.exceptions import CircuitOpenError as CircuitOpenError
@@ -18,9 +20,8 @@ from deriva.common.exceptions import LLMError as LLMError
 from deriva.common.exceptions import RateLimitError as RateLimitError
 from deriva.common.exceptions import TransientError as TransientError
 from deriva.common.exceptions import ValidationError as ValidationError
-from pydantic import BaseModel
 
-from .model_registry import VALID_PROVIDERS
+from .model_registry import VALID_PROVIDERS, reasoning_settings
 
 __all__ = [
     # Exceptions (re-exported)
@@ -60,6 +61,8 @@ class BenchmarkModelConfig:
         api_url: API endpoint URL (optional, uses provider default if not set)
         api_key: API key (optional, reads from api_key_env if not set)
         api_key_env: Environment variable name for API key
+        sampling: False for models that take no temperature (Claude Haiku 5.5); the call leaves it out
+        reasoning: Reasoning level ("none" turns it off; see ``model_registry.reasoning_settings``)
     """
 
     name: str
@@ -68,18 +71,21 @@ class BenchmarkModelConfig:
     api_url: str | None = None
     api_key: str | None = None
     api_key_env: str | None = None
+    sampling: bool = True
+    reasoning: str | None = None
 
     def __post_init__(self):
-        """Validate provider."""
+        """Validate provider and reasoning level."""
         if self.provider not in VALID_PROVIDERS:
             raise ValueError(f"Invalid provider: {self.provider}. Must be one of {VALID_PROVIDERS}")
+        reasoning_settings(self.provider, self.reasoning)
 
     def get_api_key(self) -> str | None:
         """Get API key from direct value or environment variable."""
         if self.api_key:
             return self.api_key
         if self.api_key_env:
-            return os.getenv(self.api_key_env)
+            return settings.get(self.api_key_env)
         return None
 
     def get_api_url(self) -> str:

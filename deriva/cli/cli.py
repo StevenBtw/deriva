@@ -28,7 +28,6 @@ from typing import Annotated
 
 import typer
 
-from deriva.cli.commands.benchmark import app as benchmark_app
 from deriva.cli.commands.config import app as config_app
 from deriva.cli.commands.repo import app as repo_app
 from deriva.cli.commands.run import (
@@ -37,6 +36,7 @@ from deriva.cli.commands.run import (
     _print_pipeline_result,
 )
 from deriva.cli.progress import create_progress_reporter
+from deriva.services import about, derivation
 from deriva.services.session import PipelineSession
 
 # Create main app
@@ -49,7 +49,19 @@ app = typer.Typer(
 # Add subcommand groups
 app.add_typer(config_app, name="config")
 app.add_typer(repo_app, name="repo")
-app.add_typer(benchmark_app, name="benchmark")
+BENCHMARK_MISSING = "Benchmarking is part of deriva-dev: uv tool install --python 3.14 deriva-dev"
+
+if about.features()["benchmark"]:
+    from deriva.bench.cli import app as benchmark_app
+
+    app.add_typer(benchmark_app, name="benchmark")
+else:
+
+    @app.command("benchmark", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+    def benchmark_missing() -> None:
+        """Multi-model benchmarking (part of deriva-dev)."""
+        typer.echo(BENCHMARK_MISSING, err=True)
+        raise typer.Exit(1)
 
 
 # =============================================================================
@@ -122,17 +134,23 @@ def run_stage(
                 typer.echo(f"Error: {e}", err=True)
                 raise typer.Exit(1) from e
 
-        # Show LLM status
-        llm_info = session.llm_info
-        if llm_info and not no_llm:
-            typer.echo(f"LLM configured: {llm_info['provider']}/{llm_info['model']}")
-        elif no_llm:
+        # Show LLM status (--no-llm does not load the LLM at all)
+        llm_info = None if no_llm else session.llm_info
+        if no_llm:
             typer.echo("LLM disabled (--no-llm)")
+        elif llm_info:
+            typer.echo(f"LLM configured: {llm_info['provider']}/{llm_info['model']}")
         else:
             typer.echo("Warning: LLM not configured. LLM-based steps will be skipped.")
 
         # Create progress reporter
         progress_reporter = create_progress_reporter(quiet=quiet or verbose)
+
+        # A full derivation run (no --phase, no --only-step) starts from an empty model unless the setting is off
+        # --no-llm derives no elements, so it keeps the model
+        full_derivation = stage in ("derivation", "all") and not phase and not only_step and not no_llm
+        if full_derivation and llm_info and derivation.start_full_derivation(session):
+            typer.echo("Model cleared: full derivation runs start from an empty model (setting derivation_clear_model)")
 
         if stage == "extraction":
             phases = [phase] if phase else None
@@ -147,13 +165,20 @@ def run_stage(
             _print_extraction_result(result)
 
         elif stage == "derivation":
-            if not llm_info:
+            if no_llm:
+                # Only the structural phases make no LLM call
+                if phase and derivation.needs_llm([phase]):
+                    typer.echo(f"Error: --no-llm runs only the {', '.join(derivation.STRUCTURAL_PHASES)} phase of derivation; {phase} can call the LLM.", err=True)
+                    raise typer.Exit(1)
+                phases = [phase] if phase else list(derivation.STRUCTURAL_PHASES)
+            elif not llm_info:
                 typer.echo(
                     "Error: Derivation requires LLM. Configure LLM in .env file.",
                     err=True,
                 )
                 raise typer.Exit(1)
-            phases = [phase] if phase else None
+            else:
+                phases = [phase] if phase else None
             with progress_reporter:
                 result = session.run_derivation(
                     verbose=verbose,
@@ -187,6 +212,7 @@ def run_stage(
                     repo_name=repo,
                     verbose=verbose,
                     progress=progress_reporter,
+                    no_llm=no_llm,
                 )
             _print_pipeline_result(result)
 
@@ -210,6 +236,8 @@ def status(
     with PipelineSession(repository=repo) as session:
         typer.echo("\nDERIVA STATUS")
         typer.echo("=" * 60)
+        typer.echo(f"  Home: {about.home()}")
+        typer.echo(f"  Version: {about.version()}")
 
         # Count enabled steps per type
         for step_type in ["extraction", "derivation"]:
@@ -245,7 +273,7 @@ def status(
 
 @app.command("export")
 def export(
-    output: Annotated[str, typer.Option("-o", "--output", help="Output file path")] = "workspace/output/model.xml",
+    output: Annotated[str | None, typer.Option("-o", "--output", help="Output file path (default: workspace/output/model.xml in the Deriva home folder)")] = None,
     name: Annotated[str | None, typer.Option("-n", "--name", help="Model name")] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
     repo: Annotated[

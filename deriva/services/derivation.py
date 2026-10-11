@@ -6,7 +6,7 @@ Orchestrates the derivation pipeline with phases:
 2. generate: LLM-based element and relationship derivation
 3. refine: Post-generation model refinement (dedup, orphans, etc.)
 
-Used by both Marimo (visual) and CLI (headless).
+Used by both the studio (web UI) and the CLI (headless).
 
 Usage:
     from deriva.services import derivation
@@ -39,10 +39,11 @@ import json
 import logging
 import re
 from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from deriva.adapters.archimate import ArchimateManager
-from deriva.adapters.archimate.models import Relationship, validate_relationship_rule
+from deriva.adapters.archimate.models import Element, Relationship, validate_relationship_rule
+from deriva.common.paths import workspace
 from deriva.common.types import PipelineResult, ProgressUpdate
 
 if TYPE_CHECKING:
@@ -58,7 +59,10 @@ from deriva.modules.derivation.base import (
     DependencyRule,
     ElementPrompt,
     GraphFilter,
+    GraphLinkRule,
+    ListedMembersRule,
     MembershipRule,
+    NamedInCodeRule,
     NamingConfig,
     NestedFilter,
     PerCandidateConfig,
@@ -66,8 +70,12 @@ from deriva.modules.derivation.base import (
     RoleConfig,
     SameNameRule,
     UnitFilter,
+    code_names_with_paths,
     derive_consolidated_relationships,
+    element_source_paths,
     get_enrichments_from_graph,
+    graph_link_pairs,
+    source_concept_names,
 )
 from deriva.modules.derivation.business_actor import BusinessActorDerivation
 from deriva.modules.derivation.business_event import BusinessEventDerivation
@@ -76,6 +84,7 @@ from deriva.modules.derivation.business_function import BusinessFunctionDerivati
 # Derivation class imports
 from deriva.modules.derivation.business_object import BusinessObjectDerivation
 from deriva.modules.derivation.business_process import BusinessProcessDerivation
+from deriva.modules.derivation.component_services import ComponentServicesConfig, derive_component_services
 from deriva.modules.derivation.data_object import DataObjectDerivation
 from deriva.modules.derivation.device import DeviceDerivation
 from deriva.modules.derivation.element_base import ElementDerivationBase
@@ -84,6 +93,35 @@ from deriva.modules.derivation.refine import run_refine_step
 from deriva.modules.derivation.system_software import SystemSoftwareDerivation
 from deriva.modules.derivation.technology_service import TechnologyServiceDerivation
 from deriva.services import config
+
+
+class _SettingsAndModel(Protocol):
+    def get_setting(self, key: str) -> str | None: ...
+
+    def clear_model(self) -> dict[str, Any]: ...
+
+
+# The derivation phases that make no LLM call: what a run without an LLM (--no-llm, the studio's
+# structural steps) derives. generate calls the LLM; refine steps may (params llm)
+STRUCTURAL_PHASES = ("prep",)
+
+
+def needs_llm(phases: list[str] | None) -> bool:
+    """Whether derivation over ``phases`` (None: every phase) can call the LLM."""
+    return phases is None or not set(phases) <= set(STRUCTURAL_PHASES)
+
+
+def start_full_derivation(session: _SettingsAndModel) -> bool:
+    """Before a full derivation run (every phase, every enabled step): clear the model unless the setting is off.
+
+    Callers decide what a full run is: the CLI without --phase or --only-step, the studio's run scopes.
+    Benchmarks clear the model themselves before each run. Returns whether the model was cleared.
+    """
+    if not config.clear_model_before_derivation(session.get_setting(config.CLEAR_MODEL_SETTING)):
+        return False
+    session.clear_model()
+    return True
+
 
 # Registry: element_type -> derivation class
 DERIVATION_REGISTRY: dict[str, type[ElementDerivationBase]] = {
@@ -254,6 +292,156 @@ def _same_name_rules(configs: list[Any]) -> list[SameNameRule]:
     return rules
 
 
+def _graph_link_rules(configs: list[Any]) -> list[GraphLinkRule]:
+    """Relationships from links the graph holds between source nodes (``params.graph_links``).
+
+    ``[{"source": "ApplicationComponent", "target": "ApplicationInterface", "relationship": "Composition", "query": "MATCH ... RETURN x.id AS a, y.id AS b"}]``:
+    the component made from node a composes the interface made from node b.
+    """
+    rules: list[GraphLinkRule] = []
+    for item in _structural_items(configs, "graph_links", ("source", "target", "relationship", "query")):
+        _check_rule("graph_links", item, item["source"], item["relationship"], item["target"])
+        rules.append(GraphLinkRule(source=item["source"], target=item["target"], relationship=item["relationship"], query=item["query"]))
+    return rules
+
+
+def _listed_members_rules(configs: list[Any]) -> list[ListedMembersRule]:
+    """Relationships between an element and the members it lists (``params.listed_members``).
+
+    ``[{"holder": "ApplicationService", "list": "sources", "member": "ApplicationComponent", "relationship": "Realization", "by": "source"}]``:
+    the components a service lists realize it; ``"from_holder": true`` turns the direction (a service accesses its objects).
+    """
+    rules: list[ListedMembersRule] = []
+    for item in _structural_items(configs, "listed_members", ("holder", "list", "member", "relationship")):
+        by, from_holder = item.get("by", "identifier"), item.get("from_holder", False)
+        if by not in ("source", "identifier") or not isinstance(from_holder, bool):
+            raise ValueError(f"params.listed_members rule {item!r}: by is 'source' or 'identifier', from_holder true or false")
+        source, target = (item["holder"], item["member"]) if from_holder else (item["member"], item["holder"])
+        _check_rule("listed_members", item, source, item["relationship"], target)
+        rules.append(ListedMembersRule(holder=item["holder"], list_property=item["list"], member=item["member"], relationship=item["relationship"], by=by, from_holder=from_holder))
+    return rules
+
+
+def _named_in_code_rules(configs: list[Any]) -> list[NamedInCodeRule]:
+    """Relationships from the code that names a concept (``params.named_in_code``).
+
+    ``[{"owner": "ApplicationComponent", "named": "BusinessObject", "relationship": "Access", "min_names": 2, "share": 0.5}]``:
+    the component whose directory holds the most type and directory names carrying the object's words accesses it,
+    and so does every component with at least that share of the most.
+    """
+    rules: list[NamedInCodeRule] = []
+    for item in _structural_items(configs, "named_in_code", ("owner", "named", "relationship")):
+        _check_rule("named_in_code", item, item["owner"], item["relationship"], item["named"])
+        min_names = item.get("min_names", 2)
+        if not isinstance(min_names, int) or isinstance(min_names, bool) or min_names < 1:
+            raise ValueError(f"params.named_in_code rule {item!r}: min_names must be a whole number of at least 1")
+        share = item.get("share", 1.0)
+        if not isinstance(share, (int, float)) or isinstance(share, bool) or not 0 < share <= 1:
+            raise ValueError(f"params.named_in_code rule {item!r}: share must be a number above 0 and at most 1")
+        rules.append(NamedInCodeRule(owner=item["owner"], named=item["named"], relationship=item["relationship"], min_names=min_names, share=float(share)))
+    return rules
+
+
+def _component_services_config(params: str | None) -> ComponentServicesConfig | None:
+    """Services per offering component (``params.component_services``).
+
+    ``{"component_services": {"min_names": 3, "share": 0.5, "overlap": 0.5, "max_doc_lines": 12}}``
+    switches it on: one service per group of components that expose an interface (grouped by the
+    business objects their code names), named in one call each from structure and documentation;
+    the step's graph query is then not used. Without the key the step derives from graph candidates.
+    ``interface_links`` and ``object_links`` list graph queries returning source node id pairs
+    (``a``: the component's, ``b``: the interface's or object's) that give a component its
+    interfaces and objects where the graph links them.
+    """
+    settings = json.loads(params).get("component_services") if params else None
+    if settings is None:
+        return None
+    if not isinstance(settings, dict):
+        raise ValueError(f"params.component_services must be an object, got {settings!r}")
+    defaults = ComponentServicesConfig()
+    min_names, max_doc_lines = settings.get("min_names", defaults.min_names), settings.get("max_doc_lines", defaults.max_doc_lines)
+    share, overlap = settings.get("share", defaults.share), settings.get("overlap", defaults.overlap)
+    if not all(isinstance(n, int) and not isinstance(n, bool) and n >= minimum for n, minimum in ((min_names, 1), (max_doc_lines, 0))):
+        raise ValueError("params.component_services: min_names is a whole number of at least 1, max_doc_lines of at least 0")
+    if not all(isinstance(x, (int, float)) and not isinstance(x, bool) and 0 < x <= 1 for x in (share, overlap)):
+        raise ValueError("params.component_services: share and overlap are numbers above 0 and at most 1")
+    for key in ("interface_links", "object_links"):
+        if not isinstance(settings.get(key, []), list) or not all(isinstance(q, str) and q for q in settings.get(key, [])):
+            raise ValueError(f"params.component_services.{key} must be a list of graph queries")
+    return ComponentServicesConfig(
+        min_names=min_names,
+        share=float(share),
+        overlap=float(overlap),
+        max_doc_lines=max_doc_lines,
+        interface_links=tuple(settings.get("interface_links", [])),
+        object_links=tuple(settings.get("object_links", [])),
+    )
+
+
+def _documentation_files(graph_manager: GraphManager, max_bytes: int = 200_000) -> dict[str, str]:
+    """Repository path -> text of the repository's documentation files (file type docs), read from the checkout."""
+    root = workspace() / "repositories"
+    documents: dict[str, str] = {}
+    for row in graph_manager.query("MATCH (f:Graph:File) WHERE f.active = true AND f.fileType = 'docs' RETURN f.filePath AS path"):
+        path = str(row.get("path") or "").replace(chr(92), "/")
+        file = root / path
+        try:
+            # A link that leads out of the checkout is not followed: its text would go to the model
+            if path and file.is_file() and file.resolve().is_relative_to(root.resolve()) and file.stat().st_size <= max_bytes:
+                documents[path] = file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    return documents
+
+
+def _component_services_step(
+    config: ComponentServicesConfig,
+    instruction: str,
+    graph_manager: GraphManager,
+    archimate_manager: ArchimateManager,
+    llm_query_fn: Callable[..., Any],
+    elements: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Derive and store the services the components offer; the result has the shape of ``generate_element``'s."""
+    services = derive_component_services(
+        elements,
+        element_source_paths(graph_manager, elements),
+        code_names_with_paths(graph_manager),
+        _documentation_files(graph_manager),
+        config,
+        instruction,
+        llm_query_fn,
+        source_concept_names(graph_manager, elements),
+        interface_links=[pair for query in config.interface_links for pair in graph_link_pairs(graph_manager, query)],
+        object_links=[pair for query in config.object_links for pair in graph_link_pairs(graph_manager, query)],
+    )
+    errors: list[str] = []
+    created: list[dict[str, Any]] = []
+    for service in services:
+        try:
+            archimate_manager.add_element(
+                Element(
+                    name=service["name"],
+                    element_type=service["element_type"],
+                    identifier=service["identifier"],
+                    documentation=service.get("documentation"),
+                    properties=service["properties"],
+                )
+            )
+            created.append(service)
+        except Exception as exc:
+            errors.append(f"Failed to create service {service['name']}: {exc}")
+    return {
+        "success": not errors,
+        "elements_created": len(created),
+        "relationships_created": 0,
+        "created_elements": created,
+        "created_relationships": [],
+        "candidate_decisions": [],
+        "errors": errors,
+    }
+
+
 def _per_candidate_config(params: str | None) -> PerCandidateConfig | None:
     """Read per-candidate naming mode from an element config's params.
 
@@ -311,13 +499,16 @@ def _role_config(params: str | None) -> RoleConfig | None:
     ``{"roles": {"labels": [...], "instruction": "...", "names": {key: name}}}`` switches it on
     (optional ``documentation`` template, ``missing_retries`` and ``element_per``: "role" or
     "candidate"; with "candidate" also ``name_template``, ``container_type`` and
-    ``show_path``); without the key every candidate takes the keep and naming path.
+    ``show_path``; ``structural``: ``[{"property": "decorators", "pattern": "...", "role": key}]``,
+    roles the source itself shows, given without a call); without the key every candidate takes
+    the keep and naming path.
     """
     settings = json.loads(params).get("roles") if params else None
     if settings is None:
         return None
-    if not settings.get("labels") or not settings.get("instruction") or not settings.get("names"):
-        raise ValueError("params.roles needs labels, instruction and names")
+    classified = settings.get("labels") and settings.get("instruction")
+    if not settings.get("names") or not (classified or settings.get("structural")) or bool(settings.get("labels")) != bool(settings.get("instruction")):
+        raise ValueError("params.roles needs names and either labels with an instruction (classified roles) or structural rules")
     element_per = settings.get("element_per", "role")
     if element_per not in ("role", "candidate"):
         raise ValueError(f"params.roles.element_per must be 'role' or 'candidate', not {element_per!r}")
@@ -328,14 +519,26 @@ def _role_config(params: str | None) -> RoleConfig | None:
         raise ValueError("params.roles name_template and container_type must be text, show_path true or false")
     if name_template and element_per != "candidate":
         raise ValueError("params.roles.name_template names one element per candidate: it needs element_per 'candidate'")
-    naming_call = settings.get("naming_call", False)
-    if not isinstance(naming_call, bool):
-        raise ValueError(f"params.roles.naming_call must be true or false, got {naming_call!r}")
+    naming_call, structural_as_written = settings.get("naming_call", False), settings.get("structural_as_written", False)
+    if not isinstance(naming_call, bool) or not isinstance(structural_as_written, bool):
+        raise ValueError(f"params.roles naming_call and structural_as_written must be true or false, got {naming_call!r} and {structural_as_written!r}")
     if naming_call and (element_per != "candidate" or not json.loads(params or "{}").get("naming")):
         raise ValueError("params.roles.naming_call renames one element per candidate with the step's naming call: it needs element_per 'candidate' and params.naming")
+    structural = settings.get("structural", [])
+    if not isinstance(structural, list) or not all(
+        isinstance(rule, dict) and all(isinstance(rule.get(k), str) and rule.get(k) for k in ("property", "pattern", "role")) and rule["role"] in settings["names"]
+        for rule in structural
+    ):
+        raise ValueError(f"params.roles.structural rules need property, pattern and a role key of names, got {structural!r}")
+    for rule in structural:
+        try:
+            re.compile(rule["pattern"])
+        except re.error as exc:
+            raise ValueError(f"params.roles.structural pattern {rule['pattern']!r} is no valid pattern: {exc}") from exc
     return RoleConfig(
-        labels=frozenset(settings["labels"]),
-        instruction=settings["instruction"],
+        structural=tuple((rule["property"], rule["pattern"], rule["role"]) for rule in structural),
+        labels=frozenset(settings.get("labels") or []),
+        instruction=settings.get("instruction") or "",
         names=dict(settings["names"]),
         documentation=settings.get("documentation", ""),
         missing_retries=int(settings.get("missing_retries", 0)),
@@ -344,6 +547,7 @@ def _role_config(params: str | None) -> RoleConfig | None:
         container_type=container_type,
         show_path=show_path,
         naming_call=naming_call,
+        structural_as_written=structural_as_written,
     )
 
 
@@ -480,6 +684,7 @@ def generate_element(
     skip_subtypes: bool = False,
     skip_nested: NestedFilter | None = None,
     deployable_units: UnitFilter | None = None,
+    on_candidates: Callable[[list[str]], None] | None = None,
 ) -> dict[str, Any]:
     """
     Generate ArchiMate elements of a specific type (and optionally their relationships).
@@ -566,6 +771,7 @@ def generate_element(
             skip_subtypes=skip_subtypes,
             skip_nested=skip_nested,
             deployable_units=deployable_units,
+            on_candidates=on_candidates,
         )
         return {
             "success": result.success,
@@ -938,31 +1144,36 @@ def run_derivation(
             assert cfg.batch_size is not None
 
             try:
-                step_result = generate_element(
-                    graph_manager=graph_manager,
-                    archimate_manager=archimate_manager,
-                    llm_query_fn=step_llm_query_fn,
-                    element_type=cfg.element_type,
-                    engine=engine,
-                    query=cfg.input_graph_query,
-                    instruction=cfg.instruction,
-                    example=cfg.example,
-                    max_candidates=cfg.max_candidates,
-                    batch_size=cfg.batch_size,
-                    existing_elements=all_created_elements,  # Pass accumulated elements
-                    defer_relationships=defer_relationships,
-                    enrichments=enrichments.get(),
-                    relationship_config=relationship_config(),
-                    per_candidate=_per_candidate_config(cfg.params),
-                    naming=_naming_config(cfg.params),
-                    pattern_labels=_pattern_labels(cfg.params),
-                    roles=_role_config(cfg.params),
-                    skip_when_directory_is=_skip_when_directory_is(cfg.params),
-                    prompt=_element_prompt(cfg.params),
-                    graph_filter=_graph_filter(cfg.params),
-                    skip_subtypes=_skip_subtypes(cfg.params),
-                    skip_nested=_skip_nested(cfg.params, engine),
-                    deployable_units=_deployable_units(cfg.params),
+                component_services = _component_services_config(cfg.params) if cfg.element_type == "ApplicationService" else None
+                step_result = (
+                    _component_services_step(component_services, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
+                    if component_services is not None
+                    else generate_element(
+                        graph_manager=graph_manager,
+                        archimate_manager=archimate_manager,
+                        llm_query_fn=step_llm_query_fn,
+                        element_type=cfg.element_type,
+                        engine=engine,
+                        query=cfg.input_graph_query,
+                        instruction=cfg.instruction,
+                        example=cfg.example,
+                        max_candidates=cfg.max_candidates,
+                        batch_size=cfg.batch_size,
+                        existing_elements=all_created_elements,  # Pass accumulated elements
+                        defer_relationships=defer_relationships,
+                        enrichments=enrichments.get(),
+                        relationship_config=relationship_config(),
+                        per_candidate=_per_candidate_config(cfg.params),
+                        naming=_naming_config(cfg.params),
+                        pattern_labels=_pattern_labels(cfg.params),
+                        roles=_role_config(cfg.params),
+                        skip_when_directory_is=_skip_when_directory_is(cfg.params),
+                        prompt=_element_prompt(cfg.params),
+                        graph_filter=_graph_filter(cfg.params),
+                        skip_subtypes=_skip_subtypes(cfg.params),
+                        skip_nested=_skip_nested(cfg.params, engine),
+                        deployable_units=_deployable_units(cfg.params),
+                    )
                 )
 
                 elements_created = step_result.get("elements_created", 0)
@@ -991,6 +1202,9 @@ def run_derivation(
 
                 # Complete step logging
                 if step_ctx:
+                    for element in step_created_elements:
+                        if element.get("identifier"):
+                            step_ctx.add_object(element["identifier"])
                     step_ctx.items_created = elements_created
                     step_ctx.complete()
 
@@ -1064,6 +1278,9 @@ def run_derivation(
                 configuration=_configuration_rules(relationship_configs),
                 dependency=_dependency_rules(relationship_configs),
                 same_name=_same_name_rules(relationship_configs),
+                named_in_code=_named_in_code_rules(relationship_configs),
+                listed_members=_listed_members_rules(relationship_configs),
+                graph_links=_graph_link_rules(relationship_configs),
             )
 
             # Persist relationships to archimate model with graph metadata for stability analysis
@@ -1096,6 +1313,8 @@ def run_derivation(
             if progress:
                 progress.complete_step(f"{rel_count} relationships")
             if rel_ctx:
+                for rel_data in relationships:
+                    rel_ctx.add_relationship(f"{rel_data['relationship_type']}_{rel_data['source']}_{rel_data['target']}")
                 rel_ctx.items_created = rel_count
                 rel_ctx.complete()
 
@@ -1224,12 +1443,13 @@ def run_derivation_iter(
     verbose: bool = False,
     phases: list[str] | None = None,
     defer_relationships: bool = True,
+    on_candidates: Callable[[str, list[str]], None] | None = None,
 ) -> Iterator[ProgressUpdate]:
     """
     Run derivation pipeline as a generator, yielding progress updates.
 
-    This is the generator version of run_derivation() designed for use with
-    Marimo's mo.status.progress_bar iterator pattern.
+    This is the generator version of run_derivation() the studio streams its
+    updates to the browser as run events.
 
     Args:
         engine: DuckDB connection for config
@@ -1368,31 +1588,37 @@ def run_derivation_iter(
             assert cfg.batch_size is not None
 
             try:
-                step_result = generate_element(
-                    graph_manager=graph_manager,
-                    archimate_manager=archimate_manager,
-                    llm_query_fn=step_llm_query_fn,
-                    element_type=cfg.element_type,
-                    engine=engine,
-                    query=cfg.input_graph_query,
-                    instruction=cfg.instruction,
-                    example=cfg.example,
-                    max_candidates=cfg.max_candidates,
-                    batch_size=cfg.batch_size,
-                    existing_elements=all_created_elements,
-                    defer_relationships=defer_relationships,
-                    enrichments=enrichments.get(),
-                    relationship_config=relationship_config(),
-                    per_candidate=_per_candidate_config(cfg.params),
-                    naming=_naming_config(cfg.params),
-                    pattern_labels=_pattern_labels(cfg.params),
-                    roles=_role_config(cfg.params),
-                    skip_when_directory_is=_skip_when_directory_is(cfg.params),
-                    prompt=_element_prompt(cfg.params),
-                    graph_filter=_graph_filter(cfg.params),
-                    skip_subtypes=_skip_subtypes(cfg.params),
-                    skip_nested=_skip_nested(cfg.params, engine),
-                    deployable_units=_deployable_units(cfg.params),
+                component_services = _component_services_config(cfg.params) if cfg.element_type == "ApplicationService" else None
+                step_result = (
+                    _component_services_step(component_services, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
+                    if component_services is not None
+                    else generate_element(
+                        graph_manager=graph_manager,
+                        archimate_manager=archimate_manager,
+                        llm_query_fn=step_llm_query_fn,
+                        element_type=cfg.element_type,
+                        engine=engine,
+                        query=cfg.input_graph_query,
+                        instruction=cfg.instruction,
+                        example=cfg.example,
+                        max_candidates=cfg.max_candidates,
+                        batch_size=cfg.batch_size,
+                        existing_elements=all_created_elements,
+                        defer_relationships=defer_relationships,
+                        enrichments=enrichments.get(),
+                        relationship_config=relationship_config(),
+                        per_candidate=_per_candidate_config(cfg.params),
+                        naming=_naming_config(cfg.params),
+                        pattern_labels=_pattern_labels(cfg.params),
+                        roles=_role_config(cfg.params),
+                        skip_when_directory_is=_skip_when_directory_is(cfg.params),
+                        prompt=_element_prompt(cfg.params),
+                        graph_filter=_graph_filter(cfg.params),
+                        skip_subtypes=_skip_subtypes(cfg.params),
+                        skip_nested=_skip_nested(cfg.params, engine),
+                        deployable_units=_deployable_units(cfg.params),
+                        on_candidates=(lambda ids, step=cfg.step_name: on_candidates(step, ids)) if on_candidates else None,
+                    )
                 )
 
                 elements_created = step_result.get("elements_created", 0)
@@ -1474,6 +1700,9 @@ def run_derivation_iter(
                 configuration=_configuration_rules(relationship_configs),
                 dependency=_dependency_rules(relationship_configs),
                 same_name=_same_name_rules(relationship_configs),
+                named_in_code=_named_in_code_rules(relationship_configs),
+                listed_members=_listed_members_rules(relationship_configs),
+                graph_links=_graph_link_rules(relationship_configs),
             )
 
             # Persist relationships to archimate model

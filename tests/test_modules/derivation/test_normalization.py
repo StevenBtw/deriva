@@ -45,35 +45,35 @@ class TestStripArchimateSuffix:
 
 class TestStripRepoPrefix:
     def test_strips_matching_prefix(self):
-        assert strip_repo_prefix("Lightblue Core", "lightblue") == "Core"
+        assert strip_repo_prefix("Darkgreen Core", "darkgreen") == "Core"
 
     def test_case_insensitive(self):
-        assert strip_repo_prefix("LIGHTBLUE Core", "lightblue") == "Core"
+        assert strip_repo_prefix("DARKGREEN Core", "darkgreen") == "Core"
 
     def test_matches_across_separators(self):
-        assert strip_repo_prefix("CloudbasedSBPMWfMS Engine", "Cloudbased-S-BPM-WfMS") == "Engine"
+        assert strip_repo_prefix("EdgebasedXABCDeFg Engine", "Edgebased-X-ABC-DeFg") == "Engine"
 
     def test_non_matching_prefix_unchanged(self):
-        assert strip_repo_prefix("Lightblue Core", "otherproject") == "Lightblue Core"
+        assert strip_repo_prefix("Darkgreen Core", "otherproject") == "Darkgreen Core"
 
     def test_empty_repo_name_unchanged(self):
-        assert strip_repo_prefix("Lightblue Core", "") == "Lightblue Core"
+        assert strip_repo_prefix("Darkgreen Core", "") == "Darkgreen Core"
 
     def test_a_repo_name_spread_over_several_words(self):
-        assert strip_repo_prefix("Tea Store Registry", "TeaStore") == "Registry"
-        assert strip_repo_prefix("Lakeside Mutual Customer Core", "LakesideMutual") == "Customer Core"
+        assert strip_repo_prefix("Tool Shed Registry", "ToolShed") == "Registry"
+        assert strip_repo_prefix("Hillside Union Customer Core", "HillsideUnion") == "Customer Core"
 
     def test_a_name_that_is_only_the_repo_name_stays(self):
-        assert strip_repo_prefix("Tea Store", "TeaStore") == "Tea Store"
+        assert strip_repo_prefix("Tool Shed", "ToolShed") == "Tool Shed"
 
     def test_part_of_a_word_is_no_prefix(self):
-        assert strip_repo_prefix("Teapot Store Registry", "TeaStore") == "Teapot Store Registry"
+        assert strip_repo_prefix("Toolbox Shed Registry", "ToolShed") == "Toolbox Shed Registry"
 
     def test_single_token_not_stripped(self):
-        assert strip_repo_prefix("Lightblue", "lightblue") == "Lightblue"
+        assert strip_repo_prefix("Darkgreen", "darkgreen") == "Darkgreen"
 
     def test_prefix_only_at_start(self):
-        assert strip_repo_prefix("Core Lightblue Thing", "lightblue") == "Core Lightblue Thing"
+        assert strip_repo_prefix("Core Darkgreen Thing", "darkgreen") == "Core Darkgreen Thing"
 
 
 class TestToTitleCase:
@@ -92,12 +92,12 @@ class TestNormalizeForDedup:
         assert normalize_for_dedup("Mongo Controller", RepoContext()) == "Mongo"
 
     def test_strips_repo_prefix(self):
-        ctx = RepoContext(repo_name="lightblue")
-        assert normalize_for_dedup("Lightblue Core", ctx) == "Core"
+        ctx = RepoContext(repo_name="darkgreen")
+        assert normalize_for_dedup("Darkgreen Core", ctx) == "Core"
 
     def test_repo_prefix_not_stripped_for_different_repo(self):
-        ctx = RepoContext(repo_name="bigdata")
-        assert normalize_for_dedup("Lightblue Core", ctx) == "Lightblue Core"
+        ctx = RepoContext(repo_name="bigfarm")
+        assert normalize_for_dedup("Darkgreen Core", ctx) == "Darkgreen Core"
 
     def test_rest_case_convergence(self):
         ctx = RepoContext()
@@ -121,9 +121,13 @@ class TestDesignInvariant:
         """The normalization module must not contain literal repo/product names."""
         path = Path(__file__).parent.parent.parent.parent / ("deriva/modules/derivation/refine/normalization.py")
         source = path.read_text(encoding="utf-8")
-        # These are the benchmark repo names — they must never appear as literals.
-        forbidden = ["lightblue", "bigdata", "cloudbased", "kafka", "spark", "mongodb"]
-        found = [word for word in forbidden if word.lower() in source.lower()]
-        # Allow in comments/docstrings only if the whole line is a comment.
-        # Simplest guard: no appearance at all.
-        assert not found, f"normalization.py must not contain repo/product names; found: {found}"
+        # Product names never appear as literals
+        found = [word for word in ("kafka", "spark", "mongodb") if word in source.lower()]
+        assert not found, f"normalization.py must not contain product names; found: {found}"
+        # Nor do the names the local scanner knows (where it is present)
+        from deriva.services.overfit import scan_texts
+
+        result = scan_texts({"source": source})
+        if result["available"]:
+            repo_terms = [f["finding"] for f in result["findings"] if "repo term" in f["finding"]]
+            assert not repo_terms, f"normalization.py must not contain repository names; found: {repo_terms}"

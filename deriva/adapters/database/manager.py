@@ -12,14 +12,18 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
+import uuid
 from pathlib import Path
 
 import duckdb
 
+from deriva.common.paths import config_db
+
 logger = logging.getLogger(__name__)
 
 # Database location
-DB_PATH = Path(__file__).parent / "sql.db"
+DB_PATH = config_db()
 SCRIPTS_DIR = Path(__file__).parent / "scripts"
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -34,6 +38,9 @@ def get_connection(read_only: bool = False) -> duckdb.DuckDBPyConnection:
     Returns:
         DuckDB connection
     """
+    # A fresh install has no database yet: create it from the schema and the shipped seed data
+    if not DB_PATH.exists():
+        ensure_database(DB_PATH)
     return duckdb.connect(str(DB_PATH), read_only=read_only)
 
 
@@ -102,6 +109,68 @@ def seed_database() -> bool:
     from deriva.adapters.database.db_tool import seed_from_json
 
     return seed_from_json(DB_PATH)
+
+
+def ensure_database(db_path: Path | None = None) -> bool:
+    """Create and seed the configuration database when it has no schema yet (a fresh install).
+
+    Runs the schema, the migrations and the seed from the shipped JSON files in ``data/``
+    (the active configuration rows with their version numbers). An existing database is
+    never changed. The new one is made in a file next to it and moved into place once
+    seeded, so a setup that fails or breaks off leaves no half-made database behind.
+
+    Args:
+        db_path: Database file (defaults to DB_PATH)
+
+    Returns:
+        True when the database was created, False when it already had a schema
+    """
+    path = Path(db_path or DB_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        conn = duckdb.connect(str(path))
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'extraction_config'").fetchone()
+        finally:
+            conn.close()
+        if row and row[0] > 0:
+            return False
+
+    # Import here to avoid circular imports
+    from deriva.adapters.database.db_tool import seed_from_json
+
+    if path.exists():
+        # A database that holds something else keeps it: the schema and seed data are added in place
+        conn = duckdb.connect(str(path))
+        try:
+            run_sql_file(SCRIPTS_DIR / "schema.sql", conn)
+            run_migrations(conn)
+        finally:
+            conn.close()
+        seed_from_json(path)
+        logger.info("Added the configuration schema and seed data to the existing database %s", path)
+        return True
+
+    # Staged under a name of this process's own: two first starts never share (or delete) a staging file
+    partial = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.partial")
+    leftovers = (partial, partial.with_name(partial.name + ".wal"))
+    try:
+        conn = duckdb.connect(str(partial))
+        try:
+            run_sql_file(SCRIPTS_DIR / "schema.sql", conn)
+            run_migrations(conn)
+        finally:
+            conn.close()
+        seed_from_json(partial)
+        if path.exists():
+            # Another first start published its database in between: that one stays
+            return False
+        os.replace(partial, path)
+    finally:
+        for leftover in leftovers:
+            leftover.unlink(missing_ok=True)
+    logger.info("Created the configuration database %s from the shipped seed data", path)
+    return True
 
 
 def run_migrations(conn: duckdb.DuckDBPyConnection | None = None) -> int:

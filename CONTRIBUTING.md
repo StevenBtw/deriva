@@ -25,11 +25,11 @@ cd Deriva
 cp .env.example .env
 # Edit .env with your configuration (LLM keys, etc.)
 
-# Install with dev dependencies
-uv sync --all-extras
+# Install all three packages (editable) and the development tools
+uv sync
 
-# Run the marimo notebook
-uv run marimo edit deriva/app/app.py
+# Run the studio (build the front end once: cd studio && npm install && npm run build)
+uv run deriva
 
 # Run linter
 uv run ruff check .
@@ -38,23 +38,55 @@ uv run ruff check .
 uv run ty check .
 ```
 
+### Workspace and packages
+
+The repository is a uv workspace that builds three packages, released together with one version number. They share one Python namespace, `deriva` (a namespace package: there is no `deriva/__init__.py`).
+
+| Package | Source | Holds |
+|---------|--------|-------|
+| `deriva-cli` | the root, `deriva/` | adapters, modules, common, services and the CLI |
+| `deriva-studio` | `packages/deriva-studio/src/deriva/studio/` | the studio backend and its built front end (`static/`, from `studio/`) |
+| `deriva-dev` | `packages/deriva-dev/src/deriva/bench/` | benchmarking, with its CLI commands and its studio API |
+
+`uv sync` installs all three as editable, so a checkout always has benchmarking. The CLI and the studio load `deriva.bench` only when it is installed (`deriva.services.about.features()`); without it, `deriva-cli benchmark` says how to install deriva-dev.
+
+Build the packages the way users get them:
+
+```bash
+cd studio && npm ci && npm run build && cd ..
+uv build --all-packages --no-sources        # dist/: three wheels and three sdists
+```
+
+`--no-sources` builds without the local overrides in `[tool.uv.sources]`, as uv recommends before publishing. `tests/test_packaging.py` builds the wheels and checks that each holds exactly its own files.
+
+To try a build as a user would, install it as a tool with every workspace wheel by path; uv otherwise reuses a cached build of the same version number:
+
+```bash
+uv tool install --python 3.14 dist/deriva_studio-<version>-py3-none-any.whl --with dist/deriva_cli-<version>-py3-none-any.whl
+```
+
+Point `DERIVA_HOME` at an empty folder to see a first start.
+
+To release, set the same version in the three `pyproject.toml` files and in the two pins between them (`deriva-studio` pins `deriva-cli==<version>`, `deriva-dev` pins `deriva-studio==<version>`), then push the tag `v<version>`. The release workflow checks the versions and pins, builds and smoke tests the packages, publishes them to PyPI with trusted publishing and attaches `constraints.txt` to the GitHub release.
+
 ## Architecture
 
 Deriva follows a **layered architecture** with strict separation of concerns:
 
-- **app/app.py (Marimo)**: Visual UI for configuration and pipeline execution
+- **studio/ (FastAPI + React)**: Local web UI for running the pipeline, the graphs, the model and configuration
 - **cli/cli.py**: Headless CLI for automation and scripting
 - **Services**: Shared orchestration layer with `PipelineSession` as the unified API
 - **Adapters**: Stateful services for I/O, persistence, connections
 - **Modules**: Pure functions for business logic transformations
 
-**Key Principle**: Both Marimo and CLI use `PipelineSession` from the services layer. This provides a unified API for lifecycle management, queries, and orchestration. Configuration lives in DuckDB (single source of truth). Data flows through pure transformations, with I/O isolated to adapters.
+**Key Principle**: Both the studio and the CLI use `PipelineSession` from the services layer. This provides a unified API for lifecycle management, queries, and orchestration. Configuration lives in DuckDB (single source of truth). Data flows through pure transformations, with I/O isolated to adapters.
 
 ### Architectural Boundaries (Enforced by Ruff)
 
 ```
 CLI      → services only (PipelineSession is the API)
 App      → services only (PipelineSession is the API)
+Bench    → services, adapters, modules, common (deriva-dev; only the CLI and studio entry points load it)
 Services → adapters, modules, common
 Adapters → common only (NOT modules or services)
 Modules  → common only (NOT adapters or services)
@@ -70,14 +102,15 @@ These boundaries are enforced at lint time via Ruff's `TID251` rule with per-lay
 
 ```
 deriva/
-├── app/
-│   ├── app.py               - Marimo Notebook: Visual UI + uses PipelineSession
-│   └── layouts/             - Marimo UI layout components
+├── studio/
+│   ├── app.py               - FastAPI app factory (studio layer, services only)
+│   ├── routers/             - API routes (repositories, configs, graph, model, runs, grafeo)
+│   └── static/              - Built React front end (from studio/ at the repo root)
 ├── cli/
 │   └── cli.py               - Headless CLI + uses PipelineSession
 │
 ├── services/ (Shared orchestration layer)
-│   ├── session.py           - PipelineSession: unified API for CLI + Marimo
+│   ├── session.py           - PipelineSession: unified API for the CLI and the studio
 │   ├── config.py            - Config CRUD (read/write DuckDB settings)
 │   ├── extraction.py        - Run extraction step
 │   ├── derivation.py        - Run derivation step
@@ -140,8 +173,8 @@ deriva/
 
 ```
 ┌─────────────────┐         ┌─────────────────┐
-│     Marimo      │         │      CLI        │
-│  (config + UI)  │         │   (headless)    │
+│     Studio      │         │      CLI        │
+│  (web UI)       │         │   (headless)    │
 └────────┬────────┘         └────────┬────────┘
          │                           │
          └───────────┬───────────────┘
@@ -165,17 +198,17 @@ deriva/
 ### Data Flow Pattern
 
 ```
-User clicks "Run Pipeline" in app/app.py  OR  runs `deriva run` in CLI
+User clicks "Run" in the studio  OR  runs `deriva-cli run` in the CLI
     ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ PIPELINESESSION (unified API for CLI + Marimo)              │
+│ PIPELINESESSION (unified API for the CLI and the studio)    │
 ├─────────────────────────────────────────────────────────────┤
 │ with PipelineSession() as session:                          │
 │     session.run_extraction(repo_name="my-repo")             │
 │     session.run_derivation()                                │
 │     session.export_model("output.xml")                      │
 │                                                             │
-│ # For reactive UI (Marimo):                                 │
+│ # For the studio (one session per process):                 │
 │     stats = session.get_graph_stats()                       │
 │     elements = session.get_archimate_elements()             │
 └─────────────────────────────────────────────────────────────┘
@@ -205,25 +238,25 @@ User clicks "Run Pipeline" in app/app.py  OR  runs `deriva run` in CLI
     ↓
 Export via ArchimateManager.export_to_xml() [I/O]
     ↓
-Marimo: displays results in UI  |  CLI: prints summary to stdout
+Studio: streams progress and shows results  |  CLI: prints summary to stdout
 ```
 
-### Notebook Structure
+### Studio Structure
 
-| Column | Purpose |
-|--------|---------|
-| Column 0 | Run Deriva (pipeline buttons, status callouts) |
-| Column 1 | Configuration (runs, repos, graph database, graph stats, ArchiMate, LLM) |
-| Column 2 | Extraction Settings (file types, extraction step config) |
-| Column 3 | Derivation Settings (13 element types across Business/Application/Technology layers) |
+| Area | Purpose |
+|------|---------|
+| Workspace | Run configuration, live log, intermediate and output graph (anywidget-graph), ArchiMate model (anywidget-archimate) |
+| Repositories | Clone, inspect, delete |
+| General & file types | Settings and the file type registry |
+| Extraction / Derivation config | Steps with versions, prompt editing, saves as new versions |
 
-The app/app.py uses PipelineSession for all operations.
+The studio backend uses PipelineSession for all operations.
 
 ### Quick Reference
 
 | Component | Purpose | Can Do | Cannot Do |
 |-----------|---------|--------|-----------|
-| **app/app.py** | Visual UI | Display UI, use PipelineSession | Import adapters/modules directly |
+| **studio/** | Web UI (FastAPI + React) | Serve the API and the front end, use PipelineSession | Import adapters/modules/common directly |
 | **cli/cli.py** | Headless CLI | Parse args, use PipelineSession, print output | Import adapters/modules directly |
 | **PipelineSession** | Unified API | Lifecycle, queries, orchestration | Business logic |
 | **Services** | Orchestration | Load config, run pipeline steps, coordinate adapters | Direct I/O, pure business logic |
@@ -655,8 +688,7 @@ name = 'Deriva'
 
 ### Lifecycle
 
-- **Singleton pattern**: One instance per adapter per marimo session
-- Initialized **once** in app.py, passed to cells that need them
+- **One instance per session**: `PipelineSession` creates the adapters and keeps them for its lifetime
 - Maintain **persistent connections** for session lifetime
 - Support **auto-reconnect** with retry logic (max 3 attempts, exponential backoff)
 - Cleanup via `__del__` or `__exit__` methods
@@ -685,7 +717,7 @@ name = 'Deriva'
 - Export via `__init__.py` (e.g., `from .manager import GraphManager`)
 - Consistent method naming: `add_*`, `get_*`, `update_*`, `delete_*`, `query_*`
 - Return **data** (dicts, lists, dataclasses), not side effects
-- Accept **parameters** from marimo (don't read global state)
+- Accept **parameters** from the services (don't read global state)
 
 ### Adapter Structure
 
@@ -832,33 +864,9 @@ All queries return one of three Pydantic response types:
 - Disable with `LLM_NOCACHE=true` or `use_cache=False`
 - Errors are also cached to prevent retry storms
 
-### Structured Output (JSON Schema Enforcement)
+### Structured Output
 
-Enable API-level JSON schema enforcement for guaranteed valid responses:
-
-```bash
-# In .env - per model configuration
-LLM_OPENAI_GPT41MINI_STRUCTURED_OUTPUT=true
-LLM_ANTHROPIC_HAIKU_STRUCTURED_OUTPUT=true
-LLM_MISTRAL_DEVSTRAL_STRUCTURED_OUTPUT=true
-LLM_OLLAMA_NEMOTRON_STRUCTURED_OUTPUT=true
-```
-
-**Supported Providers:**
-
-| Provider | Implementation |
-|----------|---------------|
-| OpenAI | `response_format: {type: "json_schema", json_schema: {...}}` |
-| Anthropic | `output_format` + beta header `structured-outputs-2025-11-13` |
-| Mistral | `response_format: {type: "json_schema", json_schema: {...}}` |
-| Ollama | `format: <schema>` (direct schema in format param) |
-| Azure | Same as OpenAI |
-| LMStudio | Same as OpenAI |
-
-**Behavior:**
-
-- `structured_output=true`: JSON schema passed to API for server-side enforcement
-- `structured_output=false` (default): Only `json_mode` enabled, schema used for client-side validation
+Each call's output mode follows from what it asks for; there is no setting per model. Calls with a response model (the extraction classifications) use pydantic-ai's tool output and are validated against the model. Derivation calls ask for JSON in the prompt, and the pipeline reads the answer: a whole JSON answer, a code fence, or the JSON after a short explanation.
 
 </details>
 
@@ -868,7 +876,7 @@ LLM_OLLAMA_NEMOTRON_STRUCTURED_OUTPUT=true
 ### Purpose
 
 - **Pure business logic** - data transformations only
-- Abstracts complex operations from marimo cells
+- Abstracts complex operations away from the services and the UI
 - Do **NOT** manage state, connections, or I/O
 
 ### Purity
@@ -878,7 +886,7 @@ LLM_OLLAMA_NEMOTRON_STRUCTURED_OUTPUT=true
 - **No state**: No class variables, no module-level state
 - Return **data** (dicts, lists, dataclasses), never `None`
 - **No adapter imports** (receive adapter data via parameters)
-- **No I/O operations** (marimo handles all I/O via adapters)
+- **No I/O operations** (the services do I/O through adapters)
 
 ### Dependencies
 
@@ -886,7 +894,6 @@ LLM_OLLAMA_NEMOTRON_STRUCTURED_OUTPUT=true
 - Can import **each other** (e.g., orchestration ← classification)
 - Can use **external libs** if pure (e.g., polars for data transforms)
 - **Cannot** import adapters
-- **Cannot** import marimo
 - **Cannot** import UI libraries
 
 ### Error Handling
@@ -1329,11 +1336,11 @@ Deriva splits configuration by **ownership** - who needs to change it and why:
 
 ### .env File (Adapter Configuration)
 
-- **Single source of truth** for adapter configuration
-- **Required** for all adapters to initialize
-- Loaded via `python-dotenv` at adapter initialization
+- Lives in the Deriva home folder (`deriva/common/paths.py`): the repository root in a checkout, `~/.deriva` for an installed tool, or the folder in `DERIVA_HOME`
+- **Read in one place**: `deriva/common/settings.py` merges the `.env` file with the process environment (a variable set in the environment wins) and offers typed groups (`LlmSettings`, `GrafeoSettings`, `GraphSettings`, `ArchimateSettings`, `NlpSettings`, `RepositorySettings`); `tests/test_common/test_no_cwd_paths.py` fails on any other `os.getenv`, `os.environ` or `load_dotenv` in the three packages
+- Each field of a group has a default; an empty number or switch counts as unset (the `LLM_{NAME}_*` model blocks are read by name, `settings.model_configs()`)
 - Values **cached** by adapters on init (not re-read on every call)
-- Must have `.env.example` as template
+- `.env.example` is the template
 - **No YAML files** for configuration
 - **Never commit** .env to git (keep in .gitignore)
 
@@ -1348,16 +1355,17 @@ Deriva splits configuration by **ownership** - who needs to change it and why:
 
 ```python
 # adapters/some_adapter/manager.py
-import os
-from dotenv import load_dotenv
+from deriva.common.settings import GrafeoSettings
 
 class SomeManager:
     def __init__(self):
-        load_dotenv()
-        self.setting = os.getenv('SOME_SETTING', 'default')
+        grafeo = GrafeoSettings()
+        self.slow_query_ms = grafeo.slow_query_ms
         # Read all config in __init__
         # Cache values as instance variables
 ```
+
+A new setting is a field in its group (or a new group with its own `env_prefix`); `settings.get(name, default)` reads a single value.
 
 ### Database Configs (Pipeline Configuration)
 
@@ -1374,27 +1382,33 @@ Pipeline configs (extraction steps, derivation prompts) are stored in DuckDB wit
 
 ```bash
 # Via CLI (creates new version)
-deriva config update extraction BusinessConcept \
+deriva-cli config update extraction BusinessConcept \
   -i "New instruction..."
 
 # View version history
-deriva config versions
+deriva-cli config versions
 ```
 
 **Never update configs by editing JSON and importing.** The `db_tool import` command is for **backup restoration only** - it overwrites the database including version history. This defeats the purpose of versioning and makes rollback impossible.
+
+**Shipped configuration (seed data).** The database itself (`deriva/adapters/database/sql.db`) is not in the repository. A fresh install creates it on first use from the schema, the migrations and the seed files in `deriva/adapters/database/data/`: the active config rows with their version numbers, the file types, the name patterns and the settings (no version history). An existing database is never touched. Before a release, refresh the seed files from the active configuration (the export reads the configuration database, so a fresh checkout needs it first: any `deriva-cli` command or the studio creates it):
+
+```bash
+uv run python -m deriva.adapters.database.db_tool export --active-only
+```
 
 ### Prompts and LLM Calls
 
 Prompt text is configuration, not code: a run must be fully described by its config versions.
 
-- **Text that steers the LLM lives in the database.** Persona, instructions, rules, conventions, naming guidance, examples and thresholds told to the model belong in the step's `instruction`, `example` or `params`, changed with `deriva config update`. The relationship prompt rules live in the `relationship` phase row (`GlobalRelationships`: `instruction` plus `params.min_confidence`; disabling it skips the LLM relationship pass). Per-candidate naming is switched on per element with `params.per_candidate` (`min_pool`, `rules`).
+- **Text that steers the LLM lives in the database.** Persona, instructions, rules, conventions, naming guidance, examples and thresholds told to the model belong in the step's `instruction`, `example` or `params`, changed with `deriva-cli config update`. The relationship prompt rules live in the `relationship` phase row (`GlobalRelationships`: `instruction` plus `params.min_confidence`; disabling it skips the LLM relationship pass). Per-candidate naming is switched on per element with `params.per_candidate` (`min_pool`, `rules`).
 - **Prompt builders hold only structure.** `build_*prompt*` functions in `modules/` contain section order and headings, serialisation of input data (candidates, elements, metamodel rules from `OUTBOUND_RULES`/`INBOUND_RULES`) and the output contract that matches the schema. Do not add rules, examples or domain words there. This is the target for every builder; some older builders (for example in `modules/extraction/method.py` and `modules/derivation/base.py`) still embed role text and are being migrated.
 - **Settings that change results** (cutoffs, mode switches) go in `params` or `system_settings`, not in class constants or literals.
 - **Where the text goes:** `instruction` and `example` for the main prompt, `params` (JSON, both extraction and derivation steps) for extra prompt texts and switches, e.g. `params.prompt` for the Technology headings.
 - **Every LLM call has a config row.** Services load the row and pass the text in; modules stay pure and only call the `llm_query_fn` they receive.
 - **Moving text between code and config must not change the prompt.** Pin the exact prompt with a test before the move, and check that a cached benchmark run hits the cache for every call and yields an identical model. Changing text is a result change: new config version, benchmark before and after.
 
-See [BENCHMARKS.md](BENCHMARKS.md) for running benchmarks and [OPTIMIZATION.md](OPTIMIZATION.md) for the recommended config optimization workflow.
+See [docs/benchmarks.md](docs/benchmarks.md) for running benchmarks and [docs/optimization.md](docs/optimization.md) for the recommended config optimization workflow.
 
 </details>
 
@@ -1423,19 +1437,19 @@ uv sync --extra progress
 
 ```bash
 # Default: progress bars shown (if Rich installed)
-deriva run -r my-repo
+deriva-cli run all --repo my-repo
 
 # Quiet mode: disable progress display
-deriva run -r my-repo -q
+deriva-cli run all --repo my-repo -q
 
 # Verbose mode: detailed text output (also disables progress bar)
-deriva run -r my-repo -v
+deriva-cli run all --repo my-repo -v
 
 # Benchmark with progress
-deriva benchmark run --repos my-repo --models my-model -n 3
+deriva-cli benchmark run --repos my-repo --models my-model -n 3
 
 # Benchmark quiet mode
-deriva benchmark run --repos my-repo --models my-model -n 3 -q
+deriva-cli benchmark run --repos my-repo --models my-model -n 3 -q
 ```
 
 ### Architecture
@@ -1467,13 +1481,13 @@ class BenchmarkProgressReporter(Protocol):
 | Layer | File | Implementation |
 |-------|------|----------------|
 | **CLI** | `cli/progress.py` | Rich-based reporters with fallback to no-op |
-| **Marimo** | `app/progress.py` | State-collecting reporter + `mo.status.spinner()` |
+| **Studio** | `studio/runs.py` | Iterates the run generators and streams each update as a server-sent event |
 | **Services** | `extraction.py`, `derivation.py`, `benchmarking.py` | Accept optional `progress` parameter |
 
-The services layer is UI-agnostic—it accepts any object implementing the protocol. This allows:
+The services layer is UI-agnostic: it accepts any object implementing the protocol. This allows:
 
 - CLI to use Rich progress bars with real-time updates
-- Marimo to collect events and display summary after completion with spinner during execution
+- The studio to stream every update to the browser as it happens
 - Tests to use no-op reporters
 
 ### Adding Progress to New Services
@@ -1515,7 +1529,7 @@ def my_service_function(
 The benchmarking system enables multi-model comparison for evaluating LLM performance on the ArchiMate derivation pipeline.
 
 **Key Components:**
-- `services/benchmarking.py` - `BenchmarkOrchestrator` for running benchmarks, `BenchmarkAnalyzer` for analysis
+- `deriva/bench/benchmarking.py` (in `packages/deriva-dev/src/`) - `BenchmarkOrchestrator` for running benchmarks, `BenchmarkAnalyzer` for analysis
 - OCEL 2.0 event logging for process mining analysis
 
 ### Architecture
@@ -1538,34 +1552,34 @@ BenchmarkAnalyzer
 
 ### OCEL Event Logging
 
-Benchmark runs are logged in **OCEL 2.0** (Object-Centric Event Log) format:
+Benchmark sessions log their events with `OCELLog` (`deriva/common/ocel.py`). An event has an activity, a time, its objects grouped by type and its attributes:
 
 ```python
-# Event structure
-{
-    "ocel:eid": "unique-event-id",
-    "ocel:activity": "StartBenchmark|EndRun|LLMCall|...",
-    "ocel:timestamp": "2026-01-01T15:45:09.148583",
-    "ocel:omap": ["bench_20260101_154509"],  # Related objects
-    "ocel:vmap": {  # Event attributes
-        "tokens_in": 1234,
-        "tokens_out": 567,
-        "cache_hit": false
-    }
-}
+log.create_event(
+    "LLMQuery",
+    objects={"BenchmarkRun": [run_id], "Model": [model], "Config": [step]},
+    cache_hit=False, tokens_in=1234, latency_ms=850.0,
+)
 ```
 
-**Object Types:**
-- `BenchmarkSession` - Top-level benchmark session
-- `BenchmarkRun` - Individual run (repo × model × iteration)
-- `Repository` - Target repository
-- `Model` - LLM model configuration
+Each session writes, in `ocel/`:
+
+- `benchmark_events.jsonl`: the stream, appended after each run; the analyzers read it back (nested attributes such as run stats are kept)
+- `benchmark_events.json`: the OCEL 2.0 JSON layout (`objectTypes`, `eventTypes`, `objects`, `events` with qualified relationships, typed scalar attributes) for PM4Py, ProM and other tools
+- `cases.csv`, `cases.xes`: the flat case log (`OCELLog.case_events`, one case per run) for Disco
+
+**Object Types** (the qualifier of each relationship names the role):
+- `BenchmarkSession` (session), `BenchmarkRun` (run: repo × model × iteration; `session:extraction:repo` for a repository's shared extraction)
+- `Repository` (repository), `Model` (model: the benchmark model's config name), `Config` (step)
+- `GraphNode` (node) and `Edge` (edge) per extraction step, `Element` (element) per derivation step and run, `Relationship` (relationship)
+
+Steps report what they create through their step context (`add_object`, `add_edge`, `add_relationship`); extraction records the nodes a step wrote with `GraphManager.recording_nodes()`. Consistency compares the runs of one repository with one model (the session's `benchmark_runs`); the shared extraction is not a run.
 
 ### Adding New Metrics
 
 To add a new consistency metric:
 
-1. Add method to `BenchmarkAnalyzer` in `services/benchmarking.py`
+1. Add method to `BenchmarkAnalyzer` in `deriva/bench/benchmarking.py`
 2. Define result dataclass in the module
 3. Integrate into `compute_full_analysis()`
 4. Add database table in schema if persisting
@@ -1575,7 +1589,7 @@ To add a new consistency metric:
 Benchmark models are configured via environment variables:
 
 ```bash
-LLM_{NAME}_PROVIDER=azure|openai|anthropic|ollama
+LLM_{NAME}_PROVIDER=azure|openai|anthropic|mistral|ollama|lmstudio
 LLM_{NAME}_MODEL=model-identifier
 LLM_{NAME}_URL=api-endpoint  # Optional
 LLM_{NAME}_KEY=api-key      # Optional
@@ -1668,140 +1682,30 @@ Group: stdlib, then third-party, then local. Blank line between groups.
 
 ---
 
-## Marimo
+## Studio
 
-Deriva uses [Marimo](https://marimo.io) as its reactive notebook framework. All UI and orchestration lives in `app/app.py`.
+The studio is the local web UI: `packages/deriva-studio/src/deriva/studio/` (FastAPI backend, a top layer that imports `deriva.services` only, enforced by its `ruff.toml`) and `studio/` at the repo root (React 19, Vite, TypeScript, CodeMirror 6, own CSS).
 
-**Documentation**: [docs.marimo.io](https://docs.marimo.io) | **Examples**: [github.com/marimo-team/marimo/examples](https://github.com/marimo-team/marimo/tree/main/examples)
-
-<details>
-<summary><strong>Editing app/app.py - Critical Quirks</strong></summary>
-
-### Cell Editing Format
-
-When editing `app/app.py`, only modify the contents inside the `@app.cell` decorator. Marimo auto-generates function parameters and return statements:
-
-```python
-@app.cell
-def _():
-    # Your code here - marimo handles the rest
-    return
-```
-
-### Reactivity Gotchas
-
-| Quirk | Why It Matters |
-|-------|----------------|
-| **No variable redeclaration** | Each variable name can only be defined in ONE cell across the entire notebook |
-| **`.value` access in separate cell** | You cannot access `button.value` in the same cell where `button` is defined |
-| **Underscore prefix = cell-local** | Variables like `_temp` are local to that cell and won't trigger downstream updates |
-| **Last expression auto-displays** | No need for `print()` or `display()` - the last expression renders automatically |
-| **No `global` keyword** | Never use `global` - marimo's DAG handles state |
-| **No callbacks** | Don't write callbacks - marimo's reactivity handles UI updates automatically |
-
-### DAG Dependencies
-
-Marimo builds a Directed Acyclic Graph from cell dependencies:
-- Cell parameters declare dependencies (e.g., `def _(mo, data):` depends on `mo` and `data`)
-- When a variable changes, all downstream cells automatically re-execute
-- Circular dependencies will error - reorganize code to break cycles
-
-### SQL Cells
-
-When using `mo.sql()` for DuckDB queries:
-- Don't add comments inside SQL cells
-- Use f-strings for dynamic values: `mo.sql(f"SELECT * FROM t WHERE x > {slider.value}")`
-- Configure output format in app init: `marimo.App(sql_output="polars")`
-
-### Visualization
-
-- **matplotlib**: use `plt.gca()` as last expression (not `plt.show()`)
-- **plotly/altair**: return the figure/chart object directly
-- Polars DataFrames render as interactive tables automatically
-
-</details>
-
-<details>
-<summary><strong>PipelineSession Integration Pattern</strong></summary>
-
-### Rules
-
-1. **Create PipelineSession ONCE** in an early cell (singleton pattern)
-2. Pass the **session** to cells via function parameters
-3. Use **session methods** for all operations (queries and orchestration)
-4. **Never** import adapters directly in app/app.py
-
-### Usage in Marimo
-
-```python
-# Cell 1: Create session (runs once)
-from services.session import PipelineSession
-session = PipelineSession(auto_connect=True)
-
-# Cell 2: Status display (reactive)
-def _(session, mo):
-    if session.is_connected():
-        stats = session.get_graph_stats()
-        mo.callout(mo.md(f"**Graph:** {stats['total_nodes']} nodes"), kind="success")
-    else:
-        mo.callout(mo.md("**Disconnected**"), kind="danger")
-
-# Cell 3: Run extraction (button click)
-def _(session, mo, run_button, selected_repo):
-    if run_button.value:
-        result = session.run_extraction(repo_name=selected_repo.value)
-        mo.callout(mo.md(f"Created {result['stats']['nodes_created']} nodes"))
-
-# Cell 4: Show elements table (reactive, updates after operations)
-def _(session, mo):
-    elements = session.get_archimate_elements()
-    mo.ui.table(elements)
-```
-
-### PipelineSession API
-
-| Method | Purpose |
-|--------|---------|
-| `connect()` / `disconnect()` | Lifecycle management |
-| `is_connected()` | Connection status |
-| `get_graph_stats()` | Node/edge counts for display |
-| `get_graph_nodes(type)` | Get nodes for table display |
-| `get_archimate_elements()` | Get elements for table display |
-| `query_graph(cypher)` | Run arbitrary Graph queries |
-| `query_model(cypher)` | Run arbitrary Model queries |
-| `run_extraction(...)` | Run extraction pipeline |
-| `run_derivation(...)` | Run derivation pipeline |
-| `run_pipeline(...)` | Run full pipeline |
-| `export_model(path, name)` | Export ArchiMate XML |
-| `start_graph_db()` / `stop_graph_db()` | Graph database control |
-| `clear_graph()` / `clear_model()` | Clear data |
-
-</details>
-
-<details>
-<summary><strong>Validation & Troubleshooting</strong></summary>
-
-### After Editing
+### Running it
 
 ```bash
-marimo check deriva/app/app.py --fix
+uv run deriva                        # API + built front end on http://127.0.0.1:8765
+cd studio && npm run dev             # front-end development; Vite forwards /api, /grafeo, /widgets to 8765
+DERIVA_STUDIO_API=http://127.0.0.1:9000 npm run dev   # the same for a studio started with --port 9000
+npm test && npm run lint && npm run typecheck
+npm run build                        # writes packages/deriva-studio/src/deriva/studio/static/ (git-ignored, shipped in the wheel)
 ```
 
-This catches and auto-resolves common formatting issues.
+### Backend rules
 
-### Common Issues
+- One `PipelineSession` per process, behind a lock (`SessionProvider`); request handlers and the run worker take it (the worker once per pipeline step). A database held by another process answers 503 with the holder's PID.
+- Step config edits go through the versioned service functions only (`save_extraction_config`, `save_derivation_config`), never in-place updates. Model configs are not versioned: they live in `.env` (`save_model_config`).
+- Free-form graph queries (the widget's query bar) run read-only: a write guard plus a grafeo transaction that is always rolled back.
+- Tests inject a fake session (`tests/test_studio/conftest.py`); they never open the real databases.
 
-| Issue | Solution |
-|-------|----------|
-| Circular dependencies | Reorganize code to remove cycles in DAG |
-| UI element value access error | Move `.value` access to separate cell from definition |
-| Visualization not showing | Ensure visualization object is the last expression |
-| Variable redeclaration error | Use unique names or underscore prefix for cell-local |
-| Cell not re-executing | Check that the variable is in the cell's function parameters |
+### Widgets
 
-</details>
-
----
+The studio mounts anywidget-graph and anywidget-archimate without Jupyter, through `studio/src/widgets/host.ts` (the model API a widget's front-end module expects). The backend serves each widget's module from the installed Python package (`/widgets/<name>/index.js`). anywidget-graph runs in grafeo server mode against `/grafeo` (health, query, schema), answered from the embedded databases.
 
 ## Testing
 
@@ -1876,7 +1780,6 @@ Adapter tests may require external services (DuckDB) - use fixtures for setup/te
 | Modules with I/O | Breaks purity, hard to test | Pass data as parameters |
 | Direct .env access in modules | Violates purity | Receive config as parameters |
 | YAML configuration files | Multiple config sources | Use .env for all config |
-| Manual state management in marimo | Fights reactivity | Let marimo handle state |
 | Creating adapters in individual cells | Multiple instances, connection issues | Create PipelineSession once |
 
 ---
@@ -1888,8 +1791,10 @@ This project includes several specialized documentation files:
 | Document | Description |
 |----------|-------------|
 | [README.md](README.md) | Main project overview, setup, and usage guide |
-| [BENCHMARKS.md](BENCHMARKS.md) | User guide for running benchmarks and analyzing consistency |
-| [optimization_guide.md](optimization_guide.md) | Developer guide: prompt engineering, case studies, optimization log |
+| [docs/architecture.md](docs/architecture.md) | Layers, packages, the home folder and the settings layer |
+| [docs/benchmarks.md](docs/benchmarks.md) | User guide for running benchmarks and analyzing consistency |
+| [docs/optimization.md](docs/optimization.md) | Prompt engineering and the config optimization workflow |
+| [docs/archimate.md](docs/archimate.md) | ArchiMate elements, relationships and metamodel rules |
 | [CHANGELOG.md](CHANGELOG.md) | Version history and release notes |
 | [.github/SECURITY.md](.github/SECURITY.md) | Security policy and vulnerability reporting |
 
@@ -1904,7 +1809,7 @@ This project includes several specialized documentation files:
 | Grafeo Adapter | [deriva/adapters/grafeo/README.md](deriva/adapters/grafeo/README.md) |
 | ArchiMate Adapter | [deriva/adapters/archimate/README.md](deriva/adapters/archimate/README.md) |
 | Repository Adapter | [deriva/adapters/repository/README.md](deriva/adapters/repository/README.md) |
-| Marimo App | [deriva/app/README.md](deriva/app/README.md) |
+| Studio | [README.md#studio](README.md#studio) |
 
 ---
 

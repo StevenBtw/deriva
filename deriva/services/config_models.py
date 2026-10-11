@@ -1,7 +1,7 @@
 """
-Pydantic models for Deriva configuration.
+Pydantic models for Deriva configuration rows (DuckDB).
 
-Uses pydantic-settings for environment variable validation and type coercion.
+Environment settings (the home .env under the process environment) live in deriva.common.settings.
 """
 
 from __future__ import annotations
@@ -9,125 +9,6 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-# =============================================================================
-# Environment Settings (from .env file)
-# =============================================================================
-
-
-class GrafeoSettings(BaseSettings):
-    """Grafeo (embedded graph database) settings."""
-
-    model_config = SettingsConfigDict(env_prefix="GRAFEO_", env_file=".env", extra="ignore")
-
-    db_dir: str = ""  # Empty = in-memory, directory = one <repository>.grafeo file per repository
-    log_queries: bool = False
-
-
-class LLMSettings(BaseSettings):
-    """LLM configuration settings."""
-
-    model_config = SettingsConfigDict(env_prefix="LLM_", env_file=".env", extra="ignore")
-
-    default_model: str | None = None
-    temperature: float = Field(default=0.6, ge=0.0, le=2.0)
-    max_retries: int = Field(default=3, ge=0)
-    timeout: int = Field(default=60, ge=1)
-    max_tokens: int | None = None
-
-    # Cache settings
-    cache_dir: str = "workspace/cache/llm"
-    cache_ttl: int = 0
-    nocache: bool = False
-
-    # Rate limiting
-    rate_limit_rpm: int = 0
-    rate_limit_delay: float = 0.0
-    rate_limit_retries: int = 3
-
-    # Token limits
-    token_limit_default: int = 32000
-
-
-class GraphSettings(BaseSettings):
-    """Graph manager settings."""
-
-    model_config = SettingsConfigDict(env_prefix="GRAPH_", env_file=".env", extra="ignore")
-
-    namespace: str = "Graph"
-    cache_dir: str = "workspace/cache/graph"
-    log_level: str = "INFO"
-
-
-class ArchimateSettings(BaseSettings):
-    """ArchiMate manager settings."""
-
-    model_config = SettingsConfigDict(env_prefix="ARCHIMATE_", env_file=".env", extra="ignore")
-
-    namespace: str = "Model"
-    version: str = "3.1"
-    identifier_prefix: str = "id-"
-
-    # Validation
-    validation_strict_mode: bool = False
-    validation_allow_custom_properties: bool = True
-
-    # Export
-    export_pretty_print: bool = True
-    export_encoding: str = "UTF-8"
-    export_xml_declaration: bool = True
-    export_validate_on_export: bool = True
-    export_include_metadata: bool = True
-
-
-class AppSettings(BaseSettings):
-    """Application-level settings."""
-
-    model_config = SettingsConfigDict(env_prefix="APP_", env_file=".env", extra="ignore")
-
-    env: str = "development"
-    log_level: str = "INFO"
-    log_dir: str = "logs"
-
-
-class DerivaSettings(BaseSettings):
-    """
-    Master settings class that aggregates all settings.
-
-    Usage:
-        settings = DerivaSettings()
-        print(settings.grafeo.db_dir)
-        print(settings.llm.temperature)
-    """
-
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    # Repository settings
-    repository_workspace_dir: str = Field(default="workspace/repositories", alias="REPOSITORY_WORKSPACE_DIR")
-    output_dir: str = Field(default="workspace/output/model.xml", alias="OUTPUT_DIR")
-
-    # Nested settings are loaded separately
-    @property
-    def grafeo(self) -> GrafeoSettings:
-        return GrafeoSettings()
-
-    @property
-    def llm(self) -> LLMSettings:
-        return LLMSettings()
-
-    @property
-    def graph(self) -> GraphSettings:
-        return GraphSettings()
-
-    @property
-    def archimate(self) -> ArchimateSettings:
-        return ArchimateSettings()
-
-    @property
-    def app(self) -> AppSettings:
-        return AppSettings()
-
 
 # =============================================================================
 # Pipeline Configuration Models (from DuckDB)
@@ -237,7 +118,6 @@ class BenchmarkModelConfigModel(BaseModel):
     api_url: str | None = Field(default=None, description="API endpoint URL")
     api_key: str | None = Field(default=None, description="API key (direct)")
     api_key_env: str | None = Field(default=None, description="Env var name for API key")
-    structured_output: bool = Field(default=False, description="Enable structured output at API level")
 
     @field_validator("provider", mode="before")
     @classmethod

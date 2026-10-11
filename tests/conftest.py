@@ -14,6 +14,13 @@ import pytest
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# Folders that modules bind at import time resolve against the checkout home, as in a real
+# process (its environment is set before the first import); tests that point DERIVA_HOME
+# elsewhere must not be the first to import them.
+import deriva.adapters.graph.cache  # noqa: E402, F401
+import deriva.bench.session  # noqa: E402, F401
+import deriva.services.overfit  # noqa: E402, F401
+import deriva.studio.runs  # noqa: E402, F401
 
 # =============================================================================
 # Safety: tests never touch a persistent graph database
@@ -21,30 +28,39 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
 @pytest.fixture(autouse=True)
+def _no_developer_env_file(monkeypatch, tmp_path_factory):
+    """Tests never read the developer's .env: the settings layer sees a file that does not exist."""
+    from deriva.common import settings
+
+    missing = tmp_path_factory.getbasetemp() / "no-dotenv-in-tests" / ".env"
+    monkeypatch.setattr(settings, "env_file", lambda: missing)
+
+
+@pytest.fixture(autouse=True)
 def _in_memory_graph_database(monkeypatch):
-    """Force in-memory grafeo; .env's GRAFEO_DB_DIR must never reach a test.
+    """Force in-memory grafeo: the process environment wins over .env, so an empty GRAFEO_DB_DIR keeps every test in memory.
 
-    load_dotenv() does not override variables that are already set, so an empty
-    value here wins over .env. LLMManager reloads .env with override=True, so its
-    load_dotenv re-clears both after loading. Tests that need files set
-    GRAFEO_DB_DIR to tmp_path.
+    Tests that need files set GRAFEO_DB_DIR to tmp_path.
     """
-    import os
-
-    from deriva.adapters.llm import manager as llm_manager
-
     monkeypatch.setenv("GRAFEO_DB_DIR", "")
     monkeypatch.setenv("GRAFEO_DB_PATH", "")
 
-    real_load_dotenv = llm_manager.load_dotenv
 
-    def load_dotenv_keeping_memory_graph(*args, **kwargs):
-        loaded = real_load_dotenv(*args, **kwargs)
-        os.environ["GRAFEO_DB_DIR"] = ""
-        os.environ["GRAFEO_DB_PATH"] = ""
-        return loaded
+@pytest.fixture(scope="session")
+def _llm_log_roots(tmp_path_factory):
+    """A fresh folder per test under one session folder (created only when a test writes a call log)."""
+    import itertools
 
-    monkeypatch.setattr(llm_manager, "load_dotenv", load_dotenv_keeping_memory_graph)
+    base = tmp_path_factory.mktemp("benchmarks")
+    return (base / str(n) for n in itertools.count(1))
+
+
+@pytest.fixture(autouse=True)
+def _llm_call_logs_outside_the_workspace(monkeypatch, _llm_log_roots):
+    """Benchmark LLM call logs go to a temporary folder, never into workspace/benchmarks."""
+    from deriva.bench import benchmarking
+
+    monkeypatch.setattr(benchmarking, "LLM_LOG_ROOT", next(_llm_log_roots))
 
 
 # =============================================================================

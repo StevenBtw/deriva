@@ -295,6 +295,64 @@ class TestPerCandidateMode:
         assert stages.get("0") != "filtered_out"
         assert [("CONFIG NAMING RULES" in c.args[0]) for c in llm.call_args_list] == [True]
 
+    def test_candidates_the_cap_leaves_out_are_told_apart_from_filtered_ones(self):
+        """A rule judged the one; the budget (max_candidates) the other: the run record must say which."""
+
+        class NameFiltered(ConcreteDerivation):
+            def filter_candidates(self, candidates, enrichments, max_candidates, **kwargs):
+                return sorted((c for c in candidates if c.name.endswith("Data")), key=lambda c: c.node_id)[:max_candidates]
+
+        candidates = [Candidate(node_id=str(i), name=name, labels=["TypeDefinition"], properties={}) for i, name in enumerate(["AData", "BData", "CData", "Helper"])]
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            result = NameFiltered().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                llm_query_fn=MagicMock(return_value=SimpleNamespace(content=self.RESPONSE)),
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=2,
+                batch_size=5,
+                existing_elements=[],
+                prompt=TEST_PROMPT,
+            )
+
+        stages = {d.node_id: d.stage for d in result.candidate_decisions}
+        assert (stages["2"], stages["3"]) == ("over_cap", "filtered_out")
+        assert stages.get("0") not in ("over_cap", "filtered_out") and stages.get("1") not in ("over_cap", "filtered_out")
+
+    def test_with_no_room_under_the_cap_the_candidates_the_rules_keep_are_over_cap(self):
+        """A cap of 0 leaves every candidate out: the ones the rules kept are over the cap, not filtered out."""
+
+        class NameFiltered(ConcreteDerivation):
+            def filter_candidates(self, candidates, enrichments, max_candidates, **kwargs):
+                return sorted((c for c in candidates if c.name.endswith("Data")), key=lambda c: c.node_id)[:max_candidates]
+
+        candidates = [Candidate(node_id=str(i), name=name, labels=["TypeDefinition"], properties={}) for i, name in enumerate(["AData", "BData", "Helper"])]
+        llm = MagicMock(return_value=SimpleNamespace(content=self.RESPONSE))
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            result = NameFiltered().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=0,
+                batch_size=5,
+                existing_elements=[],
+                prompt=TEST_PROMPT,
+            )
+
+        assert {d.node_id: d.stage for d in result.candidate_decisions} == {"0": "over_cap", "1": "over_cap", "2": "filtered_out"}
+        llm.assert_not_called()
+
     def test_with_an_annotation_pattern_only_marked_candidates_are_named_per_candidate(self):
         """An annotation that shows what a candidate is decides; the LLM only names it. The others are judged in a batch."""
         per_candidate = PerCandidateConfig(min_pool=1, rules="CONFIG NAMING RULES", persona="P", decorators=r"^Entity(\(.*)?$")
@@ -953,7 +1011,7 @@ class TestIsolatedNamingStep:
     def test_repository_words_are_removed_from_an_answer(self):
         candidate = Candidate(node_id="n1", name="registry", labels=["Directory"], properties={})
 
-        created, _ = self._created([candidate], ["Tea Store Registry"] * 3, repo_name="TeaStore")
+        created, _ = self._created([candidate], ["Tool Shed Registry"] * 3, repo_name="ToolShed")
 
         assert [e["name"] for e in created] == ["Registry"]
 
@@ -1015,6 +1073,21 @@ class TestStructureDecidesUniqueness:
                 naming=NamingConfig(instruction="NAMING RULES", samples=1),
             )
         return result, prompts
+
+    def test_a_proper_name_the_source_writes_as_one_word_keeps_its_inner_capitals(self):
+        """The source spells "ledgerkit3" as one word: the LLM's "LedgerKit3" is not split into "Ledger Kit3"."""
+        candidates = [Candidate(node_id="file_schema", name="ledgerkit3_Report.xsd", labels=["File"], properties={"path": "repo/schemas/ledgerkit3_Report.xsd"})]
+
+        result, _ = self._generate(candidates, ["LedgerKit3 Report Schema"], per_candidate=True)
+
+        assert [e["name"] for e in result.created_elements] == ["LedgerKit3 Report Schema"]
+
+    def test_a_code_name_the_llm_copies_is_split_where_the_source_splits_it(self):
+        candidates = [Candidate(node_id="type_proc", name="EntityProcessor", labels=["TypeDefinition"], properties={"path": "repo/src/EntityProcessor.java"})]
+
+        result, _ = self._generate(candidates, ["EntityProcessor"], per_candidate=True)
+
+        assert [e["name"] for e in result.created_elements] == ["Entity Processor"]
 
     @pytest.mark.parametrize("per_candidate", [True, False])
     def test_a_name_that_is_another_candidates_structure_name_is_not_taken(self, per_candidate):
@@ -1078,3 +1151,40 @@ class TestStepParamsReachTheBaseFilter:
         kept = ApplicationInterfaceDerivation().filter_candidates([low, high], enrichments, 10, set(), set(), graph_filter=GraphFilter(min_kcore_percentile=50.0))
 
         assert [c.node_id for c in kept] == ["high"]
+
+
+class TestCandidateActivity:
+    """The studio pulses a step's candidates: the generator reports them once, before any LLM call."""
+
+    def test_candidates_are_reported_once_before_any_llm_call(self):
+        candidates = [
+            Candidate(node_id="dir_a", name="alpha", labels=["Directory"], properties={}),
+            Candidate(node_id="dir_b", name="beta", labels=["Directory"], properties={}),
+        ]
+        events = []
+
+        def llm(prompt, schema, **kwargs):
+            events.append("llm")
+            return SimpleNamespace(content=json.dumps({"elements": []}))
+
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        ):
+            ConcreteDerivation().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(),
+                llm_query_fn=llm,
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                prompt=TEST_PROMPT,
+                on_candidates=lambda ids: events.append(("candidates", ids)),
+            )
+
+        assert events[0] == ("candidates", ["dir_a", "dir_b"])
+        assert sum(1 for e in events if isinstance(e, tuple)) == 1
+        assert "llm" in events[1:]

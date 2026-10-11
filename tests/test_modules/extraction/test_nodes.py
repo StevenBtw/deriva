@@ -775,6 +775,13 @@ class TestBuildTypeNodeFromAst:
         node = _build_type_node_from_treesitter(ext_type, "file.py", "class code", "repo")
         assert node["properties"]["category"] == "class"
 
+    @pytest.mark.parametrize("kind", ["program", "record", "job", "procedure", "screen"])
+    def test_kinds_of_structural_sources_keep_their_kind(self, kind):
+        """A program, a record, a job and a screen are told apart downstream."""
+        ext_type = ExtractedType(name="UNITA", kind=kind, line_start=1, line_end=2)
+        node = _build_type_node_from_treesitter(ext_type, "UNITA.cbl", "line one\nline two", "repo")
+        assert node["properties"]["category"] == kind
+
     def test_function_category(self):
         """Should map function kind to function category."""
         ext_type = ExtractedType(name="my_func", kind="function", line_start=1, line_end=3)

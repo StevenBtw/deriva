@@ -46,24 +46,6 @@ class TestOCELEvent:
         assert event.attributes["file_type"] == "source"
         assert event.attributes["subtype"] == "python"
 
-    def test_to_ocel_dict(self):
-        """Should convert to OCEL 2.0 JSON format."""
-        event = OCELEvent(
-            activity="ExtractNode",
-            timestamp=datetime(2024, 1, 15, 10, 30, 0),
-            objects={"File": ["file_1"]},
-            attributes={"tokens": 100},
-            event_id="evt_12345",
-        )
-
-        ocel_dict = event.to_ocel_dict()
-
-        assert ocel_dict["ocel:eid"] == "evt_12345"
-        assert ocel_dict["ocel:activity"] == "ExtractNode"
-        assert "2024-01-15" in ocel_dict["ocel:timestamp"]
-        assert ocel_dict["ocel:vmap"]["tokens"] == 100
-        assert ocel_dict["ocel:typedOmap"]["File"] == ["file_1"]
-
     def test_to_jsonl_dict(self):
         """Should convert to compact JSONL format."""
         event = OCELEvent(
@@ -80,22 +62,6 @@ class TestOCELEvent:
         assert jsonl_dict["activity"] == "ClassifyFile"
         assert jsonl_dict["objects"]["File"] == ["file_1"]
         assert jsonl_dict["attributes"]["type"] == "source"
-
-    def test_flatten_objects(self):
-        """Should flatten objects for OCEL 1.0 compatibility."""
-        event = OCELEvent(
-            activity="Test",
-            timestamp=datetime.now(),
-            objects={"File": ["f1", "f2"], "Node": ["n1"]},
-        )
-
-        ocel_dict = event.to_ocel_dict()
-        flat = ocel_dict["ocel:omap"]
-
-        assert "f1" in flat
-        assert "f2" in flat
-        assert "n1" in flat
-        assert len(flat) == 3
 
     def test_has_object(self):
         """Should check if event relates to specific object."""
@@ -550,13 +516,14 @@ class TestLoadBenchmarkOcel:
     def test_benchmark_analyzer_uses_current_layout(self, tmp_path, monkeypatch):
         from unittest.mock import MagicMock, patch
 
-        from deriva.services.benchmarking import BenchmarkAnalyzer
+        from deriva.bench.benchmarking import BenchmarkAnalyzer
 
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DERIVA_HOME", str(tmp_path))  # benchmark folders resolve against the home folder
         self._write(tmp_path / "workspace" / "benchmarks" / "s1" / "ocel" / "benchmark_events.jsonl", "Current")
         with (
-            patch("deriva.services.benchmarking.get_benchmark_session", return_value={"session_id": "s1"}),
-            patch("deriva.services.benchmarking.get_benchmark_runs", return_value=[]),
+            patch("deriva.bench.benchmarking.get_benchmark_session", return_value={"session_id": "s1"}),
+            patch("deriva.bench.benchmarking.get_benchmark_runs", return_value=[]),
         ):
             analyzer = BenchmarkAnalyzer("s1", MagicMock())
 
@@ -567,3 +534,236 @@ def test_benchmark_loader_is_exported():
     from deriva.common import ocel
 
     assert "load_benchmark_ocel" in ocel.__all__
+
+
+# =============================================================================
+# OCEL 2.0 (standard JSON layout) and the flat case log
+# =============================================================================
+
+
+def _run_log() -> OCELLog:
+    """One run of a session: start, an LLM call, a derive step, completion; plus the session and extraction events."""
+    log = OCELLog()
+    t = datetime(2026, 10, 9, 12, 0, 0)
+    run = {"BenchmarkSession": ["bench_1"], "BenchmarkRun": ["bench_1:repo:m:1"], "Repository": ["repo"], "Model": ["m"]}
+    log.add_event(OCELEvent("StartBenchmark", t, {"BenchmarkSession": ["bench_1"]}, {"models": ["m"]}, event_id="e0"))
+    log.add_event(
+        OCELEvent("EnsureExtraction", t.replace(second=5), {"BenchmarkSession": ["bench_1"], "Repository": ["repo"]}, {"cached": True, "duration_seconds": 0.5}, event_id="e1")
+    )
+    log.add_event(OCELEvent("StartRun", t.replace(second=10), run, {"iteration": 1}, event_id="e2"))
+    log.add_event(
+        OCELEvent(
+            "LLMQuery",
+            t.replace(second=20),
+            {"BenchmarkRun": ["bench_1:repo:m:1"], "Model": ["m"], "Config": ["ApplicationComponent"]},
+            {"config_id": "ApplicationComponent", "call_kind": "naming", "cache_hit": False, "tokens_in": 12, "latency_ms": 1500.0, "wait_ms": 500.0, "error_type": None},
+            event_id="e3",
+        )
+    )
+    log.add_event(
+        OCELEvent(
+            "DeriveConfig",
+            t.replace(second=30),
+            {**run, "Config": ["ApplicationComponent"], "Element": ["ac_a", "ac_b"], "Relationship": ["Serving_ac_a_ac_b"]},
+            {"config_id": "ApplicationComponent", "duration_seconds": 12, "stats": {"items_created": 2}, "errors": []},
+            event_id="e4",
+        )
+    )
+    log.add_event(OCELEvent("CompleteRun", t.replace(second=40), run, {"status": "completed", "duration_seconds": 30.5}, event_id="e5"))
+    return log
+
+
+class TestOcel2Export:
+    """export_json writes the OCEL 2.0 JSON layout that PM4Py, ProM and other OCEL 2.0 readers load."""
+
+    def _export(self, log: OCELLog, tmp_path) -> dict:
+        import json
+
+        path = tmp_path / "log.json"
+        log.export_json(path)
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_the_standard_top_level_layout(self, tmp_path):
+        data = self._export(_run_log(), tmp_path)
+
+        assert set(data) == {"objectTypes", "eventTypes", "objects", "events"}
+        assert [t["name"] for t in data["objectTypes"]] == ["BenchmarkRun", "BenchmarkSession", "Config", "Element", "Model", "Relationship", "Repository"]
+        assert all(t["attributes"] == [] for t in data["objectTypes"])
+
+    def test_event_attributes_are_typed_scalars(self, tmp_path):
+        import json
+
+        data = self._export(_run_log(), tmp_path)
+        types = {t["name"]: {a["name"]: a["type"] for a in t["attributes"]} for t in data["eventTypes"]}
+        events = {e["id"]: e for e in data["events"]}
+
+        assert types["LLMQuery"] == {"config_id": "string", "call_kind": "string", "cache_hit": "boolean", "tokens_in": "integer", "latency_ms": "float", "wait_ms": "float"}
+        assert types["DeriveConfig"]["stats"] == "string"  # nested values are JSON text
+        llm = {a["name"]: a["value"] for a in events["e3"]["attributes"]}
+        assert "error_type" not in llm  # an empty value is left out
+        assert llm["cache_hit"] is False
+        derive = {a["name"]: a["value"] for a in events["e4"]["attributes"]}
+        assert json.loads(derive["stats"]) == {"items_created": 2}
+
+    def test_numbers_of_both_kinds_are_floats_and_mixed_values_strings(self, tmp_path):
+        log = OCELLog()
+        log.create_event("Step", {"Config": ["s"]}, duration_seconds=1, value=1)
+        log.create_event("Step", {"Config": ["s"]}, duration_seconds=1.5, value="many")
+
+        data = self._export(log, tmp_path)
+        (step,) = data["eventTypes"]
+        assert {a["name"]: a["type"] for a in step["attributes"]} == {"duration_seconds": "float", "value": "string"}
+        values = [{a["name"]: a["value"] for a in e["attributes"]} for e in data["events"]]
+        assert values == [{"duration_seconds": 1.0, "value": "1"}, {"duration_seconds": 1.5, "value": "many"}]
+
+    def test_events_relate_objects_by_their_role(self, tmp_path):
+        data = self._export(_run_log(), tmp_path)
+        derive = next(e for e in data["events"] if e["id"] == "e4")
+
+        assert derive["type"] == "DeriveConfig"
+        assert datetime.fromisoformat(derive["time"]).tzinfo is not None  # times carry their offset
+        assert {(r["objectId"], r["qualifier"]) for r in derive["relationships"]} == {
+            ("bench_1", "session"),
+            ("bench_1:repo:m:1", "run"),
+            ("repo", "repository"),
+            ("m", "model"),
+            ("ApplicationComponent", "step"),
+            ("ac_a", "element"),
+            ("ac_b", "element"),
+            ("Serving_ac_a_ac_b", "relationship"),
+        }
+
+    def test_every_related_object_exists_and_runs_name_their_context(self, tmp_path):
+        data = self._export(_run_log(), tmp_path)
+        objects = {o["id"]: o for o in data["objects"]}
+
+        assert all(r["objectId"] in objects for e in data["events"] for r in e["relationships"])
+        assert objects["ac_a"]["type"] == "Element"
+        run = objects["bench_1:repo:m:1"]
+        assert {(r["objectId"], r["qualifier"]) for r in run["relationships"]} == {("bench_1", "session"), ("repo", "repository"), ("m", "model")}
+
+    def test_an_id_of_two_types_stays_unique(self, tmp_path):
+        log = OCELLog()
+        log.create_event("Step", {"Repository": ["shared"], "Config": ["shared"]})
+
+        data = self._export(log, tmp_path)
+
+        assert sorted((o["id"], o["type"]) for o in data["objects"]) == [("Config:shared", "Config"), ("shared", "Repository")]
+        assert {r["objectId"] for r in data["events"][0]["relationships"]} == {"shared", "Config:shared"}
+
+    def test_reads_back_its_own_events(self, tmp_path):
+        path = tmp_path / "log.json"
+        original = _run_log()
+        original.export_json(path)
+
+        loaded = OCELLog.from_json(path)
+
+        assert [(e.event_id, e.activity) for e in loaded.events] == [(e.event_id, e.activity) for e in original.events]
+        derive = loaded.events[4]
+        assert sorted(derive.objects["Element"]) == ["ac_a", "ac_b"]
+        assert derive.attributes["duration_seconds"] == 12.0
+        assert loaded.events[3].timestamp == original.events[3].timestamp.astimezone()
+
+    def test_still_reads_the_ocel_1_layout_of_older_sessions(self, tmp_path):
+        import json
+
+        path = tmp_path / "old.json"
+        old = {
+            "ocel:events": [
+                {"ocel:eid": "x", "ocel:activity": "StartRun", "ocel:timestamp": "2026-01-01T10:00:00", "ocel:typedOmap": {"BenchmarkRun": ["r1"]}, "ocel:vmap": {"iteration": 1}}
+            ]
+        }
+        path.write_text(json.dumps(old), encoding="utf-8")
+
+        (event,) = OCELLog.from_json(path).events
+
+        assert (event.activity, event.objects, event.attributes) == ("StartRun", {"BenchmarkRun": ["r1"]}, {"iteration": 1})
+
+    def test_the_session_loader_prefers_the_lossless_stream(self, tmp_path):
+        """The JSONL stream keeps nested attributes (run stats); the OCEL 2.0 file holds them as text."""
+        from deriva.common.ocel import load_benchmark_ocel
+
+        log = _run_log()
+        folder = tmp_path / "bench_1" / "ocel"
+        log.export_json(folder / "benchmark_events.json")
+        log.export_jsonl(folder / "benchmark_events.jsonl")
+
+        loaded = load_benchmark_ocel(tmp_path, "bench_1")
+
+        assert loaded.events[4].attributes["stats"] == {"items_created": 2}
+
+
+class TestCaseLog:
+    """A flat event log per run (case = run) for Disco and other case-centric tools, as CSV and XES."""
+
+    def test_one_case_per_run_with_readable_activities(self):
+        rows = _run_log().case_events()
+
+        assert [(r["case_id"], r["activity"]) for r in rows] == [
+            ("bench_1:extraction:repo", "Ensure extraction"),
+            ("bench_1:repo:m:1", "Start run"),
+            ("bench_1:repo:m:1", "LLM · ApplicationComponent · naming"),
+            ("bench_1:repo:m:1", "Derive · ApplicationComponent"),
+            ("bench_1:repo:m:1", "Complete run"),
+        ]  # session events (StartBenchmark) belong to no run
+
+    def test_rows_carry_time_span_resource_and_attributes(self):
+        rows = {r["activity"]: r for r in _run_log().case_events()}
+
+        llm = rows["LLM · ApplicationComponent · naming"]
+        assert llm["resource"] == "m"
+        assert (llm["timestamp"] - llm["start_timestamp"]).total_seconds() == 2.0  # latency + rate-limit wait
+        assert llm["cache_hit"] is False and llm["tokens_in"] == 12
+        derive = rows["Derive · ApplicationComponent"]
+        assert (derive["timestamp"] - derive["start_timestamp"]).total_seconds() == 12
+        assert (derive["session"], derive["repository"]) == ("bench_1", "repo")
+        assert rows["Start run"]["start_timestamp"] == rows["Start run"]["timestamp"]
+
+    def test_csv(self, tmp_path):
+        import csv
+
+        path = tmp_path / "cases.csv"
+        _run_log().export_case_csv(path)
+
+        with open(path, encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        assert (reader.fieldnames or [])[:7] == ["case_id", "activity", "timestamp", "start_timestamp", "resource", "session", "repository"]
+        assert [r["activity"] for r in rows][-1] == "Complete run"
+        assert rows[2]["cache_hit"] == "false" and rows[2]["latency_ms"] == "1500.0"
+        assert datetime.fromisoformat(rows[2]["timestamp"]).tzinfo is not None
+
+    def test_xes(self, tmp_path):
+        import xml.etree.ElementTree as ET
+
+        path = tmp_path / "cases.xes"
+        _run_log().export_case_xes(path)
+
+        ns = {"x": "http://www.xes-standard.org/"}
+        root = ET.parse(path).getroot()
+        traces = root.findall("x:trace", ns)
+        names = [t.find("x:string[@key='concept:name']", ns) for t in traces]
+        assert [n.get("value") for n in names if n is not None] == ["bench_1:extraction:repo", "bench_1:repo:m:1"]
+        llm = traces[1].findall("x:event", ns)[1]
+
+        def value(tag: str, key: str) -> str | None:
+            found = llm.find(f"x:{tag}[@key='{key}']", ns)
+            return None if found is None else found.get("value")
+
+        assert value("string", "concept:name") == "LLM · ApplicationComponent · naming"
+        assert value("string", "org:resource") == "m"
+        assert value("date", "time:timestamp") is not None
+        assert value("boolean", "cache_hit") == "false"
+        assert value("int", "tokens_in") == "12"
+        assert value("float", "latency_ms") == "1500.0"
+
+
+def test_an_id_that_looks_like_a_prefixed_one_stays_unique(tmp_path):
+    """Config x becomes Config:x; an element that is itself named Config:x must not get the same id."""
+    log = OCELLog()
+    log.create_event("Step", {"Repository": ["x"], "Config": ["x"], "Element": ["Config:x"]})
+
+    data = TestOcel2Export()._export(log, tmp_path)
+
+    ids = [o["id"] for o in data["objects"]]
+    assert len(ids) == len(set(ids)) == 3

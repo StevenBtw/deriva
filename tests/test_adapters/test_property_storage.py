@@ -13,9 +13,9 @@ from deriva.adapters.archimate.models import Element, Relationship
 from deriva.adapters.grafeo.manager import close_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.graph.models import BusinessConceptNode, FileNode, TypeDefinitionNode
+from deriva.bench.step_benchmark import graph_outputs
 from deriva.modules.derivation.refine.orphan_elements import OrphanElementsStep
 from deriva.modules.derivation.refine.structural_consistency import StructuralConsistencyStep
-from deriva.services.step_benchmark import graph_outputs
 
 
 @pytest.fixture

@@ -265,7 +265,7 @@ class TestBenchmarkModelConfig:
             provider="openai",
             model="gpt-4",
         )
-        assert "openai.com" in config.get_api_url()
+        assert config.get_api_url() == "https://api.openai.com/v1/chat/completions"
 
     def test_get_api_url_anthropic_default(self):
         """Should return Anthropic default URL."""
@@ -274,7 +274,7 @@ class TestBenchmarkModelConfig:
             provider="anthropic",
             model="claude-3",
         )
-        assert "anthropic.com" in config.get_api_url()
+        assert config.get_api_url() == "https://api.anthropic.com/v1/messages"
 
     def test_get_api_url_ollama_default(self):
         """Should return Ollama default URL."""

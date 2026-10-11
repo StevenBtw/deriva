@@ -19,9 +19,9 @@ from .joint import JointElement, MergeCandidate, Metamodel, Proposal, origin_tie
 from .normalization import RepoContext, normalize_for_dedup
 
 if TYPE_CHECKING:
-    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-    from deriva.adapters.archimate.models import Element  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
-    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see ARCHITECTURE.MD)
+    from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
+    from deriva.adapters.archimate.models import Element  # noqa: TID251 - known layer exception (see docs/architecture.md)
+    from deriva.adapters.graph import GraphManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
 logger = logging.getLogger(__name__)
 

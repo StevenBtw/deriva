@@ -1,5 +1,5 @@
 """
-PipelineSession - Unified API for CLI and Marimo.
+PipelineSession - Unified API for the CLI and the studio.
 
 This module provides a single entry point for all pipeline operations,
 managing the lifecycle of all managers and exposing both orchestration
@@ -10,26 +10,26 @@ Usage (CLI):
         result = session.run_extraction(repo_name="my-repo")
         session.export_model("output.xml")
 
-Usage (Marimo):
+Usage (studio, one session per process):
     session = PipelineSession(auto_connect=True)
-    # In reactive cells:
     stats = session.get_graph_stats()
     elements = session.get_archimate_elements()
 """
 
 from __future__ import annotations
 
+import json
 import logging
-import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from deriva.common.types import ProgressUpdate
 
 if TYPE_CHECKING:
-    from deriva.common.types import BenchmarkProgressReporter, ProgressReporter
-    from deriva.services import step_benchmark
+    from deriva.common.types import ProgressReporter
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +40,26 @@ from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, use_databas
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
 from deriva.common.logging import RunLogger
+from deriva.common.paths import home, resolve, workspace
+from deriva.common.settings import RepositorySettings
 from deriva.common.types import HasToDict, RunLoggerProtocol
 
-from . import benchmarking, config, derivation, extraction, pipeline
+from . import config, derivation, export_bundle, extraction, model_configs, ontology, overfit, pipeline, trace
+from .llm_log import record_call
+
+
+def _plain(value: Any) -> Any:
+    """A graph node or edge without the engine's internal keys, labels without the namespace."""
+    if isinstance(value, dict) and ("_labels" in value or "_id" in value):
+        plain = {k: v for k, v in value.items() if not k.startswith("_")}
+        if "_labels" in value:
+            return {"labels": [label for label in value["_labels"] if label not in ("Graph", "Model")], **plain}
+        return {"type": value.get("_type"), **plain}
+    return value
 
 
 class PipelineSession:
-    """Unified session for CLI and Marimo pipeline operations.
+    """Unified session for CLI and studio pipeline operations.
 
     Manages all manager lifecycles and provides a clean API for:
     - Lifecycle: connect/disconnect, context manager support
@@ -67,14 +80,14 @@ class PipelineSession:
 
         Args:
             db_path: Path to DuckDB database (default: deriva/adapters/database/sql.db)
-            auto_connect: If True, connect immediately (useful for Marimo)
+            auto_connect: If True, connect immediately
             workspace_dir: Repository workspace directory (default: from env)
             repository: Graph database to work in: a repository name, or the joined
                 names of a combined run (default: the shared "default" database)
         """
         self._db_path = db_path
         self.repository = repository or DEFAULT_DATABASE
-        self._workspace_dir = workspace_dir or os.getenv("REPOSITORY_WORKSPACE_DIR", "workspace/repositories")
+        self._workspace_dir = str(resolve(workspace_dir or RepositorySettings().workspace_dir))
 
         # Managers (created on connect)
         self._engine: Any | None = None
@@ -82,6 +95,7 @@ class PipelineSession:
         self._archimate_manager: ArchimateManager | None = None
         self._repo_manager: RepoManager | None = None
         self._llm_manager: Any | None = None  # Lazy loaded
+        self._call_log: Any | None = None  # LlmCallLog of the running studio run, if any
 
         # Test-only mocks (set by tests)
         self._mock_db: Any | None = None
@@ -190,16 +204,36 @@ class PipelineSession:
             response_model: type | None = None,
         ) -> Any:
             assert self._llm_manager is not None
-            return self._llm_manager.query(
-                prompt,
-                schema=schema,
-                response_model=response_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-            )
+            try:
+                response = self._llm_manager.query(
+                    prompt,
+                    schema=schema,
+                    response_model=response_model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system_prompt=system_prompt,
+                )
+            except Exception as exc:
+                self._record_call(prompt, schema, system_prompt, None, str(exc))
+                raise
+            self._record_call(prompt, schema, system_prompt, response, None)
+            return response
 
         return query_fn
+
+    def attach_call_log(self, log: Any) -> None:
+        """Record every LLM call of this session in ``log`` (an LlmCallLog) until detached."""
+        self._call_log = log
+
+    def detach_call_log(self) -> None:
+        self._call_log = None
+
+    def _record_call(self, prompt: str, schema: dict | None, system_prompt: str | None, response: Any, error: str | None) -> None:
+        log = self._call_log
+        if log is None:
+            return
+        metrics = (getattr(self._llm_manager, "last_call", None) or {}) if self._llm_manager is not None else {}
+        record_call(log, metrics, prompt=prompt, schema=schema, system_prompt=system_prompt, response=response, error=error)
 
     @property
     def llm_info(self) -> dict[str, str] | None:
@@ -212,6 +246,22 @@ class PipelineSession:
                 "model": str(self._llm_manager.model),
             }
         return None
+
+    def write_run_inputs(self, folder: str | Path, run_id: str) -> Path:
+        """Write what a run is about to run on into ``folder/inputs.json``: the active config versions, LLM
+        samples, the tables without version history and the environment, with the session's LLM settings
+        (provider, model, default temperature and max tokens; no keys). Same format as a benchmark session's inputs."""
+        self._ensure_connected()
+        if self._llm_manager is None:
+            self._get_llm_query_fn()
+        manager = self._llm_manager
+        settings = (("provider", "provider_name"), ("model", "model"), ("temperature", "temperature"), ("max_tokens", "max_tokens"))
+        models = {"session": {key: getattr(manager, attr, None) for key, attr in settings}} if manager is not None else {}
+        record = {"run_id": run_id, "captured_at": datetime.now().isoformat(), **export_bundle.run_inputs(self._engine, models)}
+        path = Path(folder) / "inputs.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, indent=1, default=str), encoding="utf-8")
+        return path
 
     # =========================================================================
     # QUERIES (for reactive UI)
@@ -237,11 +287,11 @@ class PipelineSession:
         stats["total_nodes"] = total
         return stats
 
-    def get_graph_nodes(self, node_type: str) -> list[dict]:
-        """Get nodes of a specific type."""
+    def get_graph_nodes(self, node_type: str, limit: int | None = None) -> list[dict]:
+        """Get nodes of a specific type (the first ``limit`` by id when given)."""
         self._ensure_connected()
         assert self._graph_manager is not None
-        return self._graph_manager.get_nodes_by_type(node_type)
+        return self._graph_manager.get_nodes_by_type(node_type, limit=limit)
 
     def get_archimate_stats(self) -> dict[str, Any]:
         """Get ArchiMate model statistics."""
@@ -257,7 +307,7 @@ class PipelineSession:
             if isinstance(elem, dict):
                 elem_type = cast(dict[str, Any], elem).get("type", "Unknown")
             else:
-                elem_type = getattr(elem, "type", "Unknown")
+                elem_type = getattr(elem, "element_type", None) or getattr(elem, "type", "Unknown")
             by_type[elem_type] = by_type.get(elem_type, 0) + 1
 
         return {
@@ -291,6 +341,30 @@ class PipelineSession:
         self._ensure_connected()
         assert self._archimate_manager is not None
         return self._archimate_manager.query(cypher)
+
+    def query_graph_read_only(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
+        """Run a user-typed Cypher query on the Graph namespace; writes are rolled back."""
+        self._ensure_connected()
+        assert self._graph_manager is not None
+        return self._graph_manager.query_read_only(cypher, params)
+
+    def query_model_read_only(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
+        """Run a user-typed Cypher query on the Model namespace; writes are rolled back."""
+        self._ensure_connected()
+        assert self._archimate_manager is not None
+        return self._archimate_manager.query_read_only(cypher, params)
+
+    def trace_element(self, element_id: str, calls: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+        """Where a model element comes from: sources, relationships and the given run calls that mention its sources."""
+        return trace.trace_element(self, element_id, calls or [])
+
+    def intermediate_ontology(self) -> dict[str, Any]:
+        """The graph's node and edge types with the extraction steps that produce them and the derivation steps that read them."""
+        return ontology.intermediate_ontology(self)
+
+    def output_ontology(self) -> dict[str, Any]:
+        """ArchiMate as Deriva derives it: element types with their steps, relationship types and the allowed relationships."""
+        return ontology.output_ontology(self)
 
     def get_repositories(self, detailed: bool = False) -> list[dict]:
         """Get list of repositories."""
@@ -444,8 +518,7 @@ class PipelineSession:
         """
         Run extraction pipeline as a generator, yielding progress updates.
 
-        Designed for use with Marimo's mo.status.progress_bar iterator pattern
-        to provide real-time visual feedback during extraction.
+        The studio's run manager iterates it and streams each update to the browser.
 
         Args:
             repo_name: Specific repo to extract, or None for all
@@ -455,13 +528,9 @@ class PipelineSession:
         Yields:
             ProgressUpdate objects for each step in the pipeline
 
-        Example (Marimo):
-            for update in mo.status.progress_bar(
-                session.run_extraction_iter(),
-                title="Extraction",
-                subtitle="Starting...",
-            ):
-                pass  # Marimo renders between yields
+        Example:
+            for update in session.run_extraction_iter():
+                print(update)
 
             # Get final result from last update
             final_stats = update.stats
@@ -502,8 +571,9 @@ class PipelineSession:
         assert self._graph_manager is not None
         assert self._archimate_manager is not None
 
-        llm_query_fn = self._get_llm_query_fn()
-        if llm_query_fn is None:
+        # The prep phase (graph metrics) makes no LLM call
+        llm_query_fn = self._get_llm_query_fn() if derivation.needs_llm(phases) else None
+        if llm_query_fn is None and derivation.needs_llm(phases):
             return {
                 "success": False,
                 "errors": ["LLM not configured. Derivation requires LLM."],
@@ -527,16 +597,18 @@ class PipelineSession:
         self,
         verbose: bool = False,
         phases: list[str] | None = None,
+        on_candidates: Callable[[str, list[str]], None] | None = None,
     ) -> Iterator[ProgressUpdate]:
         """
         Run derivation pipeline as a generator, yielding progress updates.
 
-        Designed for use with Marimo's mo.status.progress_bar iterator pattern
-        to provide real-time visual feedback during derivation.
+        The studio's run manager iterates it and streams each update to the browser.
 
         Args:
             verbose: Print progress to stdout
             phases: List of phases to run ("prep", "generate", "refine")
+            on_candidates: Called with (step, candidate node ids) when an element step has chosen
+                its candidates, before its LLM calls (the studio pulses them)
 
         Yields:
             ProgressUpdate objects for each step in the pipeline
@@ -546,8 +618,8 @@ class PipelineSession:
         assert self._graph_manager is not None
         assert self._archimate_manager is not None
 
-        llm_query_fn = self._get_llm_query_fn()
-        if llm_query_fn is None:
+        llm_query_fn = self._get_llm_query_fn() if derivation.needs_llm(phases) else None
+        if llm_query_fn is None and derivation.needs_llm(phases):
             yield ProgressUpdate(
                 phase="derivation",
                 status="error",
@@ -562,6 +634,7 @@ class PipelineSession:
             llm_query_fn=llm_query_fn,
             verbose=verbose,
             phases=phases,
+            on_candidates=on_candidates,
         )
 
     def get_derivation_step_count(self, enabled_only: bool = True) -> int:
@@ -585,12 +658,28 @@ class PipelineSession:
         repo_name: str | None = None,
         verbose: bool = False,
         progress: ProgressReporter | None = None,
+        no_llm: bool = False,
     ) -> dict[str, Any]:
-        """Run full pipeline (extraction → derivation with all phases)."""
+        """Run full pipeline (extraction → derivation with all phases).
+
+        ``no_llm``: no LLM call at all; extraction runs its structural steps and derivation its prep phase.
+        """
         self._ensure_connected()
         assert self._engine is not None
         assert self._graph_manager is not None
         assert self._archimate_manager is not None
+
+        if no_llm:
+            return pipeline.run_full_pipeline(
+                engine=self._engine,
+                graph_manager=self._graph_manager,
+                archimate_manager=self._archimate_manager,
+                llm_query_fn=None,
+                repo_name=repo_name,
+                verbose=verbose,
+                progress=progress,
+                derivation_phases=list(derivation.STRUCTURAL_PHASES),
+            )
 
         llm_query_fn = self._get_llm_query_fn()
         if llm_query_fn is None:
@@ -616,14 +705,22 @@ class PipelineSession:
 
     def export_model(
         self,
-        output_path: str = "workspace/output/model.xml",
+        output_path: str | None = None,
         model_name: str = "Deriva Model",
+        confined: bool = False,
     ) -> dict[str, Any]:
-        """Export ArchiMate model to XML file.
+        """Export ArchiMate model to XML file (default: workspace/output/model.xml in the Deriva home folder).
 
         Only exports enabled elements and their relationships.
-        Disabled elements (from refine phase) are excluded.
+        Disabled elements (from refine phase) are excluded. With ``confined`` (the studio), a
+        relative path is read from the home folder and the file must land in workspace/output.
         """
+        output_path = output_path or str(workspace() / "output" / "model.xml")
+        if confined:
+            target = Path(output_path) if Path(output_path).is_absolute() else home() / output_path
+            if not target.resolve().is_relative_to((workspace() / "output").resolve()):
+                raise ValueError(f"The studio exports into {workspace() / 'output'} only: {output_path}")
+            output_path = str(target.resolve())
         self._ensure_connected()
         assert self._archimate_manager is not None
 
@@ -732,6 +829,12 @@ class PipelineSession:
         if not self._connected:
             raise RuntimeError("Session not connected. Call connect() first or use auto_connect=True.")
 
+    def managers(self) -> tuple[Any, GraphManager, ArchimateManager]:
+        """The config database engine and the graph and model managers of the connected session (for benchmarking)."""
+        self._ensure_connected()
+        assert self._engine is not None and self._graph_manager is not None and self._archimate_manager is not None
+        return self._engine, self._graph_manager, self._archimate_manager
+
     # =========================================================================
     # REPOSITORY MANAGEMENT
     # =========================================================================
@@ -758,9 +861,12 @@ class PipelineSession:
         assert self._repo_manager is not None
         try:
             self._repo_manager.delete_repository(name, force=force)
-            return {"success": True, "name": name}
         except Exception as e:
             return {"success": False, "error": str(e)}
+        # A deleted repository cannot stay the one the session reads
+        if name == self.repository:
+            self.use_repository(DEFAULT_DATABASE)
+        return {"success": True, "name": name}
 
     def get_repository_info(self, name: str) -> dict[str, Any] | None:
         """Get detailed repository information."""
@@ -834,6 +940,8 @@ class PipelineSession:
                 "instruction": c.instruction,
                 "example": c.example,
                 "extraction_method": c.extraction_method,
+                "params": c.params,
+                "batch_size": c.batch_size,
             }
             for c in configs
         ]
@@ -890,9 +998,14 @@ class PipelineSession:
         *,
         enabled: bool | None = None,
         instruction: str | None = None,
+        example: str | None = None,
         input_sources: str | None = None,
+        params: str | None = None,
+        batch_size: int | None = None,
     ) -> dict[str, Any]:
-        """Save extraction config with version tracking."""
+        """Save extraction config with version tracking (``params`` must be a JSON object)."""
+        if params is not None:
+            config.validate_params(params)
         self._ensure_connected()
         assert self._engine is not None
         return config.create_extraction_config_version(
@@ -900,7 +1013,10 @@ class PipelineSession:
             node_type,
             enabled=enabled,
             instruction=instruction,
+            example=example,
             input_sources=input_sources,
+            params=params,
+            batch_size=batch_size,
         )
 
     def get_derivation_configs(self, enabled_only: bool = False) -> list[dict]:
@@ -918,6 +1034,8 @@ class PipelineSession:
                 "example": c.example,
                 "phase": c.phase,
                 "llm": c.llm,
+                "params": c.params,
+                "batch_size": c.batch_size,
             }
             for c in configs
         ]
@@ -956,8 +1074,13 @@ class PipelineSession:
         enabled: bool | None = None,
         input_graph_query: str | None = None,
         instruction: str | None = None,
+        example: str | None = None,
+        params: str | None = None,
+        batch_size: int | None = None,
     ) -> dict[str, Any]:
-        """Save derivation config with version tracking."""
+        """Save derivation config with version tracking (``params`` must be a JSON object)."""
+        if params is not None:
+            config.validate_params(params)
         self._ensure_connected()
         assert self._engine is not None
         return config.create_derivation_config_version(
@@ -966,13 +1089,31 @@ class PipelineSession:
             enabled=enabled,
             input_graph_query=input_graph_query,
             instruction=instruction,
+            example=example,
+            params=params,
+            batch_size=batch_size,
         )
 
-    def get_config_versions(self) -> dict[str, dict[str, int]]:
-        """Get current active versions for all configs."""
+    def get_config_history(self, step_type: str, name: str) -> list[dict[str, Any]]:
+        """Every version of a step, newest first."""
         self._ensure_connected()
         assert self._engine is not None
-        return config.get_active_config_versions(self._engine)
+        return config.get_config_history(self._engine, step_type, name)
+
+    def scan_prompt_texts(self, texts: dict[str, str]) -> dict[str, Any]:
+        """Overfit scan of draft texts (terms of the local scanner, when there is one) before a save."""
+        return overfit.scan_texts(texts)
+
+    def dry_run_graph_query(self, cypher: str, limit: int = 20) -> dict[str, Any]:
+        """Run a candidate query read-only (writes rolled back, no LLM): the row count and the first rows."""
+        rows = self.query_graph_read_only(cypher)
+        return {"count": len(rows), "rows": [{k: _plain(v) for k, v in row.items()} for row in rows[:limit]]}
+
+    def get_config_versions(self, include_disabled: bool = False) -> dict[str, dict[str, int]]:
+        """Get current active versions for all enabled configs (also the disabled ones with ``include_disabled``)."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.get_active_config_versions(self._engine, include_disabled=include_disabled)
 
     def get_setting(self, key: str) -> str | None:
         """Get a system setting value (None when not set)."""
@@ -1033,6 +1174,44 @@ class PipelineSession:
             return {"success": True, "cache_enabled": enabled}
         return {"success": False, "error": "LLM not configured"}
 
+    def list_model_configs(self, env_path: str | Path | None = None) -> list[dict[str, Any]]:
+        """Model configs in .env, keys masked (no database connection needed)."""
+        return model_configs.list_models(env_path or model_configs.default_env_path())
+
+    def save_model_config(
+        self,
+        name: str,
+        *,
+        provider: str,
+        model: str,
+        url: str | None = None,
+        key: str | None = None,
+        key_env: str | None = None,
+        sampling: str | None = None,
+        reasoning: str | None = None,
+        env_path: str | Path | None = None,
+    ) -> None:
+        """Add or change a model config in .env; a blank key keeps the stored key."""
+        model_configs.set_model(
+            env_path or model_configs.default_env_path(),
+            name,
+            provider=provider,
+            model=model,
+            url=url,
+            key=key,
+            key_env=key_env,
+            sampling=sampling,
+            reasoning=reasoning,
+        )
+
+    def set_default_model(self, name: str, env_path: str | Path | None = None) -> None:
+        """Make a configured model the one Deriva uses (LLM_DEFAULT_MODEL in .env)."""
+        model_configs.set_default(env_path or model_configs.default_env_path(), name)
+
+    def delete_model_config(self, name: str, env_path: str | Path | None = None) -> None:
+        """Remove a model config's keys from .env."""
+        model_configs.delete_model(env_path or model_configs.default_env_path(), name)
+
     def list_benchmark_models(self) -> dict[str, Any]:
         """List available benchmark model configurations.
 
@@ -1071,178 +1250,3 @@ class PipelineSession:
         if params:
             return self._engine.execute(query, params).fetchall()
         return self._engine.execute(query).fetchall()
-
-    # =========================================================================
-    # BENCHMARKING
-    # =========================================================================
-
-    def run_benchmark(
-        self,
-        repositories: list[str],
-        models: list[str],
-        runs: int = 3,
-        stages: list[str] | None = None,
-        description: str = "",
-        verbose: bool = False,
-        use_cache: bool = True,
-        nocache_configs: list[str] | None = None,
-        progress: BenchmarkProgressReporter | None = None,
-        export_models: bool = True,
-        clear_between_runs: bool = True,
-        bench_hash: bool = False,
-        defer_relationships: bool = True,
-        per_repo: bool = False,
-        no_cache_extraction: bool = False,
-        no_cache_extraction_llm: bool = False,
-    ) -> benchmarking.BenchmarkResult:
-        """
-        Run a full benchmark matrix.
-
-        Args:
-            repositories: List of repository names to benchmark
-            models: List of model config names (from LLM_BENCH_* env vars)
-            runs: Number of runs per (repo, model) combination
-            stages: Pipeline stages to run (default: all)
-            description: Optional description for the session
-            verbose: Print progress
-            use_cache: Enable LLM response caching (default: True)
-            nocache_configs: List of config names to skip cache for (for A/B testing)
-            progress: Optional progress reporter for visual feedback
-            export_models: Export ArchiMate model file after each run (default: True)
-            clear_between_runs: Clear graph/model between runs (default: True)
-            bench_hash: Include repo/model/run in cache key for per-run isolation (default: False)
-            defer_relationships: Two-phase derivation: create elements first, then relationships (default: False)
-            per_repo: Run each repository as a separate benchmark instead of combined (default: False)
-
-        Returns:
-            BenchmarkResult with session details
-
-        Example:
-            result = session.run_benchmark(
-                repositories=["my-repo"],
-                models=["azure-gpt4", "openai-gpt4o"],
-                runs=3,
-                stages=["extraction", "derivation"],
-                nocache_configs=["ApplicationComponent"],  # Test new prompt
-            )
-        """
-        self._ensure_connected()
-        assert self._engine is not None
-        assert self._graph_manager is not None
-        assert self._archimate_manager is not None
-
-        from deriva.services import benchmarking
-
-        bench_config = benchmarking.BenchmarkConfig(
-            repositories=repositories,
-            models=models,
-            runs_per_combination=runs,
-            stages=stages or ["classification", "extraction", "derivation"],
-            description=description,
-            use_cache=use_cache,
-            nocache_configs=nocache_configs or [],
-            export_models=export_models,
-            clear_between_runs=clear_between_runs,
-            bench_hash=bench_hash,
-            defer_relationships=defer_relationships,
-            per_repo=per_repo,
-            no_cache_extraction=no_cache_extraction,
-            no_cache_extraction_llm=no_cache_extraction_llm,
-        )
-
-        orchestrator = benchmarking.BenchmarkOrchestrator(
-            engine=self._engine,
-            graph_manager=self._graph_manager,
-            archimate_manager=self._archimate_manager,
-            config=bench_config,
-        )
-
-        try:
-            return orchestrator.run(verbose=verbose, progress=progress)
-        finally:
-            # The benchmark switched to each repository's database
-            use_database(self.repository)
-
-    def run_step_benchmark(self, step: str, repositories: list[str], model: str, runs: int = 3, verbose: bool = False) -> step_benchmark.StepBenchmarkResult:
-        """Repeat one extraction step on a fixed input per repository and compare its outputs.
-
-        The input is built once from the LLM cache; each run starts from a copy of it and
-        calls the LLM for the step without the cache (see ``services.step_benchmark``).
-        """
-        self._ensure_connected()
-        assert self._engine is not None
-        assert self._graph_manager is not None
-        assert self._archimate_manager is not None
-
-        from deriva.services import step_benchmark
-
-        benchmark = step_benchmark.StepBenchmark(
-            engine=self._engine,
-            graph_manager=self._graph_manager,
-            archimate_manager=self._archimate_manager,
-            config=benchmarking.BenchmarkConfig(repositories=repositories, models=[model], runs_per_combination=runs, per_repo=True),
-        )
-        try:
-            return benchmark.run_step(step, verbose=verbose)
-        finally:
-            # The benchmark switched to (and closed) its work databases
-            use_database(self.repository)
-
-    def analyze_benchmark(self, session_id: str) -> benchmarking.BenchmarkAnalyzer:
-        """
-        Load and analyze a completed benchmark.
-
-        Args:
-            session_id: Benchmark session ID to analyze
-
-        Returns:
-            BenchmarkAnalyzer instance for computing metrics
-
-        Example:
-            analyzer = session.analyze_benchmark("bench_20240115_103000")
-            summary = analyzer.compute_full_analysis()
-            analyzer.export_summary("analysis.json")
-        """
-        self._ensure_connected()
-        assert self._engine is not None
-
-        return benchmarking.BenchmarkAnalyzer(session_id, self._engine)
-
-    def analyze_config_deviations(self, session_id: str) -> Any:
-        """
-        Analyze which configs produce deviations across benchmark runs.
-
-        Args:
-            session_id: Benchmark session ID to analyze
-
-        Returns:
-            ConfigDeviationAnalyzer instance for computing per-config deviation stats
-
-        Example:
-            analyzer = session.analyze_config_deviations("bench_20240115_103000")
-            report = analyzer.analyze()
-            analyzer.export_json("deviations.json")
-        """
-        self._ensure_connected()
-        assert self._engine is not None
-
-        from deriva.services import config_deviation
-
-        return config_deviation.ConfigDeviationAnalyzer(session_id, self._engine)
-
-    def list_benchmarks(self, limit: int = 10) -> list[dict]:
-        """
-        List recent benchmark sessions.
-
-        Args:
-            limit: Maximum number of sessions to return
-
-        Returns:
-            List of session dictionaries
-        """
-        self._ensure_connected()
-        assert self._engine is not None
-
-        from deriva.services import benchmarking
-
-        return benchmarking.list_benchmark_sessions(self._engine, limit)

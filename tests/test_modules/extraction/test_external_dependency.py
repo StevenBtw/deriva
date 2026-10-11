@@ -684,3 +684,12 @@ class TestExtractExternalDependenciesBatch:
         )
 
         assert result["stats"]["total_nodes"] >= 2
+
+
+def test_a_member_language_has_no_package_dependencies():
+    """COPY names a member of the repository or of the platform (SQLCA), never a package."""
+    source = "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. PROGA.\n       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n       COPY SQLCA.\n       COPY RECA.\n"
+
+    result = extract_external_dependencies("app/cbl/PROGA.cbl", source, "r", subtype="cobol")
+
+    assert result["success"] and result["data"]["nodes"] == [] and result["data"]["edges"] == []

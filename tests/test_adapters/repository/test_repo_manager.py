@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 
@@ -138,7 +139,8 @@ class TestStateManager:
         retrieved = state_mgr.get_repository("test-repo")
         assert retrieved is not None
         assert retrieved["name"] == "test-repo"
-        assert "github.com" in retrieved["url"]
+        parsed_url = urlparse(retrieved["url"])
+        assert parsed_url.hostname == "github.com"
 
     def test_removes_repository(self, tmp_path):
         """Should remove repository from state."""
@@ -416,6 +418,44 @@ class TestRepoManagerClone:
             assert "--branch" in clone_cmd_args
             assert "develop" in clone_cmd_args
 
+    def test_clone_allows_long_paths(self, tmp_path):
+        """Windows: a deep home folder plus git's pack file names pass 260 characters; the clone (and the repository) allow long paths."""
+        manager = RepoManager(workspace_dir=tmp_path)
+        clone_cmd_args = []
+
+        def handle_subprocess(*args, **kwargs):
+            cmd = args[0]
+            result = MagicMock(stdout="main", stderr="")
+            if cmd[0] == "git" and "clone" in cmd:
+                clone_cmd_args.extend(cmd)
+                (Path(cmd[-1]) / ".git").mkdir(parents=True)
+            return result
+
+        with patch("deriva.adapters.repository.manager.subprocess.run", side_effect=handle_subprocess):
+            manager.clone_repository("https://github.com/user/repo.git")
+
+        position = clone_cmd_args.index("core.longpaths=true")
+        assert clone_cmd_args[position - 1] == "--config"
+
+    def test_clone_fetches_submodules(self, tmp_path):
+        """A repository that keeps its modules as git submodules is empty without them (only the top-level files)."""
+        manager = RepoManager(workspace_dir=tmp_path)
+        commands = []
+
+        def handle_subprocess(*args, **kwargs):
+            cmd = args[0]
+            if cmd[0] == "git" and "clone" in cmd:
+                commands.append(cmd)
+                (Path(cmd[-1]) / ".git").mkdir(parents=True)
+            return MagicMock(stdout="main", stderr="")
+
+        with patch("deriva.adapters.repository.manager.subprocess.run", side_effect=handle_subprocess):
+            manager.clone_repository("https://github.com/user/repo.git")
+            manager.clone_repository("https://github.com/user/other.git", depth=1)
+
+        assert "--recurse-submodules" in commands[0] and "--shallow-submodules" not in commands[0]
+        assert "--recurse-submodules" in commands[1] and "--shallow-submodules" in commands[1]
+
 
 class TestRepoManagerList:
     """Tests for RepoManager.list_repositories."""
@@ -596,3 +636,39 @@ class TestConvenienceFunctions:
 
         result = validate_repo("not-a-url")
         assert result is False
+
+
+class TestRepositoryNamesStayInTheWorkspace:
+    """A repository name is one folder in the workspace: a path could clone, overwrite or delete elsewhere."""
+
+    @pytest.mark.parametrize("name", ["../evil", "..", "a/b", "a\\b", "/tmp/x", "C:\\x", ""])
+    def test_clone_refuses_a_name_that_is_no_single_folder(self, tmp_path, name):
+        from deriva.adapters.repository.manager import RepositoryError
+
+        manager = RepoManager(workspace_dir=tmp_path / "ws")
+        with patch("deriva.adapters.repository.manager.subprocess.run") as run, pytest.raises(RepositoryError):
+            manager.clone_repository("https://github.com/user/repo.git", target_name=name, overwrite=True)
+        run.assert_not_called()
+
+    def test_delete_refuses_a_path(self, tmp_path):
+        from deriva.adapters.repository.manager import RepositoryError
+
+        (tmp_path / "outside" / ".git").mkdir(parents=True)
+        manager = RepoManager(workspace_dir=tmp_path / "ws")
+
+        with pytest.raises(RepositoryError):
+            manager.delete_repository("../outside", force=True)
+        assert (tmp_path / "outside").exists()
+
+
+def test_the_listing_reads_uncommitted_changes_now(tmp_path):
+    """The stored state is from the clone: edits made since must show, or the studio deletes without warning."""
+    manager = RepoManager(workspace_dir=tmp_path)
+    (tmp_path / "repo").mkdir()
+    manager._state_manager.list_repositories = lambda: [{"name": "repo", "path": str(tmp_path / "repo"), "is_dirty": False}]
+
+    with patch("deriva.adapters.repository.manager.subprocess.run") as run:
+        run.return_value = MagicMock(stdout=" M src/app.py\n")
+        (info,) = manager.list_repositories(detailed=True)
+
+    assert info.is_dirty is True

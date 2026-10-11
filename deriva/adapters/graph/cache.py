@@ -8,13 +8,14 @@ state hash supplied by the caller.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from deriva.common.cache_utils import BaseDiskCache, hash_inputs
+from deriva.common.paths import resolve
+from deriva.common.settings import GraphSettings
 
 # Default graph cache directory (can be overridden via GRAPH_CACHE_DIR env var)
-GRAPH_CACHE_DIR = os.getenv("GRAPH_CACHE_DIR", "workspace/cache/graph")
+GRAPH_CACHE_DIR = str(resolve(GraphSettings().cache_dir))
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,8 @@ class QueryCache(BaseDiskCache):
             cache_dir: Directory to store cache files (default: GRAPH_CACHE_DIR/queries)
         """
         if cache_dir is None:
-            cache_dir = f"{GRAPH_CACHE_DIR}/queries"
+            # Read now, not at import: a changed GRAPH_CACHE_DIR applies to the next cache
+            cache_dir = f"{resolve(GraphSettings().cache_dir)}/queries"
         super().__init__(cache_dir)
 
     @staticmethod

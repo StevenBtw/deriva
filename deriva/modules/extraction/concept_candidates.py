@@ -34,6 +34,13 @@ LABEL_TYPES = {
 }
 REJECT_LABELS = ("technical", "attribute", "quality", "generic", "documentation")
 LABELS = (*LABEL_TYPES, *REJECT_LABELS)
+
+
+def outcome(label: str | None) -> str | None:
+    """What a label does to the graph: the concept type it creates, or "rejected" for every reject label (None: no decision)."""
+    return None if label is None else LABEL_TYPES.get(label, "rejected")
+
+
 LANGUAGE_NAMES = {"en": "English", "de": "German", "fr": "French"}
 
 CLASSIFICATION_SCHEMA: dict[str, Any] = {
@@ -211,6 +218,7 @@ def select_candidates(
     evidence_share: float,
     max_candidates: int,
     support_factor: float,
+    keep_ties: bool = False,
 ) -> tuple[list[ConceptCandidate], dict[str, Any]]:
     """The candidates the classifier sees.
 
@@ -218,6 +226,8 @@ def select_candidates(
     code support multiplies its evidence score by `support_factor`.
     Ranked by evidence score, the list is the smallest prefix holding `evidence_share` of the
     total score, so it follows both the size of the documentation and how spread its vocabulary is.
+    With `keep_ties` the prefix runs to the end of the tie group at the cut (equal evidence, same
+    decision); without it the key order decides inside that group (config versions before the switch).
     `max_candidates` is a budget guard; the stats say when it binds.
     """
     qualified = [replace(c, score=_score(c, support_factor)) for c in candidates if c.count >= evidence_min_count or c.code_support]
@@ -228,8 +238,19 @@ def select_candidates(
         if running >= evidence_share * total - 1e-9:
             share_size = i
             break
-    selected = ranked[: min(share_size, max_candidates)]
-    stats = {"candidates": len(candidates), "qualified": len(ranked), "share_size": share_size, "selected": len(selected), "capped": share_size > max_candidates}
+    size = share_size
+    if keep_ties:
+        while 0 < size < len(ranked) and ranked[size].score == ranked[size - 1].score:
+            size += 1
+    selected = ranked[: min(size, max_candidates)]
+    stats = {
+        "candidates": len(candidates),
+        "qualified": len(ranked),
+        "share_size": share_size,
+        "ties_added": size - share_size,
+        "selected": len(selected),
+        "capped": size > max_candidates,
+    }
     return selected, stats
 
 

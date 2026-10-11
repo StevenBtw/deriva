@@ -2,7 +2,7 @@
 Configuration service for Deriva.
 
 Provides CRUD operations for pipeline configuration stored in DuckDB.
-Used by both Marimo (visual UI) and CLI (headless) for consistent config management.
+Used by both the studio (web UI) and the CLI (headless) for consistent config management.
 
 Tables managed:
     - extraction_config: LLM extraction step configurations
@@ -25,20 +25,14 @@ Usage:
     # Get derivation configs by phase
     generate_configs = config.get_derivation_configs(engine, phase="generate")
 
-    # Load environment settings (pydantic-settings)
-    from deriva.services.config_models import DerivaSettings
-    settings = DerivaSettings()
-    print(settings.llm.temperature)
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
-from functools import lru_cache
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from deriva.services.config_models import DerivaSettings
+import re
+from typing import Any
 
 # Phases a derivation_config row can belong to (same set as DerivationConfigModel.phase)
 DERIVATION_PHASES = ("prep", "generate", "refine", "relationship")
@@ -83,24 +77,6 @@ def read_only_connection() -> Any:
     from deriva.adapters.database import get_connection
 
     return get_connection(read_only=True)
-
-
-@lru_cache
-def get_settings() -> DerivaSettings:
-    """
-    Get cached application settings from environment.
-
-    Returns:
-        DerivaSettings instance with all environment configuration.
-
-    Usage:
-        settings = get_settings()
-        print(settings.llm.temperature)
-        print(settings.grafeo.db_dir)
-    """
-    from deriva.services.config_models import DerivaSettings
-
-    return DerivaSettings()
 
 
 # =============================================================================
@@ -712,6 +688,13 @@ DEFAULT_EXCLUDED_DIRECTORIES: list[str] = [
 ]
 
 
+def setting_default(key: str) -> str | None:
+    """The value that applies while a setting is not set (None when nothing does)."""
+    if key == "excluded_directories":
+        return json.dumps(DEFAULT_EXCLUDED_DIRECTORIES)
+    return None
+
+
 def get_excluded_directories(engine: Any) -> list[str]:
     """Directory names skipped (with their contents) by every repository walk.
 
@@ -732,6 +715,16 @@ def _parse_excluded_directories(raw: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise ValueError("excluded_directories must be a JSON list of directory names")
     return value
+
+
+# Full derivation runs start from an empty model, as benchmarks do: a run on top of an earlier model skips every
+# candidate that model already has (the duplicate check), so it derives less. "false" lets a run build on the old model.
+CLEAR_MODEL_SETTING = "derivation_clear_model"
+
+
+def clear_model_before_derivation(value: str | None) -> bool:
+    """The derivation_clear_model setting as a switch: on unless it says false, 0, no or off."""
+    return value is None or value.strip().lower() not in ("false", "0", "no", "off")
 
 
 def set_setting(engine: Any, key: str, value: str) -> None:
@@ -1055,12 +1048,67 @@ def create_extraction_config_version(
     }
 
 
-def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
+HISTORY_COLUMNS = {
+    "extraction": (
+        "extraction_config",
+        "node_type",
+        (
+            "version",
+            "is_active",
+            "enabled",
+            "sequence",
+            "instruction",
+            "example",
+            "params",
+            "batch_size",
+            "input_sources",
+            "extraction_method",
+            "temperature",
+            "max_tokens",
+            "created_at",
+        ),
+    ),
+    "derivation": (
+        "derivation_config",
+        "step_name",
+        (
+            "version",
+            "is_active",
+            "enabled",
+            "sequence",
+            "phase",
+            "llm",
+            "instruction",
+            "example",
+            "params",
+            "batch_size",
+            "max_candidates",
+            "temperature",
+            "max_tokens",
+            "input_graph_query",
+            "input_model_query",
+            "created_at",
+        ),
+    ),
+}
+
+
+def get_config_history(engine: Any, step_type: str, name: str) -> list[dict[str, Any]]:
+    """Every version of a step, newest first (texts, params, queries, generation settings, state, when it was created)."""
+    if step_type not in HISTORY_COLUMNS:
+        raise ValueError(f"Unknown step type: {step_type}")
+    table, key, columns = HISTORY_COLUMNS[step_type]
+    rows = engine.execute(f"SELECT {', '.join(columns)} FROM {table} WHERE {key} = ? ORDER BY version DESC", [name]).fetchall()
+    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+
+def get_active_config_versions(engine: Any, include_disabled: bool = False) -> dict[str, dict[str, int]]:
     """
     Get current active versions for all enabled configs.
 
     Only includes configs that are both active (current version) AND enabled.
     This ensures benchmark snapshots don't include disabled configs.
+    ``include_disabled`` adds the disabled steps (a listing shows every step with its version).
 
     Returns:
         Dict with extraction and derivation (prep/generate/refine) versions
@@ -1068,16 +1116,48 @@ def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
     versions = {"extraction": {}, "derivation": {}}
 
     # Extraction - only enabled configs
-    rows = engine.execute("SELECT node_type, version FROM extraction_config WHERE is_active = TRUE AND enabled = TRUE").fetchall()
+    enabled = "" if include_disabled else " AND enabled = TRUE"
+    rows = engine.execute(f"SELECT node_type, version FROM extraction_config WHERE is_active = TRUE{enabled}").fetchall()
     for r in rows:
         versions["extraction"][r[0]] = r[1]
 
     # Derivation (includes all phases: prep, generate, refine) - only enabled configs
-    rows = engine.execute("SELECT step_name, version FROM derivation_config WHERE is_active = TRUE AND enabled = TRUE").fetchall()
+    rows = engine.execute(f"SELECT step_name, version FROM derivation_config WHERE is_active = TRUE{enabled}").fetchall()
     for r in rows:
         versions["derivation"][r[0]] = r[1]
 
     return versions
+
+
+# A secret's name ends in key, token, secret or password (api_key, auth_token); max_tokens is a count, not a token
+SECRET_NAME = re.compile(r"(^|_)(key|token|secret|password)$", re.IGNORECASE)
+REDACTED = "<redacted>"
+
+
+def input_snapshot(engine: Any) -> dict[str, Any]:
+    """The result-changing tables that keep no version history, as they are now, with a digest per table.
+
+    File type registry (which files feed which step), derivation name patterns and system settings
+    (e.g. excluded directories). Recorded when a session starts, so sessions can be compared table by table.
+    The record goes into session folders and export bundles: a setting named like a secret keeps its name only.
+    """
+    file_types = engine.execute("SELECT extension, file_type, subtype, chunk_delimiter, chunk_max_tokens, chunk_overlap FROM file_type_registry ORDER BY extension").fetchall()
+    patterns = engine.execute(
+        "SELECT step_name, pattern_type, pattern_category, patterns, is_active FROM derivation_patterns ORDER BY step_name, pattern_type, pattern_category NULLS FIRST"
+    ).fetchall()
+    settings = engine.execute("SELECT key, value FROM system_settings ORDER BY key").fetchall()
+    snapshot: dict[str, Any] = {
+        "file_types": [{"extension": r[0], "file_type": r[1], "subtype": r[2], "chunk_delimiter": r[3], "chunk_max_tokens": r[4], "chunk_overlap": r[5]} for r in file_types],
+        "derivation_patterns": [
+            {"step_name": r[0], "pattern_type": r[1], "pattern_category": r[2], "patterns": json.loads(r[3]) if r[3] else [], "is_active": r[4]} for r in patterns
+        ],
+        "system_settings": {r[0]: REDACTED if SECRET_NAME.search(r[0]) else r[1] for r in settings},
+    }
+    snapshot["sha256"] = {
+        name: hashlib.sha256(json.dumps(snapshot[name], sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        for name in ("file_types", "derivation_patterns", "system_settings")
+    }
+    return snapshot
 
 
 # =============================================================================

@@ -6,7 +6,7 @@ Handles validation, cloning, listing, deletion, and metadata extraction.
 Usage:
     from deriva.adapters.repository import RepoManager
 
-    repo_mgr = RepoManager(workspace_dir="./workspace/repositories")
+    repo_mgr = RepoManager()
 
     # Validate and clone
     repo_mgr.validate_repository("https://github.com/user/repo.git")
@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from deriva.common.paths import resolve
 
 from .models import (
     CloneError,
@@ -513,6 +515,15 @@ def _load_config() -> dict:
 # =============================================================================
 
 
+def _working_tree_dirty(repo_path: Path, stored: bool) -> bool:
+    """Whether the checkout has uncommitted changes now (the stored value when git cannot tell)."""
+    try:
+        result = subprocess.run(["git", "-C", str(repo_path), "status", "--porcelain"], capture_output=True, encoding="utf-8", errors="replace", check=True)
+    except subprocess.CalledProcessError, OSError:
+        return stored
+    return bool(result.stdout.strip())
+
+
 class RepoManager:
     """Repository Manager for Git operations.
 
@@ -525,7 +536,7 @@ class RepoManager:
 
         Args:
             workspace_dir: Directory where repositories will be stored.
-                          Defaults to "workspace/repositories".
+                          Defaults to workspace/repositories in the Deriva home folder.
         """
         if workspace_dir is None:
             config = _load_config()
@@ -533,8 +544,7 @@ class RepoManager:
 
         ws_path = Path(workspace_dir)
         if not ws_path.is_absolute():
-            project_root = Path(__file__).parent.parent.parent.parent
-            ws_path = (project_root / ws_path).resolve()
+            ws_path = resolve(ws_path).resolve()
         else:
             ws_path = ws_path.resolve()
 
@@ -595,7 +605,7 @@ class RepoManager:
         if target_name is None:
             target_name = _extract_repo_name(repo_url)
 
-        target_path = self.workspace_dir / target_name
+        target_path = self._repository_path(target_name)
 
         if target_path.exists():
             if overwrite:
@@ -606,11 +616,13 @@ class RepoManager:
             else:
                 raise CloneError(f"Directory already exists: {target_path}. Use overwrite=True to replace it.")
 
-        cmd = ["git", "clone"]
+        # Long paths: on Windows a deep home folder plus git's own file names can pass 260 characters
+        # Submodules too: a repository that keeps its modules as submodules is nearly empty without them
+        cmd = ["git", "clone", "--config", "core.longpaths=true", "--recurse-submodules"]
         if branch:
             cmd.extend(["--branch", branch])
         if depth:
-            cmd.extend(["--depth", str(depth)])
+            cmd.extend(["--depth", str(depth), "--shallow-submodules"])
         cmd.extend([repo_url, str(target_path)])
 
         try:
@@ -644,7 +656,8 @@ class RepoManager:
                     url=repo.get("url"),
                     branch=repo.get("branch"),
                     last_commit=repo.get("last_commit"),
-                    is_dirty=repo.get("is_dirty", False),
+                    # Read now: the stored state is from the clone, and edits since must show
+                    is_dirty=_working_tree_dirty(Path(repo["path"]), repo.get("is_dirty", False)),
                     size_mb=repo.get("size_mb", 0.0),
                     cloned_at=repo.get("cloned_at"),
                 )
@@ -652,6 +665,15 @@ class RepoManager:
             ]
         else:
             return [repo["name"] for repo in repos_data]
+
+    def _repository_path(self, name: str) -> Path:
+        """The folder of a repository: one name in the workspace (a path could clone, overwrite or delete elsewhere)."""
+        if not name or name in (".", "..") or any(sep in name for sep in ("/", "\\", ":")) or Path(name).is_absolute():
+            raise RepositoryError(f"A repository name is one folder name, not a path: {name!r}")
+        path = self.workspace_dir / name
+        if path.resolve().parent != self.workspace_dir.resolve():
+            raise RepositoryError(f"A repository name is one folder name, not a path: {name!r}")
+        return path
 
     def delete_repository(self, repo_name: str, force: bool = False) -> bool:
         """Delete a repository from the workspace.
@@ -666,7 +688,7 @@ class RepoManager:
         Raises:
             DeleteError: If deletion fails
         """
-        repo_path = self.workspace_dir / repo_name
+        repo_path = self._repository_path(repo_name)
 
         if not repo_path.exists():
             raise DeleteError(f"Repository not found: {repo_name}")
