@@ -177,10 +177,10 @@ class TestProcedure:
         assert [(m.name, m.class_name) for m in result["methods"]] == [("PROCC", None), ("STEP01", "PROCC")]
 
     def test_in_stream_procedure_is_its_own_type(self, manager):
-        source = "//JOBB JOB CLASS=A\n" + PROCEDURE + "//STEP01 EXEC PROCA\n"
-        result = manager.extract_all(source, file_path="jobb.jcl")
-        assert [(t.name, t.kind) for t in result["types"]] == [("JOBB", "job"), ("PROCA", "procedure")]
-        assert [(m.name, m.class_name) for m in result["methods"]] == [("PROCA", None), ("PRC001", "PROCA"), ("STEP01", "JOBB")]
+        source = "//JOBX JOB CLASS=A\n" + PROCEDURE + "//STEP01 EXEC PROCA\n"
+        result = manager.extract_all(source, file_path="jobx.jcl")
+        assert [(t.name, t.kind) for t in result["types"]] == [("JOBX", "job"), ("PROCA", "procedure")]
+        assert [(m.name, m.class_name) for m in result["methods"]] == [("PROCA", None), ("PRC001", "PROCA"), ("STEP01", "JOBX")]
 
 
 class TestRobustness:
@@ -199,3 +199,18 @@ class TestRobustness:
         result = manager.extract_all(source, file_path="jobd.jcl")
         assert names(result["methods"]) == ["STEP01"]
         assert result["calls"] == []
+
+
+class TestReviewFixes:
+    def test_in_stream_data_after_a_continued_dd_is_read(self, manager):
+        """A DD * whose statement continues on the next line still owns the data records that follow."""
+        source = "//JOBA JOB CLASS=A\n//STEP01 EXEC PGM=IKJEFT01\n//SYSTSIN DD *,\n//         DLM=ZZ\n  RUN PROGRAM(PROGB) PLAN(PLANA)\n/*\n"
+
+        calls = manager.extract_all(source, file_path="joba.jcl")["calls"]
+
+        assert "PROGB" in {c.callee_name for c in calls}
+
+    def test_a_generation_is_dropped_from_the_dataset_name(self, manager):
+        source = "//JOBA JOB CLASS=A\n//STEP01 EXEC PGM=PROGA\n//FILEA DD DSN=LEVEL.ONE.FILEA.G0001V00,DISP=SHR\n"
+
+        assert manager.extract_methods(source, file_path="joba.jcl")[0].parameters == [{"name": "FILEA", "annotation": "LEVEL.ONE.FILEA", "disp": "SHR"}]

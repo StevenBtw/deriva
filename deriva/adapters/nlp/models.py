@@ -144,10 +144,16 @@ def ensure_spacy_package(package: SpacyPackage, models_dir: Path, download: bool
                     out = staging / member[len(prefix) :]
                     out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_bytes(archive.read(member))
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.move(str(staging), str(target))
-    marker.write_text(package.sha256, encoding="utf-8")
+        # The checksum is part of the folder that is moved into place: a folder that is there is complete
+        (staging / ".sha256").write_text(package.sha256, encoding="utf-8")
+        try:
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.move(str(staging), str(target))
+        except OSError, shutil.Error:
+            # Another first-time caller installed the same verified pipeline in between
+            if not (marker.exists() and marker.read_text(encoding="utf-8").strip() == package.sha256):
+                raise
     return target
 
 

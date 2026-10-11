@@ -149,7 +149,7 @@ def run_stage(
         # A full derivation run (no --phase, no --only-step) starts from an empty model unless the setting is off
         # --no-llm derives no elements, so it keeps the model
         full_derivation = stage in ("derivation", "all") and not phase and not only_step and not no_llm
-        if full_derivation and (stage == "all" or llm_info) and derivation.start_full_derivation(session):
+        if full_derivation and llm_info and derivation.start_full_derivation(session):
             typer.echo("Model cleared: full derivation runs start from an empty model (setting derivation_clear_model)")
 
         if stage == "extraction":

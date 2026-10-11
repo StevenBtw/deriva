@@ -1729,3 +1729,15 @@ class TestExtractEdgesExceptionHandling:
         assert "success" in result
         assert "data" in result
         assert "errors" in result
+
+
+def test_a_document_with_the_members_name_is_no_member():
+    """COPY RECA finds RECA.cpy, not RECA.md next to the program."""
+    from deriva.adapters.treesitter.models import ExtractedImport
+
+    files = {"app/cbl/PROGA.cbl", "app/cbl/RECA.md", "other/cpy/RECA.cpy", "app/cpy/RECB"}
+    imports = [ExtractedImport(module=m, names=[]) for m in ("RECA", "RECB")]
+
+    edges, _, _ = TestJavaAndScriptImports._edges(imports, "app/cbl/PROGA.cbl", files)
+
+    assert TestJavaAndScriptImports._targets(edges) == {("IMPORTS", "file::r::other_cpy_RECA.cpy"), ("IMPORTS", "file::r::app_cpy_RECB")}

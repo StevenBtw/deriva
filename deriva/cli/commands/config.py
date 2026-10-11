@@ -660,9 +660,10 @@ def _read_key() -> str:
 
     Never an argument: that would land in the shell history and the process list.
     """
-    if sys.stdin.isatty():
-        return typer.prompt("API key", hide_input=True)
-    return sys.stdin.readline().strip()
+    secret = typer.prompt("API key", hide_input=True).strip() if sys.stdin.isatty() else sys.stdin.readline().strip()
+    if not secret:
+        raise typer.BadParameter("The API key is empty; nothing was saved")
+    return secret
 
 
 @model_app.command("set")

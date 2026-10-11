@@ -48,7 +48,8 @@ class QueryCache(BaseDiskCache):
             cache_dir: Directory to store cache files (default: GRAPH_CACHE_DIR/queries)
         """
         if cache_dir is None:
-            cache_dir = f"{GRAPH_CACHE_DIR}/queries"
+            # Read now, not at import: a changed GRAPH_CACHE_DIR applies to the next cache
+            cache_dir = f"{resolve(GraphSettings().cache_dir)}/queries"
         super().__init__(cache_dir)
 
     @staticmethod

@@ -148,14 +148,15 @@ def _statements(lines: list[str]) -> tuple[list[_Statement], dict[int, str]]:
             continue
         if line.startswith("//*"):
             continue
-        in_stream = False
         rest = line[2:]
         if continued and statements and rest[:1] in ("", " "):
+            # A continuation belongs to its statement: the in-stream data of a continued DD * follows it
             operands = _operand_field(rest.lstrip())
             statements[-1].operands += operands
             statements[-1].line_end = number
             continued = operands.endswith(",")
             continue
+        in_stream = False
         name, _, tail = rest.partition(" ") if rest[:1] not in ("", " ") else ("", "", rest)
         tail = tail.lstrip()
         operation, _, operand_text = tail.partition(" ")
@@ -291,7 +292,7 @@ class _Reader:
             return
         _, keywords = self._keywords(statement.operands)
         dataset = self._substitute(keywords.get("DSN", "") or keywords.get("DSNAME", "")).strip("'")
-        dataset = dataset.split("(", 1)[0]
+        dataset = re.sub(r"\.G\d{4}V\d{2}$", "", dataset.split("(", 1)[0], flags=re.IGNORECASE)
         if not dataset or dataset == "NULLFILE" or dataset.startswith("*"):
             return
         disposition = keywords.get("DISP", "").upper().strip("()").split(",")[0] or None

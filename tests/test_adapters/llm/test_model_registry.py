@@ -51,3 +51,13 @@ def test_reasoning_is_refused_for_providers_deriva_cannot_set_it_for():
 
     with pytest.raises(ValueError, match="mistral"):
         reasoning_settings("mistral", "none")
+
+
+def test_a_level_the_provider_does_not_know_is_refused():
+    from deriva.adapters.llm.model_registry import reasoning_settings
+
+    with pytest.raises(ValueError, match="openai"):
+        reasoning_settings("openai", "max")
+    with pytest.raises(ValueError, match="anthropic"):
+        reasoning_settings("anthropic", "minimal")
+    assert reasoning_settings("anthropic", "max") and reasoning_settings("azure", "xhigh")

@@ -392,7 +392,8 @@ def differ_in_a_code(name_a: str, name_b: str) -> bool:
     (two screen ids, HTTP against CLI) names another thing, however alike the rest is.
     """
     words_a, words_b = set(name_a.split()), set(name_b.split())
-    return any(_is_code(word) for word in words_a ^ words_b)
+    common = {word.casefold() for word in words_a} & {word.casefold() for word in words_b}
+    return any(_is_code(word) for word in words_a ^ words_b if word.casefold() not in common)
 
 
 def similarity_ratio(s1: str, s2: str) -> float:

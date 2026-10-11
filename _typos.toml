@@ -17,6 +17,10 @@ extend-exclude = [
 # ArchiMate element ID prefixes (ba_ = BusinessActor, nd_ = Node)
 ba = "ba"
 nd = "nd"
+# JCL keyword (EXEC PGM=..., PARM=...)
+parm = "parm"
+# COBOL copybook extension (.cpy)
+cpy = "cpy"
 
 [default.extend-identifiers]
 # Lemmatizer suffix-stripping results (intentional truncated forms)

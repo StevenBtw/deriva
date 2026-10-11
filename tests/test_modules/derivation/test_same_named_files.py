@@ -75,3 +75,10 @@ class TestCodes:
         two = Candidate(node_id="typedef::r::maps/B.bms::SCRN1A", name="SCRN1A", labels=["Graph", "TypeDefinition"])
 
         assert len(Derivation()._consolidate_near_duplicates([one, two])) == 2
+
+
+def test_a_word_that_differs_in_case_only_is_no_other_code():
+    from deriva.modules.derivation.refine.base import differ_in_a_code
+
+    assert not differ_in_a_code("User HTTP request", "Users http requests")
+    assert differ_in_a_code("User HTTP request", "User CLI request")

@@ -111,7 +111,7 @@ uv tool install --python 3.14 deriva-dev
 
 ### Reproduce a release exactly
 
-Every GitHub release has a `constraints.txt` with the exact version of every dependency:
+Every GitHub release has a `constraints.txt` with the exact version of every dependency. Download it from the release's assets into the current folder, then install against it:
 
 ```bash
 uv tool install --python 3.14 deriva-dev==0.8.0 -c constraints.txt
@@ -162,7 +162,7 @@ LLM_OPENAI_LUNA_MODEL=gpt-6-luna
 LLM_OPENAI_LUNA_REASONING=none        # reasoning off, so the step temperatures apply
 ```
 
-`REASONING` is a level (`none`, `low`, `medium`, `high`) for OpenAI, Azure and Anthropic models. A model with `SAMPLING=false` runs at its provider's default sampling, so its answers can vary more than those of a model at temperature 0. `deriva-cli config model set <name> --sampling false --reasoning none` writes both.
+`REASONING` is a level (`none`, `low`, `medium`, `high`) for OpenAI, Azure and Anthropic models. A model with `SAMPLING=false` runs at its provider's default sampling, so its answers can vary more than those of a model at temperature 0. `deriva-cli config model set <name> --provider <provider> --model <model id> --sampling false --reasoning none` writes both.
 
 A local model needs no key:
 

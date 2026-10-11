@@ -173,3 +173,16 @@ def test_model_configs_carry_sampling_and_reasoning(dotenv, monkeypatch):
     dotenv("LLM_HAIKU_PROVIDER=anthropic\nLLM_HAIKU_MODEL=claude-haiku-5-5\nLLM_HAIKU_SAMPLING=false\nLLM_HAIKU_REASONING=none\n")
 
     assert {k: model_configs()["HAIKU"][k] for k in ("sampling", "reasoning")} == {"sampling": "false", "reasoning": "none"}
+
+
+def test_a_provider_key_removed_from_the_file_leaves_the_process(dotenv, monkeypatch):
+    monkeypatch.setattr(settings, "_ORIGINAL_ENVIRONMENT", settings._ORIGINAL_ENVIRONMENT - {"MISTRAL_API_KEY"})
+    monkeypatch.setattr(settings, "_EXPORTED", set())
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+
+    dotenv("MISTRAL_API_KEY=one\n")
+    settings.export_provider_keys()
+    dotenv("OTHER=1\n")
+    settings.export_provider_keys()
+
+    assert "MISTRAL_API_KEY" not in os.environ

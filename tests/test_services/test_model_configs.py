@@ -261,3 +261,22 @@ def test_an_inline_comment_stays_when_the_value_changes(tmp_path):
     assert "LLM_A_URL=http://y # quoted\n" in text
     (saved,) = list_models(path)
     assert (saved["model"], saved["url"]) == ("new", "http://y")
+
+
+def test_a_name_in_another_spelling_cannot_be_the_default(env):
+    """anthropic_haiku maps onto the same variables, but the model is known as anthropic-haiku only."""
+    from deriva.services.model_configs import set_default
+
+    with pytest.raises(KeyError):
+        set_default(env, "anthropic_haiku")
+
+
+def test_deleting_the_default_model_removes_a_quoted_or_commented_default(tmp_path):
+    path = tmp_path / ".env"
+    set_model(path, "mistral-small", provider="mistral", model="mistral-small-latest", key="sk-new-key-0000wxyz")
+    text = path.read_text(encoding="utf-8").replace("LLM_DEFAULT_MODEL=mistral-small", 'LLM_DEFAULT_MODEL="mistral-small"  # the one we use')
+    path.write_text(text, encoding="utf-8")
+
+    delete_model(path, "mistral-small")
+
+    assert "LLM_DEFAULT_MODEL" not in path.read_text(encoding="utf-8")

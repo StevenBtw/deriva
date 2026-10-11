@@ -88,6 +88,7 @@ def _set(lines: list[str], newline: str, key: str, value: str) -> None:
 
 def _write(path: Path, lines: list[str]) -> None:
     """Write the file next to it and move it into place: a write that breaks off leaves the old file whole."""
+    path = path.resolve()  # a linked .env keeps its link: the file it points to is replaced
     handle, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(handle, "w", encoding="utf-8", newline="") as out:
@@ -195,7 +196,7 @@ def set_default(env_path: str | Path, name: str) -> None:
     """Make a configured model the one Deriva uses (``LLM_DEFAULT_MODEL``)."""
     path = Path(env_path)
     lines, newline = _read_lines(path)
-    if f"LLM_{_env_name(name)}_PROVIDER" not in {_key_of(line) for line in lines}:
+    if not NAME.fullmatch(name) or f"LLM_{_env_name(name)}_PROVIDER" not in {_key_of(line) for line in lines}:
         raise KeyError(f"No model config named {name!r}")
     _set(lines, newline, DEFAULT_MODEL, name)
     _write(path, lines)
@@ -212,5 +213,7 @@ def delete_model(env_path: str | Path, name: str) -> None:
         raise KeyError(f"No model config named {name!r}")
     variables = {f"LLM_{env}_{field}" for field in FIELDS + LEGACY_FIELDS}
     # A default that names this model would point at nothing
-    kept = [line for line in lines if _key_of(line) not in variables and not (_key_of(line) == DEFAULT_MODEL and line.split("=", 1)[1].strip() == name)]
+    # The parsed value: quotes and a trailing comment are valid in the file
+    is_default = dotenv_values(path).get(DEFAULT_MODEL) == name
+    kept = [line for line in lines if _key_of(line) not in variables and not (is_default and _key_of(line) == DEFAULT_MODEL)]
     _write(path, kept)

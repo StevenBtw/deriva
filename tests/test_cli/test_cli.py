@@ -3073,3 +3073,26 @@ class TestModelDefaultCommand:
         assert result.exit_code == 0
         (marked,) = [line for line in result.stdout.splitlines() if "(default)" in line]
         assert "mistral-small4" in marked
+
+
+@patch("deriva.cli.cli.derivation.start_full_derivation")
+@patch("deriva.cli.cli.PipelineSession")
+def test_run_all_without_a_configured_model_keeps_the_model(mock_session_class, clear):
+    """Without a model nothing can be derived again, so the full run does not start from an empty model."""
+    mock_session = MagicMock()
+    mock_session.llm_info = None
+    mock_session.run_pipeline.return_value = {"success": True, "results": {}}
+    mock_session_class.return_value.__enter__.return_value = mock_session
+
+    result = runner.invoke(app, ["run", "all"])
+
+    assert result.exit_code == 0, result.output
+    clear.assert_not_called()
+
+
+@patch("deriva.cli.commands.config.PipelineSession")
+def test_model_set_refuses_an_empty_key(mock_session_class):
+    result = runner.invoke(app, ["config", "model", "set", "mistral-small", "--provider", "mistral", "--model", "mistral-small-latest", "--key"], input="\n")
+
+    assert result.exit_code != 0
+    mock_session_class.return_value.save_model_config.assert_not_called()

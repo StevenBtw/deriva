@@ -67,6 +67,8 @@ PROVIDER_VARIABLES = (
 )
 # What the process was started with: these values win and are never overwritten
 _ORIGINAL_ENVIRONMENT = frozenset(os.environ)
+# The provider variables export_provider_keys put into os.environ (taken out again when they leave the file)
+_EXPORTED: set[str] = set()
 
 
 def export_provider_keys() -> None:
@@ -74,12 +76,18 @@ def export_provider_keys() -> None:
 
     The only write into ``os.environ``: a variable the process was started with is never touched, and
     values from the file are refreshed on every call, so a key saved from the studio applies to the
-    next LLM manager. Nothing else from .env is exported.
+    next LLM manager and a key removed from the file is taken out again. Nothing else from .env is exported.
     """
     file = read_env_file()
     for name in PROVIDER_VARIABLES:
-        if name not in _ORIGINAL_ENVIRONMENT and name in file:
+        if name in _ORIGINAL_ENVIRONMENT:
+            continue
+        if name in file:
             os.environ[name] = file[name]
+            _EXPORTED.add(name)
+        elif name in _EXPORTED:
+            os.environ.pop(name, None)
+            _EXPORTED.discard(name)
 
 
 class _MergedEnvironment(PydanticBaseSettingsSource):

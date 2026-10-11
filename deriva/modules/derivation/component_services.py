@@ -251,7 +251,10 @@ def derive_component_services(
     for service in services:
         key = " ".join(service["name"].lower().split())
         if key in seen:
-            service["name"] = by_id_name(by_id, service)
+            fallback = by_id_name(by_id, service)
+            service["name"], number = fallback, 2
+            while " ".join(service["name"].lower().split()) in seen:
+                service["name"], number = f"{fallback} {number}", number + 1
         seen.add(" ".join(service["name"].lower().split()))
     return services
 

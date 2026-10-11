@@ -386,7 +386,8 @@ def _documentation_files(graph_manager: GraphManager, max_bytes: int = 200_000) 
         path = str(row.get("path") or "").replace(chr(92), "/")
         file = root / path
         try:
-            if path and file.is_file() and file.stat().st_size <= max_bytes:
+            # A link that leads out of the checkout is not followed: its text would go to the model
+            if path and file.is_file() and file.resolve().is_relative_to(root.resolve()) and file.stat().st_size <= max_bytes:
                 documents[path] = file.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue

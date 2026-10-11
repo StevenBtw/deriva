@@ -175,7 +175,9 @@ jobs:
           uv tool install --python 3.14 dist/deriva_studio-*.whl --with dist/deriva_cli-*.whl
           deriva-cli --help
           deriva-cli status
-          if deriva-cli benchmark run --repos x --models m; then echo "benchmark must be missing in deriva-studio"; exit 1; fi
+          status=0
+          output="$(deriva-cli benchmark run --repos x --models m 2>&1)" || status=$?
+          if [[ $status -eq 0 || "$output" != *"Benchmarking is part of deriva-dev"* ]]; then echo "benchmark must be missing in deriva-studio: $output"; exit 1; fi
           uv tool uninstall deriva-studio
           uv tool install --python 3.14 dist/deriva_dev-*.whl --with dist/deriva_studio-*.whl --with dist/deriva_cli-*.whl
           deriva-cli benchmark --help

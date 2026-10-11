@@ -908,7 +908,7 @@ def _nearest(candidates: list[str], current_file: str) -> str:
 
 
 def _resolve_member_import(member: str, current_file: str, all_file_paths: set[str], system_members: set[str]) -> dict[str, Any]:
-    """An include by member name: the repository file with that stem (any case, any extension), nearest to the including file.
+    """An include by member name: the repository member with that stem (any case; a member's extension or none), nearest to the including file.
 
     A member that is not in the repository is a system member or simply absent; it is no package, so it
     never becomes an external dependency.
@@ -917,7 +917,9 @@ def _resolve_member_import(member: str, current_file: str, all_file_paths: set[s
     if name in {m.upper() for m in system_members}:
         return {"type": "stdlib", "module": member}
     here = PurePosixPath(current_file).parent.parts
-    found = [path for path in all_file_paths if PurePosixPath(path).stem.upper() == name and path != current_file]
+    found = [
+        path for path in all_file_paths if PurePosixPath(path).stem.upper() == name and path != current_file and PurePosixPath(path).suffix.lower() in MEMBER_EXTENSIONS | {""}
+    ]
     if not found:
         return {"type": "unknown", "reason": "member_not_found"}
 

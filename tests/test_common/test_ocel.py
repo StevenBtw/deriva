@@ -756,3 +756,14 @@ class TestCaseLog:
         assert value("boolean", "cache_hit") == "false"
         assert value("int", "tokens_in") == "12"
         assert value("float", "latency_ms") == "1500.0"
+
+
+def test_an_id_that_looks_like_a_prefixed_one_stays_unique(tmp_path):
+    """Config x becomes Config:x; an element that is itself named Config:x must not get the same id."""
+    log = OCELLog()
+    log.create_event("Step", {"Repository": ["x"], "Config": ["x"], "Element": ["Config:x"]})
+
+    data = TestOcel2Export()._export(log, tmp_path)
+
+    ids = [o["id"] for o in data["objects"]]
+    assert len(ids) == len(set(ids)) == 3

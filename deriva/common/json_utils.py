@@ -35,7 +35,7 @@ def extract_json_from_response(content: str) -> str:
         try:
             json.loads(content)
             return content
-        except ValueError:
+        except ValueError, RecursionError:
             pass
 
     # Handle markdown code blocks: ```json ... ``` or ``` ... ```

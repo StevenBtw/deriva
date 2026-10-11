@@ -17,6 +17,13 @@ VALID_PROVIDERS = frozenset({"azure", "openai", "anthropic", "ollama", "mistral"
 # Reasoning levels a model config can set (LLM_{NAME}_REASONING); "none" turns reasoning off
 REASONING_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
+# The levels each provider's API accepts; a level outside them is rejected there
+PROVIDER_REASONING_LEVELS = {
+    "openai": ("none", "minimal", "low", "medium", "high", "xhigh"),
+    "azure": ("none", "minimal", "low", "medium", "high", "xhigh"),
+    "anthropic": ("none", "low", "medium", "high", "xhigh", "max"),
+}
+
 _SAMPLING_VALUES = {"true": True, "1": True, "yes": True, "on": True, "false": False, "0": False, "no": False, "off": False}
 
 
@@ -40,6 +47,9 @@ def reasoning_settings(provider: str, reasoning: str | None) -> dict[str, Any]:
         return {}
     if reasoning not in REASONING_LEVELS:
         raise ValueError(f"reasoning must be one of {', '.join(REASONING_LEVELS)}, got {reasoning!r}")
+    allowed = PROVIDER_REASONING_LEVELS.get(provider)
+    if allowed is not None and reasoning not in allowed:
+        raise ValueError(f"reasoning for {provider} must be one of {', '.join(allowed)}, got {reasoning!r}")
     if provider in ("openai", "azure"):
         return {"openai_reasoning_effort": reasoning}
     if provider == "anthropic":

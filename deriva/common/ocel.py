@@ -216,11 +216,16 @@ class OCELLog:
         """The OCEL 2.0 id of every logged (type, id), in order of first appearance."""
         owner: dict[str, str] = {}  # id -> the first type that used it
         keys: dict[tuple[str, str], str] = {}
+        used: set[str] = set()
         for event in self.events:
             for object_type, object_ids in event.objects.items():
                 for object_id in object_ids:
                     if object_id and (object_type, object_id) not in keys:
-                        keys[object_type, object_id] = object_id if owner.setdefault(object_id, object_type) == object_type else f"{object_type}:{object_id}"
+                        key = object_id if owner.setdefault(object_id, object_type) == object_type else f"{object_type}:{object_id}"
+                        while key in used:  # an id that already looks like a prefixed one
+                            key = f"{object_type}:{key}"
+                        used.add(key)
+                        keys[object_type, object_id] = key
         return keys
 
     def case_events(self) -> list[dict[str, Any]]:
