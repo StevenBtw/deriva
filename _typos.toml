@@ -6,7 +6,6 @@ extend-exclude = [
     ".venv/",
     "*.lock",
     "workspace/",
-    "reference/",
     "deriva/adapters/archimate/archimate_xsd/",
     ".pytest_cache/",
     ".ruff_cache/",
