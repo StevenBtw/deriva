@@ -32,13 +32,13 @@ Internal services (used by PipelineSession):
     extraction: Extraction orchestration
     derivation: Derivation and validation orchestration
     pipeline: Full pipeline orchestration
-    benchmarking: Multi-model benchmarking with OCEL logging and analysis
+
+Benchmarking lives in deriva.bench (deriva-dev).
 """
 
 from __future__ import annotations
 
 from . import config, config_models, derivation, extraction, pipeline
-from .config import get_settings
 from .session import PipelineSession
 
 __all__ = [
@@ -48,5 +48,4 @@ __all__ = [
     "extraction",
     "derivation",
     "pipeline",
-    "get_settings",
 ]

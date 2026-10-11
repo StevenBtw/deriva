@@ -25,21 +25,14 @@ Usage:
     # Get derivation configs by phase
     generate_configs = config.get_derivation_configs(engine, phase="generate")
 
-    # Load environment settings (pydantic-settings)
-    from deriva.services.config_models import DerivaSettings
-    settings = DerivaSettings()
-    print(settings.llm.temperature)
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from functools import lru_cache
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from deriva.services.config_models import DerivaSettings
+import re
+from typing import Any
 
 # Phases a derivation_config row can belong to (same set as DerivationConfigModel.phase)
 DERIVATION_PHASES = ("prep", "generate", "refine", "relationship")
@@ -84,24 +77,6 @@ def read_only_connection() -> Any:
     from deriva.adapters.database import get_connection
 
     return get_connection(read_only=True)
-
-
-@lru_cache
-def get_settings() -> DerivaSettings:
-    """
-    Get cached application settings from environment.
-
-    Returns:
-        DerivaSettings instance with all environment configuration.
-
-    Usage:
-        settings = get_settings()
-        print(settings.llm.temperature)
-        print(settings.grafeo.db_dir)
-    """
-    from deriva.services.config_models import DerivaSettings
-
-    return DerivaSettings()
 
 
 # =============================================================================
@@ -713,6 +688,13 @@ DEFAULT_EXCLUDED_DIRECTORIES: list[str] = [
 ]
 
 
+def setting_default(key: str) -> str | None:
+    """The value that applies while a setting is not set (None when nothing does)."""
+    if key == "excluded_directories":
+        return json.dumps(DEFAULT_EXCLUDED_DIRECTORIES)
+    return None
+
+
 def get_excluded_directories(engine: Any) -> list[str]:
     """Directory names skipped (with their contents) by every repository walk.
 
@@ -733,6 +715,16 @@ def _parse_excluded_directories(raw: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise ValueError("excluded_directories must be a JSON list of directory names")
     return value
+
+
+# Full derivation runs start from an empty model, as benchmarks do: a run on top of an earlier model skips every
+# candidate that model already has (the duplicate check), so it derives less. "false" lets a run build on the old model.
+CLEAR_MODEL_SETTING = "derivation_clear_model"
+
+
+def clear_model_before_derivation(value: str | None) -> bool:
+    """The derivation_clear_model setting as a switch: on unless it says false, 0, no or off."""
+    return value is None or value.strip().lower() not in ("false", "0", "no", "off")
 
 
 def set_setting(engine: Any, key: str, value: str) -> None:
@@ -1060,18 +1052,49 @@ HISTORY_COLUMNS = {
     "extraction": (
         "extraction_config",
         "node_type",
-        ("version", "is_active", "enabled", "sequence", "instruction", "example", "params", "batch_size", "input_sources", "created_at"),
+        (
+            "version",
+            "is_active",
+            "enabled",
+            "sequence",
+            "instruction",
+            "example",
+            "params",
+            "batch_size",
+            "input_sources",
+            "extraction_method",
+            "temperature",
+            "max_tokens",
+            "created_at",
+        ),
     ),
     "derivation": (
         "derivation_config",
         "step_name",
-        ("version", "is_active", "enabled", "sequence", "phase", "instruction", "example", "params", "batch_size", "input_graph_query", "created_at"),
+        (
+            "version",
+            "is_active",
+            "enabled",
+            "sequence",
+            "phase",
+            "llm",
+            "instruction",
+            "example",
+            "params",
+            "batch_size",
+            "max_candidates",
+            "temperature",
+            "max_tokens",
+            "input_graph_query",
+            "input_model_query",
+            "created_at",
+        ),
     ),
 }
 
 
 def get_config_history(engine: Any, step_type: str, name: str) -> list[dict[str, Any]]:
-    """Every version of a step, newest first (texts, params, query, state, when it was created)."""
+    """Every version of a step, newest first (texts, params, queries, generation settings, state, when it was created)."""
     if step_type not in HISTORY_COLUMNS:
         raise ValueError(f"Unknown step type: {step_type}")
     table, key, columns = HISTORY_COLUMNS[step_type]
@@ -1104,11 +1127,17 @@ def get_active_config_versions(engine: Any) -> dict[str, dict[str, int]]:
     return versions
 
 
+# A secret's name ends in key, token, secret or password (api_key, auth_token); max_tokens is a count, not a token
+SECRET_NAME = re.compile(r"(^|_)(key|token|secret|password)$", re.IGNORECASE)
+REDACTED = "<redacted>"
+
+
 def input_snapshot(engine: Any) -> dict[str, Any]:
     """The result-changing tables that keep no version history, as they are now, with a digest per table.
 
     File type registry (which files feed which step), derivation name patterns and system settings
     (e.g. excluded directories). Recorded when a session starts, so sessions can be compared table by table.
+    The record goes into session folders and export bundles: a setting named like a secret keeps its name only.
     """
     file_types = engine.execute("SELECT extension, file_type, subtype, chunk_delimiter, chunk_max_tokens, chunk_overlap FROM file_type_registry ORDER BY extension").fetchall()
     patterns = engine.execute(
@@ -1120,7 +1149,7 @@ def input_snapshot(engine: Any) -> dict[str, Any]:
         "derivation_patterns": [
             {"step_name": r[0], "pattern_type": r[1], "pattern_category": r[2], "patterns": json.loads(r[3]) if r[3] else [], "is_active": r[4]} for r in patterns
         ],
-        "system_settings": {r[0]: r[1] for r in settings},
+        "system_settings": {r[0]: REDACTED if SECRET_NAME.search(r[0]) else r[1] for r in settings},
     }
     snapshot["sha256"] = {
         name: hashlib.sha256(json.dumps(snapshot[name], sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()

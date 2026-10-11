@@ -14,8 +14,7 @@ import re
 from collections import Counter
 from typing import Any
 
-from deriva.adapters.archimate.models import DERIVABLE_RELATIONSHIP_TYPES, RELATIONSHIP_TABLE, relationship_tier
-from deriva.services.benchmark_views import layer_of
+from deriva.adapters.archimate.models import DERIVABLE_RELATIONSHIP_TYPES, RELATIONSHIP_TABLE, layer_of, relationship_tier
 
 NAMESPACES = ("Graph", "Model")
 SAMPLE_TEXT = 200
@@ -62,7 +61,7 @@ def intermediate_ontology(session: Any) -> dict[str, Any]:
 
     edge_types = []
     for row in sorted(run("MATCH (:Graph)-[r]->(:Graph) RETURN type(r) AS type, count(r) AS count", None), key=lambda r: r["type"]):
-        pairs = run("MATCH (a:Graph)-[r]->(b:Graph) WHERE type(r) = $type RETURN labels(a) AS source, labels(b) AS target LIMIT 200", {"type": row["type"]})
+        pairs = run("MATCH (a:Graph)-[r]->(b:Graph) WHERE type(r) = $type RETURN DISTINCT labels(a) AS source, labels(b) AS target", {"type": row["type"]})
         seen = sorted({(t[0], u[0]) for p in pairs if (t := _types(p["source"])) and (u := _types(p["target"]))})
         edge_types.append({"name": row["type"].split(":", 1)[-1], "count": row["count"], "pairs": [list(pair) for pair in seen]})
 

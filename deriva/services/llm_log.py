@@ -82,12 +82,23 @@ class LlmCallLog:
 
     @staticmethod
     def read(path: str | Path) -> list[dict[str, Any]]:
-        """All calls of a log file, in file order (empty when the file does not exist)."""
+        """All calls of a log file, in file order (empty when the file does not exist).
+
+        A line that is no call is skipped: a run still writing, or one that stopped mid-line, leaves a partial last line.
+        """
         file = Path(path)
         if not file.exists():
             return []
+        calls = []
         with file.open(encoding="utf-8") as handle:
-            return [json.loads(line) for line in handle if line.strip()]
+            for line in handle:
+                try:
+                    call = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(call, dict):
+                    calls.append(call)
+        return calls
 
     @staticmethod
     def find(path: str | Path, call_id: str) -> dict[str, Any] | None:
@@ -124,7 +135,9 @@ def record_call(
         cache_key=metrics.get("cache_key"),
         provider=metrics.get("provider"),
         model=metrics.get("model"),
+        served_model=metrics.get("served_model"),
         temperature=metrics.get("temperature"),
+        reasoning=metrics.get("reasoning"),
         max_tokens=metrics.get("max_tokens"),
         cache_hit=metrics.get("cache_hit"),
         latency_ms=metrics.get("latency_ms"),

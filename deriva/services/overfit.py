@@ -12,7 +12,9 @@ import importlib.util
 from pathlib import Path
 from typing import Any
 
-SCANNER = Path("workspace/scripts/check_prompt_overfit.py")
+from deriva.common.paths import workspace
+
+SCANNER = workspace() / "scripts" / "check_prompt_overfit.py"
 
 
 def _load(scanner: Path) -> Any:

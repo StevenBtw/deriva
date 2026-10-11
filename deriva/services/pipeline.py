@@ -47,13 +47,14 @@ def run_full_pipeline(
     engine: Any,
     graph_manager: GraphManager,
     archimate_manager: ArchimateManager,
-    llm_query_fn: Callable[[str, dict], Any],
+    llm_query_fn: Callable[[str, dict], Any] | None,
     repo_name: str | None = None,
     skip_classification: bool = False,
     skip_extraction: bool = False,
     skip_derivation: bool = False,
     verbose: bool = False,
     progress: ProgressReporter | None = None,
+    derivation_phases: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Run the full Deriva pipeline.
@@ -69,6 +70,7 @@ def run_full_pipeline(
         skip_derivation: Skip derivation step (includes all phases)
         verbose: Print progress
         progress: Optional progress reporter for visual feedback
+        derivation_phases: Derivation phases to run (default: all; ["prep"] without an LLM)
 
     Returns:
         Dict with success, stats, errors for each stage
@@ -121,6 +123,7 @@ def run_full_pipeline(
             llm_query_fn=llm_query_fn,
             verbose=verbose,
             progress=progress,
+            phases=derivation_phases,
         )
         results["derivation"] = derivation_result
 

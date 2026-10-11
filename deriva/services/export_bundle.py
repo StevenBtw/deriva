@@ -12,22 +12,23 @@ import importlib.metadata
 import json
 import os
 import platform
-import re
 import subprocess
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import deriva
 from deriva.adapters.grafeo import engine_info
-from deriva.services import config
+from deriva.services import about, config
 
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 CHUNK = 1 << 20
 # A secret's name ends in key, token, secret or password (api_key, auth_token); max_tokens is a count, not a token
-SECRET = re.compile(r"(^|_)(key|token|secret|password)$", re.IGNORECASE)
+SECRET = config.SECRET_NAME
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+# Every part of the deriva namespace (the core here, the studio and bench packages in a checkout's workspace members)
+PACKAGE_ROOTS = tuple(Path(part).resolve() for part in deriva.__path__)
 SOURCE_SUFFIXES = (".py", ".sql")
 
 
@@ -55,7 +56,12 @@ def export_session(session_dir: str | Path, out_path: str | Path, extras: dict[s
     if out.resolve().is_relative_to(session.resolve()):
         raise ValueError(f"The bundle cannot be written into the session folder it exports: {out}")
 
-    files = sorted((p for p in session.rglob("*") if p.is_file()), key=lambda p: p.relative_to(session).as_posix())
+    # Links are not followed: one in the folder could point at any file (one with keys)
+    root = session.resolve()
+    files = sorted(
+        (p for p in session.rglob("*") if p.is_file() and not p.is_symlink() and p.resolve().is_relative_to(root)),
+        key=lambda p: p.relative_to(session).as_posix(),
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     partial = out.with_name(out.name + ".partial")
     entries: list[dict[str, Any]] = []
@@ -135,21 +141,26 @@ def _git(root: Path) -> dict[str, Any]:
         return {"commit": None, "dirty": None}
 
 
-def source_digest(package_root: str | Path = PACKAGE_ROOT) -> dict[str, Any]:
+def source_digest(package_root: str | Path | Sequence[str | Path] = PACKAGE_ROOTS) -> dict[str, Any]:
     """The code that ran: a sha256 over every source file of the package (path and content, caches left out).
 
-    Names the code where a commit cannot: sessions also run on trees with uncommitted changes.
+    Names the code where a commit cannot: sessions also run on trees with uncommitted changes. ``deriva``
+    is a namespace over three packages, so several roots may be given; each file counts by its path
+    relative to its own root, which keeps the digest when a subpackage moves between packages.
     """
-    root = Path(package_root)
-    found = []
-    for folder, subfolders, names in os.walk(root):
-        subfolders[:] = [d for d in subfolders if not d.startswith((".", "__pycache__"))]  # caches are not code
-        found += [Path(folder) / n for n in names if Path(n).suffix in SOURCE_SUFFIXES and not n.startswith(".")]
-    files = sorted(found, key=lambda p: p.relative_to(root).as_posix())
+    roots = [Path(package_root)] if isinstance(package_root, (str, Path)) else [Path(root) for root in package_root]
+    found: dict[str, Path] = {}
+    for root in roots:
+        for folder, subfolders, names in os.walk(root):
+            subfolders[:] = [d for d in subfolders if not d.startswith((".", "__pycache__"))]  # caches are not code
+            for name in names:
+                if Path(name).suffix in SOURCE_SUFFIXES and not name.startswith("."):
+                    path = Path(folder) / name
+                    found[path.relative_to(root).as_posix()] = path
     digest = hashlib.sha256()
-    for path in files:
-        digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0" + hashlib.sha256(path.read_bytes()).digest())
-    return {"files": len(files), "sha256": digest.hexdigest()}
+    for relative in sorted(found):
+        digest.update(relative.encode("utf-8") + b"\0" + hashlib.sha256(found[relative].read_bytes()).digest())
+    return {"files": len(found), "sha256": digest.hexdigest()}
 
 
 def run_inputs(engine: Any, models: dict[str, Any], config_versions: dict[str, Any] | None = None, llm_samples: dict[str, int] | None = None) -> dict[str, Any]:
@@ -166,14 +177,14 @@ def run_inputs(engine: Any, models: dict[str, Any], config_versions: dict[str, A
     }
 
 
-def environment_info(models: dict[str, Any] | None = None, repo_root: str | Path = REPO_ROOT, package_root: str | Path = PACKAGE_ROOT) -> dict[str, Any]:
+def environment_info(models: dict[str, Any] | None = None, repo_root: str | Path = REPO_ROOT, package_root: str | Path | Sequence[str | Path] = PACKAGE_ROOTS) -> dict[str, Any]:
     """Versions (Deriva with its git commit and source digest, grafeo build, solvOR), Python, platform and model configs without secrets."""
     try:
         grafeo = engine_info()
     except Exception as exc:  # the record still helps without the engine's build
         grafeo = {"error": str(exc)}
     return {
-        "deriva": _version("Deriva"),
+        "deriva": _version(about.DISTRIBUTION),
         "git": _git(Path(repo_root)),
         "source": source_digest(package_root),
         "grafeo": grafeo,

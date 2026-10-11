@@ -289,21 +289,21 @@ def run_extraction(
                 step_ctx = run_logger.step_start(node_type, f"Extracting {node_type} from {repo.name}")
 
             try:
-                result = _run_extraction_step(
-                    cfg=cfg,
-                    repo=repo,
-                    repo_path=repo_path,
-                    classified_files=classified_files,
-                    undefined_files=undefined_files,
-                    graph_manager=graph_manager,
-                    llm_query_fn=llm_query_fn,
-                    engine=engine,
-                    model=model,
-                )
+                with graph_manager.recording() as written:
+                    result = _run_extraction_step(
+                        cfg=cfg,
+                        repo=repo,
+                        repo_path=repo_path,
+                        classified_files=classified_files,
+                        undefined_files=undefined_files,
+                        graph_manager=graph_manager,
+                        llm_query_fn=llm_query_fn,
+                        engine=engine,
+                        model=model,
+                    )
 
                 nodes_created = result.get("nodes_created", 0)
                 edges_created = result.get("edges_created", 0)
-                edge_ids = result.get("edge_ids", [])
                 if result.get("stats"):
                     step_stats.setdefault(str(repo.name), {})[node_type] = result["stats"]
                 stats["nodes_created"] += nodes_created
@@ -314,8 +314,10 @@ def run_extraction(
                 if step_ctx:
                     step_ctx.items_created = nodes_created + edges_created
                     step_ctx.stats = result.get("stats")
-                    # Add edge IDs for OCEL logging
-                    for edge_id in edge_ids:
+                    # Every node and edge the step wrote, once each, for OCEL logging
+                    for node_id in dict.fromkeys(written.nodes):
+                        step_ctx.add_object(node_id)
+                    for edge_id in dict.fromkeys(written.edges):
                         step_ctx.add_edge(edge_id)
                     step_ctx.complete()
 
@@ -444,7 +446,8 @@ def _run_extraction_step(
             llm_query_fn=llm_query_fn,
         )
     elif node_type in ["TypeDefinition", "Method", "ExternalDependency", "Test"]:
-        if llm_query_fn is None:
+        # Without an LLM the parsers still run (tree-sitter, manifest files); only Test is LLM-only
+        if llm_query_fn is None and node_type == "Test":
             return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
         result = _extract_llm_based(
             node_type=node_type,
@@ -1051,7 +1054,7 @@ def _is_unreadable(file_info: dict) -> bool:
 
 
 # Languages the tree-sitter adapter extracts types and methods from
-_TREESITTER_LANGUAGES = frozenset({"python", "javascript", "typescript", "java", "csharp"})
+_TREESITTER_LANGUAGES = frozenset({"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms"})
 
 
 def _extract_llm_based(
@@ -1061,14 +1064,18 @@ def _extract_llm_based(
     repo_path: Path,
     classified_files: list[dict],
     graph_manager: GraphManager,
-    llm_query_fn: Callable,
+    llm_query_fn: Callable | None,
     engine: Any,
     model: str | None = None,
 ) -> dict[str, Any]:
-    """Extract LLM-based nodes (TypeDefinition, Method, Technology, ExternalDependency, Test)."""
+    """Extract LLM-based nodes (TypeDefinition, Method, Technology, ExternalDependency, Test).
+
+    Without an LLM (``llm_query_fn`` None) the parsers still run; files that only the LLM can read are skipped and counted.
+    """
     nodes_created = 0
     edges_created = 0
     errors = []
+    skipped_without_llm = 0
     deferred_inherits: list[dict] = []
 
     # Parse input sources from config
@@ -1116,6 +1123,7 @@ def _extract_llm_based(
 
     # Wrap llm_query_fn with per-step temperature/max_tokens overrides
     def step_llm_query_fn(prompt: str, schema: dict, system_prompt: str | None = None) -> Any:
+        assert llm_query_fn is not None  # only handed out when an LLM is given (step_llm below)
         return llm_query_fn(
             prompt,
             schema,
@@ -1123,6 +1131,8 @@ def _extract_llm_based(
             max_tokens=cfg.max_tokens,
             system_prompt=system_prompt,
         )
+
+    step_llm = step_llm_query_fn if llm_query_fn is not None else None
 
     # Check if we can use tree-sitter extraction for supported languages
     use_treesitter = node_type in ["TypeDefinition", "Method"]
@@ -1157,7 +1167,7 @@ def _extract_llm_based(
                 file_path=file_info["path"],
                 file_content=content,
                 repo_name=repo.name,
-                llm_query_fn=step_llm_query_fn,
+                llm_query_fn=step_llm,
                 config=extraction_config,
                 subtype=file_info.get("subtype"),
                 model=model,
@@ -1177,6 +1187,10 @@ def _extract_llm_based(
             file_edges = result["data"].get("edges", []) if result["success"] else []
             file_errors = result.get("errors", [])
             extraction_method = "treesitter"
+        elif step_llm is None:
+            # A file only the LLM can read: skipped without one
+            skipped_without_llm += 1
+            continue
         else:
             # Use LLM extraction for non-Python files or other node types
             file_nodes, file_edges, file_errors = _extract_file_content(
@@ -1185,7 +1199,7 @@ def _extract_llm_based(
                 repo_name=repo.name,
                 extract_fn=extract_fn,
                 extraction_config=extraction_config,
-                llm_query_fn=step_llm_query_fn,
+                llm_query_fn=step_llm,
                 model=model,
             )
             extraction_method = "llm"
@@ -1239,6 +1253,10 @@ def _extract_llm_based(
                 if not graph_manager.node_exists(dst_id):
                     _add_type_placeholder(graph_manager, edge_data, dst_id, repo.name)
             edges_created += _add_extracted_edge(graph_manager, src_id, target, "INHERITS", edge_data.get("properties"), errors)
+
+    if skipped_without_llm:
+        # "LLM required" makes the caller report this as a warning, not an error
+        errors.append(f"LLM required for {node_type} in {skipped_without_llm} file{'' if skipped_without_llm == 1 else 's'} without a parser (skipped)")
 
     return {
         "nodes_created": nodes_created,
