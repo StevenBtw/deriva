@@ -90,3 +90,61 @@ class TestGraphManagerOperations:
 
         with pytest.raises(RuntimeError, match="Not connected"):
             manager.add_node(mock_node)
+
+
+class TestRecording:
+    """The ids of the nodes and edges written inside a block, for the run log."""
+
+    def test_records_the_nodes_and_edges_written_in_the_block(self):
+        from deriva.adapters.graph.models import DirectoryNode
+
+        manager = GraphManager()
+        manager.db = MagicMock()
+        node = DirectoryNode(name="a", path="a", repository_name="r")
+        manager.add_node(node, node_id="dir::r::before")
+
+        with manager.recording() as written:
+            manager.add_node(node, node_id="dir::r::a")
+            manager.add_node(node, node_id="dir::r::b")
+            manager.add_edge("dir::r::a", "dir::r::b", "CONTAINS")
+        manager.add_node(node, node_id="dir::r::after")
+
+        assert written.nodes == ["dir::r::a", "dir::r::b"]
+        # Edges by relationship, source and target: the edge ids of the benchmark's event log
+        assert written.edges == ["CONTAINS_dir::r::a_dir::r::b"]
+
+    def test_a_failed_write_is_not_recorded(self):
+        from deriva.adapters.graph.models import DirectoryNode
+
+        manager = GraphManager()
+        manager.db = MagicMock()
+        manager.db.merge_node.side_effect = RuntimeError("disk full")
+        manager.db.merge_edge.return_value = False  # an endpoint is missing
+
+        with manager.recording() as written:
+            with pytest.raises(RuntimeError):
+                manager.add_node(DirectoryNode(name="a", path="a", repository_name="r"), node_id="dir::r::a")
+            with pytest.raises(RuntimeError):
+                manager.add_edge("dir::r::a", "dir::r::b", "CONTAINS")
+
+        assert (written.nodes, written.edges) == ([], [])
+
+
+class TestNodesByType:
+    def test_a_node_type_that_is_no_label_is_refused_before_the_query(self):
+        manager = GraphManager()
+        manager.db = MagicMock()
+
+        with pytest.raises(ValueError, match="node type"):
+            manager.get_nodes_by_type("File`) DETACH DELETE n //")
+
+        manager.db.execute_read.assert_not_called()
+
+    def test_a_limit_goes_into_the_query(self):
+        manager = GraphManager()
+        manager.db = MagicMock()
+        manager.db.execute_read.return_value = []
+
+        manager.get_nodes_by_type("File", limit=5)
+
+        assert "LIMIT 5" in manager.db.execute_read.call_args.args[0]
