@@ -29,7 +29,6 @@ from deriva.adapters.llm import (
     CachedResponse,
     FailedResponse,
     ResponseType,
-    StructuredOutputMixin,
     # Caching
     CacheManager,
     cached_llm_call,
@@ -254,51 +253,9 @@ LLM_RETRY_MAX_DELAY=60.0     # Maximum delay between retries (seconds)
 
 Retries use exponential backoff with jitter and respect `Retry-After` headers.
 
-## Structured Output (JSON Schema Enforcement)
+## Structured Output
 
-Enable API-level JSON schema enforcement for guaranteed valid JSON responses:
-
-```bash
-# Per-model configuration in .env
-LLM_OPENAI_GPT41MINI_STRUCTURED_OUTPUT=true
-LLM_ANTHROPIC_HAIKU_STRUCTURED_OUTPUT=true
-LLM_MISTRAL_DEVSTRAL_STRUCTURED_OUTPUT=true
-LLM_OLLAMA_NEMOTRON_STRUCTURED_OUTPUT=true
-```
-
-**Supported Providers:**
-
-| Provider | Support | Implementation |
-|----------|---------|----------------|
-| OpenAI | ✅ | `response_format: {type: "json_schema"}` |
-| Azure | ✅ | Same as OpenAI |
-| Anthropic | ✅ | `output_format` + beta header |
-| Mistral | ✅ | `response_format: {type: "json_schema"}` |
-| Ollama | ✅ | `format: <schema>` |
-| LMStudio | ✅ | Same as OpenAI |
-| ClaudeCode | ❌ | CLI-based, no structured output |
-
-**Behavior:**
-
-- `structured_output=true`: JSON schema passed to provider API for server-side enforcement
-- `structured_output=false` (default): Only `json_mode` enabled, schema used for client-side validation only
-
-**Programmatic Usage:**
-
-```python
-from deriva.adapters.llm import LLMManager
-from deriva.adapters.llm.manager import load_benchmark_models
-
-# Load model with structured_output=true from .env
-models = load_benchmark_models()
-llm = LLMManager.from_config(models["openai-gpt41mini"])
-
-# The schema will be enforced at the API level
-result = llm.query(
-    "Extract business concepts...",
-    schema={"type": "object", "properties": {...}}
-)
-```
+Each call's output mode follows from what it asks for; there is no setting per model. Calls with a response model (the extraction classifications) use pydantic-ai's tool output and are validated against the model. Derivation calls ask for JSON in the prompt, and the pipeline reads the answer: a whole JSON answer, a code fence, or the JSON after a short explanation.
 
 ## See Also
 
