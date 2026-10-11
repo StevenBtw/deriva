@@ -1011,7 +1011,7 @@ class TestIsolatedNamingStep:
     def test_repository_words_are_removed_from_an_answer(self):
         candidate = Candidate(node_id="n1", name="registry", labels=["Directory"], properties={})
 
-        created, _ = self._created([candidate], ["Tea Store Registry"] * 3, repo_name="TeaStore")
+        created, _ = self._created([candidate], ["Tool Shed Registry"] * 3, repo_name="ToolShed")
 
         assert [e["name"] for e in created] == ["Registry"]
 

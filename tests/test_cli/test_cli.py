@@ -2779,9 +2779,9 @@ class TestRepositoryDatabaseSelection:
         mock_session.run_extraction.return_value = {"success": True, "stats": {}}
         mock_session_class.return_value.__enter__.return_value = mock_session
 
-        runner.invoke(app, ["run", "extraction", "--repo", "bigdata", "-q"])
+        runner.invoke(app, ["run", "extraction", "--repo", "bigfarm", "-q"])
 
-        assert mock_session_class.call_args.kwargs["repository"] == "bigdata"
+        assert mock_session_class.call_args.kwargs["repository"] == "bigfarm"
 
     @patch("deriva.cli.cli.PipelineSession")
     def test_export_and_clear_open_repo_database(self, mock_session_class):
@@ -2790,10 +2790,10 @@ class TestRepositoryDatabaseSelection:
         mock_session.clear_model.return_value = {"success": True}
         mock_session_class.return_value.__enter__.return_value = mock_session
 
-        runner.invoke(app, ["export", "--repo", "bigdata", "-o", "x.xml"])
-        runner.invoke(app, ["clear", "model", "--repo", "lightblue"])
+        runner.invoke(app, ["export", "--repo", "bigfarm", "-o", "x.xml"])
+        runner.invoke(app, ["clear", "model", "--repo", "darkgreen"])
 
-        assert [c.kwargs["repository"] for c in mock_session_class.call_args_list] == ["bigdata", "lightblue"]
+        assert [c.kwargs["repository"] for c in mock_session_class.call_args_list] == ["bigfarm", "darkgreen"]
 
 
 class TestModelConfigCommands:

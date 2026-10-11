@@ -25,15 +25,15 @@ def test_repository_info_and_missing_repository(make_client):
 
 
 def test_clone_passes_url_name_and_branch(make_client):
-    session = FakeSession(clone_repository={"success": True, "name": "carddemo", "path": "workspace/repositories/carddemo", "url": "u"})
+    session = FakeSession(clone_repository={"success": True, "name": "sampleapp", "path": "workspace/repositories/sampleapp", "url": "u"})
     client = make_client(session)
 
-    response = client.post("/api/repositories", json={"url": "https://github.com/aws-samples/aws-mainframe-modernization-carddemo", "name": "carddemo"})
+    response = client.post("/api/repositories", json={"url": "https://github.com/example/sample-app", "name": "sampleapp"})
 
     assert response.status_code == 201
-    assert response.json()["name"] == "carddemo"
+    assert response.json()["name"] == "sampleapp"
     args, kwargs = session.called("clone_repository")[0]
-    assert kwargs == {"url": "https://github.com/aws-samples/aws-mainframe-modernization-carddemo", "name": "carddemo", "branch": None}
+    assert kwargs == {"url": "https://github.com/example/sample-app", "name": "sampleapp", "branch": None}
 
 
 def test_failed_clone_answers_400_with_the_error(make_client):

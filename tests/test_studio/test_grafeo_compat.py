@@ -84,10 +84,10 @@ def test_a_method_is_named_by_itself_not_by_its_class():
 def test_repositories_and_dependencies_are_named_by_their_own_names():
     from deriva.studio.grafeo_compat import to_widget_value
 
-    repository = to_widget_value({"_id": 4, "_labels": ["Graph", "Repository"], "id": "repo::TeaStore", "repoName": "TeaStore"})
+    repository = to_widget_value({"_id": 4, "_labels": ["Graph", "Repository"], "id": "repo::ToolShed", "repoName": "ToolShed"})
     dependency = to_widget_value({"_id": 5, "_labels": ["Graph", "ExternalDependency"], "id": "extdep::x::org", "dependencyName": "org"})
 
-    assert repository["properties"]["name"] == "TeaStore"
+    assert repository["properties"]["name"] == "ToolShed"
     assert dependency["properties"]["name"] == "org"
 
 

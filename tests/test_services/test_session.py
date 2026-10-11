@@ -57,10 +57,10 @@ class TestPipelineSessionLifecycle:
             patch("deriva.services.session.RepoManager"),
             patch("deriva.services.session.use_database") as use_database,
         ):
-            PipelineSession(repository="bigdata").connect()
+            PipelineSession(repository="bigfarm").connect()
             PipelineSession().connect()
 
-        assert [c.args[0] for c in use_database.call_args_list] == ["bigdata", "default"]
+        assert [c.args[0] for c in use_database.call_args_list] == ["bigfarm", "default"]
 
     def test_use_repository_switches_database(self):
         with (
@@ -72,10 +72,10 @@ class TestPipelineSessionLifecycle:
         ):
             session = PipelineSession()
             session.connect()
-            session.use_repository("lightblue")
+            session.use_repository("darkgreen")
 
-        assert use_database.call_args.args[0] == "lightblue"
-        assert session.repository == "lightblue"
+        assert use_database.call_args.args[0] == "darkgreen"
+        assert session.repository == "darkgreen"
 
     def test_connect_idempotent(self):
         """Connect should be idempotent."""

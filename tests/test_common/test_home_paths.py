@@ -127,10 +127,16 @@ def test_import_time_folders_sit_in_the_workspace():
     assert about.workspace() == paths.workspace()
 
 
-def test_reference_models_are_absolute():
+def test_reference_models_are_found_in_the_home_folder(tmp_path, monkeypatch):
     from deriva.bench import analysis
 
-    assert all(Path(path).is_absolute() for path in analysis.REFERENCE_MODELS.values())
+    monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+    assert analysis.known_reference_models() == {}
+    folder = tmp_path / "workspace" / "reference"
+    folder.mkdir(parents=True)
+    (folder / "widgets.archimate").write_text("<model/>", encoding="utf-8")
+
+    assert analysis.known_reference_models() == {"widgets": str(folder / "widgets.archimate")}
 
 
 def test_the_session_exports_to_the_workspace_by_default():

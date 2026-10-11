@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from deriva.modules.derivation.base import (
     Candidate,
     ElementPrompt,
@@ -102,5 +104,9 @@ class TestAbstentionPrompt:
         prompt = build_derivation_prompt(
             candidates=[_make_candidate()], instruction="do things", example="{}", prompt=PROMPT, strength=compute_candidate_strength([_make_candidate()])
         )
-        for forbidden in ("lightblue", "bigdata", "cloudbased"):
-            assert forbidden.lower() not in prompt.lower()
+        from deriva.services.overfit import scan_texts
+
+        result = scan_texts({"prompt": prompt})
+        if not result["available"]:
+            pytest.skip("the local overfit scanner (workspace/scripts) is not here")
+        assert result["findings"] == []

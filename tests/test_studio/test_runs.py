@@ -206,7 +206,7 @@ def test_finished_runs_are_kept_on_disk_newest_first(tmp_path):
     first = manager()
     one = first.start("extraction", "deriva")
     wait_for(lambda: first.get(one).status == "finished")
-    two = first.start("derivation", "TeaStore")
+    two = first.start("derivation", "ToolShed")
     wait_for(lambda: first.get(two).status == "finished")
     (tmp_path / "old-folder-without-summary").mkdir()
     (tmp_path / "broken").mkdir()
@@ -214,7 +214,7 @@ def test_finished_runs_are_kept_on_disk_newest_first(tmp_path):
 
     history = manager().history(limit=5)
 
-    assert [(h["run_id"], h["kind"], h["repository"], h["status"]) for h in history] == [(two, "derivation", "TeaStore", "finished"), (one, "extraction", "deriva", "finished")]
+    assert [(h["run_id"], h["kind"], h["repository"], h["status"]) for h in history] == [(two, "derivation", "ToolShed", "finished"), (one, "extraction", "deriva", "finished")]
     assert history[0]["finished_at"] >= history[0]["started_at"]
     assert len(manager().history(limit=1)) == 1
 

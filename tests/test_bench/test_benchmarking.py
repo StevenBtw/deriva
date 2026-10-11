@@ -2105,19 +2105,19 @@ class TestLLMQueryEvent:
         run_logger = MagicMock(current_config="Node")
         query_fn = orchestrator._create_logging_query_fn(llm, llm, run_logger)
 
-        orchestrator._current_run_id = "bench_1:TeaStore:m:1"
+        orchestrator._current_run_id = "bench_1:ToolShed:m:1"
         query_fn("Choose roles", schema={"name": "role_classification", "schema": {}}, system_prompt="You classify.")
-        orchestrator._current_run_id = "bench_1:TeaStore:m:2"
+        orchestrator._current_run_id = "bench_1:ToolShed:m:2"
         run_logger.current_config = "SystemSoftware"
         query_fn("Choose roles again")
 
         from deriva.bench import benchmarking
 
         llm_dir = benchmarking.LLM_LOG_ROOT / "bench_1" / "llm"
-        first = LlmCallLog.read(llm_dir / "bench_1_TeaStore_m_1.jsonl")
-        second = LlmCallLog.read(llm_dir / "bench_1_TeaStore_m_2.jsonl")
+        first = LlmCallLog.read(llm_dir / "bench_1_ToolShed_m_1.jsonl")
+        second = LlmCallLog.read(llm_dir / "bench_1_ToolShed_m_2.jsonl")
         assert [(c["run_id"], c["step"], c["prompt"], c["schema"], c["response"]) for c in first] == [
-            ("bench_1:TeaStore:m:1", "Node", "Choose roles", "role_classification", '{"roles": {"a": "x"}}')
+            ("bench_1:ToolShed:m:1", "Node", "Choose roles", "role_classification", '{"roles": {"a": "x"}}')
         ]
         assert first[0]["system_prompt"] == "You classify."
         assert (first[0]["cache_key"], first[0]["latency_ms"], first[0]["tokens_in"]) == ("k1", 812.5, 100)
@@ -2129,14 +2129,14 @@ class TestLLMQueryEvent:
         orchestrator, llm = self._logging_orchestrator(tmp_path, monkeypatch)
         llm.query.side_effect = RuntimeError("provider down")
         query_fn = orchestrator._create_logging_query_fn(llm, llm, MagicMock(current_config="Node"))
-        orchestrator._current_run_id = "bench_1:TeaStore:m:1"
+        orchestrator._current_run_id = "bench_1:ToolShed:m:1"
 
         with pytest.raises(RuntimeError):
             query_fn("Choose roles")
 
         from deriva.bench import benchmarking
 
-        (call,) = LlmCallLog.read(benchmarking.LLM_LOG_ROOT / "bench_1" / "llm" / "bench_1_TeaStore_m_1.jsonl")
+        (call,) = LlmCallLog.read(benchmarking.LLM_LOG_ROOT / "bench_1" / "llm" / "bench_1_ToolShed_m_1.jsonl")
         assert (call["prompt"], call["error"], call["response"]) == ("Choose roles", "provider down", None)
 
 

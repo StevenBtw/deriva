@@ -186,7 +186,7 @@ class TestBusinessConceptStep:
 
     def test_the_list_does_not_depend_on_directory_classification(self, tmp_path):
         """Only structure decides which terms reach the classifier: a concept that DirectoryClassification
-        (an LLM decision) made for a directory changes nothing, so an upstream flip cannot cascade (rule 6d)."""
+        (an LLM decision) made for a directory changes nothing, so an upstream flip cannot cascade."""
         prompted = []
         for with_directory_concept in (False, True):
             close_database()

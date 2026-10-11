@@ -667,7 +667,7 @@ class TestIdentityFromNameKey:
 
 
 class TestStructuralSkip:
-    """Directories the structure already decides as skip never reach the LLM (rule 6a)."""
+    """Directories the structure already decides as skip never reach the LLM."""
 
     PARAMS = {"skip_names": ["utils", "tests"], "skip_trees": ["tests"], "skip_pass_through": True}
 

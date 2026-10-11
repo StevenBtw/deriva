@@ -163,9 +163,9 @@ def test_record_call_keeps_structured_answers_and_errors(tmp_path):
 
 
 def test_run_log_path_is_a_safe_file_name_per_run(tmp_path):
-    path = run_log_path(tmp_path, "bench_20261008_013000:TeaStore:mistral-devstral2:1")
+    path = run_log_path(tmp_path, "bench_20261008_013000:ToolShed:mistral-devstral2:1")
 
-    assert path == tmp_path / "bench_20261008_013000_TeaStore_mistral-devstral2_1.jsonl"
+    assert path == tmp_path / "bench_20261008_013000_ToolShed_mistral-devstral2_1.jsonl"
 
 
 def test_a_call_keeps_its_reasoning_and_the_model_that_served_it(tmp_path):
