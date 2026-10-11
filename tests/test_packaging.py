@@ -58,5 +58,8 @@ def test_deriva_dev_holds_only_the_bench_package(built_wheels):
 def test_deriva_studio_holds_the_studio_and_its_front_end(built_wheels):
     members = {m for m in built_wheels["deriva_studio"] if not m.startswith("deriva_studio-") and not m.endswith("/")}
     assert members and all(m.startswith("deriva/studio/") for m in members)
-    assert "deriva/studio/static/index.html" in members
+    # The front end is built before packaging and is not in the repository: a checkout that has it ships it
+    # (the package build in CI builds it first and checks the wheel for it)
+    if (ROOT / "packages/deriva-studio/src/deriva/studio/static/index.html").is_file():
+        assert "deriva/studio/static/index.html" in members
     assert not [m for m in members if any(junk in m for junk in LOCAL_JUNK)]

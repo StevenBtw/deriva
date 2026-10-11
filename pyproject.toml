@@ -62,7 +62,8 @@ dependencies = [
     "solvor>=0.6.3",
     # LLM
     "backoff>=2.2.1",
-    "pydantic-ai>=2",
+    # CVE-2026-107286, CVE-2026-107287 fixed in 2.53
+    "pydantic-ai>=2.55",
     # Utilities
     "authlib>=1.8.0",
     # CVE-2026-27962, CVE-2026-28490 fix (transitive via fastmcp)
@@ -75,7 +76,7 @@ dependencies = [
     "structlog>=26.1.0",
     "typer>=0.27",
     "httpx>=0.28.1",
-    "pydantic-ai-slim[mistral]>=2",
+    "pydantic-ai-slim[mistral]>=2.55",
 ]
 
 [dependency-groups]

@@ -159,6 +159,10 @@ jobs:
       - name: Build the three packages
         run: uv build --all-packages --no-sources -o dist
 
+      - name: The studio wheel holds the built front end
+        shell: bash
+        run: uv run --no-project python -m zipfile -l dist/deriva_studio-*.whl | grep -q "deriva/studio/static/index.html"
+
       # GITHUB_PATH takes the platform's path form (an export inside Git Bash would not)
       - name: Put the tool folder on PATH
         shell: bash
