@@ -199,7 +199,7 @@ class ConfigDeviationAnalyzer:
 
         # Build per-object breakdown
         object_details = []
-        objects_by_run = nodes_by_run if nodes_by_run else elements_by_run
+        objects_by_run = {run_id: nodes_by_run.get(run_id, set()) | elements_by_run.get(run_id, set()) for run_id in all_runs}
 
         for obj_id in config_objects:
             present_in = []

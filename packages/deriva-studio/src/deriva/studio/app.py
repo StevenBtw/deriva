@@ -25,6 +25,8 @@ NOT_BUILT = (
     "The API is available under <a href='/docs'>/docs</a>.</p>"
 )
 API_PREFIXES = ("api/", "grafeo/", "widgets/", "docs", "openapi.json", "redoc")
+# The namespaces themselves, without a trailing slash
+ROOTS = ("api", "grafeo", "widgets")
 # On shutdown a run gets this long to stop, then the session as long to close
 SHUTDOWN_WAIT = 5.0
 
@@ -89,7 +91,7 @@ def _mount_front_end(app: FastAPI, static_dir: Path | None) -> None:
 
     @app.get("/{path:path}", include_in_schema=False)
     def front_end(path: str) -> FileResponse:
-        if path.startswith(API_PREFIXES):
+        if path in ROOTS or path.startswith(API_PREFIXES):
             raise HTTPException(status_code=404, detail="Not Found")
         # Revalidated on every load: the page names the hashed bundles of this build
         return FileResponse(index, headers={"Cache-Control": "no-cache"})

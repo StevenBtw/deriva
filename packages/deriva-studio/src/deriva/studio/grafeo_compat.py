@@ -32,7 +32,7 @@ def to_widget_value(value: Any) -> Any:
     """A grafeo node or edge in the shape anywidget-graph's server client parses; other values unchanged."""
     if isinstance(value, list):
         return [to_widget_value(v) for v in value]
-    if isinstance(value, dict) and "_labels" in value:
+    if isinstance(value, dict) and "_labels" in value and "_id" in value:
         properties = {k: v for k, v in value.items() if not k.startswith("_")}
         if "name" not in properties:
             display = next((properties[k] for k in DISPLAY_KEYS if properties.get(k)), None)

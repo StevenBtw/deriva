@@ -150,5 +150,10 @@ def inspector(benchmarks_dir: str | Path, session_ids: list[str], models: list[s
                     }
                 )
     calls = {label: LlmCallLog.read(r.calls) for label, r in runs.items()}
-    causes = {f"{f['type']}|{f['source']}": f["cause"] for f in element_flips(snapshots, calls)}
+    # Within each model: the differences between models are no flips
+    causes: dict[str, Any] = {}
+    for name in sorted({r.model for r in runs.values()}):
+        group = [label for label, r in runs.items() if r.model == name]
+        for f in element_flips({label: snapshots[label] for label in group}, {label: calls[label] for label in group}):
+            causes.setdefault(f"{f['type']}|{f['source']}", f["cause"])
     return {"repository": repository, "runs": list(snapshots), "elements": elements, "relationships": relationships, "causes": causes}

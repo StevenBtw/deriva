@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from deriva.services import config
 from deriva.studio.deps import get_session
@@ -18,13 +18,13 @@ class SettingValue(BaseModel):
 
 
 class FileTypeIn(BaseModel):
-    extension: str
-    file_type: str
+    extension: str = Field(min_length=1)
+    file_type: str = Field(min_length=1)
     subtype: str
 
 
 class FileTypeUpdate(BaseModel):
-    file_type: str
+    file_type: str = Field(min_length=1)
     subtype: str
 
 

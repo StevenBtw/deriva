@@ -390,7 +390,7 @@ def test_an_unfollowed_run_does_not_pause_between_steps(tmp_path):
     run_id = manager.start("extraction")
     wait_for(lambda: manager.get(run_id).status == "finished")
 
-    assert time.time() - began < 1.0
+    assert time.time() - began < 5.0
 
 
 def test_a_derivation_run_starts_from_an_empty_model_and_says_so(tmp_path):

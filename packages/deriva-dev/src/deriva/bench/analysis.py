@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,9 @@ REFERENCE_MODELS = {
     "bigdata": str(workspace() / "repositories" / "bigdata" / "docs" / "MyWorkspace.archimate"),
     "Cloudbased-S-BPM-WfMS": str(workspace() / "repositories" / "Cloudbased-S-BPM-WfMS" / "AIM18 Documentation/ist_analyse_v0.7.archimate"),
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 class BenchmarkAnalyzer:
@@ -121,6 +125,7 @@ class BenchmarkAnalyzer:
         self._fit_analyses: dict[str, FitAnalysis] = {}
         self._cross_repo: CrossRepoComparison | None = None
         self._report: BenchmarkReport | None = None
+        self._skip_semantic = False  # generate_report(include_semantic=False)
 
     def _load_ocel(self, session_id: str) -> OCELLog:
         """Load OCEL log from file."""
@@ -179,13 +184,18 @@ class BenchmarkAnalyzer:
             print(f"Warning: Failed to parse reference model for {repo}: {e}")
             return [], []
 
-    def _get_objects_by_run(self, object_type: str, repo: str | None = None) -> dict[str, set[str]]:
+    def _is_run_of(self, run_repository: str, repo: str) -> bool:
+        """Whether a run's repository name is this repository, or the combined run that holds it."""
+        return run_repository == repo or (repo in self.repositories and run_repository == "_".join(sorted(self.repositories)))
+
+    def _get_objects_by_run(self, object_type: str, repo: str | None = None, model: str | None = None) -> dict[str, set[str]]:
         """
         Get objects grouped by run from OCEL logs.
 
         Args:
             object_type: Object type to extract (e.g., "Element", "Relationship")
-            repo: Optional repository filter
+            repo: Optional repository filter (a combined run counts for each of its repositories)
+            model: Optional model filter
 
         Returns:
             Dict mapping run_id -> set of object IDs
@@ -201,8 +211,10 @@ class BenchmarkAnalyzer:
                 if repo:
                     # Extract repo from run_id (format: session:repo:model:iteration)
                     parts = run_id.split(":")
-                    if len(parts) >= 2 and parts[1] != repo:
+                    if len(parts) >= 2 and not self._is_run_of(parts[1], repo):
                         continue
+                if model and len(run_id.split(":")) >= 3 and run_id.split(":")[2] != model:
+                    continue
 
                 if run_id not in objects_by_run:
                     objects_by_run[run_id] = set()
@@ -216,34 +228,22 @@ class BenchmarkAnalyzer:
 
         Extracts element data from the most recent successful run.
         """
-        elements = []
-        seen_ids = set()  # Avoid duplicates
-
-        for session_id, ocel in self.ocel_logs.items():
-            # Find runs for this repo
+        by_run: dict[str, list[str]] = {}  # run id -> element ids, runs in log order
+        completed: list[str] = []
+        for ocel in self.ocel_logs.values():
             for event in ocel.events:
+                if not any(self._is_run_of(name, repo) for name in event.objects.get("Repository", [])):
+                    continue
+                run_id = next(iter(event.objects.get("BenchmarkRun", [])), "")
                 if event.activity == "DeriveElements":
-                    repos = event.objects.get("Repository", [])
-
-                    if repo in repos:
-                        # Extract element IDs and create element dicts
-                        element_ids = event.objects.get("Element", [])
-                        for elem_id in element_ids:
-                            if elem_id in seen_ids:
-                                continue
-                            seen_ids.add(elem_id)
-
-                            # Parse element type from ID
-                            elem_type = self._extract_element_type(elem_id)
-                            elements.append(
-                                {
-                                    "id": elem_id,
-                                    "name": elem_id,  # Use ID as name for now
-                                    "type": elem_type,
-                                }
-                            )
-
-        return elements
+                    by_run.setdefault(run_id, []).extend(event.objects.get("Element", []))
+                elif event.activity == "CompleteRun" and run_id:
+                    completed.append(run_id)
+        # The latest run that completed and derived elements; without a completed one, the latest that derived any
+        latest = next((run_id for run_id in reversed(completed) if by_run.get(run_id)), next(reversed(by_run), None) if by_run else None)
+        if latest is None:
+            return []
+        return [{"id": elem_id, "name": elem_id, "type": self._extract_element_type(elem_id)} for elem_id in dict.fromkeys(by_run[latest])]
 
     def _extract_element_type(self, element_id: str) -> str:
         """Extract element type from ID prefix."""
@@ -267,13 +267,16 @@ class BenchmarkAnalyzer:
 
         for repo in self.repositories:
             # Get objects by run for this repo
-            nodes_by_run = self._get_objects_by_run("GraphNode", repo)
-            edges_by_run = self._get_objects_by_run("Edge", repo)
-            elements_by_run = self._get_objects_by_run("Element", repo)
-            relationships_by_run = self._get_objects_by_run("Relationship", repo)
-
-            # Get model name (use first model if multiple)
+            # One model per report: runs of several models would mix repeatability with model differences,
+            # so with several models the report covers the first one (the model it is labelled with)
             model = self.models[0] if self.models else "unknown"
+            only = model if len(self.models) > 1 else None
+            if only:
+                logger.warning("Sessions hold %d models; the stability report of %s covers %s only", len(self.models), repo, model)
+            nodes_by_run = self._get_objects_by_run("GraphNode", repo, only)
+            edges_by_run = self._get_objects_by_run("Edge", repo, only)
+            elements_by_run = self._get_objects_by_run("Element", repo, only)
+            relationships_by_run = self._get_objects_by_run("Relationship", repo, only)
 
             # Compute phase stability
             phase_reports = compute_phase_stability(
@@ -356,7 +359,7 @@ class BenchmarkAnalyzer:
         Returns:
             Dict mapping repo -> SemanticMatchReport
         """
-        if self._semantic_reports:
+        if self._semantic_reports or self._skip_semantic:
             return self._semantic_reports
 
         for repo in self.repositories:
@@ -462,9 +465,13 @@ class BenchmarkAnalyzer:
 
         return self._cross_repo
 
-    def generate_report(self) -> BenchmarkReport:
+    def generate_report(self, include_semantic: bool = True) -> BenchmarkReport:
         """
         Generate comprehensive benchmark report.
+
+        Args:
+            include_semantic: False skips the comparison with the reference models (and the fit and
+                cross-repository parts that read it get no reference data)
 
         Returns:
             BenchmarkReport with all analysis results
@@ -473,6 +480,7 @@ class BenchmarkAnalyzer:
             return self._report
 
         # Run all analyses
+        self._skip_semantic = not include_semantic
         stability = self.analyze_stability()
         answer_stability = self.analyze_answer_stability()
         semantic = self.analyze_semantic_match()
@@ -703,7 +711,7 @@ class BenchmarkAnalyzer:
                 # Type correct: Elements with matching ArchiMate type
                 type_correct = 0.0
                 if sem_report and sem_report.correctly_derived:
-                    exact_matches = len([m for m in sem_report.correctly_derived if m.match_type in ("exact", "fuzzy_name")])
+                    exact_matches = len([m for m in sem_report.correctly_derived if m.derived_type == m.reference_type])
                     type_correct = exact_matches / max(sem_report.total_derived_elements, 1)
 
                 # Name quality: Coverage score from fit analysis

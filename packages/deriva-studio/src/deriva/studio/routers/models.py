@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/models", tags=["models"])
+
+# Each change reads .env, edits it and writes it back: one at a time, or two edits would overwrite each other
+_ENV_WRITES = threading.Lock()
 
 
 def get_env_session(request: Request) -> Any:
@@ -33,7 +37,8 @@ def list_models(session: Any = Depends(get_env_session)) -> list[dict[str, Any]]
 @router.put("/{name}")
 def save_model(name: str, body: ModelConfig, session: Any = Depends(get_env_session)) -> dict[str, Any]:
     try:
-        session.save_model_config(name, **body.model_dump())
+        with _ENV_WRITES:
+            session.save_model_config(name, **body.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"name": name, "saved": True}
@@ -42,7 +47,8 @@ def save_model(name: str, body: ModelConfig, session: Any = Depends(get_env_sess
 @router.delete("/{name}", status_code=204)
 def delete_model(name: str, session: Any = Depends(get_env_session)) -> Response:
     try:
-        session.delete_model_config(name)
+        with _ENV_WRITES:
+            session.delete_model_config(name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"No model config named {name!r}") from exc
     return Response(status_code=204)

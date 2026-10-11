@@ -111,16 +111,18 @@ def process_logs(sessions: str, session: Any = Depends(get_benchmarks)) -> FileR
     ids = _sessions(sessions)
     folder = Path(tempfile.mkdtemp(prefix="deriva-ocel-"))
     (folder / "logs").mkdir()
+    # A fixed file name in the temporary folder: the session id names the download only
+    out = folder / "bundle.zip"
     try:
         paths = _view(lambda: session.export_process_logs(ids, folder / "logs"))
-    except HTTPException:
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as bundle:
+            for path in paths:
+                bundle.write(path, path.name)
+    except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
     name = f"ocel_{ids[0]}.zip" if len(ids) == 1 else f"ocel_{len(ids)}_sessions.zip"
-    with zipfile.ZipFile(folder / name, "w", zipfile.ZIP_DEFLATED) as bundle:
-        for path in paths:
-            bundle.write(path, path.name)
-    return FileResponse(folder / name, media_type="application/zip", filename=name, background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True))
+    return FileResponse(out, media_type="application/zip", filename=name, background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True))
 
 
 @router.get("/{session_id}/export")

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from pathlib import Path
 
 import duckdb
@@ -138,10 +139,21 @@ def ensure_database(db_path: Path | None = None) -> bool:
     # Import here to avoid circular imports
     from deriva.adapters.database.db_tool import seed_from_json
 
-    partial = path.with_name(path.name + ".partial")
+    if path.exists():
+        # A database that holds something else keeps it: the schema and seed data are added in place
+        conn = duckdb.connect(str(path))
+        try:
+            run_sql_file(SCRIPTS_DIR / "schema.sql", conn)
+            run_migrations(conn)
+        finally:
+            conn.close()
+        seed_from_json(path)
+        logger.info("Added the configuration schema and seed data to the existing database %s", path)
+        return True
+
+    # Staged under a name of this process's own: two first starts never share (or delete) a staging file
+    partial = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.partial")
     leftovers = (partial, partial.with_name(partial.name + ".wal"))
-    for leftover in leftovers:
-        leftover.unlink(missing_ok=True)
     try:
         conn = duckdb.connect(str(partial))
         try:
@@ -150,6 +162,9 @@ def ensure_database(db_path: Path | None = None) -> bool:
         finally:
             conn.close()
         seed_from_json(partial)
+        if path.exists():
+            # Another first start published its database in between: that one stays
+            return False
         os.replace(partial, path)
     finally:
         for leftover in leftovers:

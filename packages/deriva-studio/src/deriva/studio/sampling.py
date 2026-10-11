@@ -32,8 +32,14 @@ def allocate(counts: Mapping[str, int], slots: int) -> dict[str, int]:
     # Hand out what rounding down left over (largest remainder first), or take back what the one-slot minimum overdrew
     left = slots - sum(quotas.values())
     by_remainder = sorted(present, key=lambda name: (-(exact[name] - int(exact[name])), -present[name], name))
-    for name in by_remainder[: max(0, left)]:
-        quotas[name] += 1
+    while left > 0:
+        # Never more slots than a type has nodes: a full type passes its turn
+        room = [name for name in by_remainder if quotas[name] < present[name]]
+        if not room:
+            break
+        for name in room[:left]:
+            quotas[name] += 1
+            left -= 1
     overdrawn = sorted((name for name in present if quotas[name] > 1), key=lambda name: (exact[name] - quotas[name], name))
     for name in overdrawn[: max(0, -left)]:
         quotas[name] -= 1

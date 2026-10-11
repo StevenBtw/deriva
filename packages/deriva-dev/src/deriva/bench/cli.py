@@ -136,6 +136,9 @@ def benchmark_run(
         if only_extraction_step:
             typer.echo(f"Enabling only extraction step: {only_extraction_step}")
             extraction_configs = session.get_extraction_configs()
+            if only_extraction_step not in {cfg.get("node_type", cfg.get("name", "")) for cfg in extraction_configs}:
+                typer.echo(f"Error: no extraction step named {only_extraction_step!r}", err=True)
+                raise typer.Exit(1)
             for cfg in extraction_configs:
                 name = cfg.get("node_type", cfg.get("name", ""))
                 if name == only_extraction_step:
@@ -146,6 +149,9 @@ def benchmark_run(
         if only_derivation_step:
             typer.echo(f"Enabling only derivation step: {only_derivation_step}")
             derivation_configs = session.get_derivation_configs()
+            if only_derivation_step not in {cfg.get("step_name", cfg.get("name", "")) for cfg in derivation_configs}:
+                typer.echo(f"Error: no derivation step named {only_derivation_step!r}", err=True)
+                raise typer.Exit(1)
             for cfg in derivation_configs:
                 name = cfg.get("step_name", cfg.get("name", ""))
                 if name == only_derivation_step:
@@ -527,7 +533,7 @@ def benchmark_deviations(
 def benchmark_comprehensive(
     session_ids: Annotated[list[str], typer.Argument(help="Benchmark session IDs to analyze")],
     output: Annotated[str | None, typer.Option("-o", "--output", help="Output directory (default: workspace/analysis in the Deriva home folder)")] = None,
-    format: Annotated[str, typer.Option("-f", "--format", help="Output format")] = "both",
+    format: Annotated[str, typer.Option("-f", "--format", help="Which report path to print: json, markdown or both (every report file is always written)")] = "both",
     no_semantic: Annotated[bool, typer.Option("--no-semantic", help="Skip semantic matching")] = False,
 ) -> None:
     """Run comprehensive benchmark analysis."""
@@ -553,7 +559,7 @@ def benchmark_comprehensive(
             raise typer.Exit(1)
 
         typer.echo("\nRunning analysis...")
-        report = analyzer.generate_report()
+        report = analyzer.generate_report(include_semantic=not no_semantic)
 
         typer.echo(f"\nRepositories: {', '.join(report.repositories)}")
         typer.echo(f"Models: {', '.join(report.models)}")
@@ -600,6 +606,6 @@ def benchmark_comprehensive(
         paths = analyzer.export_all(output)
 
         if format in ("json", "both"):
-            typer.echo(f"  JSON: {paths.get('json', 'N/A')}")
+            typer.echo(f"  JSON: {paths.get('inter_model_json', 'N/A')}")
         if format in ("markdown", "both"):
             typer.echo(f"  Markdown: {paths.get('markdown', 'N/A')}")

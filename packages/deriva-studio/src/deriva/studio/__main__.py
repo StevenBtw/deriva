@@ -42,7 +42,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Warning: the studio is reachable from other machines on {args.host}; it has no login.")
     server = uvicorn.Server(uvicorn.Config(create_app(), host=args.host, port=args.port))
     if not args.no_browser:
-        _open_when_ready(server, f"http://{'localhost' if args.host in LOCAL_HOSTS else args.host}:{args.port}/")
+        browser_host = "localhost" if args.host in LOCAL_HOSTS else f"[{args.host}]" if ":" in args.host else args.host
+        _open_when_ready(server, f"http://{browser_host}:{args.port}/")
     server.run()
 
 

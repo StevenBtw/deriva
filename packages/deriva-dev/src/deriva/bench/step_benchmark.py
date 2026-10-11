@@ -81,7 +81,10 @@ def model_outputs(archimate_manager: ArchimateManager) -> dict[tuple[str, str], 
         outputs[(element.element_type, element.identifier)] = _decided(props)
     for relationship in archimate_manager.get_relationships():
         props = {"name": relationship.name, "documentation": relationship.documentation, **relationship.properties}
-        outputs[(relationship.relationship_type, f"{relationship.source} -> {relationship.target}")] = _decided(props)
+        key, number = (relationship.relationship_type, f"{relationship.source} -> {relationship.target}"), 2
+        while key in outputs:  # the same type between the same two elements again
+            key, number = (relationship.relationship_type, f"{relationship.source} -> {relationship.target} #{number}"), number + 1
+        outputs[key] = _decided(props)
     return outputs
 
 

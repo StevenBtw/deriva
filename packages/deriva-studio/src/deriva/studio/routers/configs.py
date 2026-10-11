@@ -46,7 +46,8 @@ def list_configs(step_type: str, session: Any = Depends(get_session)) -> list[di
     key = _name_key(step_type)
     rows = session.get_extraction_configs() if step_type == "extraction" else session.get_derivation_configs()
     versions = session.get_config_versions().get(step_type, {})
-    return [{"name": row[key], **row, "version": versions.get(row[key])} for row in rows]
+    # The version table lists enabled steps only; a disabled step keeps the version of its own row
+    return [{"name": row[key], **row, "version": versions.get(row[key], row.get("version"))} for row in rows]
 
 
 @router.put("/{step_type}/{name}")
