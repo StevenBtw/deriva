@@ -17,7 +17,7 @@ type Props = {
   onToggle: () => void;
 };
 
-/** The request a form describes: end to end runs separate one-run sessions (rule 7); derivation only runs on the current graphs. */
+/** The request a form describes: end to end runs separate one-run sessions; derivation only runs on the current graphs. */
 function request(kind: Kind, repos: string[], model: string, runCount: number, useCache: boolean): BenchmarkRequest {
   const endToEnd = kind === "end_to_end";
   return {

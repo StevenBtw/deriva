@@ -106,7 +106,7 @@ async function startRun() {
 
 describe("Workspace", () => {
   beforeEach(() => {
-    vi.mocked(repositories.list).mockResolvedValue([{ name: "deriva" }, { name: "TeaStore" }]);
+    vi.mocked(repositories.list).mockResolvedValue([{ name: "deriva" }, { name: "ToolShed" }]);
     vi.mocked(runs.history).mockResolvedValue([]);
     vi.mocked(runs.start).mockResolvedValue({ run_id: "r1" });
     vi.mocked(runs.cancel).mockResolvedValue({ run_id: "r1" });
@@ -139,32 +139,32 @@ describe("Workspace", () => {
     const at = new Date(2026, 9, 9, 10, 13).getTime() / 1000;
     vi.mocked(runs.history).mockResolvedValue([
       { run_id: "b2", kind: "derivation", repository: "deriva", status: "finished", events: 30, started_at: at, finished_at: at + 4 },
-      { run_id: "a1", kind: "extraction", repository: "TeaStore", status: "cancelled", events: 3, started_at: at - 600, finished_at: at - 590 },
+      { run_id: "a1", kind: "extraction", repository: "ToolShed", status: "cancelled", events: 3, started_at: at - 600, finished_at: at - 590 },
     ]);
     render(<Workspace />);
 
     expect(await screen.findByText("derivation · deriva")).toBeInTheDocument();
-    expect(screen.getByText("extraction · TeaStore · cancelled")).toBeInTheDocument();
+    expect(screen.getByText("extraction · ToolShed · cancelled")).toBeInTheDocument();
     expect(screen.getByText("2026-10-09 10:13")).toBeInTheDocument();
   });
 
   it("starts a run with the selection and streams its progress into the live log", async () => {
     render(<Workspace />);
-    await screen.findByRole("option", { name: "TeaStore" });
-    await userEvent.selectOptions(screen.getByLabelText("Repository"), "TeaStore");
+    await screen.findByRole("option", { name: "ToolShed" });
+    await userEvent.selectOptions(screen.getByLabelText("Repository"), "ToolShed");
     await userEvent.selectOptions(screen.getByLabelText("Scope"), "extraction");
     await userEvent.click(screen.getByLabelText(/without LLM/i));
 
     await userEvent.click(screen.getByRole("button", { name: /^Run$/ }));
 
-    expect(runs.start).toHaveBeenCalledWith("extraction", "TeaStore", true);
+    expect(runs.start).toHaveBeenCalledWith("extraction", "ToolShed", true);
     act(() => {
-      handlers.onEvent?.(event(1, "started", { kind: "extraction", repository: "TeaStore" }));
+      handlers.onEvent?.(event(1, "started", { kind: "extraction", repository: "ToolShed" }));
       handlers.onEvent?.(event(2, "progress", { phase: "extraction", step: "Repository", status: "complete", message: "1 nodes, 0 edges" }));
     });
     const log = screen.getByRole("tabpanel");
     expect(await within(log).findByText(/Repository · 1 nodes, 0 edges/)).toBeInTheDocument();
-    expect(within(log).getByText(/Run started · extraction · TeaStore/)).toBeInTheDocument();
+    expect(within(log).getByText(/Run started · extraction · ToolShed/)).toBeInTheDocument();
   });
 
   it("says which metrics a call did not record instead of showing zeros", async () => {
@@ -428,9 +428,9 @@ describe("Workspace", () => {
     await waitFor(() => expect(session.useRepository).toHaveBeenCalledWith("deriva"));
     const before = vi.mocked(graph.linked).mock.calls.length;
 
-    await userEvent.selectOptions(screen.getByLabelText("Repository"), "TeaStore");
+    await userEvent.selectOptions(screen.getByLabelText("Repository"), "ToolShed");
 
-    await waitFor(() => expect(session.useRepository).toHaveBeenCalledWith("TeaStore"));
+    await waitFor(() => expect(session.useRepository).toHaveBeenCalledWith("ToolShed"));
     // One linked request carries both graphs
     await waitFor(() => expect(vi.mocked(graph.linked).mock.calls.length).toBe(before + 1));
   });
@@ -559,14 +559,14 @@ describe("Workspace", () => {
   });
 
   it("follows a run that is already going when the page opens, with its repository in the picker", async () => {
-    vi.mocked(runs.current).mockResolvedValue({ run_id: "r9", kind: "all", repository: "TeaStore", status: "running", events: 4, started_at: 1791411141, finished_at: null });
+    vi.mocked(runs.current).mockResolvedValue({ run_id: "r9", kind: "all", repository: "ToolShed", status: "running", events: 4, started_at: 1791411141, finished_at: null });
     vi.mocked(repositories.list).mockRejectedValue(new ApiError(503, "The databases are busy", {}));
     vi.mocked(session.useRepository).mockClear();
     render(<Workspace />);
 
     await waitFor(() => expect(followRun).toHaveBeenLastCalledWith("r9", expect.any(Function), expect.any(Function)));
-    expect(await screen.findByRole("option", { name: "TeaStore" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Repository")).toHaveValue("TeaStore");
+    expect(await screen.findByRole("option", { name: "ToolShed" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Repository")).toHaveValue("ToolShed");
     act(() => handlers.onEvent?.(llm(5, "c1")));
     expect(await screen.findByRole("tab", { name: "Prompts (1)" })).toBeInTheDocument();
     expect(session.useRepository).not.toHaveBeenCalled();
@@ -605,23 +605,23 @@ describe("Workspace", () => {
   it("opens a run from the recent runs", async () => {
     vi.mocked(runs.history).mockResolvedValue([
       { run_id: "r8", kind: "all", repository: "deriva", status: "finished", events: 30, started_at: 1791411141, finished_at: 1791411200 },
-      { run_id: "r7", kind: "extraction", repository: "TeaStore", status: "finished", events: 9, started_at: 1791400000, finished_at: 1791400060 },
+      { run_id: "r7", kind: "extraction", repository: "ToolShed", status: "finished", events: 9, started_at: 1791400000, finished_at: 1791400060 },
     ]);
     render(<Workspace />);
 
-    await userEvent.click(await screen.findByRole("button", { name: /extraction · TeaStore/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /extraction · ToolShed/ }));
 
     await waitFor(() => expect(followRun).toHaveBeenLastCalledWith("r7", expect.any(Function), expect.any(Function)));
-    expect(screen.getByRole("button", { name: /extraction · TeaStore/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /extraction · ToolShed/ })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("starts with the session's repository in the picker", async () => {
-    vi.mocked(session.current).mockResolvedValue({ repository: "TeaStore" });
+    vi.mocked(session.current).mockResolvedValue({ repository: "ToolShed" });
     vi.mocked(session.useRepository).mockClear();
     render(<Workspace />);
 
     await screen.findByRole("option", { name: "deriva" });
-    await waitFor(() => expect(screen.getByLabelText("Repository")).toHaveValue("TeaStore"));
+    await waitFor(() => expect(screen.getByLabelText("Repository")).toHaveValue("ToolShed"));
     expect(session.useRepository).not.toHaveBeenCalledWith("deriva");
   });
 

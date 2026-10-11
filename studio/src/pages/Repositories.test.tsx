@@ -11,12 +11,12 @@ import { ApiError, repositories } from "../api/client";
 import { Repositories } from "./Repositories";
 
 const DERIVA = { name: "deriva", branch: "release/0.7.1", last_commit: "ef815ce improved classification", size_mb: 10.9, is_dirty: false, url: "https://github.com/x/deriva", path: "workspace/repositories/deriva" };
-const TEASTORE = { name: "TeaStore", branch: "master", last_commit: "77c10b2 x", size_mb: 4.2, is_dirty: true, url: "u", path: "p" };
+const TOOLSHED = { name: "ToolShed", branch: "master", last_commit: "77c10b2 x", size_mb: 4.2, is_dirty: true, url: "u", path: "p" };
 
 describe("Repositories", () => {
   beforeEach(() => {
-    vi.mocked(repositories.list).mockResolvedValue([DERIVA, TEASTORE]);
-    vi.mocked(repositories.clone).mockResolvedValue({ name: "carddemo", success: true });
+    vi.mocked(repositories.list).mockResolvedValue([DERIVA, TOOLSHED]);
+    vi.mocked(repositories.clone).mockResolvedValue({ name: "sampleapp", success: true });
     vi.mocked(repositories.remove).mockResolvedValue({ success: true });
   });
 
@@ -24,21 +24,21 @@ describe("Repositories", () => {
     render(<Repositories />);
 
     expect(await screen.findByRole("cell", { name: "deriva" })).toBeInTheDocument();
-    expect(screen.getByRole("cell", { name: "TeaStore" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("cell", { name: "TeaStore" }));
+    expect(screen.getByRole("cell", { name: "ToolShed" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("cell", { name: "ToolShed" }));
 
-    expect(screen.getByRole("heading", { name: "TeaStore" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "ToolShed" })).toBeInTheDocument();
     expect(screen.getByText(/uncommitted changes/i)).toBeInTheDocument();
   });
 
   it("selects a repository from the keyboard", async () => {
     render(<Repositories />);
-    const row = (await screen.findByRole("cell", { name: "TeaStore" })).closest("tr")!;
+    const row = (await screen.findByRole("cell", { name: "ToolShed" })).closest("tr")!;
 
     row.focus();
     await userEvent.keyboard("{Enter}");
 
-    expect(screen.getByRole("heading", { name: "TeaStore" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "ToolShed" })).toBeInTheDocument();
   });
 
   it("clones a repository and refreshes the list", async () => {
@@ -47,23 +47,23 @@ describe("Repositories", () => {
     await userEvent.click(screen.getByRole("button", { name: /Clone repository/ }));
 
     await userEvent.click(screen.getByLabelText("Git URL"));
-    await userEvent.paste("https://github.com/aws-samples/aws-mainframe-modernization-carddemo");
-    await userEvent.type(screen.getByLabelText("Name (optional)"), "carddemo");
+    await userEvent.paste("https://github.com/example/sample-app");
+    await userEvent.type(screen.getByLabelText("Name (optional)"), "sampleapp");
     await userEvent.click(screen.getByRole("button", { name: /^Clone$/ }));
 
-    expect(repositories.clone).toHaveBeenCalledWith("https://github.com/aws-samples/aws-mainframe-modernization-carddemo", "carddemo", "");
+    expect(repositories.clone).toHaveBeenCalledWith("https://github.com/example/sample-app", "sampleapp", "");
     await waitFor(() => expect(repositories.list).toHaveBeenCalledTimes(2));
   });
 
   it("asks before deleting and passes force for a dirty repository", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<Repositories />);
-    await userEvent.click(await screen.findByRole("cell", { name: "TeaStore" }));
+    await userEvent.click(await screen.findByRole("cell", { name: "ToolShed" }));
 
     await userEvent.click(screen.getByRole("button", { name: /Delete/ }));
 
     expect(confirm).toHaveBeenCalled();
-    expect(repositories.remove).toHaveBeenCalledWith("TeaStore", true);
+    expect(repositories.remove).toHaveBeenCalledWith("ToolShed", true);
   });
 
   it("does nothing when the deletion is not confirmed", async () => {
