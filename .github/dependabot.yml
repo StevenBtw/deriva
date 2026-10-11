@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # CVE-2025-69872: diskcache pickle deserialization. No patched release exists.
+      # Deriva mitigates at the project level: JSONOnlyDisk (deriva/common/cache_utils.py)
+      # refuses any row the cache file marks as pickled, so a tampered cache cannot run code.
+      - dependency-name: "diskcache"
+        versions: ["<=5.6.3"]

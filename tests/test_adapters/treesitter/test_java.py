@@ -71,7 +71,7 @@ class TestJavaFilterConstants:
         constants = extractor.get_filter_constants()
         assert "java.lang" in constants.stdlib_modules
         assert "java.util" in constants.stdlib_modules
-        assert "java.io" in constants.stdlib_modules
+        assert "java.io" in constants.stdlib_modules  # codeql[py/incomplete-url-substring-sanitization] -- false positive: checking Java package membership, not URL sanitization
 
     def test_filter_constants_contain_builtin_methods(self, extractor):
         """builtin_functions should contain common methods."""
