@@ -1,3 +1,6 @@
+import { type KeyboardEvent, useEffect, useId, useState } from "react";
+
+import { runs } from "../api/client";
 import type { RunEvent } from "../api/types";
 import { LiveLog } from "./LiveLog";
 import { PromptsList } from "./LlmCalls";
@@ -5,38 +8,97 @@ import { TracePanel } from "./TracePanel";
 
 export type Tab = "live" | "trace" | "prompts" | "errors";
 
-type Props = { events: RunEvent[]; status: string; runId?: string | null; tab: Tab; onTab: (tab: Tab) => void; traceElement?: string | null };
+type Props = { events: RunEvent[]; status: string; runId?: string | null; runStatus?: string; tab: Tab; onTab: (tab: Tab) => void; traceElement?: string | null };
+
+// Arrow keys move along the tabs (wrapping), Home and End go to the first and last
+const MOVES: Record<string, (index: number, count: number) => number> = {
+  ArrowRight: (i, n) => (i + 1) % n,
+  ArrowLeft: (i, n) => (i - 1 + n) % n,
+  Home: () => 0,
+  End: (_, n) => n - 1,
+};
+
+/** A run's saved LLM calls, for a run whose events this page has no copy of (it ran before the studio restarted). */
+function useSavedCalls(runId: string | null, live: number): RunEvent[] {
+  const [saved, setSaved] = useState<{ runId: string; calls: RunEvent[] } | null>(null);
+
+  useEffect(() => {
+    if (!runId || live) return;
+    let gone = false;
+    runs
+      .calls(runId)
+      .then((list) => {
+        if (!gone) setSaved({ runId, calls: list.map((call, i) => ({ seq: i + 1, event: "llm", data: call as RunEvent["data"] })) });
+      })
+      .catch(() => {});
+    return () => {
+      gone = true;
+    };
+  }, [runId, live]);
+
+  return saved && saved.runId === runId ? saved.calls : [];
+}
+
+/** A failed run (its terminal error), or a step that failed and let the run go on (a progress update with status error). */
+function isError(event: RunEvent): boolean {
+  return event.event === "error" || (event.event === "progress" && event.data.status === "error");
+}
 
 /** Live log, trace of the selected element, the run's prompts and its errors. */
-export function BottomPanel({ events, status, runId = null, tab, onTab, traceElement = null }: Props) {
-  const errors = events.filter((e) => e.event === "error");
-  const calls = events.filter((e) => e.event === "llm");
+export function BottomPanel({ events, status, runId = null, runStatus = "idle", tab, onTab, traceElement = null }: Props) {
+  const id = useId();
+  const errors = events.filter(isError);
+  const live = events.filter((e) => e.event === "llm");
+  const saved = useSavedCalls(runId, live.length);
+  const calls = live.length ? live : saved;
   const tabs: [Tab, string][] = [
     ["live", "Live"],
     ["trace", "Trace"],
     ["prompts", calls.length ? `Prompts (${calls.length})` : "Prompts"],
     ["errors", errors.length ? `Errors (${errors.length})` : "Errors"],
   ];
+  const tabId = (key: Tab) => `${id}-tab-${key}`;
+  const panelId = `${id}-panel`;
+
+  // One tab stop for the tab list (the selected tab); the arrow keys choose among them
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const move = MOVES[event.key];
+    if (!move) return;
+    event.preventDefault();
+    const next = tabs[move(index, tabs.length)][0];
+    onTab(next);
+    document.getElementById(tabId(next))?.focus();
+  };
 
   return (
     <div className="bottom">
       <div className="tabs" role="tablist">
-        {tabs.map(([key, label]) => (
-          <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => onTab(key)}>
+        {tabs.map(([key, label], index) => (
+          <button
+            key={key}
+            id={tabId(key)}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            aria-controls={panelId}
+            tabIndex={tab === key ? 0 : -1}
+            onClick={() => onTab(key)}
+            onKeyDown={(event) => onKeyDown(event, index)}
+          >
             {label}
           </button>
         ))}
         <span className="right">{status}</span>
       </div>
-      <div className="tabpanel" role="tabpanel">
-        {tab === "live" && <LiveLog events={events} runId={runId} />}
+      <div className="tabpanel" role="tabpanel" id={panelId} aria-labelledby={tabId(tab)}>
+        {tab === "live" && <LiveLog events={events} runId={runId} runStatus={runStatus} />}
         {tab === "trace" && <TracePanel elementId={traceElement} runId={runId} />}
         {tab === "prompts" && <PromptsList runId={runId} calls={calls} />}
         {tab === "errors" &&
           (errors.length ? (
             errors.map((e) => (
               <div key={e.seq} className="logline error">
-                {e.data.message}
+                {e.event === "progress" && e.data.step ? `${e.data.step}: ${e.data.message ?? "failed"}` : e.data.message}
               </div>
             ))
           ) : (
