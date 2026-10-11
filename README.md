@@ -18,7 +18,7 @@ Deriva reads a software repository, builds a graph of what is in it, and derives
 
 ## How It Works
 
-Deriva works from the outside in, like its mark: repository, intermediate graph, output graph, ArchiMate model. Parsing and graph algorithms find the structure; an LLM reads what needs reading. Every prompt is versioned configuration you can open and change.
+Deriva brings determinism to AI-assisted architecture model derivation. From repository to intermediate graph to output graph to the final ArchiMate model. Parsing and graph algorithms find the structure; an LLM reads what needs reading. Every prompt is versioned configuration you can open and change.
 
 1. **Repository** (clone): the code as it is, a Git repository cloned locally. Deriva classifies every file by type, from source and config to docs, tests and build files.
 2. **Intermediate graph** (extract): parsing (tree-sitter for most languages) turns the code into a graph of directories, files, types, methods, dependencies, technologies and business concepts. Graph metrics (PageRank, Louvain communities, k-core) then rank what matters.
