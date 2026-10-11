@@ -36,6 +36,12 @@ class TestExtractJsonFromResponse:
         result = extract_json_from_response(content)
         assert result == "[1, 2, 3]"
 
+    def test_a_whole_json_answer_with_a_fence_in_a_string_is_kept_whole(self):
+        """Backticks inside a field (documentation that quotes a command) are no fence around the answer."""
+        content = '{"elements": [{"name": "Build", "documentation": "Run ```make``` first"}]}'
+        result = extract_json_from_response(content)
+        assert result == content
+
     def test_strips_whitespace(self):
         """Should strip leading/trailing whitespace."""
         content = '  \n  {"key": "value"}  \n  '

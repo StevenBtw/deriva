@@ -747,3 +747,14 @@ class TestGetLoggerForActiveRun:
             assert result is not None
             assert isinstance(result, RunLogger)
             assert result.run_id == 42
+
+
+def test_the_run_log_step_context_takes_created_objects_and_relationships(tmp_path):
+    """The JSONL run logger's step context has the whole step context protocol (derivation reports to it in CLI runs)."""
+    from deriva.common.logging import RunLogger
+
+    logger = RunLogger(run_id=1, logs_dir=str(tmp_path))
+    with logger.step_start("gen_app") as step:
+        step.add_object("e1")
+        step.add_edge("CONTAINS_a_b")
+        step.add_relationship("Access_e1_e2")

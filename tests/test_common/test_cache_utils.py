@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import pickle
+import sqlite3
 
 import pytest
 
@@ -323,4 +325,65 @@ class TestBaseDiskCacheErrors:
         assert stats["size_bytes"] == 0
 
         cache._cache = original_cache
+        cache.close()
+
+
+_UNPICKLED: list[str] = []
+
+
+def _record_unpickling(marker: str) -> str:
+    _UNPICKLED.append(marker)
+    return marker
+
+
+class _Payload:
+    """Pickled, it calls _record_unpickling when loaded: stands in for code planted in a cache file."""
+
+    def __reduce__(self):
+        return (_record_unpickling, ("unpickled",))
+
+
+class TestPickledRowsRefused:
+    """A cache file changed by someone else must not run code (CVE-2025-69872): Deriva writes JSON only, rows marked as pickled are refused."""
+
+    @staticmethod
+    def _tamper(cache: BaseDiskCache, sql: str) -> None:
+        db = sqlite3.connect(cache.cache_dir / "cache.db")
+        db.execute(sql, (sqlite3.Binary(pickle.dumps(_Payload())),))
+        db.commit()
+        db.close()
+
+    def test_a_value_marked_as_pickled_is_refused(self, tmp_path):
+        cache = BaseDiskCache(tmp_path / "planted")
+        cache.set("key1", {"value": "test"})
+        self._tamper(cache, "UPDATE Cache SET mode = 4, value = ?")
+        _UNPICKLED.clear()
+
+        with pytest.raises(CacheError):
+            cache.get("key1")
+
+        assert _UNPICKLED == []
+        cache.close()
+
+    def test_a_key_marked_as_pickled_is_refused(self, tmp_path):
+        cache = BaseDiskCache(tmp_path / "planted")
+        cache.set("key1", {"value": "test"})
+        self._tamper(cache, "UPDATE Cache SET raw = 0, key = ?")
+        _UNPICKLED.clear()
+
+        with pytest.raises(CacheError):
+            cache.keys()
+
+        assert _UNPICKLED == []
+        cache.close()
+
+    def test_values_written_by_deriva_still_round_trip(self, tmp_path):
+        cache = BaseDiskCache(tmp_path / "plain")
+        big = {"text": "x" * 70000}  # above diskcache's in-row limit: stored as a file
+        cache.set("small", {"value": 1})
+        cache.set("big", big)
+
+        assert cache.get("small") == {"value": 1}
+        assert cache.get("big") == big
+        assert sorted(cache.keys()) == ["big", "small"]
         cache.close()
