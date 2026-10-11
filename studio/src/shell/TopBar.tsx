@@ -10,12 +10,15 @@ type Props = {
   mode: Mode;
   onModeChange: (mode: Mode) => void;
   db: DbStatus;
+  version?: string;
+  /** False when the install has no benchmarking (deriva-studio without deriva-dev): only Run mode. */
+  benchmark?: boolean;
   status?: string;
   onOpenDocs?: () => void;
   onOpenLlm?: () => void;
 };
 
-export function TopBar({ mode, onModeChange, db, status, onOpenDocs, onOpenLlm }: Props) {
+export function TopBar({ mode, onModeChange, db, version, benchmark = true, status, onOpenDocs, onOpenLlm }: Props) {
   const [theme, setTheme] = useTheme();
   const dbLabel = db.busy ? "DB busy" : db.state === "owned" ? "DB" : db.state === "held" ? `DB held (PID ${db.held_by ?? "?"})` : "DB not connected";
 
@@ -24,15 +27,18 @@ export function TopBar({ mode, onModeChange, db, status, onOpenDocs, onOpenLlm }
       <div className="logo">
         <Logo />
         Deriva Studio
+        {version && <span className="version">v{version}</span>}
       </div>
-      <div className="seg" role="group" aria-label="Mode">
-        <button type="button" className={mode === "run" ? "on" : ""} aria-pressed={mode === "run"} onClick={() => onModeChange("run")}>
-          Run
-        </button>
-        <button type="button" className={mode === "benchmark" ? "on" : ""} aria-pressed={mode === "benchmark"} onClick={() => onModeChange("benchmark")}>
-          Benchmark
-        </button>
-      </div>
+      {benchmark && (
+        <div className="seg" role="group" aria-label="Mode">
+          <button type="button" className={mode === "run" ? "on" : ""} aria-pressed={mode === "run"} onClick={() => onModeChange("run")}>
+            Run
+          </button>
+          <button type="button" className={mode === "benchmark" ? "on" : ""} aria-pressed={mode === "benchmark"} onClick={() => onModeChange("benchmark")}>
+            Benchmark
+          </button>
+        </div>
+      )}
       {status && <div className="runstatus">{status}</div>}
       <div className="topbar-right">
         {onOpenLlm && (

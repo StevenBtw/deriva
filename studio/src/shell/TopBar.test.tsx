@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import { Banner } from "./Banner";
@@ -41,6 +42,20 @@ describe("TopBar", () => {
     expect(logo?.querySelector("svg.mark")).toHaveAttribute("aria-hidden", "true");
   });
 
+  it("shows the version next to the name", () => {
+    const { container } = render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned" }} version="0.8.0" />);
+
+    expect(container.querySelector(".logo")).toHaveTextContent("Deriva Studio");
+    expect(screen.getByText("v0.8.0")).toBeInTheDocument();
+  });
+
+  it("offers no Benchmark mode when benchmarking is not installed", () => {
+    render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned" }} benchmark={false} />);
+
+    expect(screen.queryByRole("button", { name: "Benchmark" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Mode" })).not.toBeInTheDocument();
+  });
+
   it("links the API docs", () => {
     render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned" }} />);
 
@@ -55,9 +70,37 @@ describe("Banner", () => {
     expect(screen.getByRole("status")).toHaveTextContent("241896");
   });
 
+  it("says a pipeline step is running when the status reports the session busy", () => {
+    render(<Banner db={{ state: "owned", busy: true }} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("A pipeline step is running");
+  });
+
   it("is empty while the studio owns the databases", () => {
     const { container } = render(<Banner db={{ state: "owned" }} />);
 
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("points to General when no LLM model is configured", () => {
+    render(
+      <MemoryRouter>
+        <Banner db={{ state: "owned" }} noModel />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("No LLM model is configured");
+    expect(screen.getByRole("link", { name: "Add a model in General" })).toHaveAttribute("href", "/general");
+  });
+
+  it("puts a held database before the model hint", () => {
+    render(
+      <MemoryRouter>
+        <Banner db={{ state: "held", held_by: 7 }} noModel />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("PID 7");
+    expect(screen.queryByText(/No LLM model/)).not.toBeInTheDocument();
   });
 });
