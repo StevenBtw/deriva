@@ -93,7 +93,8 @@ def _llm_verdict(present: list[str], missing: list[str], calls: dict[str, list[d
     kept, dropped = first(present), first(missing)
     if kept is None or dropped is None:
         return None
-    if kept.get("cache_key") != dropped.get("cache_key"):
+    # Benchmark runs isolate their caches (another cache key per run): the prompts themselves are compared
+    if (kept.get("prompt"), kept.get("system_prompt")) != (dropped.get("prompt"), dropped.get("system_prompt")):
         return "different prompt"
     return "same prompt, different answer" if kept.get("response") != dropped.get("response") else "same prompt, same answer"
 
