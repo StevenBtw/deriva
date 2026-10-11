@@ -162,3 +162,43 @@ class TestSessionInfo:
         analyzer = BenchmarkAnalyzer.__new__(BenchmarkAnalyzer)
 
         assert analyzer._load_session_info("s1")["config"]["repositories"] == ["repo"]
+
+
+class TestRunsOfARepository:
+    """Which runs and elements the per-repository reports read."""
+
+    @staticmethod
+    def _analyzer(log, repositories, models=("m",)):
+        analyzer = BenchmarkAnalyzer.__new__(BenchmarkAnalyzer)
+        analyzer.ocel_logs = {"all": log}
+        analyzer.repositories = list(repositories)
+        analyzer.models = list(models)
+        return analyzer
+
+    def test_a_combined_run_counts_for_each_of_its_repositories(self):
+        log = OCELLog()
+        log.create_event("DeriveElements", objects={"BenchmarkRun": ["s1:alpha_beta:m:1"], "Repository": ["alpha_beta"], "Element": ["ac_one"]})
+        analyzer = self._analyzer(log, ["beta", "alpha"])
+
+        assert analyzer._get_objects_by_run("Element", "alpha") == {"s1:alpha_beta:m:1": {"ac_one"}}
+        assert [e["id"] for e in analyzer._get_derived_elements("beta")] == ["ac_one"]
+        assert analyzer._get_objects_by_run("Element", "gamma") == {}
+
+    def test_runs_can_be_read_for_one_model(self):
+        log = OCELLog()
+        for model, element in (("m1", "ac_one"), ("m2", "ac_two")):
+            log.create_event("DeriveElements", objects={"BenchmarkRun": [f"s1:repo:{model}:1"], "Repository": ["repo"], "Element": [element]})
+        analyzer = self._analyzer(log, ["repo"], models=("m1", "m2"))
+
+        assert analyzer._get_objects_by_run("Element", "repo", "m1") == {"s1:repo:m1:1": {"ac_one"}}
+
+    def test_the_derived_elements_are_those_of_the_latest_completed_run(self):
+        """Not the union of every run: an element only an earlier or an unfinished run made is not in the model compared."""
+        log = OCELLog()
+        for run, elements, completed in (("s1:repo:m:1", ["ac_old", "ac_both"], True), ("s1:repo:m:2", ["ac_both", "ac_new"], True), ("s1:repo:m:3", ["ac_broken"], False)):
+            log.create_event("DeriveElements", objects={"BenchmarkRun": [run], "Repository": ["repo"], "Element": elements})
+            if completed:
+                log.create_event("CompleteRun", objects={"BenchmarkRun": [run], "Repository": ["repo"]})
+        analyzer = self._analyzer(log, ["repo"])
+
+        assert [e["id"] for e in analyzer._get_derived_elements("repo")] == ["ac_both", "ac_new"]

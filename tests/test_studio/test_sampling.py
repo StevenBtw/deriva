@@ -108,3 +108,9 @@ def test_first_nodes_are_cut_at_the_budget():
     types, edges = tree()
 
     assert sample_nodes(types, edges, 2, first=["d0", "d1", "d2"]) == ["d0", "d1"]
+
+
+def test_allocate_never_gives_a_type_more_slots_than_it_has_nodes():
+    quotas = allocate({"a": 1, "b": 2, "c": 2}, 4)
+
+    assert sum(quotas.values()) == 4 and all(quotas[name] <= count for name, count in {"a": 1, "b": 2, "c": 2}.items())

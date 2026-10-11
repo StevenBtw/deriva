@@ -60,3 +60,18 @@ def test_data_endpoints_answer_503_when_the_database_is_held(make_client):
 
     assert response.status_code == 503
     assert response.json()["held_by"] == 241896
+
+
+def test_delete_is_refused_while_a_run_is_in_progress(make_client):
+    from deriva.studio.runs import RunBusy
+
+    session = FakeSession(delete_repository={"success": True, "name": "x"})
+    client = make_client(session)
+
+    def busy(action):
+        raise RunBusy("run1")
+
+    client.app.state.runs.while_idle = busy
+
+    assert client.delete("/api/repositories/x").status_code == 409
+    assert session.called("delete_repository") == []

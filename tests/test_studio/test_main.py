@@ -102,3 +102,10 @@ def test_a_network_address_needs_allow_remote():
         main(["--host", "0.0.0.0", "--allow-remote", "--no-browser"])
     assert uvicorn.Config.call_args.kwargs["host"] == "0.0.0.0"
     uvicorn.Server.return_value.run.assert_called_once()
+
+
+def test_the_api_namespaces_themselves_are_no_front_end_routes(tmp_path):
+    (tmp_path / "index.html").write_text("<html>studio</html>", encoding="utf-8")
+    client = TestClient(make_app(tmp_path))
+
+    assert [client.get(path).status_code for path in ("/api", "/grafeo", "/widgets")] == [404, 404, 404]

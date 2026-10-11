@@ -2033,3 +2033,22 @@ class TestInputSnapshot:
         assert snapshot["system_settings"]["webhook_token"] == "<redacted>"
         assert snapshot["system_settings"]["max_tokens"] == "4000"
         assert "tok-123" not in json.dumps(snapshot)
+
+
+def test_config_versions_can_include_the_disabled_steps():
+    """Benchmark snapshots list enabled steps only; a listing of every step asks for the disabled ones too."""
+    from types import SimpleNamespace
+
+    from deriva.services import config
+
+    queries: list[str] = []
+
+    class Engine:
+        def execute(self, sql):
+            queries.append(sql)
+            return SimpleNamespace(fetchall=lambda: [])
+
+    config.get_active_config_versions(Engine())
+    config.get_active_config_versions(Engine(), include_disabled=True)
+
+    assert all("enabled = TRUE" in q for q in queries[:2]) and all("enabled" not in q for q in queries[2:])

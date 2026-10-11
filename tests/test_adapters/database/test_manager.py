@@ -162,3 +162,24 @@ class TestEnsureDatabase:
                 assert conn.execute("SELECT COUNT(*) FROM extraction_config").fetchone()[0] > 0
             finally:
                 conn.close()
+
+
+def test_an_existing_database_without_the_schema_keeps_its_contents(tmp_path):
+    """A file that holds something else is completed in place, never replaced by a staged database."""
+    import duckdb
+
+    from deriva.adapters.database.manager import ensure_database
+
+    db = tmp_path / "sql.db"
+    conn = duckdb.connect(str(db))
+    conn.execute("CREATE TABLE notes (text VARCHAR)")
+    conn.execute("INSERT INTO notes VALUES ('keep me')")
+    conn.close()
+
+    assert ensure_database(db) is True
+
+    conn = duckdb.connect(str(db), read_only=True)
+    assert conn.execute("SELECT text FROM notes").fetchone()[0] == "keep me"
+    assert conn.execute("SELECT COUNT(*) FROM extraction_config").fetchone()[0] > 0
+    conn.close()
+    assert [p.name for p in tmp_path.iterdir() if "partial" in p.name] == []

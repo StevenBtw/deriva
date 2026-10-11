@@ -121,3 +121,11 @@ def test_write_words_in_comments_do_not_make_a_query_a_write():
     assert not is_write_query("/* SET up a view */ MATCH (n) RETURN n")
     assert is_write_query("MATCH (n {url: 'http://x'}) DELETE n")  # // inside a string is no comment
     assert is_write_query("MATCH (n) /* note */ DETACH DELETE n")
+
+
+def test_a_map_with_a_labels_key_but_no_id_is_no_node():
+    from deriva.studio.grafeo_compat import to_widget_value
+
+    value = {"_labels": ["x"], "count": 2}
+
+    assert to_widget_value(value) == value
