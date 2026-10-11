@@ -526,6 +526,22 @@ class TestDecisionContent:
 
         assert decision_content("plain answer") == "plain answer"
 
+    def test_a_fence_inside_free_text_does_not_hide_the_decisions(self):
+        """Valid JSON is parsed as it is: backticks in a documentation field are not a code fence around the answer."""
+        from deriva.modules.analysis import decision_content
+
+        first = '{"name": "Alpha", "documentation": "Run ```make``` first"}'
+        second = '{"name": "Alpha", "documentation": "Other wording"}'
+
+        assert decision_content(first) == decision_content(second)
+
+    def test_prose_around_the_json_is_free_text(self):
+        """The pipeline reads the object out of the prose, so the prose (like documentation) is no part of the decision."""
+        from deriva.modules.analysis import decision_content
+
+        assert decision_content('The name stays as is.\n\n{"name": "Alpha"}') == decision_content('Two words, title case.\n\n{"name": "Alpha"}')
+        assert decision_content('Keep it: {"keep": true}') != decision_content('Keep it: {"keep": false}')
+
 
 class TestStepOutputConsistency:
     """One step repeated on a fixed input: are its outputs (and their properties) the same every run?"""

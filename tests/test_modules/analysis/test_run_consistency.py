@@ -173,3 +173,19 @@ def test_a_source_that_was_no_candidate_says_so():
     (only,) = element_trace({"s/1": snapshot([], graph={"technologies": []})}, {}, "Node", "tech::r::queue")
 
     assert (only["present"], only["stage"], only["cause"], only["calls"]) == (False, None, "source not extracted", [])
+
+
+def test_the_same_prompt_under_per_run_cache_keys_is_the_same_prompt():
+    """Benchmark runs isolate their caches: the same prompt has another cache key in every run."""
+    runs = {
+        "s/1": snapshot([QUEUE, WORKER], candidates=[{"type": "Node", "source": "tech::r::queue", "stage": "created"}]),
+        "s/2": snapshot([WORKER], candidates=[{"type": "Node", "source": "tech::r::queue", "stage": "llm_rejected"}]),
+    }
+    calls = {
+        "s/1": [call("Node", "Candidates: tech::r::queue (Queue)", "run1-k", '{"keep": true}')],
+        "s/2": [call("Node", "Candidates: tech::r::queue (Queue)", "run2-k", '{"keep": false}')],
+    }
+
+    (flip,) = element_flips(runs, calls)
+
+    assert flip["llm"] == "same prompt, different answer"
