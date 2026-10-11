@@ -506,6 +506,10 @@ class StepContextProtocol(Protocol):
         """Mark the step as failed with an error message."""
         ...
 
+    def add_object(self, object_id: str) -> None:
+        """Track a created node ID (extraction) or element ID (derivation) for OCEL logging."""
+        ...
+
     def add_edge(self, edge_id: str) -> None:
         """Track a created edge ID for OCEL logging (extraction)."""
         ...

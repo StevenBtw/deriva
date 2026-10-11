@@ -22,8 +22,10 @@ from pathlib import Path
 from typing import Any
 
 import diskcache
+from diskcache.core import MODE_PICKLE
 
 from deriva.common.exceptions import CacheError
+from deriva.common.paths import resolve
 
 
 def hash_inputs(*args: Any, separator: str = "|") -> str:
@@ -122,6 +124,24 @@ def _hash_dict_tuple(dict_tuple: tuple[tuple[str, Any], ...]) -> str:
     return json.dumps(result, sort_keys=True)
 
 
+class JSONOnlyDisk(diskcache.JSONDisk):
+    """JSONDisk that never unpickles.
+
+    diskcache's JSONDisk writes JSON, but still unpickles any row the cache file marks as pickled
+    (CVE-2025-69872). Deriva writes JSON only, so such a row was not written by Deriva: refuse it.
+    """
+
+    def get(self, key: Any, raw: bool) -> Any:
+        if not raw:
+            raise CacheError("Refusing a pickled key in the cache file; Deriva writes JSON only")
+        return super().get(key, raw)
+
+    def fetch(self, mode: int, filename: str | None, value: Any, read: bool) -> Any:
+        if mode == MODE_PICKLE:
+            raise CacheError("Refusing a pickled value in the cache file; Deriva writes JSON only")
+        return super().fetch(mode, filename, value, read)
+
+
 class BaseDiskCache:
     """
     Base class for disk caching using diskcache (SQLite-backed).
@@ -159,14 +179,14 @@ class BaseDiskCache:
             cache_dir: Directory to store cache files (created if not exists)
             size_limit: Maximum cache size in bytes (default: 1GB)
         """
-        self.cache_dir = Path(cache_dir)
+        self.cache_dir = resolve(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize diskcache with JSON serialization (no pickle)
+        # JSON serialization; rows marked as pickled are refused, never unpickled
         self._cache = diskcache.Cache(
             str(self.cache_dir),
             size_limit=size_limit or self.DEFAULT_SIZE_LIMIT,
-            disk=diskcache.JSONDisk,
+            disk=JSONOnlyDisk,
             disk_compress_level=0,
         )
 

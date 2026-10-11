@@ -3,15 +3,16 @@
 Provides chunking functionality to handle large files that exceed LLM token limits.
 Chunking strategy is configurable per file extension via the file_type_registry.
 
-Token limits can be configured via environment variables:
+Token limits can be configured in the environment or the home .env:
 - LLM_TOKEN_LIMIT_DEFAULT: Default limit for unknown models (default: 32000)
 - LLM_TOKEN_LIMIT_{MODEL}: Per-model override (e.g., LLM_TOKEN_LIMIT_MISTRAL_DEVSTRAL2)
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+
+from deriva.common import settings
 
 __all__ = [
     "Chunk",
@@ -93,7 +94,7 @@ def get_model_token_limit(model: str | None = None) -> int:
 
     if model is None:
         # Check env var for default limit
-        env_default = os.environ.get("LLM_TOKEN_LIMIT_DEFAULT")
+        env_default = settings.get("LLM_TOKEN_LIMIT_DEFAULT")
         if env_default:
             try:
                 limit = int(env_default)
@@ -105,7 +106,7 @@ def get_model_token_limit(model: str | None = None) -> int:
         # Check env var for specific model (convert model name to env var format)
         # e.g., "mistral-devstral2" -> "LLM_TOKEN_LIMIT_MISTRAL_DEVSTRAL2"
         env_key = f"LLM_TOKEN_LIMIT_{model.upper().replace('-', '_')}"
-        env_value = os.environ.get(env_key)
+        env_value = settings.get(env_key)
         if env_value:
             try:
                 limit = int(env_value)
@@ -125,7 +126,7 @@ def get_model_token_limit(model: str | None = None) -> int:
                         break
                 else:
                     # Check env default as final fallback
-                    env_default = os.environ.get("LLM_TOKEN_LIMIT_DEFAULT")
+                    env_default = settings.get("LLM_TOKEN_LIMIT_DEFAULT")
                     if env_default:
                         try:
                             limit = int(env_default)

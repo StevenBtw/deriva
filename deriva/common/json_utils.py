@@ -17,6 +17,7 @@ def extract_json_from_response(content: str) -> str:
     Extract JSON from LLM response, handling common wrapping patterns.
 
     Handles:
+    - Raw JSON that parses as it is (kept whole, also when a string in it holds backticks)
     - Markdown code blocks (```json ... ``` or ``` ... ```)
     - Leading/trailing whitespace
     - Raw JSON (passed through as-is)
@@ -28,6 +29,14 @@ def extract_json_from_response(content: str) -> str:
         Extracted JSON string ready for parsing
     """
     content = content.strip()
+
+    # A whole JSON answer is taken as it is: backticks inside one of its strings are no fence around it
+    if content.startswith(("{", "[")):
+        try:
+            json.loads(content)
+            return content
+        except ValueError:
+            pass
 
     # Handle markdown code blocks: ```json ... ``` or ``` ... ```
     code_block_pattern = r"```(?:json)?\s*([\s\S]*?)```"
