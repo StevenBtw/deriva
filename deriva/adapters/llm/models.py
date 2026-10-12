@@ -51,7 +51,7 @@ __all__ = [
 
 def _plain(value: str) -> str:
     """Padding and quotes stripped: a pasted key, URL or model name breaks every call otherwise."""
-    return value.strip().strip("'\"")
+    return value.strip().strip("'\"").strip()
 
 
 @dataclass
