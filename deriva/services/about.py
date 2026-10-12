@@ -6,7 +6,7 @@ import importlib.util
 from importlib.metadata import version as _distribution_version
 from pathlib import Path
 
-from deriva.common import paths
+from deriva.common import paths, settings
 
 # The distribution that carries the version (the root project; all three packages share it)
 DISTRIBUTION = "deriva-cli"
@@ -29,3 +29,8 @@ def features() -> dict[str, bool]:
 def version() -> str:
     """The installed Deriva version (all three packages share it)."""
     return _distribution_version(DISTRIBUTION)
+
+
+def suppress_pydantic_ai_banner() -> None:
+    """Keep pydantic-ai's first-run banner out of the CLI's and the studio's output."""
+    settings.suppress_pydantic_ai_banner()

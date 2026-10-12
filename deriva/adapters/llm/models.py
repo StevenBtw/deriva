@@ -76,6 +76,15 @@ class BenchmarkModelConfig:
 
     def __post_init__(self):
         """Validate provider and reasoning level."""
+        # A pasted key, URL or model name with padding breaks every call
+        self.provider = self.provider.strip()
+        self.model = self.model.strip()
+        if self.api_url:
+            self.api_url = self.api_url.strip()
+        if self.api_key:
+            self.api_key = self.api_key.strip()
+        if self.api_key_env:
+            self.api_key_env = self.api_key_env.strip()
         if self.provider not in VALID_PROVIDERS:
             raise ValueError(f"Invalid provider: {self.provider}. Must be one of {VALID_PROVIDERS}")
         reasoning_settings(self.provider, self.reasoning)
@@ -85,7 +94,8 @@ class BenchmarkModelConfig:
         if self.api_key:
             return self.api_key
         if self.api_key_env:
-            return settings.get(self.api_key_env)
+            key = settings.get(self.api_key_env)
+            return key.strip() if key else key
         return None
 
     def get_api_url(self) -> str:

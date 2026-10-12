@@ -303,3 +303,33 @@ class TestBenchmarkModelConfig:
         )
         # Azure returns empty string if no url set
         assert config.get_api_url() == ""
+
+
+class TestBenchmarkModelConfigCredentials:
+    """A pasted key, URL or model name with padding is stripped."""
+
+    def test_strips_padding(self):
+        config = BenchmarkModelConfig(
+            name="test-anthropic",
+            provider=" anthropic ",
+            model=" claude-3-sonnet ",
+            api_url=" https://api.anthropic.com/v1/messages ",
+            api_key=" sk-ant-123 ",
+            api_key_env=" MY_KEY ",
+        )
+
+        assert (config.provider, config.model) == ("anthropic", "claude-3-sonnet")
+        assert config.api_url == "https://api.anthropic.com/v1/messages"
+        assert config.api_key == "sk-ant-123"
+        assert config.api_key_env == "MY_KEY"
+
+    def test_get_api_key_strips_the_env_value(self, monkeypatch):
+        monkeypatch.setenv("DERIVA_TEST_LLM_KEY", "  sk-env-key ")
+        config = BenchmarkModelConfig(
+            name="test",
+            provider="openai",
+            model="gpt-4",
+            api_key_env="DERIVA_TEST_LLM_KEY",
+        )
+
+        assert config.get_api_key() == "sk-env-key"
