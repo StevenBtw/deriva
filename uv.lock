@@ -473,7 +473,7 @@ dev = [
 
 [[package]]
 name = "deriva-dev"
-version = "0.8.0"
+version = "0.8.1"
 source = { editable = "packages/deriva-dev" }
 dependencies = [
     { name = "deriva-studio" },
@@ -484,7 +484,7 @@ requires-dist = [{ name = "deriva-studio", editable = "packages/deriva-studio" }
 
 [[package]]
 name = "deriva-studio"
-version = "0.8.0"
+version = "0.8.1"
 source = { editable = "packages/deriva-studio" }
 dependencies = [
     { name = "anywidget-archimate" },
