@@ -1,6 +1,6 @@
 [project]
 name = "deriva-studio"
-version = "0.8.0"
+version = "0.8.1"
 description = "Deriva Studio: derive ArchiMate models from code repositories in your browser (includes the deriva-cli command)."
 readme = "README.md"
 requires-python = ">=3.14"
