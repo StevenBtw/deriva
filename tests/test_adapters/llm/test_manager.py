@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from deriva.adapters.llm.manager import (
     LLMManager,
+    _is_retriable,
     _resolve_schema_to_model,
     _serialize_output,
     load_benchmark_models,
@@ -1176,3 +1178,80 @@ def test_benchmark_models_read_sampling_and_reasoning(monkeypatch):
 
     assert (models["haiku"].sampling, models["haiku"].reasoning) == (False, "none")
     assert (models["small"].sampling, models["small"].reasoning) == (True, None)
+
+
+class TestLoadBenchmarkModelsStripping:
+    """Values from the environment are stripped before they reach the model config."""
+
+    def test_strips_padding_from_credentials(self):
+        env_vars = {
+            "LLM_HAIKU_PROVIDER": " anthropic ",
+            "LLM_HAIKU_MODEL": " claude-haiku-5-5 ",
+            "LLM_HAIKU_URL": " https://api.anthropic.com/v1/messages ",
+            "LLM_HAIKU_KEY": " sk-ant-123 ",
+        }
+
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            with patch.dict("os.environ", env_vars, clear=True):
+                result = load_benchmark_models()
+
+        assert result["haiku"].provider == "anthropic"
+        assert result["haiku"].model == "claude-haiku-5-5"
+        assert result["haiku"].api_url == "https://api.anthropic.com/v1/messages"
+        assert result["haiku"].api_key == "sk-ant-123"
+
+    def test_strips_quotes_from_credentials(self):
+        """Quotes pasted around a value (a shell habit) come off like padding."""
+        env_vars = {
+            "LLM_HAIKU_PROVIDER": " 'anthropic' ",
+            "LLM_HAIKU_MODEL": ' "claude-haiku-5-5" ',
+            "LLM_HAIKU_URL": ' "https://api.anthropic.com/v1/messages" ',
+            "LLM_HAIKU_KEY": ' "sk-ant-123" ',
+        }
+
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            with patch.dict("os.environ", env_vars, clear=True):
+                result = load_benchmark_models()
+
+        assert result["haiku"].provider == "anthropic"
+        assert result["haiku"].model == "claude-haiku-5-5"
+        assert result["haiku"].api_url == "https://api.anthropic.com/v1/messages"
+        assert result["haiku"].api_key == "sk-ant-123"
+
+
+class TestIsRetriable:
+    """Permanent client errors are not retried; transient network errors are."""
+
+    def test_local_protocol_error_is_not_retriable(self):
+        """An illegal header value can never succeed on retry."""
+        assert _is_retriable(httpx.LocalProtocolError("Illegal header value b'key '")) is False
+
+    def test_unsupported_protocol_is_not_retriable(self):
+        assert _is_retriable(httpx.UnsupportedProtocol("unsupported")) is False
+
+    def test_connect_error_is_retriable(self):
+        assert _is_retriable(httpx.ConnectError("connection refused")) is True
+
+    def test_timeout_is_retriable(self):
+        assert _is_retriable(TimeoutError("timed out")) is True
+
+
+class TestRedact:
+    """The configured API key never reaches logs or error reports."""
+
+    def test_redact_replaces_the_configured_key(self, tmp_path, monkeypatch):
+        config = BenchmarkModelConfig(
+            name="test-model",
+            provider="ollama",
+            model="llama3",
+            api_url="http://localhost:11434/api/chat",
+        )
+
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            with patch.dict("os.environ", {}, clear=True):
+                manager = LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"))
+        manager.config["api_key"] = "sk-secret-123"
+
+        text = "LocalProtocolError: Illegal header value b'sk-secret-123 '"
+        assert manager._redact(text) == "LocalProtocolError: Illegal header value b'*** '"
+        assert manager._redact("no secret here") == "no secret here"

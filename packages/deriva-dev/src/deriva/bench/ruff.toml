@@ -8,3 +8,19 @@ extend = "../../../../../pyproject.toml"
 
 # No file-wide exemption: each authorized import carries its own `# noqa: TID251`, so cli.py cannot
 # reach into the studio and router.py cannot reach into the CLI without a diagnostic
+
+# Third-party libraries (see the root pyproject.toml): this layer is web code, so this table repeats
+# the root one without the web stack
+[lint.flake8-tidy-imports.extend-banned-api]
+"requests" = { msg = "Not a dependency of Deriva (only installed through other packages); use httpx" }
+"anywidget" = { msg = "The studio serves the widgets' front end only (anywidget_graph.ui, anywidget_archimate.ui)" }
+"ipywidgets" = { msg = "The studio serves the widgets' front end only (anywidget_graph.ui, anywidget_archimate.ui)" }
+"marimo" = { msg = "Not a dependency of Deriva (the marimo app was replaced by the studio)" }
+"pydantic_ai" = { msg = "Library boundary: LLM calls go through deriva.adapters.llm" }
+"spacy" = { msg = "Library boundary: NLP goes through deriva.adapters.nlp" }
+"ctranslate2" = { msg = "Library boundary: NLP goes through deriva.adapters.nlp" }
+"sentencepiece" = { msg = "Library boundary: NLP goes through deriva.adapters.nlp" }
+"duckdb" = { msg = "Library boundary: the config database goes through deriva.adapters.database" }
+"grafeo" = { msg = "Library boundary: the graphs go through deriva.adapters.grafeo" }
+"lxml" = { msg = "Library boundary: ArchiMate XML goes through deriva.adapters.archimate" }
+"tree_sitter" = { msg = "Library boundary: parsing goes through deriva.adapters.treesitter" }

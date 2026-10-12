@@ -349,6 +349,8 @@ def clear(
 
 def main() -> int:
     """Main entry point."""
+    # pydantic-ai's first-run banner is noise in CLI output
+    about.suppress_pydantic_ai_banner()
     # Line-buffer stdout so progress appears live, also when piped to a file
     # (redirected streams such as io.StringIO have no reconfigure)
     if hasattr(sys.stdout, "reconfigure"):

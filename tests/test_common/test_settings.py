@@ -190,3 +190,21 @@ def test_a_provider_key_removed_from_the_file_leaves_the_process(dotenv, monkeyp
     settings.export_provider_keys()
 
     assert "MISTRAL_API_KEY" not in os.environ
+
+
+def test_llm_credentials_are_stripped(dotenv, monkeypatch):
+    for name in list(os.environ):
+        if name.startswith("LLM_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("LLM_PROVIDER", " openai ")
+    monkeypatch.setenv("LLM_DEFAULT_MODEL", " anthropic ")
+    monkeypatch.setenv("LLM_ANTHROPIC_API_KEY", "  sk-ant-123  ")
+    monkeypatch.setenv("LLM_ANTHROPIC_MODEL", " claude-sonnet-4-20250514 ")
+    monkeypatch.setenv("LLM_OLLAMA_API_URL", " http://localhost:11434/api/chat ")
+
+    llm = LlmSettings()
+
+    assert (llm.provider, llm.default_model) == ("openai", "anthropic")
+    assert llm.anthropic_api_key == "sk-ant-123"
+    assert llm.anthropic_model == "claude-sonnet-4-20250514"
+    assert llm.ollama_api_url == "http://localhost:11434/api/chat"

@@ -83,11 +83,16 @@ def export_provider_keys() -> None:
         if name in _ORIGINAL_ENVIRONMENT:
             continue
         if name in file:
-            os.environ[name] = file[name]
+            os.environ[name] = file[name].strip()  # a key or URL with padding breaks the header the provider library builds
             _EXPORTED.add(name)
         elif name in _EXPORTED:
             os.environ.pop(name, None)
             _EXPORTED.discard(name)
+
+
+def suppress_pydantic_ai_banner() -> None:
+    """Keep pydantic-ai's first-run banner out of CLI output; the library reads the variable when it would show."""
+    os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
 
 class _MergedEnvironment(PydanticBaseSettingsSource):
@@ -158,6 +163,16 @@ class LlmSettings(_Group):
     circuit_breaker_enabled: bool = True
     circuit_failure_threshold: int = 5
     circuit_recovery_time: float = 30.0
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _credentials_plain(cls, value: Any, info: ValidationInfo) -> Any:
+        """Keys, URLs and model names: padding and quotes stripped; a pasted key with a trailing space breaks every call."""
+        if isinstance(value, str) and info.field_name is not None and (info.field_name.endswith(("_api_key", "_api_url", "_model")) or info.field_name == "provider"):
+            value = value.strip().strip("'\"")
+            if value == "":
+                raise PydanticUseDefault()
+        return value
 
 
 class GrafeoSettings(_Group):

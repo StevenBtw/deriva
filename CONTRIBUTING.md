@@ -95,6 +95,8 @@ Common   → stdlib and third-party only
 
 These boundaries are enforced at lint time via Ruff's `TID251` rule with per-layer `ruff.toml` files.
 
+The same rule keeps third-party libraries where their package declares them (`extend-banned-api` in `pyproject.toml`, inherited by every layer): the heavy engines (pydantic-ai, spaCy, CTranslate2, DuckDB, grafeo, lxml, tree-sitter) only in `adapters/`, the web stack (FastAPI, Starlette, uvicorn, the widgets) only in the studio and bench, and packages no Deriva package declares (requests, anywidget, ipywidgets, marimo) nowhere.
+
 <details>
 <summary><strong>Architecture Overview</strong></summary>
 

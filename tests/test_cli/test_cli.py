@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -3096,3 +3097,59 @@ def test_model_set_refuses_an_empty_key(mock_session_class):
 
     assert result.exit_code != 0
     mock_session_class.return_value.save_model_config.assert_not_called()
+
+
+class TestDisabledCountSummary:
+    """The run summaries show how many elements refine disabled."""
+
+    def test_derivation_result_prints_disabled_count(self, capsys):
+        result = {
+            "stats": {
+                "elements_created": 9,
+                "relationships_created": 3,
+                "elements_disabled": 4,
+            }
+        }
+        _print_derivation_result(result)
+        output = capsys.readouterr().out
+
+        assert "Elements disabled by refine: 4" in output
+
+    def test_derivation_result_omits_disabled_count_when_zero(self, capsys):
+        result = {"stats": {"elements_created": 5, "elements_disabled": 0}}
+        _print_derivation_result(result)
+        output = capsys.readouterr().out
+
+        assert "disabled" not in output
+
+    def test_pipeline_result_prints_disabled_count(self, capsys):
+        result = {
+            "results": {
+                "derivation": {"stats": {"elements_created": 9, "elements_disabled": 4}},
+            }
+        }
+        _print_pipeline_result(result)
+        output = capsys.readouterr().out
+
+        assert "Elements disabled by refine: 4" in output
+
+
+class TestMainEntryPoint:
+    """Tests for the main() entry point."""
+
+    def test_main_keeps_the_pydantic_ai_banner_out(self, monkeypatch):
+        """The CLI sets PYDANTIC_AI_NO_BANNER so the banner stays out of its output."""
+        monkeypatch.delenv("PYDANTIC_AI_NO_BANNER", raising=False)
+        with patch("deriva.cli.cli.app") as app_mock:
+            assert main() == 0
+
+        assert os.environ["PYDANTIC_AI_NO_BANNER"] == "1"
+        app_mock.assert_called_once_with()
+
+    def test_main_keeps_a_user_set_value(self, monkeypatch):
+        """A value the user set themselves wins (setdefault, not overwrite)."""
+        monkeypatch.setenv("PYDANTIC_AI_NO_BANNER", "0")
+        with patch("deriva.cli.cli.app"):
+            assert main() == 0
+
+        assert os.environ["PYDANTIC_AI_NO_BANNER"] == "0"

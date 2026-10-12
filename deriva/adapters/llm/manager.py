@@ -84,6 +84,9 @@ def _is_retriable(error: Exception) -> bool:
 
     Output validation retries are handled by the pydantic-ai agent itself.
     """
+    if isinstance(error, (httpx.LocalProtocolError, httpx.UnsupportedProtocol)):
+        # Client-side and permanent: a malformed header or URL never succeeds on retry
+        return False
     if isinstance(error, (httpx.TransportError, TimeoutError, ConnectionError)):
         return True
     return isinstance(error, ModelHTTPError) and classify_exception(error)[0] in (
@@ -387,6 +390,13 @@ class LLMManager:
         """Get the provider name."""
         return self.config.get("provider", "unknown")
 
+    def _redact(self, text: str) -> str:
+        """Keep the configured API key out of exception text: h11 quotes header values in its errors."""
+        key = self.config.get("api_key")
+        if key and key in text:
+            return text.replace(key, "***")
+        return text
+
     def _load_config_from_env(self) -> dict[str, Any]:
         """Load configuration from the settings (home .env under the process environment)."""
         llm = LlmSettings()
@@ -554,7 +564,7 @@ class LLMManager:
                 logger.warning(
                     "LLM call failed (%s: %s), retry %d/%d in %.1fs",
                     type(e).__name__,
-                    e,
+                    self._redact(str(e)),
                     attempt + 1,
                     self.max_retries,
                     delay,
@@ -781,22 +791,22 @@ class LLMManager:
             # Circuit breaker is open - fail fast without attempting request
             logger.warning(
                 "LLM query blocked by circuit breaker: %s",
-                e,
+                self._redact(str(e)),
             )
             return FailedResponse(
                 prompt=prompt,
                 model=self.model,
-                error=str(e),
+                error=self._redact(str(e)),
                 error_type="CircuitOpenError",
             )
 
         except ValidationError as e:
             call["error_type"] = "ValidationError"
-            logger.warning("LLM query failed with ValidationError: %s", e)
+            logger.warning("LLM query failed with ValidationError: %s", self._redact(str(e)))
             return FailedResponse(
                 prompt=prompt,
                 model=self.model,
-                error=str(e),
+                error=self._redact(str(e)),
                 error_type="ValidationError",
             )
 
@@ -809,24 +819,24 @@ class LLMManager:
                 self._rate_limiter.record_rate_limit(retry_after)
                 logger.warning(
                     "LLM query rate limited: %s (retry_after: %s)",
-                    e,
+                    self._redact(str(e)),
                     retry_after,
                 )
             elif category == "transient":
                 self._rate_limiter.record_failure()
-                logger.warning("LLM query failed with transient error: %s", e)
+                logger.warning("LLM query failed with transient error: %s", self._redact(str(e)))
             else:
                 # Permanent error - don't update failure counters
                 logger.warning(
                     "LLM query failed with permanent error (%s): %s",
                     type(e).__name__,
-                    e,
+                    self._redact(str(e)),
                 )
 
             return FailedResponse(
                 prompt=prompt,
                 model=self.model,
-                error=str(e),
+                error=self._redact(str(e)),
                 error_type=type(e).__name__,
             )
 

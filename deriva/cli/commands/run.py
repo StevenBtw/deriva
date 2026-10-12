@@ -50,6 +50,8 @@ def _print_derivation_result(result: dict) -> None:
     typer.echo(f"{'-' * 60}")
     stats = result.get("stats", {})
     typer.echo(f"  Elements created:      {stats.get('elements_created', 0)}")
+    if stats.get("elements_disabled", 0) > 0:
+        typer.echo(f"  Elements disabled by refine: {stats['elements_disabled']} (excluded from export)")
     typer.echo(f"  Relationships created: {stats.get('relationships_created', 0)}")
     typer.echo(f"  Elements validated:    {stats.get('elements_validated', 0)}")
     typer.echo(f"  Issues found:          {stats.get('issues_found', 0)}")
@@ -94,6 +96,8 @@ def _print_pipeline_result(result: dict) -> None:
         stats = results["derivation"].get("stats", {})
         typer.echo("\nDerivation:")
         typer.echo(f"  Elements created: {stats.get('elements_created', 0)}")
+        if stats.get("elements_disabled", 0) > 0:
+            typer.echo(f"  Elements disabled by refine: {stats['elements_disabled']} (excluded from export)")
         typer.echo(f"  Issues found: {stats.get('issues_found', 0)}")
 
     if result.get("errors"):
