@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -68,6 +69,28 @@ def test_main_takes_host_port_and_no_browser():
 
     assert uvicorn.Config.call_args.kwargs["port"] == 9000
     opener.assert_not_called()
+
+
+def test_main_keeps_the_pydantic_ai_banner_out(monkeypatch):
+    """The studio sets PYDANTIC_AI_NO_BANNER so the banner stays out of the server's console."""
+    monkeypatch.delenv("PYDANTIC_AI_NO_BANNER", raising=False)
+    from deriva.studio.__main__ import main
+
+    with patch("deriva.studio.__main__.uvicorn"), patch("deriva.studio.__main__._open_when_ready"):
+        main([])
+
+    assert os.environ["PYDANTIC_AI_NO_BANNER"] == "1"
+
+
+def test_main_keeps_a_user_set_banner_value(monkeypatch):
+    """A value the user set themselves wins (setdefault, not overwrite)."""
+    monkeypatch.setenv("PYDANTIC_AI_NO_BANNER", "0")
+    from deriva.studio.__main__ import main
+
+    with patch("deriva.studio.__main__.uvicorn"), patch("deriva.studio.__main__._open_when_ready"):
+        main([])
+
+    assert os.environ["PYDANTIC_AI_NO_BANNER"] == "0"
 
 
 def test_the_browser_opens_once_the_server_has_started():

@@ -49,6 +49,11 @@ __all__ = [
 # =============================================================================
 
 
+def _plain(value: str) -> str:
+    """Padding and quotes stripped: a pasted key, URL or model name breaks every call otherwise."""
+    return value.strip().strip("'\"")
+
+
 @dataclass
 class BenchmarkModelConfig:
     """
@@ -76,15 +81,15 @@ class BenchmarkModelConfig:
 
     def __post_init__(self):
         """Validate provider and reasoning level."""
-        # A pasted key, URL or model name with padding breaks every call
-        self.provider = self.provider.strip()
-        self.model = self.model.strip()
+        # A pasted key, URL or model name with padding or quotes breaks every call
+        self.provider = _plain(self.provider)
+        self.model = _plain(self.model)
         if self.api_url:
-            self.api_url = self.api_url.strip()
+            self.api_url = _plain(self.api_url)
         if self.api_key:
-            self.api_key = self.api_key.strip()
+            self.api_key = _plain(self.api_key)
         if self.api_key_env:
-            self.api_key_env = self.api_key_env.strip()
+            self.api_key_env = _plain(self.api_key_env)
         if self.provider not in VALID_PROVIDERS:
             raise ValueError(f"Invalid provider: {self.provider}. Must be one of {VALID_PROVIDERS}")
         reasoning_settings(self.provider, self.reasoning)
@@ -95,7 +100,7 @@ class BenchmarkModelConfig:
             return self.api_key
         if self.api_key_env:
             key = settings.get(self.api_key_env)
-            return key.strip() if key else key
+            return _plain(key) if key else key
         return None
 
     def get_api_url(self) -> str:

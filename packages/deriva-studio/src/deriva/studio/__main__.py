@@ -10,6 +10,7 @@ from typing import Any
 
 import uvicorn
 
+from deriva.services import about
 from deriva.studio.app import create_app
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
@@ -30,6 +31,8 @@ def _open_when_ready(server: Any, url: str) -> threading.Thread:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # pydantic-ai's first-run banner is noise in the studio's console output
+    about.suppress_pydantic_ai_banner()
     parser = argparse.ArgumentParser(prog="deriva", description="Deriva Studio: the local web UI for the pipeline")
     parser.add_argument("--host", default="127.0.0.1", help="Address to bind (default: 127.0.0.1, this machine only)")
     parser.add_argument("--port", type=int, default=8765, help="Port (default: 8765)")
