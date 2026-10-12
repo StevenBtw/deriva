@@ -14,6 +14,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 - **Smaller install**: deriva-cli depends on `pydantic-ai-slim` with only the providers Deriva builds (openai, anthropic, mistral; azure, ollama and lmstudio go through the openai client) instead of the full `pydantic-ai`, which also installed google-genai, logfire, opentelemetry, fastmcp and mcp. `sqlglot`, `authlib` and `nest-asyncio` (never imported) and the `pyasn1` and `pyjwt` floors (for packages no longer installed) are removed: 53 fewer packages in the lock, deriva-cli installs 86 packages instead of 146
 - **Library boundaries in Ruff**: `TID251` also checks third-party imports: the engines behind an adapter stay in `adapters/`, the web stack stays in the studio and bench, and packages Deriva does not declare are banned. The benchmark's Ollama warm-up used `requests`, which Deriva never declared; it uses httpx
+- **Studio without the notebook stack**: deriva-studio requires anywidget-graph 0.4.3 and anywidget-archimate 0.3.1; the widgets moved marimo to an `examples` extra, so the studio no longer installs it (15 fewer packages in the lock). The model view also keeps its zoom over redraws, and the fit button returns to the whole diagram
 
 ### Fixes
 
