@@ -1218,6 +1218,24 @@ class TestLoadBenchmarkModelsStripping:
         assert result["haiku"].api_url == "https://api.anthropic.com/v1/messages"
         assert result["haiku"].api_key == "sk-ant-123"
 
+    def test_strips_padding_inside_quotes(self):
+        """Padding inside the quotes goes too: ' sk-ant-123 ' comes out clean."""
+        env_vars = {
+            "LLM_HAIKU_PROVIDER": "' anthropic '",
+            "LLM_HAIKU_MODEL": '" claude-haiku-5-5 "',
+            "LLM_HAIKU_URL": '" https://api.anthropic.com/v1/messages "',
+            "LLM_HAIKU_KEY": "' sk-ant-123 '",
+        }
+
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            with patch.dict("os.environ", env_vars, clear=True):
+                result = load_benchmark_models()
+
+        assert result["haiku"].provider == "anthropic"
+        assert result["haiku"].model == "claude-haiku-5-5"
+        assert result["haiku"].api_url == "https://api.anthropic.com/v1/messages"
+        assert result["haiku"].api_key == "sk-ant-123"
+
 
 class TestIsRetriable:
     """Permanent client errors are not retried; transient network errors are."""

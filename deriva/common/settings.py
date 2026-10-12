@@ -122,7 +122,7 @@ class _Group(BaseSettings):
     def _plain_values(cls, value: Any, info: ValidationInfo) -> Any:
         """Numbers, flags and optional values: padding and quotes stripped, empty means the default. Text stays as given."""
         if isinstance(value, str) and info.field_name is not None and cls.model_fields[info.field_name].annotation is not str:
-            value = value.strip().strip("'\"")
+            value = value.strip().strip("'\"").strip()
             if value == "":
                 raise PydanticUseDefault()
         return value
@@ -169,7 +169,7 @@ class LlmSettings(_Group):
     def _credentials_plain(cls, value: Any, info: ValidationInfo) -> Any:
         """Keys, URLs and model names: padding and quotes stripped; a pasted key with a trailing space breaks every call."""
         if isinstance(value, str) and info.field_name is not None and (info.field_name.endswith(("_api_key", "_api_url", "_model")) or info.field_name == "provider"):
-            value = value.strip().strip("'\"")
+            value = value.strip().strip("'\"").strip()
             if value == "":
                 raise PydanticUseDefault()
         return value

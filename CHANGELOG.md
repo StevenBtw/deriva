@@ -8,6 +8,12 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
+## v0.8.2 - Pre-benchmark refinement (Unreleased)
+
+### Fixes
+
+- **LLM configuration**: padding inside surrounding quotes is stripped as well, so a value like `' sk-ant-123 '` no longer reaches the provider padded (the named `LLM_{NAME}_*` configs got the same refinement in 0.8.1)
+
 ## v0.8.1 - Cleanup (October 12 2026)
 
 ### Packaging
