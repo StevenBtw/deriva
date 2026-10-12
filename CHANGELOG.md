@@ -10,9 +10,14 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ## v0.8.2 - Pre-benchmark refinement (Unreleased)
 
+### Studio
+
+- **GitHub and report issue in the top bar**: a GitHub link and a Report issue button sit next to the API docs link; the button opens a new bug report on GitHub with the environment pre-filled (Deriva version, install, OS, Python version, browser), and `.github/ISSUE_TEMPLATE/studio_bug.md` gives reports started from the GitHub UI the same fields
+
 ### Fixes
 
 - **LLM configuration**: padding inside surrounding quotes is stripped as well, so a value like `' sk-ant-123 '` no longer reaches the provider padded (the named `LLM_{NAME}_*` configs got the same refinement in 0.8.1)
+- **Workspace**: the Linked | Separate switch sits level with the lane title, its right edge flush with the title's text (it was a few pixels low and off to the side)
 
 ## v0.8.1 - Cleanup (October 12 2026)
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import platform
+
 import pytest
 
 from deriva.services import about
@@ -30,6 +32,13 @@ def test_status_reports_an_owned_database(client, fake_session):
 
 def test_status_reports_the_optional_features(client):
     assert client.get("/api/status").json()["features"] == {"benchmark": True}
+
+
+def test_status_reports_the_environment(client):
+    environment = client.get("/api/status").json()["environment"]
+
+    assert environment["python"] == platform.python_version()
+    assert environment["os"]
 
 
 def test_status_reports_a_held_database_with_the_pid(make_client):

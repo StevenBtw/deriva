@@ -61,6 +61,35 @@ describe("TopBar", () => {
 
     expect(screen.getByRole("link", { name: /API/ })).toHaveAttribute("href", "/docs");
   });
+
+  it("links the repository on GitHub", () => {
+    render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned" }} />);
+
+    const link = screen.getByRole("link", { name: /github/i });
+    expect(link).toHaveAttribute("href", "https://github.com/StevenBtw/deriva");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noreferrer");
+  });
+
+  it("opens a new bug report pre-filled with the studio's environment", () => {
+    render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned" }} version="0.8.1" benchmark environment={{ os: "Windows", python: "3.14.6" }} />);
+
+    const url = new URL(screen.getByRole("link", { name: /report issue/i }).getAttribute("href") ?? "");
+    expect(`${url.origin}${url.pathname}`).toBe("https://github.com/StevenBtw/deriva/issues/new");
+    expect(url.searchParams.get("labels")).toBe("bug");
+    const body = url.searchParams.get("body") ?? "";
+    expect(body).toContain("- Deriva version: 0.8.1");
+    expect(body).toContain("- Install: deriva-dev");
+    expect(body).toContain("- OS: Windows");
+    expect(body).toContain("- Python: 3.14.6");
+  });
+
+  it("reports the install as deriva-studio when benchmarking is not installed", () => {
+    render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned" }} benchmark={false} />);
+
+    const url = new URL(screen.getByRole("link", { name: /report issue/i }).getAttribute("href") ?? "");
+    expect(url.searchParams.get("body")).toContain("- Install: deriva-studio");
+  });
 });
 
 describe("Banner", () => {

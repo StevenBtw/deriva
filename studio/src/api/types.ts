@@ -2,8 +2,8 @@
 
 export type DbStatus = { state: "owned" | "held" | "not_connected"; held_by?: number | null; error?: string | null; busy?: boolean };
 
-/** `features` lists optional parts of the install; without it everything is available (older servers). */
-export type Status = { version: string; db: DbStatus; features?: { benchmark?: boolean } };
+/** `features` lists optional parts of the install; `environment` is the machine the server runs on. Both are absent on older servers. */
+export type Status = { version: string; db: DbStatus; features?: { benchmark?: boolean }; environment?: { os?: string; python?: string } };
 
 export type Repository = {
   name: string;

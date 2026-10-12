@@ -20,11 +20,12 @@ def health(request: Request) -> dict[str, str]:
 @router.get("/status")
 def status(request: Request) -> dict[str, Any]:
     provider = request.app.state.provider
+    environment = about.environment()
     try:
         with provider.session(wait=0.5):
             pass
     except DatabaseHeld:
         pass
     except SessionBusy:
-        return {"version": request.app.version, "db": {**provider.status(), "busy": True}, "features": about.features()}
-    return {"version": request.app.version, "db": provider.status(), "features": about.features()}
+        return {"version": request.app.version, "db": {**provider.status(), "busy": True}, "features": about.features(), "environment": environment}
+    return {"version": request.app.version, "db": provider.status(), "features": about.features(), "environment": environment}

@@ -347,6 +347,10 @@ tbody tr.clickable:hover td {
   border-color: var(--line);
   color: var(--text);
 }
+.util svg {
+  vertical-align: -2px;
+  margin-right: 3px;
+}
 .dot {
   width: 8px;
   height: 8px;
@@ -1180,8 +1184,9 @@ table.rules tbody th {
 }
 .lanes-switch {
   position: absolute;
-  top: 14px;
-  right: 16px;
+  /* Level with the lane title row (8px margin + 1px border + 6px padding + half the title line), right edge flush with the title's text */
+  top: 10px;
+  right: 19px;
   z-index: 3;
   background: var(--bg2);
 }
