@@ -44,7 +44,6 @@ dependencies = [
     # Databases
     "duckdb>=1.5",
     "grafeo>=0.6.0b1",
-    "sqlglot>=30",
     # Code Analysis (tree-sitter)
     "tree-sitter>=0.26",
     "tree-sitter-python>=0.23.0",
@@ -62,21 +61,15 @@ dependencies = [
     "solvor>=0.6.3",
     # LLM
     "backoff>=2.2.1",
-    # CVE-2026-107286, CVE-2026-107287 fixed in 2.53
-    "pydantic-ai>=2.55",
+    # CVE-2026-107286, CVE-2026-107287 fixed in 2.53; slim with only the providers model_registry.py
+    # builds (azure, ollama and lmstudio go through the openai client), so no google, logfire or mcp stack
+    "pydantic-ai-slim[openai,anthropic,mistral]>=2.55",
     # Utilities
-    "authlib>=1.8.0",
-    # CVE-2026-27962, CVE-2026-28490 fix (transitive via fastmcp)
-    "pyasn1>=0.6.4",
-    # CVE-2026-30922 fix (transitive via google-auth/rsa)
-    "pyjwt>=2.15",
-    # CVE-2026-32597 fix (transitive via mcp)
+    # CVE-2026-32597 fix
     "diskcache>=5.6.3",
-    "nest-asyncio>=1.6.0",
     "structlog>=26.1.0",
     "typer>=0.27",
     "httpx>=0.28.1",
-    "pydantic-ai-slim[mistral]>=2.55",
 ]
 
 [dependency-groups]
@@ -189,6 +182,35 @@ docstring-quotes = "double"
 "deriva.cli" = { msg = "Architecture violation: cli is a top-level entry point and should not be imported" }
 "deriva.bench" = { msg = "Architecture violation: only the CLI and studio entry points load deriva.bench, behind about.features()" }
 # Note: Layer-specific bans (adapters↔modules, etc.) are in per-directory ruff.toml files
+
+# Third-party libraries, enforced with the same rule. Each library is used where its package declares it:
+#   - not at all: transitive packages no Deriva package declares, and the widgets' notebook stack
+#   - adapters only: the heavy engines behind an adapter (LLM, NLP, databases, parsers)
+#   - studio and bench only: the web stack, which deriva-cli does not install
+# This table is inherited by every per-directory ruff.toml that does not set its own (their banned-api
+# tables replace the one above, this one stays); deriva/adapters/ruff.toml and the studio and bench
+# ruff.toml files set their own to allow the libraries of their layer
+[tool.ruff.lint.flake8-tidy-imports.extend-banned-api]
+# Not declared by any Deriva package
+"requests" = { msg = "Not a dependency of Deriva (only installed through other packages); use httpx" }
+"anywidget" = { msg = "The studio serves the widgets' front end only (anywidget_graph.ui, anywidget_archimate.ui)" }
+"ipywidgets" = { msg = "The studio serves the widgets' front end only (anywidget_graph.ui, anywidget_archimate.ui)" }
+"marimo" = { msg = "Not a dependency of Deriva (the marimo app was replaced by the studio)" }
+# Adapters only
+"pydantic_ai" = { msg = "Library boundary: LLM calls go through deriva.adapters.llm" }
+"spacy" = { msg = "Library boundary: NLP goes through deriva.adapters.nlp" }
+"ctranslate2" = { msg = "Library boundary: NLP goes through deriva.adapters.nlp" }
+"sentencepiece" = { msg = "Library boundary: NLP goes through deriva.adapters.nlp" }
+"duckdb" = { msg = "Library boundary: the config database goes through deriva.adapters.database" }
+"grafeo" = { msg = "Library boundary: the graphs go through deriva.adapters.grafeo" }
+"lxml" = { msg = "Library boundary: ArchiMate XML goes through deriva.adapters.archimate" }
+"tree_sitter" = { msg = "Library boundary: parsing goes through deriva.adapters.treesitter" }
+# Studio and bench only (deriva-studio and deriva-dev declare them, deriva-cli does not)
+"fastapi" = { msg = "Not a dependency of deriva-cli: web code lives in deriva-studio (deriva.studio) or deriva-dev (deriva.bench)" }
+"starlette" = { msg = "Not a dependency of deriva-cli: web code lives in deriva-studio (deriva.studio) or deriva-dev (deriva.bench)" }
+"uvicorn" = { msg = "Not a dependency of deriva-cli: web code lives in deriva-studio (deriva.studio) or deriva-dev (deriva.bench)" }
+"anywidget_graph" = { msg = "Not a dependency of deriva-cli: the widgets are served by deriva-studio (deriva.studio)" }
+"anywidget_archimate" = { msg = "Not a dependency of deriva-cli: the widgets are served by deriva-studio (deriva.studio)" }
 
 [tool.ruff.lint.per-file-ignores]
 # Tests can import from any layer for testing purposes

@@ -471,7 +471,7 @@ class BenchmarkOrchestrator:
         Returns:
             List of any errors encountered during preloading
         """
-        import requests
+        import httpx
 
         errors = []
         ollama_models = [(name, cfg) for name, cfg in self._model_configs.items() if cfg.provider == "ollama" and name in self.config.models]
@@ -488,7 +488,7 @@ class BenchmarkOrchestrator:
                     print(f"  Loading {cfg.model}...", end=" ", flush=True)
 
                 # Send a simple warmup request
-                response = requests.post(
+                response = httpx.post(
                     cfg.get_api_url(),
                     json={
                         "model": cfg.model,
@@ -503,7 +503,7 @@ class BenchmarkOrchestrator:
                 if verbose:
                     print("OK")
 
-            except requests.exceptions.RequestException as e:
+            except httpx.HTTPError as e:
                 error_msg = f"Failed to preload {name}: {e}"
                 errors.append(error_msg)
                 if verbose:

@@ -11,3 +11,16 @@ extend = "../../pyproject.toml"
 "deriva.bench" = { msg = "Architecture violation: only the CLI and studio entry points load deriva.bench, behind about.features()" }
 "deriva.modules" = { msg = "Architecture violation: adapters cannot import from modules (use common layer for shared types)" }
 "deriva.services" = { msg = "Architecture violation: adapters cannot import from services (adapters is a lower layer)" }
+
+# Third-party libraries (see the root pyproject.toml): adapters own the heavy engines (LLM, NLP, databases,
+# parsers), so this table repeats the root one without them
+[lint.flake8-tidy-imports.extend-banned-api]
+"requests" = { msg = "Not a dependency of Deriva (only installed through other packages); use httpx" }
+"anywidget" = { msg = "The studio serves the widgets' front end only (anywidget_graph.ui, anywidget_archimate.ui)" }
+"ipywidgets" = { msg = "The studio serves the widgets' front end only (anywidget_graph.ui, anywidget_archimate.ui)" }
+"marimo" = { msg = "Not a dependency of Deriva (the marimo app was replaced by the studio)" }
+"fastapi" = { msg = "Not a dependency of deriva-cli: web code lives in deriva-studio (deriva.studio) or deriva-dev (deriva.bench)" }
+"starlette" = { msg = "Not a dependency of deriva-cli: web code lives in deriva-studio (deriva.studio) or deriva-dev (deriva.bench)" }
+"uvicorn" = { msg = "Not a dependency of deriva-cli: web code lives in deriva-studio (deriva.studio) or deriva-dev (deriva.bench)" }
+"anywidget_graph" = { msg = "Not a dependency of deriva-cli: the widgets are served by deriva-studio (deriva.studio)" }
+"anywidget_archimate" = { msg = "Not a dependency of deriva-cli: the widgets are served by deriva-studio (deriva.studio)" }
