@@ -9,11 +9,11 @@ license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "S. T. Grond", email = "steven@deriva.dev" }]
 dependencies = [
-    "deriva-cli==0.8.0",
+    "deriva-cli==0.8.1",
     "fastapi>=0.142.4",
     "uvicorn>=0.41.0",
-    "anywidget-graph>=0.4.2",
-    "anywidget-archimate>=0.3.0",
+    "anywidget-graph>=0.4.3",
+    "anywidget-archimate>=0.3.1",
 ]
 
 [project.urls]
