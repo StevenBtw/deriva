@@ -67,6 +67,7 @@ from deriva.modules.derivation.base import (
     element_identifier,
     extract_response_content,
     get_enrichments_from_graph,
+    guard_name,
     name_from_source,
     naming_source,
     parse_derivation_response,
@@ -836,6 +837,7 @@ class ElementDerivationBase(ABC):
         candidate with a role is its own element, named as written or by ``name_template``.
         """
         ordered = sorted(candidates, key=lambda c: c.node_id)
+        reserved = self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming is not None and naming.guards.reserved_labels else set()
         # Structure first: a candidate whose annotation or kind shows its role is not asked
         role_of: dict[str, str | None] = {c.node_id: role for c in ordered if (role := structural_role(c, roles.structural)) is not None}
         as_written = set(role_of) if roles.structural_as_written else set()
@@ -882,19 +884,28 @@ class ElementDerivationBase(ABC):
                     outside.add(c.node_id)
                 for unit in units:
                     groups[(unit, role_of[c.node_id] or "")].append(c)
+            # Roles the unit shows itself (roles.unit_roles): its listed files join that role's element, without a call
+            for unit, key, node_id, path in self._unit_role_members(sorted(container_names), roles.unit_roles, graph_manager):
+                if all(c.node_id != node_id for c in groups[(unit, key)]):
+                    groups[(unit, key)].append(Candidate(node_id=node_id, name=path.rsplit("/", 1)[-1], labels=["Graph", "File"], properties={"filePath": path}))
+
+            def unit_name(container: str, key: str) -> str:
+                # The channel word may merge into the container's words; the name never equals the container's
+                name = " ".join(_each_word_once(roles.name_template.format(container=container, subject="", role=roles.names[key])).split())
+                return f"{name} Interface" if _display_key(name) == _display_key(container) else name
+
             planned = []
             seen = {_display_key(name) for name in taken}
             for (unit, key), group in sorted(groups.items()):
-                name = " ".join(_each_word_once(roles.name_template.format(container=container_names[unit], subject="", role=roles.names[key])).split())
+                group.sort(key=lambda c: c.node_id)
+                name = unit_name(container_names[unit], key)
                 if _display_key(name) in seen:
                     duplicates.update(c.node_id for c in group)
                     continue
                 seen.add(_display_key(name))
                 identifier = element_identifier(self.ELEMENT_TYPE, f"{unit}::{key}")
                 unit_of_element[identifier] = unit
-                structure_of_element[identifier] = " ".join(
-                    _each_word_once(roles.name_template.format(container=container_structure[unit], subject="", role=roles.names[key])).split()
-                )
+                structure_of_element[identifier] = unit_name(container_structure[unit], key)
                 containers.update({c.node_id: container_names[unit] for c in group})
                 planned.append((identifier, name, group, key))
         elif roles.element_per == "candidate":
@@ -969,7 +980,7 @@ class ElementDerivationBase(ABC):
             # The step's naming call may rename a candidate's element (the usual uniqueness rules apply)
             if roles.naming_call and naming is not None and roles.element_per == "candidate" and source.node_id not in as_written:
                 try:
-                    self._apply_naming(element_data, source, naming, llm_query_fn, llm_kwargs, repo_name, taken, structure_names or {})
+                    self._apply_naming(element_data, source, naming, llm_query_fn, llm_kwargs, repo_name, taken, structure_names or {}, reserved)
                 except Exception as e:
                     self.logger.warning("Naming failed for %s: %s", source.node_id, e)
             try:
@@ -1154,6 +1165,38 @@ class ElementDerivationBase(ABC):
             self.logger.debug("Could not read active repository name: %s", e)
         return ""
 
+    def _unit_role_members(self, units: list[str], unit_roles: tuple[tuple[str, str], ...], graph_manager: GraphManager) -> list[tuple[str, str, str, str]]:
+        """(unit, role key, file node id, path) for the files a unit lists under a unit_roles property, in id order."""
+        members: list[tuple[str, str, str, str]] = []
+        for prop, key in unit_roles:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prop):
+                continue
+            rows = graph_manager.query(
+                f"MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) WHERE u.id IN $units AND f.filePath IN u.{prop} "
+                "RETURN u.id AS unit, f.id AS node, f.filePath AS path",
+                {"units": units},
+            )
+            members += [(str(r["unit"]), key, str(r["node"]), str(r["path"])) for r in rows if r.get("unit") and r.get("node")]
+        return sorted(members)
+
+    def _reserved_names(self, graph_manager: GraphManager, labels: tuple[str, ...]) -> set[str]:
+        """Names a naming answer may not take: those of the active graph nodes with these labels (technologies, dependencies)."""
+        names: set[str] = set()
+        for label in labels:
+            if not re.fullmatch(r"[A-Za-z]+", label):
+                continue
+            try:
+                rows = graph_manager.query(f"MATCH (n:Graph:{label}) WHERE n.active = true RETURN properties(n) AS props")
+            except Exception as e:
+                self.logger.warning("Reserved names of %s unavailable: %s", label, e)
+                continue
+            for row in rows:
+                props = row.get("props") or {}
+                name = props.get("techName") or props.get("dependencyName") or props.get("name")
+                if name:
+                    names.add(str(name))
+        return names
+
     def _apply_naming(
         self,
         element_data: dict[str, Any],
@@ -1164,6 +1207,7 @@ class ElementDerivationBase(ABC):
         repo_name: str,
         taken: list[str],
         structure_names: dict[str, str],
+        reserved: set[str] | None = None,
     ) -> None:
         """Name an element with the isolated naming step, in place.
 
@@ -1198,6 +1242,17 @@ class ElementDerivationBase(ABC):
         # Words the source spells with capitals keep its spelling, so casing never differs between runs
         if name:
             name = source_casing(name, candidate.name)
+        # Structural guards (params.naming.guards): a technology's name falls back to structure, a generic one gets the product name
+        if name:
+            product = str(candidate.properties.get("manifestName") or repo_name or "")
+            name = guard_name(
+                name,
+                structure_name=element_data["name"],
+                kind=str(candidate.properties.get("unitKind") or ""),
+                product=" ".join(w.capitalize() for w in re.findall(r"[A-Za-z0-9]+", product)),
+                reserved=reserved or set(),
+                guards=naming.guards,
+            )
         blocked = {_display_key(n) for n in taken} | {key for node_id, key in structure_names.items() if node_id != candidate.node_id}
         if name and name != element_data["name"] and _display_key(name) not in blocked:
             element_data["properties"]["structure_name"] = element_data["name"]

@@ -3123,6 +3123,14 @@ class TestUnitConfigs:
                 json.dumps({"roles": {**base, "element_per": "candidate", "name_template": "{subject}", "unit_roles": [{"property": "webEntries", "role": "web"}]}})
             )
 
+    def test_name_match_skip_pairs_are_read_from_the_relationship_row(self):
+        row = SimpleNamespace(params=json.dumps({"name_match_skip": [{"source": "ApplicationInterface", "target": "ApplicationService"}]}))
+
+        assert derivation._name_match_skip([row]) == {("ApplicationInterface", "ApplicationService")}
+        assert derivation._name_match_skip([]) == set()
+        with pytest.raises(ValueError, match="name_match_skip"):
+            derivation._name_match_skip([SimpleNamespace(params=json.dumps({"name_match_skip": [{"source": "ApplicationInterface"}]}))])
+
     def test_naming_guards_are_read_from_the_naming_params(self):
         guards = {"generic_words": ["App", "cli"], "kind_nouns": {"container": "Server", "*": "Application"}, "reserved_labels": ["Technology", "ExternalDependency"]}
 

@@ -129,3 +129,31 @@ def test_a_unit_inside_another_units_folder_is_not_its_part():
     rule = ContainmentRule(container="ApplicationComponent", contained="ApplicationComponent", relationship="Composition")
 
     assert derive_containment_relationships([core, module], {"unit::r::app::online": "r/app", "unit::r::app_mod": "r/app/mod"}, [rule], scopes=scopes) == []
+
+
+def test_without_the_interface_service_name_rule_the_listed_assignment_stays():
+    """The consolidated pass skips the configured name-match pairs; the service's interface list still assigns."""
+    from unittest.mock import MagicMock
+
+    from deriva.modules.derivation.base import ListedMembersRule, RelationshipRule, derive_consolidated_relationships
+
+    elements = [
+        {
+            "identifier": "ai_pay",
+            "name": "Payment REST API",
+            "element_type": "ApplicationInterface",
+            "properties": {"source": "unit::r::pay", "structure_name": "Payment REST API"},
+        },
+        {
+            "identifier": "as_pay",
+            "name": "Payment Handling",
+            "element_type": "ApplicationService",
+            "properties": {"source": "typedef::r::a", "structure_name": "PaymentRest", "interfaces": ["ai_pay"]},
+        },
+    ]
+    rules = {"ApplicationService": ([], [RelationshipRule(target_type="ApplicationInterface", rel_type="Serving")])}
+    listed = [ListedMembersRule(holder="ApplicationService", list_property="interfaces", member="ApplicationInterface", relationship="Assignment", by="identifier")]
+
+    result = derive_consolidated_relationships(elements, rules, MagicMock(), listed_members=listed, name_match_skip={("ApplicationInterface", "ApplicationService")})
+
+    assert [(r["source"], r["relationship_type"], r["target"]) for r in result] == [("ai_pay", "Assignment", "as_pay")]

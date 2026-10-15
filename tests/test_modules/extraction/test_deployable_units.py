@@ -215,3 +215,10 @@ def test_the_first_heading_of_the_units_readme_is_its_readme_title():
     units = _units(files, documents=documents)
 
     assert units["r/shop"].readme_title == "Storefront Service"
+
+
+def test_a_readme_title_drops_markdown_images_and_keeps_link_text():
+    files = [_file("r/shop/Dockerfile"), _file("r/shop/src/App.java", "java")]
+    documents = {"r/shop/README.md": "# ![Logo](../img/logo.png) Demo: [Storefront](docs/x.md) **Service**\n"}
+
+    assert _units(files, documents=documents)["r/shop"].readme_title == "Demo: Storefront Service"

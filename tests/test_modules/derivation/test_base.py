@@ -2233,6 +2233,23 @@ class TestDeriveDeterministicRelationships:
 
         assert [(r["source"], r["target"], r["relationship_type"]) for r in result] == [("ai_pay", "as_pay", "Serving")]
 
+    def test_a_skipped_type_pair_gets_no_name_match_link(self):
+        """params.name_match_skip: interface -> service is decided by the service's member list, never by words."""
+        from deriva.modules.derivation.base import RelationshipRule, derive_deterministic_relationships
+
+        service = {"identifier": "as_pay", "name": "Settlement", "properties": {"structure_name": "Payment Gateway", "source": "typedef::r::a"}}
+        interface = {
+            "identifier": "ai_pay",
+            "name": "Checkout Web UI",
+            "element_type": "ApplicationInterface",
+            "properties": {"structure_name": "Payment Gateway REST API", "source": "unit::r::pay"},
+        }
+        rules = [RelationshipRule(target_type="ApplicationInterface", rel_type="Serving")]  # inbound: the source type
+
+        result = derive_deterministic_relationships([service], [interface], "ApplicationService", [], rules, skip={("ApplicationInterface", "ApplicationService")})
+
+        assert result == []
+
     def test_an_element_without_a_structure_name_matches_on_its_name(self):
         from deriva.modules.derivation.base import RelationshipRule, derive_deterministic_relationships
 
@@ -2351,6 +2368,25 @@ class TestIsolatedNaming:
         )
 
         assert naming_source(cand) == {"kind": "Method", "name": "run", "path": "r/a.py", "type": "X"}
+
+    def test_a_units_readme_title_is_naming_evidence(self):
+        from deriva.modules.derivation.base import Candidate, naming_source
+
+        cand = Candidate(
+            node_id="unit::r::shop",
+            name="shop",
+            labels=["Graph", "DeployableUnit"],
+            properties={"path": "r/shop", "unitKind": "container", "manifestName": "shop-app", "readmeTitle": "Storefront Service", "webEntries": ["r/shop/index.html"]},
+        )
+
+        assert naming_source(cand) == {
+            "kind": "DeployableUnit",
+            "name": "shop",
+            "path": "r/shop",
+            "unit_kind": "container",
+            "manifest_name": "shop-app",
+            "readme_title": "Storefront Service",
+        }
 
     def test_prompt_depends_only_on_source_type_and_instruction(self):
         from deriva.modules.derivation.base import build_naming_prompt

@@ -63,6 +63,7 @@ from deriva.modules.derivation.base import (
     ListedMembersRule,
     MembershipRule,
     NamedInCodeRule,
+    NameGuards,
     NamingConfig,
     NestedFilter,
     PerCandidateConfig,
@@ -210,6 +211,11 @@ def _structural_items(configs: list[Any], key: str, fields: tuple[str, ...]) -> 
         if not isinstance(item, dict) or not all(isinstance(item.get(k), str) and item.get(k) for k in fields):
             raise ValueError(f"params.{key} rules need {', '.join(fields)}, got {item!r}")
     return settings
+
+
+def _name_match_skip(configs: list[Any]) -> set[tuple[str, str]]:
+    """(source type, target type) pairs the name-matching tier never links (``params.name_match_skip``)."""
+    return {(item["source"], item["target"]) for item in _structural_items(configs, "name_match_skip", ("source", "target"))}
 
 
 def _check_rule(key: str, item: dict[str, str], source: str, relationship: str, target: str) -> None:
@@ -515,7 +521,23 @@ def _naming_config(params: str | None) -> NamingConfig | None:
         return None
     if not settings.get("instruction"):
         raise ValueError("params.naming needs an instruction")
-    return NamingConfig(instruction=settings["instruction"], samples=int(settings.get("samples", 1)))
+    guards = settings.get("guards", {})
+    words, nouns, labels = guards.get("generic_words", []), guards.get("kind_nouns", {}), guards.get("reserved_labels", [])
+    if (
+        not isinstance(guards, dict)
+        or not isinstance(words, list)
+        or not all(isinstance(w, str) and w for w in words)
+        or not isinstance(nouns, dict)
+        or not all(isinstance(k, str) and isinstance(v, str) and v for k, v in nouns.items())
+        or not isinstance(labels, list)
+        or not all(isinstance(label, str) and label for label in labels)
+    ):
+        raise ValueError("params.naming.guards: generic_words and reserved_labels are lists of strings, kind_nouns maps a unit kind to a noun")
+    return NamingConfig(
+        instruction=settings["instruction"],
+        samples=int(settings.get("samples", 1)),
+        guards=NameGuards(generic_words=frozenset(w.lower() for w in words), kind_nouns=dict(nouns), reserved_labels=tuple(labels)),
+    )
 
 
 def _element_prompt(params: str | None) -> ElementPrompt | None:
@@ -577,7 +599,15 @@ def _role_config(params: str | None) -> RoleConfig | None:
             re.compile(rule["pattern"])
         except re.error as exc:
             raise ValueError(f"params.roles.structural pattern {rule['pattern']!r} is no valid pattern: {exc}") from exc
+    unit_roles = settings.get("unit_roles", [])
+    if not isinstance(unit_roles, list) or not all(
+        isinstance(rule, dict) and all(isinstance(rule.get(k), str) and rule.get(k) for k in ("property", "role")) and rule["role"] in settings["names"] for rule in unit_roles
+    ):
+        raise ValueError(f"params.roles.unit_roles rules need a unit property and a role key of names, got {unit_roles!r}")
+    if unit_roles and element_per != "unit":
+        raise ValueError("params.roles.unit_roles are roles a deployable unit shows itself: they need element_per 'unit'")
     return RoleConfig(
+        unit_roles=tuple((rule["property"], rule["role"]) for rule in unit_roles),
         structural=tuple((rule["property"], rule["pattern"], rule["role"]) for rule in structural),
         labels=frozenset(settings.get("labels") or []),
         instruction=settings.get("instruction") or "",
@@ -1323,6 +1353,7 @@ def run_derivation(
                 named_in_code=_named_in_code_rules(relationship_configs),
                 listed_members=_listed_members_rules(relationship_configs),
                 graph_links=_graph_link_rules(relationship_configs),
+                name_match_skip=_name_match_skip(relationship_configs),
             )
 
             # Persist relationships to archimate model with graph metadata for stability analysis
@@ -1745,6 +1776,7 @@ def run_derivation_iter(
                 named_in_code=_named_in_code_rules(relationship_configs),
                 listed_members=_listed_members_rules(relationship_configs),
                 graph_links=_graph_link_rules(relationship_configs),
+                name_match_skip=_name_match_skip(relationship_configs),
             )
 
             # Persist relationships to archimate model

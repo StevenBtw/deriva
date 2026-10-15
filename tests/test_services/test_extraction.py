@@ -2372,6 +2372,32 @@ class TestDeployableUnitStep:
         # Without the Dockerfile there is no container unit: the repository is the unit
         assert [u["id"] for u in graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id")] == ["unit::r::r"]
 
+    def test_web_entries_and_the_readme_title_are_written_on_the_unit(self, graph):
+        files = {
+            "pyproject.toml": ("config", None, '[project]\nname = "shop"\n[project.scripts]\nshop = "app.main:run"\n'),
+            "app/main.py": ("source", "python", "def run(): pass\n"),
+            "app/templates/home.html": ("config", None, "<html></html>\n"),
+            "README.md": ("docs", None, "# Shop Platform\n"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, files)
+
+        (unit,) = graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.webEntries AS web, u.readmeTitle AS title")
+        assert list(unit["web"]) == ["r/app/templates/home.html"] and unit["title"] == "Shop Platform"
+        # A script unit's members are its import closure; its pages hang below it too
+        members = graph.query("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) RETURN f.filePath AS path ORDER BY path")
+        assert [m["path"] for m in members] == ["r/app/main.py", "r/app/templates/home.html"]
+
+    def test_the_web_signals_come_from_the_params(self, graph):
+        files = {"shop/Dockerfile": ("config", None, "FROM base\n"), "shop/Shop.java": ("source", "java", "class Shop {}\n"), "shop/web/start.page": ("config", None, "x\n")}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, files, params={"code_subtypes": ["java"], "web_ui": {"files": ["*.page"]}})
+
+        (unit,) = graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.webEntries AS web")
+        assert list(unit["web"]) == ["r/shop/web/start.page"]
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="web_ui"):
+            self._run(graph, tmpdir, {}, params={"code_subtypes": ["java"], "web_ui": {"files": "*.page"}})
+
     def test_the_rules_need_code_subtypes(self, graph):
         with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="code_subtypes"):
             self._run(graph, tmpdir, {}, params={"container_files": ["Dockerfile"]})

@@ -29,6 +29,11 @@ class UnitRules:
     code_subtypes: frozenset[str]  # File subtypes that count as the repository's own code
     container_files: tuple[str, ...] = ("Dockerfile", "Dockerfile.*", "*.Dockerfile")  # Case-insensitive patterns
     readme_lines: int = 8  # Documentation lines kept per unit as naming evidence
+    # Web UI signals: page entries and server pages by file name, html-like files inside a template folder
+    web_files: tuple[str, ...] = ("index.html", "*.jsp", "*.jspx", "*.cshtml", "*.erb")  # Case-insensitive patterns
+    web_template_dirs: tuple[str, ...] = ("templates", "views")
+    web_template_suffixes: tuple[str, ...] = (".html", ".htm", ".jinja", ".jinja2", ".j2", ".ftl", ".mustache", ".hbs", ".twig")
+    web_excluded_dirs: tuple[str, ...] = ("node_modules", "build", "dist", "target", "test", "tests", "__tests__")
 
 
 @dataclass
@@ -61,6 +66,8 @@ class Unit:
     manifest_description: str | None = None
     module: str | None = None
     readme_lines: list[str] = field(default_factory=list)
+    readme_title: str | None = None  # First heading of the README in the unit's folder
+    web_entries: list[str] = field(default_factory=list)  # Files that serve pages (Web UI signals), sorted
 
 
 def unit_id(repository: str, unit: Unit) -> str:
@@ -235,6 +242,36 @@ def _readme_lines(unit: Unit, documents: dict[str, str], limit: int) -> list[str
     return list(dict.fromkeys(lines))[:limit]
 
 
+def _readme_title(unit: Unit, documents: dict[str, str]) -> str | None:
+    """The first Markdown heading of a README in the unit's own folder."""
+    for path in sorted(p for p in documents if _parent(p) == unit.path and PurePosixPath(p).name.lower().startswith("readme")):
+        for line in documents[path].splitlines():
+            if match := re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line):
+                # Plain text: images dropped, links as their text, emphasis marks removed
+                text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", match.group(1))
+                text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+                text = " ".join(re.sub(r"[*_`]+", "", text).split())
+                if text:
+                    return text
+    return None
+
+
+def _web_entries(unit: Unit, paths: set[str], nested: list[str], rules: UnitRules) -> list[str]:
+    """The files in the unit's folder (outside nested units and build, dependency or test folders) that serve pages."""
+    names = [n.lower() for n in rules.web_files]
+    entries = []
+    for path in paths:
+        if not _below(path, unit.path) or any(_below(path, other) for other in nested):
+            continue
+        parts = [part.lower() for part in PurePosixPath(path[len(unit.path) :]).parts[:-1]]
+        if any(part in rules.web_excluded_dirs for part in parts):
+            continue
+        name = PurePosixPath(path).name.lower()
+        if any(fnmatch.fnmatchcase(name, n) for n in names) or (any(part in rules.web_template_dirs for part in parts) and name.endswith(rules.web_template_suffixes)):
+            entries.append(path)
+    return sorted(entries)
+
+
 def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
     """The repository's deployable units, ordered by path and entry."""
     paths = {f["path"] for f in facts.files}
@@ -282,6 +319,9 @@ def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
     units = sorted([*folder_units.values(), *script_units, *_mainframe_units(facts, imports)], key=lambda u: (u.path, u.entry or "", u.kind))
     if not units:
         units = [Unit(path=facts.repository, name=facts.repository, kind="repository", evidence=["no deployable unit found: the repository"], members=set(paths))]
+    folders = sorted({u.path for u in units})
     for unit in units:
         unit.readme_lines = _readme_lines(unit, facts.documents, rules.readme_lines)
+        unit.readme_title = _readme_title(unit, facts.documents)
+        unit.web_entries = _web_entries(unit, paths, [f for f in folders if f != unit.path and _below(f, unit.path)], rules)
     return units

@@ -477,7 +477,8 @@ UNIT_MANIFESTS = frozenset({"pyproject.toml", "package.json", "pom.xml", "build.
 
 
 def _unit_rules(params: str | None) -> deployable_units.UnitRules:
-    """The DeployableUnit step's rules (``params``): ``code_subtypes``, ``container_files``, ``readme_lines``."""
+    """The DeployableUnit step's rules (``params``): ``code_subtypes``, ``container_files``, ``readme_lines`` and the
+    Web UI signals ``web_ui`` (``files``, ``template_dirs``, ``template_suffixes``, ``excluded_dirs``: lists of strings)."""
     settings = json.loads(params) if params else {}
     subtypes = settings.get("code_subtypes")
     if not isinstance(subtypes, list) or not subtypes or not all(isinstance(s, str) and s for s in subtypes):
@@ -487,7 +488,12 @@ def _unit_rules(params: str | None) -> deployable_units.UnitRules:
     lines = settings.get("readme_lines", defaults.readme_lines)
     if not isinstance(containers, list) or not all(isinstance(c, str) and c for c in containers) or not isinstance(lines, int) or isinstance(lines, bool) or lines < 0:
         raise ValueError("DeployableUnit params: container_files is a list of file name patterns, readme_lines a whole number of at least 0")
-    return deployable_units.UnitRules(code_subtypes=frozenset(subtypes), container_files=tuple(containers), readme_lines=lines)
+    web = settings.get("web_ui", {})
+    keys = {"files": "web_files", "template_dirs": "web_template_dirs", "template_suffixes": "web_template_suffixes", "excluded_dirs": "web_excluded_dirs"}
+    if not isinstance(web, dict) or set(web) - set(keys) or not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in web.values()):
+        raise ValueError(f"DeployableUnit params: web_ui holds lists of strings under {sorted(keys)}")
+    signals = {field: tuple(x.lower() for x in web[key]) for key, field in keys.items() if key in web}
+    return deployable_units.UnitRules(code_subtypes=frozenset(subtypes), container_files=tuple(containers), readme_lines=lines, **signals)
 
 
 def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 200_000) -> str | None:
@@ -561,12 +567,14 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
                 manifest_description=unit.manifest_description,
                 module=unit.module,
                 readme_lines=unit.readme_lines,
+                readme_title=unit.readme_title,
+                web_entries=unit.web_entries,
                 member_count=len(unit.members),
             ),
             node_id=node_id,
         )
         nodes += 1
-        for target in sorted({file_ids[p] for p in unit.members if p in file_ids} | unit.nodes):
+        for target in sorted({file_ids[p] for p in unit.members | set(unit.web_entries) if p in file_ids} | unit.nodes):
             graph_manager.add_edge(node_id, target, INCLUDES)
             edges += 1
     return {"nodes_created": nodes, "edges_created": edges, "errors": []}

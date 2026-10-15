@@ -517,6 +517,8 @@ class DeployableUnitNode:
     manifest_description: str | None = None
     module: str | None = None
     readme_lines: list[str] = field(default_factory=list)
+    readme_title: str | None = None
+    web_entries: list[str] = field(default_factory=list)  # Files that serve pages (Web UI signals)
     member_count: int = 0
 
     def generate_id(self) -> str:
@@ -535,6 +537,8 @@ class DeployableUnitNode:
             "manifestDescription": self.manifest_description,
             "module": self.module,
             "readmeLines": list(self.readme_lines),
+            "readmeTitle": self.readme_title,
+            "webEntries": list(self.web_entries),
             "memberCount": self.member_count,
             "type": "DeployableUnit",
         }

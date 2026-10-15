@@ -1329,6 +1329,7 @@ def derive_deterministic_relationships(
     element_type: str,
     outbound_rules: list[RelationshipRule],
     inbound_rules: list[RelationshipRule],
+    skip: set[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships deterministically from rules without LLM.
@@ -1363,8 +1364,10 @@ def derive_deterministic_relationships(
         if not new_id or not new_name:
             continue
 
-        # Process OUTBOUND rules (FROM new TO existing)
+        # Process OUTBOUND rules (FROM new TO existing); configured pairs are never linked by words (params.name_match_skip)
         for rule in outbound_rules:
+            if skip and (element_type, rule.target_type) in skip:
+                continue
             # Validate rule against ArchiMate metamodel
             is_valid, msg = validate_relationship_rule(element_type, rule.rel_type, rule.target_type)
             if not is_valid:
@@ -1413,6 +1416,8 @@ def derive_deterministic_relationships(
 
         # Process INBOUND rules (FROM existing TO new)
         for rule in inbound_rules:
+            if skip and (rule.target_type, element_type) in skip:
+                continue
             # Validate rule against ArchiMate metamodel
             # For INBOUND: source=rule.target_type, target=element_type
             is_valid, msg = validate_relationship_rule(rule.target_type, rule.rel_type, element_type)
@@ -2087,6 +2092,36 @@ def structure_element_name(source_id: str, source_name: str, repo_name: str = ""
 
 
 @dataclass(frozen=True)
+class NameGuards:
+    """Structural checks on a naming call's answer (``params.naming.guards``); empty: the answer is kept.
+
+    An answer that names a technology (``reserved_labels``: graph node labels whose names are taken)
+    gets the structure name, and a structure name that collides as well gets the noun of its unit
+    kind (``kind_nouns``, ``"*"`` for any other kind). An answer made only of ``generic_words`` gets
+    the product name in front.
+    """
+
+    generic_words: frozenset[str] = frozenset()
+    kind_nouns: dict[str, str] = field(default_factory=dict)
+    reserved_labels: tuple[str, ...] = ()
+
+
+def guard_name(name: str, *, structure_name: str, kind: str, product: str, reserved: set[str], guards: NameGuards) -> str:
+    """The name after the structural guards: a taken name falls back to structure, a generic one gets the product name."""
+    if not (guards.generic_words or guards.kind_nouns or guards.reserved_labels):
+        return name
+    taken = {name_key(r) for r in reserved}
+    if name_key(name) in taken:
+        name = structure_name
+        if name_key(name) in taken:
+            name = f"{name} {guards.kind_nouns.get(kind) or guards.kind_nouns.get('*', '')}".strip()
+    words = [w.lower() for w in re.findall(r"[A-Za-z0-9]+", name)]
+    if guards.generic_words and words and all(w in guards.generic_words for w in words) and product and name_key(product) not in {name_key(w) for w in words}:
+        name = f"{product} {name}"
+    return name
+
+
+@dataclass(frozen=True)
 class NamingConfig:
     """Isolated naming step for an element type (element config ``params.naming``).
 
@@ -2097,6 +2132,7 @@ class NamingConfig:
 
     instruction: str  # Naming convention for the element type
     samples: int = 1  # Answers per element; above 1 they are combined by majority (voting, reported per session)
+    guards: NameGuards = field(default_factory=NameGuards)  # Structural checks on the answer (unit names)
 
 
 # Structural source fields that are the same in every run (no LLM-written text)
@@ -2112,6 +2148,7 @@ _NAMING_FIELDS = (
     ("module", "module"),
     ("manifestName", "manifest_name"),
     ("manifestDescription", "manifest_description"),
+    ("readmeTitle", "readme_title"),
     ("readmeLines", "documentation"),
 )
 
@@ -2222,6 +2259,9 @@ class RoleConfig:
     structural: tuple[tuple[str, str, str], ...] = ()
     # A candidate with a structural role keeps its own name as written: no template, no naming call
     structural_as_written: bool = False
+    # element_per "unit" only: roles a deployable unit shows itself, (unit property, role key). A unit whose
+    # property lists files (such as webEntries) gets that role's element with those files as members, no call
+    unit_roles: tuple[tuple[str, str], ...] = ()
 
 
 ROLE_SCHEMA: dict[str, Any] = {
@@ -2606,6 +2646,7 @@ def derive_batch_relationships(
     llm_config: RelationshipLLMConfig | None = None,
     decided: dict[tuple[str, str], tuple[str, str, set[str], set[str] | None]] | None = None,
     owner_pairs: set[frozenset[str]] | None = None,
+    name_match_skip: set[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for a batch of newly created elements.
@@ -2766,6 +2807,7 @@ def derive_batch_relationships(
         element_type=element_type,
         outbound_rules=outbound_rules,
         inbound_rules=inbound_rules,
+        skip=name_match_skip,
     )
     for rel in kept(deterministic_rels):
         key = (rel["source"], rel["target"], rel["relationship_type"])
@@ -3432,6 +3474,7 @@ def derive_consolidated_relationships(
     named_in_code: list[NamedInCodeRule] | None = None,
     listed_members: list[ListedMembersRule] | None = None,
     graph_links: list[GraphLinkRule] | None = None,
+    name_match_skip: set[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for all elements in a single consolidated pass.
@@ -3573,6 +3616,7 @@ def derive_consolidated_relationships(
             llm_config=llm_config,
             decided=decided,
             owner_pairs=owner_pairs,
+            name_match_skip=name_match_skip,
         )
 
         all_relationships.extend(relationships)
