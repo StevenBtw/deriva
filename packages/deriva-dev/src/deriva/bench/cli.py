@@ -290,6 +290,26 @@ def benchmark_list(
         typer.echo("")
 
 
+@app.command("conventions")
+def benchmark_conventions(
+    session_ids: Annotated[list[str], typer.Argument(help="Benchmark sessions whose run snapshots are checked")],
+    output: Annotated[str | None, typer.Option("-o", "--output", help="Output folder (default: workspace/analysis/conventions/<first session>)")] = None,
+    run: Annotated[int | None, typer.Option("--run", help="Check only this run number (default: every run)")] = None,
+) -> None:
+    """ArchiMate convention checklist: a review page per repository, a summary and a JSON with the findings."""
+    from deriva.bench.conventions_report import write_reports
+
+    out = output or str(workspace() / "analysis" / "conventions" / session_ids[0])
+    try:
+        payload = write_reports(list(session_ids), out, run=run)
+    except FileNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Checked {len(payload['results'])} repositories; summary: {out}/summary.md")
+    for name, page in payload["pages"].items():
+        typer.echo(f"  {name}: {page}")
+
+
 @app.command("analyze")
 def benchmark_analyze(
     session_id: Annotated[str, typer.Argument(help="Benchmark session ID to analyze")],

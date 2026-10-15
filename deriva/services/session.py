@@ -1061,6 +1061,12 @@ class PipelineSession:
             example=example,
         )
 
+    def add_extraction_step(self, node_type: str, sequence: int, extraction_method: str = "structural", params: str | None = None) -> bool:
+        """Add a new extraction step (disabled, version 1)."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.add_extraction_step(self._engine, node_type, sequence, extraction_method=extraction_method, params=params)
+
     def add_derivation_step(self, step_name: str, phase: str, sequence: int, params: str | None = None) -> bool:
         """Add a new derivation step (disabled, version 1)."""
         self._ensure_connected()

@@ -37,6 +37,7 @@ from deriva.common.settings import GraphSettings
 
 from .models import (
     BusinessConceptNode,
+    DeployableUnitNode,
     DirectoryNode,
     ExternalDependencyNode,
     FileNode,
@@ -62,6 +63,7 @@ GraphNode = (
     | TestNode
     | ServiceNode
     | ExternalDependencyNode
+    | DeployableUnitNode
 )
 
 logger = logging.getLogger(__name__)

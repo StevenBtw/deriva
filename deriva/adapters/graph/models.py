@@ -26,6 +26,8 @@ __all__ = [
     "TestNode",
     "ServiceNode",
     "ExternalDependencyNode",
+    "DeployableUnitNode",
+    "INCLUDES",
 ]
 
 
@@ -493,7 +495,50 @@ class ExternalDependencyNode:
         }
 
 
+@dataclass
+class DeployableUnitNode:
+    """A deployable unit: what runs on its own (a container, a declared entry point, a mainframe application).
+
+    Its members (files, and for mainframe units programs and screens) hang below it by ``INCLUDES``
+    edges; the structural evidence and the naming evidence (manifest name and description, the
+    documentation lines that name it, the mainframe module) are properties.
+    """
+
+    name: str
+    path: str
+    unit_kind: str  # container, script, start, bin, war, spring-boot, application, online, batch, module, repository
+    repository_name: str
+    evidence: list[str] = field(default_factory=list)
+    entry: str | None = None
+    manifest_name: str | None = None
+    manifest_description: str | None = None
+    module: str | None = None
+    readme_lines: list[str] = field(default_factory=list)
+    member_count: int = 0
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"DeployableUnit_{self.path}_{self.entry or self.unit_kind}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "path": self.path,
+            "unitKind": self.unit_kind,
+            "evidence": list(self.evidence),
+            "entry": self.entry,
+            "manifestName": self.manifest_name,
+            "manifestDescription": self.manifest_description,
+            "module": self.module,
+            "readmeLines": list(self.readme_lines),
+            "memberCount": self.member_count,
+            "type": "DeployableUnit",
+        }
+
+
 # Relationship types
+INCLUDES = "INCLUDES"  # For deployableunit->file (and ->program/screen type) membership
 CONTAINS = "CONTAINS"  # For repository->module, repository->directory, directory->file, module->file relationships
 DEPENDS_ON = "DEPENDS_ON"  # For module->module, file->file, service->service dependencies
 REFERENCES = "REFERENCES"  # For file->businessconcept relationships

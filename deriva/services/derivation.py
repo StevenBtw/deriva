@@ -73,6 +73,7 @@ from deriva.modules.derivation.base import (
     code_names_with_paths,
     derive_consolidated_relationships,
     element_source_paths,
+    file_imports,
     get_enrichments_from_graph,
     graph_link_pairs,
     source_concept_names,
@@ -84,7 +85,7 @@ from deriva.modules.derivation.business_function import BusinessFunctionDerivati
 # Derivation class imports
 from deriva.modules.derivation.business_object import BusinessObjectDerivation
 from deriva.modules.derivation.business_process import BusinessProcessDerivation
-from deriva.modules.derivation.component_services import ComponentServicesConfig, derive_component_services
+from deriva.modules.derivation.component_services import ComponentServicesConfig, derive_component_services, derive_member_services
 from deriva.modules.derivation.data_object import DataObjectDerivation
 from deriva.modules.derivation.device import DeviceDerivation
 from deriva.modules.derivation.element_base import ElementDerivationBase
@@ -368,7 +369,20 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
     for key in ("interface_links", "object_links"):
         if not isinstance(settings.get(key, []), list) or not all(isinstance(q, str) and q for q in settings.get(key, [])):
             raise ValueError(f"params.component_services.{key} must be a list of graph queries")
+    ubiquity = settings.get("ubiquity", defaults.ubiquity)
+    if not isinstance(ubiquity, (int, float)) or isinstance(ubiquity, bool) or not 0 < ubiquity <= 1:
+        raise ValueError("params.component_services: ubiquity is a number above 0 and at most 1")
+    group_by = settings.get("group_by", defaults.group_by)
+    member_min_names, max_groups = settings.get("member_min_names", defaults.member_min_names), settings.get("max_groups", defaults.max_groups)
+    if group_by not in ("components", "members"):
+        raise ValueError(f"params.component_services.group_by is 'components' or 'members', not {group_by!r}")
+    if not all(isinstance(n, int) and not isinstance(n, bool) and n >= minimum for n, minimum in ((member_min_names, 1), (max_groups, 0))):
+        raise ValueError("params.component_services: member_min_names is a whole number of at least 1, max_groups of at least 0")
     return ComponentServicesConfig(
+        group_by=group_by,
+        ubiquity=float(ubiquity),
+        member_min_names=member_min_names,
+        max_groups=max_groups,
         min_names=min_names,
         share=float(share),
         overlap=float(overlap),
@@ -403,6 +417,27 @@ def _component_services_step(
     elements: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Derive and store the services the components offer; the result has the shape of ``generate_element``'s."""
+    interface_links = [pair for query in config.interface_links for pair in graph_link_pairs(graph_manager, query)]
+    object_links = [pair for query in config.object_links for pair in graph_link_pairs(graph_manager, query)]
+    if config.group_by == "members":
+        # The paths of the interfaces' members, of the nodes linked to them and of the objects' sources
+        nodes = {str(m.get("source")) for e in elements for m in (e.get("properties") or {}).get("members") or [] if m.get("source")}
+        nodes |= {a for a, _ in interface_links} | {a for a, _ in object_links}
+        nodes |= {src for e in elements if (src := (e.get("properties") or {}).get("source"))}
+        services = derive_member_services(
+            elements,
+            element_source_paths(graph_manager, [{"properties": {"source": n}} for n in sorted(nodes)]),
+            file_imports(graph_manager),
+            code_names_with_paths(graph_manager),
+            _documentation_files(graph_manager),
+            config,
+            instruction,
+            llm_query_fn,
+            source_concept_names(graph_manager, elements),
+            member_links=interface_links,
+            object_links=object_links,
+        )
+        return _stored_services(services, archimate_manager)
     services = derive_component_services(
         elements,
         element_source_paths(graph_manager, elements),
@@ -412,9 +447,14 @@ def _component_services_step(
         instruction,
         llm_query_fn,
         source_concept_names(graph_manager, elements),
-        interface_links=[pair for query in config.interface_links for pair in graph_link_pairs(graph_manager, query)],
-        object_links=[pair for query in config.object_links for pair in graph_link_pairs(graph_manager, query)],
+        interface_links=interface_links,
+        object_links=object_links,
     )
+    return _stored_services(services, archimate_manager)
+
+
+def _stored_services(services: list[dict[str, Any]], archimate_manager: ArchimateManager) -> dict[str, Any]:
+    """Store the derived services; the result has the shape of ``generate_element``'s."""
     errors: list[str] = []
     created: list[dict[str, Any]] = []
     for service in services:
@@ -510,15 +550,17 @@ def _role_config(params: str | None) -> RoleConfig | None:
     if not settings.get("names") or not (classified or settings.get("structural")) or bool(settings.get("labels")) != bool(settings.get("instruction")):
         raise ValueError("params.roles needs names and either labels with an instruction (classified roles) or structural rules")
     element_per = settings.get("element_per", "role")
-    if element_per not in ("role", "candidate"):
-        raise ValueError(f"params.roles.element_per must be 'role' or 'candidate', not {element_per!r}")
+    if element_per not in ("role", "candidate", "unit"):
+        raise ValueError(f"params.roles.element_per must be 'role', 'candidate' or 'unit', not {element_per!r}")
+    if element_per == "unit" and (not settings.get("container_type") or "{container}" not in str(settings.get("name_template", ""))):
+        raise ValueError("params.roles.element_per 'unit' names one element per deployable unit and role: it needs a container_type and a name_template with {container}")
     name_template = settings.get("name_template", "")
     container_type = settings.get("container_type", "")
     show_path = settings.get("show_path", False)
     if not isinstance(name_template, str) or not isinstance(container_type, str) or not isinstance(show_path, bool):
         raise ValueError("params.roles name_template and container_type must be text, show_path true or false")
-    if name_template and element_per != "candidate":
-        raise ValueError("params.roles.name_template names one element per candidate: it needs element_per 'candidate'")
+    if name_template and element_per not in ("candidate", "unit"):
+        raise ValueError("params.roles.name_template names one element per candidate or per unit: it needs element_per 'candidate' or 'unit'")
     naming_call, structural_as_written = settings.get("naming_call", False), settings.get("structural_as_written", False)
     if not isinstance(naming_call, bool) or not isinstance(structural_as_written, bool):
         raise ValueError(f"params.roles naming_call and structural_as_written must be true or false, got {naming_call!r} and {structural_as_written!r}")

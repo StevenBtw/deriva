@@ -1232,3 +1232,30 @@ class TestBenchmarkMarkFailed:
 
         assert result.exit_code == 1
         assert "completed, not running" in result.output
+
+
+def test_conventions_writes_a_review_per_repository_and_a_summary(tmp_path, monkeypatch):
+    """The command reads the run snapshots of a session and writes the checklist views."""
+    import json as _json
+
+    from typer.testing import CliRunner as _Runner
+
+    from deriva.bench import conventions_report
+    from deriva.bench.cli import app as bench_app
+
+    models = tmp_path / "benchmarks" / "bench_1" / "models"
+    models.mkdir(parents=True)
+    snapshot = {"elements": [{"identifier": "ac_shop", "type": "ApplicationComponent", "name": "Shop", "source": "dir::r::shop"}], "relationships": [], "disabled": []}
+    for n in (1, 2):
+        (models / f"shop_m_run{n}.json").write_text(_json.dumps(snapshot), encoding="utf-8")
+    (models / "other-repo_m_run1.json").write_text(_json.dumps(snapshot), encoding="utf-8")
+    real = conventions_report.write_reports
+    monkeypatch.setattr(conventions_report, "write_reports", lambda ids, out, run=None: real(ids, out, run=run, benchmarks_dir=tmp_path / "benchmarks"))
+
+    result = _Runner().invoke(bench_app, ["conventions", "bench_1", "-o", str(tmp_path / "out")])
+
+    assert result.exit_code == 0, result.output
+    review = (tmp_path / "out" / "shop_m.md").read_text(encoding="utf-8")
+    assert "| check | run1 | run2 | target |" in review and "| unconnected elements | fail 1 | fail 1 | 0 |" in review
+    summary = (tmp_path / "out" / "summary.md").read_text(encoding="utf-8")
+    assert "| shop |" in summary and "| other-repo |" in summary

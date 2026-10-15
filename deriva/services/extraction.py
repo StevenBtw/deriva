@@ -48,7 +48,9 @@ from deriva.common.types import ProgressUpdate
 if TYPE_CHECKING:
     from deriva.common.types import ProgressReporter, RunLoggerProtocol
 from deriva.adapters.graph.models import (
+    INCLUDES,
     BusinessConceptNode,
+    DeployableUnitNode,
     DirectoryNode,
     ExternalDependencyNode,
     FileNode,
@@ -66,7 +68,7 @@ from deriva.common.file_utils import read_file_with_encoding
 from deriva.common.naming import UNCOUNTABLE_WORDS, name_key
 from deriva.common.ocel import create_edge_id
 from deriva.modules import extraction
-from deriva.modules.extraction import classification, concept_candidates, technology_candidates
+from deriva.modules.extraction import classification, concept_candidates, deployable_units, technology_candidates
 from deriva.modules.extraction.base import deduplicate_nodes
 from deriva.modules.extraction.directory_classification import (
     classify_directories,
@@ -414,6 +416,9 @@ def _run_extraction_step(
     elif node_type == "Edges":
         # Unified edge extraction: all edge types in one efficient pass (4x faster)
         result = _extract_edges(repo, repo_path, classified_files, graph_manager)
+    elif node_type == "DeployableUnit":
+        # Deployable units from structure (containers, manifest entry points, mainframe applications); no LLM
+        result = _extract_deployable_units(cfg, repo, repo_path, graph_manager)
     elif node_type == "DirectoryClassification":
         if llm_query_fn is None:
             return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
@@ -464,6 +469,106 @@ def _run_extraction_step(
         return {"nodes_created": 0, "edges_created": 0, "errors": [f"Unknown node type: {node_type}"]}
 
     return result
+
+
+# Manifests the DeployableUnit step reads from the checkout
+UNIT_MANIFESTS = frozenset({"pyproject.toml", "package.json", "pom.xml", "build.gradle", "build.gradle.kts"})
+
+
+def _unit_rules(params: str | None) -> deployable_units.UnitRules:
+    """The DeployableUnit step's rules (``params``): ``code_subtypes``, ``container_files``, ``readme_lines``."""
+    settings = json.loads(params) if params else {}
+    subtypes = settings.get("code_subtypes")
+    if not isinstance(subtypes, list) or not subtypes or not all(isinstance(s, str) and s for s in subtypes):
+        raise ValueError("DeployableUnit params need code_subtypes: the file subtypes that count as the repository's own code")
+    defaults = deployable_units.UnitRules(code_subtypes=frozenset())
+    containers = settings.get("container_files", list(defaults.container_files))
+    lines = settings.get("readme_lines", defaults.readme_lines)
+    if not isinstance(containers, list) or not all(isinstance(c, str) and c for c in containers) or not isinstance(lines, int) or isinstance(lines, bool) or lines < 0:
+        raise ValueError("DeployableUnit params: container_files is a list of file name patterns, readme_lines a whole number of at least 0")
+    return deployable_units.UnitRules(code_subtypes=frozenset(subtypes), container_files=tuple(containers), readme_lines=lines)
+
+
+def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 200_000) -> str | None:
+    """A file's text from the checkout (graph paths start with the repository folder)."""
+    relative = path[len(repo_name) + 1 :] if path.startswith(repo_name + "/") else path
+    file = repo_path / relative
+    try:
+        if file.is_file() and file.stat().st_size <= max_bytes:
+            return file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return None
+
+
+def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
+    """Deployable unit nodes with INCLUDES edges to their members, from the graph and the manifests (no LLM)."""
+    rules = _unit_rules(cfg.params)
+    q = graph_manager.query
+    norm = lambda p: str(p or "").replace(chr(92), "/")  # noqa: E731 - a one-line helper
+    files = [
+        {"id": r["id"], "path": norm(r["path"]), "name": r["name"] or "", "file_type": r["file_type"], "subtype": r["subtype"]}
+        for r in q("MATCH (f:Graph:File) WHERE f.active = true RETURN f.id AS id, f.filePath AS path, f.fileName AS name, f.fileType AS file_type, f.subtype AS subtype")
+        if r.get("id") and r.get("path")
+    ]
+    manifests = {f["path"]: text for f in files if f["name"].lower() in UNIT_MANIFESTS and (text := _read_checkout(repo_path, repo.name, f["path"])) is not None}
+    documents = {f["path"]: text for f in files if f["file_type"] == "docs" and (text := _read_checkout(repo_path, repo.name, f["path"])) is not None}
+    imports = [(norm(r["a"]), norm(r["b"])) for r in q("MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(b:Graph:File) RETURN a.filePath AS a, b.filePath AS b")]
+    kinds = "MATCH (t:Graph:TypeDefinition) WHERE t.active = true AND t.category = $category RETURN t.id AS id, t.filePath AS path, t.typeName AS name, t.decorators AS decorators"
+    programs = [{**r, "path": norm(r["path"])} for r in q(kinds, {"category": "program"})]
+    screens = [{**r, "path": norm(r["path"])} for r in q(kinds, {"category": "screen"})]
+    job_files = {norm(r["path"]) for category in ("job", "procedure") for r in q(kinds, {"category": category})}
+    entry_calls = q(
+        "MATCH (a:Graph:Method)-[:`Graph:CALLS`]->(b:Graph:Method), (p:Graph:TypeDefinition) "
+        "WHERE p.category = 'program' AND b.filePath = p.filePath AND b.methodName = p.typeName RETURN DISTINCT a.filePath AS caller, p.id AS program"
+    )
+    program_of_file = {p["path"]: p["id"] for p in programs}
+    job_runs = [(norm(r["caller"]), r["program"]) for r in entry_calls if norm(r["caller"]) in job_files]
+    program_calls = [
+        (program_of_file[norm(r["caller"])], r["program"]) for r in entry_calls if norm(r["caller"]) in program_of_file and program_of_file[norm(r["caller"])] != r["program"]
+    ]
+
+    facts = deployable_units.RepoFacts(
+        repository=repo.name,
+        files=files,
+        manifests=manifests,
+        imports=imports,
+        programs=programs,
+        screens=screens,
+        job_runs=job_runs,
+        program_calls=program_calls,
+        documents=documents,
+    )
+    units = deployable_units.detect_units(facts, rules)
+
+    # The step's output replaces what an earlier run of it wrote
+    for row in q("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id"):
+        graph_manager.delete_node(row["id"])
+    file_ids = {f["path"]: f["id"] for f in files}
+    nodes = edges = 0
+    for unit in units:
+        node_id = deployable_units.unit_id(repo.name, unit)
+        graph_manager.add_node(
+            DeployableUnitNode(
+                name=unit.name,
+                path=unit.path,
+                unit_kind=unit.kind,
+                repository_name=repo.name,
+                evidence=unit.evidence,
+                entry=unit.entry,
+                manifest_name=unit.manifest_name,
+                manifest_description=unit.manifest_description,
+                module=unit.module,
+                readme_lines=unit.readme_lines,
+                member_count=len(unit.members),
+            ),
+            node_id=node_id,
+        )
+        nodes += 1
+        for target in sorted({file_ids[p] for p in unit.members if p in file_ids} | unit.nodes):
+            graph_manager.add_edge(node_id, target, INCLUDES)
+            edges += 1
+    return {"nodes_created": nodes, "edges_created": edges, "errors": []}
 
 
 def _extract_repository(repo: Any, graph_manager: GraphManager) -> dict[str, Any]:

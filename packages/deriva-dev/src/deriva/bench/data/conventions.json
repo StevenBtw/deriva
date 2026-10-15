@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "about": "ArchiMate convention checklist for derived models (the model granularity plan). Bands warn; patterns, technology services, orphans, exact duplicates, more than one interface per component and channel, data objects without a business object and nodes without a deployment unit fail.",
+  "bands": {
+    "total": [25, 40],
+    "ApplicationComponent": [1, 9],
+    "ApplicationService": [3, 7],
+    "BusinessObject": [5, 9]
+  },
+  "forbidden_types": ["TechnologyService"],
+  "file_extensions": ["py", "java", "js", "jsx", "ts", "tsx", "json", "yaml", "yml", "xml", "toml", "md", "sql", "sh", "properties", "gradle", "cbl", "cob", "cpy", "jcl", "prc", "bms", "csv", "html", "css"],
+  "artifact_names": ["dockerfile", "docker compose", "docker-compose", "compose file", "container image"],
+  "suffixes": ["id", "entity", "dto", "record", "impl"],
+  "placeholder_names": ["application server", "database server", "message broker", "container host", "web server", "cache server", "monitoring server"],
+  "languages": ["python", "java", "javascript", "typescript", "c#", "csharp", "go", "golang", "rust", "kotlin", "scala", "ruby", "php", "cobol", "jcl", "sql", "html", "css", "shell", "bash", "c", "c++"],
+  "technology_types": ["Node", "Device", "SystemSoftware", "TechnologyService"],
+  "channels": {
+    "REST": ["http api", "rest api", "rest"],
+    "Web UI": ["web ui", "web portal", "portal"],
+    "Batch": ["batch job", "batch"],
+    "Messaging": ["messaging", "message queue", "event stream"],
+    "CLI": ["cli", "command line"],
+    "RPC": ["rpc", "grpc"]
+  },
+  "deployment_unit_prefixes": ["deploy::"],
+  "fuzzy_ratio": 0.85
+}

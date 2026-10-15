@@ -3080,3 +3080,25 @@ class TestGraphLinkConfig:
         assert derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": True}})).structural_as_written is True
         with pytest.raises(ValueError, match="structural_as_written"):
             derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": "yes"}}))
+
+
+class TestUnitConfigs:
+    """Config parsing of the deployable-unit modes: roles per unit, services grouped by members."""
+
+    def test_roles_per_unit_need_a_container_and_a_template_with_it(self):
+        base = {"names": {"rest": "REST API"}, "labels": ["File"], "instruction": "x", "element_per": "unit"}
+
+        config = derivation._role_config(json.dumps({"roles": {**base, "container_type": "ApplicationComponent", "name_template": "{container} {role}"}}))
+
+        assert config is not None and config.element_per == "unit"
+        with pytest.raises(ValueError, match="unit"):
+            derivation._role_config(json.dumps({"roles": {**base, "name_template": "{role}"}}))
+
+    def test_services_can_group_by_members_with_a_limit(self):
+        config = derivation._component_services_config(json.dumps({"component_services": {"group_by": "members", "member_min_names": 2, "max_groups": 7}}))
+
+        assert config is not None and (config.group_by, config.member_min_names, config.max_groups) == ("members", 2, 7)
+        with pytest.raises(ValueError, match="group_by"):
+            derivation._component_services_config(json.dumps({"component_services": {"group_by": "packages"}}))
+        with pytest.raises(ValueError, match="max_groups"):
+            derivation._component_services_config(json.dumps({"component_services": {"max_groups": -1}}))

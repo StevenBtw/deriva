@@ -149,24 +149,35 @@ def config_disable(
 
 @app.command("add")
 def config_add(
-    step_type: Annotated[str, typer.Argument(help="Type of configuration (derivation)")],
-    name: Annotated[str, typer.Argument(help="Step name")],
-    phase: Annotated[str, typer.Option("--phase", help="prep, generate or refine")],
-    sequence: Annotated[int, typer.Option("--sequence", help="Execution order within the phase")],
+    step_type: Annotated[str, typer.Argument(help="Type of configuration (extraction or derivation)")],
+    name: Annotated[str, typer.Argument(help="Step name (the node type for an extraction step)")],
+    sequence: Annotated[int, typer.Option("--sequence", help="Execution order (within the phase for derivation)")],
+    phase: Annotated[str | None, typer.Option("--phase", help="prep, generate or refine (derivation)")] = None,
+    method: Annotated[str, typer.Option("--method", help="structural, treesitter, ast or llm (extraction)")] = "structural",
     params: Annotated[str | None, typer.Option("--params", "-p", help="Params JSON")] = None,
+    params_file: Annotated[str | None, typer.Option("--params-file", help="Read params JSON from file")] = None,
 ) -> None:
-    """Add a new derivation step (created disabled; enable with 'config enable')."""
-    if step_type != "derivation":
-        typer.echo("Error: only 'derivation' steps can be added", err=True)
+    """Add a new step (created disabled; enable with 'config enable')."""
+    if step_type not in ("extraction", "derivation"):
+        typer.echo("Error: step_type must be 'extraction' or 'derivation'", err=True)
         raise typer.Exit(1)
+    if step_type == "derivation" and not phase:
+        typer.echo("Error: a derivation step needs --phase", err=True)
+        raise typer.Exit(1)
+    if params_file:
+        with open(params_file, encoding="utf-8") as f:
+            params = f.read()
     with PipelineSession() as session:
         try:
-            added = session.add_derivation_step(name, phase, sequence, params=params)
+            if step_type == "extraction":
+                added = session.add_extraction_step(name, sequence, extraction_method=method, params=params)
+            else:
+                added = session.add_derivation_step(name, phase or "", sequence, params=params)
         except ValueError as e:
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1) from e
         if added:
-            typer.echo(f"Added derivation step: {name} (disabled)")
+            typer.echo(f"Added {step_type} step: {name} (disabled)")
         else:
             typer.echo(f"Step already exists: {step_type}/{name}")
             raise typer.Exit(1)

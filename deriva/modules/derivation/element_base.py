@@ -33,7 +33,7 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -860,7 +860,37 @@ class ElementDerivationBase(ABC):
         containers: dict[str, str] = {}
         subjects: dict[str, str] = {}
         duplicates: set[str] = set()
-        if roles.element_per == "candidate":
+        unit_of_element: dict[str, str] = {}  # element identifier -> its deployable unit (element_per "unit")
+        outside: set[str] = set()  # candidates with a role that no unit with a container element includes
+        if roles.element_per == "unit":
+            # One element per (unit, role): the unit's container element names it, the candidates are its members
+            chosen = [c for c in ordered if role_of.get(c.node_id) is not None]
+            units_of = self._units_of(chosen, graph_manager)
+            container_names = {
+                str(e.properties.get("source")): e.name
+                for e in (archimate_manager.get_elements(element_type=roles.container_type) if roles.container_type else [])
+                if str(e.properties.get("source") or "").startswith("unit::")
+            }
+            groups: dict[tuple[str, str], list[Candidate]] = defaultdict(list)
+            for c in chosen:
+                units = [u for u in units_of.get(c.node_id, []) if u in container_names]
+                if not units:
+                    outside.add(c.node_id)
+                for unit in units:
+                    groups[(unit, role_of[c.node_id] or "")].append(c)
+            planned = []
+            seen = {_display_key(name) for name in taken}
+            for (unit, key), group in sorted(groups.items()):
+                name = " ".join(_each_word_once(roles.name_template.format(container=container_names[unit], subject="", role=roles.names[key])).split())
+                if _display_key(name) in seen:
+                    duplicates.update(c.node_id for c in group)
+                    continue
+                seen.add(_display_key(name))
+                identifier = element_identifier(self.ELEMENT_TYPE, f"{unit}::{key}")
+                unit_of_element[identifier] = unit
+                containers.update({c.node_id: container_names[unit] for c in group})
+                planned.append((identifier, name, group, key))
+        elif roles.element_per == "candidate":
             chosen = [c for c in ordered if role_of.get(c.node_id) is not None]
             if roles.name_template:
                 # The name from structure: container + subject + role name, each word once
@@ -914,6 +944,11 @@ class ElementDerivationBase(ABC):
             }
             if roles.element_per == "role":
                 properties["sources"] = [c.node_id for c in group]
+            if roles.element_per == "unit":
+                # Grounded in the unit; the endpoints, screens or jobs it bundles are a property, not elements
+                properties["source"] = unit_of_element[identifier]
+                properties["sources"] = [c.node_id for c in group]
+                properties["members"] = [{"name": c.name, "source": c.node_id} for c in group]
             element_data: dict[str, Any] = {
                 "identifier": identifier,
                 "name": name,
@@ -960,11 +995,38 @@ class ElementDerivationBase(ABC):
                     in_degree=c.in_degree,
                     out_degree=c.out_degree,
                     confidence=c.properties.get("confidence"),
-                    stage="created" if c.node_id in element_of else ("duplicate_removed" if c.node_id in duplicates else ("llm_rejected" if answered else "llm_unanswered")),
+                    stage="created"
+                    if c.node_id in element_of
+                    else ("duplicate_removed" if c.node_id in duplicates else ("no_unit" if c.node_id in outside else ("llm_rejected" if answered else "llm_unanswered"))),
                     became_element=c.node_id in element_of,
                     element_id=element_of.get(c.node_id),
                 )
             )
+
+    def _units_of(self, candidates: list[Candidate], graph_manager: GraphManager) -> dict[str, list[str]]:
+        """Per candidate id, the deployable units that include it: the candidate node itself, or its file."""
+        if not candidates:
+            return {}
+        ids = sorted(c.node_id for c in candidates)
+        paths = sorted({str(c.properties.get("filePath") or c.properties.get("path") or "").replace(chr(92), "/") for c in candidates} - {""})
+        rows = graph_manager.query(
+            "MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(m) WHERE m.id IN $ids OR m.filePath IN $paths RETURN u.id AS unit, m.id AS node, m.filePath AS path",
+            {"ids": ids, "paths": paths},
+        )
+        by_node: dict[str, set[str]] = defaultdict(set)
+        by_path: dict[str, set[str]] = defaultdict(set)
+        for row in rows:
+            if row.get("node"):
+                by_node[row["node"]].add(row["unit"])
+            if row.get("path"):
+                by_path[str(row["path"]).replace(chr(92), "/")].add(row["unit"])
+        found: dict[str, list[str]] = {}
+        for c in candidates:
+            path = str(c.properties.get("filePath") or c.properties.get("path") or "").replace(chr(92), "/")
+            units = by_node.get(c.node_id) or by_path.get(path) or set()
+            if units:
+                found[c.node_id] = sorted(units)
+        return found
 
     def _containers_of(
         self,

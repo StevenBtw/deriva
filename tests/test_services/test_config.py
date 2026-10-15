@@ -2054,3 +2054,38 @@ def test_config_versions_can_include_the_disabled_steps():
     # Two tables per call
     assert len(queries) == 4
     assert all("enabled = TRUE" in q for q in queries[:2]) and all("enabled" not in q for q in queries[2:])
+
+
+class TestAddExtractionStep:
+    """A new extraction step is version 1, disabled and active; an existing one is refused."""
+
+    @pytest.fixture
+    def engine(self):
+        import duckdb
+
+        con = duckdb.connect(":memory:")
+        con.execute(
+            "CREATE TABLE extraction_config (id INTEGER, node_type VARCHAR, version INTEGER, sequence INTEGER, enabled BOOLEAN, input_sources VARCHAR, "
+            "instruction TEXT, example TEXT, is_active BOOLEAN, extraction_method VARCHAR, temperature FLOAT, max_tokens INTEGER, batch_size INTEGER, params TEXT, "
+            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+        )
+        con.execute("INSERT INTO extraction_config (id, node_type, version, sequence, enabled, is_active) VALUES (3, 'File', 1, 3, TRUE, TRUE)")
+        yield con
+        con.close()
+
+    def test_adds_a_disabled_versioned_step(self, engine):
+        from deriva.services.config import add_extraction_step
+
+        assert add_extraction_step(engine, "DeployableUnit", 15, params='{"code_subtypes": ["python"]}') is True
+        row = engine.execute("SELECT id, version, sequence, enabled, is_active, extraction_method, params FROM extraction_config WHERE node_type = 'DeployableUnit'").fetchone()
+        assert row == (4, 1, 15, False, True, "structural", '{"code_subtypes": ["python"]}')
+        assert add_extraction_step(engine, "File", 3) is False
+
+    @pytest.mark.parametrize(
+        ("method", "sequence", "params", "message"), [("magic", 1, None, "extraction_method"), ("structural", -1, None, "sequence"), ("structural", 1, "[1]", "JSON object")]
+    )
+    def test_rejects_invalid_values(self, engine, method, sequence, params, message):
+        from deriva.services.config import add_extraction_step
+
+        with pytest.raises(ValueError, match=message):
+            add_extraction_step(engine, "X", sequence, extraction_method=method, params=params)

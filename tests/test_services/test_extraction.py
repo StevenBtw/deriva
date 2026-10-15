@@ -2291,3 +2291,66 @@ def test_the_nodes_and_edges_a_step_writes_reach_the_run_log(tmp_path):
 
     assert [c.args[0] for c in step_ctx.add_object.call_args_list] == ["dir::test_repo::a", "dir::test_repo::b"]
     assert [c.args[0] for c in step_ctx.add_edge.call_args_list] == ["CONTAINS_dir::test_repo::a_dir::test_repo::b", "IMPORTS_dir::test_repo::b_dir::test_repo::a"]
+
+
+class TestDeployableUnitStep:
+    """The DeployableUnit step writes one node per unit with INCLUDES edges to its member files, and replaces what it wrote before."""
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _run(self, graph, tmpdir, files, params=None):
+        from deriva.adapters.graph.models import FileNode
+
+        for path, (file_type, subtype, text) in files.items():
+            (Path(tmpdir) / path).parent.mkdir(parents=True, exist_ok=True)
+            (Path(tmpdir) / path).write_text(text, encoding="utf-8")
+            node = FileNode(name=Path(path).name, path=f"r/{path}", repository_name="r", file_type=file_type, subtype=subtype)
+            graph.add_node(node, node_id=f"file::r::{path.replace('/', '_')}")
+        cfg = SimpleNamespace(
+            node_type="DeployableUnit",
+            params=json.dumps(params or {"code_subtypes": ["java", "python"]}),
+            input_sources="",
+            instruction="",
+            example="",
+            temperature=None,
+            max_tokens=None,
+            batch_size=1,
+        )
+        return _run_extraction_step(cfg, SimpleNamespace(name="r"), Path(tmpdir), [], [], graph, None, MagicMock())
+
+    def test_units_and_their_members_are_written(self, graph):
+        files = {
+            "shop/Dockerfile": ("config", None, "FROM base\n"),
+            "shop/src/Shop.java": ("source", "java", "class Shop {}\n"),
+            "proxy/Dockerfile": ("config", None, "FROM nginx\n"),
+            "README.md": ("docs", None, "- shop: the storefront\n"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = self._run(graph, tmpdir, files)
+
+        assert result["errors"] == [] and result["nodes_created"] == 1
+        units = graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.name AS name, u.unitKind AS kind, u.readmeLines AS readme")
+        assert [(u["id"], u["name"], u["kind"], list(u["readme"])) for u in units] == [("unit::r::shop", "shop", "container", ["shop: the storefront"])]
+        members = graph.query("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) RETURN f.filePath AS path ORDER BY path")
+        assert [m["path"] for m in members] == ["r/shop/Dockerfile", "r/shop/src/Shop.java"]
+
+    def test_a_second_run_replaces_the_units_of_the_first(self, graph):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, {"shop/Dockerfile": ("config", None, "FROM base\n"), "shop/Shop.java": ("source", "java", "class Shop {}\n")})
+            graph.delete_node("file::r::shop_Dockerfile")
+            self._run(graph, tmpdir, {})
+
+        # Without the Dockerfile there is no container unit: the repository is the unit
+        assert [u["id"] for u in graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id")] == ["unit::r::r"]
+
+    def test_the_rules_need_code_subtypes(self, graph):
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="code_subtypes"):
+            self._run(graph, tmpdir, {}, params={"container_files": ["Dockerfile"]})

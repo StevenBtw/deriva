@@ -3153,3 +3153,26 @@ class TestMainEntryPoint:
             assert main() == 0
 
         assert os.environ["PYDANTIC_AI_NO_BANNER"] == "0"
+
+
+@patch("deriva.cli.commands.config.PipelineSession")
+def test_config_add_extraction_step(mock_session_class, tmp_path):
+    mock_session = MagicMock()
+    mock_session.add_extraction_step.return_value = True
+    mock_session_class.return_value.__enter__.return_value = mock_session
+    params = tmp_path / "params.json"
+    params.write_text('{"code_subtypes": ["python"]}', encoding="utf-8")
+
+    result = runner.invoke(app, ["config", "add", "extraction", "DeployableUnit", "--sequence", "15", "--params-file", str(params)])
+
+    assert result.exit_code == 0, result.output
+    mock_session.add_extraction_step.assert_called_once_with("DeployableUnit", 15, extraction_method="structural", params='{"code_subtypes": ["python"]}')
+    assert "Added extraction step: DeployableUnit (disabled)" in result.stdout
+
+
+@patch("deriva.cli.commands.config.PipelineSession")
+def test_config_add_derivation_step_needs_a_phase(mock_session_class):
+    result = runner.invoke(app, ["config", "add", "derivation", "x", "--sequence", "4"])
+
+    assert result.exit_code == 1 and "--phase" in result.output
+    mock_session_class.assert_not_called()
