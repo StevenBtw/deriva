@@ -28,6 +28,7 @@ __all__ = [
     "ServiceNode",
     "ExternalDependencyNode",
     "DeployableUnitNode",
+    "DataEntityNode",
     "INCLUDES",
 ]
 
@@ -546,7 +547,39 @@ class DeployableUnitNode:
             "nameCandidates": list(self.name_candidates),
             "nameSources": list(self.name_sources),
             "memberCount": self.member_count,
+            # Unit ids carry no prefix the graph manager reads the repository from
+            "repository_name": self.repository_name,
             "type": "DeployableUnit",
+        }
+
+
+@dataclass
+class DataEntityNode:
+    """A data entity: one persistent concept of the code (an aggregate root, an ORM entity, a shared
+    record, a table), merging the same concept's types across units; its types hang below it by
+    ``INCLUDES`` edges."""
+
+    name: str
+    signal: str  # aggregate root, orm entity, shared record, table
+    repository_name: str
+    name_candidates: list[str] = field(default_factory=list)
+    name_sources: list[str] = field(default_factory=list)
+    paths: list[str] = field(default_factory=list)
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"DataEntity_{self.repository_name}_{self.name}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "signal": self.signal,
+            "nameCandidates": list(self.name_candidates),
+            "nameSources": list(self.name_sources),
+            "paths": list(self.paths),
+            "typeCount": len(self.paths),
+            "type": "DataEntity",
         }
 
 

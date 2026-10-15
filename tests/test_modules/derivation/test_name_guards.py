@@ -38,3 +38,8 @@ def test_a_specific_answer_is_kept_as_written():
 
 def test_without_guards_the_answer_is_kept():
     assert guard_name("CLI", structure_name="Shop Cli", kind="script", product="Shop", reserved={"cli"}, guards=NameGuards()) == "CLI"
+
+
+def test_a_generic_answer_that_holds_a_multiword_product_gets_no_second_product():
+    assert guard_name("Web App", structure_name="Web App", kind="script", product="Web App", reserved=set(), guards=GUARDS) == "Web App"
+    assert guard_name("Web App Server", structure_name="Server", kind="container", product="Web App", reserved=set(), guards=GUARDS) == "Web App Server"

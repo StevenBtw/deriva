@@ -29,6 +29,9 @@ export function newIssueUrl(environment: IssueEnvironment): string {
     "**Expected behavior**",
     "What you expected to happen.",
     "",
+    "**Screenshots**",
+    "If applicable, add screenshots.",
+    "",
     "**Environment**",
   ];
   const known: [string, string | undefined][] = [
@@ -59,6 +62,7 @@ export function detectOs(): string {
   const ua = navigator.userAgent;
   if (/windows/i.test(ua)) return "Windows";
   if (/mac os|macintosh/i.test(ua)) return "macOS";
+  if (/android/i.test(ua)) return "Android";
   if (/linux/i.test(ua)) return "Linux";
   return "unknown";
 }
@@ -72,7 +76,8 @@ export function detectBrowser(): string {
   if (edge) return `Edge ${edge[1]}`;
   const firefox = /Firefox\/([\d.]+)/.exec(ua);
   if (firefox) return `Firefox ${firefox[1]}`;
-  const chrome = /Chrome\/([\d.]+)/.exec(ua);
+  // Chrome on iOS writes CriOS, followed by the Safari tokens
+  const chrome = /(?:Chrome|CriOS)\/([\d.]+)/.exec(ua);
   if (chrome) return `Chrome ${chrome[1]}`;
   const safari = /Version\/([\d.]+).*Safari/.exec(ua);
   if (safari) return `Safari ${safari[1]}`;

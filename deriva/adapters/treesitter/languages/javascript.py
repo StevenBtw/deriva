@@ -556,7 +556,11 @@ class JavaScriptExtractor(LanguageExtractor):
             func = self.find_child_by_field(call, "function")
             if func is None or not (func.type == "import" or self.get_node_text(func, source) == "require"):
                 continue
-            declarator = call.parent if call.parent is not None and call.parent.type == "variable_declarator" else None
+            # `const mod = await import(...)`: the await sits between the call and its declarator
+            parent = call.parent
+            if parent is not None and parent.type == "await_expression":
+                parent = parent.parent
+            declarator = parent if parent is not None and parent.type == "variable_declarator" else None
             if declarator is not None and declarator.parent is not None:
                 imp = self._extract_require(declarator.parent, declarator, call, source)
             else:

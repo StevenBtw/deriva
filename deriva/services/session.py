@@ -411,6 +411,20 @@ class PipelineSession:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def tag_graph_steps(self, repo_name: str) -> dict[str, Any]:
+        """Tag the graph's untagged nodes and edges with the extraction step that wrote them, by rule (no LLM)."""
+        self._ensure_connected()
+        assert self._graph_manager is not None
+        return extraction.tag_steps(self._graph_manager, repo_name)
+
+    def later_extraction_steps(self, step: str) -> list[str]:
+        """The enabled extraction steps after ``step`` (they may read what it writes)."""
+        self._ensure_connected()
+        assert self._engine is not None
+        configs = sorted(config.get_extraction_configs(self._engine, enabled_only=True), key=lambda c: c.sequence)
+        current = next((c.sequence for c in configs if c.node_type == step), None)
+        return [c.node_type for c in configs if current is not None and c.sequence > current]
+
     def clear_model(self) -> dict[str, Any]:
         """Clear all ArchiMate model data."""
         self._ensure_connected()

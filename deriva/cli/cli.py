@@ -29,6 +29,7 @@ from typing import Annotated
 import typer
 
 from deriva.cli.commands.config import app as config_app
+from deriva.cli.commands.graph import app as graph_app
 from deriva.cli.commands.repo import app as repo_app
 from deriva.cli.commands.run import (
     _print_derivation_result,
@@ -49,6 +50,7 @@ app = typer.Typer(
 # Add subcommand groups
 app.add_typer(config_app, name="config")
 app.add_typer(repo_app, name="repo")
+app.add_typer(graph_app, name="graph")
 BENCHMARK_MISSING = "Benchmarking is part of deriva-dev: uv tool install --python 3.14 deriva-dev"
 
 if about.features()["benchmark"]:

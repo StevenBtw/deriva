@@ -24,7 +24,7 @@ class ExtractionConfigModel(BaseModel):
     input_sources: str | None = Field(default=None, description="JSON string of input sources")
     instruction: str | None = Field(default=None, description="LLM instruction prompt")
     example: str | None = Field(default=None, description="Example output for LLM")
-    extraction_method: Literal["llm", "ast", "structural"] = Field(default="llm", description="Extraction method to use")
+    extraction_method: Literal["llm", "ast", "structural", "treesitter"] = Field(default="llm", description="Extraction method to use")
     temperature: float | None = Field(default=None, ge=0.0, le=2.0, description="LLM temperature override")
     max_tokens: int | None = Field(default=None, ge=1, description="LLM max_tokens override")
 

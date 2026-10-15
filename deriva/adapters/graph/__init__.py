@@ -20,6 +20,7 @@ from .models import (
     TESTS,
     USES,
     BusinessConceptNode,
+    DataEntityNode,
     DeployableUnitNode,
     DirectoryNode,
     ExternalDependencyNode,
@@ -54,6 +55,7 @@ __all__ = [
     "TestNode",
     "ServiceNode",
     "ExternalDependencyNode",
+    "DataEntityNode",
     "DeployableUnitNode",
     # Relationship types
     "CONTAINS",

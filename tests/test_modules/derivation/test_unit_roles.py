@@ -151,3 +151,13 @@ def test_the_channel_merges_with_the_component_name_only_where_they_overlap():
     assert _merge_channel("WebUI", "Web UI") == "WebUI Interface"  # the whole channel is in the name already
     assert _merge_channel("Order Batch Jobs", "Batch Jobs") == "Order Batch Jobs Interface"
     assert _merge_channel("Deriva CLI", "Commands") == "Deriva CLI Commands"
+
+
+def test_a_file_two_units_include_is_documented_with_each_units_component(monkeypatch):
+    monkeypatch.setitem(UNITS, "unit::r::admin", ("Admin Backend", {"r/shop/orders.py"}, set()))
+    orders = _file("r/shop/orders.py")
+
+    result, _ = _generate([orders], {orders.node_id: "rest"})
+
+    documentation = {e["name"]: e["documentation"] for e in result.created_elements}
+    assert documentation == {"Admin Backend REST API": "REST API of Admin Backend: orders.py.", "Shop Backend REST API": "REST API of Shop Backend: orders.py."}

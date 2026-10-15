@@ -23,6 +23,7 @@ from deriva.common.json_utils import extract_json_from_response
 from deriva.common.naming import name_key
 from deriva.modules.derivation.base import (
     NamedInCodeRule,
+    UnitScopes,
     derive_named_in_code_relationships,
     element_identifier,
     extract_response_content,
@@ -61,9 +62,10 @@ class ComponentServicesConfig:
     # interfaces' members (endpoints, screens, jobs), grouped across components by the objects they reach
     group_by: str = "components"
     member_min_names: int = 1  # Code names carrying a business object's words that make a member reach it
-    max_groups: int = 0  # At most this many services (0: no limit); the most similar groups merge first
-    # An object that at least this share of the members reach does not decide the grouping (1: every object decides);
-    # a member that reaches only such objects groups by them
+    # At most this many services (0: no limit); the most similar groups merge first, groups that share no object never
+    max_groups: int = 0
+    # An object that at least this share of the members reach does not decide the grouping (1: only an object that every
+    # member reaches is left out); a member that reaches only such objects groups by them
     ubiquity: float = 1.0
 
 
@@ -286,6 +288,7 @@ def derive_member_services(
     llm_kwargs: dict[str, Any] | None = None,
     member_links: list[tuple[str, str]] | None = None,
     object_links: list[tuple[str, str]] | None = None,
+    scopes: UnitScopes | None = None,
 ) -> list[dict[str, Any]]:
     """One ApplicationService per capability: the members of the interfaces (``properties.members``) grouped by the objects they reach.
 
@@ -293,7 +296,8 @@ def derive_member_services(
     (``member_links``: (node, member), such as a program and the screen it sends) reaches through ``object_links``, and
     the business objects whose words at least ``member_min_names`` code names in those files carry. Members whose objects
     overlap (Jaccard of the object names, at least ``overlap``) are one service; a member that reaches nothing stays with
-    its interface's other members; above ``max_groups`` the most similar groups merge. Identity and relationships come
+    its interface's other members; above ``max_groups`` the most similar groups merge (groups that share no object never
+    merge, so more groups than ``max_groups`` can stay). Identity and relationships come
     from structure; one LLM call per service writes its name and one sentence.
 
     Args:
@@ -322,6 +326,12 @@ def derive_member_services(
         by_source[_source(e)].append(e["identifier"])
         if path := node_paths.get(_source(e)):
             by_path[path].append(e["identifier"])
+        # An object made from a data entity is reached through any of the entity's types and their files
+        if scopes is not None:
+            for node in scopes.entity_nodes.get(_source(e), ()):
+                by_source[node].append(e["identifier"])
+            for file in scopes.entity_files.get(_source(e), ()):
+                by_path[file].append(e["identifier"])
     imported: dict[str, set[str]] = defaultdict(set)
     for a, b in imports:
         imported[a].add(b)
@@ -380,7 +390,8 @@ def derive_member_services(
             home.append(m)
     groups = [sorted(g) for g in groups]
     while config.max_groups and len(groups) > config.max_groups:
-        pairs = [(_jaccard(keys(a), keys(b)), i, j) for i, a in enumerate(groups) for j, b in enumerate(groups) if i < j]
+        key_sets = [keys(g) for g in groups]
+        pairs = [(_jaccard(key_sets[i], key_sets[j]), i, j) for i in range(len(groups)) for j in range(i + 1, len(groups))]
         best = max(pairs, key=lambda p: (p[0], -p[1], -p[2]))
         if best[0] <= 0:
             break

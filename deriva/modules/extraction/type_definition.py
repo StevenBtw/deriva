@@ -621,6 +621,8 @@ def _build_type_node_from_treesitter(
         "job": "job",
         "procedure": "procedure",
         "screen": "screen",
+        # SQL DDL: a CREATE TABLE statement
+        "table": "table",
     }
     category = category_map.get(ext_type.kind, "other")
 

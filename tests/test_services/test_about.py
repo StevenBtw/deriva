@@ -16,4 +16,4 @@ def test_environment_reports_the_os_and_python_version():
     environment = about.environment()
 
     assert environment["python"] == platform.python_version()
-    assert environment["os"] in {"Windows", "macOS", "Linux", platform.system()}
+    assert environment["os"] == {"Darwin": "macOS"}.get(platform.system(), platform.system())

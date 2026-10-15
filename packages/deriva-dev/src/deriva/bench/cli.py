@@ -305,6 +305,9 @@ def benchmark_conventions(
     except FileNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
+    if not payload["results"]:
+        typer.echo("Error: no run snapshots matched the selected sessions and run", err=True)
+        raise typer.Exit(1)
     typer.echo(f"Checked {len(payload['results'])} repositories; summary: {out}/summary.md")
     for name, page in payload["pages"].items():
         typer.echo(f"  {name}: {page}")

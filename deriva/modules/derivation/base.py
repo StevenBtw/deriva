@@ -2116,7 +2116,10 @@ def guard_name(name: str, *, structure_name: str, kind: str, product: str, reser
         if name_key(name) in taken:
             name = f"{name} {guards.kind_nouns.get(kind) or guards.kind_nouns.get('*', '')}".strip()
     words = [w.lower() for w in re.findall(r"[A-Za-z0-9]+", name)]
-    if guards.generic_words and words and all(w in guards.generic_words for w in words) and product and name_key(product) not in {name_key(w) for w in words}:
+    # The product's words in a row in the answer: the answer already names the product
+    product_words = [w.lower() for w in re.findall(r"[A-Za-z0-9]+", product)]
+    has_product = any(words[i : i + len(product_words)] == product_words for i in range(len(words) - len(product_words) + 1))
+    if guards.generic_words and words and all(w in guards.generic_words for w in words) and product_words and not has_product:
         name = f"{product} {name}"
     return name
 
@@ -3100,10 +3103,17 @@ UNIT_PREFIX = "unit::"
 
 @dataclass(frozen=True)
 class UnitScopes:
-    """What each deployable unit includes (graph ``INCLUDES``): member file paths and member node ids."""
+    """What each deployable unit includes (graph ``INCLUDES``): member file paths and member node ids;
+    and the types (and their files) each data entity merges."""
 
     files: dict[str, frozenset[str]]
     nodes: dict[str, frozenset[str]]
+    entity_files: dict[str, frozenset[str]] = field(default_factory=dict)
+    entity_nodes: dict[str, frozenset[str]] = field(default_factory=dict)
+
+    def entities_of(self, node: str) -> list[str]:
+        """The data entities that merge a type node."""
+        return sorted(e for e, members in self.entity_nodes.items() if node in members)
 
     def size(self, unit: str) -> int:
         return len(self.files.get(unit, ())) + len(self.nodes.get(unit, ()))
@@ -3120,7 +3130,19 @@ def unit_scopes(graph_manager: GraphManager) -> UnitScopes:
             files[row["unit"]].add(str(row["path"]).replace(chr(92), "/"))
         elif row.get("node"):
             nodes[row["unit"]].add(row["node"])
-    return UnitScopes(files={u: frozenset(p) for u, p in files.items()}, nodes={u: frozenset(n) for u, n in nodes.items()})
+    entity_files: dict[str, set[str]] = defaultdict(set)
+    entity_nodes: dict[str, set[str]] = defaultdict(set)
+    for row in graph_manager.query("MATCH (d:Graph:DataEntity)-[:`Graph:INCLUDES`]->(t) RETURN d.id AS entity, t.id AS node, t.filePath AS path"):
+        if row.get("entity") and row.get("node"):
+            entity_nodes[row["entity"]].add(row["node"])
+            if row.get("path"):
+                entity_files[row["entity"]].add(str(row["path"]).replace(chr(92), "/"))
+    return UnitScopes(
+        files={u: frozenset(p) for u, p in files.items()},
+        nodes={u: frozenset(n) for u, n in nodes.items()},
+        entity_files={e: frozenset(p) for e, p in entity_files.items()},
+        entity_nodes={e: frozenset(n) for e, n in entity_nodes.items()},
+    )
 
 
 def unit_owners(owners: list[tuple[str, str]], scopes: UnitScopes, source: str, path: str | None) -> list[str]:
@@ -3129,6 +3151,10 @@ def unit_owners(owners: list[tuple[str, str]], scopes: UnitScopes, source: str, 
     same = sorted(element for unit, element in owners if unit == source)
     if same:
         return same
+    if source in scopes.entity_files or source in scopes.entity_nodes:
+        # A data entity: every unit that holds one of its types
+        files, nodes = scopes.entity_files.get(source, frozenset()), scopes.entity_nodes.get(source, frozenset())
+        return sorted({element for unit, element in owners if scopes.files.get(unit, frozenset()) & files or scopes.nodes.get(unit, frozenset()) & nodes})
     found = set()
     for unit, element in owners:
         members = scopes.files.get(unit, frozenset())
@@ -3177,6 +3203,12 @@ def derive_containment_relationships(
             # Containers made from deployable units own what their units include (one owner: the smallest unit)
             if scopes is not None and units.get(rule.container):
                 owned = [o for o in unit_owners(units[rule.container], scopes, source, path) if o != e["identifier"]]
+                if owned and source in scopes.entity_files:
+                    # A data entity is used by every unit that holds one of its types (access, not ownership)
+                    relationships.extend(
+                        {"source": o, "target": e["identifier"], "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "containment"} for o in owned
+                    )
+                    continue
                 if owned:
                     owner = min(owned, key=lambda o: (unit_size.get(o, 0), o))
                     relationships.append({"source": owner, "target": e["identifier"], "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "containment"})
@@ -3314,6 +3346,9 @@ def derive_graph_link_relationships(
 
         def ends(node: str, kind: str) -> list[str]:
             direct = of_source[kind].get(node, [])
+            # A type that a data entity merges stands for the entity's element
+            if not direct and scopes is not None:
+                direct = [element for entity in scopes.entities_of(node) for element in of_source[kind].get(entity, [])]
             return direct or (unit_owners(lifted[kind], scopes, node, None) if scopes is not None and lifted.get(kind) else [])
 
         found = {(s, t) for a, b in links.get(rule.query, []) for s in ends(a, rule.source) for t in ends(b, rule.target) if s != t}

@@ -1249,13 +1249,32 @@ def test_conventions_writes_a_review_per_repository_and_a_summary(tmp_path, monk
     for n in (1, 2):
         (models / f"shop_m_run{n}.json").write_text(_json.dumps(snapshot), encoding="utf-8")
     (models / "other-repo_m_run1.json").write_text(_json.dumps(snapshot), encoding="utf-8")
-    real = conventions_report.write_reports
-    monkeypatch.setattr(conventions_report, "write_reports", lambda ids, out, run=None: real(ids, out, run=run, benchmarks_dir=tmp_path / "benchmarks"))
+    monkeypatch.setattr(conventions_report, "workspace", lambda: tmp_path)
 
     result = _Runner().invoke(bench_app, ["conventions", "bench_1", "-o", str(tmp_path / "out")])
 
     assert result.exit_code == 0, result.output
     review = (tmp_path / "out" / "shop_m.md").read_text(encoding="utf-8")
     assert "| check | run1 | run2 | target |" in review and "| unconnected elements | fail 1 | fail 1 | 0 |" in review
+    assert (tmp_path / "out" / "other-repo_m.md").is_file()
     summary = (tmp_path / "out" / "summary.md").read_text(encoding="utf-8")
     assert "| shop |" in summary and "| other-repo |" in summary
+
+
+def test_conventions_with_a_run_no_snapshot_has_exits_1(tmp_path, monkeypatch):
+    """A --run that matches no snapshot is an error, not an empty report."""
+    import json as _json
+
+    from typer.testing import CliRunner as _Runner
+
+    from deriva.bench import conventions_report
+    from deriva.bench.cli import app as bench_app
+
+    models = tmp_path / "benchmarks" / "bench_1" / "models"
+    models.mkdir(parents=True)
+    (models / "shop_m_run1.json").write_text(_json.dumps({"elements": [], "relationships": [], "disabled": []}), encoding="utf-8")
+    monkeypatch.setattr(conventions_report, "workspace", lambda: tmp_path)
+
+    result = _Runner().invoke(bench_app, ["conventions", "bench_1", "-o", str(tmp_path / "out"), "--run", "7"])
+
+    assert result.exit_code == 1 and "no run snapshots" in result.output

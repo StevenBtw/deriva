@@ -136,3 +136,21 @@ def test_an_object_most_members_reach_does_not_decide_the_grouping():
 
     grouped = sorted(([m["name"] for m in s["properties"]["members"]], s["properties"]["objects"]) for s in services)
     assert grouped == [(["Accounts"], ["do_acct"]), (["Admin", "Users"], ["do_session"]), (["Cards"], ["do_card"])]
+
+
+def test_a_member_reaches_a_data_entity_through_any_of_its_types():
+    from deriva.modules.derivation.base import UnitScopes
+
+    entity = _el("do_invoice", "DataObject", "entity::r::invoice", "Invoice")
+    scopes = UnitScopes(
+        files={},
+        nodes={},
+        entity_files={"entity::r::invoice": frozenset({"r/orders/model/Invoice.java"})},
+        entity_nodes={"entity::r::invoice": frozenset({"typedef::invoice"})},
+    )
+
+    services = derive_member_services([*COMPONENTS, *INTERFACES, entity], PATHS, IMPORTS, [], {}, CONFIG, "NAME", _llm([]), scopes=scopes)
+
+    invoicing = next(s for s in services if "do_invoice" in s["properties"]["objects"])
+    # The two members that import the entity's type file reach it (the others join their interface's group)
+    assert {"BillingPage", "InvoiceController"} <= {m["name"] for m in invoicing["properties"]["members"]}

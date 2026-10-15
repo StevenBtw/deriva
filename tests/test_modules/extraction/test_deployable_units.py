@@ -338,3 +338,44 @@ def test_mainframe_core_units_are_named_after_the_product_and_the_other_title_pa
         ("Mainframe Card Management Online", "mainframe"),
         ("CardShop App Online", "structure"),  # "app Online" is only generic words: the product in front
     ]
+
+
+def test_unit_ids_tell_a_nested_folder_from_a_folder_with_an_underscore():
+    from deriva.modules.extraction.deployable_units import Unit, unit_id
+
+    assert unit_id("r", Unit(path="r/a/b", name="b", kind="container")) != unit_id("r", Unit(path="r/a_b", name="a_b", kind="container"))
+
+
+def test_programs_at_the_repository_root_are_the_core_application():
+    units = _units([_file("r/ONL1.cbl", "cobol")], programs=[{"id": "p:ONLY1", "path": "r/ONL1.cbl", "name": "ONLY1", "decorators": ["online"]}])
+
+    assert list(units) == ["r::online"] and units["r::online"].nodes == {"p:ONLY1"}
+
+
+def test_a_folder_holding_a_unit_folder_is_no_unit_whatever_the_order_they_were_found_in():
+    """The folder below is found first (its container file), the folder above second (its manifest); a script replaces the one below."""
+    files = [
+        _file("r/a/package.json"),
+        _file("r/a/index.js", "javascript"),
+        _file("r/a/b/Dockerfile"),
+        _file("r/a/b/pyproject.toml"),
+        _file("r/a/b/main.py", "python"),
+    ]
+    manifests = {"r/a/package.json": '{"name": "a", "scripts": {"start": "node ."}}', "r/a/b/pyproject.toml": '[project]\nname = "b"\n[project.scripts]\ntool = "main:run"\n'}
+
+    assert list(_units(files, manifests=manifests)) == ["r/a/b::tool"]
+
+
+def test_a_taken_guard_name_gets_the_product_in_front():
+    manifests = {"r/spring-admin/package.json": '{"name": "spring-admin", "scripts": {"start": "java"}}'}
+    files = [*_container("spring-admin"), _file("r/spring-admin/package.json")]
+
+    units = _named(files, manifests=manifests, documents={"r/README.md": "# Shop\n"}, reserved={"Spring Admin", "Spring Admin Server"})
+
+    assert units["r/spring-admin"].name_candidates == [("Shop Spring Admin Server", "guard")]
+
+
+def test_a_generic_name_that_holds_the_product_gets_no_second_product():
+    units = _named(_container("backend-server"), documents={"r/README.md": "# Backend Server\n"})
+
+    assert units["r/backend-server"].name_candidates == [("Backend Server", "structure")]

@@ -425,6 +425,7 @@ class ElementDerivationBase(ABC):
         relationship_config: RelationshipLLMConfig | None = None,
         per_candidate: PerCandidateConfig | None = None,
         naming: NamingConfig | None = None,
+        name_match_skip: set[tuple[str, str]] | None = None,
         patterns: dict[str, set[str]] | None = None,
         roles: RoleConfig | None = None,
         skip_when_directory_is: frozenset[str] | None = None,
@@ -466,6 +467,8 @@ class ElementDerivationBase(ABC):
                 (None uses batch mode)
             naming: Isolated naming step from the element config (None keeps the
                 structure name)
+            name_match_skip: (source type, target type) pairs the per-batch name matching
+                never links (the relationship row's ``params.name_match_skip``)
             patterns: The step's include/exclude patterns from config (None: none)
             roles: Candidates classified into roles from the element config (None: every
                 candidate takes the keep and naming path)
@@ -767,6 +770,7 @@ class ElementDerivationBase(ABC):
                     taken=taken,
                     relationship_config=relationship_config,
                     naming=naming,
+                    name_match_skip=name_match_skip,
                 )
             marked_ids = {c.node_id for c in marked}
             filtered = [c for c in filtered if c.node_id not in marked_ids]
@@ -799,6 +803,7 @@ class ElementDerivationBase(ABC):
                 taken=taken,
                 relationship_config=relationship_config,
                 naming=naming,
+                name_match_skip=name_match_skip,
             )
         elif batches and prompt is None:
             result.success = False
@@ -826,6 +831,7 @@ class ElementDerivationBase(ABC):
                     element_prompt=cast(ElementPrompt, prompt),
                     relationship_config=relationship_config,
                     naming=naming,
+                    name_match_skip=name_match_skip,
                 )
 
         self.logger.info(
@@ -887,6 +893,7 @@ class ElementDerivationBase(ABC):
         duplicates: set[str] = set()
         unit_of_element: dict[str, str] = {}  # element identifier -> its deployable unit (element_per "unit")
         structure_of_element: dict[str, str] = {}  # element identifier -> its name from structure (element_per "unit")
+        container_of_element: dict[str, str] = {}  # element identifier -> its unit's container name (element_per "unit")
         outside: set[str] = set()  # candidates with a role that no unit with a container element includes
         if roles.element_per == "unit":
             # One element per (unit, role): the unit's container element names it, the candidates are its members
@@ -931,7 +938,8 @@ class ElementDerivationBase(ABC):
                 identifier = element_identifier(self.ELEMENT_TYPE, f"{unit}::{key}")
                 unit_of_element[identifier] = unit
                 structure_of_element[identifier] = unit_name(container_structure[unit], key)
-                containers.update({c.node_id: container_names[unit] for c in group})
+                # Per element, not per candidate: a file that several units include is in each unit's group
+                container_of_element[identifier] = container_names[unit]
                 planned.append((identifier, name, group, key))
         elif roles.element_per == "candidate":
             chosen = [c for c in ordered if role_of.get(c.node_id) is not None]
@@ -998,7 +1006,10 @@ class ElementDerivationBase(ABC):
                 "name": name,
                 "element_type": self.ELEMENT_TYPE,
                 "documentation": roles.documentation.format(
-                    members=", ".join(c.name for c in group), role=roles.names[key], container=containers.get(source.node_id, ""), subject=subjects.get(source.node_id, "")
+                    members=", ".join(c.name for c in group),
+                    role=roles.names[key],
+                    container=container_of_element.get(identifier, containers.get(source.node_id, "")),
+                    subject=subjects.get(source.node_id, ""),
                 ),
                 "properties": properties,
             }
@@ -1348,6 +1359,7 @@ class ElementDerivationBase(ABC):
         strength: dict[str, Any] | None = None,
         relationship_config: RelationshipLLMConfig | None = None,
         naming: NamingConfig | None = None,
+        name_match_skip: set[tuple[str, str]] | None = None,
     ) -> None:
         """
         Process a single batch of candidates.
@@ -1449,6 +1461,7 @@ class ElementDerivationBase(ABC):
                     repo_name,
                     taken,
                     structure_names,
+                    self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming.guards.reserved_labels else set(),
                 )
             taken.append(element_data["name"])
 
@@ -1526,6 +1539,7 @@ class ElementDerivationBase(ABC):
                 archimate_manager=archimate_manager,
                 result=result,
                 relationship_config=relationship_config,
+                name_match_skip=name_match_skip,
             )
 
     def _process_per_candidate(
@@ -1548,6 +1562,7 @@ class ElementDerivationBase(ABC):
         taken: list[str],
         relationship_config: RelationshipLLMConfig | None = None,
         naming: NamingConfig | None = None,
+        name_match_skip: set[tuple[str, str]] | None = None,
     ) -> None:
         """Derive elements one candidate per LLM call, then batch relationships.
 
@@ -1622,6 +1637,7 @@ class ElementDerivationBase(ABC):
                     repo_name,
                     taken,
                     structure_names,
+                    self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming.guards.reserved_labels else set(),
                 )
 
             try:
@@ -1671,6 +1687,7 @@ class ElementDerivationBase(ABC):
                 archimate_manager=archimate_manager,
                 result=result,
                 relationship_config=relationship_config,
+                name_match_skip=name_match_skip,
             )
 
     def _derive_relationships(
@@ -1684,6 +1701,7 @@ class ElementDerivationBase(ABC):
         archimate_manager: ArchimateManager,
         result: GenerationResult,
         relationship_config: RelationshipLLMConfig | None = None,
+        name_match_skip: set[tuple[str, str]] | None = None,
     ) -> None:
         """
         Derive relationships for newly created elements.
@@ -1698,6 +1716,7 @@ class ElementDerivationBase(ABC):
             archimate_manager: For creating relationships
             result: GenerationResult to update
             relationship_config: Relationship config row settings (None skips the LLM pass)
+            name_match_skip: (source type, target type) pairs the name matching never links
         """
         relationships = derive_batch_relationships(
             new_elements=batch_elements,
@@ -1710,6 +1729,7 @@ class ElementDerivationBase(ABC):
             max_tokens=max_tokens,
             graph_manager=graph_manager,
             llm_config=relationship_config,
+            name_match_skip=name_match_skip,
         )
 
         for rel_data in relationships:

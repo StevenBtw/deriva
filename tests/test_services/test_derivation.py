@@ -2362,6 +2362,33 @@ class TestNamingConfig:
 
         assert gen.call_args.kwargs["naming"] == NamingConfig(instruction="N", samples=3)
 
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_per_batch_relationships_receive_the_name_match_skip_pairs(self, runner):
+        """Without the deferred relationship pass the elements' own relationship pass leaves the configured pairs out too."""
+        cfg = SimpleNamespace(
+            step_name="ApplicationComponent",
+            element_type="ApplicationComponent",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params=None,
+        )
+        row = SimpleNamespace(
+            step_name="GlobalRelationships", params=json.dumps({"llm_proposals": False, "name_match_skip": [{"source": "ApplicationInterface", "target": "ApplicationService"}]})
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: {"generate": [cfg], "relationship": [row]}.get(phase, [])),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["name_match_skip"] == {("ApplicationInterface", "ApplicationService")}
+
 
 class TestPatternLabelsConfig:
     """Which candidates the step's name patterns filter comes from the element row's params.pattern_labels."""
@@ -3091,8 +3118,11 @@ class TestUnitConfigs:
         config = derivation._role_config(json.dumps({"roles": {**base, "container_type": "ApplicationComponent", "name_template": "{container} {role}"}}))
 
         assert config is not None and config.element_per == "unit"
+        # Each requirement on its own: the container type, and the container in the template
         with pytest.raises(ValueError, match="unit"):
-            derivation._role_config(json.dumps({"roles": {**base, "name_template": "{role}"}}))
+            derivation._role_config(json.dumps({"roles": {**base, "name_template": "{container} {role}"}}))
+        with pytest.raises(ValueError, match="unit"):
+            derivation._role_config(json.dumps({"roles": {**base, "container_type": "ApplicationComponent", "name_template": "{role}"}}))
 
     def test_services_can_group_by_members_with_a_limit(self):
         config = derivation._component_services_config(json.dumps({"component_services": {"group_by": "members", "member_min_names": 2, "max_groups": 7}}))
@@ -3102,6 +3132,24 @@ class TestUnitConfigs:
             derivation._component_services_config(json.dumps({"component_services": {"group_by": "packages"}}))
         with pytest.raises(ValueError, match="max_groups"):
             derivation._component_services_config(json.dumps({"component_services": {"max_groups": -1}}))
+
+    def test_services_by_members_read_no_documentation_files(self):
+        """The member services' prompts carry no documentation, so the checkout's documents are not read."""
+        config = derivation._component_services_config(json.dumps({"component_services": {"group_by": "members"}}))
+        assert config is not None
+        with (
+            patch("deriva.services.derivation._documentation_files") as documents,
+            patch("deriva.services.derivation.derive_member_services", return_value=[]) as member_services,
+            patch("deriva.services.derivation.element_source_paths", return_value={}),
+            patch("deriva.services.derivation.file_imports", return_value=[]),
+            patch("deriva.services.derivation.code_names_with_paths", return_value=[]),
+            patch("deriva.services.derivation.source_concept_names", return_value={}),
+            patch("deriva.services.derivation.unit_scopes"),
+        ):
+            derivation._component_services_step(config, "NAME", MagicMock(), MagicMock(), MagicMock(), [])
+
+        documents.assert_not_called()
+        assert member_services.call_args.args[4] == {}
 
     def test_unit_roles_name_a_known_channel_and_need_roles_per_unit(self):
         base = {
@@ -3118,6 +3166,9 @@ class TestUnitConfigs:
         assert config is not None and config.unit_roles == (("webEntries", "web"),)
         with pytest.raises(ValueError, match="unit_roles"):
             derivation._role_config(json.dumps({"roles": {**base, "unit_roles": [{"property": "webEntries", "role": "desktop"}]}}))
+        # The property is read in a graph query: only a plain property name can be
+        with pytest.raises(ValueError, match="unit_roles"):
+            derivation._role_config(json.dumps({"roles": {**base, "unit_roles": [{"property": "web-entries", "role": "web"}]}}))
         with pytest.raises(ValueError, match="unit_roles"):
             derivation._role_config(
                 json.dumps({"roles": {**base, "element_per": "candidate", "name_template": "{subject}", "unit_roles": [{"property": "webEntries", "role": "web"}]}})
@@ -3150,3 +3201,5 @@ class TestUnitConfigs:
         assert derivation._naming_config(json.dumps({"naming": {"instruction": "x"}})).guards.generic_words == frozenset()
         with pytest.raises(ValueError, match="guards"):
             derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": {"generic_words": "app"}}}))
+        with pytest.raises(ValueError, match="guards"):
+            derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": ["app"]}}))

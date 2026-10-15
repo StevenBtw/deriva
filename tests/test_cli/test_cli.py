@@ -2770,6 +2770,49 @@ class TestConfigAddCommand:
         assert result.exit_code == 1
         assert "phase must be one of" in result.output
 
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_config_add_extraction_step(self, mock_session_class, tmp_path):
+        mock_session = MagicMock()
+        mock_session.add_extraction_step.return_value = True
+        mock_session_class.return_value.__enter__.return_value = mock_session
+        params = tmp_path / "params.json"
+        params.write_text('{"code_subtypes": ["python"]}', encoding="utf-8")
+
+        result = runner.invoke(app, ["config", "add", "extraction", "DeployableUnit", "--sequence", "15", "--params-file", str(params)])
+
+        assert result.exit_code == 0, result.output
+        mock_session.add_extraction_step.assert_called_once_with("DeployableUnit", 15, extraction_method="structural", params='{"code_subtypes": ["python"]}')
+        assert "Added extraction step: DeployableUnit (disabled)" in result.stdout
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_config_add_derivation_step_needs_a_phase(self, mock_session_class):
+        result = runner.invoke(app, ["config", "add", "derivation", "x", "--sequence", "4"])
+
+        assert result.exit_code == 1 and "--phase" in result.output
+        mock_session_class.assert_not_called()
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_a_missing_params_file_exits_1_with_the_reason(self, mock_session_class, tmp_path):
+        result = runner.invoke(app, ["config", "add", "extraction", "X", "--sequence", "1", "--params-file", str(tmp_path / "missing.json")])
+
+        assert result.exit_code == 1 and "Error reading params file" in result.output
+        mock_session_class.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("args", "reason"),
+        [
+            (["extraction", "X", "--sequence", "1", "--phase", "refine"], "--phase"),
+            (["derivation", "X", "--sequence", "1", "--phase", "refine", "--method", "llm"], "--method"),
+            (["derivation", "X", "--sequence", "1", "--phase", "refine", "--params", "{}", "--params-file", "p.json"], "--params-file"),
+        ],
+    )
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_options_that_do_not_apply_or_conflict_exit_1(self, mock_session_class, args, reason):
+        result = runner.invoke(app, ["config", "add", *args])
+
+        assert result.exit_code == 1 and reason in result.output
+        mock_session_class.assert_not_called()
+
 
 class TestRepositoryDatabaseSelection:
     """Commands with --repo work in that repository's graph database."""
@@ -3153,26 +3196,3 @@ class TestMainEntryPoint:
             assert main() == 0
 
         assert os.environ["PYDANTIC_AI_NO_BANNER"] == "0"
-
-
-@patch("deriva.cli.commands.config.PipelineSession")
-def test_config_add_extraction_step(mock_session_class, tmp_path):
-    mock_session = MagicMock()
-    mock_session.add_extraction_step.return_value = True
-    mock_session_class.return_value.__enter__.return_value = mock_session
-    params = tmp_path / "params.json"
-    params.write_text('{"code_subtypes": ["python"]}', encoding="utf-8")
-
-    result = runner.invoke(app, ["config", "add", "extraction", "DeployableUnit", "--sequence", "15", "--params-file", str(params)])
-
-    assert result.exit_code == 0, result.output
-    mock_session.add_extraction_step.assert_called_once_with("DeployableUnit", 15, extraction_method="structural", params='{"code_subtypes": ["python"]}')
-    assert "Added extraction step: DeployableUnit (disabled)" in result.stdout
-
-
-@patch("deriva.cli.commands.config.PipelineSession")
-def test_config_add_derivation_step_needs_a_phase(mock_session_class):
-    result = runner.invoke(app, ["config", "add", "derivation", "x", "--sequence", "4"])
-
-    assert result.exit_code == 1 and "--phase" in result.output
-    mock_session_class.assert_not_called()

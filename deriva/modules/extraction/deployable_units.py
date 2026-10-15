@@ -82,7 +82,8 @@ class Unit:
 def unit_id(repository: str, unit: Unit) -> str:
     """The unit's graph id: its path (without the repository folder), and its entry or online/batch kind where a folder holds several."""
     relative = unit.path[len(repository) + 1 :] if unit.path.startswith(repository + "/") else ("" if unit.path == repository else unit.path)
-    key = relative.replace("/", "_") or repository
+    # The path as written: flattening "/" would give the folders a/b and a_b one id
+    key = relative or repository
     if unit.entry:
         key += f"::{unit.entry}"
     elif unit.kind in ("online", "batch"):
@@ -165,7 +166,8 @@ def _mainframe_units(facts: RepoFacts, imports: dict[str, set[str]]) -> list[Uni
     batch, a module nested in it stays one unit. A called program joins the unit of most of its callers (online on a tie)."""
     if not facts.programs:
         return []
-    folders = sorted({_parent(_parent(p["path"])) for p in facts.programs})
+    # Programs stored directly in the repository folder have it as their application folder
+    folders = sorted({facts.repository if (folder := _parent(_parent(p["path"]))) == "." else folder for p in facts.programs})
     cores = [f for f in folders if not any(_below(f, other) for other in folders if other != f)]
     modules = [f for f in folders if f not in cores]
     units: list[Unit] = []
@@ -426,13 +428,18 @@ class _Naming:
         for name, source in raw:
             if _key(name) in self.reserved:
                 continue
-            if self.casing and self.generic(_words(name)):
+            # A name that already holds every word of the product gets no second product
+            if self.casing and self.generic(_words(name)) and not {_key(w) for w in _words(self.product)} <= {_key(w) for w in _words(name)}:
                 name = f"{self.product} {name}"
             if _key(name) not in {_key(n) for n, _ in names}:
                 names.append((name, source))
         if not names:
             noun = self.kind_nouns.get(unit.kind) or self.kind_nouns.get("*", "")
-            names = [(f"{raw[0][0]} {noun}".strip(), "guard")]
+            guard = f"{raw[0][0]} {noun}".strip()
+            # A guard name that is taken as well gets the product in front
+            if _key(guard) in self.reserved:
+                guard = f"{self.product} {guard}"
+            names = [(guard, "guard")]
         return names
 
 
@@ -473,10 +480,11 @@ def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
             folder_units[folder].manifest_description = folder_units[folder].manifest_description or description
 
     # A folder that holds another unit folder is no unit itself; project scripts replace their folder's unit
+    # (decided on all unit folders found, so the outcome never depends on the order they were found in)
     script_folders = {u.path for u in script_units}
-    for folder in list(folder_units):
-        if folder in script_folders or any(_below(other, folder) for other in folder_units if other != folder):
-            del folder_units[folder]
+    dropped = [folder for folder in folder_units if folder in script_folders or any(_below(other, folder) for other in folder_units if other != folder)]
+    for folder in dropped:
+        del folder_units[folder]
     for unit in folder_units.values():
         unit.members = {p for p in paths if _below(p, unit.path)}
 

@@ -78,6 +78,7 @@ from deriva.modules.derivation.base import (
     get_enrichments_from_graph,
     graph_link_pairs,
     source_concept_names,
+    unit_scopes,
 )
 from deriva.modules.derivation.business_actor import BusinessActorDerivation
 from deriva.modules.derivation.business_event import BusinessEventDerivation
@@ -358,7 +359,8 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
     the step's graph query is then not used. Without the key the step derives from graph candidates.
     ``interface_links`` and ``object_links`` list graph queries returning source node id pairs
     (``a``: the component's, ``b``: the interface's or object's) that give a component its
-    interfaces and objects where the graph links them.
+    interfaces and objects where the graph links them. ``group_by: "members"`` groups the
+    interfaces' members instead; ``ubiquity``, ``member_min_names`` and ``max_groups`` apply only there.
     """
     settings = json.loads(params).get("component_services") if params else None
     if settings is None:
@@ -435,13 +437,15 @@ def _component_services_step(
             element_source_paths(graph_manager, [{"properties": {"source": n}} for n in sorted(nodes)]),
             file_imports(graph_manager),
             code_names_with_paths(graph_manager),
-            _documentation_files(graph_manager),
+            # The member services' prompts read no documentation (yet): nothing is read from the checkout
+            {},
             config,
             instruction,
             llm_query_fn,
             source_concept_names(graph_manager, elements),
             member_links=interface_links,
             object_links=object_links,
+            scopes=unit_scopes(graph_manager),
         )
         return _stored_services(services, archimate_manager)
     services = derive_component_services(
@@ -522,10 +526,11 @@ def _naming_config(params: str | None) -> NamingConfig | None:
     if not settings.get("instruction"):
         raise ValueError("params.naming needs an instruction")
     guards = settings.get("guards", {})
+    if not isinstance(guards, dict):
+        raise ValueError("params.naming.guards must be an object")
     words, nouns, labels = guards.get("generic_words", []), guards.get("kind_nouns", {}), guards.get("reserved_labels", [])
     if (
-        not isinstance(guards, dict)
-        or not isinstance(words, list)
+        not isinstance(words, list)
         or not all(isinstance(w, str) and w for w in words)
         or not isinstance(nouns, dict)
         or not all(isinstance(k, str) and isinstance(v, str) and v for k, v in nouns.items())
@@ -563,9 +568,10 @@ def _role_config(params: str | None) -> RoleConfig | None:
     """Read the role classification from an element config's params (``params.roles``).
 
     ``{"roles": {"labels": [...], "instruction": "...", "names": {key: name}}}`` switches it on
-    (optional ``documentation`` template, ``missing_retries`` and ``element_per``: "role" or
-    "candidate"; with "candidate" also ``name_template``, ``container_type`` and
-    ``show_path``; ``structural``: ``[{"property": "decorators", "pattern": "...", "role": key}]``,
+    (optional ``documentation`` template, ``missing_retries`` and ``element_per``: "role",
+    "candidate" or "unit"; with "candidate" also ``name_template``, ``container_type`` and
+    ``show_path``; "unit" needs a ``container_type`` and a ``name_template`` with ``{container}``
+    and may list ``unit_roles``; ``structural``: ``[{"property": "decorators", "pattern": "...", "role": key}]``,
     roles the source itself shows, given without a call); without the key every candidate takes
     the keep and naming path.
     """
@@ -604,10 +610,15 @@ def _role_config(params: str | None) -> RoleConfig | None:
         except re.error as exc:
             raise ValueError(f"params.roles.structural pattern {rule['pattern']!r} is no valid pattern: {exc}") from exc
     unit_roles = settings.get("unit_roles", [])
+    # The property is read in a graph query, so it is a plain property name
     if not isinstance(unit_roles, list) or not all(
-        isinstance(rule, dict) and all(isinstance(rule.get(k), str) and rule.get(k) for k in ("property", "role")) and rule["role"] in settings["names"] for rule in unit_roles
+        isinstance(rule, dict)
+        and all(isinstance(rule.get(k), str) and rule.get(k) for k in ("property", "role"))
+        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", rule["property"])
+        and rule["role"] in settings["names"]
+        for rule in unit_roles
     ):
-        raise ValueError(f"params.roles.unit_roles rules need a unit property and a role key of names, got {unit_roles!r}")
+        raise ValueError(f"params.roles.unit_roles rules need a unit property (a plain property name) and a role key of names, got {unit_roles!r}")
     if unit_roles and element_per != "unit":
         raise ValueError("params.roles.unit_roles are roles a deployable unit shows itself: they need element_per 'unit'")
     return RoleConfig(
@@ -753,6 +764,7 @@ def generate_element(
     per_candidate: PerCandidateConfig | None = None,
     naming: NamingConfig | None = None,
     pattern_labels: frozenset[str] | None = None,
+    name_match_skip: set[tuple[str, str]] | None = None,
     roles: RoleConfig | None = None,
     skip_when_directory_is: frozenset[str] | None = None,
     prompt: ElementPrompt | None = None,
@@ -791,6 +803,7 @@ def generate_element(
         per_candidate: Per-candidate naming mode from the element config (None uses batch mode)
         naming: Isolated naming step from the element config (None keeps structure names)
         pattern_labels: Labels of the candidates the name patterns filter (None: every candidate)
+        name_match_skip: (source type, target type) pairs the per-batch name matching never links (``params.name_match_skip``)
         roles: Candidates classified into roles, one element per role (None: no role path)
         skip_when_directory_is: Element types whose sources take a directory's candidates out
         prompt: The texts of the batch element prompt (``params.prompt``)
@@ -837,6 +850,7 @@ def generate_element(
             defer_relationships=defer_relationships,
             enrichments=enrichments,
             relationship_config=relationship_config,
+            name_match_skip=name_match_skip,
             per_candidate=per_candidate,
             naming=naming,
             patterns=patterns,
@@ -1239,6 +1253,7 @@ def run_derivation(
                         defer_relationships=defer_relationships,
                         enrichments=enrichments.get(),
                         relationship_config=relationship_config(),
+                        name_match_skip=_name_match_skip(relationship_configs),
                         per_candidate=_per_candidate_config(cfg.params),
                         naming=_naming_config(cfg.params),
                         pattern_labels=_pattern_labels(cfg.params),
@@ -1684,6 +1699,7 @@ def run_derivation_iter(
                         defer_relationships=defer_relationships,
                         enrichments=enrichments.get(),
                         relationship_config=relationship_config(),
+                        name_match_skip=_name_match_skip(relationship_configs),
                         per_candidate=_per_candidate_config(cfg.params),
                         naming=_naming_config(cfg.params),
                         pattern_labels=_pattern_labels(cfg.params),

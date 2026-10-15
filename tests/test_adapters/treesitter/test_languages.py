@@ -479,6 +479,15 @@ if (ready) {
         assert next(i for i in imports if i.module == "./e").names == ["e"]
         assert next(i for i in imports if i.module == "./c").line == 5
 
+    def test_javascript_an_awaited_dynamic_import_keeps_its_binding_name(self, manager):
+        source = """async function load() {
+  const mod = await import('./mod');
+}
+"""
+        (imp,) = manager.extract_imports(source, language="javascript")
+
+        assert imp.module == "./mod" and imp.names == ["mod"]
+
 
 # =============================================================================
 # EDGE CASES
@@ -983,3 +992,30 @@ CREATE INDEX idx_x ON order_items (order_id);
 
     def test_ddl_files_are_sql(self, manager):
         assert manager.extract_types("CREATE TABLE T1 (a int);", file_path="db/T1.ddl")[0].name == "T1"
+
+    def test_a_quoted_name_is_one_identifier_even_with_spaces_and_dots(self, manager):
+        types = manager.extract_types('CREATE TABLE [dbo].[my table] (a int);\nCREATE TABLE "app"."order.lines" (a int);', language="sql")
+
+        assert [(t.name, t.decorators) for t in types] == [("my table", ["schema:dbo"]), ("order.lines", ["schema:app"])]
+
+    def test_create_table_in_comments_and_literals_is_no_table(self, manager):
+        source = """-- CREATE TABLE old_orders (id int);
+/* CREATE TABLE draft (id int); */
+INSERT INTO notes VALUES ('CREATE TABLE fake (x int)');
+CREATE TABLE real_one (id int);
+"""
+        assert [t.name for t in manager.extract_types(source, language="sql")] == ["real_one"]
+
+    def test_a_table_ends_at_its_own_terminator(self, manager):
+        source = """CREATE TABLE settings (
+    sep CHAR(1) DEFAULT ';',
+    name TEXT
+);
+CREATE TABLE plain (
+    id INT
+)
+"""
+        settings, plain = manager.extract_types(source, language="sql")
+
+        assert (settings.line_start, settings.line_end) == (1, 4)
+        assert (plain.line_start, plain.line_end) == (5, 7)

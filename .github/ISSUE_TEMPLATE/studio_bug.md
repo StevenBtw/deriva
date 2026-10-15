@@ -25,4 +25,4 @@ If applicable, add screenshots.
  - Python: [e.g. 3.14.6]
  - Browser: [e.g. Chrome 130]
 
-> The studio's "Report issue" button opens a bug report with this information pre-filled; fill in what it left out.
+<!-- The studio's "Report issue" button opens a bug report with this information pre-filled; fill in what it left out. -->

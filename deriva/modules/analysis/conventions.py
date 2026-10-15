@@ -162,7 +162,8 @@ def check_model(snapshot: dict[str, Any], conventions: dict[str, Any]) -> dict[s
 
     def channel_of(name: str) -> str:
         low = name.lower().strip()
-        return next((channel for pattern, channel in channels if low.endswith(pattern)), "other")
+        # The pattern ends the name as whole words ("interest" is no "rest")
+        return next((channel for pattern, channel in channels if re.search(rf"\b{re.escape(pattern)}$", low)), "other")
 
     owners: dict[str, set[str]] = defaultdict(set)
     for r in rels:
@@ -172,8 +173,9 @@ def check_model(snapshot: dict[str, Any], conventions: dict[str, Any]) -> dict[s
         elif t["type"] == "ApplicationComponent" and s["type"] == "ApplicationInterface":
             owners[s["identifier"]].add(t["name"])
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    # Interfaces without a component share no owner: they are not grouped
     for e in by_type.get("ApplicationInterface", []):
-        for owner in sorted(owners.get(e["identifier"]) or {"(no component)"}):
+        for owner in sorted(owners.get(e["identifier"], set())):
             groups[(owner, channel_of(e["name"]))].append(e)
     per_channel = []
     for (owner, channel), group in sorted(groups.items()):

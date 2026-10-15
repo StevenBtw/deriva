@@ -153,7 +153,7 @@ def config_add(
     name: Annotated[str, typer.Argument(help="Step name (the node type for an extraction step)")],
     sequence: Annotated[int, typer.Option("--sequence", help="Execution order (within the phase for derivation)")],
     phase: Annotated[str | None, typer.Option("--phase", help="prep, generate or refine (derivation)")] = None,
-    method: Annotated[str, typer.Option("--method", help="structural, treesitter, ast or llm (extraction)")] = "structural",
+    method: Annotated[str | None, typer.Option("--method", help="structural (default), treesitter, ast or llm (extraction)")] = None,
     params: Annotated[str | None, typer.Option("--params", "-p", help="Params JSON")] = None,
     params_file: Annotated[str | None, typer.Option("--params-file", help="Read params JSON from file")] = None,
 ) -> None:
@@ -164,13 +164,27 @@ def config_add(
     if step_type == "derivation" and not phase:
         typer.echo("Error: a derivation step needs --phase", err=True)
         raise typer.Exit(1)
+    # Options that do not apply to the step type, or that conflict, are refused rather than ignored
+    if step_type == "extraction" and phase:
+        typer.echo("Error: --phase applies to derivation steps only", err=True)
+        raise typer.Exit(1)
+    if step_type == "derivation" and method:
+        typer.echo("Error: --method applies to extraction steps only", err=True)
+        raise typer.Exit(1)
+    if params is not None and params_file:
+        typer.echo("Error: give the params either with --params or with --params-file", err=True)
+        raise typer.Exit(1)
     if params_file:
-        with open(params_file, encoding="utf-8") as f:
-            params = f.read()
+        try:
+            with open(params_file, encoding="utf-8") as f:
+                params = f.read()
+        except OSError as e:
+            typer.echo(f"Error reading params file: {e}", err=True)
+            raise typer.Exit(1) from e
     with PipelineSession() as session:
         try:
             if step_type == "extraction":
-                added = session.add_extraction_step(name, sequence, extraction_method=method, params=params)
+                added = session.add_extraction_step(name, sequence, extraction_method=method or "structural", params=params)
             else:
                 added = session.add_derivation_step(name, phase or "", sequence, params=params)
         except ValueError as e:

@@ -157,3 +157,31 @@ def test_without_the_interface_service_name_rule_the_listed_assignment_stays():
     result = derive_consolidated_relationships(elements, rules, MagicMock(), listed_members=listed, name_match_skip={("ApplicationInterface", "ApplicationService")})
 
     assert [(r["source"], r["relationship_type"], r["target"]) for r in result] == [("ai_pay", "Assignment", "as_pay")]
+
+
+# A data entity merges the same concept's types across units: its element relates through all of them
+ENTITY_SCOPES = UnitScopes(
+    files=dict(SCOPES.files),
+    nodes=dict(SCOPES.nodes),
+    entity_files={"entity::r::order": frozenset({"r/pkg/core/orders.py", "r/cbl/BAT1.cbl"})},
+    entity_nodes={"entity::r::order": frozenset({"typedef::r::pkg/core/orders.py::Order", "typedef::r::REC"})},
+)
+
+
+def test_a_data_entity_is_accessed_by_every_unit_that_holds_one_of_its_types():
+    order = _el("do_order", "DataObject", "entity::r::order", "Order")
+
+    result = derive_containment_relationships(
+        [*COMPONENTS, order], PATHS, [ContainmentRule(container="ApplicationComponent", contained="DataObject", relationship="Access")], scopes=ENTITY_SCOPES
+    )
+
+    assert _triples(result) == {("ac_cli", "Access", "do_order"), ("ac_app", "Access", "do_order"), ("ac_batch", "Access", "do_order")}
+
+
+def test_a_graph_link_to_one_of_an_entities_types_reaches_the_entities_element():
+    order = _el("do_order", "DataObject", "entity::r::order", "Order")
+    rule = GraphLinkRule(source="ApplicationComponent", target="DataObject", relationship="Access", query="Q")
+
+    result = derive_graph_link_relationships([*COMPONENTS, order], [rule], {"Q": [("typedef::r::BAT1", "typedef::r::REC")]}, scopes=ENTITY_SCOPES)
+
+    assert _triples(result) == {("ac_batch", "Access", "do_order")}

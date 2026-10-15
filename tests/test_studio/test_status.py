@@ -38,7 +38,7 @@ def test_status_reports_the_environment(client):
     environment = client.get("/api/status").json()["environment"]
 
     assert environment["python"] == platform.python_version()
-    assert environment["os"]
+    assert environment["os"] == ("macOS" if platform.system() == "Darwin" else platform.system())
 
 
 def test_status_reports_a_held_database_with_the_pid(make_client):

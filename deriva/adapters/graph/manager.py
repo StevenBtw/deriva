@@ -37,6 +37,7 @@ from deriva.common.settings import GraphSettings
 
 from .models import (
     BusinessConceptNode,
+    DataEntityNode,
     DeployableUnitNode,
     DirectoryNode,
     ExternalDependencyNode,
@@ -64,6 +65,7 @@ GraphNode = (
     | ServiceNode
     | ExternalDependencyNode
     | DeployableUnitNode
+    | DataEntityNode
 )
 
 logger = logging.getLogger(__name__)
@@ -101,6 +103,7 @@ class GraphWrites:
 
     nodes: list[str] = field(default_factory=list)
     edges: list[str] = field(default_factory=list)  # {relationship}_{source}_{target}, the edge ids of the run log
+    edge_ends: list[tuple[str, str, str]] = field(default_factory=list)  # (source, relationship, target)
 
 
 def _extract_repo_from_node_id(node_id: str) -> str | None:
@@ -179,6 +182,7 @@ class GraphManager:
         self.db: GrafeoConnection | None = None
         self.namespace = GraphSettings().namespace
         self._recorders: list[GraphWrites] = []  # open recording() blocks
+        self._step_tags: dict[str, Any] = {}  # extractStep/extractVersion of the running extraction step
 
         logger.info(f"Initializing GraphManager with namespace: {self.namespace}")
 
@@ -247,7 +251,9 @@ class GraphManager:
             # Two labels: namespace (Graph) + type (Directory), so MATCH (d:Directory) works with
             # namespace isolation. The stored node is exactly this write: properties set on it since
             # (such as enrichment scores) are dropped.
-            self.db.merge_node("id", node_id, [self.namespace, node_label], {**properties, **system}, replace=True)
+            # Inside an extraction step the node carries the step (its extractSteps are completed by the step's sweep)
+            tags = {**self._step_tags, "extractSteps": [self._step_tags["extractStep"]]} if self._step_tags else {}
+            self.db.merge_node("id", node_id, [self.namespace, node_label], {**properties, **system, **tags}, replace=True)
             logger.debug(f"Added node: {node_id} ({node_label})")
             for recorder in self._recorders:
                 recorder.nodes.append(node_id)
@@ -256,6 +262,16 @@ class GraphManager:
         except Exception as e:
             logger.error(f"Failed to add node {node_id}: {e}")
             raise
+
+    @contextmanager
+    def step_tags(self, step: str, version: int | None = None) -> Iterator[None]:
+        """Nodes and edges written inside the block carry the extraction step (``extractStep``) and its version."""
+        previous = self._step_tags
+        self._step_tags = {"extractStep": step, **({"extractVersion": version} if version is not None else {})}
+        try:
+            yield
+        finally:
+            self._step_tags = previous
 
     @contextmanager
     def recording(self) -> Iterator[GraphWrites]:
@@ -294,7 +310,7 @@ class GraphManager:
         if edge_id is None:
             edge_id = f"{src_id}_{relationship}_{dst_id}"
 
-        properties = properties or {}
+        properties = {**(properties or {}), **self._step_tags}
 
         try:
             # Relationship type as the label (e.g., Graph:CONTAINS); endpoints are
@@ -306,6 +322,7 @@ class GraphManager:
             logger.debug(f"Added edge: {src_id} -{relationship}-> {dst_id}")
             for recorder in self._recorders:
                 recorder.edges.append(create_edge_id(src_id, relationship, dst_id))
+                recorder.edge_ends.append((src_id, relationship, dst_id))
             return edge_id
 
         except Exception as e:
@@ -540,6 +557,27 @@ class GraphManager:
         except Exception as e:
             logger.error(f"Failed to get nodes by type {node_type}: {e}")
             raise
+
+    def set_edge_property(self, src_id: str, relationship: str, dst_id: str, name: str, value: Any) -> int:
+        """Set one property on the edges of one type between two nodes; the number of edges set."""
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+        if not name.isidentifier():
+            raise ValueError(f"Not a property name: {name!r}")
+        label = self.db.get_label(relationship.removeprefix(f"{self.namespace}:"))
+        result = self.db.execute_write(
+            f"MATCH (a {{id: $src}})-[r:`{label}`]->(b {{id: $dst}}) SET r.{name} = $value RETURN count(r) AS updated",
+            {"src": src_id, "dst": dst_id, "value": value},
+        )
+        return int(result[0]["updated"]) if result else 0
+
+    def delete_edge(self, src_id: str, relationship: str, dst_id: str) -> bool:
+        """Delete the edges of one type between two nodes, keeping the nodes; True when any was deleted."""
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+        label = self.db.get_label(relationship.removeprefix(f"{self.namespace}:"))
+        result = self.db.execute_write(f"MATCH (a {{id: $src}})-[r:`{label}`]->(b {{id: $dst}}) DELETE r RETURN count(r) AS deleted", {"src": src_id, "dst": dst_id})
+        return bool(result and result[0]["deleted"] > 0)
 
     def delete_node(self, node_id: str) -> bool:
         """Delete a node and its associated edges.
