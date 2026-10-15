@@ -493,7 +493,30 @@ def _unit_rules(params: str | None) -> deployable_units.UnitRules:
     if not isinstance(web, dict) or set(web) - set(keys) or not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in web.values()):
         raise ValueError(f"DeployableUnit params: web_ui holds lists of strings under {sorted(keys)}")
     signals = {field: tuple(x.lower() for x in web[key]) for key, field in keys.items() if key in web}
-    return deployable_units.UnitRules(code_subtypes=frozenset(subtypes), container_files=tuple(containers), readme_lines=lines, **signals)
+    naming = settings.get("naming", {})
+    words, cut, nouns, docs = naming.get("generic_words", []), naming.get("title_cut_words", []), naming.get("kind_nouns", {}), naming.get("max_doc_names", 3)
+    if (
+        not isinstance(naming, dict)
+        or not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in (words, cut))
+        or not isinstance(nouns, dict)
+        or not all(isinstance(k, str) and isinstance(v, str) and v for k, v in nouns.items())
+        or not isinstance(docs, int)
+        or isinstance(docs, bool)
+        or docs < 0
+    ):
+        raise ValueError(
+            "DeployableUnit params: naming holds generic_words and title_cut_words (lists of strings), kind_nouns (unit kind -> noun) and max_doc_names (a whole number)"
+        )
+    return deployable_units.UnitRules(
+        code_subtypes=frozenset(subtypes),
+        container_files=tuple(containers),
+        readme_lines=lines,
+        generic_words=tuple(words),
+        title_cut_words=tuple(cut),
+        kind_nouns=tuple(sorted(nouns.items())),
+        max_doc_names=docs,
+        **signals,
+    )
 
 
 def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 200_000) -> str | None:
@@ -545,6 +568,9 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
         job_runs=job_runs,
         program_calls=program_calls,
         documents=documents,
+        # Names no unit may take: the technologies and dependencies the graph already names
+        reserved={str(r["name"]) for r in q("MATCH (n:Graph:Technology) WHERE n.active = true RETURN n.techName AS name") if r.get("name")}
+        | {str(r["name"]) for r in q("MATCH (n:Graph:ExternalDependency) WHERE n.active = true RETURN n.dependencyName AS name") if r.get("name")},
     )
     units = deployable_units.detect_units(facts, rules)
 
@@ -569,6 +595,9 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
                 readme_lines=unit.readme_lines,
                 readme_title=unit.readme_title,
                 web_entries=unit.web_entries,
+                product=unit.product,
+                name_candidates=[name for name, _ in unit.name_candidates],
+                name_sources=[source for _, source in unit.name_candidates],
                 member_count=len(unit.members),
             ),
             node_id=node_id,
@@ -1162,7 +1191,7 @@ def _is_unreadable(file_info: dict) -> bool:
 
 
 # Languages the tree-sitter adapter extracts types and methods from
-_TREESITTER_LANGUAGES = frozenset({"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms"})
+_TREESITTER_LANGUAGES = frozenset({"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms", "sql"})
 
 
 def _extract_llm_based(

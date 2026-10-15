@@ -2398,6 +2398,31 @@ class TestDeployableUnitStep:
         with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="web_ui"):
             self._run(graph, tmpdir, {}, params={"code_subtypes": ["java"], "web_ui": {"files": "*.page"}})
 
+    def test_name_candidates_are_written_and_skip_the_technologies_in_the_graph(self, graph):
+        from deriva.adapters.graph.models import TechnologyNode
+
+        graph.add_node(TechnologyNode(name="Shop Admin", tech_category="service", repository_name="r"), node_id="tech::r::shopadmin")
+        files = {
+            "README.md": ("docs", None, "# Shop - Tea Store\n\n| Part | Runtime |\n|---|---|\n| Order Desk | Java |\n"),
+            "desk/Dockerfile": ("config", None, "FROM base\n"),
+            "desk/Desk.java": ("source", "java", "class Desk {}\n"),
+            "shop-admin/Dockerfile": ("config", None, "FROM base\n"),
+            "shop-admin/Admin.java": ("source", "java", "class Admin {}\n"),
+        }
+        params = {
+            "code_subtypes": ["java"],
+            "naming": {"generic_words": ["Server", "Application"], "title_cut_words": ["with"], "kind_nouns": {"container": "Server", "*": "Application"}},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, files, params=params)
+
+        units = {u["id"]: u for u in graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.product AS product, u.nameCandidates AS names, u.nameSources AS sources")}
+        assert units["unit::r::desk"]["product"] == "Shop"
+        assert list(units["unit::r::desk"]["names"]) == ["Order Desk", "Desk"] and list(units["unit::r::desk"]["sources"]) == ["docs", "structure"]
+        assert list(units["unit::r::shop-admin"]["names"]) == ["Shop Admin Server"]  # the technology's name is taken
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="naming"):
+            self._run(graph, tmpdir, {}, params={"code_subtypes": ["java"], "naming": {"generic_words": "Server"}})
+
     def test_the_rules_need_code_subtypes(self, graph):
         with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="code_subtypes"):
             self._run(graph, tmpdir, {}, params={"container_files": ["Dockerfile"]})

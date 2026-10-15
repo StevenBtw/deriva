@@ -56,11 +56,13 @@ from deriva.modules.derivation.base import (
     RoleConfig,
     UnitFilter,
     batch_candidates,
+    build_choice_prompt,
     build_derivation_prompt,
     build_element,
     build_naming_prompt,
     build_role_prompt,
     build_single_candidate_prompt,
+    choice_schema,
     choose_name,
     compute_candidate_strength,
     derive_batch_relationships,
@@ -124,6 +126,27 @@ def _each_word_once(text: str) -> str:
             seen.add(word.casefold())
             words.append(word)
     return " ".join(words)
+
+
+def _compact(words: list[str]) -> str:
+    return "".join(w.casefold() for w in words)
+
+
+def _merge_channel(container: str, channel: str) -> str:
+    """A unit interface's name: the component's name and the channel words, merged on their longest overlap.
+
+    The longest leading run of channel words that, compared without spaces and case, equals a trailing run
+    of the component's words is not repeated ("CardDemo Batch" + "Batch Jobs" -> "CardDemo Batch Jobs";
+    "WebUI" meets "Web UI"). When no channel word is left, "Interface" goes at the end, so the name never
+    equals the component's.
+    """
+    words, channel_words = container.split(), channel.split()
+    for i in range(len(channel_words), 0, -1):
+        prefix = _compact(channel_words[:i])
+        if any(_compact(words[-j:]) == prefix for j in range(1, len(words) + 1)):
+            rest = channel_words[i:]
+            return " ".join([*words, *rest]) if rest else f"{container} Interface"
+    return " ".join([*words, *channel_words])
 
 
 def _relative_path(path: str, repo_name: str) -> str:
@@ -890,7 +913,9 @@ class ElementDerivationBase(ABC):
                     groups[(unit, key)].append(Candidate(node_id=node_id, name=path.rsplit("/", 1)[-1], labels=["Graph", "File"], properties={"filePath": path}))
 
             def unit_name(container: str, key: str) -> str:
-                # The channel word may merge into the container's words; the name never equals the container's
+                # The channel words merge into the container's words where they overlap; the name never equals the container's
+                if roles.name_template.strip() == "{container} {role}":
+                    return _merge_channel(container, roles.names[key])
                 name = " ".join(_each_word_once(roles.name_template.format(container=container, subject="", role=roles.names[key])).split())
                 return f"{name} Interface" if _display_key(name) == _display_key(container) else name
 
@@ -1179,6 +1204,45 @@ class ElementDerivationBase(ABC):
             members += [(str(r["unit"]), key, str(r["node"]), str(r["path"])) for r in rows if r.get("unit") and r.get("node")]
         return sorted(members)
 
+    def _apply_choice(
+        self,
+        element_data: dict[str, Any],
+        candidate: Candidate,
+        naming: NamingConfig,
+        choices: list[str],
+        llm_query_fn: Callable[..., Any],
+        llm_kwargs: dict[str, Any],
+        taken: list[str],
+        structure_names: dict[str, str],
+    ) -> None:
+        """Name an element from its structural candidates (closed-set naming), in place.
+
+        Candidates another element already took are passed over; one free candidate is the name
+        without a call; several are chosen from by one call whose schema allows only them. An
+        answer outside the set takes the first free candidate. The LLM never writes the name.
+        """
+        blocked = {_display_key(n) for n in taken} | {key for node_id, key in structure_names.items() if node_id != candidate.node_id}
+        free = [c for c in choices if _display_key(c) not in blocked]
+        if not free:
+            self.logger.warning("Every name candidate of %s is taken; the structure name stays", candidate.node_id)
+            return
+        name = free[0]
+        if len(free) > 1:
+            prompt = build_choice_prompt(naming_source(candidate), self.ELEMENT_TYPE, naming.choose_instruction, free)
+            try:
+                content, error = extract_response_content(llm_query_fn(prompt, choice_schema(free), **llm_kwargs))
+                text = (content or "").strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                answer = None if error else json.loads(text).get("name")
+                if answer in free:
+                    name = answer
+                else:
+                    self.logger.warning("Name choice for %s outside its candidates (%r); the first candidate stays", candidate.node_id, answer)
+            except (ValueError, AttributeError) as e:
+                self.logger.warning("Unusable name choice for %s: %s; the first candidate stays", candidate.node_id, e)
+        if name != element_data["name"]:
+            element_data["properties"]["structure_name"] = element_data["name"]
+            element_data["name"] = name
+
     def _reserved_names(self, graph_manager: GraphManager, labels: tuple[str, ...]) -> set[str]:
         """Names a naming answer may not take: those of the active graph nodes with these labels (technologies, dependencies)."""
         names: set[str] = set()
@@ -1221,6 +1285,10 @@ class ElementDerivationBase(ABC):
         """
         from deriva.modules.derivation.refine.normalization import strip_repo_prefix
 
+        choices = [str(n) for n in (candidate.properties.get("nameCandidates") or []) if str(n).strip()]
+        if naming.choose_instruction and choices:
+            self._apply_choice(element_data, candidate, naming, choices, llm_query_fn, llm_kwargs, taken, structure_names)
+            return
         source = naming_source(candidate)
         prompt = build_naming_prompt(source, self.ELEMENT_TYPE, naming.instruction)
         answers: list[str | None] = []

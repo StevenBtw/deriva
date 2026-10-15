@@ -3131,6 +3131,14 @@ class TestUnitConfigs:
         with pytest.raises(ValueError, match="name_match_skip"):
             derivation._name_match_skip([SimpleNamespace(params=json.dumps({"name_match_skip": [{"source": "ApplicationInterface"}]}))])
 
+    def test_the_choice_instruction_is_read_from_the_naming_params(self):
+        config = derivation._naming_config(json.dumps({"naming": {"instruction": "x", "choose_instruction": "CHOOSE"}}))
+
+        assert config is not None and config.choose_instruction == "CHOOSE"
+        assert derivation._naming_config(json.dumps({"naming": {"instruction": "x"}})).choose_instruction == ""
+        with pytest.raises(ValueError, match="choose_instruction"):
+            derivation._naming_config(json.dumps({"naming": {"instruction": "x", "choose_instruction": 3}}))
+
     def test_naming_guards_are_read_from_the_naming_params(self):
         guards = {"generic_words": ["App", "cli"], "kind_nouns": {"container": "Server", "*": "Application"}, "reserved_labels": ["Technology", "ExternalDependency"]}
 

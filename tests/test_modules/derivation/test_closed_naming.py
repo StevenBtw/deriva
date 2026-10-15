@@ -1,0 +1,83 @@
+"""Closed-set naming: a unit's component takes one of its structural name candidates; the LLM only chooses."""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+from deriva.modules.derivation.base import Candidate, NamingConfig, build_choice_prompt, choice_schema
+from tests.test_modules.derivation.test_roles import Derivation
+
+NAMING = NamingConfig(instruction="NAME FREELY", choose_instruction="CHOOSE ONE")
+
+
+def _unit(*names: str) -> Candidate:
+    return Candidate(
+        node_id="unit::r::app::online",
+        name="app Online",
+        labels=["Graph", "DeployableUnit"],
+        properties={"path": "r/app", "unitKind": "online", "nameCandidates": list(names), "nameSources": ["mainframe"] * len(names)},
+    )
+
+
+def _name(candidate: Candidate, answer: str | None = None) -> tuple[dict, list[tuple[str, dict]]]:
+    calls: list[tuple[str, dict]] = []
+
+    def llm(prompt: str, schema: dict, **kwargs):
+        calls.append((prompt, schema))
+        return SimpleNamespace(content=json.dumps({"name": answer}))
+
+    element = {"name": "App Online", "properties": {}}
+    Derivation()._apply_naming(element, candidate, NAMING, llm, {}, "r", [], {})
+    return element, calls
+
+
+def test_the_prompt_lists_the_candidates_in_order_after_the_instruction():
+    source = {"kind": "DeployableUnit", "name": "app Online", "unit_kind": "online"}
+
+    prompt = build_choice_prompt(source, "ApplicationComponent", "CHOOSE ONE", ["Shop Online", "Shop App Online"])
+
+    assert prompt.startswith("CHOOSE ONE")
+    assert prompt.index('"Shop Online"') < prompt.index('"Shop App Online"') and '"unit_kind":"online"' in prompt
+
+
+def test_the_schema_is_a_closed_enum_of_the_candidates():
+    schema = choice_schema(["Shop Online", "Shop App Online"])
+
+    assert schema["strict"] is True and schema["schema"]["properties"]["name"] == {"type": "string", "enum": ["Shop Online", "Shop App Online"]}
+
+
+def test_one_candidate_is_the_name_without_a_call():
+    element, calls = _name(_unit("Shop Online"))
+
+    assert element["name"] == "Shop Online" and element["properties"]["structure_name"] == "App Online"
+    assert calls == []
+
+
+def test_several_candidates_are_chosen_from_with_the_choice_instruction():
+    element, calls = _name(_unit("Shop Online", "Mainframe Card Management Online"), answer="Mainframe Card Management Online")
+
+    assert element["name"] == "Mainframe Card Management Online"
+    ((prompt, schema),) = calls
+    assert prompt.startswith("CHOOSE ONE") and "NAME FREELY" not in prompt
+    assert schema["schema"]["properties"]["name"]["enum"] == ["Shop Online", "Mainframe Card Management Online"]
+
+
+def test_an_answer_outside_the_set_falls_back_to_the_first_candidate():
+    element, _ = _name(_unit("Shop Online", "Shop App Online"), answer="Card Demo Online System")
+
+    assert element["name"] == "Shop Online"
+
+
+def test_a_candidate_another_element_took_is_passed_over():
+    calls: list[str] = []
+
+    def llm(prompt, schema, **kwargs):
+        calls.append(prompt)
+        return SimpleNamespace(content=json.dumps({"name": "Shop Online"}))
+
+    element = {"name": "App Online", "properties": {}}
+    Derivation()._apply_naming(element, _unit("Shop Online", "Shop App Online"), NAMING, llm, {}, "r", ["Shop Online"], {})
+
+    # Only one candidate is still free: no call
+    assert element["name"] == "Shop App Online" and calls == []

@@ -87,6 +87,7 @@ def _ensure_extractors_loaded() -> None:
         bms,  # noqa: F401
         cobol,  # noqa: F401
         jcl,  # noqa: F401
+        sql,  # noqa: F401
     )
 
     _EXTRACTORS_LOADED = True

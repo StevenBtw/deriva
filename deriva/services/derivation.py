@@ -533,9 +533,13 @@ def _naming_config(params: str | None) -> NamingConfig | None:
         or not all(isinstance(label, str) and label for label in labels)
     ):
         raise ValueError("params.naming.guards: generic_words and reserved_labels are lists of strings, kind_nouns maps a unit kind to a noun")
+    choose = settings.get("choose_instruction", "")
+    if not isinstance(choose, str):
+        raise ValueError("params.naming.choose_instruction is the instruction text of closed-set naming (a string)")
     return NamingConfig(
         instruction=settings["instruction"],
         samples=int(settings.get("samples", 1)),
+        choose_instruction=choose,
         guards=NameGuards(generic_words=frozenset(w.lower() for w in words), kind_nouns=dict(nouns), reserved_labels=tuple(labels)),
     )
 

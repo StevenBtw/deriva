@@ -10,12 +10,31 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ## v0.8.2 - Pre-benchmark refinement (Unreleased)
 
+### Model granularity: the application layer
+
+- **Deployable units**: a new structural extraction step `DeployableUnit` (no LLM) finds what runs on its own: a folder with a container file and its own code (the innermost one), a manifest entry point (package.json `bin`/`start`, a Maven or Gradle `war`, `spring-boot` or `application` plugin, one unit per pyproject script with its import closure as members) and mainframe applications (the core application split into online and batch, each module whole, a subprogram with the unit of most of its callers). A repository without any is one unit. Each unit is a `Graph:DeployableUnit` node with `INCLUDES` edges to its files (and programs and screens)
+- **One component per deployable unit**: ApplicationComponent is derived from the units, so a repository gets as many components as it has deployable units instead of one per module, package or folder
+- **One interface per unit and channel**: ApplicationInterface groups a unit's endpoints, screens or jobs per channel (`roles.element_per: "unit"`) and keeps them as the interface's `members`; the channel words are REST API, Web UI, Commands, Messaging API, RPC API and Batch Jobs. A unit with page files (an `index.html`, server pages such as JSP, html-like files in a `templates` or `views` folder; build, dependency and test folders left out) gets a Web UI interface from structure, without an LLM call (`roles.unit_roles`). The channel words merge into the component's name where they overlap, and an interface name never equals its component's
+- **Services per capability**: ApplicationService groups the interfaces' members by the objects they reach (`component_services.group_by: "members"`), across components, with one naming call per service
+- **Names chosen, not written**: a unit's component is named from a closed set of candidates built from structure and documentation (the first part of the root README title as the product name, the unit's own README title, link texts and table or bold names in the documentation, the manifest name, the folder or entry name). Taken names (technologies, dependencies) are dropped and names of only generic words get the product name in front; with one candidate there is no call, with several one call chooses from a closed enum (`naming.choose_instruction`). Component names are the same in 97% of runs instead of 81%, with 10 naming calls per run instead of 36 on the development set
+- **Relationships follow the units**: containment, configuration, dependency, named-in-code and graph-link rules resolve "the component of a node" through the units' members, so access to data objects and serving between units move up from removed packages to their unit
+- **Name matching reads structure**: the name and file matching tier compares `structure_name` (the name before a naming call), never an LLM-written name, so its relationships no longer change from run to run (relationship consistency 89.7% to 95.2% on the development set). Type pairs can be left out of it (`name_match_skip`); interface to service is left out, as the service's interface list already assigns its interfaces
+- **Convention checklist**: `deriva-cli benchmark conventions <session...>` checks the run snapshots of benchmark sessions against ArchiMate modelling conventions (size bands, technology services, forbidden name patterns, unconnected elements, exact duplicates including one name across two types, spelling variants, one interface per component and channel, data objects without a business object, nodes without a deployment unit) and writes a review page per repository and a summary
+- **CLI**: `config add extraction <node type> --sequence N` adds an extraction step (disabled), with `--method` and `--params-file`
+
+### Extraction
+
+- **SQL tables without an LLM**: `.sql` and `.ddl` files are parsed for `CREATE TABLE` statements (schema and quotes handled) into table types; they went to the LLM type fallback before
+
 ### Studio
 
 - **GitHub and report issue in the top bar**: a GitHub link and a Report issue button sit next to the API docs link; the button opens a new bug report on GitHub with the environment pre-filled (Deriva version, install, OS, Python version, browser), and `.github/ISSUE_TEMPLATE/studio_bug.md` gives reports started from the GitHub UI the same fields
 
 ### Fixes
 
+- **Imports inside functions and blocks**: Python imports in functions, methods and `if`/`try` blocks, and JavaScript `require()` and dynamic `import()` anywhere, are extracted; only top-level imports were before
+- **A top folder named like the repository**: stored paths no longer drop a first folder that has the repository's name (`repo/repo/pkg/x.py` was stored as `repo/pkg/x.py`); a concept merge no longer doubles the repository prefix
+- **Same-file preference in call resolution**: method and type lookups compare repository-relative paths, so a call resolves to the callee in its own file before a same-named one elsewhere (the comparison never matched before)
 - **LLM configuration**: padding inside surrounding quotes is stripped as well, so a value like `' sk-ant-123 '` no longer reaches the provider padded (the named `LLM_{NAME}_*` configs got the same refinement in 0.8.1)
 - **Workspace**: the Linked | Separate switch is tucked into the top right corner of the lane box, its outer corner rounded like the box (it was a few pixels low and off to the side)
 - **Benchmark**: in the runs' models diagram view the ArchiMate diagram starts below the model bar, with the bar's spacing and side margins (it sat against the bar's bottom edge)

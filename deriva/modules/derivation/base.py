@@ -2133,6 +2133,8 @@ class NamingConfig:
     instruction: str  # Naming convention for the element type
     samples: int = 1  # Answers per element; above 1 they are combined by majority (voting, reported per session)
     guards: NameGuards = field(default_factory=NameGuards)  # Structural checks on the answer (unit names)
+    # Closed-set naming: a source that lists nameCandidates is named by choosing one of them with this instruction
+    choose_instruction: str = ""
 
 
 # Structural source fields that are the same in every run (no LLM-written text)
@@ -2162,6 +2164,37 @@ NAMING_SCHEMA: dict[str, Any] = {
         "additionalProperties": False,
     },
 }
+
+
+def choice_schema(candidates: list[str]) -> dict[str, Any]:
+    """The output contract of a closed-set naming call: one of the candidates, as written."""
+    return {
+        "name": "element_name_choice",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "enum": list(candidates)}},
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def build_choice_prompt(source: dict[str, Any], element_type: str, instruction: str, candidates: list[str]) -> str:
+    """Prompt for choosing one element's name from its candidates; depends only on its source, type, instruction and candidates."""
+    source_json = json.dumps(source, sort_keys=True, separators=(",", ":"), default=str)
+    listed = "\n".join(f"- {json.dumps(c)}" for c in candidates)
+    return f"""{instruction}
+
+## ArchiMate {element_type} derived from this source
+```json
+{source_json}
+```
+
+## Candidates
+{listed}
+
+Return {{"name": "..."}} with one candidate exactly as written."""
 
 
 def naming_source(candidate: Candidate) -> dict[str, Any]:

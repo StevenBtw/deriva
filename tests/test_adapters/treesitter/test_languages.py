@@ -959,3 +959,27 @@ class TestCSharpSpecificExtraction:
 
         # Should have some imports
         assert len(imports) >= 1
+
+
+class TestSqlDdl:
+    """CREATE TABLE statements are table types, parsed without an LLM."""
+
+    def test_tables_with_schema_quotes_and_if_not_exists(self, manager):
+        source = """-- schema
+CREATE TABLE IF NOT EXISTS order_items (
+    id INTEGER PRIMARY KEY,
+    order_id INTEGER
+);
+
+create table "Shop"."Customer" (id int);
+CREATE TABLE SHOP.TRANSACTION_TYPE
+  (TR_TYPE CHAR(2) NOT NULL);
+CREATE INDEX idx_x ON order_items (order_id);
+"""
+        types = manager.extract_types(source, language="sql")
+
+        assert [(t.name, t.kind, t.line_start) for t in types] == [("order_items", "table", 2), ("Customer", "table", 7), ("TRANSACTION_TYPE", "table", 8)]
+        assert types[2].decorators == ["schema:SHOP"]
+
+    def test_ddl_files_are_sql(self, manager):
+        assert manager.extract_types("CREATE TABLE T1 (a int);", file_path="db/T1.ddl")[0].name == "T1"

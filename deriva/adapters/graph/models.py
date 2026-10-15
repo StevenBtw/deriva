@@ -519,6 +519,9 @@ class DeployableUnitNode:
     readme_lines: list[str] = field(default_factory=list)
     readme_title: str | None = None
     web_entries: list[str] = field(default_factory=list)  # Files that serve pages (Web UI signals)
+    product: str = ""
+    name_candidates: list[str] = field(default_factory=list)  # The closed set its component is named from
+    name_sources: list[str] = field(default_factory=list)  # Where each candidate comes from (readme, docs, manifest, ...)
     member_count: int = 0
 
     def generate_id(self) -> str:
@@ -539,6 +542,9 @@ class DeployableUnitNode:
             "readmeLines": list(self.readme_lines),
             "readmeTitle": self.readme_title,
             "webEntries": list(self.web_entries),
+            "product": self.product,
+            "nameCandidates": list(self.name_candidates),
+            "nameSources": list(self.name_sources),
             "memberCount": self.member_count,
             "type": "DeployableUnit",
         }

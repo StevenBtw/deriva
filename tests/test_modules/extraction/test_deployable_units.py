@@ -222,3 +222,119 @@ def test_a_readme_title_drops_markdown_images_and_keeps_link_text():
     documents = {"r/shop/README.md": "# ![Logo](../img/logo.png) Demo: [Storefront](docs/x.md) **Service**\n"}
 
     assert _units(files, documents=documents)["r/shop"].readme_title == "Demo: Storefront Service"
+
+
+# Closed-set naming: each unit's name candidates come from structure and documentation, never from an LLM
+NAMING = UnitRules(
+    code_subtypes=frozenset({"python", "java", "javascript", "cobol"}),
+    generic_words=("Application", "App", "CLI", "Server", "Service", "Backend", "Frontend", "UI", "Batch", "Online", "Extension"),
+    title_cut_words=("with", "using"),
+    kind_nouns=(("container", "Server"), ("*", "Application")),
+)
+
+
+def _named(files, rules=NAMING, **facts):
+    units = detect_units(RepoFacts(repository="r", files=files, **facts), rules)
+    return {u.path + (f"::{u.entry}" if u.entry else "") + (f"::{u.kind}" if u.kind in ("online", "batch") else ""): u for u in units}
+
+
+def _container(folder: str) -> list[dict]:
+    return [_file(f"r/{folder}/Dockerfile"), _file(f"r/{folder}/src/App.java", "java")]
+
+
+def test_the_product_name_is_the_first_part_of_the_root_readme_title():
+    units = _named(_container("shop"), documents={"r/README.md": "# Shop Platform - Online Store for Teas\n"})
+
+    assert units["r/shop"].product == "Shop Platform"
+    assert _named(_container("shop"))["r/shop"].product == "r"  # no README, no root manifest: the repository name
+
+
+def test_a_readme_title_naming_the_product_and_the_folder_gives_one_candidate():
+    documents = {"r/README.md": "# Shop\n", "r/customer-core/README.md": "# ![Logo](x.png) Shop: Customer Core\n"}
+    manifests = {"r/customer-core/package.json": '{"name": "customer-core", "scripts": {"start": "node ."}}'}
+
+    units = _named([*_container("customer-core"), _file("r/customer-core/package.json")], documents=documents, manifests=manifests)
+
+    assert units["r/customer-core"].name_candidates == [("Customer Core", "readme")]
+
+
+def test_title_parts_drop_product_and_generic_words_and_a_cut_word_keeps_only_the_shorter_variant():
+    """The words after a cut word name technology ("with DB2"), which belongs in the technology layer, not in the name."""
+    documents = {"r/README.md": "# Shop\n", "r/order-imports/README.md": "# Shop Extension - Order Imports with Queue and Store\n"}
+
+    names = [n for n, _ in _named(_container("order-imports"), documents=documents)["r/order-imports"].name_candidates]
+
+    assert names[0] == "Order Imports" and "Order Imports with Queue and Store" not in names  # "Shop Extension": product and generic
+
+
+def test_links_to_the_folder_written_as_names_are_candidates_and_prose_links_are_not():
+    documents = {
+        "r/README.md": "# Shop\n\n- **[Risk Engine](risk-engine)** computes risk.\n- See [the risk documentation](./risk-engine/).\n",
+        "r/docs/overview.md": "The [Pending Risk Checks](../risk-engine) run nightly.\n",
+    }
+
+    names = [n for n, s in _named(_container("risk-engine"), documents=documents)["r/risk-engine"].name_candidates if s == "docs"]
+
+    assert names == ["Risk Engine", "Pending Risk Checks"]
+
+
+def test_table_cells_and_bold_terms_ending_in_the_folder_name_are_candidates():
+    readme = (
+        "# Clinic\n\n| Component | Runtime |\n|---|---|\n| KVS Bridge | Java |\n| Bridge Trigger | Lambda |\n"
+        "| Invoked by the flow to start the bridge | x |\n\n**Media Bridge** relays audio.\n"
+    )
+
+    names = [n for n, s in _named(_container("bridge"), documents={"r/README.md": readme})["r/bridge"].name_candidates if s == "docs"]
+
+    assert names == ["KVS Bridge", "Media Bridge"]
+
+
+def test_a_generic_folder_name_takes_no_table_cells():
+    readme = "# Clinic\n\n| Part | Notes |\n|---|---|\n| Billing Backend | Java |\n"
+
+    units = _named(_container("backend"), documents={"r/README.md": readme})
+
+    assert units["r/backend"].name_candidates == [("Clinic Backend", "structure")]
+
+
+def test_the_manifest_name_loses_only_the_whole_product_prefix():
+    documents = {"r/README.md": "# Loan Desk\n"}
+    manifests = {"r/web/package.json": '{"name": "loan-desk-frontend", "scripts": {"start": "vite"}}', "r/ops/package.json": '{"name": "loan-ops", "scripts": {"start": "node ."}}'}
+    files = [*_container("web"), _file("r/web/package.json"), *_container("ops"), _file("r/ops/package.json")]
+
+    units = _named(files, documents=documents, manifests=manifests)
+
+    assert [n for n, s in units["r/web"].name_candidates if s == "manifest"] == ["Loan Desk Frontend"]  # generic: the product in front
+    assert [n for n, s in units["r/ops"].name_candidates if s == "manifest"] == ["Loan Ops"]
+
+
+def test_a_taken_name_is_dropped_and_when_all_are_taken_the_kind_noun_is_added():
+    manifests = {"r/spring-admin/package.json": '{"name": "spring-admin", "scripts": {"start": "java"}}'}
+    files = [*_container("spring-admin"), _file("r/spring-admin/package.json")]
+
+    units = _named(files, manifests=manifests, reserved={"Spring Admin"})
+
+    assert units["r/spring-admin"].name_candidates == [("Spring Admin Server", "guard")]
+
+
+def test_documentation_keeps_its_spelling_and_generic_words_take_the_lists_casing():
+    documents = {"r/README.md": "# Shop\n", "r/risk-server/README.md": "# Shop: Risk Management server with cache\n"}
+
+    names = [n for n, _ in _named(_container("risk-server"), documents=documents)["r/risk-server"].name_candidates]
+
+    assert names[0] == "Risk Management Server"
+
+
+def test_mainframe_core_units_are_named_after_the_product_and_the_other_title_parts():
+    units = _named(
+        MAINFRAME,
+        programs=PROGRAMS,
+        job_runs=[("r/app/jcl/JOB1.jcl", "p:BAT1")],
+        documents={"r/README.md": "# CardShop - Mainframe Card Management\n"},
+    )
+
+    assert units["r/app::online"].name_candidates == [
+        ("CardShop Online", "mainframe"),
+        ("Mainframe Card Management Online", "mainframe"),
+        ("CardShop App Online", "structure"),  # "app Online" is only generic words: the product in front
+    ]

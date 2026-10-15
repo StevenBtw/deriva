@@ -141,3 +141,13 @@ def test_an_interface_name_never_equals_its_components_name():
     result, _ = _generate([screen], {}, roles=roles)
 
     assert [e["name"] for e in result.created_elements] == ["Ledger Online Interface"]
+
+
+def test_the_channel_merges_with_the_component_name_only_where_they_overlap():
+    from deriva.modules.derivation.element_base import _merge_channel
+
+    assert _merge_channel("CardDemo Batch", "Batch Jobs") == "CardDemo Batch Jobs"
+    assert _merge_channel("TeaStore UI", "Web UI") == "TeaStore UI Web UI"  # "UI" is no overlap of "Web UI"
+    assert _merge_channel("WebUI", "Web UI") == "WebUI Interface"  # the whole channel is in the name already
+    assert _merge_channel("Order Batch Jobs", "Batch Jobs") == "Order Batch Jobs Interface"
+    assert _merge_channel("Deriva CLI", "Commands") == "Deriva CLI Commands"

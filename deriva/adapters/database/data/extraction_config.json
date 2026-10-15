@@ -236,5 +236,22 @@
     "created_at": "2026-09-29T23:00:12.367943",
     "batch_size": 1,
     "params": "{\n \"prompt\": {\n  \"persona\": \"You are analyzing a test file to extract test definitions.\",\n  \"task\": \"Extract all test definitions from this file.\"\n }\n}"
+  },
+  {
+    "id": 85,
+    "node_type": "DeployableUnit",
+    "version": 3,
+    "sequence": 15,
+    "enabled": true,
+    "input_sources": "",
+    "instruction": "",
+    "example": null,
+    "is_active": true,
+    "extraction_method": "structural",
+    "temperature": null,
+    "max_tokens": null,
+    "created_at": "2026-10-15T21:23:28.970581",
+    "batch_size": 1,
+    "params": "{\"code_subtypes\": [\"c\", \"cobol\", \"coffeescript\", \"cpp\", \"csharp\", \"golang\", \"java\", \"javascript\", \"php\", \"python\", \"ruby\", \"rust\", \"typescript\"], \"container_files\": [\"Dockerfile\", \"Dockerfile.*\", \"*.Dockerfile\"], \"readme_lines\": 8, \"web_ui\": {\"files\": [\"index.html\", \"*.jsp\", \"*.jspx\", \"*.cshtml\", \"*.erb\"], \"template_dirs\": [\"templates\", \"views\"], \"template_suffixes\": [\".html\", \".htm\", \".jinja\", \".jinja2\", \".j2\", \".ftl\", \".mustache\", \".hbs\", \".twig\"], \"excluded_dirs\": [\"node_modules\", \"build\", \"dist\", \"target\", \"test\", \"tests\", \"__tests__\"]}, \"naming\": {\"generic_words\": [\"Application\", \"App\", \"Apps\", \"CLI\", \"Command\", \"Commands\", \"Console\", \"Server\", \"Service\", \"Services\", \"Backend\", \"Frontend\", \"Front\", \"End\", \"Web\", \"UI\", \"API\", \"Client\", \"Core\", \"Main\", \"Module\", \"Component\", \"System\", \"Platform\", \"Tool\", \"Tools\", \"Worker\", \"Batch\", \"Online\", \"Program\", \"Engine\", \"Runtime\", \"Portal\", \"Extension\"], \"title_cut_words\": [\"with\", \"using\", \"for\"], \"kind_nouns\": {\"container\": \"Server\", \"*\": \"Application\"}, \"max_doc_names\": 3}}"
   }
 ]
