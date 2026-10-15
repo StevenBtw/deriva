@@ -59,6 +59,7 @@ from deriva.adapters.graph.models import (
     TechnologyNode,
     TestNode,
     TypeDefinitionNode,
+    repo_relative,
 )
 from deriva.adapters.nlp import NlpTool
 from deriva.adapters.repository import RepoManager
@@ -771,12 +772,9 @@ def _extract_edges(
             class_name = props.get("typeName") or props.get("class_name") or None
             if class_name == "":
                 class_name = None
-            file_path = props.get("filePath") or props.get("file_path", "")
+            # The graph stores "<repo>/<path>"; the files being parsed are repo-relative
+            file_path = repo_relative(props.get("filePath") or props.get("file_path", ""), repo.name)
             node_id = m.get("id", "")
-
-            # Keep file_path as-is (with repo prefix) to match classified_files format
-            # Both graph filePath and classified_files paths include the full relative path
-            # e.g., "deriva/cli/cli.py" for files inside the deriva/ subdirectory
 
             key = (method_name, class_name)
             if key not in global_method_lookup:
@@ -801,11 +799,8 @@ def _extract_edges(
             # Properties may be nested in a "properties" dict or at top level
             props = t.get("properties", t)
             type_name = props.get("typeName") or props.get("name", "")
-            file_path = props.get("filePath") or props.get("file_path", "")
+            file_path = repo_relative(props.get("filePath") or props.get("file_path", ""), repo.name)
             node_id = t.get("id", "")
-
-            # Keep file_path as-is (with repo prefix) to match classified_files format
-            # Both graph filePath and classified_files paths include the full relative path
 
             if type_name not in global_type_lookup:
                 global_type_lookup[type_name] = []
@@ -1793,7 +1788,7 @@ def _add_concept_node(graph_manager: GraphManager, node: BusinessConceptNode, no
     node.concept_types = merged["conceptTypes"]
     node.source_terms = merged["sourceTerms"]
     node.description = merged["description"]
-    node.origin_source = merged["originSource"]
+    node.origin_source = repo_relative(merged["originSource"], node.repository_name)  # stored paths carry the repo prefix
     node.confidence = merged["confidence"]
     node.extraction_method = merged["extractionMethod"]
     graph_manager.add_node(node, node_id=node_id)

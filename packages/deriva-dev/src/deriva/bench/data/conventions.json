@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "about": "ArchiMate convention checklist for derived models (the model granularity plan). Bands warn; patterns, technology services, orphans, exact duplicates, more than one interface per component and channel, data objects without a business object and nodes without a deployment unit fail.",
   "bands": {
     "total": [25, 40],

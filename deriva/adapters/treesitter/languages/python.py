@@ -454,11 +454,11 @@ class PythonExtractor(LanguageExtractor):
         return methods
 
     def extract_imports(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedImport]:
-        """Extract import statements."""
+        """Extract import statements, also inside functions, classes and if/try blocks (lazy and optional imports)."""
         imports: list[ExtractedImport] = []
         root = tree.root_node
 
-        for node in root.children:
+        for node in self.walk_tree(root, {"import_statement", "import_from_statement"}):
             if node.type == "import_statement":
                 imports.extend(self._extract_import(node, source))
             elif node.type == "import_from_statement":

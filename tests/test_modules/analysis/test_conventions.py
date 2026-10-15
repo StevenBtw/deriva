@@ -103,6 +103,24 @@ def test_exact_duplicates_fail_and_spelling_variants_only_warn():
     assert _status(result, "spelling variants") == "warn" and any("ActiveMQ" in h for h in _hits(result, "spelling variants"))
 
 
+def test_the_same_name_across_any_two_types_is_an_exact_duplicate():
+    """An interface named like its component, or a service like a function, is one name for two things."""
+    elements = [
+        *BASE,
+        _el("ac_batch", "ApplicationComponent", "Ledger Batch", "unit::r::batch"),
+        _el("ai_batch", "ApplicationInterface", "Ledger Batch", "unit::r::batch"),
+        _el("as_billing", "ApplicationService", "Billing", "unit::r::billing"),
+        _el("bf_billing", "BusinessFunction", "Billing", "concept::r::billing"),
+    ]
+
+    result = check_runs({"run1": _snapshot(elements, BASE_RELS)}, CONVENTIONS)["run1"]
+
+    exact = _hits(result, "exact duplicates")
+    assert "Ledger Batch: ApplicationComponent and ApplicationInterface" in exact
+    assert "Billing: ApplicationService and BusinessFunction" in exact
+    assert not any(h.startswith("Order") for h in exact)  # a data object realizing its business object stays fine
+
+
 def test_more_than_one_interface_per_component_and_channel_fails():
     elements = [*BASE, _el("ai_shop_rest2", "ApplicationInterface", "Shop Orders HTTP API"), _el("ai_shop_web", "ApplicationInterface", "Shop Web UI")]
     rels = [*BASE_RELS, _rel("ac_shop", "Composition", "ai_shop_rest2"), _rel("ac_shop", "Composition", "ai_shop_web")]

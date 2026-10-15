@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -24,13 +25,15 @@ UNITS = {
     "unit::r::shop": ("Shop Backend", {"r/shop/orders.py", "r/shop/users.py"}, set()),
     "unit::r::app::online": ("Ledger Online", {"r/app/bms/MAP1.bms"}, {"typedef::r::MAP1"}),
 }
+# unit id -> the component's structure name (the fallback of its naming call); none for the online unit
+STRUCTURE = {"unit::r::shop": "Shop"}
 
 
 def _file(path: str) -> Candidate:
     return Candidate(node_id=f"file::r::{path.replace('/', '_')}", name=path.rsplit("/", 1)[-1], labels=["Graph", "File"], properties={"path": path})
 
 
-def _generate(candidates, answer):
+def _generate(candidates, answer, roles=ROLES, web_entries=None):
     prompts: list[str] = []
 
     def llm(prompt, schema, **kwargs):
@@ -39,6 +42,8 @@ def _generate(candidates, answer):
         return SimpleNamespace(content=json.dumps({"items": items}))
 
     def query(cypher, params=None):
+        if "webEntries" in cypher:
+            return [{"unit": unit, "node": f"file::r::{path.replace('/', '_')}", "path": path} for unit, paths in sorted((web_entries or {}).items()) for path in paths]
         if "Graph:INCLUDES" in cypher:
             ids, paths = set(params["ids"]), set(params["paths"])
             rows = []
@@ -50,7 +55,10 @@ def _generate(candidates, answer):
 
     archimate_manager = MagicMock()
     archimate_manager.get_elements.side_effect = lambda element_type=None, enabled_only=False: (
-        [SimpleNamespace(name=name, identifier=f"ac_{i}", properties={"source": unit}) for i, (unit, (name, _, _)) in enumerate(UNITS.items())]
+        [
+            SimpleNamespace(name=name, identifier=f"ac_{i}", properties={"source": unit, **({"structure_name": STRUCTURE[unit]} if unit in STRUCTURE else {})})
+            for i, (unit, (name, _, _)) in enumerate(UNITS.items())
+        ]
         if element_type == "ApplicationComponent"
         else []
     )
@@ -69,7 +77,7 @@ def _generate(candidates, answer):
             batch_size=5,
             existing_elements=[],
             prompt=TEST_PROMPT,
-            roles=ROLES,
+            roles=roles,
         )
     return result, prompts
 
@@ -91,6 +99,18 @@ def test_the_endpoints_of_one_unit_and_channel_become_one_interface_with_them_as
     assert len(prompts) == 1 and "MAP1" not in prompts[0]
 
 
+def test_an_interface_carries_a_structure_name_from_its_components_structure_name():
+    """Name matching may only read structure (rule 6d): the template filled with the component's structure name."""
+    orders = _file("r/shop/orders.py")
+    screen = Candidate(node_id="typedef::r::MAP1", name="MAP1", labels=["Graph", "TypeDefinition"], properties={"filePath": "r/app/bms/MAP1.bms", "category": "screen"})
+
+    result, _ = _generate([orders, screen], {orders.node_id: "rest"})
+
+    by_name = {e["name"]: e["properties"] for e in result.created_elements}
+    assert by_name["Shop Backend REST API"]["structure_name"] == "Shop REST API"
+    assert by_name["Ledger Online Web UI"]["structure_name"] == "Ledger Online Web UI"  # no structure name: the component's name
+
+
 def test_a_candidate_that_no_unit_includes_is_left_out_with_its_reason():
     stray = _file("r/tools/report.py")
 
@@ -98,3 +118,26 @@ def test_a_candidate_that_no_unit_includes_is_left_out_with_its_reason():
 
     assert result.created_elements == []
     assert [d.stage for d in result.candidate_decisions] == ["no_unit"]
+
+
+def test_a_unit_with_web_entries_gets_a_web_ui_from_structure_without_an_llm_call():
+    """Server-rendered pages and page entries are a Web UI, decided by structure (roles.unit_roles)."""
+    orders = _file("r/shop/orders.py")
+    roles = replace(ROLES, unit_roles=(("webEntries", "web"),))
+
+    result, prompts = _generate([orders], {orders.node_id: "rest"}, roles=roles, web_entries={"unit::r::shop": ["r/shop/templates/home.html"]})
+
+    by_name = {e["name"]: e["properties"] for e in result.created_elements}
+    assert sorted(by_name) == ["Shop Backend REST API", "Shop Backend Web UI"]
+    assert by_name["Shop Backend Web UI"]["members"] == [{"name": "home.html", "source": "file::r::r_shop_templates_home.html"}]
+    assert len(prompts) == 1 and "home.html" not in prompts[0]  # only the endpoint file was asked
+
+
+def test_an_interface_name_never_equals_its_components_name():
+    """The word dedupe can swallow the channel word ("Ledger Online" + "Online"); then "Interface" goes at the end."""
+    screen = Candidate(node_id="typedef::r::MAP1", name="MAP1", labels=["Graph", "TypeDefinition"], properties={"filePath": "r/app/bms/MAP1.bms", "category": "screen"})
+    roles = replace(ROLES, names={**ROLES.names, "web": "Online"})
+
+    result, _ = _generate([screen], {}, roles=roles)
+
+    assert [e["name"] for e in result.created_elements] == ["Ledger Online Interface"]

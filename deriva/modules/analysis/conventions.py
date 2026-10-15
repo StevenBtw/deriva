@@ -109,7 +109,7 @@ def check_model(snapshot: dict[str, Any], conventions: dict[str, Any]) -> dict[s
             flag(e["identifier"], "unconnected elements")
     checks.append(_check("unconnected elements", orphans, target="0"))
 
-    # Exact duplicates: within a type, and across business/data objects and components/system software
+    # Exact duplicates: within a type, and one name across two types
     realized = {(r["source"], r["target"]) for r in rels if r["type"] == "Realization"}
     exact: list[str] = []
     by_type_key: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -120,18 +120,23 @@ def check_model(snapshot: dict[str, Any], conventions: dict[str, Any]) -> dict[s
             exact.append(f"{kind}: {' = '.join(sorted(g['name'] for g in group))}")
             for g in group:
                 flag(g["identifier"], "exact duplicates")
-    for first, second, needs_link in (("BusinessObject", "DataObject", True), ("ApplicationComponent", "SystemSoftware", False)):
-        for (kind, key), group in sorted(by_type_key.items()):
-            if kind != first or not key:
-                continue
-            for a in group:
-                for b in by_type_key.get((second, key), []):
-                    if needs_link and ((b["identifier"], a["identifier"]) in realized or (a["identifier"], b["identifier"]) in realized):
-                        continue
-                    note = ", no Realization" if needs_link else ""
-                    exact.append(f"{a['name']}: {first} and {second}{note}")
-                    flag(a["identifier"], "exact duplicates")
-                    flag(b["identifier"], "exact duplicates")
+    # Across any two types one name is a duplicate, except a data object that realizes its business object
+    types_by_key: dict[str, list[str]] = defaultdict(list)
+    for kind, key in sorted(by_type_key):
+        if key:
+            types_by_key[key].append(kind)
+    for key, kinds in sorted(types_by_key.items()):
+        for i, first in enumerate(kinds):
+            for second in kinds[i + 1 :]:
+                needs_link = (first, second) == ("BusinessObject", "DataObject")
+                for a in by_type_key[(first, key)]:
+                    for b in by_type_key[(second, key)]:
+                        if needs_link and ((b["identifier"], a["identifier"]) in realized or (a["identifier"], b["identifier"]) in realized):
+                            continue
+                        note = ", no Realization" if needs_link else ""
+                        exact.append(f"{a['name']}: {first} and {second}{note}")
+                        flag(a["identifier"], "exact duplicates")
+                        flag(b["identifier"], "exact duplicates")
     checks.append(_check("exact duplicates", exact, target="0"))
 
     # Spelling variants within a type (warn only: pairs such as a backend and its frontend look alike)

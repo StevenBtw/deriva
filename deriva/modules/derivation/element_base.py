@@ -861,16 +861,20 @@ class ElementDerivationBase(ABC):
         subjects: dict[str, str] = {}
         duplicates: set[str] = set()
         unit_of_element: dict[str, str] = {}  # element identifier -> its deployable unit (element_per "unit")
+        structure_of_element: dict[str, str] = {}  # element identifier -> its name from structure (element_per "unit")
         outside: set[str] = set()  # candidates with a role that no unit with a container element includes
         if roles.element_per == "unit":
             # One element per (unit, role): the unit's container element names it, the candidates are its members
             chosen = [c for c in ordered if role_of.get(c.node_id) is not None]
             units_of = self._units_of(chosen, graph_manager)
-            container_names = {
-                str(e.properties.get("source")): e.name
+            containers_of_units = [
+                e
                 for e in (archimate_manager.get_elements(element_type=roles.container_type) if roles.container_type else [])
                 if str(e.properties.get("source") or "").startswith("unit::")
-            }
+            ]
+            container_names = {str(e.properties.get("source")): e.name for e in containers_of_units}
+            # The container's name from structure (its naming call's fallback): what name matching may read (rule 6d)
+            container_structure = {str(e.properties.get("source")): str(e.properties.get("structure_name") or e.name) for e in containers_of_units}
             groups: dict[tuple[str, str], list[Candidate]] = defaultdict(list)
             for c in chosen:
                 units = [u for u in units_of.get(c.node_id, []) if u in container_names]
@@ -888,6 +892,9 @@ class ElementDerivationBase(ABC):
                 seen.add(_display_key(name))
                 identifier = element_identifier(self.ELEMENT_TYPE, f"{unit}::{key}")
                 unit_of_element[identifier] = unit
+                structure_of_element[identifier] = " ".join(
+                    _each_word_once(roles.name_template.format(container=container_structure[unit], subject="", role=roles.names[key])).split()
+                )
                 containers.update({c.node_id: container_names[unit] for c in group})
                 planned.append((identifier, name, group, key))
         elif roles.element_per == "candidate":
@@ -949,6 +956,7 @@ class ElementDerivationBase(ABC):
                 properties["source"] = unit_of_element[identifier]
                 properties["sources"] = [c.node_id for c in group]
                 properties["members"] = [{"name": c.name, "source": c.node_id} for c in group]
+                properties["structure_name"] = structure_of_element[identifier]
             element_data: dict[str, Any] = {
                 "identifier": identifier,
                 "name": name,

@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "normalize_path",
+    "repo_relative",
     "RepositoryNode",
     "DirectoryNode",
     "ModuleNode",
@@ -35,7 +36,7 @@ def normalize_path(path: str, repo_name: str | None = None) -> str:
     """Normalize a path for consistent storage.
 
     Args:
-        path: Path string to normalize
+        path: Repository-relative path string to normalize (a top folder named like the repository is kept)
         repo_name: Optional repository name for prefixing paths
 
     Returns:
@@ -48,10 +49,6 @@ def normalize_path(path: str, repo_name: str | None = None) -> str:
         # Handle empty or invalid paths
         if not normalized or normalized == ".":
             return ""
-
-        # Remove repo prefix if present
-        if repo_name and normalized.startswith(f"{repo_name}/"):
-            normalized = normalized[len(repo_name) + 1 :]
 
         # Remove any leading/trailing slashes
         normalized = normalized.strip("/")
@@ -67,6 +64,12 @@ def normalize_path(path: str, repo_name: str | None = None) -> str:
         # Log error but don't fail - return empty string
         logger.error("Failed to normalize path '%s': %s", path, e)
         return ""
+
+
+def repo_relative(path: str, repo_name: str) -> str:
+    """The repository-relative path of a stored path (the inverse of ``normalize_path`` with a repository name)."""
+    path = str(path or "").replace("\\", "/")
+    return path[len(repo_name) + 1 :] if path.startswith(f"{repo_name}/") else path
 
 
 @dataclass

@@ -431,6 +431,54 @@ class TestImportExtraction:
         modules = [i.module for i in imports]
         assert any(module in m for m in modules)
 
+    def test_python_extracts_imports_inside_functions_and_blocks(self, manager):
+        """Imports in functions, methods and if/try blocks are dependencies too (lazy and optional imports)."""
+        source = """import os
+
+if TYPE_CHECKING:
+    from pkg.types import Thing
+
+try:
+    import fast_json as json
+except ImportError:
+    import json
+
+
+def run():
+    from pkg.services import worker
+    import pkg.tools
+
+
+class Runner:
+    def go(self):
+        from .local import helper
+"""
+        imports = manager.extract_imports(source, language="python")
+
+        assert sorted(i.module for i in imports) == [".local", "fast_json", "json", "os", "pkg.services", "pkg.tools", "pkg.types"]
+        worker = next(i for i in imports if i.module == "pkg.services")
+        assert worker.names == ["worker"] and worker.is_from_import and worker.line == 13
+
+    def test_javascript_extracts_require_and_dynamic_import_inside_functions_and_blocks(self, manager):
+        """A require() anywhere, bare or assigned, and a dynamic import() are dependencies too."""
+        source = """const a = require('./a');
+
+function load() {
+  const b = require('./b');
+  require('./c');
+  return import('./d');
+}
+
+if (ready) {
+  const { e } = require('./e');
+}
+"""
+        imports = manager.extract_imports(source, language="javascript")
+
+        assert sorted(i.module for i in imports) == ["./a", "./b", "./c", "./d", "./e"]
+        assert next(i for i in imports if i.module == "./e").names == ["e"]
+        assert next(i for i in imports if i.module == "./c").line == 5
+
 
 # =============================================================================
 # EDGE CASES

@@ -3102,3 +3102,35 @@ class TestUnitConfigs:
             derivation._component_services_config(json.dumps({"component_services": {"group_by": "packages"}}))
         with pytest.raises(ValueError, match="max_groups"):
             derivation._component_services_config(json.dumps({"component_services": {"max_groups": -1}}))
+
+    def test_unit_roles_name_a_known_channel_and_need_roles_per_unit(self):
+        base = {
+            "names": {"web": "Web UI"},
+            "labels": ["File"],
+            "instruction": "x",
+            "element_per": "unit",
+            "container_type": "ApplicationComponent",
+            "name_template": "{container} {role}",
+        }
+
+        config = derivation._role_config(json.dumps({"roles": {**base, "unit_roles": [{"property": "webEntries", "role": "web"}]}}))
+
+        assert config is not None and config.unit_roles == (("webEntries", "web"),)
+        with pytest.raises(ValueError, match="unit_roles"):
+            derivation._role_config(json.dumps({"roles": {**base, "unit_roles": [{"property": "webEntries", "role": "desktop"}]}}))
+        with pytest.raises(ValueError, match="unit_roles"):
+            derivation._role_config(
+                json.dumps({"roles": {**base, "element_per": "candidate", "name_template": "{subject}", "unit_roles": [{"property": "webEntries", "role": "web"}]}})
+            )
+
+    def test_naming_guards_are_read_from_the_naming_params(self):
+        guards = {"generic_words": ["App", "cli"], "kind_nouns": {"container": "Server", "*": "Application"}, "reserved_labels": ["Technology", "ExternalDependency"]}
+
+        config = derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": guards}}))
+
+        assert config is not None
+        assert config.guards.generic_words == frozenset({"app", "cli"}) and config.guards.kind_nouns["container"] == "Server"
+        assert config.guards.reserved_labels == ("Technology", "ExternalDependency")
+        assert derivation._naming_config(json.dumps({"naming": {"instruction": "x"}})).guards.generic_words == frozenset()
+        with pytest.raises(ValueError, match="guards"):
+            derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": {"generic_words": "app"}}}))

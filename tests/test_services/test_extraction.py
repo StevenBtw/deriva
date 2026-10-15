@@ -1389,6 +1389,27 @@ class TestExtractEdges:
             assert "edges_created" in result
             mock_batch.assert_called_once()
 
+    def test_lookups_carry_repo_relative_paths_so_the_same_file_is_preferred(self):
+        """The graph stores repo-prefixed paths; the files being parsed are repo-relative, so the lookups drop the prefix."""
+        from deriva.services.extraction import _extract_edges
+
+        mock_repo = MagicMock()
+        mock_repo.name = "shop"
+        nodes = {
+            "Method": [{"id": "m1", "properties": {"methodName": "run", "typeName": "", "filePath": "shop/shop/jobs.py"}}],
+            "TypeDefinition": [{"id": "t1", "properties": {"typeName": "Order", "filePath": "shop/orders/model.py"}}],
+        }
+        graph_manager = MagicMock()
+        graph_manager.get_nodes_by_type.side_effect = lambda node_type: nodes.get(node_type, [])
+
+        with patch("deriva.modules.extraction.edges.extract_edges_batch") as mock_batch:
+            mock_batch.return_value = {"data": {"edges": []}, "stats": {}, "errors": []}
+            _extract_edges(mock_repo, Path("."), [], graph_manager)
+
+        kwargs = mock_batch.call_args.kwargs
+        assert kwargs["global_method_lookup"][("run", None)][0]["file_path"] == "shop/jobs.py"
+        assert kwargs["global_type_lookup"]["Order"][0]["file_path"] == "orders/model.py"
+
 
 class TestExtractImports:
     """Tests for _extract_imports function."""
@@ -1494,9 +1515,9 @@ class TestExtractDirectoryClassification:
         close_database()
         with GraphManager() as gm:
             for name in ("zeta", "alpha"):
-                gm.add_node(DirectoryNode(name=name, path=f"r/{name}", repository_name="r"), node_id=f"dir::r::{name}")
+                gm.add_node(DirectoryNode(name=name, path=name, repository_name="r"), node_id=f"dir::r::{name}")
             for i, (file_type, subtype) in enumerate([("source", "java"), ("source", "java"), ("docs", "markdown"), ("test", "java"), ("config", "yaml")]):
-                gm.add_node(FileNode(name=f"f{i}", path=f"r/alpha/f{i}", repository_name="r", file_type=file_type, subtype=subtype), node_id=f"file::r::f{i}")
+                gm.add_node(FileNode(name=f"f{i}", path=f"alpha/f{i}", repository_name="r", file_type=file_type, subtype=subtype), node_id=f"file::r::f{i}")
                 gm.add_edge("dir::r::alpha", f"file::r::f{i}", "CONTAINS")
             cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
@@ -1520,10 +1541,10 @@ class TestExtractDirectoryClassification:
         close_database()
         with GraphManager() as gm:
             for path in ("r/lib", "r/lib/records", "r/utils"):
-                gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r"), node_id=f"dir::r::{path}")
+                gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path.removeprefix("r/"), repository_name="r"), node_id=f"dir::r::{path}")
             gm.add_edge("dir::r::r/lib", "dir::r::r/lib/records", "CONTAINS")
             for path in ("r/lib/records", "r/utils"):
-                gm.add_node(FileNode(name="f", path=f"{path}/f", repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}/f")
+                gm.add_node(FileNode(name="f", path=f"{path.removeprefix('r/')}/f", repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}/f")
                 gm.add_edge(f"dir::r::{path}", f"file::r::{path}/f", "CONTAINS")
             params = {"skip_names": ["utils"], "skip_trees": [], "skip_pass_through": True}
             cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
@@ -1579,7 +1600,7 @@ class TestExtractDirectoryClassification:
         close_database()
         with GraphManager() as gm:
             for path in ("r/a/records", "r/b", "r/c/records"):
-                gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r"), node_id=f"dir::r::{path}")
+                gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path.removeprefix("r/"), repository_name="r"), node_id=f"dir::r::{path}")
             cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=2)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
                 _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
@@ -2312,7 +2333,7 @@ class TestDeployableUnitStep:
         for path, (file_type, subtype, text) in files.items():
             (Path(tmpdir) / path).parent.mkdir(parents=True, exist_ok=True)
             (Path(tmpdir) / path).write_text(text, encoding="utf-8")
-            node = FileNode(name=Path(path).name, path=f"r/{path}", repository_name="r", file_type=file_type, subtype=subtype)
+            node = FileNode(name=Path(path).name, path=path, repository_name="r", file_type=file_type, subtype=subtype)
             graph.add_node(node, node_id=f"file::r::{path.replace('/', '_')}")
         cfg = SimpleNamespace(
             node_type="DeployableUnit",

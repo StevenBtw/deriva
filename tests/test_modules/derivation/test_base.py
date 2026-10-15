@@ -2202,6 +2202,48 @@ class TestDeriveDeterministicRelationships:
         # Should find relationship based on "Invoice" word overlap
         assert len(result) >= 0  # Depends on threshold, verify no crash
 
+    def test_names_written_by_a_naming_call_do_not_decide_a_name_match(self):
+        """The words of properties.structure_name decide (rule 6d): LLM names that share a word link nothing."""
+        from deriva.modules.derivation.base import RelationshipRule, derive_deterministic_relationships
+
+        service = {"identifier": "as_cards", "name": "Card Management", "properties": {"structure_name": "LISTPGM", "source": "typedef::r::a"}}
+        interface = {
+            "identifier": "ai_online",
+            "name": "Credit Card Web UI",
+            "element_type": "ApplicationInterface",
+            "properties": {"structure_name": "Ledger Online Web UI", "source": "unit::r::online"},
+        }
+        rules = [RelationshipRule(target_type="ApplicationInterface", rel_type="Serving")]  # inbound: the source type
+
+        assert derive_deterministic_relationships([service], [interface], "ApplicationService", [], rules) == []
+
+    def test_structure_names_that_share_words_match_whatever_the_written_names(self):
+        from deriva.modules.derivation.base import RelationshipRule, derive_deterministic_relationships
+
+        service = {"identifier": "as_pay", "name": "Settlement", "properties": {"structure_name": "Payment Gateway", "source": "typedef::r::a"}}
+        interface = {
+            "identifier": "ai_pay",
+            "name": "Checkout Web UI",
+            "element_type": "ApplicationInterface",
+            "properties": {"structure_name": "Payment Gateway REST API", "source": "unit::r::pay"},
+        }
+        rules = [RelationshipRule(target_type="ApplicationInterface", rel_type="Serving")]  # inbound: the source type
+
+        result = derive_deterministic_relationships([service], [interface], "ApplicationService", [], rules)
+
+        assert [(r["source"], r["target"], r["relationship_type"]) for r in result] == [("ai_pay", "as_pay", "Serving")]
+
+    def test_an_element_without_a_structure_name_matches_on_its_name(self):
+        from deriva.modules.derivation.base import RelationshipRule, derive_deterministic_relationships
+
+        service = {"identifier": "as_pay", "name": "Payment Processing", "properties": {"source": "typedef::r::a"}}
+        interface = {"identifier": "ai_pay", "name": "Payment REST API", "element_type": "ApplicationInterface", "properties": {"source": "unit::r::pay"}}
+        rules = [RelationshipRule(target_type="ApplicationInterface", rel_type="Serving")]  # inbound: the source type
+
+        result = derive_deterministic_relationships([service], [interface], "ApplicationService", [], rules)
+
+        assert [(r["source"], r["target"]) for r in result] == [("ai_pay", "as_pay")]
+
 
 class TestConsolidatedRelationshipsDedup:
     """A pair found by both endpoint types' passes is persisted once."""

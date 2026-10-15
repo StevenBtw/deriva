@@ -161,11 +161,57 @@ def test_readme_lines_that_name_the_unit_are_kept_as_naming_evidence():
     assert units["r/shop"].readme_lines == ["Shop service.", "shop: the storefront for customers"]
 
 
-def test_an_entry_module_is_found_when_the_folder_is_named_like_its_top_package():
-    """Stored paths collapse a top package into a repository folder of the same name (r/pkg -> r)."""
-    files = [_file("pkg/pyproject.toml"), _file("pkg/cli/main.py", "python"), _file("pkg/core.py", "python"), _file("pkg/other.py", "python")]
-    manifests = {"pkg/pyproject.toml": '[project]\nname = "pkg"\n[project.scripts]\npkg-cli = "pkg.cli.main:run"\n'}
+def test_a_unit_with_a_page_entry_has_web_entries_and_build_output_does_not_count():
+    files = [
+        _file("r/web/Dockerfile"),
+        _file("r/web/src/App.js", "javascript"),
+        _file("r/web/public/index.html"),
+        _file("r/web/node_modules/lib/index.html"),
+        _file("r/web/build/index.html"),
+        _file("r/api/Dockerfile"),
+        _file("r/api/src/Api.java", "java"),
+        _file("r/api/src/main/webapp/WEB-INF/web.xml"),
+    ]
 
-    units = detect_units(RepoFacts(repository="pkg", files=files, manifests=manifests, imports=[("pkg/cli/main.py", "pkg/core.py")]), RULES)
+    units = _units(files)
 
-    assert [u.members for u in units] == [{"pkg/cli/main.py", "pkg/core.py"}]
+    assert units["r/web"].web_entries == ["r/web/public/index.html"]
+    assert units["r/api"].web_entries == []  # a servlet descriptor alone serves no pages
+
+
+def test_server_pages_and_templates_are_web_entries():
+    files = [
+        _file("r/shop/Dockerfile"),
+        _file("r/shop/src/Shop.java", "java"),
+        _file("r/shop/src/main/webapp/WEB-INF/pages/cart.jsp"),
+        _file("r/shop/src/main/resources/templates/home.html"),
+        _file("r/shop/src/main/resources/templates/notes.txt"),
+        _file("r/shop/src/test/resources/templates/fixture.html"),
+    ]
+
+    assert _units(files)["r/shop"].web_entries == ["r/shop/src/main/resources/templates/home.html", "r/shop/src/main/webapp/WEB-INF/pages/cart.jsp"]
+
+
+def test_the_web_entries_of_a_nested_unit_are_not_its_parents():
+    files = [
+        _file("r/pyproject.toml"),
+        _file("r/app/main.py", "python"),
+        _file("r/ui/Dockerfile"),
+        _file("r/ui/src/main.js", "javascript"),
+        _file("r/ui/index.html"),
+    ]
+    manifests = {"r/pyproject.toml": '[project]\nname = "app"\n[project.scripts]\napp = "app.main:run"\n'}
+
+    units = _units(files, manifests=manifests)
+
+    assert units["r/ui"].web_entries == ["r/ui/index.html"]
+    assert units["r::app"].web_entries == []
+
+
+def test_the_first_heading_of_the_units_readme_is_its_readme_title():
+    files = [_file("r/shop/Dockerfile"), _file("r/shop/src/App.java", "java")]
+    documents = {"r/shop/README.md": "Intro line\n\n# Storefront Service\n\n## Setup\n", "r/README.md": "# Demo Platform\n"}
+
+    units = _units(files, documents=documents)
+
+    assert units["r/shop"].readme_title == "Storefront Service"

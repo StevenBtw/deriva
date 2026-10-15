@@ -127,17 +127,10 @@ def _manifest_entries(path: str, text: str) -> tuple[list[tuple[str, str, str, s
 def _script_module(folder: str, target: str, paths: set[str]) -> str | None:
     """The file of a script's entry module (``package.module:function``), in the manifest's folder or its src folder."""
     module = target.split(":", 1)[0].strip().replace(".", "/")
-    modules = [module]
-    # A folder named like the module's top package can hold it without that segment (the stored
-    # paths collapse a top package into a repository folder of the same name)
-    head, _, rest = module.partition("/")
-    if rest and PurePosixPath(folder).name == head:
-        modules.append(rest)
-    for name in modules:
-        for base in (folder, f"{folder}/src"):
-            for candidate in (f"{base}/{name}.py", f"{base}/{name}/__init__.py", f"{base}/{name}/__main__.py"):
-                if candidate in paths:
-                    return candidate
+    for base in (folder, f"{folder}/src"):
+        for candidate in (f"{base}/{module}.py", f"{base}/{module}/__init__.py", f"{base}/{module}/__main__.py"):
+            if candidate in paths:
+                return candidate
     return None
 
 

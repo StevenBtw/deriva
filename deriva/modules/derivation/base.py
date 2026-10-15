@@ -847,6 +847,11 @@ def extract_file_path_from_source(source_id: str | None) -> str | None:
     return None
 
 
+def _match_name(element: dict[str, Any]) -> str:
+    """The name that name matching reads: the structure name when a naming call wrote the name (rule 6d)."""
+    return str((element.get("properties") or {}).get("structure_name") or element.get("name") or "")
+
+
 def elements_share_source_file(elem1: dict[str, Any], elem2: dict[str, Any]) -> bool:
     """
     Check if two elements are derived from the same source file.
@@ -1384,8 +1389,8 @@ def derive_deterministic_relationships(
                 if not target_id or not target_name:
                     continue
 
-                # Strategy 1: Name matching (with relationship-specific threshold)
-                name_match = names_match_for_relationship(new_name, target_name, threshold=threshold)
+                # Strategy 1: Name matching (with relationship-specific threshold), on structure names
+                name_match = names_match_for_relationship(_match_name(new_elem), _match_name(target), threshold=threshold)
 
                 # Strategy 2: File proximity (elements from same source file)
                 file_match = elements_share_source_file(new_elem, target)
@@ -1433,8 +1438,8 @@ def derive_deterministic_relationships(
                 if not source_id or not source_name:
                     continue
 
-                # Strategy 1: Name matching
-                name_match = names_match_for_relationship(source_name, new_name, threshold=threshold)
+                # Strategy 1: Name matching, on structure names
+                name_match = names_match_for_relationship(_match_name(source), _match_name(new_elem), threshold=threshold)
 
                 # Strategy 2: File proximity
                 file_match = elements_share_source_file(source, new_elem)
