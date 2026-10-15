@@ -95,7 +95,7 @@ Changelog = "https://github.com/StevenBtw/deriva/blob/main/CHANGELOG.md"
 deriva-cli = "deriva.cli.cli:main"
 
 [build-system]
-requires = ["uv_build>=0.12.21,<0.13"]
+requires = ["uv_build>=0.12.21,<0.14"]
 build-backend = "uv_build"
 
 # deriva is a namespace shared by three packages; this one holds the pipeline and the CLI
