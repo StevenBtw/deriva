@@ -41,7 +41,7 @@ import time
 from pathlib import Path
 from typing import Any, TypeVar, cast, overload
 
-import httpx
+import httpx2
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
@@ -64,7 +64,7 @@ from .models import (
     ValidationError,
 )
 from .rate_limiter import RateLimitConfig, RateLimiter, get_default_rate_limit
-from .retry import classify_exception
+from .retry import classify_exception, transport_error
 from .schemas import EXTRACTION_SCHEMAS
 
 # Thread pool for running LLM calls outside of existing event loops
@@ -82,12 +82,16 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
 def _is_retriable(error: Exception) -> bool:
     """Timeouts, connection errors, rate limits and 5xx are worth another try; other errors are not.
 
-    Output validation retries are handled by the pydantic-ai agent itself.
+    pydantic-ai wraps what the HTTP layer raises (a timeout arrives as a ``ModelAPIError`` whose
+    cause chain ends in the httpx2 transport error), so the transport error is looked for behind
+    the exception, not only on it. Output validation retries are handled by the pydantic-ai agent
+    itself.
     """
-    if isinstance(error, (httpx.LocalProtocolError, httpx.UnsupportedProtocol)):
+    transport = transport_error(error)
+    if transport is not None:
         # Client-side and permanent: a malformed header or URL never succeeds on retry
-        return False
-    if isinstance(error, (httpx.TransportError, TimeoutError, ConnectionError)):
+        return not isinstance(transport, (httpx2.LocalProtocolError, httpx2.UnsupportedProtocol))
+    if isinstance(error, (TimeoutError, ConnectionError)):
         return True
     return isinstance(error, ModelHTTPError) and classify_exception(error)[0] in (
         "rate_limited",
@@ -811,7 +815,8 @@ class LLMManager:
             )
 
         except Exception as e:
-            call["error_type"] = type(e).__name__
+            # A wrapped transport error is reported under its own name (ReadTimeout, not ModelAPIError)
+            call["error_type"] = type(transport_error(e) or e).__name__
             # Classify the error and update rate limiter state
             category, retry_after = classify_exception(e)
 

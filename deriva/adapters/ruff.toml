@@ -15,7 +15,7 @@ extend = "../../pyproject.toml"
 # Third-party libraries (see the root pyproject.toml): adapters own the heavy engines (LLM, NLP, databases,
 # parsers), so this table repeats the root one without them
 [lint.flake8-tidy-imports.extend-banned-api]
-"requests" = { msg = "Not a dependency of Deriva (only installed through other packages); use httpx" }
+"requests" = { msg = "Not a dependency of Deriva (only installed through other packages); use httpx2" }
 "anywidget" = { msg = "The studio serves the widgets' front end only (anywidget_graph.ui, anywidget_archimate.ui)" }
 "ipywidgets" = { msg = "The studio serves the widgets' front end only (anywidget_graph.ui, anywidget_archimate.ui)" }
 "marimo" = { msg = "Not a dependency of Deriva (the marimo app was replaced by the studio)" }

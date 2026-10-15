@@ -1,8 +1,8 @@
 """
 Common caching utilities for Deriva.
 
-Provides a base class for disk caching using diskcache (SQLite-backed)
-and utilities for generating cache keys. Used by LLM cache, graph cache,
+Provides a base class for disk caching using lmdb (a memory-mapped key-value
+store) and utilities for generating cache keys. Used by LLM cache, graph cache,
 and other caching implementations.
 
 Usage:
@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import diskcache
-from diskcache.core import MODE_PICKLE
+import lmdb
 
 from deriva.common.exceptions import CacheError
 from deriva.common.paths import resolve
@@ -124,35 +126,201 @@ def _hash_dict_tuple(dict_tuple: tuple[tuple[str, Any], ...]) -> str:
     return json.dumps(result, sort_keys=True)
 
 
-class JSONOnlyDisk(diskcache.JSONDisk):
-    """JSONDisk that never unpickles.
+_MISSING = object()
 
-    diskcache's JSONDisk writes JSON, but still unpickles any row the cache file marks as pickled
-    (CVE-2025-69872). Deriva writes JSON only, so such a row was not written by Deriva: refuse it.
+# lmdb opens a folder once per process: every store on one folder shares its environment,
+# which closes when the last of them does (folder -> environment and the number of open stores)
+_ENVIRONMENTS: dict[str, tuple[Any, int]] = {}
+_ENVIRONMENTS_LOCK = threading.Lock()
+
+
+def _open_environment(directory: Path, map_size: int) -> Any:
+    key = os.path.normcase(str(directory.resolve()))
+    with _ENVIRONMENTS_LOCK:
+        env, users = _ENVIRONMENTS.get(key, (None, 0))
+        if env is None:
+            env = lmdb.open(str(directory), map_size=map_size, subdir=True, max_dbs=2)
+        _ENVIRONMENTS[key] = (env, users + 1)
+        return env
+
+
+def _close_environment(directory: Path) -> None:
+    key = os.path.normcase(str(directory.resolve()))
+    with _ENVIRONMENTS_LOCK:
+        env, users = _ENVIRONMENTS.get(key, (None, 0))
+        if env is None:
+            return
+        if users > 1:
+            _ENVIRONMENTS[key] = (env, users - 1)
+            return
+        del _ENVIRONMENTS[key]
+        env.close()
+
+
+class _LmdbStore:
+    """A small diskcache-shaped key-value store on lmdb.
+
+    Deriva writes JSON rows only ({"seq", "expires", "value"}), so nothing here ever
+    unpickles: a row a cache file contains that is not such JSON raises instead of
+    running code. A "meta" database holds the eviction state (a sequence number and
+    the total row size), so enforcing the size limit needs no scan of the entries.
     """
 
-    def get(self, key: Any, raw: bool) -> Any:
-        if not raw:
-            raise CacheError("Refusing a pickled key in the cache file; Deriva writes JSON only")
-        return super().get(key, raw)
+    _ENTRIES = b"entries"
+    _META = b"meta"
+    _STATE = b"state"
 
-    def fetch(self, mode: int, filename: str | None, value: Any, read: bool) -> Any:
-        if mode == MODE_PICKLE:
-            raise CacheError("Refusing a pickled value in the cache file; Deriva writes JSON only")
-        return super().fetch(mode, filename, value, read)
+    def __init__(self, directory: str | Path, size_limit: int):
+        self._dir = Path(directory)
+        self._size_limit = size_limit
+        # The map grows with the data up to map_size; twice the limit leaves room for one eviction pass
+        # (the first store on a folder opens it; later ones share that environment)
+        self._env = _open_environment(self._dir, max(2 * size_limit, 64 * 1024 * 1024))
+        self._entries = self._env.open_db(self._ENTRIES)
+        self._meta = self._env.open_db(self._META)
+        self._closed = False
+
+    def _read_state(self, txn) -> dict[str, int]:
+        raw = txn.get(self._STATE, db=self._meta)
+        return json.loads(raw) if raw is not None else {"seq": 0, "size": 0}
+
+    def _write_state(self, txn, state: dict[str, int]) -> None:
+        txn.put(self._STATE, json.dumps(state).encode(), db=self._meta)
+
+    def _evict(self, txn) -> None:
+        """Inside a write transaction: drop expired and unreadable rows, then the oldest rows, until the size is within the limit."""
+        now = time.time()
+        state = self._read_state(txn)
+        drop: list[bytes] = []
+        live: list[tuple[int, bytes, int]] = []  # (seq, key, row bytes)
+        size = 0
+        for key, raw in txn.cursor(self._entries):
+            row_bytes = len(key) + len(raw)
+            try:
+                row = json.loads(raw)
+                seq, expires = row["seq"], row["expires"]
+                expired = expires is not None and expires <= now
+            except ValueError, TypeError, KeyError:
+                drop.append(key)  # not a row Deriva wrote
+                continue
+            if expired:
+                drop.append(key)
+                continue
+            live.append((seq, key, row_bytes))
+            size += row_bytes
+        for key in drop:
+            txn.delete(key, db=self._entries)
+        if size > self._size_limit:
+            live.sort()  # the lowest seq is the oldest row
+            for _, key, row_bytes in live:
+                if size <= self._size_limit:
+                    break
+                txn.delete(key, db=self._entries)
+                size -= row_bytes
+        state["size"] = size
+        self._write_state(txn, state)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        encoded = key.encode()
+        with self._env.begin() as txn:
+            raw = txn.get(encoded, db=self._entries)
+        if raw is None:
+            return default
+        row = json.loads(raw)  # a row Deriva did not write raises here, it is never unpickled
+        expires = row["expires"]
+        if expires is not None and expires <= time.time():
+            with self._env.begin(write=True) as txn:
+                state = self._read_state(txn)
+                if txn.get(encoded, db=self._entries) == raw:  # another process may have replaced the row meanwhile
+                    txn.delete(encoded, db=self._entries)
+                    state["size"] = max(0, state["size"] - len(encoded) - len(raw))
+                    self._write_state(txn, state)
+            return default
+        return row["value"]
+
+    def set(self, key: str, value: Any, expire: float | None = None) -> None:
+        encoded = key.encode()
+        expires = time.time() + expire if expire is not None else None
+        with self._env.begin(write=True) as txn:
+            state = self._read_state(txn)
+            old = txn.get(encoded, db=self._entries)
+            if old is not None:
+                state["size"] = max(0, state["size"] - len(encoded) - len(old))
+            state["seq"] += 1
+            raw = json.dumps({"seq": state["seq"], "expires": expires, "value": value}).encode()
+            txn.put(encoded, raw, db=self._entries)
+            state["size"] += len(encoded) + len(raw)
+            self._write_state(txn, state)
+            if state["size"] > self._size_limit:
+                self._evict(txn)
+
+    def delete(self, key: str) -> bool:
+        encoded = key.encode()
+        with self._env.begin(write=True) as txn:
+            raw = txn.get(encoded, db=self._entries)
+            if raw is None:
+                return False
+            txn.delete(encoded, db=self._entries)
+            state = self._read_state(txn)
+            state["size"] = max(0, state["size"] - len(encoded) - len(raw))
+            self._write_state(txn, state)
+            return True
+
+    def clear(self) -> None:
+        with self._env.begin(write=True) as txn:
+            txn.drop(self._entries, delete=False)
+            self._write_state(txn, {"seq": 0, "size": 0})
+
+    def iterkeys(self) -> list[str]:
+        """The keys of the readable, unexpired entries; a key that is not text at all raises (a cache file changed by someone else)."""
+        now = time.time()
+        keys = []
+        with self._env.begin() as txn:
+            for key, raw in txn.cursor(self._entries):
+                try:
+                    row = json.loads(raw)
+                    expires = row["expires"]
+                    expired = expires is not None and expires <= now
+                except ValueError, TypeError, KeyError:
+                    continue  # not a row Deriva wrote; get() refuses it
+                if expired:
+                    continue
+                keys.append(key.decode())
+        return keys
+
+    def __len__(self) -> int:
+        return len(self.iterkeys())
+
+    def __getitem__(self, key: str) -> Any:
+        value = self.get(key, _MISSING)
+        if value is _MISSING:
+            raise KeyError(key)
+        return value
+
+    def volume(self) -> int:
+        """The size of the map file on disk (0 when it cannot be read)."""
+        try:
+            return os.path.getsize(self._dir / "data.mdb")
+        except OSError:
+            return 0
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            _close_environment(self._dir)
 
 
 class BaseDiskCache:
     """
-    Base class for disk caching using diskcache (SQLite-backed).
+    Base class for disk caching using lmdb (a memory-mapped key-value store).
 
-    Provides a generic caching interface that stores entries in SQLite
-    for efficient persistence and retrieval. Includes export functionality
+    Provides a generic caching interface that stores entries as JSON rows on
+    disk for efficient persistence and retrieval. Includes export functionality
     for auditing.
 
     Attributes:
         cache_dir: Path to the directory storing cache data
-        _cache: diskcache.Cache instance
+        _cache: _LmdbStore instance
 
     Example:
         class MyCache(BaseDiskCache):
@@ -182,13 +350,8 @@ class BaseDiskCache:
         self.cache_dir = resolve(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # JSON serialization; rows marked as pickled are refused, never unpickled
-        self._cache = diskcache.Cache(
-            str(self.cache_dir),
-            size_limit=size_limit or self.DEFAULT_SIZE_LIMIT,
-            disk=JSONOnlyDisk,
-            disk_compress_level=0,
-        )
+        # JSON rows only; rows Deriva did not write are refused, never unpickled
+        self._cache = _LmdbStore(self.cache_dir, size_limit or self.DEFAULT_SIZE_LIMIT)
 
     def get(self, cache_key: str) -> dict[str, Any] | None:
         """
@@ -213,7 +376,7 @@ class BaseDiskCache:
         """
         Retrieve cached data (alias for get, kept for backward compatibility).
 
-        diskcache handles its own memory caching internally.
+        lmdb keeps no separate memory layer.
 
         Args:
             cache_key: The cache key
@@ -227,7 +390,7 @@ class BaseDiskCache:
         """
         Retrieve cached data (alias for get, kept for backward compatibility).
 
-        diskcache uses SQLite, not individual files.
+        lmdb stores the rows in one map file, not in individual files.
 
         Args:
             cache_key: The cache key
@@ -267,11 +430,7 @@ class BaseDiskCache:
             raise CacheError(f"Error deleting cache entry: {e}") from e
 
     def clear_memory(self) -> None:
-        """Clear the in-memory portion of cache (triggers SQLite cleanup)."""
-        try:
-            self._cache.cull()
-        except Exception:
-            pass  # Cull is optional optimization
+        """Clear the in-memory portion of cache (kept for backward compatibility; lmdb has no separate memory layer)."""
 
     def clear_disk(self) -> None:
         """
@@ -299,7 +458,7 @@ class BaseDiskCache:
                 - size_bytes: Total size of cache
                 - size_mb: Total size in megabytes
                 - cache_dir: Path to cache directory
-                - volume: diskcache volume stats
+                - volume: the map file size on disk
         """
         try:
             volume = self._cache.volume()
@@ -325,8 +484,14 @@ class BaseDiskCache:
 
         Returns:
             List of cache keys
+
+        Raises:
+            CacheError: If the cache file was changed by someone else
         """
-        return list(self._cache.iterkeys())
+        try:
+            return list(self._cache.iterkeys())
+        except Exception as e:
+            raise CacheError(f"Error reading cache keys: {e}") from e
 
     def export_to_json(self, output_path: str | Path, include_values: bool = True) -> int:
         """

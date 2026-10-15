@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel, ValidationError
+from pydantic_ai.exceptions import ModelAPIError
 
 from deriva.adapters.llm.manager import (
     LLMManager,
@@ -23,6 +24,14 @@ from deriva.adapters.llm.models import (
     FailedResponse,
     LiveResponse,
 )
+
+
+def _api_error(cause: Exception) -> ModelAPIError:
+    """What pydantic-ai raises when a provider call fails: a ModelAPIError with the transport error as its cause."""
+    try:
+        raise ModelAPIError(model_name="test-model", message=str(cause)) from cause
+    except ModelAPIError as error:
+        return error
 
 
 class TestSchemaRegistry:
@@ -905,9 +914,7 @@ class TestTimeoutAndRetry:
         assert timeout == 7.0 and isinstance(timeout, float)
 
     def test_timeout_is_retried_then_succeeds(self, tmp_path):
-        import httpx
-
-        response, run, sleep = self._query(self._manager(tmp_path), [httpx.ReadTimeout("slow"), MagicMock(output="ok")])
+        response, run, sleep = self._query(self._manager(tmp_path), [_api_error(httpx2.ReadTimeout("slow")), MagicMock(output="ok")])
 
         assert run.call_count == 2
         assert sleep.call_count == 1
@@ -941,10 +948,8 @@ class TestTimeoutAndRetry:
         assert record.call_count == 3  # two retried attempts + the final failure
 
     def test_gives_up_after_max_retries(self, tmp_path):
-        import httpx
-
         manager = self._manager(tmp_path)
-        response, run, _ = self._query(manager, httpx.ReadTimeout("slow"))
+        response, run, _ = self._query(manager, _api_error(httpx2.ReadTimeout("slow")))
 
         assert run.call_count == 3  # first try + LLM_MAX_RETRIES
         assert isinstance(response, FailedResponse)
@@ -959,18 +964,14 @@ class TestTimeoutAndRetry:
         assert isinstance(response, FailedResponse)
 
     def test_a_failed_query_counts_once_for_the_circuit_breaker(self, tmp_path):
-        import httpx
-
         manager = self._manager(tmp_path)
-        self._query(manager, httpx.ReadTimeout("slow"))
+        self._query(manager, _api_error(httpx2.ReadTimeout("slow")))
 
         assert manager._rate_limiter.get_stats()["consecutive_failures"] == 1
 
     def test_backoff_is_jittered(self, tmp_path):
-        import httpx
-
         with patch("deriva.adapters.llm.manager.random.uniform", return_value=0.25) as uniform:
-            _, _, sleep = self._query(self._manager(tmp_path), [httpx.ReadTimeout("slow"), MagicMock(output="ok")])
+            _, _, sleep = self._query(self._manager(tmp_path), [_api_error(httpx2.ReadTimeout("slow")), MagicMock(output="ok")])
 
         uniform.assert_called_once_with(0, 2.0)
         sleep.assert_called_once_with(0.25)
@@ -978,28 +979,22 @@ class TestTimeoutAndRetry:
     def test_latency_is_recorded_for_failed_calls(self, tmp_path):
         import itertools
 
-        import httpx
-
         manager = self._manager(tmp_path)
         with patch("deriva.adapters.llm.manager.time.perf_counter", side_effect=itertools.count(0, 1.0)):
-            self._query(manager, httpx.ReadTimeout("slow"))
+            self._query(manager, _api_error(httpx2.ReadTimeout("slow")))
 
         assert manager.last_call["latency_ms"] >= 1000
 
     def test_requests_include_failed_attempts(self, tmp_path):
-        import httpx
-
         manager = self._manager(tmp_path)
         result = MagicMock(output="ok")
         result.usage.return_value = MagicMock(requests=1, input_tokens=3, output_tokens=2)
-        self._query(manager, [httpx.ReadTimeout("slow"), result])
+        self._query(manager, [_api_error(httpx2.ReadTimeout("slow")), result])
 
         assert manager.last_call["requests"] == 2
 
     def test_backoff_does_not_sleep_on_the_event_loop_thread(self, tmp_path):
         import threading
-
-        import httpx
 
         sleeping_threads = []
         with (
@@ -1007,7 +1002,7 @@ class TestTimeoutAndRetry:
             patch("deriva.adapters.llm.manager.Agent") as agent_class,
             patch("deriva.adapters.llm.manager.time.sleep", side_effect=lambda _: sleeping_threads.append(threading.current_thread())),
         ):
-            agent_class.return_value.run_sync.side_effect = [httpx.ReadTimeout("slow"), MagicMock(output="ok")]
+            agent_class.return_value.run_sync.side_effect = [_api_error(httpx2.ReadTimeout("slow")), MagicMock(output="ok")]
             self._manager(tmp_path).query("Hello")
 
         assert sleeping_threads and threading.main_thread() not in sleeping_threads
@@ -1095,7 +1090,7 @@ def test_a_string_model_finds_its_provider_key_in_the_home_env(monkeypatch, tmp_
 
     assert manager.config["api_key"] == "sk-from-file"
     assert os.environ["MISTRAL_API_KEY"] == "sk-from-file"
-    assert type(infer_model(manager._pydantic_model)).__name__ == "MistralModel"
+    assert type(infer_model(manager._pydantic_model)).__name__ == "OpenAIChatModel"  # mistral goes through its OpenAI-compatible API
 
 
 class TestModelSettings:
@@ -1238,20 +1233,39 @@ class TestLoadBenchmarkModelsStripping:
 
 
 class TestIsRetriable:
-    """Permanent client errors are not retried; transient network errors are."""
+    """Permanent client errors are not retried; transient network errors are, also behind pydantic-ai's wrapper."""
 
     def test_local_protocol_error_is_not_retriable(self):
         """An illegal header value can never succeed on retry."""
-        assert _is_retriable(httpx.LocalProtocolError("Illegal header value b'key '")) is False
+        assert _is_retriable(httpx2.LocalProtocolError("Illegal header value b'key '")) is False
 
     def test_unsupported_protocol_is_not_retriable(self):
-        assert _is_retriable(httpx.UnsupportedProtocol("unsupported")) is False
+        assert _is_retriable(httpx2.UnsupportedProtocol("unsupported")) is False
 
     def test_connect_error_is_retriable(self):
-        assert _is_retriable(httpx.ConnectError("connection refused")) is True
+        assert _is_retriable(httpx2.ConnectError("connection refused")) is True
 
     def test_timeout_is_retriable(self):
         assert _is_retriable(TimeoutError("timed out")) is True
+
+    def test_a_wrapped_timeout_is_retriable(self):
+        """pydantic-ai wraps the httpx2 timeout in a ModelAPIError; the wrapper must not hide it."""
+        assert _is_retriable(_api_error(httpx2.ReadTimeout("slow"))) is True
+
+    def test_a_wrapped_connection_error_is_retriable(self):
+        assert _is_retriable(_api_error(httpx2.ConnectError("connection refused"))) is True
+
+    def test_a_wrapped_local_protocol_error_is_not_retriable(self):
+        assert _is_retriable(_api_error(httpx2.LocalProtocolError("Illegal header value b'key '"))) is False
+
+    def test_a_model_api_error_without_a_transport_error_is_not_retriable(self):
+        assert _is_retriable(ModelAPIError(model_name="m", message="unexpected model behavior")) is False
+
+    def test_an_httpx_error_is_not_retriable(self):
+        """Only httpx2 matches: pydantic-ai and the provider SDKs run on httpx2, not on httpx."""
+        import httpx
+
+        assert _is_retriable(httpx.ReadTimeout("slow")) is False
 
 
 class TestRedact:

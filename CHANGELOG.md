@@ -17,7 +17,8 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 ### Fixes
 
 - **LLM configuration**: padding inside surrounding quotes is stripped as well, so a value like `' sk-ant-123 '` no longer reaches the provider padded (the named `LLM_{NAME}_*` configs got the same refinement in 0.8.1)
-- **Workspace**: the Linked | Separate switch sits level with the lane title, its right edge flush with the title's text (it was a few pixels low and off to the side)
+- **Workspace**: the Linked | Separate switch is tucked into the top right corner of the lane box, its outer corner rounded like the box (it was a few pixels low and off to the side)
+- **Benchmark**: in the runs' models diagram view the ArchiMate diagram starts below the model bar, with the bar's spacing and side margins (it sat against the bar's bottom edge)
 
 ## v0.8.1 - Cleanup (October 12 2026)
 

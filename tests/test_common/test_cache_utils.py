@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import pickle
-import sqlite3
 
 import pytest
 
@@ -241,6 +240,33 @@ class TestBaseDiskCache:
         result = cache.get("key1")
         assert result == {"value": "test"}
 
+    def test_expired_entry_is_a_miss(self, cache):
+        """An entry past its TTL is a miss and is not listed."""
+        cache.set("key1", {"value": "test"}, expire=-1)
+
+        assert cache.get("key1") is None
+        assert cache.keys() == []
+
+    def test_size_limit_evicts_the_oldest_entry(self, tmp_path):
+        """Over the size limit, the oldest entry goes first."""
+        cache = BaseDiskCache(tmp_path / "sized_cache", size_limit=120)
+        cache.set("first", {"value": "x" * 40})
+        cache.set("second", {"value": "y" * 40})
+
+        assert cache.get("first") is None
+        assert cache.get("second") == {"value": "y" * 40}
+        cache.close()
+
+    def test_values_written_by_deriva_still_round_trip(self, cache):
+        """A value far bigger than one row stays in the single map file and round-trips."""
+        big = {"text": "x" * 70000}
+        cache.set("small", {"value": 1})
+        cache.set("big", big)
+
+        assert cache.get("small") == {"value": 1}
+        assert cache.get("big") == big
+        assert sorted(cache.keys()) == ["big", "small"]
+
     def test_custom_size_limit(self, tmp_path):
         """Should accept custom size limit."""
         cache = BaseDiskCache(tmp_path / "sized_cache", size_limit=1024 * 1024)
@@ -343,20 +369,18 @@ class _Payload:
         return (_record_unpickling, ("unpickled",))
 
 
-class TestPickledRowsRefused:
-    """A cache file changed by someone else must not run code (CVE-2025-69872): Deriva writes JSON only, rows marked as pickled are refused."""
+class TestPlantedRowsRefused:
+    """A cache file changed by someone else must not run code: Deriva writes JSON rows only, a row that is not such JSON is refused, never unpickled."""
 
     @staticmethod
-    def _tamper(cache: BaseDiskCache, sql: str) -> None:
-        db = sqlite3.connect(cache.cache_dir / "cache.db")
-        db.execute(sql, (sqlite3.Binary(pickle.dumps(_Payload())),))
-        db.commit()
-        db.close()
+    def _plant(cache: BaseDiskCache, key: bytes, payload: bytes) -> None:
+        with cache._cache._env.begin(write=True) as txn:
+            txn.put(key, payload, db=cache._cache._entries)
 
-    def test_a_value_marked_as_pickled_is_refused(self, tmp_path):
+    def test_a_value_that_is_not_json_is_refused(self, tmp_path):
         cache = BaseDiskCache(tmp_path / "planted")
         cache.set("key1", {"value": "test"})
-        self._tamper(cache, "UPDATE Cache SET mode = 4, value = ?")
+        self._plant(cache, b"key1", pickle.dumps(_Payload()))
         _UNPICKLED.clear()
 
         with pytest.raises(CacheError):
@@ -365,10 +389,10 @@ class TestPickledRowsRefused:
         assert _UNPICKLED == []
         cache.close()
 
-    def test_a_key_marked_as_pickled_is_refused(self, tmp_path):
+    def test_a_key_that_is_not_text_is_refused(self, tmp_path):
         cache = BaseDiskCache(tmp_path / "planted")
         cache.set("key1", {"value": "test"})
-        self._tamper(cache, "UPDATE Cache SET raw = 0, key = ?")
+        self._plant(cache, pickle.dumps(_Payload()), b'{"seq": 1, "expires": null, "value": 1}')
         _UNPICKLED.clear()
 
         with pytest.raises(CacheError):
@@ -377,13 +401,19 @@ class TestPickledRowsRefused:
         assert _UNPICKLED == []
         cache.close()
 
-    def test_values_written_by_deriva_still_round_trip(self, tmp_path):
-        cache = BaseDiskCache(tmp_path / "plain")
-        big = {"text": "x" * 70000}  # above diskcache's in-row limit: stored as a file
-        cache.set("small", {"value": 1})
-        cache.set("big", big)
 
-        assert cache.get("small") == {"value": 1}
-        assert cache.get("big") == big
-        assert sorted(cache.keys()) == ["big", "small"]
-        cache.close()
+def test_two_caches_on_one_folder_share_it(tmp_path):
+    """lmdb opens a folder once per process: a second cache there (a benchmark's reading and non-reading
+    LLM managers) uses the same store, and closing one leaves the other working."""
+    from deriva.common.cache_utils import BaseDiskCache
+
+    first = BaseDiskCache(tmp_path / "shared")
+    second = BaseDiskCache(tmp_path / "shared")
+    first.set("k", {"answer": 1})
+
+    assert second.get("k") == {"answer": 1}
+    first.close()
+    second.set("j", {"answer": 2})
+    assert second.get("j") == {"answer": 2}
+    second.close()
+    assert BaseDiskCache(tmp_path / "shared").get("j") == {"answer": 2}

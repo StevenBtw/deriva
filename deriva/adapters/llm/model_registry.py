@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from deriva.common import settings
+
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
@@ -96,12 +98,16 @@ def get_pydantic_ai_model(config: dict[str, Any]) -> Model | str:
         return AnthropicModel(model, provider=AnthropicProvider(api_key=api_key))
 
     elif provider == "mistral":
-        if not api_key:
-            return f"mistral:{model}"
-        from pydantic_ai.models.mistral import MistralModel
-        from pydantic_ai.providers.mistral import MistralProvider
+        # Mistral's API is OpenAI-compatible (https://api.mistral.ai/v1): it goes through the openai client, like azure, ollama and lmstudio
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
 
-        return MistralModel(model, provider=MistralProvider(api_key=api_key))
+        base_url = _normalize_openai_url(api_url) if api_url else "https://api.mistral.ai/v1"
+        # The merged environment (process and home .env), read in the settings layer only
+        key = api_key or settings.get("MISTRAL_API_KEY")
+        if not key:
+            raise ValueError("A mistral model needs a key: set the model config's key (LLM_{NAME}_KEY) in the studio's models page, or MISTRAL_API_KEY in the environment")
+        return OpenAIChatModel(model, provider=OpenAIProvider(base_url=base_url, api_key=key))
 
     elif provider == "ollama":
         if not api_url:

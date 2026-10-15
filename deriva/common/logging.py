@@ -1,5 +1,5 @@
 """
-Logging module - Structured logging for pipeline runs using structlog.
+Logging module - structured logging for pipeline runs (JSONL, one entry per line).
 
 Logging Levels:
 - Level 1: High-level phases (classification, extraction, derivation, validation)
@@ -17,9 +17,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import IO, Any
-
-import structlog
+from typing import Any
 
 from deriva.common.paths import home
 
@@ -55,7 +53,7 @@ class LogStatus(str, Enum):  # noqa: UP042 - StrEnum would change str() of membe
 
 
 class LogEntry:
-    """A single log entry - compatibility wrapper for structlog output."""
+    """A single log entry, written to the run log as one JSON line."""
 
     def __init__(
         self,
@@ -119,47 +117,9 @@ class LogEntry:
         return json.dumps(self.to_dict())
 
 
-def _jsonl_renderer(
-    logger: structlog.types.WrappedLogger,
-    method_name: str,
-    event_dict: structlog.types.EventDict,
-) -> str:
-    """Custom renderer that outputs JSONL format compatible with existing logs."""
-    return json.dumps(event_dict, default=str)
-
-
-def _create_structlog_logger(file_handle: IO[str]) -> structlog.stdlib.BoundLogger:
-    """Create a structlog logger configured for JSONL file output."""
-
-    def file_writer(
-        logger: structlog.types.WrappedLogger,
-        method_name: str,
-        event_dict: structlog.types.EventDict,
-    ) -> str:
-        """Write to file and return the JSON string."""
-        json_str = json.dumps(event_dict, default=str)
-        file_handle.write(json_str + "\n")
-        file_handle.flush()
-        return json_str
-
-    structlog.configure(
-        processors=[
-            structlog.stdlib.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            file_writer,
-        ],
-        wrapper_class=structlog.stdlib.BoundLogger,
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=False,
-    )
-
-    return structlog.get_logger()
-
-
 class RunLogger:
     """
-    Logger for a single pipeline run using structlog.
+    Logger for a single pipeline run.
 
     Creates and appends to a JSONL file in <home>/workspace/logs/run_{id}/.
     """
@@ -190,24 +150,10 @@ class RunLogger:
         datetime_str = self.start_time.strftime("%Y%m%d_%H%M%S")
         self.log_file = self.run_dir / f"log_{datetime_str}.jsonl"
 
-        # Open file handle for structlog
-        self._file_handle: IO[str] | None = None
-
         # Track current phase for step logging
         self._current_phase: str | None = None
         self._phase_start: datetime | None = None
         self._step_sequence: int = 0
-
-        # Bound logger with run context
-        self._logger: structlog.stdlib.BoundLogger | None = None
-
-    def _ensure_logger(self) -> structlog.stdlib.BoundLogger:
-        """Ensure the structlog logger is initialized."""
-        if self._logger is None:
-            self._file_handle = open(self.log_file, "a", encoding="utf-8")
-            self._logger = _create_structlog_logger(self._file_handle)
-            self._logger = self._logger.bind(run_id=self.run_id)
-        return self._logger
 
     def _write_entry(self, entry: LogEntry) -> None:
         """Write a log entry to the JSONL file."""
@@ -223,10 +169,7 @@ class RunLogger:
         return int((datetime.now() - start).total_seconds() * 1000)
 
     def close(self) -> None:
-        """Close the file handle."""
-        if hasattr(self, "_file_handle") and self._file_handle:
-            self._file_handle.close()
-            self._file_handle = None
+        """Nothing to close: every entry is written by opening the log file for that entry."""
 
     def __del__(self) -> None:
         """Cleanup on deletion."""
@@ -862,7 +805,7 @@ def read_run_logs(run_id: int, logs_dir: str = "workspace/logs", level: int | No
 
 
 # =============================================================================
-# Standard Logging Bridge (integrates Python logging with structlog)
+# Standard Logging Bridge (integrates Python logging with the run log)
 # =============================================================================
 
 
