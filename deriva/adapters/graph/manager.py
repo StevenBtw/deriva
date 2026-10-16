@@ -45,9 +45,12 @@ from .models import (
     EnvironmentNode,
     ExternalDependencyNode,
     FileNode,
+    LifecycleEventNode,
+    LifecycleNode,
     MethodNode,
     ModuleNode,
     RepositoryNode,
+    RoleNode,
     ServiceNode,
     SoftwareNode,
     TechnologyNode,
@@ -74,6 +77,9 @@ GraphNode = (
     | EnvironmentNode
     | DeploymentNode
     | SoftwareNode
+    | LifecycleNode
+    | LifecycleEventNode
+    | RoleNode
 )
 
 logger = logging.getLogger(__name__)

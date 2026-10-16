@@ -82,7 +82,13 @@ class ComponentServicesConfig:
     max_hops: int = 2  # Import hops a member's reach follows (routes -> services -> models)
     # Decorator patterns (full match) that make a type, or a type with such a method, an endpoint of its unit
     endpoint_markers: tuple[str, ...] = ()
+    # Naming convention: a behaviour (service, function) is named as an activity, never by a bare object noun. A name
+    # is an activity when its last word is in activity_words or ends in one of activity_suffixes (a gerund: "ing")
+    activity_words: tuple[str, ...] = ()
+    activity_suffixes: tuple[str, ...] = ()
     choose_instruction: str = ""  # The closed-set naming instruction (config text)
+    # Business functions from shared domains of cooperating components (gap 3); off when a function model supplies them
+    business_functions: bool = True
 
 
 def _source(element: dict[str, Any]) -> str:
@@ -510,6 +516,18 @@ def clean_member_name(name: str, kind_words: tuple[str, ...], generic_names: tup
     return " ".join(w if w.isupper() and len(w) > 1 else w[:1].upper() + w[1:] for w in words)
 
 
+def is_activity(name: str, config: ComponentServicesConfig) -> bool:
+    """Whether a name names an activity (no rule configured: every name does)."""
+    if not config.activity_words and not config.activity_suffixes:
+        return True
+    words = [w.casefold() for w in _name_words(name)]
+    if not words:
+        return False
+    last = words[-1]
+    # The last word decides: "Risk Computation", "Quote Processing", "User Login"; a suffix only on a long word ("String" is none)
+    return last in {w.casefold() for w in config.activity_words} or any(last.endswith(x.casefold()) and len(last) >= len(x) + 4 for x in config.activity_suffixes)
+
+
 def _choose(candidates: list[str], source: dict[str, Any], element_type: str, instruction: str, llm_query_fn: Callable[..., Any], llm_kwargs: dict[str, Any]) -> str:
     """One of the candidates: the only one without a call, else the LLM's choice (an answer outside the set takes the first)."""
     if len(candidates) == 1:
@@ -542,6 +560,9 @@ def derive_unit_services(
     type_names: dict[str, set[str]] | None = None,
     domain_names: dict[str, set[str]] | None = None,
     endpoints: dict[str, list[tuple[str, str]]] | None = None,
+    domain_anchors: dict[str, str] | None = None,
+    lifecycle_sites: dict[str, set[str]] | None = None,
+    consumes: set[tuple[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Application services per component and business functions across components (``group_by`` "unit").
 
@@ -572,6 +593,10 @@ def derive_unit_services(
         type_names: File path -> name keys of the types it defines (a member reaches a domain whose entity it uses)
         domain_names: Domain id -> name keys of its entities and member types
         endpoints: Unit id -> (node, name) of the unit's endpoint types (structural markers), members as well
+        domain_anchors: Domain id -> its anchor's name, for the deciding domains without a BusinessObject (templates)
+        lifecycle_sites: Lifecycle id -> the files that set its states; a service serves the lifecycles its members reach
+        consumes: (consumer unit, provider unit) API lines; a service lists the data objects of the providers its
+            component consumes (``consumed_objects``), the data it reads through their APIs
     """
     llm_kwargs = llm_kwargs or {}
     components = {_source(e): e for e in elements if e.get("element_type") == config.component_type}
@@ -592,13 +617,19 @@ def derive_unit_services(
 
     names_of = {d: set((domain_names or {}).get(d, ())) for d in object_of}
 
-    def reached(member: str) -> Counter:
+    def member_files(member: str) -> set[str]:
+        """The files a member's reach covers: its own and its linked nodes', then up to max_hops imports."""
         nodes = {member} | linked.get(member, set())
         files = {p for n in nodes if (p := node_paths.get(n))}
         frontier = set(files)
         for _ in range(max(config.max_hops, 0)):
             frontier = {t for f in frontier for t in imported.get(f, ())} - files
             files |= frontier
+        return files
+
+    def reached(member: str) -> Counter:
+        nodes = {member} | linked.get(member, set())
+        files = member_files(member)
         targets = {t for n in nodes for t in record_links.get(n, ())}
         used = {key for f in files for key in (type_names or {}).get(f, ())}
         hits: Counter = Counter()
@@ -674,18 +705,23 @@ def derive_unit_services(
             group_interfaces = sorted({i for m in group for i in members[m]["interfaces"]})
             candidates: list[str] = []
             if key.startswith("family:"):
-                if family := clean_member_name(key.removeprefix("family:"), config.kind_words, config.generic_names):
+                if (family := clean_member_name(key.removeprefix("family:"), config.kind_words, config.generic_names)) and is_activity(family, config):
                     candidates.append(family)
             for m in group:
-                if m not in pages and (name := clean_member_name(members[m]["name"], config.kind_words, config.generic_names)):
+                # A member name names the service only as an activity (bare object nouns name data and business objects)
+                if m not in pages and (name := clean_member_name(members[m]["name"], config.kind_words, config.generic_names)) and is_activity(name, config):
                     candidates.append(name)
             # Templates on every business domain the group reaches: the most reached first, then the larger domain
             weight = Counter()
             for m in group:
                 weight.update(reach[m])
-            reached_objects = sorted((d for d in weight if d in business_objects), key=lambda d: (-weight[d], -len(names_of.get(d) or files_of.get(d) or ()), d))
+            # The object a template names: the BusinessObject, else the anchor of a deciding domain without one
+            object_names = {d: n for d, n in (domain_anchors or {}).items() if d in deciding} | business_objects
+            reached_objects = sorted(
+                (d for d in weight if d in object_names), key=lambda d: (d not in business_objects, -weight[d], -len(names_of.get(d) or files_of.get(d) or ()), d)
+            )
             for domain in reached_objects:
-                candidates += [t.format(object=business_objects[domain]) for t in config.service_templates]
+                candidates += [t.format(object=object_names[domain]) for t in config.service_templates]
             taken = {name_key(components[unit]["name"])} | {name_key(e["name"]) for e in interfaces if _source(e) == unit}
 
             def usable(found: list[str]) -> list[str]:
@@ -696,7 +732,9 @@ def derive_unit_services(
             if not candidates:
                 # Nothing names the behaviour: the templates on the component's own name without its kind words
                 stem = clean_member_name(components[unit]["name"], config.kind_words, ())
-                candidates = usable([t.format(object=stem) for t in config.service_templates] if stem else []) or [components[unit]["name"]]
+                stem_names = ([stem] if is_activity(stem, config) and config.activity_words else [t.format(object=stem) for t in config.service_templates]) if stem else []
+                # The stem may equal the component's own name only through its kind word: it stays a candidate
+                candidates = [c for c in stem_names if name_key(c) != name_key(components[unit]["name"])] or [components[unit]["name"]]
             source = {
                 "component": components[unit]["name"],
                 "interfaces": [e["name"] for e in interfaces if e["identifier"] in group_interfaces],
@@ -718,6 +756,7 @@ def derive_unit_services(
                         "objects": sorted(object_of[d] for d in group_domains),
                         "members": sorted(({"name": members[m]["name"], "source": m} for m in group), key=lambda x: (x["name"], x["source"])),
                         "name_candidates": candidates,
+                        "processes": sorted(life for life, sites in (lifecycle_sites or {}).items() if sites & {f for m in group for f in member_files(m)}),
                         "structure_name": candidates[0],
                         "confidence": 1.0,
                         "derived_at": current_timestamp(),
@@ -725,11 +764,28 @@ def derive_unit_services(
                 }
             )
 
+    # The data a component reads through the APIs it consumes: the objects of the providers' services
+    provided: dict[str, set[str]] = defaultdict(set)
+    for item in services:
+        provided[item["properties"]["sources"][0]] |= set(item["properties"]["objects"])
+    for item in services:
+        unit = item["properties"]["sources"][0]
+        reads = {o for a, b in consumes or () if a == unit and b != unit for o in provided.get(b, ())}
+        item["properties"]["consumed_objects"] = sorted(reads - set(item["properties"]["objects"]))
+
+    # Services are named (unique within the type) before the functions, so a function never takes a service's name
+    used: set[str] = set()
+    for item in services:
+        if name_key(item["name"]) in used:
+            options = [c for c in item["properties"]["name_candidates"] if name_key(c) not in used]
+            item["name"] = options[0] if options else f"{item['name']} {len(used) + 1}"
+        used.add(name_key(item["name"]))
+
     # Business functions: a business domain that services of cooperating components access
     undirected = {frozenset(pair) for pair in lines if len(set(pair)) == 2}
     functions: list[dict[str, Any]] = []
     nouns = "|".join(re.escape(n) for n in config.function_nouns)
-    for domain, object_name in sorted(business_objects.items()):
+    for domain, object_name in sorted(business_objects.items()) if config.business_functions else ():
         if domain not in object_of:
             continue
         users = sorted({s["properties"]["sources"][0] for s in services if object_of[domain] in s["properties"]["objects"]})
@@ -758,9 +814,9 @@ def derive_unit_services(
             }
         )
 
-    # Names are unique within the type: a repeated name falls back to the next candidate, then a number
-    for items in (services, functions):
-        used: set[str] = set()
+    # Function names are unique within the type: a repeated name falls back to the next candidate, then a number
+    for items in (functions,):
+        used = set()
         for item in items:
             if name_key(item["name"]) in used:
                 options = [c for c in item["properties"]["name_candidates"] if name_key(c) not in used]

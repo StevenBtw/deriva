@@ -1,0 +1,11 @@
+# A fictitious business function model (test fixture): the format of a supplied function model.
+# Lines that start with # are notes (a licence notice, the source) and are not read as rows.
+id,name,parent,level,code,description
+F100,Run the Trading Floor,,1,1.0,Everything that happens between a bid and a settled trade.
+F110,Take bids,F100,2,1.1,Receiving and recording bids from traders.
+F120,"Match, clear, and settle",F100,2,1.2,"Pairing bids with offers, then clearing and settling them."
+F200,Keep the Lights On,,1,2.0,Running the systems the floor depends on.
+F210,Patch the servers,F200,2,2.1,
+F300,Look After Members,,1,3.0,Members and their questions.
+F310,Answer member questions,F300,2,3.1,Questions and complaints from members.
+F311,Answer a question by phone,F310,3,3.1.1,A level 3 row: allowed in the file and ignored by the step.

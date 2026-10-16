@@ -266,6 +266,8 @@ class GraphLinkRule:
     # The query also returns ``channel``: the source end is the element (made from a) whose role is that channel,
     # such as the provider's interface of a unit (a unit has an interface per channel)
     source_channel: bool = False
+    # Only the graph relates the two types by this relationship type, in either direction: no other tier adds one
+    exclusive: bool = False
 
 
 @dataclass(frozen=True)
@@ -3630,6 +3632,8 @@ def derive_consolidated_relationships(
     scopes = unit_scopes(graph_manager) if graph_manager and any(str((e.get("properties") or {}).get("source") or "").startswith(UNIT_PREFIX) for e in all_elements) else None
     # A link the graph holds says more than a path: the element it places is not placed again by containment
     linked: set[tuple[str, str, str, str]] = set()
+    # (types, relationship type) that only the graph relates (exclusive graph links)
+    graph_only = {(frozenset((r.source, r.target)), r.relationship) for r in graph_links or [] if r.exclusive}
     if graph_links and graph_manager:
         rels = derive_graph_link_relationships(
             all_elements, graph_links, {query: graph_link_pairs(graph_manager, query) for query in sorted({r.query for r in graph_links})}, scopes=scopes
@@ -3716,6 +3720,7 @@ def derive_consolidated_relationships(
             owner_pairs=owner_pairs,
             name_match_skip=name_match_skip,
         )
+        relationships = [r for r in relationships if (frozenset((type_of.get(r["source"], ""), type_of.get(r["target"], ""))), r["relationship_type"]) not in graph_only]
 
         all_relationships.extend(relationships)
         logger.debug(

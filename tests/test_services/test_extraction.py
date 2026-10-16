@@ -2922,3 +2922,57 @@ class TestDataDomainStep:
     def test_the_signals_are_validated(self, graph, tmp_path):
         with pytest.raises(ValueError, match="DataDomain"):
             self._run(graph, tmp_path, {"identity_words": "user"})
+
+
+class TestBusinessLayerStep:
+    """The BusinessLayer step writes lifecycles (processes), their events and the roles assigned to them (no LLM)."""
+
+    PARAMS = {"markers": [r"require_role\(([^)]*)\)"], "generic_roles": ["admin"], "status_words": ["status"], "min_states": 3}
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _cfg(self, params):
+        return SimpleNamespace(node_type="BusinessLayer", params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+
+    def test_a_lifecycle_its_events_and_the_roles_on_it_are_written(self, graph, tmp_path):
+        from deriva.adapters.graph.models import DataDomainNode, DataEntityNode, DeployableUnitNode, FileNode, TypeDefinitionNode
+
+        files = {
+            "loan/models.py": 'class LoanApplication(Base):\n    status = Column(String(20), default="DRAFT")\n',
+            "loan/routes.py": 'require_role("ADMIN", "LOAN_OFFICER")\ndef submit(app):\n    app.status = "SUBMITTED"\n',
+            "uw/routes.py": 'require_role("UNDERWRITER")\ndef approve(app):\n    app.status = "APPROVED"\n',
+        }
+        for path, text in files.items():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_text(text, encoding="utf-8")
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="source", subtype="python"), node_id=f"file::r::{path}")
+        for unit in ("loan", "uw"):
+            graph.add_node(DeployableUnitNode(name=f"{unit}-service", path=f"r/{unit}", unit_kind="container", repository_name="r"), node_id=f"unit::r::{unit}")
+        graph.add_node(TypeDefinitionNode(name="LoanApplication", type_category="class", file_path="loan/models.py", repository_name="r"), node_id="typedef::r::LoanApplication")
+        graph.add_node(DataEntityNode(name="Loan Application", signal="orm entity", repository_name="r"), node_id="entity::r::loanapplication")
+        graph.add_edge("entity::r::loanapplication", "typedef::r::LoanApplication", "INCLUDES")
+        graph.add_node(DataDomainNode(name="Loan Application", kind="single", repository_name="r", business_object="Loan Application"), node_id="domain::r::loanapplication")
+        graph.add_edge("domain::r::loanapplication", "entity::r::loanapplication", "INCLUDES")
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == [] and result["lifecycles"] == 1 and result["roles"] == 2
+        (life,) = graph.query("MATCH (l:Graph:Lifecycle) RETURN l.id AS id, l.name AS name, l.states AS states, l.events AS events")
+        assert (life["name"], list(life["states"]), list(life["events"])) == ("Loan Application Lifecycle", ["DRAFT", "SUBMITTED", "APPROVED"], ["SUBMITTED", "APPROVED"])
+        chain = graph.query("MATCH (a)-[:`Graph:TRIGGERS`]->(b:Graph:LifecycleEvent) RETURN a.id AS a, b.name AS b ORDER BY b")
+        assert [r["b"] for r in chain] == ["Loan Application Approved", "Loan Application Submitted"]
+        assert {r["a"] for r in chain} == {life["id"]}  # no transition in code links the two: both hang off the lifecycle
+        roles = graph.query("MATCH (r:Graph:Role)-[:`Graph:ASSIGNED`]->(l:Graph:Lifecycle) RETURN r.name AS r ORDER BY r")
+        assert [r["r"] for r in roles] == ["Loan Officer", "Underwriter"]
+
+    def test_the_signals_are_validated(self, graph, tmp_path):
+        with pytest.raises(ValueError, match="BusinessLayer"):
+            _run_extraction_step(self._cfg({"markers": "require_role"}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
-from deriva.modules.derivation.base import Candidate, GraphLinkRule, derive_consolidated_relationships, derive_graph_link_relationships
+from deriva.modules.derivation.base import Candidate, GraphLinkRule, RelationshipRule, derive_consolidated_relationships, derive_graph_link_relationships
 from deriva.modules.derivation.component_services import ComponentServicesConfig, derive_component_services
 from tests.test_modules.derivation.test_roles import TestRoleNameTemplate, TestStructuralRoles
 
@@ -151,3 +151,42 @@ class TestGraphLinksOnAChannel:
 
         rows = [{"a": "unit::r::core", "b": "unit::r::billing", "channel": "rest"}, {"a": "x", "b": "y"}]
         assert graph_link_pairs(SimpleNamespace(query=lambda q: rows), "Q") == [("unit::r::core", "unit::r::billing", "rest"), ("x", "y")]  # type: ignore[arg-type]
+
+
+class TestExclusiveGraphLinks:
+    """An exclusive rule lets only the graph relate its two types by its relationship type, in either direction."""
+
+    LIFE = _el("bp_loan", "BusinessProcess", "lifecycle::r::loan", "Loan Lifecycle")
+    SENT = _el("be_sent", "BusinessEvent", "event::r::loan::SENT", "Loan Sent")
+    DONE = _el("be_done", "BusinessEvent", "event::r::loan::DONE", "Loan Done")
+    LINKS = {"Q1": [("lifecycle::r::loan", "event::r::loan::SENT")], "Q2": [("event::r::loan::SENT", "event::r::loan::DONE")]}
+    METAMODEL = {
+        "BusinessEvent": (
+            [RelationshipRule(target_type="BusinessProcess", rel_type="Triggering")],
+            [RelationshipRule(target_type="BusinessProcess", rel_type="Triggering")],
+        ),
+        "BusinessProcess": ([RelationshipRule(target_type="BusinessEvent", rel_type="Triggering")], [RelationshipRule(target_type="BusinessEvent", rel_type="Triggering")]),
+    }
+
+    def _derive(self, exclusive: bool):
+        rules = [
+            GraphLinkRule(source="BusinessProcess", target="BusinessEvent", relationship="Triggering", query="Q1", exclusive=exclusive),
+            GraphLinkRule(source="BusinessEvent", target="BusinessEvent", relationship="Triggering", query="Q2", exclusive=exclusive),
+        ]
+
+        def query(cypher: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+            return [{"a": a, "b": b} for a, b in self.LINKS.get(cypher, [])]
+
+        return derive_consolidated_relationships(
+            all_elements=[self.LIFE, self.SENT, self.DONE],
+            relationship_rules=self.METAMODEL,
+            llm_query_fn=None,
+            graph_manager=SimpleNamespace(query=query),  # type: ignore[arg-type]
+            graph_links=rules,
+        )
+
+    def test_without_exclusive_other_tiers_add_more_of_the_type(self):
+        assert _triples(self._derive(False)) > {("bp_loan", "Triggering", "be_sent"), ("be_sent", "Triggering", "be_done")}
+
+    def test_with_exclusive_only_the_graph_links_remain(self):
+        assert _triples(self._derive(True)) == {("bp_loan", "Triggering", "be_sent"), ("be_sent", "Triggering", "be_done")}

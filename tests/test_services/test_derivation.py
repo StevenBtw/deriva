@@ -3081,12 +3081,17 @@ class TestGraphLinkConfig:
 
         assert derivation._graph_link_rules([TestNamedInCodeConfig._row()]) == []
         assert derivation._graph_link_rules([row]) == [GraphLinkRule(source="ApplicationComponent", target="ApplicationInterface", relationship="Composition", query=self.QUERY)]
+        exclusive = TestNamedInCodeConfig._row(
+            graph_links=[{"source": "ApplicationComponent", "target": "ApplicationInterface", "relationship": "Composition", "query": self.QUERY, "exclusive": True}]
+        )
+        assert derivation._graph_link_rules([exclusive])[0].exclusive is True
 
     @pytest.mark.parametrize(
         "item",
         [
             {"source": "ApplicationComponent", "target": "ApplicationInterface", "relationship": "Composition"},
             {"source": "BusinessObject", "target": "ApplicationComponent", "relationship": "Composition", "query": "Q"},
+            {"source": "ApplicationComponent", "target": "ApplicationInterface", "relationship": "Composition", "query": "Q", "exclusive": "yes"},
         ],
     )
     def test_an_incomplete_or_invalid_rule_is_an_error(self, item):

@@ -60,8 +60,11 @@ from deriva.adapters.graph.models import (
     EnvironmentNode,
     ExternalDependencyNode,
     FileNode,
+    LifecycleEventNode,
+    LifecycleNode,
     MethodNode,
     RepositoryNode,
+    RoleNode,
     SoftwareNode,
     TechnologyNode,
     TestNode,
@@ -84,6 +87,8 @@ from deriva.modules.extraction import (
     data_entities,
     deployable_units,
     deployments,
+    lifecycles,
+    roles,
     step_tags,
     technologies,
     technology_candidates,
@@ -547,6 +552,9 @@ def _run_step_writes(
     elif node_type == "DeployableUnit":
         # Deployable units from structure (containers, manifest entry points, mainframe applications); no LLM
         result = _extract_deployable_units(cfg, repo, repo_path, graph_manager)
+    elif node_type == "BusinessLayer":
+        # Processes (lifecycles), events and roles from code and documentation; no LLM
+        result = _extract_business_layer(cfg, repo, repo_path, graph_manager)
     elif node_type == "DataDomain":
         # Information domains from the data entities, their relations and the units; no LLM
         result = _extract_data_domains(cfg, repo, repo_path, graph_manager, engine)
@@ -1046,6 +1054,107 @@ def _extract_data_domains(cfg: config.ExtractionConfig, repo: Any, repo_path: Pa
             edges += 1
     excluded = [{"name": x.name, "reason": x.reason} for x in result.excluded]
     return {"nodes_created": len(result.domains), "edges_created": edges, "errors": [], "domains": len(result.domains), "excluded": excluded}
+
+
+def _business_layer_rules(params: str | None) -> tuple[lifecycles.LifecycleRules, roles.RoleRules]:
+    """The BusinessLayer step's signals (``params``): lifecycle words and patterns (``status_words``, ``min_states``,
+    ``value_pattern``, ``flow_words``, ``heading_noise``, ``unit_noise``, ``name_templates``) and the role signals
+    (``markers``: patterns whose first group holds role constants, ``generic_roles``, ``generic_actors``)."""
+    settings = json.loads(params) if params else {}
+    lists = ("status_words", "flow_words", "heading_noise", "unit_noise", "name_templates", "markers", "generic_roles", "generic_actors")
+    unknown = set(settings) - {*lists, "min_states", "value_pattern"}
+    lists_ok = all(isinstance(settings.get(k, []), list) and all(isinstance(x, str) and x for x in settings.get(k, [])) for k in lists)
+    states = settings.get("min_states", lifecycles.LifecycleRules.min_states)
+    pattern = settings.get("value_pattern", lifecycles.LifecycleRules.value_pattern)
+    if unknown or not lists_ok or not isinstance(states, int) or isinstance(states, bool) or states < 2 or not isinstance(pattern, str):
+        raise ValueError(f"BusinessLayer params: lists of strings under {list(lists)}, min_states a whole number of at least 2, value_pattern a pattern")
+    for p in [pattern, *settings.get("markers", [])]:
+        try:
+            re.compile(p)
+        except re.error as exc:
+            raise ValueError(f"BusinessLayer params: {p!r} is no valid pattern: {exc}") from exc
+    life_defaults = lifecycles.LifecycleRules()
+    life = lifecycles.LifecycleRules(
+        **{k: tuple(settings[k]) if k in settings else getattr(life_defaults, k) for k in ("status_words", "flow_words", "heading_noise", "unit_noise", "name_templates")},
+        min_states=states,
+        value_pattern=pattern,
+    )
+    return life, roles.RoleRules(**{k: tuple(settings.get(k, [])) for k in ("markers", "generic_roles", "generic_actors")})
+
+
+def _extract_business_layer(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
+    """Lifecycles of the business domains (processes, with their events) and the roles and actors assigned to them,
+    from code, documentation and the units (no LLM)."""
+    life_rules, role_rules = _business_layer_rules(cfg.params)
+    q = lambda query, params=None: graph_manager.query(query, {**(params or {}), "repo_name": repo.name})  # noqa: E731 - a one-line helper
+    norm = lambda p: str(p or "").replace(chr(92), "/")  # noqa: E731 - a one-line helper
+    members = []
+    for row in q(
+        "MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(m) WHERE d.repository_name = $repo_name AND d.businessObject IS NOT NULL "
+        "OPTIONAL MATCH (m)-[:`Graph:INCLUDES`]->(t:Graph:TypeDefinition) "
+        "RETURN d.id AS domain, d.businessObject AS object, m.typeName AS member, m.filePath AS member_path, t.typeName AS type, t.filePath AS type_path"
+    ):
+        for name, path in ((row.get("member"), row.get("member_path")), (row.get("type"), row.get("type_path"))):
+            if name and path:
+                members.append({"domain": row["domain"], "object": row["object"], "name": str(name), "path": norm(path)})
+    paths = q("MATCH (f:Graph:File) WHERE f.active = true AND f.repository_name = $repo_name RETURN f.filePath AS path, f.fileType AS kind, f.subtype AS subtype")
+    files = {norm(r["path"]): text for r in paths if r.get("kind") == "source" and (text := _read_checkout(repo_path, repo.name, norm(r["path"]))) is not None}
+    docs = {norm(r["path"]): text for r in paths if r.get("kind") == "docs" and (text := _read_checkout(repo_path, repo.name, norm(r["path"]))) is not None}
+    units = [
+        {"id": r["id"], "path": norm(r["path"]), "name": r["name"], "web": bool(r.get("web"))}
+        for r in q("MATCH (u:Graph:DeployableUnit) WHERE u.active = true AND u.repository_name = $repo_name RETURN u.id AS id, u.path AS path, u.name AS name, u.webEntries AS web")
+    ]
+    found = lifecycles.detect_lifecycles(files, members, units, life_rules, docs)
+    concepts = [
+        {"id": r["id"], "name": r["name"], "files": [norm(f) for f in r["files"] or []]}
+        for r in q(
+            "MATCH (c:Graph:BusinessConcept) WHERE c.repository_name = $repo_name AND ANY(t IN COALESCE(c.conceptTypes, []) WHERE t IN ['actor', 'role']) "
+            "OPTIONAL MATCH (f:Graph:File)-[:`Graph:REFERENCES`]->(c) RETURN c.id AS id, c.conceptName AS name, collect(f.filePath) AS files"
+        )
+        if r.get("name")
+    ]
+    consumes = [
+        (r["a"], r["b"]) for r in q("MATCH (a:Graph:DeployableUnit)-[:`Graph:CONSUMES`]->(b:Graph:DeployableUnit) WHERE a.repository_name = $repo_name RETURN a.id AS a, b.id AS b")
+    ]
+    lifecycle_id = {life.key: f"lifecycle::{repo.name}::{_slug(life.key.split('::', 2)[-1])}" for life in found}
+    reached = {lifecycle_id[life.key]: sorted({u for units_ in life.units_of_state.values() for u in units_}) for life in found}
+    found_roles = roles.detect_roles(files, concepts, units, reached, consumes, role_rules)
+
+    edges = 0
+    for life in found:
+        node = lifecycle_id[life.key]
+        graph_manager.add_node(
+            LifecycleNode(
+                name=life.name_candidates[0],
+                domain=life.domain,
+                entity=life.entity,
+                attribute=life.attribute,
+                repository_name=repo.name,
+                states=life.states,
+                events=life.events,
+                sites=sorted({p for ps in life.sites.values() for p in ps}),
+                name_candidates=life.name_candidates,
+                flow=life.flow or "",
+                transitions=[f"{a}>{b}" for a, b in life.transitions],
+            ),
+            node_id=node,
+        )
+        event_id = {state: f"event::{repo.name}::{_slug(life.key.split('::', 2)[-1])}::{state.casefold()}" for state in life.events}
+        for state in life.events:
+            label = lifecycles.display(state) if life.from_enum else f"{life.entity} {lifecycles.display(state)}"
+            graph_manager.add_node(LifecycleEventNode(name=label, lifecycle=node, state=state, repository_name=repo.name), node_id=event_id[state])
+        # Only transitions code or the documented flow shows chain events; an event without one hangs off the lifecycle
+        for before, state in life.triggers:
+            graph_manager.add_edge(event_id[before] if before else node, event_id[state], "TRIGGERS")
+            edges += 1
+    for role in found_roles:
+        node = f"role::{repo.name}::{_slug(role.name)}"
+        graph_manager.add_node(RoleNode(name=role.name, kind=role.kind, source=role.source, repository_name=repo.name), node_id=node)
+        for life in role.lifecycles:
+            graph_manager.add_edge(node, life, "ASSIGNED")
+            edges += 1
+    events = sum(len(life.events) for life in found)
+    return {"nodes_created": len(found) + events + len(found_roles), "edges_created": edges, "errors": [], "lifecycles": len(found), "events": events, "roles": len(found_roles)}
 
 
 def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 200_000) -> str | None:

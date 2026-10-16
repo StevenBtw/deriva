@@ -38,7 +38,7 @@ def _data(key: str, name: str) -> dict[str, Any]:
     return {"identifier": f"do_{key}", "name": name, "element_type": "DataObject", "properties": {"source": f"domain::{key}"}}
 
 
-def _run(elements, reach, *, bases=None, lines=(), objects=None, deciding=None, llm=None, documents=None, files=None):
+def _run(elements, reach, *, bases=None, lines=(), objects=None, deciding=None, llm=None, documents=None, files=None, consumes=None, config=CONFIG):
     """reach: member -> domain keys its file holds; each member lives in its own file."""
     node_paths = {f"n::{m}": f"{m}.java" for m in reach} | {f"n::{m}": f"{m}.java" for e in elements for m in [x["name"] for x in (e["properties"].get("members") or [])]}
     entity_files: dict[str, set[str]] = {}
@@ -57,7 +57,7 @@ def _run(elements, reach, *, bases=None, lines=(), objects=None, deciding=None, 
         elements,
         node_paths,
         [],
-        CONFIG,
+        config,
         "Choose the name.",
         query,
         scopes=scopes,
@@ -66,6 +66,7 @@ def _run(elements, reach, *, bases=None, lines=(), objects=None, deciding=None, 
         bases={f"n::{m}": set(b) for m, b in (bases or {}).items()},
         lines=set(lines),
         documents=documents or {},
+        consumes=consumes,
     )
     return services, functions, calls
 
@@ -180,6 +181,52 @@ def test_a_business_function_is_a_shared_business_domain_of_cooperating_componen
     quote_services = sorted(s["identifier"] for s in services if s["properties"]["objects"] == ["do_quote"])
     assert sorted(function["properties"]["services"]) == quote_services and len(quote_services) == 2
     assert function["properties"]["name_candidates"] == ["Insurance Quote Management", "Insurance Quote Handling"]
+
+
+def test_a_service_lists_the_data_objects_of_the_providers_its_component_consumes():
+    elements = [
+        _component("pm", "Policy Management"),
+        _interface("pm", "rest", ["PolicyHolder", "PolicyResource"]),
+        _component("core", "Customer Core"),
+        _interface("core", "rest", ["CustomerHolder", "CustomerResource"]),
+        _component("risk", "Risk"),
+        _interface("risk", "rpc", ["RiskHolder", "RiskResource"]),
+        _data("policy", "Policy Data"),
+        _data("customer", "Customer Data"),
+        _data("risk", "Risk Data"),
+    ]
+    reach = {
+        "PolicyHolder": ["policy"],
+        "PolicyResource": ["policy"],
+        "CustomerHolder": ["customer"],
+        "CustomerResource": ["customer"],
+        "RiskHolder": ["risk"],
+        "RiskResource": ["risk"],
+    }
+
+    # pm consumes core's API; pm sends messages to risk (a cooperation line, but no API it consumes)
+    services, _, _ = _run(elements, reach, lines={("unit::pm", "unit::core"), ("unit::pm", "unit::risk")}, consumes={("unit::pm", "unit::core")})
+
+    consumed = {s["properties"]["sources"][0]: s["properties"]["consumed_objects"] for s in services}
+    assert consumed == {"unit::pm": ["do_customer"], "unit::core": [], "unit::risk": []}
+
+
+def test_without_business_functions_only_the_services_are_derived():
+    import dataclasses
+
+    elements = [
+        _component("ss", "Self Service"),
+        _interface("ss", "rest", ["QuoteRequestResource", "QuoteRequestHolder"]),
+        _component("pm", "Policy Management"),
+        _interface("pm", "rest", ["QuoteProcessingResource", "QuoteConsumer"]),
+        _data("quote", "Quote Data"),
+    ]
+    reach = {"QuoteRequestResource": ["quote"], "QuoteRequestHolder": ["quote"], "QuoteProcessingResource": ["quote"], "QuoteConsumer": ["quote"]}
+    off = dataclasses.replace(CONFIG, business_functions=False)
+
+    services, functions, _ = _run(elements, reach, objects={"domain::quote": "Insurance Quote"}, lines={("unit::ss", "unit::pm")}, config=off)
+
+    assert len(services) == 2 and functions == []  # a function model supplies the functions instead
 
 
 def _run2(elements, imports, *, files_of=None, type_names=None, domain_names=None, endpoints=None, objects=None, members_reach=None):
@@ -299,3 +346,85 @@ def test_a_function_never_takes_a_services_name():
     service_names = {s["name"] for s in services}
     assert functions and not ({f["name"] for f in functions} & service_names)
     assert "Quote Management" in service_names and functions[0]["name"] == "Quote Handling"
+
+
+ACTIVITY = dict(activity_words=("login", "computation", "management", "processing", "handling"), activity_suffixes=("ing",))
+
+
+def test_behaviour_names_are_activities_never_bare_object_names():
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_templates=("{object} Management", "{object} Processing"), **ACTIVITY)
+    elements = [
+        _component("pm", "Policy Backend"),
+        _interface("pm", "rest", ["InsuranceQuoteRequestCoordinator", "RiskComputationService", "UserLoginController", "CustomerMessageController"]),
+        _data("quote", "Insurance Quote Request Data"),
+    ]
+    node_paths = {f"n::{m}": f"{m}.java" for m in ("InsuranceQuoteRequestCoordinator", "RiskComputationService", "UserLoginController", "CustomerMessageController")}
+    scopes = UnitScopes(files={}, nodes={}, entity_files={"domain::quote": frozenset(node_paths.values())}, entity_nodes={})
+    services, _ = derive_unit_services(
+        elements, node_paths, [], config, "Choose.", lambda p, s, **k: {"content": json.dumps({"name": s["schema"]["properties"]["name"]["enum"][0]})},
+        scopes=scopes, deciding={"domain::quote"}, business_objects={"domain::quote": "Insurance Quote Request"}, bases={}, lines=set(), documents={},
+    )  # fmt: skip
+
+    candidates = services[0]["properties"]["name_candidates"]
+    # Object nouns (Insurance Quote Request, Customer Message) are no candidates; activities are
+    assert candidates == ["Risk Computation", "User Login", "Insurance Quote Request Management", "Insurance Quote Request Processing"]
+
+
+def test_services_are_named_before_functions_so_a_function_never_repeats_a_service():
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, **ACTIVITY)
+    elements = [
+        _component("ss", "Self Service"),
+        _interface("ss", "rest", ["ss/routes.py"]),
+        _component("pm", "Policy Backend"),
+        _interface("pm", "rest", ["pm/routes.py"]),
+        _data("quote", "Quote Data"),
+    ]
+    node_paths = {"n::ss/routes.py": "ss/routes.py", "n::pm/routes.py": "pm/routes.py"}
+    scopes = UnitScopes(files={}, nodes={}, entity_files={"domain::quote": frozenset(node_paths.values())}, entity_nodes={})
+    services, functions = derive_unit_services(
+        elements, node_paths, [], config, "Choose.", lambda p, s, **k: {"content": json.dumps({"name": s["schema"]["properties"]["name"]["enum"][0]})},
+        scopes=scopes, deciding={"domain::quote"}, business_objects={"domain::quote": "Quote"}, bases={}, lines={("unit::ss", "unit::pm")}, documents={},
+    )  # fmt: skip
+
+    names = [s["name"] for s in services] + [f["name"] for f in functions]
+    assert len(names) == len({n.casefold() for n in names})  # one name per element, across both types
+
+
+def test_an_exception_domain_names_its_service_and_a_stem_that_is_an_activity_stands_alone():
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, kind_words=(*CONFIG.kind_words, "Backend"), **ACTIVITY)
+    elements = [
+        _component("cm", "Customer Management Backend"),
+        _interface("cm", "rest", ["InteractionLogHolder"]),
+        _data("log", "Interaction Log"),
+        _component("x", "Order Processing Backend"),
+        _interface("x", "rest", ["app/routes.py"]),
+    ]
+    node_paths = {"n::InteractionLogHolder": "log.java", "n::app/routes.py": "routes.py"}
+    scopes = UnitScopes(files={}, nodes={}, entity_files={"domain::log": frozenset({"log.java"})}, entity_nodes={})
+    services, _ = derive_unit_services(
+        elements, node_paths, [], config, "Choose.", lambda p, s, **k: {"content": json.dumps({"name": s["schema"]["properties"]["name"]["enum"][0]})},
+        scopes=scopes, deciding={"domain::log"}, business_objects={}, bases={}, lines=set(), documents={}, domain_anchors={"domain::log": "Interaction Log"},
+    )  # fmt: skip
+
+    by_unit = {s["properties"]["sources"][0]: s["properties"]["name_candidates"] for s in services}
+    assert by_unit["unit::cm"][0] == "Interaction Log Management"
+    assert by_unit["unit::x"] == ["Order Processing"]  # the stem without its kind word is an activity already
+
+
+def test_a_service_serves_the_lifecycles_whose_states_its_members_set():
+    elements = [_component("loan", "Loan Service"), _interface("loan", "rest", ["routes"]), _data("loan", "Loan Data")]
+    scopes = UnitScopes(files={}, nodes={}, entity_files={"domain::loan": frozenset({"models.java"})}, entity_nodes={})
+    services, _ = derive_unit_services(
+        elements, {"n::routes": "routes.java"}, [("routes.java", "services.java"), ("services.java", "models.java")], CONFIG, "Choose.",
+        lambda p, s, **k: {"content": json.dumps({"name": s["schema"]["properties"]["name"]["enum"][0]})},
+        scopes=scopes, deciding={"domain::loan"}, business_objects={"domain::loan": "Loan"}, bases={}, lines=set(), documents={},
+        lifecycle_sites={"lifecycle::app": {"services.java"}, "lifecycle::other": {"elsewhere.java"}},
+    )  # fmt: skip
+
+    assert services[0]["properties"]["processes"] == ["lifecycle::app"]

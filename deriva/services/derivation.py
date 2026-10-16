@@ -40,6 +40,8 @@ import logging
 import re
 from collections import defaultdict
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from deriva.adapters.archimate import ArchimateManager
@@ -93,6 +95,7 @@ from deriva.modules.derivation.component_services import ComponentServicesConfig
 from deriva.modules.derivation.data_object import DataObjectDerivation
 from deriva.modules.derivation.device import DeviceDerivation
 from deriva.modules.derivation.element_base import ElementDerivationBase
+from deriva.modules.derivation.function_model import ServiceItem, classify_services, function_elements, parse_function_model
 from deriva.modules.derivation.node import NodeDerivation
 from deriva.modules.derivation.refine import run_refine_step
 from deriva.modules.derivation.system_software import SystemSoftwareDerivation
@@ -306,7 +309,8 @@ def _graph_link_rules(configs: list[Any]) -> list[GraphLinkRule]:
     """Relationships from links the graph holds between source nodes (``params.graph_links``).
 
     ``[{"source": "ApplicationComponent", "target": "ApplicationInterface", "relationship": "Composition", "query": "MATCH ... RETURN x.id AS a, y.id AS b"}]``:
-    the component made from node a composes the interface made from node b.
+    the component made from node a composes the interface made from node b. ``"exclusive": true``: only the
+    graph relates the two types by that relationship type (either direction), no other tier adds one.
     """
     rules: list[GraphLinkRule] = []
     for item in _structural_items(configs, "graph_links", ("source", "target", "relationship", "query")):
@@ -314,7 +318,12 @@ def _graph_link_rules(configs: list[Any]) -> list[GraphLinkRule]:
         on_channel = item.get("source_channel", False)
         if not isinstance(on_channel, bool):
             raise ValueError(f"graph_links: source_channel must be true or false, got {on_channel!r}")
-        rules.append(GraphLinkRule(source=item["source"], target=item["target"], relationship=item["relationship"], query=item["query"], source_channel=on_channel))
+        exclusive = item.get("exclusive", False)
+        if not isinstance(exclusive, bool):
+            raise ValueError(f"graph_links: exclusive must be true or false, got {exclusive!r}")
+        rules.append(
+            GraphLinkRule(source=item["source"], target=item["target"], relationship=item["relationship"], query=item["query"], source_channel=on_channel, exclusive=exclusive)
+        )
     return rules
 
 
@@ -401,7 +410,10 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
             re.compile(marker)
         except re.error as exc:
             raise ValueError(f"params.component_services: endpoint marker {marker!r} is no valid pattern: {exc}") from exc
-    words = {k: settings.get(k, list(getattr(defaults, k))) for k in ("kind_words", "generic_names", "service_templates", "function_templates", "function_nouns")}
+    words = {
+        k: settings.get(k, list(getattr(defaults, k)))
+        for k in ("kind_words", "generic_names", "service_templates", "function_templates", "function_nouns", "activity_words", "activity_suffixes")
+    }
     if not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in words.values()):
         raise ValueError(f"params.component_services: {sorted(words)} are lists of strings")
     if any("{object}" not in t for t in words["service_templates"] + words["function_templates"]):
@@ -410,6 +422,9 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
         raise ValueError("params.component_services.choose_instruction (the closed-set naming instruction) is needed for group_by 'unit'")
     if not all(isinstance(n, int) and not isinstance(n, bool) and n >= minimum for n, minimum in ((member_min_names, 1), (max_groups, 0))):
         raise ValueError("params.component_services: member_min_names is a whole number of at least 1, max_groups of at least 0")
+    business_functions = settings.get("business_functions", defaults.business_functions)
+    if not isinstance(business_functions, bool):
+        raise ValueError(f"params.component_services.business_functions must be true or false, got {business_functions!r}")
     return ComponentServicesConfig(
         **whole,
         **{k: tuple(v) for k, v in words.items()},
@@ -426,6 +441,7 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
         max_doc_lines=max_doc_lines,
         interface_links=tuple(settings.get("interface_links", [])),
         object_links=tuple(settings.get("object_links", [])),
+        business_functions=business_functions,
     )
 
 
@@ -460,17 +476,17 @@ def _component_services_step(
     if config.group_by == "unit":
         nodes = {str(m.get("source")) for e in elements for m in (e.get("properties") or {}).get("members") or [] if m.get("source")}
         nodes |= {a for a, _ in interface_links} | {a for a, _ in object_links}
-        domains = graph_manager.query("MATCH (d:Graph:DataDomain) WHERE d.active = true RETURN d.id AS id, d.businessObject AS bo, d.exception AS exception")
+        domains = graph_manager.query("MATCH (d:Graph:DataDomain) WHERE d.active = true RETURN d.id AS id, d.name AS name, d.businessObject AS bo, d.exception AS exception")
         bases: dict[str, set[str]] = defaultdict(set)
         for row in graph_manager.query("MATCH (t:Graph:TypeDefinition)-[:`Graph:INHERITS`]->(b) RETURN t.id AS t, b.typeName AS name, b.id AS id"):
             if row.get("t"):
                 bases[row["t"]].add(str(row.get("name") or str(row.get("id") or "").split("::")[-1]))
-        lines = {
-            (row["a"], row["b"])
-            for row in graph_manager.query(
-                "MATCH (a:Graph:DeployableUnit)-[r]->(b:Graph:DeployableUnit) WHERE type(r) IN ['Graph:CONSUMES', 'Graph:SENDS_TO'] RETURN DISTINCT a.id AS a, b.id AS b"
-            )
-        }
+        cooperation = graph_manager.query(
+            "MATCH (a:Graph:DeployableUnit)-[r]->(b:Graph:DeployableUnit) WHERE type(r) IN ['Graph:CONSUMES', 'Graph:SENDS_TO'] "
+            "RETURN DISTINCT a.id AS a, b.id AS b, type(r) AS kind"
+        )
+        lines = {(row["a"], row["b"]) for row in cooperation}
+        consumes = {(row["a"], row["b"]) for row in cooperation if str(row.get("kind") or "").endswith("CONSUMES")}
         norm = lambda p: str(p or "").replace(chr(92), "/")  # noqa: E731 - a one-line helper
         type_names: dict[str, set[str]] = defaultdict(set)
         for row in graph_manager.query("MATCH (t:Graph:TypeDefinition) WHERE t.active = true RETURN t.filePath AS path, t.typeName AS name"):
@@ -523,6 +539,12 @@ def _component_services_step(
             type_names=dict(type_names),
             domain_names=dict(domain_names),
             endpoints=dict(endpoints),
+            domain_anchors={str(r["id"]): str(r["name"]) for r in domains if r.get("name")},
+            consumes=consumes,
+            lifecycle_sites={
+                str(r["id"]): {norm(p) for p in r.get("sites") or []}
+                for r in graph_manager.query("MATCH (l:Graph:Lifecycle) WHERE l.active = true RETURN l.id AS id, l.sites AS sites")
+            },
         )
         return _stored_services(services + functions, archimate_manager)
     if config.group_by == "members":
@@ -559,6 +581,84 @@ def _component_services_step(
         object_links=object_links,
     )
     return _stored_services(services, archimate_manager)
+
+
+@dataclass(frozen=True)
+class FunctionModelConfig:
+    """A supplied business function model the services are classified into (element config ``params.function_model``)."""
+
+    name: str  # Names the model in the element identities (function::<name>::<id>)
+    path: str  # The CSV file: a bundled model's file name, or a path to a user-supplied file
+    exclude: tuple[str, ...] = ()  # Function ids left out of the closed set, with everything below them
+    levels: int = 2
+    batch_size: int = 10  # Services per classification call
+
+
+def _function_model_config(params: str | None) -> FunctionModelConfig | None:
+    """``{"function_model": {"name": "pcf-8.0", "path": "pcf-8.0-cross-industry.csv", "exclude": ["20607"], "batch_size": 10}}``."""
+    settings = json.loads(params).get("function_model") if isinstance(params, str) and params else None
+    if settings is None:
+        return None
+    if not isinstance(settings, dict) or not isinstance(settings.get("name"), str) or not settings["name"] or not isinstance(settings.get("path"), str) or not settings["path"]:
+        raise ValueError("params.function_model needs a name and a path (strings)")
+    exclude = settings.get("exclude", [])
+    if not isinstance(exclude, list) or not all(isinstance(x, str) for x in exclude):
+        raise ValueError("params.function_model.exclude is a list of function ids")
+    levels, batch = settings.get("levels", 2), settings.get("batch_size", 10)
+    if not all(isinstance(n, int) and not isinstance(n, bool) and n >= 1 for n in (levels, batch)) or levels > 2:
+        raise ValueError("params.function_model: levels is 1 or 2, batch_size a whole number of at least 1")
+    return FunctionModelConfig(name=settings["name"], path=settings["path"], exclude=tuple(exclude), levels=levels, batch_size=batch)
+
+
+def _function_model_file(path: str) -> Path:
+    """The model file: a bundled model by its file name, else the path as given (absolute or from the working directory)."""
+    from deriva.adapters.database import FUNCTION_MODELS_DIR
+
+    bundled = FUNCTION_MODELS_DIR / path
+    found = bundled if not Path(path).is_absolute() and bundled.is_file() else Path(path)
+    if not found.is_file():
+        raise ValueError(f"params.function_model.path: no function model file {path!r} (bundled in {FUNCTION_MODELS_DIR} or a path)")
+    return found
+
+
+def _function_model_step(
+    config: FunctionModelConfig,
+    instruction: str,
+    graph_manager: GraphManager,
+    archimate_manager: ArchimateManager,
+    llm_query_fn: Callable[..., Any],
+    elements: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Classify the services that touch a business domain into the function model, level by level, and store the
+    chosen functions; the result has the shape of ``generate_element``'s."""
+    model = parse_function_model(_function_model_file(config.path).read_text(encoding="utf-8"), config.name, config.exclude, max_level=config.levels)
+    business = {str(r["id"]) for r in graph_manager.query("MATCH (d:Graph:DataDomain) WHERE d.active = true RETURN d.id AS id, d.businessObject AS bo") if r.get("bo")}
+    data_objects = {e["identifier"]: e for e in elements if e.get("element_type") == "DataObject"}
+    units = {str(r["id"]): str(r["name"]) for r in graph_manager.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.name AS name") if r.get("name")}
+    lifecycles = {str(r["id"]): str(r["name"]) for r in graph_manager.query("MATCH (l:Graph:Lifecycle) WHERE l.active = true RETURN l.id AS id, l.name AS name")}
+    items: list[ServiceItem] = []
+    processes: dict[str, list[str]] = {}
+    for service in sorted((e for e in elements if e.get("element_type") == "ApplicationService"), key=lambda e: e["identifier"]):
+        props = service.get("properties") or {}
+        objects = [data_objects[o] for o in props.get("objects") or [] if o in data_objects]
+        # Only a service that touches a business domain names a business function (technical services do not)
+        if not any(str((o.get("properties") or {}).get("source") or "") in business for o in objects):
+            continue
+        unit = str((props.get("sources") or [""])[0])
+        items.append(
+            ServiceItem(
+                key=service["identifier"],
+                component=units.get(unit, unit.rsplit("::", 1)[-1]),
+                members=sorted(str(m.get("name") or "") for m in props.get("members") or [])[:20],
+                data=sorted(str(o["name"]) for o in objects),
+                processes=sorted(lifecycles.get(str(p), str(p)) for p in props.get("processes") or []),
+            )
+        )
+        processes[service["identifier"]] = list(props.get("processes") or [])
+    decisions = classify_services(items, model, instruction, llm_query_fn, config.batch_size)
+    result = _stored_services(function_elements(decisions, model, processes), archimate_manager)
+    result["function_decisions"] = decisions
+    return result
 
 
 def _stored_services(services: list[dict[str, Any]], archimate_manager: ArchimateManager) -> dict[str, Any]:
@@ -1303,18 +1403,24 @@ def run_derivation(
                     max_tokens=cfg.max_tokens,
                 )
 
-            # Validate required config parameters
-            missing_params = []
-            if not cfg.input_graph_query:
-                missing_params.append("input_graph_query")
+            # Validate required config parameters (a function model step reads no candidates: only its instruction)
+            try:
+                function_model = _function_model_config(cfg.params)
+            except ValueError as exc:
+                function_model, missing_params = None, [str(exc)]
+            else:
+                missing_params = []
             if not cfg.instruction:
                 missing_params.append("instruction")
-            if not cfg.example:
-                missing_params.append("example")
-            if cfg.max_candidates is None:
-                missing_params.append("max_candidates")
-            if cfg.batch_size is None:
-                missing_params.append("batch_size")
+            if function_model is None:
+                if not cfg.input_graph_query:
+                    missing_params.append("input_graph_query")
+                if not cfg.example:
+                    missing_params.append("example")
+                if cfg.max_candidates is None:
+                    missing_params.append("max_candidates")
+                if cfg.batch_size is None:
+                    missing_params.append("batch_size")
 
             if missing_params:
                 error_msg = f"Missing required config for {cfg.step_name}: {', '.join(missing_params)}"
@@ -1324,19 +1430,20 @@ def run_derivation(
                     step_ctx.error(error_msg)
                 continue
 
-            # Type assertions for validated config (helps type checker)
-            assert cfg.input_graph_query is not None
-            assert cfg.instruction is not None
-            assert cfg.example is not None
-            assert cfg.max_candidates is not None
-            assert cfg.batch_size is not None
-
             try:
+                assert cfg.instruction is not None
                 component_services = _component_services_config(cfg.params) if cfg.element_type == "ApplicationService" else None
-                step_result = (
-                    _component_services_step(component_services, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
-                    if component_services is not None
-                    else generate_element(
+                if function_model is not None:
+                    step_result = _function_model_step(function_model, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
+                elif component_services is not None:
+                    step_result = _component_services_step(component_services, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
+                else:
+                    # Type assertions for validated config (helps type checker)
+                    assert cfg.input_graph_query is not None
+                    assert cfg.example is not None
+                    assert cfg.max_candidates is not None
+                    assert cfg.batch_size is not None
+                    step_result = generate_element(
                         graph_manager=graph_manager,
                         archimate_manager=archimate_manager,
                         llm_query_fn=step_llm_query_fn,
@@ -1363,7 +1470,6 @@ def run_derivation(
                         skip_nested=_skip_nested(cfg.params, engine),
                         deployable_units=_deployable_units(cfg.params),
                     )
-                )
 
                 elements_created = step_result.get("elements_created", 0)
                 relationships_created = step_result.get("relationships_created", 0)
@@ -1742,18 +1848,24 @@ def run_derivation_iter(
                     max_tokens=cfg.max_tokens,
                 )
 
-            # Validate required config parameters
-            missing_params = []
-            if not cfg.input_graph_query:
-                missing_params.append("input_graph_query")
+            # Validate required config parameters (a function model step reads no candidates: only its instruction)
+            try:
+                function_model = _function_model_config(cfg.params)
+            except ValueError as exc:
+                function_model, missing_params = None, [str(exc)]
+            else:
+                missing_params = []
             if not cfg.instruction:
                 missing_params.append("instruction")
-            if not cfg.example:
-                missing_params.append("example")
-            if cfg.max_candidates is None:
-                missing_params.append("max_candidates")
-            if cfg.batch_size is None:
-                missing_params.append("batch_size")
+            if function_model is None:
+                if not cfg.input_graph_query:
+                    missing_params.append("input_graph_query")
+                if not cfg.example:
+                    missing_params.append("example")
+                if cfg.max_candidates is None:
+                    missing_params.append("max_candidates")
+                if cfg.batch_size is None:
+                    missing_params.append("batch_size")
 
             if missing_params:
                 error_msg = f"Missing required config for {cfg.step_name}: {', '.join(missing_params)}"
@@ -1770,19 +1882,20 @@ def run_derivation_iter(
                 )
                 continue
 
-            # Type assertions for validated config
-            assert cfg.input_graph_query is not None
-            assert cfg.instruction is not None
-            assert cfg.example is not None
-            assert cfg.max_candidates is not None
-            assert cfg.batch_size is not None
-
             try:
+                assert cfg.instruction is not None
                 component_services = _component_services_config(cfg.params) if cfg.element_type == "ApplicationService" else None
-                step_result = (
-                    _component_services_step(component_services, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
-                    if component_services is not None
-                    else generate_element(
+                if function_model is not None:
+                    step_result = _function_model_step(function_model, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
+                elif component_services is not None:
+                    step_result = _component_services_step(component_services, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
+                else:
+                    # Type assertions for validated config
+                    assert cfg.input_graph_query is not None
+                    assert cfg.example is not None
+                    assert cfg.max_candidates is not None
+                    assert cfg.batch_size is not None
+                    step_result = generate_element(
                         graph_manager=graph_manager,
                         archimate_manager=archimate_manager,
                         llm_query_fn=step_llm_query_fn,
@@ -1810,7 +1923,6 @@ def run_derivation_iter(
                         deployable_units=_deployable_units(cfg.params),
                         on_candidates=(lambda ids, step=cfg.step_name: on_candidates(step, ids)) if on_candidates else None,
                     )
-                )
 
                 elements_created = step_result.get("elements_created", 0)
                 relationships_created = step_result.get("relationships_created", 0)

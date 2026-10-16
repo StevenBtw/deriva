@@ -32,6 +32,9 @@ __all__ = [
     "DataDomainNode",
     "EnvironmentNode",
     "DeploymentNode",
+    "LifecycleNode",
+    "LifecycleEventNode",
+    "RoleNode",
     "SoftwareNode",
     "INCLUDES",
 ]
@@ -616,6 +619,83 @@ class DataDomainNode:
             "repository_name": self.repository_name,
             "type": "DataDomain",
         }
+
+
+@dataclass
+class LifecycleNode:
+    """A business process from structure: the lifecycle of a business domain's status, its states in order; it
+    ``TRIGGERS`` its first event."""
+
+    name: str
+    domain: str
+    entity: str
+    attribute: str
+    repository_name: str
+    states: list[str] = field(default_factory=list)
+    events: list[str] = field(default_factory=list)
+    sites: list[str] = field(default_factory=list)  # Files that set its states
+    name_candidates: list[str] = field(default_factory=list)
+    flow: str = ""  # The documented flow it follows ("path#heading")
+    transitions: list[str] = field(default_factory=list)  # "FROM>TO": the transitions code or the flow shows
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"Lifecycle_{self.repository_name}_{self.entity}_{self.attribute}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "domain": self.domain,
+            "entity": self.entity,
+            "attribute": self.attribute,
+            "states": list(self.states),
+            "events": list(self.events),
+            "sites": list(self.sites),
+            "nameCandidates": list(self.name_candidates),
+            "nameSources": ["structure"] * len(self.name_candidates),
+            "flow": self.flow,
+            "transitions": list(self.transitions),
+            "repository_name": self.repository_name,
+            "type": "Lifecycle",
+        }
+
+
+@dataclass
+class LifecycleEventNode:
+    """A business event: a state where the lifecycle passes to another unit (or its start); it ``TRIGGERS`` the next."""
+
+    name: str
+    lifecycle: str
+    state: str
+    repository_name: str
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"LifecycleEvent_{self.lifecycle}_{self.state}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {"name": self.name, "lifecycle": self.lifecycle, "state": self.state, "repository_name": self.repository_name, "type": "LifecycleEvent"}
+
+
+@dataclass
+class RoleNode:
+    """An actor or role from structure (an authorization role, a person a Web UI component's README names); it is
+    ``ASSIGNED`` to the lifecycles it works on."""
+
+    name: str
+    kind: str  # role or actor
+    source: str
+    repository_name: str
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"Role_{self.repository_name}_{self.name}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {"name": self.name, "kind": self.kind, "source": self.source, "repository_name": self.repository_name, "type": "Role"}
 
 
 @dataclass

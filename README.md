@@ -553,6 +553,8 @@ This means you can freely use, modify, and distribute this software, but if you 
 
 See [LICENSE](LICENSE) for the full license text.
 
+The bundled business function model is an excerpt of APQC's Process Classification Framework® (PCF), used under APQC's license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Acknowledgments
 
 - [FastAPI](https://fastapi.tiangolo.com) and [React](https://react.dev) - The studio
