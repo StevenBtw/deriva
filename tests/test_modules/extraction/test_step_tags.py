@@ -13,6 +13,8 @@ def test_nodes_are_owned_by_the_step_that_writes_their_kind():
     assert node_step(["Graph", "Technology"], {"extractionMethod": "llm-directory"}) == "DirectoryClassification"
     assert node_step(["Graph", "ExternalDependency"], {"description": "External package discovered via import"}) == "Imports"
     assert node_step(["Graph", "ExternalDependency"], {"extractionMethod": "llm"}) == "ExternalDependency"
+    for kind in ("Environment", "Deployment", "Software"):
+        assert node_step(["Graph", kind], {"extractionMethod": "structural"}) == "Deployment"
     assert node_step(["Graph", "Mystery"], {}) is None  # no rule: left untagged, never swept
 
 
@@ -26,6 +28,10 @@ def test_edges_are_owned_by_their_type_and_endpoints():
     assert edge_step("INCLUDES", "DataEntity", "TypeDefinition") == "DataEntity"
     assert edge_step("INHERITS", "TypeDefinition", "TypeDefinition") == "TypeDefinition"
     assert edge_step("USES", "File", "ExternalDependency") == "Imports"
+    assert edge_step("RUNS", "Environment", "Deployment") == "Deployment"
+    assert edge_step("DEPLOYS", "Deployment", "DeployableUnit") == "Deployment"
+    assert edge_step("HOSTS", "Environment", "Software") == "Deployment"
+    assert edge_step("SERVES", "Software", "DeployableUnit") == "Deployment"
     assert edge_step("CONTAINS", "Method", "File") is None
 
 

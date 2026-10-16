@@ -25,6 +25,9 @@ _NODE_STEPS = {
     "Test": "Test",
     "DeployableUnit": "DeployableUnit",
     "DataEntity": "DataEntity",
+    "Environment": "Deployment",
+    "Deployment": "Deployment",
+    "Software": "Deployment",
 }
 
 # (edge type, source kind, target kind) -> the step that writes it; None as a kind: any
@@ -48,6 +51,11 @@ _EDGE_STEPS: dict[tuple[str, str | None, str | None], str] = {
     ("CONFIGURES", None, None): "Technology",
     ("INCLUDES", "DeployableUnit", None): "DeployableUnit",
     ("INCLUDES", "DataEntity", None): "DataEntity",
+    ("NAMED_IN", "DataEntity", None): "DataEntity",
+    ("RUNS", "Environment", None): "Deployment",
+    ("DEPLOYS", "Deployment", None): "Deployment",
+    ("HOSTS", "Environment", None): "Deployment",
+    ("SERVES", "Software", None): "Deployment",
 }
 
 IMPORT_STUB = "External package discovered via import"

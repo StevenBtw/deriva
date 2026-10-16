@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -454,6 +455,8 @@ def extract_edges_from_file(
     ts_manager: TreeSitterManager | None = None,
     global_method_lookup: dict[tuple[str, str | None], list[dict]] | None = None,
     global_type_lookup: dict[str, list[dict]] | None = None,
+    call_languages: dict[str, frozenset[str]] | None = None,
+    scope_of: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     """
     Extract edges from a single source file using a single AST parse.
@@ -536,6 +539,9 @@ def extract_edges_from_file(
                 repo_name=repo_name,
                 filter_constants=filter_constants,
                 global_method_lookup=global_method_lookup,
+                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants),
+                call_languages=call_languages,
+                scope_of=scope_of,
             )
             edges.extend(call_edges)
             stats["calls"] = call_stats
@@ -586,6 +592,8 @@ def extract_edges_batch(
     progress_callback: Any | None = None,
     global_method_lookup: dict[tuple[str, str | None], list[dict]] | None = None,
     global_type_lookup: dict[str, list[dict]] | None = None,
+    call_languages: dict[str, frozenset[str]] | None = None,
+    scope_of: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     """
     Extract edges from multiple source files efficiently.
@@ -667,6 +675,8 @@ def extract_edges_batch(
             ts_manager=ts_manager,
             global_method_lookup=global_method_lookup,
             global_type_lookup=global_type_lookup,
+            call_languages=call_languages,
+            scope_of=scope_of,
         )
 
         all_edges.extend(result["data"]["edges"])
@@ -814,6 +824,33 @@ def _extract_import_edges(
             stats["unresolved"] += 1
 
     return edges, nodes, stats
+
+
+def _imported_paths(
+    imports: list[ExtractedImport],
+    file_path: str,
+    all_file_paths: set[str],
+    external_packages: set[str],
+    filter_constants: FilterConstants | None = None,
+) -> set[str]:
+    """The repository files a file imports (its internal imports, resolved as the IMPORTS edges are)."""
+    stdlib_modules = filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
+    java_files = _java_file_index(all_file_paths) if file_path.endswith(".java") and imports else None
+    paths: set[str] = set()
+    for imp in imports:
+        resolved = _resolve_import(
+            module=imp.module,
+            current_file=file_path,
+            all_file_paths=all_file_paths,
+            external_packages=external_packages,
+            stdlib_modules=stdlib_modules,
+            names=imp.names,
+            java_files=java_files,
+            is_from_import=imp.is_from_import,
+        )
+        if resolved["type"] == "internal":
+            paths.add(resolved["target_path"])
+    return paths
 
 
 def _infer_ecosystem(file_path: str) -> str:
@@ -1059,17 +1096,27 @@ def _extract_call_edges(
     repo_name: str,
     filter_constants: FilterConstants | None = None,
     global_method_lookup: dict[tuple[str, str | None], list[dict]] | None = None,
+    imported_files: set[str] | None = None,
+    call_languages: dict[str, frozenset[str]] | None = None,
+    scope_of: Callable[[str], str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Extract CALLS edges from function/method calls.
 
-    Uses global_method_lookup for cross-file resolution when available.
-    Falls back to within-file resolution if global lookup is not provided.
+    A call resolves in the caller's own file first. Across files (``global_method_lookup``) it only
+    reaches a method in a language the caller may call (its own, or one of ``call_languages`` for its
+    language), in a file the caller imports (``imported_files``), else in a file of the caller's own
+    scope (``scope_of``: path -> scope key; without it every file is one scope); among several, the
+    first path in order. A name alone never links two languages or two scopes.
     """
     edges: list[dict[str, Any]] = []
     stats = {"total": 0, "resolved": 0, "unresolved": 0, "cross_file": 0}
 
     # Use language-specific builtins or fall back to Python builtins
     builtin_functions = filter_constants.builtin_functions if filter_constants else PYTHON_BUILTINS
+    language = _language_of(file_path)
+    allowed = (call_languages or {}).get(language or "", frozenset()) | {language}
+    imported = imported_files or set()
+    own_scope = scope_of(file_path) if scope_of else ""
 
     for call in calls:
         stats["total"] += 1
@@ -1096,51 +1143,30 @@ def _extract_call_edges(
             stats["unresolved"] += 1
             continue
 
-        # Try to resolve callee using global lookup first (cross-file)
-        callee_id = None
+        # The caller's own file first (an overload in the caller's own class included)
+        callee_id = _resolve_callee(
+            call.callee_name,
+            call.callee_qualifier,
+            call.is_method_call,
+            call.caller_class,
+            method_lookup,
+            repo_name,
+            file_path,
+            builtin_functions=builtin_functions,
+        )
         is_cross_file = False
 
-        if global_method_lookup:
-            # For self.method() calls, look for method in same class across files
-            if call.is_method_call and call.callee_qualifier in ("self", "cls"):
-                key = (call.callee_name, call.caller_class)
-                candidates = global_method_lookup.get(key, [])
-                if candidates:
-                    # Prefer same file, then any file
-                    for c in candidates:
-                        if c["file_path"] == file_path:
-                            callee_id = c["node_id"]
-                            break
-                    if not callee_id and candidates:
-                        callee_id = candidates[0]["node_id"]
-                        is_cross_file = True
-            else:
-                # For regular function calls, look up by name
-                # Try with None class first (module-level function)
-                key = (call.callee_name, None)
-                candidates = global_method_lookup.get(key, [])
-                if candidates:
-                    # Prefer same file
-                    for c in candidates:
-                        if c["file_path"] == file_path:
-                            callee_id = c["node_id"]
-                            break
-                    if not callee_id and candidates:
-                        callee_id = candidates[0]["node_id"]
-                        is_cross_file = True
-
-        # Fall back to within-file resolution
-        if not callee_id:
-            callee_id = _resolve_callee(
-                call.callee_name,
-                call.callee_qualifier,
-                call.is_method_call,
-                call.caller_class,
-                method_lookup,
-                repo_name,
-                file_path,
-                builtin_functions=builtin_functions,
+        if not callee_id and global_method_lookup:
+            # self.method() looks in the same class across files, a plain call at module-level functions
+            key = (call.callee_name, call.caller_class) if call.is_method_call and call.callee_qualifier in ("self", "cls") else (call.callee_name, None)
+            candidates = sorted(
+                (c for c in global_method_lookup.get(key, []) if c["file_path"] != file_path and _language_of(c["file_path"]) in allowed),
+                key=lambda c: (c["file_path"], c["node_id"]),
             )
+            chosen = [c for c in candidates if c["file_path"] in imported] or [c for c in candidates if scope_of is None or scope_of(c["file_path"]) == own_scope]
+            if chosen:
+                callee_id = chosen[0]["node_id"]
+                is_cross_file = True
 
         if not callee_id:
             stats["unresolved"] += 1
@@ -1218,6 +1244,11 @@ def _resolve_caller(
     return None
 
 
+def _language_of(path: str) -> str | None:
+    """The parser language of a file, from its extension."""
+    return TreeSitterManager.detect_language(path)
+
+
 def _resolve_callee(
     callee_name: str,
     callee_qualifier: str | None,
@@ -1254,6 +1285,10 @@ def _resolve_callee(
 
     if len(candidates) == 1:
         return generate_method_node_id(repo_name, file_path, callee_name, candidates[0]["class_name"])
+
+    for c in candidates:
+        if caller_class and c["class_name"] == caller_class:
+            return generate_method_node_id(repo_name, file_path, callee_name, caller_class)
 
     for c in candidates:
         if c["class_name"] is None:

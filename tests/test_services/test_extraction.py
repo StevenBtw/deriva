@@ -1410,6 +1410,32 @@ class TestExtractEdges:
         assert kwargs["global_method_lookup"][("run", None)][0]["file_path"] == "shop/jobs.py"
         assert kwargs["global_type_lookup"]["Order"][0]["file_path"] == "orders/model.py"
 
+    def test_the_calls_step_passes_its_cross_language_calls_and_module_roots(self):
+        """Calls params: ``call_languages`` (caller language -> callee languages it may call) and ``module_files``
+        (a folder holding one is a module root; a call without an import stays within its module root)."""
+        from deriva.services.extraction import _run_step_writes
+
+        params = {"call_languages": {"jcl": ["cobol"]}, "module_files": ["pom.xml", "Dockerfile*"]}
+        cfg = SimpleNamespace(node_type="Calls", params=json.dumps(params))
+        files = [{"path": p} for p in ("svc/pom.xml", "svc/src/A.java", "svc/web/Dockerfile.web", "svc/web/app.js", "app/cbl/A.cbl")]
+        graph_manager = MagicMock()
+        graph_manager.get_nodes_by_type.return_value = []
+        with patch("deriva.modules.extraction.edges.extract_edges_batch") as mock_batch:
+            mock_batch.return_value = {"data": {"edges": []}, "stats": {}, "errors": []}
+            _run_step_writes(cfg, SimpleNamespace(name="r"), Path("."), files, [], graph_manager, None, MagicMock())
+
+        kwargs = mock_batch.call_args.kwargs
+        assert kwargs["call_languages"] == {"jcl": frozenset({"cobol"})}
+        scope = kwargs["scope_of"]
+        assert (scope("svc/src/A.java"), scope("svc/web/app.js"), scope("app/cbl/A.cbl")) == ("svc", "svc/web", "")
+
+    def test_the_calls_step_validates_its_params(self):
+        from deriva.services.extraction import _run_step_writes
+
+        cfg = SimpleNamespace(node_type="Calls", params=json.dumps({"call_languages": [["jcl", "cobol"]]}))
+        with pytest.raises(ValueError, match="Calls params"):
+            _run_step_writes(cfg, SimpleNamespace(name="r"), Path("."), [], [], MagicMock(), None, MagicMock())
+
 
 class TestExtractImports:
     """Tests for _extract_imports function."""
@@ -1453,7 +1479,7 @@ class TestExtractCalls:
             with patch("deriva.services.extraction._extract_edges") as mock_extract:
                 mock_extract.return_value = {"edges_created": 0, "errors": []}
 
-                _extract_calls(mock_repo, Path(tmpdir), [], graph_manager)
+                _extract_calls(SimpleNamespace(params=None), mock_repo, Path(tmpdir), [], graph_manager)
 
             mock_extract.assert_called_once()
 
@@ -2507,6 +2533,38 @@ class TestDataEntityStep:
         names = sorted(r["name"] for r in graph.query("MATCH (d:Graph:DataEntity) RETURN d.name AS name"))
         assert names == ["Policy", "Policy Item"]  # without roots both are ORM entities; the old nodes are gone
 
+    def test_only_the_repositories_own_types_count_and_its_entities_carry_the_repository(self, graph):
+        from deriva.adapters.graph.models import TypeDefinitionNode
+
+        graph.add_node(TypeDefinitionNode(name="Order", type_category="class", file_path="Order.java", repository_name="r", decorators=["Entity"]), node_id="typedef::r::Order")
+        graph.add_node(
+            TypeDefinitionNode(name="Invoice", type_category="class", file_path="Invoice.java", repository_name="other", decorators=["Entity"]), node_id="typedef::other::Invoice"
+        )
+
+        _run_extraction_step(self._cfg({"entity_annotations": ["Entity"]}), SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
+
+        rows = graph.query("MATCH (d:Graph:DataEntity) RETURN d.name AS name, d.repository_name AS repo")
+        assert [(r["name"], r["repo"]) for r in rows] == [("Order", "r")]
+
+    def test_a_table_is_linked_to_the_code_files_that_name_it(self, graph, tmp_path):
+        from deriva.adapters.graph.models import FileNode, TypeDefinitionNode
+        from deriva.modules.derivation.base import unit_scopes
+
+        (tmp_path / "db").mkdir()
+        (tmp_path / "app").mkdir()
+        (tmp_path / "db/schema.sql").write_text("CREATE TABLE benchmark_runs (id INT);", encoding="utf-8")
+        (tmp_path / "app/store.py").write_text('q = "SELECT * FROM benchmark_runs"', encoding="utf-8")
+        (tmp_path / "app/util.py").write_text("x = 1", encoding="utf-8")
+        for path, subtype in (("db/schema.sql", "sql"), ("app/store.py", "python"), ("app/util.py", "python")):
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="source", subtype=subtype), node_id=f"file::r::{path}")
+        graph.add_node(TypeDefinitionNode(name="benchmark_runs", type_category="table", file_path="db/schema.sql", repository_name="r"), node_id="typedef::r::benchmark_runs")
+
+        _run_extraction_step(self._cfg({"table_mentions": True}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        named = graph.query("MATCH (d:Graph:DataEntity)-[:`Graph:NAMED_IN`]->(f:Graph:File) RETURN d.name AS entity, f.filePath AS path")
+        assert [(r["entity"], r["path"]) for r in named] == [("Benchmark Run", "r/app/store.py")]
+        assert "r/app/store.py" in unit_scopes(graph).entity_files["entity::r::benchmarkrun"]
+
     def test_the_signals_are_validated(self, graph):
         with pytest.raises(ValueError, match="DataEntity"):
             _run_extraction_step(self._cfg({"technical_words": "log"}), SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
@@ -2644,3 +2702,75 @@ def test_a_steps_own_node_it_only_links_to_again_is_kept():
         assert result["swept"] == {"nodes": 0, "edges": 0}
         assert gm.node_exists("typedef::r::Base")
     close_database()
+
+
+class TestDeploymentStep:
+    """The Deployment step writes the primary environment, its deployed services and the system software (no LLM)."""
+
+    PARAMS = {
+        "technologies": [
+            {"name": "PostgreSQL", "kind": "database", "aliases": ["postgres", "psycopg2"]},
+            {"name": "Java runtime", "kind": "runtime", "aliases": ["eclipse-temurin"]},
+            {"name": "CICS", "kind": "transaction monitor", "aliases": ["cics"]},
+        ],
+        "cloud_resources": {"AWS::ECS::Service": "container"},
+        "markers": [{"pattern": r"EXEC\s+CICS", "technology": "cics"}],
+        "marker_suffixes": [".cbl"],
+        "manifest_runtimes": {"pyproject.toml": "python"},
+    }
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _cfg(self, params):
+        return SimpleNamespace(node_type="Deployment", params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+
+    def _repo(self, graph, root, files):
+        from deriva.adapters.graph.models import DeployableUnitNode, FileNode
+
+        for path, text in files.items():
+            (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / path).write_text(text, encoding="utf-8")
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="other", subtype=""), node_id=f"file::r::{path}")
+        for name in ("shop", "billing"):
+            graph.add_node(DeployableUnitNode(name=name, path=f"r/{name}", unit_kind="container", repository_name="r"), node_id=f"unit::r::{name}")
+
+    def test_the_environment_its_services_and_the_software_are_written(self, graph, tmp_path):
+        compose = "services:\n  shop:\n    build: ./shop\n    depends_on: [db]\n  billing:\n    build: ./billing\n  db:\n    image: postgres:15\n"
+        self._repo(graph, tmp_path, {"docker-compose.yml": compose, "shop/Dockerfile": "FROM eclipse-temurin:21\n"})
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == []
+        (env,) = graph.query("MATCH (e:Graph:Environment) RETURN e.id AS id, e.name AS name, e.kind AS kind, e.repository_name AS repo")
+        assert (env["id"], env["name"], env["kind"], env["repo"]) == ("environment::r::compose", "Docker Compose", "compose", "r")
+        deploys = graph.query(
+            "MATCH (e:Graph:Environment)-[:`Graph:RUNS`]->(d:Graph:Deployment)-[:`Graph:DEPLOYS`]->(u:Graph:DeployableUnit) RETURN d.name AS d, u.id AS u ORDER BY d"
+        )
+        assert [(r["d"], r["u"]) for r in deploys] == [("billing", "unit::r::billing"), ("shop", "unit::r::shop")]
+        hosted = graph.query("MATCH (e:Graph:Environment)-[:`Graph:HOSTS`]->(s:Graph:Software) RETURN s.name AS s ORDER BY s")
+        assert [r["s"] for r in hosted] == ["Java runtime", "PostgreSQL"]
+        serves = graph.query("MATCH (s:Graph:Software)-[:`Graph:SERVES`]->(u:Graph:DeployableUnit) RETURN s.name AS s, u.id AS u ORDER BY s")
+        assert [(r["s"], r["u"]) for r in serves] == [("Java runtime", "unit::r::shop"), ("PostgreSQL", "unit::r::shop")]
+        assert result["software"] == {"listed": 2, "fallback": 0, "unconnected": 0}
+
+    def test_a_run_with_another_environment_sweeps_the_old_one(self, graph, tmp_path):
+        self._repo(graph, tmp_path, {"docker-compose.yml": "services:\n  shop:\n    build: ./shop\n", "shop/a.cbl": "EXEC CICS RETURN"})
+        _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        (tmp_path / "docker-compose.yml").unlink()
+
+        _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert [r["id"] for r in graph.query("MATCH (e:Graph:Environment) RETURN e.id AS id")] == ["environment::r::mainframe"]
+        assert [r["n"] for r in graph.query("MATCH (d:Graph:Deployment) RETURN d.name AS n")] == ["shop"]
+
+    def test_the_signals_are_validated(self, graph, tmp_path):
+        with pytest.raises(ValueError, match="Deployment"):
+            _run_extraction_step(self._cfg({**self.PARAMS, "markers": [{"pattern": "("}]}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())

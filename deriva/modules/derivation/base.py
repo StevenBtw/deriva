@@ -3137,6 +3137,10 @@ def unit_scopes(graph_manager: GraphManager) -> UnitScopes:
             entity_nodes[row["entity"]].add(row["node"])
             if row.get("path"):
                 entity_files[row["entity"]].add(str(row["path"]).replace(chr(92), "/"))
+    # The code files that name a table (NAMED_IN) use it as well
+    for row in graph_manager.query("MATCH (d:Graph:DataEntity)-[:`Graph:NAMED_IN`]->(f:Graph:File) RETURN d.id AS entity, f.filePath AS path"):
+        if row.get("entity") and row.get("path"):
+            entity_files[row["entity"]].add(str(row["path"]).replace(chr(92), "/"))
     return UnitScopes(
         files={u: frozenset(p) for u, p in files.items()},
         nodes={u: frozenset(n) for u, n in nodes.items()},

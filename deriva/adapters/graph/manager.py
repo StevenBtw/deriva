@@ -39,13 +39,16 @@ from .models import (
     BusinessConceptNode,
     DataEntityNode,
     DeployableUnitNode,
+    DeploymentNode,
     DirectoryNode,
+    EnvironmentNode,
     ExternalDependencyNode,
     FileNode,
     MethodNode,
     ModuleNode,
     RepositoryNode,
     ServiceNode,
+    SoftwareNode,
     TechnologyNode,
     TestNode,
     TypeDefinitionNode,
@@ -66,6 +69,9 @@ GraphNode = (
     | ExternalDependencyNode
     | DeployableUnitNode
     | DataEntityNode
+    | EnvironmentNode
+    | DeploymentNode
+    | SoftwareNode
 )
 
 logger = logging.getLogger(__name__)

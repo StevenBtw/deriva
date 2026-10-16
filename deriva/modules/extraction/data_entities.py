@@ -44,6 +44,7 @@ class EntityRules:
     min_importers: int = 3  # Programs that must import a mainframe record
     record_pattern: str = ""  # Full-match pattern of a mainframe record's name (empty: every record)
     name_suffixes: tuple[str, ...] = ()  # Kind words dropped from the end of a name
+    table_mentions: bool = False  # Link a DDL table to the code files that name it (NAMED_IN)
 
 
 @dataclass
@@ -55,6 +56,7 @@ class Entity:
     signal: str
     type_ids: list[str] = field(default_factory=list)
     paths: list[str] = field(default_factory=list)
+    tables: list[str] = field(default_factory=list)  # The DDL table names it merges, as written
 
 
 @dataclass
@@ -118,6 +120,23 @@ def entity_name(type_name: str, unit_name: str, rules: EntityRules, table: bool 
     return " ".join(_cased(w) for w in words)
 
 
+def table_mentions(tables: dict[str, list[str]], files: dict[str, str], own_files: set[str] | None = None) -> dict[str, list[str]]:
+    """The files that query a table, per entity key; the files that define it are left out.
+
+    Code reaches a table through its name in a query (SQL strings, embedded SQL), not through an import:
+    the table's name as a whole word right after a query keyword (FROM, JOIN, INTO, UPDATE, TABLE), with or
+    without a schema in front, case-insensitive. A table named like a common word only counts there.
+    """
+    found: dict[str, list[str]] = {}
+    for key, names in sorted(tables.items()):
+        alternatives = "|".join(re.escape(n) for n in sorted(names) if n)
+        pattern = re.compile(rf"\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+(?:[\w$#@\"`\[\]]+\.)?[\"`\[]?(?:{alternatives})(?![A-Za-z0-9_])", re.IGNORECASE)
+        hits = sorted(path for path, text in files.items() if path not in (own_files or set()) and pattern.search(text))
+        if hits:
+            found[key] = hits
+    return found
+
+
 def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owners: dict[str, str], rules: EntityRules) -> EntityResult:
     """The data entities among ``types``.
 
@@ -157,6 +176,8 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
         entity = found.setdefault(key, Entity(key=key, name_candidates=[(cleaned, "type")], signal=signal))
         entity.type_ids = sorted({*entity.type_ids, str(t["id"])})
         entity.paths = sorted({*entity.paths, str(t.get("path") or "")})
+        if str(t.get("category") or "") == "table":
+            entity.tables = sorted({*entity.tables, str(t["name"])})
         decided.setdefault(_flat(str(t["name"])), ("entity", key))
 
     # Code types first: a table generated for one (PERSISTENCEORDER for PersistenceOrder) follows its decision

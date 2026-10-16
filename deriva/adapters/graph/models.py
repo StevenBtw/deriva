@@ -29,6 +29,9 @@ __all__ = [
     "ExternalDependencyNode",
     "DeployableUnitNode",
     "DataEntityNode",
+    "EnvironmentNode",
+    "DeploymentNode",
+    "SoftwareNode",
     "INCLUDES",
 ]
 
@@ -579,7 +582,82 @@ class DataEntityNode:
             "nameSources": list(self.name_sources),
             "paths": list(self.paths),
             "typeCount": len(self.paths),
+            "repository_name": self.repository_name,
             "type": "DataEntity",
+        }
+
+
+@dataclass
+class EnvironmentNode:
+    """A deployment environment (Docker Compose, Kubernetes, a cloud, a mainframe): the repository's
+    primary one; it ``RUNS`` its deployed services and ``HOSTS`` the system software that runs in it."""
+
+    name: str
+    kind: str  # compose, kubernetes, cloud, mainframe
+    repository_name: str
+    file: str = ""  # The compose file, the folder of the manifests or of the templates
+    others: list[str] = field(default_factory=list)  # The other environments, "kind file" (reported, not modelled)
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"Environment_{self.repository_name}_{self.kind}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "file": self.file,
+            "others": list(self.others),
+            "repository_name": self.repository_name,
+            "type": "Environment",
+        }
+
+
+@dataclass
+class DeploymentNode:
+    """A service an environment runs; it ``DEPLOYS`` its deployable unit (none for a ready-made image)."""
+
+    name: str
+    environment: str  # The environment kind
+    repository_name: str
+    image: str = ""
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"Deployment_{self.repository_name}_{self.environment}_{self.name}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {"name": self.name, "environment": self.environment, "image": self.image, "repository_name": self.repository_name, "type": "Deployment"}
+
+
+@dataclass
+class SoftwareNode:
+    """A system software from the closed list (or a fallback image off it), with its evidence; it
+    ``SERVES`` the deployable units that demonstrably use it."""
+
+    name: str
+    kind: str  # The list entry's kind (database, runtime, ...), "fallback" off the list
+    listed: bool
+    repository_name: str
+    in_environment: bool = False
+    evidence: list[str] = field(default_factory=list)
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"Software_{self.repository_name}_{self.name}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "listed": self.listed,
+            "inEnvironment": self.in_environment,
+            "evidence": list(self.evidence),
+            "repository_name": self.repository_name,
+            "type": "Software",
         }
 
 

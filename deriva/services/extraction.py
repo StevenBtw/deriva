@@ -30,13 +30,14 @@ Usage:
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
 import re
 from collections import Counter
 from collections.abc import Callable, Iterator
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
@@ -53,11 +54,14 @@ from deriva.adapters.graph.models import (
     BusinessConceptNode,
     DataEntityNode,
     DeployableUnitNode,
+    DeploymentNode,
     DirectoryNode,
+    EnvironmentNode,
     ExternalDependencyNode,
     FileNode,
     MethodNode,
     RepositoryNode,
+    SoftwareNode,
     TechnologyNode,
     TestNode,
     TypeDefinitionNode,
@@ -71,7 +75,7 @@ from deriva.common.file_utils import read_file_with_encoding
 from deriva.common.naming import UNCOUNTABLE_WORDS, name_key
 from deriva.common.ocel import create_edge_id
 from deriva.modules import extraction
-from deriva.modules.extraction import classification, concept_candidates, data_entities, deployable_units, step_tags, technology_candidates
+from deriva.modules.extraction import classification, concept_candidates, data_entities, deployable_units, deployments, step_tags, technologies, technology_candidates
 from deriva.modules.extraction.base import deduplicate_nodes
 from deriva.modules.extraction.directory_classification import (
     classify_directories,
@@ -515,7 +519,7 @@ def _run_step_writes(
         result = _extract_imports(repo, repo_path, classified_files, graph_manager)
     elif node_type == "Calls":
         # Tree-sitter based call edge extraction (deterministic, no LLM)
-        result = _extract_calls(repo, repo_path, classified_files, graph_manager)
+        result = _extract_calls(cfg, repo, repo_path, classified_files, graph_manager)
     elif node_type == "Decorators":
         # Tree-sitter based decorator edge extraction (deterministic, no LLM)
         result = _extract_decorators(repo, repo_path, classified_files, graph_manager)
@@ -527,10 +531,13 @@ def _run_step_writes(
         result = _extract_edges(repo, repo_path, classified_files, graph_manager)
     elif node_type == "DataEntity":
         # Persistent concepts from structure (roots, ORM entities, shared records, tables); no LLM
-        result = _extract_data_entities(cfg, repo, graph_manager)
+        result = _extract_data_entities(cfg, repo, repo_path, graph_manager)
     elif node_type == "DeployableUnit":
         # Deployable units from structure (containers, manifest entry points, mainframe applications); no LLM
         result = _extract_deployable_units(cfg, repo, repo_path, graph_manager)
+    elif node_type == "Deployment":
+        # The primary environment, its deployed services and the system software from a closed list; no LLM
+        result = _extract_deployments(cfg, repo, repo_path, graph_manager)
     elif node_type == "DirectoryClassification":
         if llm_query_fn is None:
             return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
@@ -648,27 +655,36 @@ _ENTITY_LISTS = (
 
 
 def _entity_rules(params: str | None) -> data_entities.EntityRules:
-    """The DataEntity step's signals (``params``): lists of names, ``min_importers`` and ``record_pattern``."""
+    """The DataEntity step's signals (``params``): lists of names, ``min_importers``, ``record_pattern`` and
+    ``table_mentions`` (link a table to the code files that name it)."""
     settings = json.loads(params) if params else {}
-    unknown = set(settings) - {*_ENTITY_LISTS, "min_importers", "record_pattern"}
+    unknown = set(settings) - {*_ENTITY_LISTS, "min_importers", "record_pattern", "table_mentions"}
     lists_ok = all(isinstance(settings.get(k, []), list) and all(isinstance(x, str) and x for x in settings.get(k, [])) for k in _ENTITY_LISTS)
     importers, pattern = settings.get("min_importers", 3), settings.get("record_pattern", "")
-    if unknown or not lists_ok or not isinstance(importers, int) or isinstance(importers, bool) or importers < 0 or not isinstance(pattern, str):
-        raise ValueError(f"DataEntity params: lists of names under {list(_ENTITY_LISTS)}, min_importers (a whole number), record_pattern (a pattern)")
+    mentions = settings.get("table_mentions", False)
+    bad_numbers = not isinstance(importers, int) or isinstance(importers, bool) or importers < 0
+    if unknown or not lists_ok or bad_numbers or not isinstance(pattern, str) or not isinstance(mentions, bool):
+        raise ValueError(
+            f"DataEntity params: lists of names under {list(_ENTITY_LISTS)}, min_importers (a whole number), record_pattern (a pattern), table_mentions (true or false)"
+        )
     try:
         re.compile(pattern)
     except re.error as exc:
         raise ValueError(f"DataEntity params: record_pattern is no valid pattern: {exc}") from exc
-    return data_entities.EntityRules(**{k: tuple(settings.get(k, [])) for k in _ENTITY_LISTS}, min_importers=importers, record_pattern=pattern)
+    return data_entities.EntityRules(**{k: tuple(settings.get(k, [])) for k in _ENTITY_LISTS}, min_importers=importers, record_pattern=pattern, table_mentions=mentions)
 
 
-def _extract_data_entities(cfg: config.ExtractionConfig, repo: Any, graph_manager: GraphManager) -> dict[str, Any]:
+def _extract_data_entities(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
     """Data entity nodes with INCLUDES edges to their types, from the types, their bases and their importers (no LLM)."""
     rules = _entity_rules(cfg.params)
-    q = graph_manager.query
-    types = q("MATCH (t:Graph:TypeDefinition) WHERE t.active = true RETURN t.id AS id, t.typeName AS name, t.category AS category, t.decorators AS decorators, t.filePath AS path")
+    # Only this repository's nodes (a combined graph holds several)
+    q = lambda query, params=None: graph_manager.query(query, {**(params or {}), "repo_name": repo.name})  # noqa: E731 - a one-line helper
+    types = q(
+        "MATCH (t:Graph:TypeDefinition) WHERE t.active = true AND t.repository_name = $repo_name "
+        "RETURN t.id AS id, t.typeName AS name, t.category AS category, t.decorators AS decorators, t.filePath AS path"
+    )
     bases: dict[str, list[str]] = {}
-    for row in q("MATCH (a:Graph:TypeDefinition)-[:`Graph:INHERITS`]->(b) RETURN a.id AS a, b.typeName AS name, b.id AS id"):
+    for row in q("MATCH (a:Graph:TypeDefinition)-[:`Graph:INHERITS`]->(b) WHERE a.repository_name = $repo_name RETURN a.id AS a, b.typeName AS name, b.id AS id"):
         bases.setdefault(row["a"], []).append(row.get("name") or str(row.get("id") or "").split("::")[-1])
     facts = [
         {
@@ -682,11 +698,15 @@ def _extract_data_entities(cfg: config.ExtractionConfig, repo: Any, graph_manage
         for t in types
         if t.get("id")
     ]
-    importers = Counter(r["f"] for r in q("MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(f:Graph:File) RETURN DISTINCT f.filePath AS f, a.filePath AS a") if r.get("f"))
+    importers = Counter(
+        r["f"]
+        for r in q("MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(f:Graph:File) WHERE f.repository_name = $repo_name RETURN DISTINCT f.filePath AS f, a.filePath AS a")
+        if r.get("f")
+    )
     # The unit that holds a file names it; a dotted unit name is known by its last part
     owners = {
         r["p"]: str(r["n"]).split(".")[-1]
-        for r in q("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) RETURN f.filePath AS p, u.name AS n")
+        for r in q("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) WHERE u.repository_name = $repo_name RETURN f.filePath AS p, u.name AS n")
         if r.get("p") and r.get("n")
     }
     result = data_entities.detect_entities(facts, dict(importers), owners, rules)
@@ -710,8 +730,142 @@ def _extract_data_entities(cfg: config.ExtractionConfig, repo: Any, graph_manage
         for type_id in entity.type_ids:
             graph_manager.add_edge(node_id, type_id, INCLUDES)
             edges += 1
+    if rules.table_mentions:
+        # A table is reached through its name in a query, not through an import: the code files that name it
+        tables = {e.key: e.tables for e in result.entities if e.tables}
+        own = {path for e in result.entities if e.tables for path in e.paths}
+        code = q("MATCH (f:Graph:File) WHERE f.active = true AND f.repository_name = $repo_name AND f.fileType = 'source' RETURN f.id AS id, f.filePath AS path")
+        texts = {r["path"]: text for r in code if tables and r["path"] not in own and (text := _read_checkout(repo_path, repo.name, r["path"])) is not None}
+        file_ids = {r["path"]: r["id"] for r in code}
+        for key, paths in data_entities.table_mentions(tables, texts, own_files=own).items():
+            for path in paths:
+                graph_manager.add_edge(f"entity::{repo.name}::{key}", file_ids[path], "NAMED_IN")
+                edges += 1
     excluded = [{"type": x.name, "reason": x.reason} for x in result.excluded]
     return {"nodes_created": nodes, "edges_created": edges, "errors": [], "excluded": excluded}
+
+
+def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, tuple[technologies.Technology, ...]]:
+    """The Deployment step's signals (``params``): the closed list ``technologies`` ([{name, kind, aliases}]),
+    ``cloud_resources`` (resource type -> container, function or managed), ``markers`` ([{pattern, technology}]),
+    ``manifest_runtimes`` (manifest file pattern -> runtime alias), ``environment_names`` (kind -> name) and the
+    file name patterns ``compose_files``, ``build_scripts`` and ``marker_suffixes``."""
+    settings = json.loads(params) if params else {}
+    lists, maps = ("compose_files", "build_scripts", "marker_suffixes"), ("cloud_resources", "manifest_runtimes", "environment_names")
+    unknown = set(settings) - {*lists, *maps, "technologies", "markers"}
+    lists_ok = all(isinstance(settings.get(k, []), list) and all(isinstance(x, str) and x for x in settings.get(k, [])) for k in lists)
+    maps_ok = all(isinstance(settings.get(k, {}), dict) and all(isinstance(v, str) and v for v in settings.get(k, {}).values()) for k in maps)
+    markers = settings.get("markers", [])
+    markers_ok = isinstance(markers, list) and all(isinstance(m, dict) and isinstance(m.get("pattern"), str) and isinstance(m.get("technology"), str) for m in markers)
+    if unknown or not lists_ok or not maps_ok or not markers_ok:
+        raise ValueError(
+            f"Deployment params: lists of strings under {list(lists)}, objects of strings under {list(maps)}, "
+            "markers as [{pattern, technology}] and technologies as [{name, kind, aliases}]"
+        )
+    for m in markers:
+        try:
+            re.compile(m["pattern"])
+        except re.error as exc:
+            raise ValueError(f"Deployment params: marker pattern {m['pattern']!r} is no valid pattern: {exc}") from exc
+    try:
+        catalog = technologies.catalog_from_params(settings.get("technologies", []))
+    except ValueError as exc:
+        raise ValueError(f"Deployment params: {exc}") from exc
+    defaults = deployments.DeploymentRules()
+    rules = deployments.DeploymentRules(
+        cloud_resources=tuple(sorted(settings.get("cloud_resources", {}).items())),
+        compose_files=tuple(settings.get("compose_files", defaults.compose_files)),
+        environment_names=tuple(sorted({**dict(defaults.environment_names), **settings.get("environment_names", {})}.items())),
+        build_scripts=tuple(settings.get("build_scripts", defaults.build_scripts)),
+        markers=tuple((m["pattern"], m["technology"]) for m in markers),
+        marker_suffixes=tuple(s.lower() for s in settings.get("marker_suffixes", [])),
+        manifest_runtimes=tuple(settings.get("manifest_runtimes", {}).items()),
+    )
+    return rules, catalog
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.casefold()).strip("-")
+
+
+def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
+    """The primary environment (RUNS its deployed services, which DEPLOY units; HOSTS the software that
+    runs in it) and the system software (SERVES the units that use it), from the checkout (no LLM)."""
+    rules, catalog = _deployment_rules(cfg.params)
+    q = lambda query, params=None: graph_manager.query(query, {**(params or {}), "repo_name": repo.name})  # noqa: E731 - a one-line helper
+    paths = [
+        str(r["path"]).replace(chr(92), "/") for r in q("MATCH (f:Graph:File) WHERE f.active = true AND f.repository_name = $repo_name RETURN f.filePath AS path") if r.get("path")
+    ]
+    scripts = rules.build_scripts + rules.compose_files
+
+    def wanted(path: str) -> bool:
+        name = path.rsplit("/", 1)[-1].lower()
+        return (
+            name.endswith((".yml", ".yaml", ".json", ".dockerfile"))
+            or name == "dockerfile"
+            or name.startswith("dockerfile.")
+            or name in UNIT_MANIFESTS
+            or (name.startswith("requirements") and name.endswith(".txt"))
+            or any(fnmatch.fnmatchcase(name, p) for p in scripts)
+        )
+
+    files = {p: text for p in paths if wanted(p) and (text := _read_checkout(repo_path, repo.name, p)) is not None}
+    sources = {p: text for p in paths if p.lower().endswith(rules.marker_suffixes) and rules.marker_suffixes and (text := _read_checkout(repo_path, repo.name, p)) is not None}
+    # Units that share a folder are told apart by their members (files, and the files of their programs and screens)
+    members: dict[str, set[str]] = {}
+    for r in q("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(m) WHERE u.repository_name = $repo_name RETURN u.id AS u, m.filePath AS path"):
+        if r.get("path"):
+            members.setdefault(r["u"], set()).add(str(r["path"]).replace(chr(92), "/"))
+    units = [
+        {"id": r["id"], "path": str(r["path"]).replace(chr(92), "/"), "name": r["name"], "members": sorted(members.get(r["id"], ()))}
+        for r in q("MATCH (u:Graph:DeployableUnit) WHERE u.active = true AND u.repository_name = $repo_name RETURN u.id AS id, u.path AS path, u.name AS name")
+    ]
+    layer = deployments.technology_layer(repo.name, files, units, rules, catalog, sources)
+
+    nodes = edges = 0
+    env = layer.environment
+    env_id = f"environment::{repo.name}::{env.kind}" if env else None
+    if env and env_id:
+        others = [f"{e.kind} {e.file}" for e in layer.deployments.others]
+        graph_manager.add_node(EnvironmentNode(name=env.name, kind=env.kind, repository_name=repo.name, file=env.file, others=others), node_id=env_id)
+        nodes += 1
+        for service in env.services:
+            deployment_id = f"deployment::{repo.name}::{env.kind}::{_slug(service.name)}"
+            graph_manager.add_node(DeploymentNode(name=service.name, environment=env.kind, repository_name=repo.name, image=service.image or ""), node_id=deployment_id)
+            graph_manager.add_edge(env_id, deployment_id, "RUNS")
+            nodes, edges = nodes + 1, edges + 1
+            if service.unit:
+                graph_manager.add_edge(deployment_id, service.unit, "DEPLOYS")
+                edges += 1
+    for software in layer.software:
+        software_id = f"software::{repo.name}::{_slug(software.name)}"
+        graph_manager.add_node(
+            SoftwareNode(
+                name=software.name,
+                kind=software.kind,
+                listed=software.listed,
+                repository_name=repo.name,
+                in_environment=software.in_environment,
+                evidence=software.evidence,
+            ),
+            node_id=software_id,
+        )
+        nodes += 1
+        if software.in_environment and env_id:
+            graph_manager.add_edge(env_id, software_id, "HOSTS")
+            edges += 1
+        for unit in software.serves:
+            graph_manager.add_edge(software_id, unit, "SERVES")
+            edges += 1
+    listed = sum(1 for s in layer.software if s.listed)
+    return {
+        "nodes_created": nodes,
+        "edges_created": edges,
+        "errors": [],
+        "environment": f"{env.kind} {env.file}".strip() if env else None,
+        "other_environments": [f"{e.kind} {e.file}" for e in layer.deployments.others],
+        "software": {"listed": listed, "fallback": len(layer.software) - listed, "unconnected": len(layer.unconnected)},
+    }
 
 
 def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 200_000) -> str | None:
@@ -969,6 +1123,8 @@ def _extract_edges(
     classified_files: list[dict],
     graph_manager: GraphManager,
     edge_types: set | None = None,
+    call_languages: dict[str, frozenset[str]] | None = None,
+    scope_of: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
     """Extract edges from source files using Tree-sitter (unified extraction).
 
@@ -1071,6 +1227,8 @@ def _extract_edges(
         external_packages=external_packages,
         global_method_lookup=global_method_lookup,
         global_type_lookup=global_type_lookup,
+        call_languages=call_languages,
+        scope_of=scope_of,
     )
 
     # First, process ExternalDependency nodes from imports
@@ -1150,16 +1308,54 @@ def _extract_imports(
     return _extract_edges(repo, repo_path, classified_files, graph_manager, {EdgeType.IMPORTS, EdgeType.USES})
 
 
+def _call_rules(params: str | None) -> tuple[dict[str, frozenset[str]], tuple[str, ...]]:
+    """The Calls step's rules (``params``): ``call_languages`` (caller language -> the other languages its calls
+    may reach, such as a job language and the program language its steps run) and ``module_files`` (file name
+    patterns, case-insensitive; a folder holding one is a module root)."""
+    settings = json.loads(params) if params else {}
+    languages, modules = settings.get("call_languages", {}), settings.get("module_files", [])
+    if (
+        set(settings) - {"call_languages", "module_files"}
+        or not isinstance(languages, dict)
+        or not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in languages.values())
+        or not isinstance(modules, list)
+        or not all(isinstance(m, str) and m for m in modules)
+    ):
+        raise ValueError("Calls params: call_languages maps a caller language to a list of languages, module_files is a list of file name patterns")
+    return {k: frozenset(v) for k, v in languages.items()}, tuple(m.lower() for m in modules)
+
+
+def _module_roots(paths: list[str], module_files: tuple[str, ...]) -> Callable[[str], str]:
+    """Path -> its module root: the nearest folder above it that holds a module file, else "" (the repository root)."""
+    roots = {str(PurePosixPath(p).parent) for p in paths if any(fnmatch.fnmatchcase(PurePosixPath(p).name.lower(), m) for m in module_files)}
+    roots = {"" if r == "." else r for r in roots}
+
+    def root_of(path: str) -> str:
+        for parent in PurePosixPath(path).parents:
+            folder = "" if str(parent) == "." else str(parent)
+            if folder in roots:
+                return folder
+        return ""
+
+    return root_of
+
+
 def _extract_calls(
+    cfg: config.ExtractionConfig,
     repo: Any,
     repo_path: Path,
     classified_files: list[dict],
     graph_manager: GraphManager,
 ) -> dict[str, Any]:
-    """Extract CALLS edges from source files using Tree-sitter."""
+    """Extract CALLS edges from source files using Tree-sitter.
+
+    A call without an import stays within its module root (``params.module_files``) and its language,
+    or reaches one of the languages ``params.call_languages`` allows for its language."""
     from deriva.modules.extraction.edges import EdgeType
 
-    return _extract_edges(repo, repo_path, classified_files, graph_manager, {EdgeType.CALLS})
+    call_languages, module_files = _call_rules(cfg.params)
+    scope_of = _module_roots([str(f["path"]).replace(chr(92), "/") for f in classified_files if f.get("path")], module_files)
+    return _extract_edges(repo, repo_path, classified_files, graph_manager, {EdgeType.CALLS}, call_languages=call_languages, scope_of=scope_of)
 
 
 def _extract_decorators(

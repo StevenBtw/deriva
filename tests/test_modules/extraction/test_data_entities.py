@@ -146,3 +146,22 @@ def test_a_table_generated_for_a_code_entity_is_that_entity():
     (order,) = result.entities
     assert order.name_candidates == [("Order", "type")] and len(order.type_ids) == 2
     assert _reasons(result)["DATABASEMANAGEMENTENTITY"] == "technical word: database"
+
+
+def test_a_table_is_named_in_the_code_files_that_query_it():
+    """The table's name after a query keyword (FROM, JOIN, INTO, UPDATE, TABLE), schema-qualified or not: a common word elsewhere is no use."""
+    from deriva.modules.extraction.data_entities import table_mentions
+
+    files = {
+        "r/db/schema.sql": "CREATE TABLE benchmark_runs (id INT); CREATE TABLE runs (id INT);",
+        "r/app/store.py": 'conn.execute("SELECT * FROM benchmark_runs WHERE id = ?")',
+        "r/app/other.py": 'conn.execute("SELECT * FROM benchmark_runs_archive")',  # another table
+        "r/app/loop.py": "# the pipeline runs twice\nfor runs in range(3): pass",  # the word, not the table
+        "r/app/history.py": 'conn.execute("insert into runs (id) values (?)")',
+        "r/cbl/PROG.cbl": "EXEC SQL SELECT TR_TYPE FROM CARDDEMO.TRANSACTION_TYPE END-EXEC.",
+    }
+    tables = {"benchmarkrun": ["benchmark_runs"], "run": ["runs"], "transactiontype": ["TRANSACTION_TYPE"]}
+
+    found = table_mentions(tables, files, own_files={"r/db/schema.sql"})
+
+    assert found == {"benchmarkrun": ["r/app/store.py"], "run": ["r/app/history.py"], "transactiontype": ["r/cbl/PROG.cbl"]}
