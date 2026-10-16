@@ -58,6 +58,8 @@ from deriva.adapters.llm import LLMManager
 from deriva.adapters.llm.manager import load_benchmark_models
 from deriva.adapters.llm.model_registry import reasoning_settings
 from deriva.adapters.llm.models import BenchmarkModelConfig
+from deriva.adapters.repository import RepoManager
+from deriva.bench import baseline_b1, paper_metrics
 from deriva.common.json_utils import extract_json_from_response
 from deriva.common.ocel import OCELLog, create_run_id, hash_content, load_benchmark_ocel
 from deriva.common.paths import workspace
@@ -65,7 +67,7 @@ from deriva.common.settings import LlmSettings
 from deriva.common.timing import query_stats, summarize_run_events
 from deriva.modules.analysis import compute_consistency_score, decision_content, decision_stability
 from deriva.modules.analysis.model_quality import compute_model_quality
-from deriva.modules.analysis.semantic_matching import match_elements, parse_archi_xml, parse_exchange_format_xml
+from deriva.modules.analysis.semantic_matching import parse_archi_xml, parse_exchange_format_xml
 from deriva.services import config as config_service
 from deriva.services import derivation, export_bundle, export_levels, extraction
 from deriva.services.llm_log import LlmCallLog, record_call, run_log_path
@@ -352,6 +354,8 @@ class BenchmarkConfig:
     no_cache_extraction_llm: bool = False  # Re-run LLM extraction steps only (keep structural/AST)
     # Every run extracts (its own model, no cache) on its own graph, kept in the session's graphs folder
     extract_per_run: bool = False
+    # A baseline instead of Deriva: "b1" (one generation of the whole model from raw repository material)
+    baseline: str | None = None
 
     def total_runs(self) -> int:
         """Calculate total number of runs in the matrix.
@@ -392,6 +396,13 @@ def generation_settings(config: Any) -> dict[str, Any]:
 
 def validate_config(config: BenchmarkConfig) -> None:
     """Refuse a configuration that cannot measure what it claims (raises ValueError)."""
+    if config.baseline is not None:
+        if config.baseline != "b1":
+            raise ValueError(f"Unknown baseline {config.baseline!r} (b1)")
+        if config.use_cache:
+            raise ValueError("--baseline needs --no-cache: every run generates anew")
+        if config.extract_per_run:
+            raise ValueError("--baseline runs no extraction: leave out --extract-per-run")
     if config.extract_per_run:
         if not {"extraction", "derivation"} <= set(config.stages):
             raise ValueError("--extract-per-run needs the stages extraction and derivation")
@@ -547,6 +558,31 @@ class BenchmarkOrchestrator:
                     print(f"FAILED: {e}")
 
         return errors
+
+    def _run_b1(self, repositories: list[str], run_logger: OCELRunLogger, llm_query_fn: Any, verbose: bool = False) -> dict[str, Any]:
+        """Baseline B1 for each repository: generate, validate and repair the whole model, then write it to the model."""
+        row = config_service.get_derivation_config(self.engine, baseline_b1.CONFIG_STEP)
+        if row is None or not row.instruction:
+            raise RuntimeError(f"No {baseline_b1.CONFIG_STEP} config row with an instruction (deriva-cli config add derivation {baseline_b1.CONFIG_STEP} --phase baseline)")
+        params = baseline_b1.B1Params.from_params(json.loads(row.params) if row.params else {}, config_service.get_excluded_directories(self.engine))
+        paths = {str(getattr(r, "name", "")): Path(str(getattr(r, "path", ""))) for r in RepoManager().list_repositories(detailed=True) if hasattr(r, "path")}
+        report: dict[str, Any] = {}
+        for repo in repositories:
+            if repo not in paths:
+                raise RuntimeError(f"Repository not cloned: {repo}")
+            material, manifest = baseline_b1.repository_material(paths[repo], params)
+            if verbose:
+                print(f"  B1 {repo}: {manifest['chars']} characters ({len(manifest['manifests'])} manifests, {len(manifest['sources'])} sources)")
+            step = run_logger.step_start(baseline_b1.CONFIG_STEP)
+            model, generated = baseline_b1.generate(llm_query_fn, row.instruction, material, params)
+            step.complete()
+            elements, relationships = baseline_b1.to_archimate(model)
+            for element in elements:
+                self.archimate_manager.add_element(element, validate=False)
+            for relationship in relationships:
+                self.archimate_manager.add_relationship(relationship, validate=False)
+            report[repo] = {**generated, "elements": len(elements), "relationships": len(relationships), "material": manifest}
+        return report
 
     def _keep_run_graph(self, key: str, repo_name: str, model_name: str, iteration: int) -> str | None:
         """Close the run's graph database and move its file(s) into the session's ``graphs`` folder."""
@@ -815,8 +851,9 @@ class BenchmarkOrchestrator:
         # Each repo (per-repo mode) or the repo set (combined mode) has its own graph
         # database. Extraction runs once per database (or is skipped if cached), so
         # the benchmark loop only needs to re-derive.
-        # With extraction per run, every run opens its own graph instead (``_run_combined``)
-        if not self.config.per_repo and not self.config.extract_per_run:
+        # With extraction per run (or a baseline), every run opens its own graph instead (``_run_combined``)
+        own_graph = self.config.extract_per_run or self.config.baseline is not None
+        if not self.config.per_repo and not own_graph:
             use_database(self.config.get_combined_repo_name())
             if "extraction" in self.config.stages:
                 errors.extend(self._ensure_extraction(verbose=verbose, repositories=self.config.repositories))
@@ -828,7 +865,7 @@ class BenchmarkOrchestrator:
             # Per-repo mode: each repo gets its own benchmark runs
             # Iterate: repo → iteration → model
             for repo_name in self.config.repositories:
-                if not self.config.extract_per_run:
+                if not own_graph:
                     use_database(repo_name)
                     if "extraction" in self.config.stages:
                         errors.extend(self._ensure_extraction(verbose=verbose, repositories=[repo_name]))
@@ -1041,7 +1078,9 @@ class BenchmarkOrchestrator:
         stats: dict[str, Any] = {"extraction": {}, "derivation": {}}
 
         extraction_decisions: dict[str, dict[str, Any]] = {}
-        run_graph = _run_graph_key(session_id, combined_repo_name, model_name, iteration) if self.config.extract_per_run else None
+        own_graph = self.config.extract_per_run or self.config.baseline is not None
+        run_graph = _run_graph_key(session_id, combined_repo_name, model_name, iteration) if own_graph else None
+        result: dict[str, Any] = {}
         try:
             # With extraction per run, the run works in its own (new) graph database
             if run_graph:
@@ -1086,7 +1125,9 @@ class BenchmarkOrchestrator:
 
             stages = self.config.stages
 
-            if run_graph:
+            if self.config.baseline == "b1":
+                stats["baseline"] = self._run_b1(repositories, ocel_run_logger, llm_query_fn, verbose)
+            elif self.config.extract_per_run:
                 # The complete extraction, live, with the run's model, logged under the run
                 totals = {"nodes_created": 0, "edges_created": 0}
                 for repo in repositories:
@@ -1106,7 +1147,7 @@ class BenchmarkOrchestrator:
                 stats["extraction"] = {"skipped": True, "reason": "pre-extracted"}
 
             # Run derivation ONCE on combined graph
-            if "derivation" in stages:
+            if "derivation" in stages and self.config.baseline is None:
                 if verbose:
                     print("  Deriving combined model...")
 
@@ -1128,7 +1169,7 @@ class BenchmarkOrchestrator:
                     errors.extend(result.get("errors", []))
 
             # Export ONCE (combined model)
-            if self.config.export_models and "derivation" in stages:
+            if self.config.export_models and ("derivation" in stages or self.config.baseline is not None):
                 if verbose:
                     print("  Exporting combined model...")
                 model_path = self._export_run_model(
@@ -1437,6 +1478,8 @@ class BenchmarkOrchestrator:
                         "name": e.name,
                         "source": (e.properties or {}).get("source"),
                         "level": "architect",
+                        # The name came from an LLM choice among several candidates (origin split, C24)
+                        "name_choice": bool((e.properties or {}).get("name_choice")) or len((e.properties or {}).get("name_candidates") or []) > 1,
                         # The structural name (first candidate) next to the chosen one: what LLM naming adds (C36)
                         # (no naming call: the name is the structural one)
                         "structure_name": (e.properties or {}).get("structure_name") or next(iter((e.properties or {}).get("name_candidates") or []), None) or e.name,
@@ -2138,11 +2181,10 @@ def model_quality_for_session(
                     row["solve"] = None
                 row["reference"] = None
                 if reference:
+                    # Lineage-free: name + type, the user's manual matches and derivable labels next to the reference (C5)
                     derived = [{"id": e.identifier, "name": e.name, "type": e.element_type} for e in elements]
-                    named = {m.reference_id for m in match_elements(derived, reference) if m.match_type in NAME_MATCHES and m.derived_type == m.reference_type}
-                    precision = len(named) / len(derived) if derived else 0.0
-                    recall = len(named) / len(reference)
-                    row["reference"] = {"precision": round(precision, 3), "recall": round(recall, 3), "reference_elements": len(reference)}
+                    aliases, derivable = paper_metrics.manual_inputs(reference_models[repo])
+                    row["reference"] = paper_metrics.golden_comparison(derived, reference, aliases=aliases, derivable=derivable)
                 rows.append(row)
     return rows
 
@@ -2339,6 +2381,7 @@ class AnalysisSummary:
     variance_split: list[dict[str, Any]] = field(default_factory=list)  # extraction vs derivation share (extraction per run)
     extraction_stability: list[dict[str, Any]] = field(default_factory=list)  # decision stability of the LLM extraction steps
     naming_fallbacks: list[dict[str, Any]] = field(default_factory=list)  # unusable name choices per model (structural fallback)
+    paper: dict[str, Any] = field(default_factory=dict)  # identities, layers/origin, two levels, out of candidates (paper_metrics)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -2354,6 +2397,7 @@ class AnalysisSummary:
             "variance_split": self.variance_split,
             "extraction_stability": self.extraction_stability,
             "naming_fallbacks": self.naming_fallbacks,
+            "paper": self.paper,
         }
 
 
@@ -3097,6 +3141,7 @@ class BenchmarkAnalyzer:
             variance_split=variance_split_for_session(*self._session_scope()),
             extraction_stability=extraction_stability_for_session(*self._session_scope()),
             naming_fallbacks=naming_fallbacks_for_session(self._session_scope()[0]),
+            paper=paper_metrics.session_report([self._session_scope()[0]]),
         )
 
     def compute_model_quality(self) -> list[dict[str, Any]]:

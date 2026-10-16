@@ -1238,6 +1238,8 @@ class ElementDerivationBase(ABC):
             return
         name = free[0]
         if len(free) > 1:
+            # The name depends on an LLM call (recorded for the origin split of the consistency report)
+            element_data["properties"]["name_choice"] = True
             prompt = build_choice_prompt(naming_source(candidate), self.ELEMENT_TYPE, naming.choose_instruction, free)
             try:
                 content, error = extract_response_content(llm_query_fn(prompt, choice_schema(free), **llm_kwargs))

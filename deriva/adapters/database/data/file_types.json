@@ -1280,6 +1280,14 @@
     "chunk_overlap": 0
   },
   {
+    "extension": ".ddl",
+    "file_type": "source",
+    "subtype": "sql",
+    "chunk_delimiter": null,
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
     "extension": ".go",
     "file_type": "source",
     "subtype": "golang",

@@ -32,13 +32,23 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ### Model granularity: technology
 
-- **Deployment from structure**: a new structural extraction step `Deployment` (no LLM) reads compose files, Kubernetes manifests, cloud templates and Dockerfiles. One primary environment per repository (the root compose file, else Kubernetes, else the cloud) becomes a `Graph:Environment` with its deployed services, which deploy units; the others are reported. A unit's runtime is the last `FROM` of its own Dockerfile, and a project-built image resolves to its base through the build command in a script or CI file and the `FROM` chain
+- **Deployment from structure**: a new structural extraction step `Deployment` (no LLM) reads compose files, Kubernetes manifests, cloud templates and Dockerfiles. One primary environment per repository (the cloud, else the root compose file, else Kubernetes) becomes a `Graph:Environment` with its deployed services, which deploy units; the others are reported. A unit's runtime is the last `FROM` of its own Dockerfile, and a project-built image resolves to its base through the build command in a script or CI file and the `FROM` chain
 - **System software from a closed list**: the step matches images, runtimes, managed cloud services, manifest dependencies and content markers (`markers`, such as the transaction and database calls of mainframe programs) against a versioned list of technologies (`technologies`); an image off the list is kept as fallback software, a library is left out. Mainframe subsystems without another environment make a mainframe environment
 - **Nodes and system software without an LLM**: Node is derived from the environment and SystemSoftware from the listed software; the environment serves the units it runs and composes the software that runs in it, and software serves the units that use it (their runtime, a connection or `depends_on`, a client dependency, a marker file). TechnologyService and Device are switched off. On the development set the technology layer is identical in every run, with no LLM call
+- **AWS CDK apps without synth**: a CDK app (a folder with `cdk.json`) is read statically with the tree-sitter TypeScript grammar (`tree-sitter-typescript`, used only here): each `new <construct>(...)` in a versioned construct table (`cdk_constructs`, keyed by module and class, whatever the import alias) becomes a cloud resource, as in a CloudFormation template. Values come from literals only; a construct inside a `for ... of` loop over a literal array (directly or through a method it calls with the loop variable) is one resource per entry, and its names (the construct id and `*Name` properties) match it to a deployable unit. The construct table also names the environment (`AWS ECS Fargate`)
+- **Engine-qualified managed services**: a managed cloud resource is qualified by a property where `cloud_qualifiers` names one (the database or cache engine, the load balancer type), so it can be listed as `Amazon RDS for PostgreSQL`, `Amazon ElastiCache for Redis` or `Application Load Balancer`; a qualified type off the list falls back to the plain one
+- **The cloud first**: the primary environment is the cloud, else the root compose file, else Kubernetes; the other environments' services stay on the environment node, so the Cooperation step still finds the names and ports configuration refers to
+- **One engine, one software**: a database or cache engine found only through the units' drivers is the managed service of that engine when the environment has one; its evidence and the units it serves move to the managed service
 
 ### Application cooperation
 
 - **Lines between components**: a new structural extraction step `Cooperation` (no LLM) finds which unit uses which (`CONSUMES`, with the channel and the evidence) and which sends messages to which (`SENDS_TO`): endpoint URLs in a unit's configuration or compose environment whose host is another unit's service name or whose port is another unit's port, destinations that one unit's code sends to and another's listens on, service catalog constants named after a unit's folder, gateway routes (`location` to `proxy_pass`) that a unit's code calls, and code edges between files that only one unit each holds. The provider's interface of the edge's channel serves the consumer component (`graph_links` option `source_channel`), and messages are a Flow between the components. Against the development reference models every derived line is correct
+
+### Model granularity: business
+
+- **Business layer from structure**: a new structural extraction step `BusinessLayer` (no LLM) finds lifecycles (an entity's status attribute with its states, the transitions code or a documented flow shows, ordered with the ORM default first), the events that hand a lifecycle on (`TRIGGERS`) and the roles that act in it. BusinessProcess is one per lifecycle, BusinessEvent one per hand-off state, BusinessActor one per role
+- **Transitions from code**: guarded assignments (an `==` guard covers the deeper body, a `!=` guard with raise or return requires the state), `UPDATE ... WHERE` statements, switch and dictionary transition tables and the steps of a documented flow; the process keeps its states and the files that set each state
+- **Business functions from a process catalog (off by default)**: a `BusinessFunctionModel` step classifies the components' documentation against a published process classification (APQC PCF Cross-Industry 8.0, with its notice in THIRD_PARTY_NOTICES.md); it stays disabled
 
 ### Re-runnable extraction steps
 
@@ -47,6 +57,31 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 ### Evaluation
 
 - **Reference models**: `deriva-cli benchmark reference <session>` compares the runs of a benchmark session with reference models in JSON (elements with type, name, aliases and structural lineage, relationships with a kind, chains across layers). Elements match on type and name, or on lineage when the structure behind them is the same; relationships on their mapped ends, type and direction. It reports recall and precision per element type and relationship kind, elements the model splits finer than the reference, chain completeness, and a page per repository with what is missing, extra or split
+
+### Joint decision
+
+- **Joint consistency on, as the last refine step**: the MILP decides relationships and merges in a canonical order (a lexicographic optimum: evidence tiers first, then every variable fixed in a structural order), so an equal-score choice no longer depends on the order of the input. Evidence tiers come from a versioned table of the relationship origins; merges are proposed only for elements with the same structural identity (type, source and role). Its solve report (proposals, rows, cuts, kept, dropped, merges) is in every run snapshot and in `benchmark analyze`
+- **No confidence gates**: element and relationship steps no longer filter on an LLM-reported confidence; the duplicate steps only flag, the joint decision decides
+
+### Export
+
+- **Two levels in one file**: the exchange file holds the architect level (the derived model, unchanged) and a detail level with the members of its elements: a data domain composes its entities, a channel interface its endpoints, a mainframe component its programs, and the environment is assigned to an Artifact per deployed container that realizes the component it deploys. Every element carries a `level` property; lifecycle states are a property of their process. The benchmark measures the architect level and reports the detail level apart
+- **Generated views**: Layered, Application Cooperation, Information Structure (with a detail view), Implementation and Deployment (with a detail view) and Business Process Cooperation, laid out deterministically in bands (one row per element type, detail members after their element). The files validate against the Open Group ArchiMate 3.1 exchange schema and open in Archi
+- **Studio**: the model panel switches between the architect and the detail level and shows one generated view at a time
+- **Artifact**: the metamodel knows the Artifact element type and its relationships (from the ArchiMate relationship tables)
+
+### Benchmark
+
+- **Extraction per run**: `deriva-cli benchmark run --extract-per-run` (with `--stages extraction,derivation --no-cache`) repeats the complete pipeline in every run: extraction with the run's own model, without any cache, on a graph of its own that is kept in the session's `graphs` folder (and in the export bundle); the repository's working graph is not opened. Extraction uses the run's model in every mode (it used the session's first model)
+- **What each run sent**: every LLM call records the temperature it sent, top_p and seed (never sent), the reasoning level and the model the provider says answered; `session_metadata.json` lists the generation settings per model. A model config can set its own temperature (`LLM_{NAME}_TEMPERATURE`, `config model set ... --temperature`)
+- **Reports in `benchmark analyze`**: consistency under the source-derived identity and under type + name (the share in every run and the mean pairwise Jaccard), per layer and for the LLM-dependent part; answer stability, decision stability and Krippendorff's alpha per decision type; the share of answers outside their candidates per model and decision type (an unusable name choice takes the structural candidate); extraction decision stability and the share of run-to-run differences that comes from extraction or from derivation; with `--also <session>`, the agreement across the runs of several sessions (one per LLM)
+- **Reference models in Archi format**: precision and recall per layer, a file of accepted names per reference element and a file marking which reference elements are derivable (recall on that subset and over the derived element types)
+- **Baseline B1**: `deriva-cli benchmark run --baseline b1 --no-cache` lets the LLM generate the whole ArchiMate model in one go from raw repository material (README, directory tree, manifest, build and deployment files, the largest source files) within a fixed budget, as a typed answer with closed type lists; it is validated against the ArchiMate relationship rules and repaired at most twice with the error list. The prompt and the limits are the `BaselineB1` config row (phase `baseline`, never run by the pipeline)
+
+### Removed
+
+- **circular_relationships**: the refine step had no configuration and never ran; it decided on confidence
+- **relationship_consolidation**: replaced by the joint decision; relationship confidence gates are gone, an LLM relationship is kept or dropped by the joint decision
 
 ### Extraction
 
@@ -65,6 +100,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 - **Python from-imports**: `from . import x` was read one package too high and `from x import y as z` lost its names; a name that is a module of the package now imports that module's file, relative or absolute
 - **LLM configuration**: padding inside surrounding quotes is stripped as well, so a value like `' sk-ant-123 '` no longer reaches the provider padded (the named `LLM_{NAME}_*` configs got the same refinement in 0.8.1)
 - **Workspace**: the Linked | Separate switch is tucked into the top right corner of the lane box, its outer corner rounded like the box (it was a few pixels low and off to the side)
+- **`config query` on Windows**: its help no longer says it is safe during a benchmark; DuckDB locks the file, so it fails while another process holds the configuration database
 - **Benchmark**: in the runs' models diagram view the ArchiMate diagram starts below the model bar, with the bar's spacing and side margins (it sat against the bar's bottom edge)
 
 ## v0.8.1 - Cleanup (October 12 2026)

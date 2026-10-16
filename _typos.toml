@@ -20,6 +20,8 @@ nd = "nd"
 parm = "parm"
 # COBOL copybook extension (.cpy)
 cpy = "cpy"
+# Author surname (Nast et al., BIS 2026: the design baseline B1 follows)
+nast = "nast"
 
 [default.extend-identifiers]
 # Lemmatizer suffix-stripping results (intentional truncated forms)

@@ -79,6 +79,7 @@ class BenchmarkSession:
         no_cache_extraction: bool = False,
         no_cache_extraction_llm: bool = False,
         extract_per_run: bool = False,
+        baseline: str | None = None,
     ) -> benchmarking.BenchmarkResult:
         """
         Run a full benchmark matrix.
@@ -130,6 +131,7 @@ class BenchmarkSession:
             no_cache_extraction=no_cache_extraction,
             no_cache_extraction_llm=no_cache_extraction_llm,
             extract_per_run=extract_per_run,
+            baseline=baseline,
         )
 
         orchestrator = benchmarking.BenchmarkOrchestrator(

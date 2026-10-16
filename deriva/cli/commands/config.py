@@ -386,7 +386,7 @@ def config_versions() -> None:
 
 
 # =============================================================================
-# Read-Only Query Commands (safe during benchmarks)
+# Read-Only Query Commands
 # =============================================================================
 
 
@@ -395,11 +395,11 @@ def config_query(
     step_type: Annotated[str, typer.Argument(help="Type: 'extraction' or 'derivation'")],
     name: Annotated[str | None, typer.Argument(help="Config name (optional)")] = None,
 ) -> None:
-    """Query configs with read-only connection (safe during benchmarks).
+    """Query configs with a read-only connection.
 
-    This command uses a read-only database connection, so it can safely
-    query configurations even while a benchmark is running without causing
-    lock contention.
+    The connection is read-only, so it never changes a configuration. On Windows it cannot open
+    the database while another process (a running benchmark) holds it: DuckDB locks the file, so
+    query after the benchmark has finished.
     """
     if step_type not in ("extraction", "derivation"):
         typer.echo(
@@ -408,7 +408,7 @@ def config_query(
         )
         raise typer.Exit(1)
 
-    # Use read-only connection for safe concurrent access
+    # Read-only: it never writes (on Windows it fails while another process holds the file)
     engine = config.read_only_connection()
 
     try:

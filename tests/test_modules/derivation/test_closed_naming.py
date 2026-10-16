@@ -81,3 +81,12 @@ def test_a_candidate_another_element_took_is_passed_over():
 
     # Only one candidate is still free: no call
     assert element["name"] == "Shop App Online" and calls == []
+
+
+def test_a_name_chosen_by_a_call_is_marked_and_a_single_candidate_is_not():
+    """For the origin split (C24): an element whose name an LLM call chose depends on the LLM."""
+    chosen, _ = _name(_unit("Shop Online", "Mainframe Card Management Online"), answer="Mainframe Card Management Online")
+    single, _ = _name(_unit("Shop Online"))
+
+    assert chosen["properties"]["name_choice"] is True
+    assert "name_choice" not in single["properties"]

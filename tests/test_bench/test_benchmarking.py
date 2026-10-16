@@ -2347,8 +2347,24 @@ class TestRunModelSnapshot:
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert snapshot["solve"] == solve  # the MILP's report for this run (a safety net: what it decided)
         assert snapshot["elements"] == [
-            {"identifier": "ac_orders", "type": "ApplicationComponent", "name": "Orders", "source": "dir::r::orders", "level": "architect", "structure_name": "Orders"},
-            {"identifier": "bo_order", "type": "BusinessObject", "name": "Order", "source": "concept::r::order", "level": "architect", "structure_name": "Order"},
+            {
+                "identifier": "ac_orders",
+                "type": "ApplicationComponent",
+                "name": "Orders",
+                "source": "dir::r::orders",
+                "level": "architect",
+                "name_choice": False,
+                "structure_name": "Orders",
+            },
+            {
+                "identifier": "bo_order",
+                "type": "BusinessObject",
+                "name": "Order",
+                "source": "concept::r::order",
+                "level": "architect",
+                "name_choice": False,
+                "structure_name": "Order",
+            },
         ]
         assert snapshot["relationships"] == [
             {"source": "ac_orders", "target": "bo_order", "type": "Access", "derived_from": "llm", "confidence": 0.8},

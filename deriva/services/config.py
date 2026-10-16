@@ -35,7 +35,8 @@ import re
 from typing import Any
 
 # Phases a derivation_config row can belong to (same set as DerivationConfigModel.phase)
-DERIVATION_PHASES = ("prep", "generate", "refine", "relationship")
+# "baseline": rows the pipeline never runs (the benchmark's baseline B1 loads its own by name)
+DERIVATION_PHASES = ("prep", "generate", "refine", "relationship", "baseline")
 
 
 def _affected_rows(result: Any) -> int:

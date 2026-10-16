@@ -148,7 +148,7 @@ LLM_MISTRAL_SMALL_MODEL=mistral-small-2603
 LLM_MISTRAL_SMALL_KEY=your-mistral-api-key
 ```
 
-Name a dated model version (`mistral-small-2603`) rather than a `-latest` alias, so a run says which model answered; each LLM call also records the model the provider reports. Some models need two more settings:
+Name a dated model version (`mistral-small-2603`) rather than a `-latest` alias, so a run says which model answered; each LLM call also records the model the provider reports. Some models need more settings:
 
 ```bash
 # .env: models without a temperature, or with reasoning to switch off
@@ -158,10 +158,11 @@ LLM_ANTHROPIC_HAIKU_SAMPLING=false    # takes no temperature: Deriva leaves it o
 LLM_ANTHROPIC_HAIKU_REASONING=none    # thinking off
 LLM_OPENAI_LUNA_PROVIDER=openai
 LLM_OPENAI_LUNA_MODEL=gpt-6-luna
-LLM_OPENAI_LUNA_REASONING=none        # reasoning off, so the step temperatures apply
+LLM_OPENAI_LUNA_REASONING=none        # reasoning off, so the temperature applies
+LLM_OPENAI_LUNA_TEMPERATURE=0         # this model's own temperature, over LLM_TEMPERATURE
 ```
 
-`REASONING` is a level (`none`, `low`, `medium`, `high`) for OpenAI, Azure and Anthropic models. A model with `SAMPLING=false` runs at its provider's default sampling, so its answers can vary more than those of a model at temperature 0. `deriva-cli config model set <name> --provider <provider> --model <model id> --sampling false --reasoning none` writes both.
+`REASONING` is a level (`none`, `low`, `medium`, `high`) for OpenAI, Azure and Anthropic models. A model with `SAMPLING=false` runs at its provider's default sampling, so its answers can vary more than those of a model at temperature 0. `TEMPERATURE` (0 to 2) sets one model's temperature; models without it use `LLM_TEMPERATURE`. Every LLM call records the temperature it sent (none with `SAMPLING=false`); top_p and seed are never sent, so the provider's defaults apply. `deriva-cli config model set <name> --provider <provider> --model <model id> --sampling false --reasoning none --temperature 0` writes these settings.
 
 A local model needs no key:
 

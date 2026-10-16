@@ -6,6 +6,7 @@ Provides commands for multi-model benchmarking.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -82,6 +83,14 @@ def benchmark_run(
             "(kept in the session's graphs folder). Needs --stages extraction,derivation and --no-cache",
         ),
     ] = False,
+    baseline: Annotated[
+        str | None,
+        typer.Option(
+            "--baseline",
+            help="Run a baseline instead of Deriva: b1 (one generation of the whole model from raw repository material, "
+            "validated and repaired at most N times; the BaselineB1 config row). Needs --no-cache",
+        ),
+    ] = None,
     only_extraction_step: Annotated[
         str | None,
         typer.Option(
@@ -110,7 +119,14 @@ def benchmark_run(
 
     try:
         validate_config(
-            BenchmarkConfig(repositories=repos_list, models=models_list, stages=stages_list or ["extraction", "derivation"], use_cache=use_cache, extract_per_run=extract_per_run)
+            BenchmarkConfig(
+                repositories=repos_list,
+                models=models_list,
+                stages=stages_list or ["extraction", "derivation"],
+                use_cache=use_cache,
+                extract_per_run=extract_per_run,
+                baseline=baseline,
+            )
         )
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -200,6 +216,7 @@ def benchmark_run(
                 no_cache_extraction=no_cache_extraction,
                 no_cache_extraction_llm=no_cache_extraction_llm,
                 extract_per_run=extract_per_run,
+                baseline=baseline,
             )
 
         typer.echo(f"\n{'=' * 60}")
@@ -359,11 +376,63 @@ def benchmark_reference(
     typer.echo(f"Summary and pages: {Path(next(iter(pages.values()))).parent}")
 
 
+def _pct(value: float | None) -> str:
+    return "-" if value is None else f"{value:.0%}"
+
+
+def _print_consistency(rows: list[dict]) -> None:
+    header = f"{'Repository':<24} {'Model':<18} {'Runs':>4}  {'id: E / J':<11} {'R / J':<11} {'name: E / J':<12} {'R / J':<11} {'LLM part E / R (n)':<20} Layers B/A/T"
+    typer.echo("-" * len(header))
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for r in rows:
+        i, n = r["identities"]["id"], r["identities"]["name"]
+        llm = i["origin"]["llm"]
+        layers = "/".join(_pct(i["layers"].get(layer)) for layer in ("Business", "Application", "Technology"))
+        typer.echo(
+            f"{r['repository'][:24]:<24} {r['model'][:18]:<18} {r['runs']:>4}  "
+            f"{_pct(i['elements']['cons']) + ' / ' + _pct(i['elements']['jbar']):<11} {_pct(i['relationships']['cons']) + ' / ' + _pct(i['relationships']['jbar']):<11} "
+            f"{_pct(n['elements']['cons']) + ' / ' + _pct(n['elements']['jbar']):<12} {_pct(n['relationships']['cons']) + ' / ' + _pct(n['relationships']['jbar']):<11} "
+            f"{_pct(llm['elements']) + ' / ' + _pct(llm['relationships']) + f' ({llm["count"]})':<20} {layers}"
+        )
+    typer.echo("")
+
+
+def _print_paper_report(paper: dict) -> None:
+    """Identities (C2), J, layers and origin (C24), the two-level table and the out-of-candidate rate (C42)."""
+    if not paper:
+        return
+    if paper.get("consistency"):
+        typer.echo("CONSISTENCY BY IDENTITY (cons / mean pairwise Jaccard; id = source-derived, name = type + name key; LLM part by id)")
+        _print_consistency(paper["consistency"])
+    if paper.get("two_level"):
+        typer.echo("TWO LEVELS (answers: same prompt answered alike; decisions: each item decided alike; alpha: Krippendorff, nominal)")
+        header = f"{'Repository':<24} {'Model':<18} {'Decision':<36} {'Answers':>9} {'Decisions':>11} {'alpha':>6}"
+        typer.echo("-" * len(header))
+        typer.echo(header)
+        typer.echo("-" * len(header))
+        for r in paper["two_level"]:
+            answers = f"{r['answers']['identical']}/{r['answers']['prompts']}" if r["answers"]["prompts"] else "-"
+            decisions = f"{r['decisions']['stable']}/{r['decisions']['items']}" if r["decisions"]["items"] else "-"
+            alpha = "-" if r["alpha"] is None else f"{r['alpha']:.2f}"
+            typer.echo(f"{r['repository'][:24]:<24} {r['model'][:18]:<18} {r['decision'][:36]:<36} {answers:>9} {decisions:>11} {alpha:>6}")
+        typer.echo("")
+    if paper.get("out_of_candidates"):
+        typer.echo("OUT OF CANDIDATES (per model and decision type: calls, typed answers asked again, answers outside the candidates)")
+        for r in paper["out_of_candidates"]:
+            typer.echo(f"  {r['model'][:24]:<24} {r['decision'][:36]:<36} {r['calls']:>5} calls  {r['re_asked']:>3} asked again  {r['outside']:>3} outside")
+        typer.echo("")
+
+
 @app.command("analyze")
 def benchmark_analyze(
     session_id: Annotated[str, typer.Argument(help="Benchmark session ID to analyze")],
     output: Annotated[str | None, typer.Option("-o", "--output", help="Output file for analysis")] = None,
     format: Annotated[str, typer.Option("-f", "--format", help="Output format")] = "json",
+    also: Annotated[
+        list[str] | None,
+        typer.Option("--also", help="Further sessions (other LLMs on the same repositories): agreement across all their runs"),
+    ] = None,
 ) -> None:
     """Analyze benchmark results."""
     if format not in ("json", "markdown"):
@@ -489,6 +558,20 @@ def benchmark_analyze(
 
                     typer.echo(f"{v['repository'][:24]:<24} {v['model'][:18]:<18} {v['runs']:>4}  {text(v['elements']):<22} {text(v['relationships']):<26}")
                 typer.echo("")
+
+        _print_paper_report(summary.paper)
+        if also:
+            from deriva.bench import paper_metrics
+
+            sessions = [workspace() / "benchmarks" / s for s in [session_id, *also]]
+            agreement = [r for r in paper_metrics.consistency_rows(sessions) if r["model"] == paper_metrics.ALL_MODELS]
+            typer.echo(f"AGREEMENT ACROSS LLMS ({', '.join([session_id, *also])})")
+            _print_consistency(agreement)
+            target = workspace() / "benchmarks" / session_id / "analysis" / "agreement.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps({"sessions": [session_id, *also], "agreement": agreement}, indent=1), encoding="utf-8")
+            typer.echo(f"  -> {target}")
+            typer.echo("")
 
         if summary.naming_fallbacks:
             typer.echo("NAME CHOICES (closed set; an unusable answer takes the structural first candidate)")

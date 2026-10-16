@@ -65,7 +65,7 @@ from .models import (
 )
 from .rate_limiter import RateLimitConfig, RateLimiter, get_default_rate_limit
 from .retry import classify_exception, transport_error
-from .schemas import EXTRACTION_SCHEMAS
+from .schemas import EXTRACTION_SCHEMAS, ArchiMateModelResponse
 
 # Thread pool for running LLM calls outside of existing event loops
 _llm_executor: concurrent.futures.ThreadPoolExecutor | None = None
@@ -119,6 +119,7 @@ _SCHEMA_NAME_TO_MODEL: dict[str, type[BaseModel]] = {
     "test_extraction": EXTRACTION_SCHEMAS["Test"],
     "methods_extraction": EXTRACTION_SCHEMAS["Method"],
     "directory_classification": EXTRACTION_SCHEMAS["DirectoryClassification"],
+    "archimate_model_generation": ArchiMateModelResponse,
 }
 
 
