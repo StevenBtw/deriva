@@ -273,6 +273,10 @@ class TestSpecRelationshipTable:
             ("ApplicationComponent", "Serving", "BusinessActor", "derived"),
             ("BusinessActor", "Association", "Node", "direct"),
             ("ApplicationComponent", "Composition", "DataObject", None),
+            ("Node", "Assignment", "Artifact", "direct"),
+            ("Artifact", "Realization", "ApplicationComponent", "direct"),
+            ("Artifact", "Realization", "ApplicationService", "derived"),
+            ("Artifact", "Composition", "ApplicationComponent", None),
         ],
     )
     def test_relationship_tier(self, source, rel, target, tier):
@@ -288,8 +292,9 @@ class TestSpecRelationshipTable:
         valid = sum(1 for s in types for t in types for r in derivable if models.relationship_tier(s, r, t))
         non_association = [r for r in models.RELATIONSHIP_TYPES if r != "Association"]
         direct = sum(1 for s in types for t in types for r in non_association if models.relationship_tier(s, r, t) == "direct")
-        assert valid == 473
-        assert direct == 104
+        # 13 derived element types plus Artifact (the export's detail level, from Archi's relationships.xml)
+        assert valid == 500
+        assert direct == 113
 
     def test_valid_relationships_from_excludes_non_derivable_types(self, metamodel):
         rel_types = {r["relationship_type"] for r in metamodel.get_valid_relationships_from("BusinessActor")}

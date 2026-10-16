@@ -42,7 +42,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.models import Element, Relationship, validate_relationship_rule
@@ -95,7 +95,18 @@ from deriva.modules.derivation.component_services import ComponentServicesConfig
 from deriva.modules.derivation.data_object import DataObjectDerivation
 from deriva.modules.derivation.device import DeviceDerivation
 from deriva.modules.derivation.element_base import ElementDerivationBase
-from deriva.modules.derivation.function_model import ServiceItem, classify_services, function_elements, parse_function_model
+from deriva.modules.derivation.function_model import (
+    EvidenceRules,
+    ServiceItem,
+    classify_services,
+    component_documentation,
+    function_elements,
+    header_notes,
+    is_technical,
+    operations_of,
+    parse_function_model,
+    shown_operations,
+)
 from deriva.modules.derivation.node import NodeDerivation
 from deriva.modules.derivation.refine import run_refine_step
 from deriva.modules.derivation.system_software import SystemSoftwareDerivation
@@ -192,12 +203,10 @@ def _relationship_llm_config(configs: list[Any]) -> RelationshipLLMConfig | None
         return None
     if not cfg.instruction:
         raise ValueError(f"Relationship config {cfg.step_name} has no instruction")
-    missing = [name for name in ("min_confidence", "persona") if name not in params]
-    if missing:
-        raise ValueError(f"Relationship config {cfg.step_name} needs params.{' and params.'.join(missing)}")
+    if "persona" not in params:
+        raise ValueError(f"Relationship config {cfg.step_name} needs params.persona")
     return RelationshipLLMConfig(
         instruction=cfg.instruction,
-        min_confidence=float(params["min_confidence"]),
         persona=params["persona"],
         temperature=getattr(cfg, "temperature", None),
     )
@@ -521,6 +530,7 @@ def _component_services_step(
                 if path in unit_files:
                     endpoints[unit].append((node, type_name))
                     nodes.add(node)
+        lifecycle_rows = graph_manager.query("MATCH (l:Graph:Lifecycle) WHERE l.active = true RETURN l.id AS id, l.sites AS sites, l.stateSites AS stateSites")
         services, functions = derive_unit_services(
             elements,
             element_source_paths(graph_manager, [{"properties": {"source": n}} for n in sorted(nodes)]),
@@ -541,10 +551,8 @@ def _component_services_step(
             endpoints=dict(endpoints),
             domain_anchors={str(r["id"]): str(r["name"]) for r in domains if r.get("name")},
             consumes=consumes,
-            lifecycle_sites={
-                str(r["id"]): {norm(p) for p in r.get("sites") or []}
-                for r in graph_manager.query("MATCH (l:Graph:Lifecycle) WHERE l.active = true RETURN l.id AS id, l.sites AS sites")
-            },
+            lifecycle_sites={str(r["id"]): {norm(p) for p in r.get("sites") or []} for r in lifecycle_rows},
+            lifecycle_state_sites={str(r["id"]): _state_sites(r.get("stateSites") or [], norm) for r in lifecycle_rows},
         )
         return _stored_services(services + functions, archimate_manager)
     if config.group_by == "members":
@@ -592,10 +600,16 @@ class FunctionModelConfig:
     exclude: tuple[str, ...] = ()  # Function ids left out of the closed set, with everything below them
     levels: int = 2
     batch_size: int = 10  # Services per classification call
+    # Which services are classified: "business" (their data includes a business domain) or "data_or_endpoints"
+    # (their component has a data object, or they offer endpoint operations; never a purely technical service)
+    services: str = "business"
+    evidence: EvidenceRules = EvidenceRules()
 
 
 def _function_model_config(params: str | None) -> FunctionModelConfig | None:
-    """``{"function_model": {"name": "pcf-8.0", "path": "pcf-8.0-cross-industry.csv", "exclude": ["20607"], "batch_size": 10}}``."""
+    """``{"function_model": {"name": "pcf-8.0", "path": "pcf-8.0-cross-industry.csv", "exclude": ["20607"], "batch_size": 10,
+    "services": "data_or_endpoints", "evidence": {"operation_patterns": [...], "summary_patterns": [...], "header_fields": [...],
+    "technical_words": [...], "max_operations": 15, "max_members": 20, "max_doc_chars": 500, "max_notes": 5}}}``."""
     settings = json.loads(params).get("function_model") if isinstance(params, str) and params else None
     if settings is None:
         return None
@@ -607,7 +621,43 @@ def _function_model_config(params: str | None) -> FunctionModelConfig | None:
     levels, batch = settings.get("levels", 2), settings.get("batch_size", 10)
     if not all(isinstance(n, int) and not isinstance(n, bool) and n >= 1 for n in (levels, batch)) or levels > 2:
         raise ValueError("params.function_model: levels is 1 or 2, batch_size a whole number of at least 1")
-    return FunctionModelConfig(name=settings["name"], path=settings["path"], exclude=tuple(exclude), levels=levels, batch_size=batch)
+    services = settings.get("services", "business")
+    if services not in ("business", "data_or_endpoints"):
+        raise ValueError(f"params.function_model.services is 'business' or 'data_or_endpoints', not {services!r}")
+    raw = settings.get("evidence", {})
+    if not isinstance(raw, dict):
+        raise ValueError("params.function_model.evidence must be an object")
+    defaults = EvidenceRules()
+    lists = {k: raw.get(k, list(getattr(defaults, k))) for k in ("operation_patterns", "summary_patterns", "header_fields", "technical_words", "member_links")}
+    if not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in lists.values()):
+        raise ValueError(f"params.function_model.evidence: {sorted(lists)} are lists of strings")
+    for pattern in lists["operation_patterns"] + lists["summary_patterns"]:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ValueError(f"params.function_model.evidence: {pattern!r} is no valid pattern: {exc}") from exc
+    caps = {k: raw.get(k, getattr(defaults, k)) for k in ("max_operations", "max_members", "max_doc_chars", "max_notes")}
+    if not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in caps.values()):
+        raise ValueError(f"params.function_model.evidence: {sorted(caps)} are whole numbers of at least 0")
+    return FunctionModelConfig(
+        name=settings["name"],
+        path=settings["path"],
+        exclude=tuple(exclude),
+        levels=levels,
+        batch_size=batch,
+        services=services,
+        evidence=EvidenceRules(
+            operation_patterns=tuple(lists["operation_patterns"]),
+            summary_patterns=tuple(lists["summary_patterns"]),
+            header_fields=tuple(lists["header_fields"]),
+            technical_words=tuple(lists["technical_words"]),
+            member_links=tuple(lists["member_links"]),
+            max_operations=caps["max_operations"],
+            max_members=caps["max_members"],
+            max_doc_chars=caps["max_doc_chars"],
+            max_notes=caps["max_notes"],
+        ),
+    )
 
 
 def _function_model_file(path: str) -> Path:
@@ -621,6 +671,60 @@ def _function_model_file(path: str) -> Path:
     return found
 
 
+def _checkout_text(path: str, max_bytes: int = 200_000) -> str:
+    """A repository file's text from the checkout ("" when missing, too large, or outside the checkout)."""
+    root = workspace() / "repositories"
+    file = root / path
+    try:
+        if path and file.is_file() and file.resolve().is_relative_to(root.resolve()) and file.stat().st_size <= max_bytes:
+            return file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        pass
+    return ""
+
+
+def _member_evidence(graph_manager: GraphManager, members: list[str], rules: EvidenceRules) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Member node -> its endpoint operations, and member node -> the named fields of its file's header comment."""
+    if not members:
+        return {}, {}
+    norm = lambda p: str(p or "").replace(chr(92), "/")  # noqa: E731 - a one-line helper
+    paths = element_source_paths(graph_manager, [{"properties": {"source": m}} for m in members])
+    type_rows = graph_manager.query("MATCH (t:Graph:TypeDefinition) WHERE t.id IN $ids RETURN t.id AS id, t.decorators AS decorators, t.typeName AS name", {"ids": members})
+    type_decorators = {str(r["id"]): list(r.get("decorators") or []) for r in type_rows}
+    type_names = {str(r["id"]): str(r.get("name") or "") for r in type_rows}
+    # Nodes that describe a member (a program and the screen it sends): their header notes count for the member
+    describing: dict[str, set[str]] = defaultdict(set)
+    for query in rules.member_links:
+        for a, b, *_ in graph_link_pairs(graph_manager, query):
+            describing[b].add(a)
+    linked_paths = element_source_paths(graph_manager, [{"properties": {"source": n}} for n in sorted({n for ns in describing.values() for n in ns})])
+    by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in graph_manager.query(
+        "MATCH (t:Graph:TypeDefinition)-[:`Graph:CONTAINS`]->(m:Graph:Method) WHERE t.id IN $ids "
+        "RETURN t.id AS t, m.methodName AS name, m.decorators AS decorators, m.startLine AS line",
+        {"ids": members},
+    ):
+        by_type[str(r["t"])].append(r)
+    files = {m: paths[m] for m in members if m not in type_decorators and m in paths}
+    by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    if files:
+        for r in graph_manager.query(
+            "MATCH (m:Graph:Method) WHERE m.active = true RETURN m.filePath AS path, m.methodName AS name, m.decorators AS decorators, m.startLine AS line"
+        ):
+            by_file[norm(r.get("path"))].append(r)
+    operations: dict[str, list[str]] = {}
+    notes: dict[str, list[str]] = {}
+    for member in members:
+        methods = by_type.get(member) if member in type_decorators else by_file.get(norm(files.get(member)), [])
+        ordered = sorted(methods or [], key=lambda r: (int(r.get("line") or 0), str(r.get("name") or "")))
+        operations[member] = operations_of(
+            [{"name": r.get("name"), "decorators": r.get("decorators")} for r in ordered], type_decorators.get(member, []), rules, type_name=type_names.get(member, "")
+        )
+        sources = [paths.get(member, "")] + sorted(linked_paths.get(n, "") for n in describing.get(member, ()))
+        notes[member] = list(dict.fromkeys(note for path in sources if path for note in header_notes(_checkout_text(path), rules)))
+    return operations, notes
+
+
 def _function_model_step(
     config: FunctionModelConfig,
     instruction: str,
@@ -629,29 +733,57 @@ def _function_model_step(
     llm_query_fn: Callable[..., Any],
     elements: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Classify the services that touch a business domain into the function model, level by level, and store the
-    chosen functions; the result has the shape of ``generate_element``'s."""
+    """Classify the services into the function model, level by level, and store the chosen functions; the result
+    has the shape of ``generate_element``'s. Which services and what evidence: ``config.services`` and ``config.evidence``."""
+    rules = config.evidence
     model = parse_function_model(_function_model_file(config.path).read_text(encoding="utf-8"), config.name, config.exclude, max_level=config.levels)
     business = {str(r["id"]) for r in graph_manager.query("MATCH (d:Graph:DataDomain) WHERE d.active = true RETURN d.id AS id, d.businessObject AS bo") if r.get("bo")}
     data_objects = {e["identifier"]: e for e in elements if e.get("element_type") == "DataObject"}
-    units = {str(r["id"]): str(r["name"]) for r in graph_manager.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.name AS name") if r.get("name")}
+    roles = {e["identifier"]: str((e.get("properties") or {}).get("role") or "") for e in elements if e.get("element_type") == "ApplicationInterface"}
+    unit_rows = graph_manager.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.name AS name, u.path AS path")
+    units = {str(r["id"]): str(r["name"]) for r in unit_rows if r.get("name")}
+    documents = _documentation_files(graph_manager) if config.services == "data_or_endpoints" else {}
+    unit_docs = {
+        str(r["id"]): component_documentation(str(r.get("path") or "").replace(chr(92), "/").rstrip("/"), str(r.get("name") or ""), documents, rules.max_doc_chars)
+        for r in unit_rows
+    }
     lifecycles = {str(r["id"]): str(r["name"]) for r in graph_manager.query("MATCH (l:Graph:Lifecycle) WHERE l.active = true RETURN l.id AS id, l.name AS name")}
+    services = sorted((e for e in elements if e.get("element_type") == "ApplicationService"), key=lambda e: e["identifier"])
+    with_data = {str(((e.get("properties") or {}).get("sources") or [""])[0]) for e in services if (e.get("properties") or {}).get("objects")}
+    member_ids = sorted({str(m.get("source")) for e in services for m in (e.get("properties") or {}).get("members") or [] if m.get("source")})
+    member_ops, member_notes = _member_evidence(graph_manager, member_ids, rules) if config.services == "data_or_endpoints" else ({}, {})
     items: list[ServiceItem] = []
     processes: dict[str, list[str]] = {}
-    for service in sorted((e for e in elements if e.get("element_type") == "ApplicationService"), key=lambda e: e["identifier"]):
+    for service in services:
         props = service.get("properties") or {}
         objects = [data_objects[o] for o in props.get("objects") or [] if o in data_objects]
-        # Only a service that touches a business domain names a business function (technical services do not)
-        if not any(str((o.get("properties") or {}).get("source") or "") in business for o in objects):
-            continue
+        touches_business = any(str((o.get("properties") or {}).get("source") or "") in business for o in objects)
         unit = str((props.get("sources") or [""])[0])
+        members = sorted(props.get("members") or [], key=lambda m: (str(m.get("name") or ""), str(m.get("source") or "")))
+        operations = [op for m in members for op in member_ops.get(str(m.get("source")), [])]
+        member_names = [str(m.get("name") or "") for m in members]
+        if config.services == "business":
+            if not touches_business:
+                continue  # Only a service that touches a business domain names a business function
+        elif not touches_business and (is_technical(operations, member_names, rules) or not (unit in with_data or operations)):
+            continue  # A purely technical service, or one without data and endpoints, names no business function
+        states = []
+        for entry in props.get("states") or []:
+            life, _, state = str(entry).rpartition("::")
+            states.append(f"{lifecycles.get(life, life)}: {state}")
+        notes = list(dict.fromkeys(n for m in members for n in member_notes.get(str(m.get("source")), [])))[: rules.max_notes]
         items.append(
             ServiceItem(
                 key=service["identifier"],
                 component=units.get(unit, unit.rsplit("::", 1)[-1]),
-                members=sorted(str(m.get("name") or "") for m in props.get("members") or [])[:20],
+                members=member_names[: rules.max_members],
                 data=sorted(str(o["name"]) for o in objects),
                 processes=sorted(lifecycles.get(str(p), str(p)) for p in props.get("processes") or []),
+                interfaces=sorted({roles[i] for i in props.get("interfaces") or [] if roles.get(i)}) if config.services == "data_or_endpoints" else [],
+                operations=shown_operations(operations, rules)[: rules.max_operations],
+                states=states if config.services == "data_or_endpoints" else [],
+                documentation=unit_docs.get(unit, "") if config.services == "data_or_endpoints" else "",
+                notes=notes,
             )
         )
         processes[service["identifier"]] = list(props.get("processes") or [])
@@ -659,6 +791,16 @@ def _function_model_step(
     result = _stored_services(function_elements(decisions, model, processes), archimate_manager)
     result["function_decisions"] = decisions
     return result
+
+
+def _state_sites(rows: list[str], norm: Callable[[str], str]) -> dict[str, set[str]]:
+    """State -> the files that set it, from a lifecycle's "STATE>path" entries."""
+    found: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        state, _, path = str(row).partition(">")
+        if path:
+            found[state].add(norm(path))
+    return dict(found)
 
 
 def _stored_services(services: list[dict[str, Any]], archimate_manager: ArchimateManager) -> dict[str, Any]:
@@ -1677,6 +1819,8 @@ def run_derivation(
                 stats["elements_disabled"] += refine_result.elements_disabled
                 stats["relationships_deleted"] += refine_result.relationships_deleted
                 stats["refine_issues_found"] += refine_result.issues_found
+                if refine_result.report is not None:
+                    cast("dict[str, Any]", stats).setdefault("refine_reports", {})[cfg.step_name] = refine_result.report
 
                 if step_ctx:
                     step_ctx.complete()
@@ -2098,6 +2242,8 @@ def run_derivation_iter(
                 stats["elements_disabled"] += refine_result.elements_disabled
                 stats["relationships_deleted"] += refine_result.relationships_deleted
                 stats["refine_issues_found"] += refine_result.issues_found
+                if refine_result.report is not None:
+                    cast("dict[str, Any]", stats).setdefault("refine_reports", {})[cfg.step_name] = refine_result.report
 
                 msg = f"Refine: {refine_result.issues_found} issues"
                 if refine_result.elements_disabled > 0:

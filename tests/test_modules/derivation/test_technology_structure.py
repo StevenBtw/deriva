@@ -121,7 +121,7 @@ class TestConsolidatedPass:
             relationship_rules=rules,
             llm_query_fn=lambda prompt, schema, **kw: SimpleNamespace(content=json.dumps({"relationships": proposals})),
             graph_manager=graph,
-            llm_config=RelationshipLLMConfig(instruction="rules", min_confidence=0.5, persona="P"),
+            llm_config=RelationshipLLMConfig(instruction="rules", persona="P"),
             membership=MEMBERSHIP,
         )
 
@@ -151,7 +151,7 @@ class TestConsolidatedPass:
             relationship_rules=rules,
             llm_query_fn=lambda prompt, schema, **kw: SimpleNamespace(content=json.dumps({"relationships": proposals})),
             graph_manager=FakeGraph({}, [], connected=["file::r::docker-compose.yml", "tech::r::mysql"]),
-            llm_config=RelationshipLLMConfig(instruction="rules", min_confidence=0.5, persona="P"),
+            llm_config=RelationshipLLMConfig(instruction="rules", persona="P"),
             membership=MEMBERSHIP,
         )
 

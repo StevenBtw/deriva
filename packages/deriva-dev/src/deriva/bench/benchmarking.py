@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -51,7 +52,7 @@ from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 
 if TYPE_CHECKING:
     from deriva.common.types import BenchmarkProgressReporter, RunLoggerProtocol
-from deriva.adapters.grafeo import use_database
+from deriva.adapters.grafeo import close_database, database_file, use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.llm import LLMManager
 from deriva.adapters.llm.manager import load_benchmark_models
@@ -59,11 +60,11 @@ from deriva.adapters.llm.models import BenchmarkModelConfig
 from deriva.common.ocel import OCELLog, create_run_id, hash_content, load_benchmark_ocel
 from deriva.common.paths import workspace
 from deriva.common.timing import query_stats, summarize_run_events
-from deriva.modules.analysis import compute_consistency_score, decision_content
+from deriva.modules.analysis import compute_consistency_score, decision_content, decision_stability
 from deriva.modules.analysis.model_quality import compute_model_quality
 from deriva.modules.analysis.semantic_matching import match_elements, parse_archi_xml, parse_exchange_format_xml
 from deriva.services import config as config_service
-from deriva.services import derivation, export_bundle, extraction
+from deriva.services import derivation, export_bundle, export_levels, extraction
 from deriva.services.llm_log import LlmCallLog, record_call, run_log_path
 
 logger = logging.getLogger(__name__)
@@ -346,6 +347,8 @@ class BenchmarkConfig:
     # Extraction cache settings
     no_cache_extraction: bool = False  # Force full re-extraction (ignore fingerprint)
     no_cache_extraction_llm: bool = False  # Re-run LLM extraction steps only (keep structural/AST)
+    # Every run extracts (its own model, no cache) on its own graph, kept in the session's graphs folder
+    extract_per_run: bool = False
 
     def total_runs(self) -> int:
         """Calculate total number of runs in the matrix.
@@ -365,6 +368,20 @@ class BenchmarkConfig:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON storage."""
         return asdict(self)
+
+
+def validate_config(config: BenchmarkConfig) -> None:
+    """Refuse a configuration that cannot measure what it claims (raises ValueError)."""
+    if config.extract_per_run:
+        if not {"extraction", "derivation"} <= set(config.stages):
+            raise ValueError("--extract-per-run needs the stages extraction and derivation")
+        if config.use_cache:
+            raise ValueError("--extract-per-run needs --no-cache: every run repeats the pipeline without any cache")
+
+
+def _run_graph_key(session_id: str, repo: str, model: str, iteration: int) -> str:
+    """The graph database key of one run (a plain file name in GRAFEO_DB_DIR)."""
+    return f"{repo}__{session_id}__{model}__run{iteration}".replace("/", "_").replace("\\", "_")
 
 
 @dataclass
@@ -511,9 +528,27 @@ class BenchmarkOrchestrator:
 
         return errors
 
-    def _make_extraction_llm_fn(self, run_logger: OCELRunLogger) -> Any:
-        """LLM query function for extraction steps, logged like derivation calls."""
-        model_config = self._model_configs[self.config.models[0]]
+    def _keep_run_graph(self, key: str, repo_name: str, model_name: str, iteration: int) -> str | None:
+        """Close the run's graph database and move its file(s) into the session's ``graphs`` folder."""
+        close_database()
+        source = database_file(key)
+        if not source:
+            return None  # in-memory graph: nothing to keep
+        folder = workspace() / "benchmarks" / (self.session_id or "unknown") / "graphs"
+        folder.mkdir(parents=True, exist_ok=True)
+        name = f"{repo_name.replace('/', '_')}_{model_name.replace('/', '_')}_run{iteration}"
+        kept: str | None = None
+        for path in sorted(Path(source).parent.glob(Path(source).name + "*")):
+            target = folder / (name + path.name[len(Path(source).stem) :])
+            shutil.move(str(path), target)
+            if path.name == Path(source).name:
+                kept = str(target)
+        return kept
+
+    def _make_extraction_llm_fn(self, run_logger: OCELRunLogger, model_name: str | None = None) -> Any:
+        """LLM query function for extraction steps, logged like derivation calls (``model_name``: the run's model,
+        default the session's first: a shared extraction belongs to it)."""
+        model_config = self._model_configs[model_name or self.config.models[0]]
         # --no-cache must reach extraction too, or extraction variance is never measured
         llm_manager = LLMManager.from_config(model_config, nocache=not self.config.use_cache)
         # Configs listed in nocache_configs always get a live call
@@ -528,28 +563,31 @@ class BenchmarkOrchestrator:
         verbose: bool = False,
         steps: list[str] | None = None,
         run_id: str | None = None,
+        model_name: str | None = None,
     ) -> dict[str, Any]:
         """Run extraction for one repo, logging its steps and LLM calls to the event log.
 
         ``steps`` limits the run to those steps; ``run_id`` names it in the event log
-        (default: the session's extraction run of the repo).
+        (default: the session's extraction run of the repo); ``model_name`` is the model that
+        extracts (default: the session's first).
         """
-        model = self._model_configs[self.config.models[0]].model
+        model_name = model_name or self.config.models[0]
+        model = self._model_configs[model_name].model
         run_logger = OCELRunLogger(
             ocel_log=self.ocel_log,
             run_id=run_id or f"{self.session_id}:extraction:{repo_name}",
             session_id=self.session_id or "",
-            model=self.config.models[0],  # the config name, as in the LLM calls and the derivation runs
+            model=model_name,  # the config name, as in the LLM calls and the derivation runs
             repo=repo_name,
             verbose=verbose,
         )
         previous_run_id, self._current_run_id = self._current_run_id, run_logger.run_id
-        previous_model, self._current_model = self._current_model, self.config.models[0]
+        previous_model, self._current_model = self._current_model, model_name
         try:
             return extraction.run_extraction(
                 engine=self.engine,
                 graph_manager=self.graph_manager,
-                llm_query_fn=self._make_extraction_llm_fn(run_logger),
+                llm_query_fn=self._make_extraction_llm_fn(run_logger, model_name),
                 repo_name=repo_name,
                 verbose=False,
                 run_logger=cast("RunLoggerProtocol", run_logger),
@@ -686,6 +724,7 @@ class BenchmarkOrchestrator:
         query_stats.reset()
 
         errors: list[str] = []
+        validate_config(self.config)
 
         # Load model configurations
         self._model_configs = load_benchmark_models()
@@ -756,7 +795,8 @@ class BenchmarkOrchestrator:
         # Each repo (per-repo mode) or the repo set (combined mode) has its own graph
         # database. Extraction runs once per database (or is skipped if cached), so
         # the benchmark loop only needs to re-derive.
-        if not self.config.per_repo:
+        # With extraction per run, every run opens its own graph instead (``_run_combined``)
+        if not self.config.per_repo and not self.config.extract_per_run:
             use_database(self.config.get_combined_repo_name())
             if "extraction" in self.config.stages:
                 errors.extend(self._ensure_extraction(verbose=verbose, repositories=self.config.repositories))
@@ -768,9 +808,10 @@ class BenchmarkOrchestrator:
             # Per-repo mode: each repo gets its own benchmark runs
             # Iterate: repo → iteration → model
             for repo_name in self.config.repositories:
-                use_database(repo_name)
-                if "extraction" in self.config.stages:
-                    errors.extend(self._ensure_extraction(verbose=verbose, repositories=[repo_name]))
+                if not self.config.extract_per_run:
+                    use_database(repo_name)
+                    if "extraction" in self.config.stages:
+                        errors.extend(self._ensure_extraction(verbose=verbose, repositories=[repo_name]))
                 for iteration in range(1, self.config.runs_per_combination + 1):
                     for model_name in self.config.models:
                         run_number += 1
@@ -979,7 +1020,12 @@ class BenchmarkOrchestrator:
         errors: list[str] = []
         stats: dict[str, Any] = {"extraction": {}, "derivation": {}}
 
+        extraction_decisions: dict[str, dict[str, Any]] = {}
+        run_graph = _run_graph_key(session_id, combined_repo_name, model_name, iteration) if self.config.extract_per_run else None
         try:
+            # With extraction per run, the run works in its own (new) graph database
+            if run_graph:
+                use_database(run_graph)
             # Only clear Model namespace between runs.
             # Extraction data persists (handled by _ensure_extraction before the loop).
             if self.config.clear_between_runs:
@@ -1020,9 +1066,23 @@ class BenchmarkOrchestrator:
 
             stages = self.config.stages
 
-            # Extraction is handled by _ensure_extraction() before the benchmark loop.
-            # Log stats if extraction was part of this benchmark's stages.
-            if "extraction" in stages:
+            if run_graph:
+                # The complete extraction, live, with the run's model, logged under the run
+                totals = {"nodes_created": 0, "edges_created": 0}
+                for repo in repositories:
+                    if verbose:
+                        print(f"  Extracting {repo} ({model_name}, no cache)...")
+                    extracted = self._extract_repo(repo, getattr(self, "_config_versions_snapshot", None), verbose=verbose, run_id=run_id, model_name=model_name)
+                    for key in totals:
+                        totals[key] += (extracted.get("stats") or {}).get(key, 0)
+                    for step, step_stats in ((extracted.get("step_stats") or {}).get(repo) or {}).items():
+                        if isinstance(step_stats, dict) and step_stats.get("decisions") is not None:
+                            extraction_decisions.setdefault(step, {}).update({f"{repo}:{k}" if len(repositories) > 1 else k: v for k, v in step_stats["decisions"].items()})
+                    if not extracted.get("success"):
+                        errors.extend(extracted.get("errors") or [f"Extraction failed for {repo}"])
+                stats["extraction"] = totals
+            elif "extraction" in stages:
+                # Extraction is handled by _ensure_extraction() before the benchmark loop
                 stats["extraction"] = {"skipped": True, "reason": "pre-extracted"}
 
             # Run derivation ONCE on combined graph
@@ -1051,7 +1111,14 @@ class BenchmarkOrchestrator:
             if self.config.export_models and "derivation" in stages:
                 if verbose:
                     print("  Exporting combined model...")
-                model_path = self._export_run_model(combined_repo_name, model_name, iteration, candidate_decisions=result.get("candidate_decisions", []))
+                model_path = self._export_run_model(
+                    combined_repo_name,
+                    model_name,
+                    iteration,
+                    candidate_decisions=result.get("candidate_decisions", []),
+                    solve_report=(result.get("stats") or {}).get("refine_reports", {}).get("joint_consistency"),
+                    extraction_decisions=extraction_decisions or None,
+                )
                 if model_path:
                     stats["model_file"] = model_path
 
@@ -1076,6 +1143,13 @@ class BenchmarkOrchestrator:
             status = "failed"
             tb_str = traceback.format_exc()
             errors.append(f"{e}\n{tb_str}")
+
+        if run_graph:
+            # The run's graph goes with the session (an artifact of the run); its key's file is freed
+            try:
+                stats["graph_file"] = self._keep_run_graph(run_graph, combined_repo_name, model_name, iteration)
+            except OSError as e:
+                errors.append(f"Run graph not kept: {e}")
 
         # Calculate duration
         duration = (datetime.now() - run_start).total_seconds()
@@ -1269,6 +1343,8 @@ class BenchmarkOrchestrator:
         model_name: str,
         iteration: int,
         candidate_decisions: list[dict[str, Any]] | None = None,
+        solve_report: dict[str, Any] | None = None,
+        extraction_decisions: dict[str, dict[str, Any]] | None = None,
     ) -> str | None:
         """
         Export ArchiMate model to file after a benchmark run.
@@ -1280,6 +1356,8 @@ class BenchmarkOrchestrator:
             model_name: Model config name
             iteration: Run iteration number (1-based)
             candidate_decisions: The run's candidate decisions (recorded in the JSON snapshot)
+            solve_report: The joint_consistency (MILP) solve report of the run (recorded in the JSON snapshot)
+            extraction_decisions: The run's own extraction decisions per step (extraction per run), for decision stability
 
         Returns:
             Path to exported file, or None if export failed
@@ -1307,14 +1385,17 @@ class BenchmarkOrchestrator:
             filename = f"{safe_repo}_{safe_model}_run{iteration}.xml"
             output_path = models_dir / filename
 
-            # Export using ArchiMateXMLExporter
+            # Export using ArchiMateXMLExporter: both levels in one file (the benchmark measures the architect level)
+            leveled = export_levels.leveled_model(elements, relationships, export_levels.detail_lineage(self.graph_manager))
             exporter = ArchiMateXMLExporter()
             model_display_name = f"{repo_name} - {model_name} - Run {iteration}"
             exporter.export(
-                elements=elements,
-                relationships=relationships,
+                elements=leveled.elements,
+                relationships=leveled.relationships,
                 output_path=str(output_path),
                 model_name=model_display_name,
+                properties=leveled.properties,
+                views=leveled.views,
             )
 
             # JSON snapshot for consistency analysis: the XML carries no properties,
@@ -1327,7 +1408,21 @@ class BenchmarkOrchestrator:
             disabled = list(self.archimate_manager.get_disabled_elements())
             refined = {(d["type"], d["source"]): d["reason"] for d in disabled if d.get("source")}
             snapshot = {
-                "elements": [{"identifier": e.identifier, "type": e.element_type, "name": e.name, "source": (e.properties or {}).get("source")} for e in elements],
+                # The MILP's report (safety net): what it was given and what it decided in this run
+                "solve": solve_report,
+                "elements": [
+                    {
+                        "identifier": e.identifier,
+                        "type": e.element_type,
+                        "name": e.name,
+                        "source": (e.properties or {}).get("source"),
+                        "level": "architect",
+                        # The structural name (first candidate) next to the chosen one: what LLM naming adds (C36)
+                        # (no naming call: the name is the structural one)
+                        "structure_name": (e.properties or {}).get("structure_name") or next(iter((e.properties or {}).get("name_candidates") or []), None) or e.name,
+                    }
+                    for e in elements
+                ],
                 "relationships": [
                     {
                         "source": r.source,
@@ -1348,6 +1443,25 @@ class BenchmarkOrchestrator:
                     # The extraction routes that produced each node, so stability can be measured per route
                     "concept_routes": concept_routes,
                     "technology_routes": technology_routes,
+                    # Every active node, so an element missing from a run can be traced to its source node (variance split)
+                    "node_ids": sorted({str(row["id"]) for row in self.graph_manager.query(ACTIVE_NODE_IDS) if row.get("id")}),
+                },
+                "extraction_decisions": extraction_decisions,
+                # The export's detail level (members of the architect elements), reported on its own
+                "detail": {
+                    "elements": [
+                        {
+                            "identifier": d["identifier"],
+                            "type": d["element_type"],
+                            "name": d["name"],
+                            "source": d["properties"]["source"],
+                            "parent": d["properties"]["parent"],
+                            "level": "detail",
+                        }
+                        for d in leveled.detail.elements
+                    ],
+                    "relationships": [{"source": r["source"], "target": r["target"], "type": r["relationship_type"]} for r in leveled.detail.relationships],
+                    "properties": {k: v for k, v in leveled.detail.properties.items() if v},
                 },
                 "disabled": disabled,
                 # Every candidate's fate per element type (created, llm_rejected, filtered_out, ...), for keep rates;
@@ -1992,8 +2106,14 @@ def model_quality_for_session(
                 run = path.stem[len(prefix) :]
                 if not run.isdigit():
                     continue
-                elements, relationships = parse_exchange_format_xml(path)
+                # The architect level: the detail level (members) is reported on its own
+                elements, relationships = parse_exchange_format_xml(path, level="architect")
                 row: dict[str, Any] = {"repository": repo, "model": model, "run": int(run), **compute_model_quality(elements, relationships).to_dict()}
+                snapshot_path = path.with_suffix(".json")
+                try:
+                    row["solve"] = json.loads(snapshot_path.read_text(encoding="utf-8")).get("solve") if snapshot_path.is_file() else None
+                except OSError, ValueError:
+                    row["solve"] = None
                 row["reference"] = None
                 if reference:
                     derived = [{"id": e.identifier, "name": e.name, "type": e.element_type} for e in elements]
@@ -2007,6 +2127,136 @@ def model_quality_for_session(
 
 # Semantic matches that agree on the name and the type (a match on the type alone does not count)
 NAME_MATCHES = {"exact", "fuzzy_name"}
+
+
+ACTIVE_NODE_IDS = "MATCH (n) WHERE 'Graph' IN labels(n) AND n.active = true RETURN n.id AS id"
+
+
+def _run_snapshots(session_dir: Path, repositories: list[str], models: list[str]) -> list[tuple[str, str, list[dict[str, Any]]]]:
+    """The JSON snapshots of every run, per repository (and the combined name) and model, in run order."""
+    models_dir = Path(session_dir) / "models"
+    names = list(repositories) + (["_".join(sorted(repositories))] if len(repositories) > 1 else [])
+    found: list[tuple[str, str, list[dict[str, Any]]]] = []
+    for repo in names:
+        for model in models:
+            prefix = f"{repo.replace('/', '_')}_{model.replace('/', '_')}_run"
+            numbered = [(int(p.stem[len(prefix) :]), p) for p in models_dir.glob(f"{prefix}*.json") if p.stem[len(prefix) :].isdigit()]
+            snapshots = []
+            for _, path in sorted(numbered):
+                try:
+                    snapshots.append(json.loads(path.read_text(encoding="utf-8")))
+                except OSError, ValueError:
+                    continue
+            if snapshots:
+                found.append((repo, model, snapshots))
+    return found
+
+
+def variance_split_for_session(session_dir: Path, repositories: list[str], models: list[str]) -> list[dict[str, Any]]:
+    """Which share of the run-to-run differences comes from extraction and which from derivation (extraction per run).
+
+    Every time an element is missing from a run that another run has, it counts as *extraction* when its source node
+    is missing from that run's graph (``graph.node_ids`` of the snapshot), else as *derivation*: the node is there,
+    the element is not. A missing relationship follows its endpoints: extraction when an endpoint's source node is
+    missing from the run's graph. Needs node ids in every snapshot (sessions with extraction per run).
+    """
+    rows: list[dict[str, Any]] = []
+    for repo, model, snapshots in _run_snapshots(session_dir, repositories, models):
+        if len(snapshots) < 2 or any("node_ids" not in (s.get("graph") or {}) for s in snapshots):
+            continue
+        nodes = [set(s["graph"]["node_ids"]) for s in snapshots]
+        source_of: dict[str, str | None] = {}
+        for s in snapshots:
+            for e in s.get("elements", []):
+                source_of.setdefault(e["identifier"], e.get("source"))
+        elements = [{e["identifier"] for e in s.get("elements", [])} for s in snapshots]
+        edges = [{(r["source"], r["type"], r["target"]) for r in s.get("relationships", [])} for s in snapshots]
+
+        def split(present: list[set[Any]], sources: Callable[[Any], list[str | None]]) -> dict[str, Any]:
+            counts = {"extraction": 0, "derivation": 0}
+            for have, graph in zip(present, nodes, strict=True):
+                for item in set().union(*present) - have:
+                    lost = any(src is not None and src not in graph for src in sources(item))
+                    counts["extraction" if lost else "derivation"] += 1
+            total = counts["extraction"] + counts["derivation"]
+            return {**counts, "extraction_share": round(counts["extraction"] / total, 3) if total else None}
+
+        rows.append(
+            {
+                "repository": repo,
+                "model": model,
+                "runs": len(snapshots),
+                "elements": split(elements, lambda item: [source_of.get(item)]),
+                "relationships": split(edges, lambda item: [source_of.get(item[0]), source_of.get(item[2])]),
+            }
+        )
+    return rows
+
+
+def extraction_stability_for_session(session_dir: Path, repositories: list[str], models: list[str]) -> list[dict[str, Any]]:
+    """Decision stability of the LLM extraction steps over the runs (extraction per run): per step, the items that got
+    the same decision in every run, from the snapshots' ``extraction_decisions``."""
+    rows: list[dict[str, Any]] = []
+    for repo, model, snapshots in _run_snapshots(session_dir, repositories, models):
+        decided = [s.get("extraction_decisions") for s in snapshots]
+        if len(decided) < 2 or any(not isinstance(d, dict) for d in decided):
+            continue
+        steps = sorted(set().union(*(d.keys() for d in decided if isinstance(d, dict))))
+        result = {}
+        for step in steps:
+            stability = decision_stability([dict((d or {}).get(step) or {}) for d in decided])
+            result[step] = {"items": stability.items, "stable": stability.stable}
+        rows.append({"repository": repo, "model": model, "runs": len(snapshots), "steps": result})
+    return rows
+
+
+def detail_level_for_session(session_dir: Path, repositories: list[str], models: list[str]) -> list[dict[str, Any]]:
+    """The export's detail level per repository and model, from the run snapshots (apart from the architect level).
+
+    Size (mean detail elements per run, per type) and consistency over the runs: the share of the detail elements
+    (and relationships) that every run has, of all the runs have. Runs without a detail section are skipped.
+    """
+    rows: list[dict[str, Any]] = []
+    models_dir = Path(session_dir) / "models"
+    names = list(repositories) + (["_".join(sorted(repositories))] if len(repositories) > 1 else [])
+    for repo in names:
+        for model in models:
+            prefix = f"{repo.replace('/', '_')}_{model.replace('/', '_')}_run"
+            details = []
+            for path in sorted(models_dir.glob(f"{prefix}*.json")):
+                if not path.stem[len(prefix) :].isdigit():
+                    continue
+                try:
+                    detail = json.loads(path.read_text(encoding="utf-8")).get("detail")
+                except OSError, ValueError:
+                    continue
+                if detail is not None:
+                    details.append(detail)
+            if not details:
+                continue
+            elements = [{e["identifier"] for e in d.get("elements", [])} for d in details]
+            edges = [{(r["source"], r["type"], r["target"]) for r in d.get("relationships", [])} for d in details]
+            types: dict[str, int] = {}
+            for d in details:
+                for e in d.get("elements", []):
+                    types[e["type"]] = types.get(e["type"], 0) + 1
+
+            def share(sets: list[set[Any]]) -> float:
+                union = set().union(*sets)
+                return round(len(set.intersection(*sets)) / len(union), 3) if union else 1.0
+
+            rows.append(
+                {
+                    "repository": repo,
+                    "model": model,
+                    "runs": len(details),
+                    "elements": round(sum(len(s) for s in elements) / len(details), 1),
+                    "by_type": {t: round(n / len(details), 1) for t, n in sorted(types.items())},
+                    "element_consistency": share(elements),
+                    "relationship_consistency": share(edges),
+                }
+            )
+    return rows
 
 
 def _reference_elements(path: str | None) -> list[Any]:
@@ -2028,6 +2278,9 @@ class AnalysisSummary:
     localization: InconsistencyLocalization
     overall_consistency: float
     model_quality: list[dict[str, Any]] = field(default_factory=list)  # one row per exported run model
+    detail_level: list[dict[str, Any]] = field(default_factory=list)  # the export's detail level per repository and model
+    variance_split: list[dict[str, Any]] = field(default_factory=list)  # extraction vs derivation share (extraction per run)
+    extraction_stability: list[dict[str, Any]] = field(default_factory=list)  # decision stability of the LLM extraction steps
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -2039,6 +2292,9 @@ class AnalysisSummary:
             "localization": self.localization.to_dict(),
             "overall_consistency": self.overall_consistency,
             "model_quality": self.model_quality,
+            "detail_level": self.detail_level,
+            "variance_split": self.variance_split,
+            "extraction_stability": self.extraction_stability,
         }
 
 
@@ -2778,12 +3034,25 @@ class BenchmarkAnalyzer:
             localization=localization,
             overall_consistency=overall,
             model_quality=self.compute_model_quality(),
+            detail_level=self.compute_detail_level(),
+            variance_split=variance_split_for_session(*self._session_scope()),
+            extraction_stability=extraction_stability_for_session(*self._session_scope()),
         )
 
     def compute_model_quality(self) -> list[dict[str, Any]]:
         """Structural quality of every model the session exported (see ``model_quality_for_session``)."""
         config = (self.session_info or {}).get("config", {})
         return model_quality_for_session(workspace() / "benchmarks" / self.session_id, config.get("repositories", []), config.get("models", []))
+
+    def _session_scope(self) -> tuple[Path, list[str], list[str]]:
+        """The session folder, its repositories and its models."""
+        config = (self.session_info or {}).get("config", {})
+        return workspace() / "benchmarks" / (self.session_id or ""), config.get("repositories", []), config.get("models", [])
+
+    def compute_detail_level(self) -> list[dict[str, Any]]:
+        """The export's detail level per repository and model (see ``detail_level_for_session``)."""
+        config = (self.session_info or {}).get("config", {})
+        return detail_level_for_session(workspace() / "benchmarks" / self.session_id, config.get("repositories", []), config.get("models", []))
 
     def export_summary(self, path: str | None = None, format: str = "json") -> str:
         """

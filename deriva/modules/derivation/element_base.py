@@ -196,7 +196,6 @@ class ElementDerivationBase(ABC):
     INBOUND_RULES: list[RelationshipRule]
 
     # Confidence gate: elements below this threshold are not created
-    MIN_ELEMENT_CONFIDENCE: float = 0.5
 
     def __init__(self) -> None:
         """Initialize the derivation class."""
@@ -1440,17 +1439,6 @@ class ElementDerivationBase(ABC):
 
             element_data = element_result["data"]
 
-            # Confidence gate: skip elements the LLM flagged as poor matches
-            confidence = element_data.get("properties", {}).get("confidence", 1.0)
-            if confidence < self.MIN_ELEMENT_CONFIDENCE:
-                self.logger.debug(
-                    "Skipping low-confidence element %s (%.2f < %.2f)",
-                    element_data.get("name", "?"),
-                    confidence,
-                    self.MIN_ELEMENT_CONFIDENCE,
-                )
-                continue
-
             if naming is not None:
                 self._apply_naming(
                     element_data,
@@ -1623,9 +1611,6 @@ class ElementDerivationBase(ABC):
                 continue
 
             element_data = element_result["data"]
-            confidence = element_data.get("properties", {}).get("confidence", 1.0)
-            if confidence < self.MIN_ELEMENT_CONFIDENCE:
-                continue
 
             if naming is not None:
                 self._apply_naming(

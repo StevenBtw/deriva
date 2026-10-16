@@ -78,6 +78,7 @@ class BenchmarkSession:
         per_repo: bool = False,
         no_cache_extraction: bool = False,
         no_cache_extraction_llm: bool = False,
+        extract_per_run: bool = False,
     ) -> benchmarking.BenchmarkResult:
         """
         Run a full benchmark matrix.
@@ -97,6 +98,7 @@ class BenchmarkSession:
             bench_hash: Include repo/model/run in cache key for per-run isolation (default: False)
             defer_relationships: Two-phase derivation: create elements first, then relationships (default: False)
             per_repo: Run each repository as a separate benchmark instead of combined (default: False)
+            extract_per_run: Every run extracts (its model, no cache) on its own graph, kept with the session
 
         Returns:
             BenchmarkResult with session details
@@ -127,6 +129,7 @@ class BenchmarkSession:
             per_repo=per_repo,
             no_cache_extraction=no_cache_extraction,
             no_cache_extraction_llm=no_cache_extraction_llm,
+            extract_per_run=extract_per_run,
         )
 
         orchestrator = benchmarking.BenchmarkOrchestrator(

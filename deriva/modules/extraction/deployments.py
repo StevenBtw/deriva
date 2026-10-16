@@ -1,10 +1,11 @@
 """Deployment structure (no LLM): the environments a repository deploys to and the services they run.
 
 An environment is one deployment kind: a compose file (``Docker Compose``), the Kubernetes manifests
-(``Kubernetes``) or the cloud templates (``AWS ECS``). Each runs services; a service is matched to the
-deployable unit it builds or runs (by build context, else by its image or name), or stays without a unit
-when it runs a ready-made image (``postgres:15``). One environment is the primary one (the root compose
-file, else Kubernetes, else the cloud); the others are reported. The runtime image of a container unit
+(``Kubernetes``) or the cloud templates and CDK apps (``AWS ECS``). Each runs services; a service is matched
+to the deployable unit it builds or runs (by build context, else by its image or name), or stays without a
+unit when it runs a ready-made image (``postgres:15``). One environment is the primary one (the cloud, else
+the root compose file, else Kubernetes); the others are reported. A managed cloud service is qualified by a
+property (an engine) where the rules name one, so its name can carry it. The runtime image of a container unit
 is the last ``FROM`` of its Dockerfile.
 
 ``technology_layer`` adds the system software: images, runtimes (a project-built image resolved to
@@ -36,6 +37,10 @@ class DeploymentRules:
 
     # Cloud resource type -> role: "container" (a deployed service), "function" or "managed" (a managed service)
     cloud_resources: tuple[tuple[str, str], ...] = ()
+    # Cloud resource type -> (property, default): the property's value qualifies the type (``AWS::RDS::DBInstance::postgres``)
+    cloud_qualifiers: tuple[tuple[str, str, str], ...] = ()
+    # CDK construct ("module.Class") -> (CloudFormation type, environment name or "", fixed properties): read statically
+    cdk_constructs: tuple[tuple[str, str, str, tuple[tuple[str, str], ...]], ...] = ()
     compose_files: tuple[str, ...] = ("docker-compose*.yml", "docker-compose*.yaml", "compose*.yml", "compose*.yaml")
     environment_names: tuple[tuple[str, str], ...] = (("compose", "Docker Compose"), ("kubernetes", "Kubernetes"), ("cloud", "AWS ECS"), ("mainframe", "Mainframe"))
     # Files whose image build commands name a project's own images (scripts relative to their folder, YAML to the root)
@@ -151,6 +156,14 @@ class _Units:
         listing = [u for u in nearest if path in (u.get("members") or ())]
         return sorted(str(u["id"]) for u in (listing or nearest))
 
+    def by_exact_name(self, names: list[str]) -> str | None:
+        """The one unit whose name or folder name is one of the names (case-insensitive), first name first."""
+        for name in names:
+            found = [u for u in self.units if name.casefold() in (str(u.get("name") or "").casefold(), PurePosixPath(str(u["path"])).name.casefold())]
+            if len(found) == 1:
+                return str(found[0]["id"])
+        return None
+
     def by_name(self, *names: str | None) -> str | None:
         for name in names:
             words = _tokens(image_name(name)) if name else []
@@ -217,23 +230,42 @@ def _kubernetes(manifests: dict[str, list[Any]], units: _Units, rules: Deploymen
     return Environment(kind="kubernetes", name=dict(rules.environment_names).get("kubernetes", "Kubernetes"), file="/".join(common), services=services)
 
 
+def _qualified(kind: str, resource: dict[str, Any], rules: DeploymentRules) -> str:
+    """The resource type with its qualifier (``AWS::RDS::DBInstance::postgres``), or the plain type."""
+    for qualified_type, prop, default in rules.cloud_qualifiers:
+        if qualified_type == kind:
+            properties = resource.get("Properties")
+            value = properties.get(prop) if isinstance(properties, dict) else None
+            value = value if isinstance(value, str) and value else default
+            return f"{kind}::{value.lower()}" if value else kind
+    return kind
+
+
 def _cloud(templates: dict[str, dict[str, Any]], units: _Units, rules: DeploymentRules) -> tuple[Environment | None, list[str]]:
+    """The cloud environment of the templates and CDK apps. A CDK container carries its names (matched to a unit by
+    name) and the environment its construct runs in; a template container deploys the unit that holds the template."""
     roles = dict(rules.cloud_resources)
     services: list[DeployedService] = []
     managed: set[str] = set()
+    names: set[str] = set()
     for path, resources in sorted(templates.items()):
         for logical, resource in sorted(resources.items()):
             kind = resource.get("Type") if isinstance(resource, dict) else None
             role = roles.get(str(kind)) if kind else None
             if role == "container":
-                services.append(DeployedService(name=str(logical), unit=units.holding(path), kind="container"))
+                named = resource.get("Names")
+                unit = units.by_exact_name([str(n) for n in named]) if isinstance(named, list) else units.holding(path)
+                services.append(DeployedService(name=str(logical), unit=unit, kind="container"))
+                if resource.get("Environment"):
+                    names.add(str(resource["Environment"]))
             elif role in ("function", "managed"):
-                managed.add(str(kind))
+                managed.add(_qualified(str(kind), resource, rules))
     if not services:
         return None, sorted(managed)
     folders = [PurePosixPath(p).parent.parts for p in templates]
     common = [parts[0] for parts in zip(*folders, strict=False) if len(set(parts)) == 1]
-    env = Environment(kind="cloud", name=dict(rules.environment_names).get("cloud", "Cloud"), file="/".join(common), services=services, managed=sorted(managed))
+    name = next(iter(names)) if len(names) == 1 else dict(rules.environment_names).get("cloud", "Cloud")
+    env = Environment(kind="cloud", name=name, file="/".join(common), services=services, managed=sorted(managed))
     return env, sorted(managed)
 
 
@@ -242,7 +274,13 @@ def _last_from(text: str) -> str | None:
     return images[-1] if images else None
 
 
-def detect_deployments(repository: str, files: dict[str, str], units: list[dict[str, Any]], rules: DeploymentRules) -> DeploymentResult:
+def detect_deployments(
+    repository: str,
+    files: dict[str, str],
+    units: list[dict[str, Any]],
+    rules: DeploymentRules,
+    cdk: dict[str, dict[str, Any]] | None = None,
+) -> DeploymentResult:
     """The deployment environments of a repository.
 
     Args:
@@ -250,6 +288,7 @@ def detect_deployments(repository: str, files: dict[str, str], units: list[dict[
         files: Path -> text of the candidate deployment files (compose, YAML/JSON manifests and templates, Dockerfiles)
         units: {"id", "path", "name"} of the deployable units
         rules: The signals
+        cdk: Path -> the resources a CDK app file declares (template-shaped, with ``Names``), read with the templates
     """
     lookup = _Units(units)
     result = DeploymentResult()
@@ -282,6 +321,7 @@ def detect_deployments(repository: str, files: dict[str, str], units: list[dict[
                     and any(isinstance(r, dict) and str(r.get("Type", "")).startswith(("AWS::", "Microsoft.", "Google")) for r in doc["Resources"].values())
                 ):
                     templates[path] = doc["Resources"]
+    templates.update(cdk or {})
     # A unit's own Dockerfile decides its runtime; a nested one (an example, a sidecar) only when it has none
     for unit, found in runtimes.items():
         nearest = min(depth for depth, _ in found)
@@ -292,7 +332,7 @@ def detect_deployments(repository: str, files: dict[str, str], units: list[dict[
     result.managed = managed
     if cloud:
         environments.append(cloud)
-    order = {"compose": 0, "kubernetes": 1, "cloud": 2}
+    order = {"cloud": 0, "compose": 1, "kubernetes": 2}
     ranked = sorted(environments, key=lambda e: (order[e.kind], len(PurePosixPath(e.file).parts), e.file))
     if ranked:
         result.primary, result.others = ranked[0], ranked[1:]
@@ -472,6 +512,7 @@ def technology_layer(
     rules: DeploymentRules,
     catalog: tuple[Technology, ...],
     sources: dict[str, str],
+    cdk: dict[str, dict[str, Any]] | None = None,
 ) -> TechnologyLayer:
     """The primary environment, the units it runs and the system software with its evidence.
 
@@ -492,8 +533,9 @@ def technology_layer(
         rules: The signals
         catalog: The closed list of technologies
         sources: Path -> text of the source files searched for content markers
+        cdk: Path -> the resources of the CDK app files (see ``detect_deployments``)
     """
-    deployments = detect_deployments(repository, files, units, rules)
+    deployments = detect_deployments(repository, files, units, rules, cdk)
     layer = TechnologyLayer(deployments=deployments, environment=deployments.primary)
     lookup = _Units(units)
     built = built_images(repository, files, rules.build_scripts)
@@ -539,7 +581,11 @@ def technology_layer(
                 add(resolve_image(image, built, files), f"runtime of {unit} (outside the environment)", fallback=True, outside=unit)
     if env and env.kind == "cloud":
         for kind in env.managed:
-            add(kind.lower(), "cloud template", in_environment=True)
+            # A qualified type (an engine) off the list falls back to its plain type
+            alias = kind.lower()
+            if match_technology(alias, catalog) is None and alias.count("::") > 2:
+                alias = alias.rsplit("::", 1)[0]
+            add(alias, "cloud template", in_environment=True)
     for alias, paths in sorted(marked.items()):
         holders = tuple(sorted({unit for p in paths for unit in lookup.holders(p)}))
         add(alias, f"marker in {len(paths)} files", in_environment=True, serves=holders)
@@ -556,6 +602,20 @@ def technology_layer(
                 add(dependency, f"dependency of {holder}", serves=(holder,))
             if runtime and holder not in deployments.base_images:
                 add(runtime, f"manifest of {holder}", serves=(holder,))
+
+    # A driver-detected engine (not running in the environment itself) is the managed service of that engine
+    # when the environment has one: the qualifier names the engine; its evidence and users move to the service
+    for kind in env.managed if env and env.kind == "cloud" else []:
+        parts = kind.lower().split("::")
+        engine = match_technology(parts[-1], catalog) if len(parts) > 3 else None
+        service = match_technology(kind.lower(), catalog)
+        if engine is None or service is None or engine.name == service.name:
+            continue
+        found, into = software.get(engine.name), software.get(service.name)
+        if found is not None and into is not None and not found.in_environment:
+            into.evidence += [e for e in found.evidence if e not in into.evidence]
+            into.serves = sorted(set(into.serves) | set(found.serves))
+            del software[engine.name]
 
     for name, entry in sorted(software.items()):
         if entry.in_environment or entry.serves:

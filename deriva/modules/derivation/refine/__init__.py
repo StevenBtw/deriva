@@ -39,7 +39,6 @@ from . import (
     graph_relationships,
     joint_consistency,
     orphan_elements,
-    relationship_consolidation,
     structural_consistency,
 )
 from .base import (
@@ -62,6 +61,5 @@ __all__ = [
     "graph_relationships",
     "joint_consistency",
     "orphan_elements",
-    "relationship_consolidation",
     "structural_consistency",
 ]

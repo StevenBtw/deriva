@@ -102,6 +102,35 @@ def map_elements(reference: Reference, model: dict[str, Any]) -> dict[str, str]:
     return mapping
 
 
+# Element types whose name is a closed choice among structural candidates (C36: what the LLM name adds)
+NAMED_TYPES = ("ApplicationComponent", "ApplicationService", "DataObject", "BusinessFunction", "BusinessProcess")
+
+
+def naming(reference: Reference, model: dict[str, Any]) -> dict[str, dict[str, int]]:
+    """Per named type: of the elements whose lineage maps to a reference element and that carry a structure name,
+    how many match its name (normalized) with the LLM-chosen name and with the structural name, and with an alias."""
+    out: dict[str, dict[str, int]] = {}
+    for t in NAMED_TYPES:
+        counts = {"compared": 0, "chosen": 0, "chosen_alias": 0, "structural": 0, "structural_alias": 0}
+        for e in model.get("elements", []):
+            if _type(e["type"]) != t or not e.get("structure_name"):
+                continue
+            ref = next((r for r in reference.elements if t in r.types and ({str(e.get("source") or ""), e["identifier"]} & r.lineage)), None)
+            if ref is None:
+                continue
+            exact = {name_key(ref.name)}
+            alias = exact | {name_key(a) for a in ref.aliases}
+            chosen, structural = name_key(str(e.get("name") or "")), name_key(str(e["structure_name"]))
+            counts["compared"] += 1
+            counts["chosen"] += chosen in exact
+            counts["chosen_alias"] += chosen in alias
+            counts["structural"] += structural in exact
+            counts["structural_alias"] += structural in alias
+        if counts["compared"]:
+            out[t] = counts
+    return out
+
+
 def evaluate(reference: Reference, model: dict[str, Any]) -> dict[str, Any]:
     """Recall and precision per element type and relationship kind, splits, chains, for one model."""
     mapping = map_elements(reference, model)
@@ -179,6 +208,7 @@ def evaluate(reference: Reference, model: dict[str, Any]) -> dict[str, Any]:
         "element_recall": round(sum(s["covered"] for s in elements.values()) / required, 3) if required else None,
         "element_precision": round(len(mapping) / len(model.get("elements", [])), 3) if model.get("elements") else None,
         "relationship_recall": _ratio(relationships, "matched", "required"),
+        "naming": naming(reference, model),
         "model_size": len(model.get("elements", [])),
         "reference_size": required,
     }
@@ -241,6 +271,11 @@ def table_lines(payload: dict[str, Any]) -> list[str]:
         lines.append(f"   rel precision {totals['correct']}/{totals['assessable']} {_pct(totals['precision'])} ({totals['unassessable']} unassessable)")
         if first["chains"]:
             lines.append("   chains: " + ", ".join(f"{c['name']} {c['present']}/{c['steps']}" for c in first["chains"]))
+        if first.get("naming"):
+            lines.append(
+                "   names LLM / structure vs reference (alias): "
+                + ", ".join(f"{t} {n['chosen']}/{n['structural']} of {n['compared']} ({n['chosen_alias']}/{n['structural_alias']})" for t, n in sorted(first["naming"].items()))
+            )
     return lines
 
 

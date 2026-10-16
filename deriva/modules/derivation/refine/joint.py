@@ -12,29 +12,45 @@ constraints:
 - H6 no merge chains without direct evidence (transitivity)
 
 Tiers are optimised in strict order (tier 1 first, fixed, then tier 2, then 3),
-then a rank tie-break on the canonical input order. Pure: no I/O, no LLM.
+then a lexicographic maximum over the variables in a canonical order: relationships
+by (tier, source, type, target), merges by (tier, first, second); each variable in
+turn is fixed to 1 when that is still feasible. No weights and no confidence, so the
+selection does not depend on identifiers or on the input order. Pure: no I/O, no LLM.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 from solvor import solve_milp
 from solvor.types import Status
 
 MAX_CYCLE_ROUNDS = 20
-_TIER2_ORIGINS = frozenset({"graph_neighbor", "community", "rule"})
+# Evidence tier per relationship origin (``derived_from``): 1 direct structure, 2 indirect structure, 3 word
+# overlap and LLM. The joint_consistency step takes the table from its params (versioned config); this is the default.
+DEFAULT_ORIGIN_TIERS: dict[str, int] = {
+    "containment": 1,
+    "graph_link": 1,
+    "listed_members": 1,
+    "membership": 1,
+    "configuration": 1,
+    "dependency": 1,
+    "same_name": 1,
+    "named_in_code": 2,
+    "graph_neighbor": 2,
+    "community": 2,
+    "rule": 3,
+}
 
 
-def origin_tier(derived_from: str | None) -> int:
-    """Evidence tier of a relationship from its `derived_from` origin tag."""
-    if derived_from and (derived_from == "containment" or derived_from.startswith("Graph:") or derived_from.endswith("_edge")):
+def origin_tier(derived_from: str | None, tiers: dict[str, int] | None = None) -> int:
+    """Evidence tier of a relationship from its `derived_from` origin tag: a graph edge is tier 1, else the table; unknown 3."""
+    if derived_from and (derived_from.startswith("Graph:") or derived_from.endswith("_edge")):
         return 1
-    if derived_from in _TIER2_ORIGINS:
-        return 2
-    return 3
+    return (DEFAULT_ORIGIN_TIERS if tiers is None else tiers).get(derived_from or "", 3)
 
 
 @dataclass(frozen=True)
@@ -61,7 +77,11 @@ class Proposal:
     target: str
     relationship_type: str
     tier: int
-    confidence: float = 0.0
+
+
+def canonical_key(p: Proposal) -> tuple[int, str, str, str, str]:
+    """The canonical order of a relationship: (tier, source, type, target), then its identifier for exact repeats."""
+    return (p.tier, p.source, p.relationship_type, p.target, p.identifier)
 
 
 @dataclass(frozen=True)
@@ -80,6 +100,8 @@ class JointDecision:
     dropped: dict[str, str] = field(default_factory=dict)
     merges: dict[str, str] = field(default_factory=dict)
     redirects: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # The solve report: proposals, constraint rows by name (H1-H6), cycle cuts, parts, and what changed
+    stats: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -103,7 +125,7 @@ def solve(
     types = {e.identifier: e.element_type for e in elements}
     dropped: dict[str, str] = {}
     valid: list[Proposal] = []
-    for p in sorted(proposals, key=lambda p: (p.tier, -p.confidence, p.identifier)):
+    for p in sorted(proposals, key=canonical_key):
         if p.source == p.target:
             dropped[p.identifier] = "self_loop"
         elif p.source not in types or p.target not in types or not metamodel.is_valid(types[p.source], p.relationship_type, types[p.target]):
@@ -112,13 +134,37 @@ def solve(
             valid.append(p)
 
     merges = _canonical_merges(merge_candidates, types)
+    prefilter = dict(Counter(dropped.values()))
     if not valid and not merges:
-        return JointDecision(status="optimal", dropped=dropped)
+        return _reported(JointDecision(status="optimal", dropped=dropped), proposals, valid, merges, prefilter, [])
 
     status, chosen, rows = _select(valid, merges, metamodel)
     if status != "optimal":
-        return JointDecision(status=status, dropped=dropped)
-    return _decision(elements, valid, merges, rows, chosen, dropped)
+        return _reported(JointDecision(status=status, dropped=dropped), proposals, valid, merges, prefilter, rows)
+    return _reported(_decision(elements, valid, merges, rows, chosen, dropped), proposals, valid, merges, prefilter, rows)
+
+
+def _reported(
+    decision: JointDecision, proposals: list[Proposal], valid: list[Proposal], merges: list[MergeCandidate], prefilter: dict[str, int], rows: list[_Row]
+) -> JointDecision:
+    """The decision with its solve report (logged for the benchmark; the MILP as a safety net)."""
+    parts = _parts(valid, merges)
+    part_of = {v: k for k, variables in enumerate(parts) for v in variables}
+    decision.stats = {
+        "proposals": len(proposals),
+        "valid": len(valid),
+        "merge_candidates": len(merges),
+        "prefilter": prefilter,
+        "rows": dict(Counter(row.name for row in rows if row.name != "H3")),
+        "cycle_cuts": sum(1 for row in rows if row.name == "H3"),
+        "parts": len(parts),
+        "constrained_parts": len({part_of[next(iter(row.coef))] for row in rows if row.coef}),
+        "kept": len(decision.kept),
+        "dropped": len(decision.dropped),
+        "merges": len(decision.merges),
+        "redirects": len(decision.redirects),
+    }
+    return decision
 
 
 def _select(props: list[Proposal], merges: list[MergeCandidate], metamodel: Metamodel) -> tuple[str, set[int], list[_Row]]:
@@ -129,10 +175,8 @@ def _select(props: list[Proposal], merges: list[MergeCandidate], metamodel: Meta
     over variables, so each part is solved on its own: the same optimum as one solve
     over everything, without a search over combinations of unrelated parts.
     """
-    n = len(props) + len(merges)
     tiers = [p.tier for p in props] + [m.tier for m in merges]
-    # Rank tie-break on the global input order (a part keeps its global weights)
-    weights = [float(n - i) for i in range(n)]
+    position = {v: k for k, v in enumerate(_canonical_order(props, merges))}
     rows = _build_rows(props, merges, metamodel.single_parent_types)
     parts = _parts(props, merges)
     part_of = {v: k for k, variables in enumerate(parts) for v in variables}
@@ -143,12 +187,20 @@ def _select(props: list[Proposal], merges: list[MergeCandidate], metamodel: Meta
     chosen: set[int] = set()
     cuts: list[_Row] = []
     for k, variables in enumerate(parts):
-        status, part_chosen, part_cuts = _select_part(variables, tiers, weights, rows_of[k], props, merges, metamodel.acyclic_types)
+        ordered = sorted(variables, key=position.__getitem__)
+        status, part_chosen, part_cuts = _select_part(ordered, tiers, rows_of[k], props, merges, metamodel.acyclic_types)
         cuts += part_cuts
         if status != "optimal":
             return status, set(), rows + cuts
         chosen |= part_chosen
     return "optimal", chosen, rows + cuts
+
+
+def _canonical_order(props: list[Proposal], merges: list[MergeCandidate]) -> list[int]:
+    """All variables in canonical order: by tier; within a tier relationships (source, type, target), then merges (first, second)."""
+    keys: list[tuple[int, int, str, str, str, str]] = [(p.tier, 0, p.source, p.relationship_type, p.target, p.identifier) for p in props]
+    keys += [(m.tier, 1, m.first, m.second, "", "") for m in merges]
+    return sorted(range(len(keys)), key=lambda i: keys[i])
 
 
 def _parts(props: list[Proposal], merges: list[MergeCandidate]) -> list[list[int]]:
@@ -174,20 +226,19 @@ def _parts(props: list[Proposal], merges: list[MergeCandidate]) -> list[list[int
 def _select_part(
     variables: list[int],
     tiers: list[int],
-    weights: list[float],
     rows: list[_Row],
     props: list[Proposal],
     merges: list[MergeCandidate],
     acyclic: frozenset[str],
 ) -> tuple[str, set[int], list[_Row]]:
-    """Lexicographic optimum of one part, with lazy cycle cuts; returns status, choice and cuts."""
+    """Lexicographic optimum of one part (``variables`` in canonical order), with lazy cycle cuts; returns status, choice and cuts."""
     cuts: list[_Row] = []
     for round_ in range(MAX_CYCLE_ROUNDS + 1):
         if not rows and not cuts:
             # Nothing constrains the part: every variable is worth taking
             chosen: set[int] | None = set(variables)
         else:
-            chosen = _lexicographic(variables, tiers, weights, rows + cuts)
+            chosen = _lexicographic(variables, tiers, rows + cuts)
         if chosen is None:
             return "solver_failed", set(), cuts
         cycles = _find_cycles(props, merges, chosen, acyclic)
@@ -208,9 +259,9 @@ def _canonical_merges(candidates: list[MergeCandidate], types: dict[str, str]) -
             continue
         m = replace(m, first=a, second=b)
         current = best.get((a, b))
-        if current is None or (m.tier, -m.score) < (current.tier, -current.score):
+        if current is None or (m.tier, m.evidence) < (current.tier, current.evidence):
             best[(a, b)] = m
-    return sorted(best.values(), key=lambda m: (m.tier, -m.score, m.first, m.second))
+    return sorted(best.values(), key=lambda m: (m.tier, m.first, m.second))
 
 
 def _collide_after_merge(p: Proposal, q: Proposal, u: str, v: str, single_parent: frozenset[str]) -> bool:
@@ -265,8 +316,9 @@ def _build_rows(props: list[Proposal], merges: list[MergeCandidate], single_pare
     return rows
 
 
-def _lexicographic(variables: list[int], tiers: list[int], weights: list[float], rows: list[_Row]) -> set[int] | None:
-    """Maximise tier 1, then 2, then 3, then the rank weights over ``variables``; the chosen ones."""
+def _lexicographic(variables: list[int], tiers: list[int], rows: list[_Row]) -> set[int] | None:
+    """Maximise tier 1, then 2, then 3 over ``variables``, then fix them one by one in their (canonical) order, each to
+    1 when still feasible: the lexicographic maximum. The chosen ones."""
     index = {v: j for j, v in enumerate(variables)}
     n = len(variables)
     matrix: list[list[float]] = []
@@ -283,26 +335,40 @@ def _lexicographic(variables: list[int], tiers: list[int], weights: list[float],
         matrix.append(line)
         bounds.append(1.0)
 
-    solution: list[int] | None = None
-    objectives = [[1.0 if tiers[v] == tier else 0.0 for v in variables] for tier in (1, 2, 3)]
-    objectives = [c for c in objectives if any(c)]
-    objectives.append([weights[v] for v in variables])
-    for stage, c in enumerate(objectives):
-        result = solve_milp(
-            c,
-            matrix,
-            bounds,
-            integers=list(range(n)),
-            minimize=False,
-            warm_start=solution,
-        )
+    def best(c: list[float], warm: list[int] | None) -> list[int] | None:
+        result = solve_milp(c, matrix, bounds, integers=list(range(n)), minimize=False, warm_start=warm)
         if result.status != Status.OPTIMAL or result.solution is None:
             return None
-        solution = [round(v) for v in result.solution]
-        if stage < len(objectives) - 1:
-            achieved = sum(solution[j] for j in range(n) if c[j])
-            matrix.append([-v for v in c])
-            bounds.append(-achieved + 0.5)
+        return [round(v) for v in result.solution]
+
+    solution: list[int] | None = None
+    for tier in (1, 2, 3):
+        c = [1.0 if tiers[v] == tier else 0.0 for v in variables]
+        if not any(c):
+            continue
+        solution = best(c, solution)
+        if solution is None:
+            return None
+        achieved = sum(solution[j] for j in range(n) if c[j])
+        matrix.append([-v for v in c])
+        bounds.append(-achieved + 0.5)
+    for j in range(n):
+        # When the current solution already takes it, it is feasible: fixed to 1 without a solve
+        if solution is None or solution[j] != 1:
+            c = [0.0] * n
+            c[j] = 1.0
+            candidate = best(c, solution)
+            if candidate is None:
+                return None
+            solution = candidate
+        line = [0.0] * n
+        if solution[j] == 1:
+            line[j] = -1.0
+            bounds.append(-1.0)
+        else:
+            line[j] = 1.0
+            bounds.append(0.0)
+        matrix.append(line)
     assert solution is not None
     return {variables[j] for j in range(n) if solution[j] == 1}
 

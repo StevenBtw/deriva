@@ -73,6 +73,7 @@ from deriva.adapters.graph.models import (
 )
 from deriva.adapters.nlp import NlpTool
 from deriva.adapters.repository import RepoManager
+from deriva.adapters.treesitter import cdk
 from deriva.common.cache_utils import hash_inputs
 from deriva.common.document_reader import read_document
 from deriva.common.file_utils import read_file_with_encoding
@@ -780,11 +781,25 @@ def _extract_data_entities(cfg: config.ExtractionConfig, repo: Any, repo_path: P
 def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, tuple[technologies.Technology, ...]]:
     """The Deployment step's signals (``params``): the closed list ``technologies`` ([{name, kind, aliases}]),
     ``cloud_resources`` (resource type -> container, function or managed), ``markers`` ([{pattern, technology}]),
-    ``manifest_runtimes`` (manifest file pattern -> runtime alias), ``environment_names`` (kind -> name) and the
-    file name patterns ``compose_files``, ``build_scripts`` and ``marker_suffixes``."""
+    ``manifest_runtimes`` (manifest file pattern -> runtime alias), ``environment_names`` (kind -> name), the
+    file name patterns ``compose_files``, ``build_scripts`` and ``marker_suffixes``, ``cloud_qualifiers``
+    (resource type -> {property, default}) and ``cdk_constructs`` ("module.Class" -> {type, environment, properties})."""
     settings = json.loads(params) if params else {}
     lists, maps = ("compose_files", "build_scripts", "marker_suffixes"), ("cloud_resources", "manifest_runtimes", "environment_names")
-    unknown = set(settings) - {*lists, *maps, "technologies", "markers"}
+    unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs"}
+    qualifiers, constructs = settings.get("cloud_qualifiers", {}), settings.get("cdk_constructs", {})
+    text = lambda v: isinstance(v, str) and bool(v)  # noqa: E731 - a one-line helper
+    qualifiers_ok = isinstance(qualifiers, dict) and all(isinstance(q, dict) and text(q.get("property")) and isinstance(q.get("default", ""), str) for q in qualifiers.values())
+    constructs_ok = isinstance(constructs, dict) and all(
+        isinstance(c, dict)
+        and text(c.get("type"))
+        and isinstance(c.get("environment", ""), str)
+        and isinstance(c.get("properties", {}), dict)
+        and all(text(v) for v in c.get("properties", {}).values())
+        for c in constructs.values()
+    )
+    if not qualifiers_ok or not constructs_ok:
+        raise ValueError("Deployment params: cloud_qualifiers as {type: {property, default}} and cdk_constructs as {construct: {type, environment, properties}}")
     lists_ok = all(isinstance(settings.get(k, []), list) and all(isinstance(x, str) and x for x in settings.get(k, [])) for k in lists)
     maps_ok = all(isinstance(settings.get(k, {}), dict) and all(isinstance(v, str) and v for v in settings.get(k, {}).values()) for k in maps)
     markers = settings.get("markers", [])
@@ -806,6 +821,8 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
     defaults = deployments.DeploymentRules()
     rules = deployments.DeploymentRules(
         cloud_resources=tuple(sorted(settings.get("cloud_resources", {}).items())),
+        cloud_qualifiers=tuple((t, q["property"], q.get("default", "")) for t, q in sorted(qualifiers.items())),
+        cdk_constructs=tuple((k, c["type"], c.get("environment", ""), tuple(sorted(c.get("properties", {}).items()))) for k, c in sorted(constructs.items())),
         compose_files=tuple(settings.get("compose_files", defaults.compose_files)),
         environment_names=tuple(sorted({**dict(defaults.environment_names), **settings.get("environment_names", {})}.items())),
         build_scripts=tuple(settings.get("build_scripts", defaults.build_scripts)),
@@ -814,6 +831,28 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
         manifest_runtimes=tuple(settings.get("manifest_runtimes", {}).items()),
     )
     return rules, catalog
+
+
+def _cdk_resources(paths: list[str], rules: deployments.DeploymentRules, repo: Any, repo_path: Path) -> dict[str, dict[str, Any]]:
+    """The resources the repository's CDK apps declare (a folder with ``cdk.json``; its TypeScript files outside
+    ``node_modules`` and ``cdk.out``), read statically with the construct table."""
+    if not rules.cdk_constructs:
+        return {}
+    roots = sorted({p.rsplit("/", 1)[0] + "/" if "/" in p else "" for p in paths if p.rsplit("/", 1)[-1].lower() == "cdk.json"})
+    if not roots:
+        return {}
+    skipped = ("/node_modules/", "/cdk.out/")
+    sources = {
+        p: text
+        for p in paths
+        if p.lower().endswith(".ts")
+        and not p.lower().endswith(".d.ts")
+        and any(p.startswith(root) for root in roots)
+        and not any(s in f"/{p}" for s in skipped)
+        and (text := _read_checkout(repo_path, repo.name, p)) is not None
+    }
+    constructs = {key: cdk.CdkConstruct(type=kind, environment=environment or None, properties=props) for key, kind, environment, props in rules.cdk_constructs}
+    return cdk.cdk_resources(sources, constructs, properties=tuple(sorted({prop for _, prop, _ in rules.cloud_qualifiers})))
 
 
 def _slug(text: str) -> str:
@@ -844,7 +883,7 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
     files = {p: text for p in paths if wanted(p) and (text := _read_checkout(repo_path, repo.name, p)) is not None}
     sources = {p: text for p in paths if p.lower().endswith(rules.marker_suffixes) and rules.marker_suffixes and (text := _read_checkout(repo_path, repo.name, p)) is not None}
     units = _units_with_members(q)
-    layer = deployments.technology_layer(repo.name, files, units, rules, catalog, sources)
+    layer = deployments.technology_layer(repo.name, files, units, rules, catalog, sources, cdk=_cdk_resources(paths, rules, repo, repo_path))
 
     nodes = edges = 0
     env = layer.environment
@@ -1136,6 +1175,7 @@ def _extract_business_layer(cfg: config.ExtractionConfig, repo: Any, repo_path: 
                 name_candidates=life.name_candidates,
                 flow=life.flow or "",
                 transitions=[f"{a}>{b}" for a, b in life.transitions],
+                state_sites=[f"{state}>{path}" for state in life.states for path in life.sites.get(state, [])],
             ),
             node_id=node,
         )
@@ -1833,11 +1873,18 @@ def _extract_directory_classification(
         except RuntimeError as e:
             errors.append(f"Error creating edge {relationship}: {e}")
 
+    # Per name entry (one decision for all its directories) the nodes it became, None for none: decision stability
+    targets: dict[str, set[str]] = {}
+    for edge_data in all_edges:
+        targets.setdefault(str(edge_data.get("source")), set()).add(str(edge_data.get("target")))
+    decisions = {name_key(str(group["name"])): sorted({t for i in group["ids"] for t in targets.get(str(i), ())}) or None for group in directories}
+
     return {
         "nodes_created": nodes_created,
         "edges_created": edges_created,
         "edge_ids": edge_ids,
         "errors": errors,
+        "stats": {"decisions": decisions},
     }
 
 

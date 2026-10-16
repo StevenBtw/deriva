@@ -82,7 +82,11 @@ export type LinkedView = { lanes: Lane[]; nodes: WidgetNode[]; edges: WidgetEdge
 
 export type ModelElement = { id: string; name: string; type: string; layer: string; documentation: string; source?: string | null };
 export type ModelRelationship = { id: string; source: string; target: string; type: string; name: string };
-export type Model = { elements: ModelElement[]; relationships: ModelRelationship[] };
+/** The export levels: the derived model (architect) and, with it, the members of its elements (detail). */
+export type ModelLevel = "architect" | "detail";
+/** A generated view: its ArchiMate viewpoint, its level and the elements it shows. */
+export type ModelView = { name: string; viewpoint: string; level: ModelLevel; elements: string[] };
+export type Model = { elements: ModelElement[]; relationships: ModelRelationship[]; views?: ModelView[] };
 
 export type RunKind = "all" | "extraction" | "derivation";
 export type RunSummary = { run_id: string; kind: RunKind | "benchmark"; repository: string | null; status: string; events: number; started_at: number; finished_at: number | null };

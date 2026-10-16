@@ -118,3 +118,32 @@ def test_the_reference_command_prints_a_table_and_writes_the_summary_and_a_page_
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert summary["repositories"]["shop"]["runs"][0]["elements"]["ApplicationComponent"]["covered"] == 1
     assert "Missing" in (out / "shop.md").read_text(encoding="utf-8")
+
+
+def test_naming_compares_the_chosen_and_the_structural_name_with_the_reference_by_lineage():
+    """C36: per named type, how often the LLM-chosen name and the structural name match the reference element the
+    element's lineage maps to (normalized, and with aliases); elements without lineage or structure name are left out."""
+    reference = {
+        "repository": "shop",
+        "elements": [
+            {"key": "core", "type": "ApplicationComponent", "name": "Customer Core", "lineage": ["unit::shop::core"]},
+            {"key": "web", "type": "ApplicationComponent", "name": "Web Shop", "aliases": ["Shop Frontend"], "lineage": ["unit::shop::web"]},
+            {"key": "orders", "type": "ApplicationComponent", "name": "Order Service", "lineage": ["unit::shop::orders"]},
+        ],
+    }
+    model = _model(
+        [
+            ("ac_core", "ApplicationComponent", "Customer Core", "unit::shop::core"),
+            ("ac_web", "ApplicationComponent", "Shop Frontend", "unit::shop::web"),
+            ("ac_orders", "ApplicationComponent", "Orders", "unit::shop::orders"),
+            ("ac_none", "ApplicationComponent", "Admin", "unit::shop::admin"),  # no reference element by lineage
+        ]
+    )
+    structure = {"ac_core": "Core", "ac_web": "Web Shop", "ac_orders": "Order Service"}
+    for e in model["elements"]:
+        if e["identifier"] in structure:
+            e["structure_name"] = structure[e["identifier"]]
+
+    naming = evaluate(parse_reference(reference), model)["naming"]["ApplicationComponent"]
+
+    assert naming == {"compared": 3, "chosen": 1, "chosen_alias": 2, "structural": 2, "structural_alias": 2}

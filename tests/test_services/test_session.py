@@ -726,6 +726,24 @@ class TestPipelineSessionExport:
         assert result["success"] is True
         assert result["elements_exported"] == 1
 
+    def test_model_levels_hold_both_levels_and_the_views(self, connected_session):
+        """The studio's model: the enabled elements (architect), their members (detail) and the views per level."""
+        from deriva.adapters.archimate.models import Element
+
+        connected_session._mock_archimate.get_elements.return_value = [
+            Element(name="Order Data", element_type="DataObject", identifier="do_order", properties={"source": "domain::r::order"}),
+        ]
+        connected_session._mock_archimate.get_relationships.return_value = []
+        connected_session._graph_manager.query.side_effect = lambda q, p=None: [{"d": "domain::r::order", "e": "entity::r::line", "n": "Order Line"}] if "DataEntity" in q else []
+
+        levels = connected_session.get_model_levels()
+
+        assert [(e["name"], e["level"], e["layer"]) for e in levels["elements"]] == [("Order Data", "architect", "Application"), ("Order Line", "detail", "Application")]
+        assert len(levels["relationships"]) == 1
+        views = {v["name"]: v for v in levels["views"]}
+        assert views["Information Structure"] == {"name": "Information Structure", "viewpoint": "Information Structure", "level": "architect", "elements": ["do_order"]}
+        assert views["Information Structure (detail)"]["level"] == "detail" and len(views["Information Structure (detail)"]["elements"]) == 2
+
     def test_export_model_no_elements(self, connected_session, tmp_path):
         """Should return error when no elements found."""
         connected_session._mock_archimate.get_elements.return_value = []
@@ -1789,19 +1807,15 @@ class TestPipelineSessionExportEdgeCases:
         ):
             session = PipelineSession(auto_connect=True)
 
-            # Two enabled elements
-            elem1 = MagicMock()
-            elem1.identifier = "elem1"
-            elem2 = MagicMock()
-            elem2.identifier = "elem2"
+            from deriva.adapters.archimate.models import Element, Relationship
 
-            # Three relationships - one points to disabled element
-            rel1 = MagicMock()
-            rel1.source = "elem1"
-            rel1.target = "elem2"  # Both enabled
-            rel2 = MagicMock()
-            rel2.source = "elem1"
-            rel2.target = "elem3"  # elem3 is disabled
+            # Two enabled elements
+            elem1 = Element(name="One", element_type="ApplicationComponent", identifier="elem1")
+            elem2 = Element(name="Two", element_type="ApplicationComponent", identifier="elem2")
+
+            # Two relationships - one points to a disabled element
+            rel1 = Relationship(source="elem1", target="elem2", relationship_type="Serving", identifier="rel1")  # Both enabled
+            rel2 = Relationship(source="elem1", target="elem3", relationship_type="Serving", identifier="rel2")  # elem3 is disabled
 
             mock_archimate.return_value.get_elements.return_value = [elem1, elem2]
             mock_archimate.return_value.get_relationships.return_value = [rel1, rel2]

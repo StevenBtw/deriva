@@ -2338,19 +2338,22 @@ class TestRunModelSnapshot:
         )
         orchestrator.session_id = "s"
 
+        solve = {"status": "optimal", "seconds": 0.01, "proposals": 1, "rows": {}, "cycle_cuts": 0, "kept": 1, "dropped": 0, "merges": 0, "redirects": 0}
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
-            xml_path = orchestrator._export_run_model("r", "m", 2)
+            xml_path = orchestrator._export_run_model("r", "m", 2, solve_report=solve)
 
         from pathlib import Path
 
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
+        assert snapshot["solve"] == solve  # the MILP's report for this run (a safety net: what it decided)
         assert snapshot["elements"] == [
-            {"identifier": "ac_orders", "type": "ApplicationComponent", "name": "Orders", "source": "dir::r::orders"},
-            {"identifier": "bo_order", "type": "BusinessObject", "name": "Order", "source": "concept::r::order"},
+            {"identifier": "ac_orders", "type": "ApplicationComponent", "name": "Orders", "source": "dir::r::orders", "level": "architect", "structure_name": "Orders"},
+            {"identifier": "bo_order", "type": "BusinessObject", "name": "Order", "source": "concept::r::order", "level": "architect", "structure_name": "Order"},
         ]
         assert snapshot["relationships"] == [
             {"source": "ac_orders", "target": "bo_order", "type": "Access", "derived_from": "llm", "confidence": 0.8},
         ]
+        assert snapshot["detail"] == {"elements": [], "relationships": [], "properties": {}}  # no lineage in the graph
 
 
 class TestSessionMetadataSamples:
@@ -2483,6 +2486,8 @@ class TestRunSnapshotGraphNodes:
         graph_manager = MagicMock()
 
         def query(q, *args, **kwargs):
+            if "RETURN n.id AS id" in q and "labels(n)" in q:  # every active node
+                return [{"id": "tech::r::beta"}, {"id": "concept::r::alpha"}, {"id": None}]
             if "type(r)" in q:  # incoming edges, for the routes
                 if "BusinessConcept" in q:
                     return [{"id": "concept::r::alpha", "rel": "Graph:REPRESENTS", "props": None}]
@@ -2513,6 +2518,8 @@ class TestRunSnapshotGraphNodes:
             # The routes that produced each node (directory, document, structural, llm), for per-route stability
             "concept_routes": {"concept::r::alpha": ["directory"]},
             "technology_routes": {"tech::r::beta": ["llm"]},
+            # Every active node, for the variance split (an element whose source node is missing from a run)
+            "node_ids": ["concept::r::alpha", "tech::r::beta"],
         }
 
 

@@ -203,14 +203,14 @@ class TestRelationshipConfigThreading:
         return derive
 
     def test_batch_mode_passes_relationship_config(self):
-        config = RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+        config = RelationshipLLMConfig(instruction="rules", persona="P")
 
         derive = self._generate(ConcreteDerivation(), config)
 
         assert derive.call_args.kwargs["llm_config"] is config
 
     def test_per_candidate_mode_passes_relationship_config(self):
-        config = RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+        config = RelationshipLLMConfig(instruction="rules", persona="P")
 
         derive = self._generate(ConcreteDerivation(), config, PerCandidateConfig(min_pool=1, rules="R", persona="P"))
 

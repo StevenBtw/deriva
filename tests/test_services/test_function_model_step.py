@@ -89,3 +89,70 @@ def test_only_services_that_touch_a_business_domain_are_classified_and_their_fun
     stored = {e.name: e for e in store.added}
     assert set(stored) == {"Run the Trading Floor", "Take bids"}
     assert stored["Take bids"].properties["services"] == ["as_engine"] and stored["Take bids"].properties["processes"] == ["lifecycle::r::bid"]
+
+
+class _RichGraph:
+    """The queries of the richer evidence: units with documentation lines, types, methods with decorators."""
+
+    def query(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        if "DataDomain" in cypher:
+            return [{"id": "domain::r::bid", "bo": "Bid"}]
+        if "DeployableUnit" in cypher:
+            return [
+                {"id": "unit::r::engine", "name": "trading-engine", "path": "r/engine"},
+                {"id": "unit::r::auth", "name": "auth", "path": "r/auth"},
+                {"id": "unit::r::board", "name": "board", "path": "r/board"},
+            ]
+        if "Lifecycle" in cypher:
+            return [{"id": "lifecycle::r::bid", "name": "Bid Lifecycle"}]
+        if "CONTAINS" in cypher:
+            return [
+                {"t": "t::BidResource", "name": "placeBid", "decorators": ['PostMapping(value = "/bids")'], "line": 3},
+                {"t": "t::LoginResource", "name": "login", "decorators": ['PostMapping(value = "/login")'], "line": 3},
+                {"t": "t::BoardResource", "name": "summary", "decorators": ['GetMapping(value = "/summary")'], "line": 3},
+            ]
+        if "TypeDefinition" in cypher:
+            return [{"id": t, "decorators": []} for t in ("t::BidResource", "t::LoginResource", "t::BoardResource")]
+        if "n.id IN" in cypher:  # element_source_paths
+            return [{"id": t, "file_path": f"r/{t[3:]}.java"} for t in ("t::BidResource", "t::LoginResource", "t::BoardResource")]
+        return []
+
+
+def test_the_richer_evidence_classifies_services_with_data_or_endpoints_but_not_technical_ones(monkeypatch):
+    monkeypatch.setattr(derivation, "_documentation_files", lambda gm: {"r/engine/README.md": "# Engine\n\nThe **trading engine** matches bids.\n"})
+
+    def service(key: str, unit: str, member: str, objects: list[str], states: list[str] | None = None) -> dict[str, Any]:
+        props = {"sources": [unit], "objects": objects, "members": [{"name": member, "source": f"t::{member}"}], "interfaces": [f"ai_{key}"], "states": states or []}
+        return {"identifier": key, "name": key, "element_type": "ApplicationService", "properties": props}
+
+    elements = [
+        {"identifier": "do_bid", "name": "Bid Data", "element_type": "DataObject", "properties": {"source": "domain::r::bid"}},
+        {"identifier": "ai_as_engine", "name": "x", "element_type": "ApplicationInterface", "properties": {"role": "rest"}},
+        service("as_engine", "unit::r::engine", "BidResource", ["do_bid"], ["lifecycle::r::bid::PLACED"]),
+        service("as_auth", "unit::r::auth", "LoginResource", []),
+        service("as_board", "unit::r::board", "BoardResource", []),
+    ]
+    prompts: list[str] = []
+
+    def query(prompt: str, schema: dict[str, Any], **kwargs: Any) -> Any:
+        prompts.append(prompt)
+        keys = list(schema["schema"]["properties"]["choices"]["properties"])
+        return SimpleNamespace(content=json.dumps({"choices": dict.fromkeys(keys, "none")}))
+
+    params = {
+        "function_model": {
+            "name": "fixture",
+            "path": str(FIXTURE),
+            "services": "data_or_endpoints",
+            "evidence": {"operation_patterns": [r"^(?P<verb>Get|Post)Mapping(?:\(value = \"(?P<path>[^\"]*)\"\))?"], "technical_words": ["login"]},
+        }
+    }
+    config = derivation._function_model_config(json.dumps(params))
+    assert config is not None
+
+    result = derivation._function_model_step(config, "Classify.", _RichGraph(), _Store(), query, elements)  # type: ignore[arg-type]
+
+    assert set(result["function_decisions"]) == {"as_engine", "as_board"}  # the login service is technical
+    prompt = prompts[0]
+    for text in ("POST /bids placeBid", "GET /summary summary", "Bid Lifecycle: PLACED", "interfaces: rest", "The trading engine matches bids."):
+        assert text in prompt

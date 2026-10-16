@@ -122,6 +122,13 @@ ELEMENT_TYPES: dict[str, ElementType] = {
         aspect="Behavior",
         description="An explicitly defined exposed technology behavior",
     ),
+    # A detail-level element (the export's detail level): the deployed image or package of a component
+    "Artifact": ElementType(
+        name="Artifact",
+        layer="Technology",
+        aspect="Passive",
+        description="A piece of data that is used or produced in a software development process, or by deployment and operation of an IT system",
+    ),
 }
 
 
@@ -152,6 +159,7 @@ BEHAVIOR_ELEMENTS: set[str] = {
 PASSIVE_ELEMENTS: set[str] = {
     "DataObject",
     "BusinessObject",
+    "Artifact",
 }
 
 # All elements
@@ -178,6 +186,7 @@ TECHNOLOGY_LAYER: set[str] = {
     "Device",
     "SystemSoftware",
     "TechnologyService",
+    "Artifact",
 }
 
 
@@ -196,7 +205,7 @@ def layer_of(element_type: str) -> str:
 # ArchiMate 3.2 Relationship Table
 # =============================================================================
 # Source: ArchiMate 3.2 Specification, Appendix B.5 "Relationship Tables", restricted
-# to the 13 element types Deriva derives. The spec publishes the tables as images;
+# to the 13 element types Deriva derives plus Artifact (the export's detail level). The spec publishes the tables as images;
 # letters were read from them and cross-checked (case-insensitively, all 169 cells)
 # against Archi's relationships.xml v3.2.
 #
@@ -233,24 +242,29 @@ _TABLE_COLUMNS = (
     "Device",
     "SystemSoftware",
     "TechnologyService",
+    "Artifact",
 )
 
+# Artifact (row and column) from Archi's relationships.xml; uppercase where the spec's metamodel figures show the
+# relationship: Node, Device and SystemSoftware are assigned to an artifact, an artifact realizes an application
+# component, a data object or system software; artifacts compose, aggregate and specialize artifacts.
 # Row = source, columns in _TABLE_COLUMNS order = target.
 # fmt: off
 _TABLE_ROWS: dict[str, tuple[str, ...]] = {
-    "BusinessActor":        ("SCGvtfO", "IvtfO", "IvtfO", "IvtfO", "aO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO"),
-    "BusinessProcess":      ("vtfO", "SCGvTFO", "CGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO"),
-    "BusinessFunction":     ("vtfO", "CGvTFO", "SCGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO"),
-    "BusinessEvent":        ("vtfO", "vTFO", "vTFO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO"),
-    "BusinessObject":       ("O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O", "O", "O", "O"),
-    "ApplicationComponent": ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGRvtfO", "CgrvtfO", "irvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO"),
-    "ApplicationInterface": ("VtfO", "vtfO", "vtfO", "vtfO", "aO", "VtfO", "SCGvtfO", "IvtfO", "aO", "VtfO", "VtfO", "VtfO", "vtfO"),
-    "ApplicationService":   ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "SCGvTFO", "AO", "VtfO", "VtfO", "VtfO", "vtfO"),
-    "DataObject":           ("O", "O", "O", "O", "RO", "O", "O", "O", "SCGO", "O", "O", "O", "O"),
-    "Node":                 ("ivtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGivtfO", "CGirvtfO", "CGirvtfO", "irvtfO"),
-    "Device":               ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "SCGvtfO", "CGIrvtfO", "irvtfO"),
-    "SystemSoftware":       ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "vtfO", "SCGIrvtfO", "irvtfO"),
-    "TechnologyService":    ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "RvtfO", "aO", "VtfO", "VtfO", "VtfO", "SCGvTFO"),
+    "BusinessActor":        ("SCGvtfO", "IvtfO", "IvtfO", "IvtfO", "aO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessProcess":      ("vtfO", "SCGvTFO", "CGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessFunction":     ("vtfO", "CGvTFO", "SCGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessEvent":        ("vtfO", "vTFO", "vTFO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessObject":       ("O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O", "O", "O", "O", "O"),
+    "ApplicationComponent": ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGRvtfO", "CgrvtfO", "irvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "ApplicationInterface": ("VtfO", "vtfO", "vtfO", "vtfO", "aO", "VtfO", "SCGvtfO", "IvtfO", "aO", "VtfO", "VtfO", "VtfO", "vtfO", "aO"),
+    "ApplicationService":   ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "SCGvTFO", "AO", "VtfO", "VtfO", "VtfO", "vtfO", "aO"),
+    "DataObject":           ("O", "O", "O", "O", "RO", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O"),
+    "Node":                 ("ivtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGivtfO", "CGirvtfO", "CGirvtfO", "irvtfO", "aIO"),
+    "Device":               ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "SCGvtfO", "CGIrvtfO", "irvtfO", "aIO"),
+    "SystemSoftware":       ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "vtfO", "SCGIrvtfO", "irvtfO", "aIO"),
+    "TechnologyService":    ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "RvtfO", "aO", "VtfO", "VtfO", "VtfO", "SCGvTFO", "aO"),
+    "Artifact":             ("O", "rO", "rO", "rO", "rO", "RO", "rO", "rO", "RO", "O", "O", "RO", "rO", "SCGrO"),
 }
 # fmt: on
 

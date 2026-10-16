@@ -37,6 +37,7 @@ class RefineResult:
     issues_fixed: int = 0
     details: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    report: dict[str, Any] | None = None  # A step's own summary (joint_consistency: its solve report)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for reporting."""
@@ -51,6 +52,7 @@ class RefineResult:
             "issues_fixed": self.issues_fixed,
             "details": self.details,
             "errors": self.errors,
+            "report": self.report,
         }
 
 

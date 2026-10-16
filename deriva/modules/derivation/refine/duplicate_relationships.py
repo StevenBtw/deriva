@@ -1,11 +1,10 @@
 """
 Duplicate Relationships Detection - Refine Step.
 
-Finds and removes duplicate relationships in the ArchiMate model:
-- Exact duplicates: Same source, target, and type
-- Redundant relationships: Same source and target with semantically equivalent types
-
-Only hard-deletes relationships (unlike elements which are soft-deleted).
+Flags duplicate relationships in the ArchiMate model (it changes nothing; joint_consistency, the MILP, decides):
+- Self-referential relationships (the MILP drops them)
+- Exact duplicates: same source, target and type (the MILP keeps one relationship per pair)
+- Redundant relationships: same source and target with different types
 
 Refine Step Name: "duplicate_relationships"
 """
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 @register_refine_step("duplicate_relationships")
 class DuplicateRelationshipsStep:
-    """Find and remove duplicate ArchiMate relationships."""
+    """Flag duplicate ArchiMate relationships (flagger before the MILP)."""
 
     def run(
         self,
@@ -58,8 +57,8 @@ class DuplicateRelationshipsStep:
         try:
             ns = archimate_manager.namespace
 
-            # First, remove self-referential relationships (source == target)
-            self._remove_self_loops(archimate_manager, result)
+            # First, self-referential relationships (source == target)
+            self._flag_self_loops(archimate_manager, result)
 
             # Find exact duplicates: same source, target, type
             # Note: Nodes have separate labels (e.g., Model + ApplicationComponent)
@@ -82,15 +81,13 @@ class DuplicateRelationshipsStep:
             if duplicates:
                 logger.info(f"Found {len(duplicates)} exact duplicate relationships")
 
-                # Collect IDs to delete (keep r1, delete r2)
-                to_delete = []
                 for dup in duplicates:
-                    to_delete.append(dup["r2_id"])
+                    result.issues_found += 1
                     result.details.append(
                         {
-                            "action": "deleted",
-                            "kept": dup["r1_id"],
-                            "deleted": dup["r2_id"],
+                            "action": "flagged",
+                            "first": dup["r1_id"],
+                            "second": dup["r2_id"],
                             "source": dup["source"],
                             "target": dup["target"],
                             "rel_type": dup["rel_type"].split(":")[-1],
@@ -98,17 +95,11 @@ class DuplicateRelationshipsStep:
                         }
                     )
 
-                # Delete duplicates
-                if to_delete:
-                    deleted_count = archimate_manager.delete_relationships(to_delete)
-                    result.relationships_deleted += deleted_count
-                    result.issues_fixed += deleted_count
-
             # Check for redundant relationships (same source/target, different types)
             if check_redundant:
                 self._check_redundant_relationships(archimate_manager, result)
 
-            logger.info(f"Duplicate relationship detection complete: {result.relationships_deleted} deleted")
+            logger.info(f"Duplicate relationship detection complete: {result.issues_found} flagged")
 
         except Exception as e:
             logger.exception(f"Error in duplicate relationship detection: {e}")
@@ -187,16 +178,12 @@ class DuplicateRelationshipsStep:
                             }
                         )
 
-    def _remove_self_loops(
+    def _flag_self_loops(
         self,
         archimate_manager: ArchimateManager,
         result: RefineResult,
     ) -> None:
-        """Remove self-referential relationships (where source == target).
-
-        Self-loops are invalid in ArchiMate models and should never exist.
-        This cleanup catches any that may have been created incorrectly.
-        """
+        """Flag self-referential relationships (where source == target); the MILP drops them."""
         ns = archimate_manager.namespace
 
         self_loop_query = f"""
@@ -214,24 +201,17 @@ class DuplicateRelationshipsStep:
         if not self_loops:
             return
 
-        logger.info(f"Found {len(self_loops)} self-referential relationships to remove")
+        logger.info(f"Found {len(self_loops)} self-referential relationships")
 
-        to_delete = []
         for loop in self_loops:
-            to_delete.append(loop["rel_id"])
+            result.issues_found += 1
             result.details.append(
                 {
-                    "action": "deleted",
-                    "deleted": loop["rel_id"],
+                    "action": "flagged",
+                    "relationship": loop["rel_id"],
                     "element": loop["element_id"],
                     "element_name": loop["element_name"],
                     "rel_type": loop["rel_type"].split(":")[-1],
                     "reason": "self_referential",
                 }
             )
-
-        if to_delete:
-            deleted_count = archimate_manager.delete_relationships(to_delete)
-            result.relationships_deleted += deleted_count
-            result.issues_fixed += deleted_count
-            logger.info(f"Deleted {deleted_count} self-referential relationships")

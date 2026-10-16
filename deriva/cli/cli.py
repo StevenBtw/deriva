@@ -299,6 +299,9 @@ def export(
         if result["success"]:
             typer.echo(f"  Elements exported: {result['elements_exported']}")
             typer.echo(f"  Relationships exported: {result['relationships_exported']}")
+            if result.get("detail_elements") is not None:
+                typer.echo(f"  Detail level: {result['detail_elements']} elements, {result['detail_relationships']} relationships")
+                typer.echo(f"  Views: {result['views_exported']}")
             typer.echo(f"\nExported to: {result['output_path']}")
             typer.echo("Model can be opened with Archi or other ArchiMate-compatible tools.")
         else:

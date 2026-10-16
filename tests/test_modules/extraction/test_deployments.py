@@ -227,3 +227,88 @@ def test_compose_services_carry_their_published_and_container_ports():
     env = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary
 
     assert {s.name: s.ports for s in env.services} == {"shop": [80, 8080, 9000], "db": [5432]}
+
+
+QUALIFIED = DeploymentRules(
+    cloud_resources=(("AWS::ECS::Service", "container"), ("AWS::RDS::DBInstance", "managed"), ("AWS::ElasticLoadBalancingV2::LoadBalancer", "managed")),
+    cloud_qualifiers=(("AWS::ElasticLoadBalancingV2::LoadBalancer", "Type", "application"), ("AWS::RDS::DBInstance", "Engine", "")),
+)
+CDK = {
+    "r/infra/lib/services.ts": {
+        "shopService": {"Type": "AWS::ECS::Service", "Properties": {}, "Names": ["shopService", "shop"], "Environment": "AWS ECS Fargate"},
+        "otherService": {"Type": "AWS::ECS::Service", "Properties": {}, "Names": ["otherService", "other"], "Environment": "AWS ECS Fargate"},
+        "Db": {"Type": "AWS::RDS::DBInstance", "Properties": {"Engine": "postgres"}, "Names": ["Db"]},
+    }
+}
+
+
+def test_cdk_containers_are_matched_to_units_by_name_and_the_cloud_comes_before_compose():
+    result = detect_deployments("r", {"r/docker-compose.yml": COMPOSE}, UNITS, QUALIFIED, cdk=CDK)
+
+    env = result.primary
+    assert (env.kind, env.name, env.file) == ("cloud", "AWS ECS Fargate", "r/infra/lib")  # the name the construct table gives
+    assert [(s.name, s.unit) for s in env.services] == [("otherService", None), ("shopService", "unit::r::shop")]  # no unit named other
+    assert env.managed == ["AWS::RDS::DBInstance::postgres"]  # the engine qualifies the managed service
+    assert [e.kind for e in result.others] == ["compose"]
+
+
+def test_cloudformation_resources_are_qualified_by_their_property_or_its_default():
+    template = (
+        "Resources:\n  App:\n    Type: AWS::ECS::Service\n  Lb:\n    Type: AWS::ElasticLoadBalancingV2::LoadBalancer\n"
+        "  Db:\n    Type: AWS::RDS::DBInstance\n    Properties:\n      Engine: !Ref EngineParameter\n"
+    )
+
+    env = detect_deployments("r", {"r/shop/infra/cloudformation.yaml": template}, UNITS, QUALIFIED).primary
+
+    # A load balancer without a Type is an application one; an engine that is no literal (a !Ref) qualifies nothing
+    assert env.managed == ["AWS::ElasticLoadBalancingV2::LoadBalancer::application", "AWS::RDS::DBInstance::engineparameter"]
+
+
+def test_a_qualified_managed_service_takes_its_qualified_name_else_the_plain_one():
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    catalog = catalog_from_params(
+        [
+            {"name": "Amazon RDS", "kind": "managed service", "aliases": ["aws::rds::dbinstance"]},
+            {"name": "Amazon RDS for PostgreSQL", "kind": "managed service", "aliases": ["aws::rds::dbinstance::postgres"]},
+        ]
+    )
+    other = {"r/infra/lib/db.ts": {"Db": {"Type": "AWS::RDS::DBInstance", "Properties": {"Engine": "oracle"}, "Names": ["Db"]}}}
+
+    qualified = technology_layer("r", {}, UNITS, QUALIFIED, catalog, {}, cdk={**CDK})
+    plain = technology_layer("r", {}, UNITS, QUALIFIED, catalog, {}, cdk={"r/infra/lib/services.ts": CDK["r/infra/lib/services.ts"], **other})
+
+    assert [s.name for s in qualified.software] == ["Amazon RDS for PostgreSQL"]
+    assert [s.name for s in plain.software] == ["Amazon RDS", "Amazon RDS for PostgreSQL"]
+
+
+def test_a_driver_detected_engine_is_the_managed_service_of_that_engine_in_the_same_environment():
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    catalog = catalog_from_params(
+        [
+            {"name": "PostgreSQL", "kind": "database", "aliases": ["postgres", "psycopg2"]},
+            {"name": "Amazon RDS for PostgreSQL", "kind": "managed service", "aliases": ["aws::rds::dbinstance::postgres"]},
+        ]
+    )
+    files = {"r/shop/requirements.txt": "psycopg2==2.9\n"}
+
+    layer = technology_layer("r", files, UNITS, QUALIFIED, catalog, {}, cdk=CDK)
+
+    [rds] = layer.software
+    assert rds.name == "Amazon RDS for PostgreSQL"
+    assert rds.serves == ["unit::r::shop"]  # the driver's use moves to the managed service
+    assert sorted(rds.evidence) == ["cloud template", "dependency of unit::r::shop"]
+
+
+def test_an_engine_that_runs_in_the_environment_itself_stays_separate():
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    catalog = catalog_from_params([{"name": "PostgreSQL", "kind": "database", "aliases": ["postgres"]}])
+
+    layer = technology_layer("r", {"r/docker-compose.yml": COMPOSE}, UNITS, QUALIFIED, catalog, {})
+
+    assert [s.name for s in layer.software] == ["PostgreSQL"]  # no managed service of the engine: nothing to merge into

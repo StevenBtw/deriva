@@ -238,7 +238,7 @@ class TestLlmProposals:
             relationship_rules=rules,
             llm_query_fn=lambda prompt, schema, **kw: SimpleNamespace(content=json.dumps({"relationships": proposals})),
             graph_manager=Connected(paths),
-            llm_config=RelationshipLLMConfig(instruction="rules", min_confidence=0.5, persona="P"),
+            llm_config=RelationshipLLMConfig(instruction="rules", persona="P"),
             containment=RULES,
         )
 

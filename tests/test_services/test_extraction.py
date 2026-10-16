@@ -1635,6 +1635,28 @@ class TestExtractDirectoryClassification:
         (batch,) = [c.kwargs["directories"] for c in classify.call_args_list]
         assert [(g["name"], g["paths"]) for g in batch] == [("records", ["r/a/records", "r/c/records"]), ("b", ["r/b"])]
 
+    def test_each_directory_name_reports_its_decision(self):
+        """Per name entry the nodes it became (None: no concept or technology), for decision stability (real graph)."""
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode
+        from deriva.services.extraction import _extract_directory_classification
+
+        close_database()
+        with GraphManager() as gm:
+            for name in ("billing", "misc"):
+                gm.add_node(DirectoryNode(name=name, path=f"r/{name}", repository_name="r"), node_id=f"dir::r::{name}")
+            answer = {
+                "nodes": [{"id": "concept::r::billing", "labels": ["Graph:BusinessConcept"], "properties": {"conceptName": "Billing"}}],
+                "edges": [{"source": "dir::r::billing", "target": "concept::r::billing", "relationship_type": "REPRESENTS"}],
+            }
+            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
+            with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": answer}):
+                result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
+        close_database()
+
+        assert result["stats"]["decisions"] == {"billing": ["concept::r::billing"], "misc": None}
+
     def test_queries_directories_from_graph(self):
         """Should query directories from graph."""
         from deriva.services.extraction import _extract_directory_classification
@@ -2761,6 +2783,41 @@ class TestDeploymentStep:
         assert [(r["s"], r["u"]) for r in serves] == [("Java runtime", "unit::r::shop"), ("PostgreSQL", "unit::r::shop")]
         assert result["software"] == {"listed": 2, "fallback": 0, "unconnected": 0}
 
+    def test_a_cdk_app_is_read_statically_and_is_the_primary_environment(self, graph, tmp_path):
+        params = {
+            **self.PARAMS,
+            "technologies": [*self.PARAMS["technologies"], {"name": "Amazon RDS for PostgreSQL", "kind": "managed service", "aliases": ["aws::rds::dbinstance::postgres"]}],
+            "cloud_resources": {"AWS::ECS::Service": "container", "AWS::RDS::DBInstance": "managed"},
+            "cloud_qualifiers": {"AWS::RDS::DBInstance": {"property": "Engine"}},
+            "cdk_constructs": {
+                "aws-ecs.FargateService": {"type": "AWS::ECS::Service", "environment": "AWS ECS Fargate"},
+                "aws-rds.DatabaseInstance": {"type": "AWS::RDS::DBInstance"},
+            },
+        }
+        app = (
+            "import * as ecs from 'aws-cdk-lib/aws-ecs';\nimport * as rds from 'aws-cdk-lib/aws-rds';\n"
+            "const NAMES = ['shop', 'billing'];\n"
+            "export class S { constructor(s: any) {\n"
+            "  for (const n of NAMES) { new ecs.FargateService(s, `${n}Service`, { serviceName: n }); }\n"
+            "  new rds.DatabaseInstance(s, 'Db', { engine: rds.DatabaseInstanceEngine.postgres({}) });\n} }\n"
+        )
+        compose = "services:\n  shop:\n    build: ./shop\n"
+        self._repo(
+            graph,
+            tmp_path,
+            {"docker-compose.yml": compose, "infra/cdk.json": '{"app": "npx ts-node bin/app.ts"}', "infra/lib/stack.ts": app, "shop/x.ts": "new ecs.FargateService(a, 'Nope');"},
+        )
+
+        result = _run_extraction_step(self._cfg(params), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == []
+        (env,) = graph.query("MATCH (e:Graph:Environment) RETURN e.name AS name, e.kind AS kind")
+        assert (env["name"], env["kind"]) == ("AWS ECS Fargate", "cloud")
+        deploys = graph.query("MATCH (:Graph:Environment)-[:`Graph:RUNS`]->(d:Graph:Deployment)-[:`Graph:DEPLOYS`]->(u) RETURN d.name AS d, u.id AS u ORDER BY d")
+        assert [(r["d"], r["u"]) for r in deploys] == [("billingService", "unit::r::billing"), ("shopService", "unit::r::shop")]
+        hosted = graph.query("MATCH (e:Graph:Environment)-[:`Graph:HOSTS`]->(s:Graph:Software) RETURN s.name AS s ORDER BY s")
+        assert [r["s"] for r in hosted] == ["Amazon RDS for PostgreSQL"]
+
     def test_a_run_with_another_environment_sweeps_the_old_one(self, graph, tmp_path):
         self._repo(graph, tmp_path, {"docker-compose.yml": "services:\n  shop:\n    build: ./shop\n", "shop/a.cbl": "EXEC CICS RETURN"})
         _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
@@ -2965,7 +3022,8 @@ class TestBusinessLayerStep:
         result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
 
         assert result["errors"] == [] and result["lifecycles"] == 1 and result["roles"] == 2
-        (life,) = graph.query("MATCH (l:Graph:Lifecycle) RETURN l.id AS id, l.name AS name, l.states AS states, l.events AS events")
+        (life,) = graph.query("MATCH (l:Graph:Lifecycle) RETURN l.id AS id, l.name AS name, l.states AS states, l.events AS events, l.stateSites AS sites")
+        assert "SUBMITTED>r/loan/routes.py" in list(life["sites"]) and "APPROVED>r/uw/routes.py" in list(life["sites"])
         assert (life["name"], list(life["states"]), list(life["events"])) == ("Loan Application Lifecycle", ["DRAFT", "SUBMITTED", "APPROVED"], ["SUBMITTED", "APPROVED"])
         chain = graph.query("MATCH (a)-[:`Graph:TRIGGERS`]->(b:Graph:LifecycleEvent) RETURN a.id AS a, b.name AS b ORDER BY b")
         assert [r["b"] for r in chain] == ["Loan Application Approved", "Loan Application Submitted"]

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import random
+import uuid
 
 from deriva.adapters.archimate.models import ArchiMateMetamodel
 from deriva.modules.derivation.refine.joint import (
+    DEFAULT_ORIGIN_TIERS,
     JointElement,
     MergeCandidate,
     Metamodel,
@@ -31,24 +33,31 @@ def el(identifier: str, element_type: str = AC, pagerank: float = 0.0, doc_lengt
     return JointElement(identifier, element_type, pagerank, doc_length)
 
 
-def rel(identifier: str, source: str, target: str, rel_type: str = "Serving", tier: int = 3, confidence: float = 0.5) -> Proposal:
-    return Proposal(identifier, source, target, rel_type, tier, confidence)
+def rel(identifier: str, source: str, target: str, rel_type: str = "Serving", tier: int = 3) -> Proposal:
+    return Proposal(identifier, source, target, rel_type, tier)
 
 
 class TestOriginTier:
-    def test_graph_edges_and_containment_are_tier_1(self):
+    def test_direct_structure_is_tier_1(self):
         assert origin_tier("Graph:CALLS") == 1
         assert origin_tier("calls_edge") == 1
-        assert origin_tier("containment") == 1
+        for origin in ("containment", "graph_link", "listed_members", "membership", "configuration", "dependency", "same_name"):
+            assert origin_tier(origin) == 1, origin
 
-    def test_structural_rules_are_tier_2(self):
-        for origin in ("graph_neighbor", "community", "rule"):
-            assert origin_tier(origin) == 2
+    def test_indirect_structure_is_tier_2(self):
+        for origin in ("named_in_code", "graph_neighbor", "community"):
+            assert origin_tier(origin) == 2, origin
 
-    def test_llm_and_unknown_are_tier_3(self):
+    def test_word_overlap_llm_and_unknown_are_tier_3(self):
+        assert origin_tier("rule") == 3
         assert origin_tier("llm") == 3
         assert origin_tier(None) == 3
         assert origin_tier("something_else") == 3
+
+    def test_the_tier_table_is_config(self):
+        assert origin_tier("rule", {**DEFAULT_ORIGIN_TIERS, "rule": 2}) == 2
+        assert origin_tier("graph_link", {}) == 3  # a table without it
+        assert origin_tier("Graph:CALLS", {}) == 1  # graph edges are direct structure whatever the table
 
 
 class TestPrefilter:
@@ -109,19 +118,37 @@ class TestRelationshipConstraints:
         decision = run(
             [el("a"), el("b")],
             [rel("ab", "a", "b", tier=3), rel("ba", "b", "a", tier=3)],
-            [MergeCandidate("a", "b", tier=1, score=1.0, evidence="normalized_name")],
+            [MergeCandidate("a", "b", tier=1, score=1.0, evidence="same_source_node")],
         )
         assert decision.merges == {"b": "a"}
         assert decision.kept == []
         assert decision.dropped["ab"].startswith("H4") and decision.dropped["ba"].startswith("H4")
 
+    def test_an_equal_tier_conflict_is_decided_by_the_canonical_order_not_the_identifier(self):
+        # Two tier-1 relationships on one pair (H1): (tier, source, type, target) decides, Flow before Serving
+        for first, second in (("x", "y"), ("y", "x")):
+            decision = run([el("a"), el("b")], [rel(first, "a", "b", "Serving", tier=1), rel(second, "a", "b", "Flow", tier=1)], [])
+            assert decision.kept == [second]
+
+    def test_two_runs_with_different_uuids_choose_the_same_relationships(self):
+        shape = [("a", "b", "Composition", 1), ("c", "b", "Composition", 1), ("a", "b", "Serving", 1), ("d", "c", "Flow", 2), ("c", "d", "Flow", 3)]
+
+        def selection(seed):
+            rng = random.Random(seed)
+            props = [rel(str(uuid.UUID(int=rng.getrandbits(128))), s, t, kind, tier) for s, t, kind, tier in shape]
+            decision = run([el(x) for x in "abcd"], props, [])
+            by_id = {p.identifier: (p.source, p.relationship_type, p.target) for p in props}
+            return sorted(by_id[i] for i in decision.kept)
+
+        assert selection(1) == selection(2) == selection(3)
+
     def test_deterministic_under_input_order(self):
         elements = [el(x) for x in "abcd"]
         proposals = [
-            rel("r1", "a", "b", "Composition", 2, 0.9),
-            rel("r2", "c", "b", "Composition", 2, 0.9),
-            rel("r3", "a", "b", "Serving", 3, 0.7),
-            rel("r4", "d", "c", "Flow", 3, 0.6),
+            rel("r1", "a", "b", "Composition", 2),
+            rel("r2", "c", "b", "Composition", 2),
+            rel("r3", "a", "b", "Serving", 3),
+            rel("r4", "d", "c", "Flow", 3),
         ]
         merges = [MergeCandidate("c", "d", 3, 0.9)]
         baseline = run(elements, proposals, merges)
@@ -196,12 +223,13 @@ class TestCyclesAndFailures:
         decision = run(
             [el("a"), el("b"), el("c")],
             [
-                rel("ab", "a", "b", "Composition", tier=2, confidence=0.9),
-                rel("bc", "b", "c", "Composition", tier=2, confidence=0.8),
-                rel("ca", "c", "a", "Composition", tier=2, confidence=0.7),
+                rel("ab", "a", "b", "Composition", tier=2),
+                rel("bc", "b", "c", "Composition", tier=2),
+                rel("ca", "c", "a", "Composition", tier=2),
             ],
             [],
         )
+        # The canonical order keeps a->b and b->c (sources a, b come before c)
         assert sorted(decision.kept) == ["ab", "bc"]
         assert decision.dropped["ca"] == "H3:ab,bc"
 
@@ -213,9 +241,9 @@ class TestCyclesAndFailures:
             a, b, c = f"a{i}", f"b{i}", f"c{i}"
             elements += [el(a), el(b), el(c)]
             proposals += [
-                rel(f"{a}{b}", a, b, "Composition", tier=2, confidence=0.9),
-                rel(f"{b}{c}", b, c, "Composition", tier=2, confidence=0.8),
-                rel(f"{c}{a}", c, a, "Composition", tier=2, confidence=0.7),
+                rel(f"{a}{b}", a, b, "Composition", tier=2),
+                rel(f"{b}{c}", b, c, "Composition", tier=2),
+                rel(f"{c}{a}", c, a, "Composition", tier=2),
             ]
 
         decision = run(elements, proposals, [])
@@ -264,7 +292,7 @@ class TestDecomposition:
             elements += [el(i, pagerank=rng.random()) for i in ids]
             for k in range(4):
                 s, t = rng.sample(ids, 2)
-                proposals.append(rel(f"c{c}r{k}", s, t, rng.choice(["Composition", "Serving", "Flow"]), tier=rng.randint(1, 3), confidence=rng.random()))
+                proposals.append(rel(f"c{c}r{k}", s, t, rng.choice(["Composition", "Serving", "Flow"]), tier=rng.randint(1, 3)))
             if rng.random() < 0.7:
                 a, b = rng.sample(ids, 2)
                 merges.append(MergeCandidate(a, b, tier=rng.randint(1, 3), score=rng.random()))
@@ -276,17 +304,13 @@ class TestDecomposition:
         from deriva.modules.derivation.refine import joint
 
         types = {e.identifier: e.element_type for e in elements}
-        valid = [
-            p
-            for p in sorted(proposals, key=lambda p: (p.tier, -p.confidence, p.identifier))
-            if p.source != p.target and ARCHIMATE.is_valid(types[p.source], p.relationship_type, types[p.target])
-        ]
+        valid = [p for p in sorted(proposals, key=joint.canonical_key) if p.source != p.target and ARCHIMATE.is_valid(types[p.source], p.relationship_type, types[p.target])]
         return valid, joint._canonical_merges(merges, types)
 
     @staticmethod
-    def _objective(chosen, tiers):
-        n = len(tiers)
-        return tuple(sum(1 for i in chosen if tiers[i] == t) for t in (1, 2, 3)) + (sum(n - i for i in chosen),)
+    def _objective(chosen, tiers, order):
+        """Tier counts, then the choice vector in canonical order (the lexicographic maximum)."""
+        return tuple(sum(1 for i in chosen if tiers[i] == t) for t in (1, 2, 3)) + tuple(1 if v in chosen else 0 for v in order)
 
     def test_same_optimum_as_exhaustive_search(self):
         from itertools import product
@@ -296,11 +320,12 @@ class TestDecomposition:
         for seed in range(30):
             valid, merges = self._prepared(*self._instance(seed, n_comp=2))
             tiers = [p.tier for p in valid] + [m.tier for m in merges]
+            order = joint._canonical_order(valid, merges)
             status, chosen, _ = joint._select(valid, merges, ARCHIMATE)
             rows = joint._build_rows(valid, merges, ARCHIMATE.single_parent_types)
 
             best = max(
-                self._objective(pick, tiers)
+                self._objective(pick, tiers, order)
                 for bits in product((0, 1), repeat=len(tiers))
                 if (pick := {i for i, b in enumerate(bits) if b}) is not None
                 and all(sum(c for i, c in r.coef.items() if i in pick) <= r.rhs for r in rows)
@@ -308,7 +333,7 @@ class TestDecomposition:
             )
 
             assert status == "optimal"
-            assert self._objective(chosen, tiers) == best, seed
+            assert self._objective(chosen, tiers, order) == best, seed
 
     def test_each_component_is_its_own_solve(self, monkeypatch):
         from solvor.types import Result, Status
@@ -326,3 +351,31 @@ class TestDecomposition:
 
         assert sizes
         assert max(sizes) <= 5  # at most 4 proposals and 1 merge per component
+
+
+class TestSolveReport:
+    """The decision carries a report of the solve: what was proposed, which constraints bound, what changed."""
+
+    def test_the_report_counts_proposals_constraint_rows_cuts_and_changes(self):
+        decision = run(
+            [el("a"), el("b"), el("c")],
+            [
+                rel("ab", "a", "b", "Composition", tier=1),
+                rel("ab2", "a", "b", "Serving", tier=3),  # H1 with ab
+                rel("bc", "b", "c", "Composition", tier=2),
+                rel("ca", "c", "a", "Composition", tier=2),  # closes a Composition cycle (H3)
+                rel("loop", "a", "a", "Serving", tier=1),
+            ],
+            [],
+        )
+
+        stats = decision.stats
+        assert stats["proposals"] == 5 and stats["valid"] == 4 and stats["merge_candidates"] == 0
+        assert stats["prefilter"] == {"self_loop": 1}
+        assert stats["rows"]["H1"] == 1 and stats["cycle_cuts"] == 1
+        assert stats["parts"] == 1 and stats["constrained_parts"] == 1
+        assert (stats["kept"], stats["dropped"], stats["merges"], stats["redirects"]) == (2, 3, 0, 0)
+
+    def test_an_unconstrained_model_reports_no_rows(self):
+        decision = run([el("a"), el("b")], [rel("ab", "a", "b", tier=1)], [])
+        assert decision.stats["rows"] == {} and decision.stats["constrained_parts"] == 0 and decision.stats["kept"] == 1

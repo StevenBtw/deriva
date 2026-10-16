@@ -563,6 +563,7 @@ def derive_unit_services(
     domain_anchors: dict[str, str] | None = None,
     lifecycle_sites: dict[str, set[str]] | None = None,
     consumes: set[tuple[str, str]] | None = None,
+    lifecycle_state_sites: dict[str, dict[str, set[str]]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Application services per component and business functions across components (``group_by`` "unit").
 
@@ -597,6 +598,8 @@ def derive_unit_services(
         lifecycle_sites: Lifecycle id -> the files that set its states; a service serves the lifecycles its members reach
         consumes: (consumer unit, provider unit) API lines; a service lists the data objects of the providers its
             component consumes (``consumed_objects``), the data it reads through their APIs
+        lifecycle_state_sites: Lifecycle id -> state -> the files that set it; a service lists the states its
+            members' reach sets (``states``: "<lifecycle id>::<state>")
     """
     llm_kwargs = llm_kwargs or {}
     components = {_source(e): e for e in elements if e.get("element_type") == config.component_type}
@@ -757,6 +760,12 @@ def derive_unit_services(
                         "members": sorted(({"name": members[m]["name"], "source": m} for m in group), key=lambda x: (x["name"], x["source"])),
                         "name_candidates": candidates,
                         "processes": sorted(life for life, sites in (lifecycle_sites or {}).items() if sites & {f for m in group for f in member_files(m)}),
+                        "states": sorted(
+                            f"{life}::{state}"
+                            for life, by_state in (lifecycle_state_sites or {}).items()
+                            for state, sites in by_state.items()
+                            if sites & {f for m in group for f in member_files(m)}
+                        ),
                         "structure_name": candidates[0],
                         "confidence": 1.0,
                         "derived_at": current_timestamp(),

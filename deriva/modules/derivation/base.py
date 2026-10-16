@@ -328,7 +328,6 @@ class RelationshipLLMConfig:
     """
 
     instruction: str  # Conventions and rules inserted into the relationship prompt
-    min_confidence: float  # LLM relationships below this confidence are dropped
     persona: str  # Opening line of the relationship prompt; {element_type} is the type just created
     temperature: float | None = None  # Temperature of the consolidated relationship pass (row column)
 
@@ -1358,6 +1357,10 @@ def derive_deterministic_relationships(
     relationships = []
     created_pairs: set[tuple[str, str, str]] = set()  # (source, target, type)
 
+    def skipped(source_type: str, target_type: str) -> bool:
+        """A pair the config never links by words; "*" stands for any type ({("*", "*")} switches the tier off)."""
+        return bool(skip) and bool({(source_type, target_type), (source_type, "*"), ("*", target_type), ("*", "*")} & skip)
+
     # Relationship types that benefit from lower threshold (more connections)
     # Flow relationships are about data/control flow, not ownership
     loose_match_types = {"Flow", "Triggering", "Access"}
@@ -1371,7 +1374,7 @@ def derive_deterministic_relationships(
 
         # Process OUTBOUND rules (FROM new TO existing); configured pairs are never linked by words (params.name_match_skip)
         for rule in outbound_rules:
-            if skip and (element_type, rule.target_type) in skip:
+            if skipped(element_type, rule.target_type):
                 continue
             # Validate rule against ArchiMate metamodel
             is_valid, msg = validate_relationship_rule(element_type, rule.rel_type, rule.target_type)
@@ -1421,7 +1424,7 @@ def derive_deterministic_relationships(
 
         # Process INBOUND rules (FROM existing TO new)
         for rule in inbound_rules:
-            if skip and (rule.target_type, element_type) in skip:
+            if skipped(rule.target_type, element_type):
                 continue
             # Validate rule against ArchiMate metamodel
             # For INBOUND: source=rule.target_type, target=element_type
@@ -2996,23 +2999,12 @@ def derive_batch_relationships(
                 )
                 continue
 
-        # Enforce minimum confidence threshold for consistency
-        confidence = rel_data.get("confidence", 0.5)
-        if confidence < llm_config.min_confidence:
-            logger.debug(
-                "Skipping low-confidence relationship (%s -> %s, confidence=%s)",
-                source,
-                target,
-                confidence,
-            )
-            continue
-
         llm_relationships.append(
             {
                 "source": source,
                 "target": target,
                 "relationship_type": rel_type,
-                "confidence": confidence,
+                "confidence": rel_data.get("confidence", 0.5),  # logged only; no gate reads it
                 "derived_from": "llm",
             }
         )

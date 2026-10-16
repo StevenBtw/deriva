@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -103,13 +104,169 @@ def parse_function_model(text: str, name: str, exclude: tuple[str, ...] = (), ma
 
 @dataclass(frozen=True)
 class ServiceItem:
-    """A service to classify, described by structure only (rule 6d): its unit, members, data and lifecycles."""
+    """A service to classify, described by structure and the documentation that names its component (rule 6d):
+    its unit, members, data and lifecycles, and the richer evidence (operations, lifecycle states it sets, interface
+    roles, the unit's documentation lines, the named fields of its members' header comments)."""
 
     key: str  # The service element's identifier
     component: str
     members: list[str] = field(default_factory=list)
     data: list[str] = field(default_factory=list)
     processes: list[str] = field(default_factory=list)
+    interfaces: list[str] = field(default_factory=list)
+    operations: list[str] = field(default_factory=list)
+    states: list[str] = field(default_factory=list)
+    documentation: str = ""
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class EvidenceRules:
+    """How a service's evidence is read (function model step ``params.evidence``)."""
+
+    # Decorator patterns (re.match) with named groups verb and/or path: an endpoint operation of a method or type
+    operation_patterns: tuple[str, ...] = ()
+    summary_patterns: tuple[str, ...] = ()  # Decorator patterns with a group text: the operation's summary
+    header_fields: tuple[str, ...] = ()  # Field names whose "Name: value" lines in a file's leading comment block are notes
+    technical_words: tuple[str, ...] = ()  # A service whose every operation (else member) names one of these is technical
+    # Graph queries returning (a, b): node a describes member b (a program and the screen it sends); a's header notes count
+    member_links: tuple[str, ...] = ()
+    max_operations: int = 15
+    max_members: int = 20
+    max_doc_chars: int = 500
+    max_notes: int = 5
+
+
+def _words(text: str) -> list[str]:
+    return [w.casefold() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", text)]
+
+
+def _matches(decorators: list[str], patterns: tuple[str, ...]) -> list[dict[str, str]]:
+    found = []
+    for decorator in decorators:
+        for pattern in patterns:
+            if m := re.match(pattern, decorator.strip()):
+                found.append({k: v for k, v in m.groupdict().items() if v is not None})
+                break
+    return found
+
+
+def operations_of(methods: list[dict[str, Any]], type_decorators: list[str], rules: EvidenceRules, type_name: str = "") -> list[str]:
+    """The endpoint operations of a member: per method with a verb or path decorator "VERB /path name (summary)";
+    the type's own path decorator is the prefix; a type with a path and no method operations (a servlet) is one
+    operation of its own. ``methods``: {"name", "decorators"} in source order."""
+    prefix = next((m["path"] for m in _matches(type_decorators, rules.operation_patterns) if m.get("path")), "")
+    operations = []
+    for method in methods:
+        decorators = list(method.get("decorators") or [])
+        found = _matches(decorators, rules.operation_patterns)
+        if not found:
+            continue
+        verb = next((m["verb"] for m in found if m.get("verb")), "")
+        verb = "ANY" if not verb or verb.casefold() == "request" else verb.upper()
+        path = next((m["path"] for m in found if m.get("path") is not None), "")
+        full = (prefix.rstrip("/") + ("/" + path.lstrip("/") if path else "")) or "/"
+        summary = next((m["text"] for m in _matches(decorators, rules.summary_patterns) if m.get("text")), "")
+        operations.append(f"{verb} {full} {method['name']}" + (f" ({summary})" if summary else ""))
+    if not operations and prefix and type_name:
+        operations.append(f"ANY {'/' + prefix.lstrip('/')} {type_name}")
+    return operations
+
+
+def header_notes(text: str, rules: EvidenceRules) -> list[str]:
+    """The values of the named fields ("Function: ...") in the file's leading comment block."""
+    if not rules.header_fields:
+        return []
+    fields = "|".join(re.escape(f) for f in rules.header_fields)
+    notes = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if not re.match(r"^\s*(?:\*|#|//|/\*|--)", line):
+            break  # The leading block ends at the first line of code
+        content = re.sub(r"^[*#/\-\s]+", "", line.strip())
+        if m := re.match(rf"(?i)^(?:{fields})\s*:\s*(.+?)[\s*]*$", content):
+            notes.append(m.group(1))
+    return notes
+
+
+def is_technical(operations: list[str], members: list[str], rules: EvidenceRules) -> bool:
+    """Whether a service only provides technical capability: every operation (without operations: every member
+    name) names a technical word."""
+    words = {w.casefold() for w in rules.technical_words}
+    items = operations or members
+    return bool(items and words) and all(words & set(_words(item)) for item in items)
+
+
+def shown_operations(operations: list[str], rules: EvidenceRules) -> list[str]:
+    """The operations a prompt shows: technical ones left out, a repeat (same verb, path and name) kept once, with its summary."""
+    kept: dict[str, str] = {}
+    for op in operations:
+        if is_technical([op], [], rules):
+            continue
+        key = op.split(" (", 1)[0]
+        if key not in kept or ("(" in op and "(" not in kept[key]):
+            kept[key] = op
+    return list(kept.values())
+
+
+def _plain(line: str) -> str:
+    """A Markdown line as plain text: images dropped, links as their text, emphasis and table pipes removed."""
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", line)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"[*_`]+", "", text).strip()
+    if re.fullmatch(r"[\s|:\-]*", text):
+        return ""  # A table separator or an empty cell row
+    return " ".join(text.strip("|").replace(" |", " |").split())
+
+
+def _joined(parts: list[str], max_chars: int) -> str:
+    text = ""
+    for part in parts:
+        text = f"{text}{'' if not text else ' ' if text[-1] in '.!?:;' else '. '}{part}"
+    return text[:max_chars].rstrip()
+
+
+def component_documentation(unit_path: str, unit_name: str, documents: dict[str, str], max_chars: int) -> str:
+    """A component's documentation: its own README's text under the title (up to the next heading), then the lines of
+    the repository's root README that name it (a table row, a bold term, a link), as plain text, capped."""
+    parts: list[str] = []
+    own = sorted(p for p in documents if p.rsplit("/", 1)[0] == unit_path and p.rsplit("/", 1)[-1].lower().startswith("readme"))
+    for path in own[:1]:
+        fenced = False
+        for line in documents[path].splitlines():
+            if line.strip().startswith("```"):
+                fenced = not fenced
+                continue
+            if fenced:
+                continue
+            if re.match(r"^#{1,6}\s", line):
+                if parts:
+                    break  # The text under the title ends at the next heading
+                continue
+            if plain := _plain(line):
+                parts.append(plain)
+    repo = unit_path.split("/", 1)[0]
+    roots = sorted(p for p in documents if p.rsplit("/", 1)[0] == repo and p.rsplit("/", 1)[-1].lower().startswith("readme") and repo != unit_path)
+    names = {n for n in (unit_path.rsplit("/", 1)[-1], unit_name) if n}
+    if roots and names:
+        pattern = re.compile("|".join(rf"(?<![A-Za-z0-9-]){re.escape(n)}(?![A-Za-z0-9-])" for n in sorted(names)), re.IGNORECASE)
+        # The first line that names it: a later one is usually a mention elsewhere (a finding, a log line)
+        parts += [plain for line in documents[roots[0]].splitlines() if not re.match(r"^#{1,6}\s", line) and pattern.search(line) and (plain := _plain(line))][:1]
+    return _joined(list(dict.fromkeys(parts)), max_chars)
+
+
+def documentation_text(lines: list[str], max_chars: int) -> str:
+    """Documentation lines as plain text (images dropped, links as their text, emphasis removed), capped."""
+    text = ""
+    for line in lines:
+        plain = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", line)
+        plain = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", plain)
+        plain = " ".join(re.sub(r"[*_`]+", "", plain).split())
+        if not plain:
+            continue
+        text = f"{text}{'' if not text else ' ' if text[-1] in '.!?:;' else '. '}{plain}"
+    return text[:max_chars].rstrip()
 
 
 def _stable(key: str) -> str:
@@ -119,10 +276,7 @@ def _stable(key: str) -> str:
 def build_function_prompt(items: list[ServiceItem], options: list[Function], instruction: str, model_name: str, level: int) -> str:
     """The prompt of one classification batch: the instruction, the options of one level, the services."""
     listed = "\n".join(f"- {f.id}: {f.name}" + (f". {f.description}" if f.description else "") for f in options)
-    services = "\n".join(
-        f"- s{n}: {item.component} | members: {', '.join(item.members[:20]) or '-'} | data: {', '.join(item.data) or '-'} | processes: {', '.join(item.processes) or '-'}"
-        for n, item in enumerate(items, 1)
-    )
+    services = "\n".join(_service_lines(n, item) for n, item in enumerate(items, 1))
     keys = ", ".join(f'"s{n}": "<id or {NONE}>"' for n in range(1, len(items) + 1))
     return f"""{instruction}
 
@@ -134,6 +288,18 @@ def build_function_prompt(items: list[ServiceItem], options: list[Function], ins
 {services}
 
 Return {{"choices": {{{keys}}}}}: for each service one option id as written, or "{NONE}"."""
+
+
+def _service_lines(n: int, item: ServiceItem) -> str:
+    """One service in the prompt: the identifying first line, then the evidence it has."""
+    head = f"- s{n}: {item.component} | members: {', '.join(item.members[:20]) or '-'} | data: {', '.join(item.data) or '-'} | processes: {', '.join(item.processes) or '-'}"
+    lines = [head]
+    for label, values in (("interfaces", item.interfaces), ("operations", item.operations), ("states", item.states), ("code notes", item.notes)):
+        if values:
+            lines.append(f"  {label}: {'; '.join(values)}")
+    if item.documentation:
+        lines.append(f"  documentation: {item.documentation}")
+    return "\n".join(lines)
 
 
 def function_schema(count: int, options: list[Function]) -> dict[str, Any]:

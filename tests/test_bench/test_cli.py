@@ -245,6 +245,53 @@ class TestBenchmarkAnalyzeCommand:
         assert "repo1" in result.stdout and "1.50" in result.stdout and "20%" in result.stdout
         assert "ApplicationService-ApplicationComponent 3/4" in result.stdout
 
+    @patch("deriva.bench.cli.PipelineSession")
+    def test_analyze_shows_the_milp_solve_per_run(self, mock_session_class):
+        """The joint_consistency report of each run (the MILP as a safety net) is printed."""
+        mock_session = MagicMock()
+        mock_analyzer = MagicMock()
+        mock_summary = MagicMock()
+        mock_summary.intra_model = []
+        mock_summary.inter_model = []
+        mock_summary.localization.hotspots = []
+        row = {
+            "repository": "repo1",
+            "model": "gpt4",
+            "run": 2,
+            "elements": 3,
+            "relationships": 4,
+            "relationships_per_element": 1.3,
+            "orphan_share": 0.0,
+            "composition_violations": 0,
+            "duplicate_pairs": 0,
+            "duplicate_elements": 0,
+            "chains": {},
+            "reference": None,
+        }
+        solve = {
+            "status": "optimal",
+            "seconds": 0.012,
+            "proposals": 4,
+            "merge_candidates": 1,
+            "rows": {"H1": 2, "H5": 1},
+            "cycle_cuts": 1,
+            "kept": 3,
+            "dropped": 1,
+            "merges": 0,
+            "redirects": 0,
+        }
+        mock_summary.model_quality = [{**row, "solve": solve}, {**row, "run": 3, "solve": None}]
+        mock_analyzer.compute_full_analysis.return_value = mock_summary
+        mock_analyzer.export_summary.return_value = "output.json"
+        mock_session.analyze_benchmark.return_value = mock_analyzer
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["benchmark", "analyze", "session_123"])
+
+        assert result.exit_code == 0
+        assert "MILP SAFETY NET" in result.stdout
+        assert "H1 2, H5 1" in result.stdout and "optimal" in result.stdout and "0.012" in result.stdout
+
 
 class TestBenchmarkDeviationsCommand:
     """Tests for benchmark deviations command."""

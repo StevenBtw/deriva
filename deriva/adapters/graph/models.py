@@ -637,6 +637,7 @@ class LifecycleNode:
     name_candidates: list[str] = field(default_factory=list)
     flow: str = ""  # The documented flow it follows ("path#heading")
     transitions: list[str] = field(default_factory=list)  # "FROM>TO": the transitions code or the flow shows
+    state_sites: list[str] = field(default_factory=list)  # "STATE>path": the files that set each state
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -656,6 +657,7 @@ class LifecycleNode:
             "nameSources": ["structure"] * len(self.name_candidates),
             "flow": self.flow,
             "transitions": list(self.transitions),
+            "stateSites": list(self.state_sites),
             "repository_name": self.repository_name,
             "type": "Lifecycle",
         }

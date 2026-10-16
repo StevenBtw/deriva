@@ -309,8 +309,8 @@ class TestDuplicateElementsStep:
         assert result.success is True
         assert result.elements_merged == 0
 
-    def test_finds_exact_name_duplicates(self):
-        """Should find and merge exact name duplicates."""
+    def test_flags_exact_name_duplicates_without_merging(self):
+        """Equal names are flagged (tier 1); merges happen only in joint_consistency."""
         from deriva.modules.derivation.refine.duplicate_elements import DuplicateElementsStep
 
         elements = [
@@ -325,9 +325,10 @@ class TestDuplicateElementsStep:
         result = step.run(archimate_manager=mock_manager)
 
         assert result.success is True
-        assert result.elements_merged == 1
-        assert result.elements_disabled == 1
-        assert any(d["tier"] == 1 for d in result.details)
+        assert result.elements_merged == 0 and result.elements_disabled == 0
+        assert result.issues_found == 1
+        assert [d["tier"] for d in result.details] == [1] and result.details[0]["action"] == "flagged"
+        mock_manager.disable_element.assert_not_called()
 
     def test_skips_disabled_elements(self):
         """Should skip disabled elements."""
@@ -344,11 +345,10 @@ class TestDuplicateElementsStep:
         step = DuplicateElementsStep()
         result = step.run(archimate_manager=mock_manager)
 
-        # Should not find duplicates since one is disabled
-        assert result.elements_merged == 0
+        assert result.issues_found == 0
 
-    def test_finds_fuzzy_matches_and_flags(self):
-        """Should find fuzzy matches and flag for review."""
+    def test_fuzzy_matches_are_flagged_and_never_merged(self):
+        """Similar names are flagged (tier 2), whatever the params say."""
         from deriva.modules.derivation.refine.duplicate_elements import DuplicateElementsStep
 
         elements = [
@@ -360,32 +360,11 @@ class TestDuplicateElementsStep:
         mock_manager.get_elements.return_value = elements
 
         step = DuplicateElementsStep()
-        result = step.run(archimate_manager=mock_manager)
+        result = step.run(archimate_manager=mock_manager, params={"auto_merge_tier2": True, "fuzzy_threshold": 0.7})
 
-        # Should flag as issue but not merge (default auto_merge_tier2=False)
-        assert result.issues_found >= 1 or result.elements_merged >= 1
-
-    def test_auto_merge_tier2_when_enabled(self):
-        """Should auto-merge fuzzy matches when auto_merge_tier2=True."""
-        from deriva.modules.derivation.refine.duplicate_elements import DuplicateElementsStep
-
-        elements = [
-            MockElement("id1", "AuthenticationService", "ApplicationComponent"),
-            MockElement("id2", "AuthenticateService", "ApplicationComponent"),
-        ]
-
-        mock_manager = MagicMock()
-        mock_manager.get_elements.return_value = elements
-
-        step = DuplicateElementsStep()
-        result = step.run(
-            archimate_manager=mock_manager,
-            params={"auto_merge_tier2": True, "fuzzy_threshold": 0.7},
-        )
-
-        # Should merge fuzzy matches
-        if result.elements_merged > 0:
-            assert any(d.get("tier") == 2 for d in result.details)
+        assert result.issues_found == 1 and result.elements_merged == 0
+        assert result.details[0]["tier"] == 2 and result.details[0]["action"] == "flagged"
+        mock_manager.disable_element.assert_not_called()
 
     def test_handles_exception(self):
         """Should handle exceptions gracefully."""
@@ -399,43 +378,6 @@ class TestDuplicateElementsStep:
 
         assert result.success is False
         assert "DB error" in result.errors[0]
-
-    def test_select_survivor_by_pagerank(self):
-        """Should select element with higher pagerank as survivor."""
-        from deriva.modules.derivation.refine.duplicate_elements import DuplicateElementsStep
-
-        elem_a = MockElement("id1", "Service", "ApplicationComponent", properties={"source_pagerank": 0.5})
-        elem_b = MockElement("id2", "Service", "ApplicationComponent", properties={"source_pagerank": 0.8})
-
-        step = DuplicateElementsStep()
-        survivor, duplicate = step._select_survivor(elem_a, elem_b)
-
-        assert survivor.identifier == "id2"  # Higher pagerank
-        assert duplicate.identifier == "id1"
-
-    def test_select_survivor_by_documentation(self):
-        """Should select element with more documentation when pagerank equal."""
-        from deriva.modules.derivation.refine.duplicate_elements import DuplicateElementsStep
-
-        elem_a = MockElement("id1", "Service", "ApplicationComponent", documentation="Short")
-        elem_b = MockElement("id2", "Service", "ApplicationComponent", documentation="Much longer documentation")
-
-        step = DuplicateElementsStep()
-        survivor, duplicate = step._select_survivor(elem_a, elem_b)
-
-        assert survivor.identifier == "id2"  # Longer docs
-
-    def test_select_survivor_alphabetical_fallback(self):
-        """Should use alphabetical order as fallback."""
-        from deriva.modules.derivation.refine.duplicate_elements import DuplicateElementsStep
-
-        elem_a = MockElement("aaa", "Service", "ApplicationComponent")
-        elem_b = MockElement("bbb", "Service", "ApplicationComponent")
-
-        step = DuplicateElementsStep()
-        survivor, duplicate = step._select_survivor(elem_a, elem_b)
-
-        assert survivor.identifier == "aaa"  # First alphabetically
 
 
 class TestDuplicateElementsStepNoLlm:
@@ -479,8 +421,8 @@ class TestDuplicateRelationshipsStep:
         assert result.success is True
         assert result.relationships_deleted == 0
 
-    def test_finds_and_deletes_exact_duplicates(self):
-        """Should find and delete exact duplicate relationships."""
+    def test_flags_exact_duplicates_without_deleting(self):
+        """Exact duplicates are flagged; the MILP keeps one relationship per pair."""
         from deriva.modules.derivation.refine.duplicate_relationships import DuplicateRelationshipsStep
 
         mock_manager = MagicMock()
@@ -504,9 +446,9 @@ class TestDuplicateRelationshipsStep:
         result = step.run(archimate_manager=mock_manager)
 
         assert result.success is True
-        assert result.relationships_deleted == 1
-        assert result.issues_fixed == 1
-        mock_manager.delete_relationships.assert_called_once_with(["rel2"])
+        assert result.relationships_deleted == 0
+        assert result.issues_found == 1
+        mock_manager.delete_relationships.assert_not_called()
 
     def test_flags_redundant_relationship_pairs(self):
         """Should flag redundant relationship pairs."""
@@ -569,8 +511,8 @@ class TestDuplicateRelationshipsStep:
         # Should query twice: self_loops + exact duplicates (skips redundant check)
         assert mock_manager.query.call_count == 2
 
-    def test_finds_and_removes_self_loops(self):
-        """Should find and remove self-referential relationships."""
+    def test_flags_self_loops_without_deleting(self):
+        """Self-referential relationships are flagged; the MILP drops them."""
         from deriva.modules.derivation.refine.duplicate_relationships import DuplicateRelationshipsStep
 
         mock_manager = MagicMock()
@@ -600,9 +542,9 @@ class TestDuplicateRelationshipsStep:
         result = step.run(archimate_manager=mock_manager)
 
         assert result.success is True
-        assert result.relationships_deleted == 2
-        assert result.issues_fixed == 2
-        mock_manager.delete_relationships.assert_called_once_with(["rel_self1", "rel_self2"])
+        assert result.relationships_deleted == 0
+        assert result.issues_found == 2
+        mock_manager.delete_relationships.assert_not_called()
         # Check details include self-referential reason
         assert any(d.get("reason") == "self_referential" for d in result.details)
         assert len([d for d in result.details if d.get("reason") == "self_referential"]) == 2
@@ -807,156 +749,6 @@ class TestCircularRelationshipsStep:
 
         # Should delete rel1 (lower confidence) and keep rel2
         mock_manager.delete_relationships.assert_called_with(["rel1"])
-
-
-# =============================================================================
-# Tests for refine/relationship_consolidation.py
-# =============================================================================
-
-
-class TestRelationshipConsolidationStep:
-    """Tests for RelationshipConsolidationStep class."""
-
-    def test_returns_success_for_no_relationships(self):
-        """Should return success when no relationships found."""
-        from deriva.modules.derivation.refine.relationship_consolidation import RelationshipConsolidationStep
-
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.return_value = []
-
-        step = RelationshipConsolidationStep()
-        result = step.run(archimate_manager=mock_manager)
-
-        assert result.success is True
-        assert result.issues_found == 0
-
-    def test_boosts_confidence_for_corroborated_relationships(self):
-        """Should boost confidence when multiple derivation signals agree."""
-        from deriva.modules.derivation.refine.relationship_consolidation import RelationshipConsolidationStep
-
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.return_value = [
-            {
-                "identifier": "rel1",
-                "source_id": "elem1",
-                "source_name": "Component A",
-                "target_id": "elem2",
-                "target_name": "Service B",
-                "rel_type": "Model:Serving",
-                "confidence": 0.7,
-                "derived_from": "edge_calls,community",
-                "rel_name": None,
-            }
-        ]
-
-        step = RelationshipConsolidationStep()
-        result = step.run(archimate_manager=mock_manager)
-
-        assert result.success is True
-        # Should have boosted at least one relationship
-        boosted = [d for d in result.details if d.get("action") == "boosted"]
-        assert len(boosted) >= 1
-
-    def test_flags_low_confidence_relationships_for_pruning(self):
-        """Should flag relationships below confidence threshold."""
-        from deriva.modules.derivation.refine.relationship_consolidation import RelationshipConsolidationStep
-
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.return_value = [
-            {
-                "identifier": "rel1",
-                "source_id": "elem1",
-                "source_name": "Component A",
-                "target_id": "elem2",
-                "target_name": "Service B",
-                "rel_type": "Model:Serving",
-                "confidence": 0.3,  # Below default 0.5 threshold
-                "derived_from": "llm",
-                "rel_name": None,
-            }
-        ]
-
-        step = RelationshipConsolidationStep()
-        result = step.run(archimate_manager=mock_manager)
-
-        assert result.success is True
-        assert result.issues_found == 1
-        flagged = [d for d in result.details if "prune" in d.get("action", "")]
-        assert len(flagged) == 1
-
-    def test_prunes_relationships_when_auto_prune_enabled(self):
-        """Should delete relationships when auto_prune=True."""
-        from deriva.modules.derivation.refine.relationship_consolidation import RelationshipConsolidationStep
-
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.return_value = [
-            {
-                "identifier": "rel1",
-                "source_id": "elem1",
-                "source_name": "Component A",
-                "target_id": "elem2",
-                "target_name": "Service B",
-                "rel_type": "Model:Serving",
-                "confidence": 0.3,
-                "derived_from": "llm",
-                "rel_name": None,
-            }
-        ]
-        mock_manager.delete_relationships.return_value = 1
-
-        step = RelationshipConsolidationStep()
-        result = step.run(
-            archimate_manager=mock_manager,
-            params={"auto_prune": True},
-        )
-
-        assert result.success is True
-        assert result.relationships_deleted == 1
-        mock_manager.delete_relationships.assert_called()
-
-    def test_handles_exception(self):
-        """Should handle exceptions gracefully."""
-        from deriva.modules.derivation.refine.relationship_consolidation import RelationshipConsolidationStep
-
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.side_effect = Exception("Query error")
-
-        step = RelationshipConsolidationStep()
-        result = step.run(archimate_manager=mock_manager)
-
-        assert result.success is False
-        assert "Query error" in result.errors[0]
-
-    def test_requires_corroboration_for_low_confidence(self):
-        """Should flag single-signal relationships below corroboration threshold."""
-        from deriva.modules.derivation.refine.relationship_consolidation import RelationshipConsolidationStep
-
-        mock_manager = MagicMock()
-        mock_manager.namespace = "Model"
-        mock_manager.query.return_value = [
-            {
-                "identifier": "rel1",
-                "source_id": "elem1",
-                "source_name": "Component A",
-                "target_id": "elem2",
-                "target_name": "Service B",
-                "rel_type": "Model:Serving",
-                "confidence": 0.6,  # Below corroboration threshold (0.7)
-                "derived_from": "llm",  # Single signal
-                "rel_name": None,
-            }
-        ]
-
-        step = RelationshipConsolidationStep()
-        result = step.run(archimate_manager=mock_manager)
-
-        assert result.success is True
-        assert result.issues_found == 1
 
 
 # =============================================================================
@@ -1380,45 +1172,6 @@ class TestUnanchoredLayers:
 # =============================================================================
 # Integration Tests for Step Registration
 # =============================================================================
-
-
-class TestDuplicateElementsMerge:
-    """Additional tests for duplicate element merging behavior."""
-
-    def test_merge_elements_disables_duplicate(self):
-        """Should call disable_element on the duplicate."""
-        from deriva.modules.derivation.refine.duplicate_elements import (
-            DuplicateElementsStep,
-        )
-
-        survivor = MockElement("survivor_id", "Service", "ApplicationComponent")
-        duplicate = MockElement("dup_id", "Service", "ApplicationComponent")
-
-        mock_manager = MagicMock()
-
-        step = DuplicateElementsStep()
-        step._merge_elements(mock_manager, survivor, duplicate, "test_reason")
-
-        mock_manager.disable_element.assert_called_once()
-        call_args = mock_manager.disable_element.call_args
-        assert call_args[0][0] == "dup_id"
-        assert "survivor_id" in call_args[1]["reason"]
-
-    def test_merge_elements_with_documentation(self):
-        """Should handle elements with documentation."""
-        from deriva.modules.derivation.refine.duplicate_elements import (
-            DuplicateElementsStep,
-        )
-
-        survivor = MockElement("s1", "Svc", "ApplicationComponent", documentation="Survivor docs")
-        duplicate = MockElement("d1", "Svc", "ApplicationComponent", documentation="Duplicate docs")
-
-        mock_manager = MagicMock()
-
-        step = DuplicateElementsStep()
-        step._merge_elements(mock_manager, survivor, duplicate, "doc_test")
-
-        mock_manager.disable_element.assert_called_once()
 
 
 class TestOrphanElementsProposals:

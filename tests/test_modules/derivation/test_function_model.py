@@ -122,3 +122,120 @@ def test_the_elements_are_the_chosen_functions_named_and_identified_by_the_model
     assert top["properties"]["services"] == []  # its services serve its level 2 functions
     assert part["properties"]["services"] == ["as_floor"] and part["properties"]["processes"] == ["lifecycle::r::bid"]
     assert elements["function::fixture::F300"]["properties"]["services"] == ["as_members"]  # none at level 2: it serves level 1
+
+
+# Richer evidence (catalog v2): operations, states, interfaces, documentation and code notes, all from structure
+
+from deriva.modules.derivation.function_model import EvidenceRules, documentation_text, header_notes, is_technical, operations_of  # noqa: E402
+
+RULES = EvidenceRules(
+    operation_patterns=(
+        r"^(?:\w+\.)?(?P<verb>get|post|put|delete|patch)\(\s*[\"'](?P<path>[^\"']*)[\"']",
+        r"^(?P<verb>Get|Post|Put|Delete|Patch|Request)Mapping(?:\((?:(?:value|path)\s*=\s*)?[\"'](?P<path>[^\"']*)[\"'][^)]*\))?",
+        r"^(?P<verb>GET|POST|PUT|DELETE|PATCH)$",
+        r"^Path\(\s*[\"'](?P<path>[^\"']*)[\"']",
+    ),
+    summary_patterns=(r"^Operation\(\s*summary\s*=\s*\"(?P<text>[^\"]*)\"",),
+    header_fields=("function", "purpose"),
+    technical_words=("auth", "login", "health", "ready", "cache", "error"),
+)
+
+
+def test_operations_come_from_decorators_with_the_class_path_and_the_summary():
+    methods = [
+        {"name": "getCustomer", "decorators": ['Operation(summary = "Get a customer.")', 'GetMapping(value = "/{id}")']},
+        {"name": "create_case", "decorators": ['router.post("/cases", response_model=CaseResponse)']},
+        {"name": "list", "decorators": ["GET", 'Path("/items")']},
+        {"name": "helper", "decorators": []},
+    ]
+
+    ops = operations_of(methods, ["RestController", 'RequestMapping("/customers")'], RULES)
+
+    assert ops == ["GET /customers/{id} getCustomer (Get a customer.)", "POST /customers/cases create_case", "GET /customers/items list"]
+
+
+def test_header_notes_are_the_named_fields_of_the_leading_comment_block():
+    cobol = (
+        "      ******************************************\n"
+        "      * Program:     COACTUPC.CBL               *\n"
+        "      * Function:    Accept and process ACCOUNT UPDATE *\n"
+        "      * Copyright Example Corp.                  \n"
+        "       IDENTIFICATION DIVISION.\n"
+        "      * Function: not in the leading block\n"
+    )
+
+    assert header_notes(cobol, RULES) == ["Accept and process ACCOUNT UPDATE"]
+    assert header_notes('"""A module."""\nimport os\n', RULES) == []
+
+
+def test_a_service_is_technical_only_when_every_operation_is():
+    assert is_technical(["POST /auth/login login", "GET /ready ready"], [], RULES)
+    assert not is_technical(["POST /cart/add/{id} addToCart", "GET /ready ready"], [], RULES)
+    assert is_technical([], ["CacheManagerEndpoint"], RULES)  # no operations: the member names decide
+    assert not is_technical([], [], RULES)
+
+
+def test_documentation_is_plain_text_without_images_and_capped():
+    lines = ["![Logo](logo.png) Example: Order Core", "The **Order Core** manages [orders](docs/orders.md) of the shop.", "x" * 400]
+
+    text = documentation_text(lines, max_chars=80)
+
+    assert text.startswith("Example: Order Core. The Order Core manages orders of the shop.") and len(text) <= 80
+
+
+def test_the_prompt_shows_the_richer_evidence_of_a_service():
+    model = parse_function_model(FIXTURE, name="fixture")
+    item = ServiceItem(
+        key="as_floor",
+        component="trading-engine",
+        members=["BidResource"],
+        data=["Bid Data"],
+        processes=["Bid Lifecycle"],
+        interfaces=["rest"],
+        operations=["POST /bids placeBid (Place a bid.)"],
+        states=["Bid Lifecycle: PLACED"],
+        documentation="The trading engine matches bids.",
+        notes=["Accept and match bids"],
+    )
+
+    prompt = build_function_prompt([item], model.level(2)[:2], "Classify.", "fixture", 2)
+
+    for text in ("s1: trading-engine", "POST /bids placeBid (Place a bid.)", "Bid Lifecycle: PLACED", "The trading engine matches bids.", "Accept and match bids", "rest"):
+        assert text in prompt
+    assert "Receiving and recording bids from traders." in prompt  # level-2 options carry their description
+
+
+def test_component_documentation_is_its_readme_under_the_title_and_the_root_readme_lines_that_name_it():
+    from deriva.modules.derivation.function_model import component_documentation
+
+    docs = {
+        "repo/README.md": "# Shop\n\n| Unit | Purpose |\n|---|---|\n| **order-core** | Keeps the orders. |\n| billing | Bills. |\n",
+        "repo/order-core/README.md": "![logo](l.png)\n# Order Core\n\nThe Order Core keeps the orders of the shop.\nIt offers an HTTP API.\n\n## IDE\n\nUse any IDE.\n",
+        "repo/docs/SECURITY.md": "| order-core | a finding |\n",
+    }
+
+    text = component_documentation("repo/order-core", "order-core", docs, max_chars=300)
+
+    assert text == "The Order Core keeps the orders of the shop. It offers an HTTP API. order-core | Keeps the orders."
+
+
+def test_technical_operations_are_left_out_and_repeats_keep_the_one_with_a_summary():
+    from deriva.modules.derivation.function_model import shown_operations
+
+    ops = ["GET /orders list", "GET /orders list (List the orders.)", "ANY /error handleError", "POST /orders create"]
+
+    assert shown_operations(ops, RULES) == ["GET /orders list (List the orders.)", "POST /orders create"]
+
+
+def test_a_type_with_a_path_but_no_method_operations_is_one_operation():
+    rules = EvidenceRules(operation_patterns=(r"^WebServlet\([^\"']*[\"'](?P<path>[^\"']*)[\"']",))
+
+    assert operations_of([{"name": "doGet", "decorators": []}], ['WebServlet("/cart")'], rules, type_name="CartServlet") == ["ANY /cart CartServlet"]
+
+
+def test_only_the_first_root_readme_line_that_names_a_component_counts():
+    from deriva.modules.derivation.function_model import component_documentation
+
+    docs = {"repo/README.md": "| order-core | Keeps the orders. |\n| finding | order-core logs too much |\n"}
+
+    assert component_documentation("repo/order-core", "order-core", docs, max_chars=300) == "order-core | Keeps the orders."

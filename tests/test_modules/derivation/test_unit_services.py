@@ -428,3 +428,17 @@ def test_a_service_serves_the_lifecycles_whose_states_its_members_set():
     )  # fmt: skip
 
     assert services[0]["properties"]["processes"] == ["lifecycle::app"]
+
+
+def test_a_service_lists_the_lifecycle_states_its_members_set():
+    elements = [_component("loan", "Loan Service"), _interface("loan", "rest", ["routes"]), _data("loan", "Loan Data")]
+    scopes = UnitScopes(files={}, nodes={}, entity_files={"domain::loan": frozenset({"models.java"})}, entity_nodes={})
+    services, _ = derive_unit_services(
+        elements, {"n::routes": "routes.java"}, [("routes.java", "services.java"), ("services.java", "models.java")], CONFIG, "Choose.",
+        lambda p, s, **k: {"content": json.dumps({"name": s["schema"]["properties"]["name"]["enum"][0]})},
+        scopes=scopes, deciding={"domain::loan"}, business_objects={"domain::loan": "Loan"}, bases={}, lines=set(), documents={},
+        lifecycle_sites={"lifecycle::app": {"services.java", "other.java"}},
+        lifecycle_state_sites={"lifecycle::app": {"SUBMITTED": {"services.java"}, "DISBURSED": {"other.java"}}},
+    )  # fmt: skip
+
+    assert services[0]["properties"]["states"] == ["lifecycle::app::SUBMITTED"]  # DISBURSED is set elsewhere

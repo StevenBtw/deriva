@@ -452,7 +452,7 @@ class TestContainmentConfig:
 
     @staticmethod
     def _row(containment):
-        params = {"min_confidence": 0.6, "persona": "P"}
+        params = {"persona": "P"}
         if containment is not None:
             params["containment"] = containment
         return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
@@ -504,7 +504,7 @@ class TestNamedInCodeConfig:
 
     @staticmethod
     def _row(**structure):
-        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        params = {"persona": "P", **structure}
         return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
 
     def test_without_the_key_there_are_no_rules(self):
@@ -544,7 +544,7 @@ class TestSameNameConfig:
 
     @staticmethod
     def _row(**structure):
-        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        params = {"persona": "P", **structure}
         return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
 
     def test_without_the_key_there_are_no_rules(self):
@@ -591,7 +591,7 @@ class TestDependencyConfig:
 
     @staticmethod
     def _row(**structure):
-        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        params = {"persona": "P", **structure}
         return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
 
     def test_without_the_key_there_are_no_rules(self):
@@ -637,7 +637,7 @@ class TestTechnologyStructureConfig:
 
     @staticmethod
     def _row(**structure):
-        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        params = {"persona": "P", **structure}
         return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
 
     def test_without_the_keys_there_are_no_rules(self):
@@ -2143,32 +2143,32 @@ class TestRelationshipLLMConfig:
     """The enabled relationship-phase config row drives the LLM relationship pass."""
 
     @staticmethod
-    def _row(instruction="rules", params='{"temperature": 0.0, "min_confidence": 0.6, "persona": "P"}', name="GlobalRelationships"):
+    def _row(instruction="rules", params='{"temperature": 0.0, "persona": "P"}', name="GlobalRelationships"):
         return SimpleNamespace(step_name=name, instruction=instruction, params=params)
 
     def test_no_enabled_row_skips_the_llm_pass(self):
         assert derivation._relationship_llm_config([]) is None
 
     def test_row_supplies_instruction_and_cutoff(self):
-        assert derivation._relationship_llm_config([self._row()]) == RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+        assert derivation._relationship_llm_config([self._row()]) == RelationshipLLMConfig(instruction="rules", persona="P")
 
-    def test_row_without_min_confidence_is_an_error(self):
-        with pytest.raises(ValueError, match="min_confidence"):
+    def test_row_without_persona_is_an_error(self):
+        with pytest.raises(ValueError, match="persona"):
             derivation._relationship_llm_config([self._row(params='{"temperature": 0.0}')])
 
     def test_llm_proposals_off_leaves_relationships_to_structure(self):
-        row = self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": false}')
+        row = self._row(params='{"persona": "P", "llm_proposals": false}')
 
         assert derivation._relationship_llm_config([row]) is None
 
     def test_llm_proposals_on_keeps_the_llm_pass(self):
-        row = self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": true}')
+        row = self._row(params='{"persona": "P", "llm_proposals": true}')
 
-        assert derivation._relationship_llm_config([row]) == RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+        assert derivation._relationship_llm_config([row]) == RelationshipLLMConfig(instruction="rules", persona="P")
 
     def test_llm_proposals_must_be_a_boolean(self):
         with pytest.raises(ValueError, match="llm_proposals"):
-            derivation._relationship_llm_config([self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": "no"}')])
+            derivation._relationship_llm_config([self._row(params='{"persona": "P", "llm_proposals": "no"}')])
 
     @pytest.mark.parametrize("runner", ["run_derivation", "run_derivation_iter"])
     def test_runs_that_never_derive_relationships_do_not_read_the_row(self, runner):
@@ -2209,7 +2209,7 @@ def _run_derivation_iter(**kwargs):
 class TestRelationshipConfigReachesTheRelationshipPass:
     """Both runners pass the relationship row to both relationship paths."""
 
-    EXPECTED = RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+    EXPECTED = RelationshipLLMConfig(instruction="rules", persona="P")
 
     @staticmethod
     def _configs(engine, enabled_only, phase):
@@ -2229,7 +2229,7 @@ class TestRelationshipConfigReachesTheRelationshipPass:
                 )
             ]
         if phase == "relationship":
-            return [SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6, "persona": "P"}')]
+            return [SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"persona": "P"}')]
         return []
 
     def _run(self, runner, defer):
@@ -2961,7 +2961,7 @@ class TestRelationshipTemperature:
     """The relationship row's temperature column sets the consolidated relationship pass temperature."""
 
     def test_row_temperature_is_part_of_the_config(self):
-        row = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6, "persona": "P"}', temperature=0.0)
+        row = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"persona": "P"}', temperature=0.0)
 
         assert derivation._relationship_llm_config([row]).temperature == 0.0
 
@@ -2979,7 +2979,7 @@ class TestRelationshipTemperature:
             max_tokens=None,
             params=None,
         )
-        rel = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6, "persona": "P"}', temperature=0.0)
+        rel = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"persona": "P"}', temperature=0.0)
         generated = {"success": True, "elements_created": 1, "relationships_created": 0, "created_elements": [{"identifier": "e1"}], "errors": []}
         with (
             patch.object(

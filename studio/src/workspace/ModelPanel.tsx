@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { model as modelApi } from "../api/client";
-import type { Model } from "../api/types";
+import type { Model, ModelLevel } from "../api/types";
 import { ArchimateWidget } from "../widgets/ArchimateWidget";
 
-/** The output model in anywidget-archimate, with export and the selected element's details. */
+/** The output model in anywidget-archimate at one export level, optionally one generated view of it, with export and the selected element's details. */
 export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh: number; onSelect?: (elementId: string | null) => void }) {
   const [model, setModel] = useState<Model>({ elements: [], relationships: [] });
+  const [level, setLevel] = useState<ModelLevel>("architect");
+  // A view by name ("" = the whole model at this level)
+  const [viewName, setViewName] = useState("");
   // The selection is an id: its details come from the model as it is now (a refresh can rename or remove it)
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -20,10 +23,11 @@ export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh
     // A slower, older answer must not replace a newer model
     let live = true;
     modelApi
-      .get()
+      .get(level)
       .then((found) => {
         if (!live) return;
         setModel(found);
+        setViewName((name) => (found.views ?? []).some((v) => v.name === name) ? name : "");
         const { id, onSelect: notify } = current.current;
         if (id !== null && !found.elements.some((e) => String(e.id) === id)) {
           setSelectedId(null);
@@ -34,7 +38,14 @@ export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh
     return () => {
       live = false;
     };
-  }, [refresh]);
+  }, [refresh, level]);
+
+  const shown = useMemo(() => {
+    const view = (model.views ?? []).find((v) => v.name === viewName);
+    if (!view) return model;
+    const ids = new Set(view.elements);
+    return { elements: model.elements.filter((e) => ids.has(String(e.id))), relationships: model.relationships.filter((r) => ids.has(r.source) && ids.has(r.target)) };
+  }, [model, viewName]);
 
   const selected = selectedId === null ? null : (model.elements.find((e) => String(e.id) === selectedId) ?? null);
 
@@ -58,8 +69,27 @@ export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh
       <div className="modelpanel-head">
         <b>Output model</b>
         <span className="muted">
-          {model.elements.length} elements · {model.relationships.length} relationships
+          {shown.elements.length} elements · {shown.relationships.length} relationships
         </span>
+        <span role="radiogroup" aria-label="Level" style={{ display: "inline-flex", gap: 8 }}>
+          {(["architect", "detail"] as const).map((value) => (
+            <label key={value}>
+              <input type="radio" name="model-level" value={value} checked={level === value} onChange={() => setLevel(value)} />{" "}
+              {value === "architect" ? "Architect" : "Detail"}
+            </label>
+          ))}
+        </span>
+        <label htmlFor="model-view" className="muted">
+          Viewpoint
+        </label>
+        <select id="model-view" value={viewName} onChange={(e) => setViewName(e.target.value)}>
+          <option value="">Whole model</option>
+          {(model.views ?? []).map((v) => (
+            <option key={v.name} value={v.name}>
+              {v.name}
+            </option>
+          ))}
+        </select>
         {message && <span className="note">{message}</span>}
         <button type="button" style={{ marginLeft: "auto" }} onClick={exportXml}>
           ⤓ Export XML
@@ -67,7 +97,7 @@ export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh
       </div>
       <div style={{ display: "flex", gap: 10, padding: "0 14px 14px", minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <ArchimateWidget elements={model.elements} relationships={model.relationships} dark={dark} onSelect={select} />
+          <ArchimateWidget elements={shown.elements} relationships={shown.relationships} dark={dark} onSelect={select} />
         </div>
         {selected && (
           <aside className="card" style={{ width: 240 }}>

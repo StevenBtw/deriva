@@ -266,6 +266,41 @@ describe("Workspace", () => {
     expect(model.get).toHaveBeenCalled();
   });
 
+  it("switches the model between the architect and detail level and filters it by viewpoint", async () => {
+    const node = { id: "n1", name: "Application Server", type: "Node", layer: "Technology", documentation: "" };
+    const core = { id: "ac1", name: "Core", type: "ApplicationComponent", layer: "Application", documentation: "" };
+    const artifact = { id: "art1", name: "core", type: "Artifact", layer: "Technology", documentation: "" };
+    vi.mocked(model.get).mockImplementation(async (level = "architect") =>
+      level === "detail"
+        ? {
+            elements: [node, core, artifact],
+            relationships: [],
+            views: [
+              { name: "Layered", viewpoint: "Layered", level: "architect", elements: ["n1", "ac1"] },
+              { name: "Implementation and Deployment (detail)", viewpoint: "Implementation and Deployment", level: "detail", elements: ["n1", "art1"] },
+            ],
+          }
+        : { elements: [node, core], relationships: [], views: [{ name: "Layered", viewpoint: "Layered", level: "architect", elements: ["n1", "ac1"] }] },
+    );
+    render(<Workspace />);
+    await userEvent.click(screen.getByRole("button", { name: /View model/ }));
+    expect(await screen.findByTestId("archimate")).toHaveTextContent("2 elements");
+
+    await userEvent.click(screen.getByRole("radio", { name: "Detail" }));
+    await waitFor(() => expect(model.get).toHaveBeenLastCalledWith("detail"));
+    expect(await screen.findByTestId("archimate")).toHaveTextContent("3 elements");
+
+    await userEvent.selectOptions(screen.getByLabelText("Viewpoint"), "Implementation and Deployment (detail)");
+    expect(screen.getByTestId("archimate")).toHaveTextContent("2 elements");
+    expect(screen.getByRole("button", { name: "select core" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "select Core" })).not.toBeInTheDocument();
+
+    // Back to the architect level: a detail view is no longer offered, the whole model shows again
+    await userEvent.click(screen.getByRole("radio", { name: "Architect" }));
+    await waitFor(() => expect(screen.getByTestId("archimate")).toHaveTextContent("2 elements"));
+    expect(screen.getByLabelText("Viewpoint")).toHaveValue("");
+  });
+
   it("reloads both graphs when a step completes", async () => {
     render(<Workspace />);
     await screen.findByRole("option", { name: "deriva" });

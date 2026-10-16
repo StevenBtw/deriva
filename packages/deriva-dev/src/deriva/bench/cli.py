@@ -74,6 +74,14 @@ def benchmark_run(
             help="Re-run LLM extraction steps only (keep structural/AST cached; LLM answers still come from the LLM cache unless --no-cache)",
         ),
     ] = False,
+    extract_per_run: Annotated[
+        bool,
+        typer.Option(
+            "--extract-per-run",
+            help="Every run repeats the complete pipeline: extraction with the run's model, no cache, on its own graph "
+            "(kept in the session's graphs folder). Needs --stages extraction,derivation and --no-cache",
+        ),
+    ] = False,
     only_extraction_step: Annotated[
         str | None,
         typer.Option(
@@ -98,6 +106,15 @@ def benchmark_run(
     use_cache = not no_cache
     export_models = not no_export_models
     clear_between_runs = not no_clear
+    from deriva.bench.benchmarking import BenchmarkConfig, validate_config
+
+    try:
+        validate_config(
+            BenchmarkConfig(repositories=repos_list, models=models_list, stages=stages_list or ["extraction", "derivation"], use_cache=use_cache, extract_per_run=extract_per_run)
+        )
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
 
     # Calculate total runs based on mode
     if per_repo:
@@ -128,6 +145,8 @@ def benchmark_run(
         typer.echo("Extraction cache: disabled (full re-extraction)")
     elif no_cache_extraction_llm:
         typer.echo("Extraction cache: structural/AST only (LLM steps re-run)")
+    if extract_per_run:
+        typer.echo("Extraction: per run (the run's model, no cache, a graph per run)")
     typer.echo(f"{'=' * 60}\n")
 
     with _benchmarks() as session:
@@ -180,6 +199,7 @@ def benchmark_run(
                 per_repo=per_repo,
                 no_cache_extraction=no_cache_extraction,
                 no_cache_extraction_llm=no_cache_extraction_llm,
+                extract_per_run=extract_per_run,
             )
 
         typer.echo(f"\n{'=' * 60}")
@@ -421,6 +441,73 @@ def benchmark_analyze(
                 chains = ", ".join(f"{name} {linked}/{total}" for name, (linked, total) in q.get("chains", {}).items())
                 if chains:
                     typer.echo(f"    chains: {chains}")
+            typer.echo("")
+
+        if summary.detail_level:
+            typer.echo("DETAIL LEVEL (the export's members of the architect elements; not in the numbers above)")
+            header = f"{'Repository':<24} {'Model':<18} {'Runs':>4} {'Elem':>6} {'Elem cons.':>10} {'Rel cons.':>9}  By type"
+            typer.echo("-" * len(header))
+            typer.echo(header)
+            typer.echo("-" * len(header))
+            for d in summary.detail_level:
+                by_type = ", ".join(f"{t} {n:g}" for t, n in d["by_type"].items()) or "-"
+                typer.echo(
+                    f"{d['repository'][:24]:<24} {d['model'][:18]:<18} {d['runs']:>4} {d['elements']:>6.1f} "
+                    f"{d['element_consistency']:>10.0%} {d['relationship_consistency']:>9.0%}  {by_type}"
+                )
+            typer.echo("")
+
+        if summary.extraction_stability or summary.variance_split:
+            # Extraction per run: how stable each LLM extraction step is, and which share of the differences it causes
+            from deriva.bench.analysis import BenchmarkAnalyzer as ReportAnalyzer
+
+            answers = ReportAnalyzer([session_id], session._engine).analyze_answer_stability()
+            typer.echo("EXTRACTION PER RUN (each run extracted with its model, no cache)")
+            header = f"{'Repository':<24} {'Model':<18} {'Step':<24} {'Decisions':>12} {'Answers':>12}"
+            typer.echo("-" * len(header))
+            typer.echo(header)
+            typer.echo("-" * len(header))
+            for row in summary.extraction_stability:
+                per_step = {a.step: a for key, found in answers.items() if key in (row["repository"], f"{row['repository']} · {row['model']}") for a in found}
+                for step, d in row["steps"].items():
+                    a = per_step.get(step)
+                    decided = f"{d['stable']}/{d['items']}" if d["items"] else "-"
+                    answered = f"{a.identical}/{a.prompts}" if a and a.prompts else "-"
+                    typer.echo(f"{row['repository'][:24]:<24} {row['model'][:18]:<18} {step[:24]:<24} {decided:>12} {answered:>12}")
+            typer.echo("")
+            if summary.variance_split:
+                typer.echo("VARIANCE SPLIT (a missing element or relationship: its source node missing too = extraction, else derivation)")
+                header = f"{'Repository':<24} {'Model':<18} {'Runs':>4}  {'Elements extr/deriv':<22} {'Relationships extr/deriv':<26}"
+                typer.echo("-" * len(header))
+                typer.echo(header)
+                typer.echo("-" * len(header))
+                for v in summary.variance_split:
+
+                    def text(part: dict) -> str:
+                        share = part["extraction_share"]
+                        return f"{part['extraction']}/{part['derivation']}" + (f" ({share:.0%} extr.)" if share is not None else "")
+
+                    typer.echo(f"{v['repository'][:24]:<24} {v['model'][:18]:<18} {v['runs']:>4}  {text(v['elements']):<22} {text(v['relationships']):<26}")
+                typer.echo("")
+
+        solves = [q for q in summary.model_quality if q.get("solve")]
+        if solves:
+            typer.echo("MILP SAFETY NET (joint_consistency per run)")
+            header = (
+                f"{'Repository':<24} {'Run':>3} {'Status':<9} {'Props':>5} {'Merge c.':>8} {'Rows (H1-H6)':<22} "
+                f"{'Cuts':>4} {'Kept':>5} {'Drop':>4} {'Merge':>5} {'Redir':>5} {'Sec':>6}"
+            )
+            typer.echo("-" * len(header))
+            typer.echo(header)
+            typer.echo("-" * len(header))
+            for q in solves:
+                s = q["solve"]
+                rows = ", ".join(f"{k} {v}" for k, v in sorted((s.get("rows") or {}).items())) or "-"
+                typer.echo(
+                    f"{q['repository'][:24]:<24} {q['run']:>3} {str(s.get('status'))[:9]:<9} {s.get('proposals', 0):>5} "
+                    f"{s.get('merge_candidates', 0):>8} {rows[:22]:<22} "
+                    f"{s.get('cycle_cuts', 0):>4} {s.get('kept', 0):>5} {s.get('dropped', 0):>4} {s.get('merges', 0):>5} {s.get('redirects', 0):>5} {s.get('seconds', 0):>6.3f}"
+                )
             typer.echo("")
 
         if summary.localization.hotspots:
