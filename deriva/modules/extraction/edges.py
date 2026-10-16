@@ -750,6 +750,22 @@ def _extract_import_edges(
     java_files = _java_file_index(all_file_paths) if file_path.endswith(".java") and imports else None
 
     for imp in imports:
+        # from <package> import <module>: the module's own file (and the package for names that are no module)
+        submodules, only_modules = _python_submodules(imp.module, imp.names, file_path, all_file_paths) if imp.is_from_import else ([], False)
+        for target_path in submodules if EdgeType.IMPORTS in edge_types else []:
+            target_file_id = generate_file_node_id(repo_name, target_path)
+            edges.append(
+                {
+                    "edge_id": generate_edge_id(source_file_id, target_file_id, "IMPORTS"),
+                    "from_node_id": source_file_id,
+                    "to_node_id": target_file_id,
+                    "relationship_type": "IMPORTS",
+                    "properties": {"module": imp.module, "names": imp.names, "line": imp.line, "is_from_import": imp.is_from_import, "created_at": current_timestamp()},
+                }
+            )
+            stats["internal"] += 1
+        if only_modules:
+            continue
         resolved = _resolve_import(
             module=imp.module,
             current_file=file_path,
@@ -838,6 +854,10 @@ def _imported_paths(
     java_files = _java_file_index(all_file_paths) if file_path.endswith(".java") and imports else None
     paths: set[str] = set()
     for imp in imports:
+        submodules, only_modules = _python_submodules(imp.module, imp.names, file_path, all_file_paths) if imp.is_from_import else ([], False)
+        paths.update(submodules)
+        if only_modules:
+            continue
         resolved = _resolve_import(
             module=imp.module,
             current_file=file_path,
@@ -866,6 +886,26 @@ def _infer_ecosystem(file_path: str) -> str:
         return "nuget"
     else:
         return "unknown"
+
+
+def _python_submodules(module: str, names: list[str] | None, current_file: str, all_file_paths: set[str]) -> tuple[list[str], bool]:
+    """The module files a Python ``from <package> import <name>, ...`` imports (names that are modules of the
+    package, relative or absolute), and whether every name was one."""
+    if not current_file.endswith(".py") or not names or "*" in names:
+        return [], False
+    found: list[str] = []
+    for name in names:
+        if module.startswith("."):
+            dots = len(module) - len(module.lstrip("."))
+            parts = [p for p in str(PurePosixPath(current_file).parent).split("/") if p and p != "."]
+            parts = parts[: len(parts) - (dots - 1)] if dots > 1 else parts
+            base = "/".join(parts + [p for p in module[dots:].split(".") if p])
+            target = next((c for c in (f"{base}/{name}.py".lstrip("/"), f"{base}/{name}/__init__.py".lstrip("/")) if c in all_file_paths), None)
+        else:
+            target = _resolve_absolute_import(f"{module}.{name}", all_file_paths)
+        if target and target != current_file and target not in found:
+            found.append(target)
+    return found, len(found) == len(names)
 
 
 def _resolve_import(

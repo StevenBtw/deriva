@@ -38,11 +38,13 @@ import functools
 import json
 import logging
 import re
+from collections import defaultdict
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any, Protocol
 
 from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.models import Element, Relationship, validate_relationship_rule
+from deriva.common.naming import name_key
 from deriva.common.paths import workspace
 from deriva.common.types import PipelineResult, ProgressUpdate
 
@@ -87,7 +89,7 @@ from deriva.modules.derivation.business_function import BusinessFunctionDerivati
 # Derivation class imports
 from deriva.modules.derivation.business_object import BusinessObjectDerivation
 from deriva.modules.derivation.business_process import BusinessProcessDerivation
-from deriva.modules.derivation.component_services import ComponentServicesConfig, derive_component_services, derive_member_services
+from deriva.modules.derivation.component_services import ComponentServicesConfig, derive_component_services, derive_member_services, derive_unit_services
 from deriva.modules.derivation.data_object import DataObjectDerivation
 from deriva.modules.derivation.device import DeviceDerivation
 from deriva.modules.derivation.element_base import ElementDerivationBase
@@ -309,7 +311,10 @@ def _graph_link_rules(configs: list[Any]) -> list[GraphLinkRule]:
     rules: list[GraphLinkRule] = []
     for item in _structural_items(configs, "graph_links", ("source", "target", "relationship", "query")):
         _check_rule("graph_links", item, item["source"], item["relationship"], item["target"])
-        rules.append(GraphLinkRule(source=item["source"], target=item["target"], relationship=item["relationship"], query=item["query"]))
+        on_channel = item.get("source_channel", False)
+        if not isinstance(on_channel, bool):
+            raise ValueError(f"graph_links: source_channel must be true or false, got {on_channel!r}")
+        rules.append(GraphLinkRule(source=item["source"], target=item["target"], relationship=item["relationship"], query=item["query"], source_channel=on_channel))
     return rules
 
 
@@ -382,11 +387,35 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
         raise ValueError("params.component_services: ubiquity is a number above 0 and at most 1")
     group_by = settings.get("group_by", defaults.group_by)
     member_min_names, max_groups = settings.get("member_min_names", defaults.member_min_names), settings.get("max_groups", defaults.max_groups)
-    if group_by not in ("components", "members"):
-        raise ValueError(f"params.component_services.group_by is 'components' or 'members', not {group_by!r}")
+    if group_by not in ("components", "members", "unit"):
+        raise ValueError(f"params.component_services.group_by is 'components', 'members' or 'unit', not {group_by!r}")
+    whole = {k: settings.get(k, getattr(defaults, k)) for k in ("min_members", "max_per_component", "min_family", "max_candidates")}
+    if not all(isinstance(n, int) and not isinstance(n, bool) and n >= 1 for n in whole.values()):
+        raise ValueError(f"params.component_services: {sorted(whole)} are whole numbers of at least 1")
+    max_hops = settings.get("max_hops", defaults.max_hops)
+    markers = settings.get("endpoint_markers", [])
+    if not isinstance(max_hops, int) or isinstance(max_hops, bool) or max_hops < 0 or not isinstance(markers, list) or not all(isinstance(m, str) and m for m in markers):
+        raise ValueError("params.component_services: max_hops is a whole number of at least 0, endpoint_markers a list of patterns")
+    for marker in markers:
+        try:
+            re.compile(marker)
+        except re.error as exc:
+            raise ValueError(f"params.component_services: endpoint marker {marker!r} is no valid pattern: {exc}") from exc
+    words = {k: settings.get(k, list(getattr(defaults, k))) for k in ("kind_words", "generic_names", "service_templates", "function_templates", "function_nouns")}
+    if not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in words.values()):
+        raise ValueError(f"params.component_services: {sorted(words)} are lists of strings")
+    if any("{object}" not in t for t in words["service_templates"] + words["function_templates"]):
+        raise ValueError("params.component_services: name templates hold {object}")
+    if group_by == "unit" and not isinstance(settings.get("choose_instruction"), str):
+        raise ValueError("params.component_services.choose_instruction (the closed-set naming instruction) is needed for group_by 'unit'")
     if not all(isinstance(n, int) and not isinstance(n, bool) and n >= minimum for n, minimum in ((member_min_names, 1), (max_groups, 0))):
         raise ValueError("params.component_services: member_min_names is a whole number of at least 1, max_groups of at least 0")
     return ComponentServicesConfig(
+        **whole,
+        **{k: tuple(v) for k, v in words.items()},
+        max_hops=max_hops,
+        endpoint_markers=tuple(markers),
+        choose_instruction=str(settings.get("choose_instruction") or ""),
         group_by=group_by,
         ubiquity=float(ubiquity),
         member_min_names=member_min_names,
@@ -425,8 +454,77 @@ def _component_services_step(
     elements: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Derive and store the services the components offer; the result has the shape of ``generate_element``'s."""
-    interface_links = [pair for query in config.interface_links for pair in graph_link_pairs(graph_manager, query)]
-    object_links = [pair for query in config.object_links for pair in graph_link_pairs(graph_manager, query)]
+    # Member and object links are pairs (no channel)
+    interface_links = [(link[0], link[1]) for query in config.interface_links for link in graph_link_pairs(graph_manager, query)]
+    object_links = [(link[0], link[1]) for query in config.object_links for link in graph_link_pairs(graph_manager, query)]
+    if config.group_by == "unit":
+        nodes = {str(m.get("source")) for e in elements for m in (e.get("properties") or {}).get("members") or [] if m.get("source")}
+        nodes |= {a for a, _ in interface_links} | {a for a, _ in object_links}
+        domains = graph_manager.query("MATCH (d:Graph:DataDomain) WHERE d.active = true RETURN d.id AS id, d.businessObject AS bo, d.exception AS exception")
+        bases: dict[str, set[str]] = defaultdict(set)
+        for row in graph_manager.query("MATCH (t:Graph:TypeDefinition)-[:`Graph:INHERITS`]->(b) RETURN t.id AS t, b.typeName AS name, b.id AS id"):
+            if row.get("t"):
+                bases[row["t"]].add(str(row.get("name") or str(row.get("id") or "").split("::")[-1]))
+        lines = {
+            (row["a"], row["b"])
+            for row in graph_manager.query(
+                "MATCH (a:Graph:DeployableUnit)-[r]->(b:Graph:DeployableUnit) WHERE type(r) IN ['Graph:CONSUMES', 'Graph:SENDS_TO'] RETURN DISTINCT a.id AS a, b.id AS b"
+            )
+        }
+        norm = lambda p: str(p or "").replace(chr(92), "/")  # noqa: E731 - a one-line helper
+        type_names: dict[str, set[str]] = defaultdict(set)
+        for row in graph_manager.query("MATCH (t:Graph:TypeDefinition) WHERE t.active = true RETURN t.filePath AS path, t.typeName AS name"):
+            if row.get("path") and row.get("name"):
+                type_names[norm(row["path"])].add(name_key(str(row["name"])))
+        domain_names: dict[str, set[str]] = defaultdict(set)
+        for row in graph_manager.query(
+            "MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(m) OPTIONAL MATCH (m)-[:`Graph:INCLUDES`]->(t:Graph:TypeDefinition) "
+            "RETURN d.id AS d, m.name AS entity, m.typeName AS member, t.typeName AS type"
+        ):
+            for value in (row.get("entity"), row.get("member"), row.get("type")):
+                if value:
+                    domain_names[str(row["d"])].add(name_key(str(value)))
+        # Endpoint types: a type whose own or whose methods' decorators match a marker, in the unit that includes its file
+        endpoint_types: dict[str, tuple[str, str]] = {}
+        if config.endpoint_markers:
+            marker = re.compile("|".join(f"(?:{m})" for m in config.endpoint_markers))
+            for row in graph_manager.query(
+                "MATCH (t:Graph:TypeDefinition) WHERE t.active = true RETURN t.id AS id, t.typeName AS name, t.filePath AS path, t.decorators AS decorators"
+            ):
+                if any(marker.fullmatch(str(d)) for d in row.get("decorators") or []):
+                    endpoint_types[row["id"]] = (str(row["name"]), norm(row["path"]))
+            for row in graph_manager.query(
+                "MATCH (t:Graph:TypeDefinition)-[:`Graph:CONTAINS`]->(m:Graph:Method) RETURN t.id AS id, t.typeName AS name, t.filePath AS path, m.decorators AS decorators"
+            ):
+                if any(marker.fullmatch(str(d)) for d in row.get("decorators") or []):
+                    endpoint_types[row["id"]] = (str(row["name"]), norm(row["path"]))
+        scopes = unit_scopes(graph_manager)
+        endpoints: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        for node, (type_name, path) in sorted(endpoint_types.items()):
+            for unit, unit_files in scopes.files.items():
+                if path in unit_files:
+                    endpoints[unit].append((node, type_name))
+                    nodes.add(node)
+        services, functions = derive_unit_services(
+            elements,
+            element_source_paths(graph_manager, [{"properties": {"source": n}} for n in sorted(nodes)]),
+            file_imports(graph_manager),
+            config,
+            config.choose_instruction,
+            llm_query_fn,
+            scopes=scopes,
+            deciding={str(r["id"]) for r in domains if r.get("bo") or r.get("exception")},
+            business_objects={str(r["id"]): str(r["bo"]) for r in domains if r.get("bo")},
+            bases=dict(bases),
+            lines=lines,
+            documents=_documentation_files(graph_manager),
+            member_links=interface_links,
+            object_links=object_links,
+            type_names=dict(type_names),
+            domain_names=dict(domain_names),
+            endpoints=dict(endpoints),
+        )
+        return _stored_services(services + functions, archimate_manager)
     if config.group_by == "members":
         # The paths of the interfaces' members, of the nodes linked to them and of the objects' sources
         nodes = {str(m.get("source")) for e in elements for m in (e.get("properties") or {}).get("members") or [] if m.get("source")}

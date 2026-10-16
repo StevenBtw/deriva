@@ -101,6 +101,11 @@ def _is_mainframe(path: str) -> bool:
     return PurePosixPath(path).suffix.lower() in (".cpy", ".cbl", ".cob", ".cobol")
 
 
+def is_root(decorators: list[str], bases: list[str], rules: EntityRules) -> bool:
+    """Whether a type's annotations or base types carry a root marker (``rules.root_markers``)."""
+    return bool({_bare(x) for x in [*decorators, *bases]} & {m.casefold() for m in rules.root_markers})
+
+
 def entity_name(type_name: str, unit_name: str, rules: EntityRules, table: bool = False) -> str:
     """The entity's name from its type name: the owning unit's name in front and kind suffixes at the end dropped."""
     words = _words(type_name)

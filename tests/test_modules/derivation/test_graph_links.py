@@ -128,3 +128,26 @@ def test_a_service_name_in_a_fenced_answer_is_read():
     )
 
     assert [s["name"] for s in services] == ["Ledger Keeping"]
+
+
+class TestGraphLinksOnAChannel:
+    """A rule with source_channel ends on the source element whose role is the link's channel (a unit has an interface per channel)."""
+
+    RULE = GraphLinkRule(source="ApplicationInterface", target="ApplicationComponent", relationship="Serving", query="Q", source_channel=True)
+    REST = {**_el("ai_core__rest", "ApplicationInterface", "unit::r::core", "Core REST API"), "properties": {"source": "unit::r::core", "role": "rest"}}
+    WEB = {**_el("ai_core__web", "ApplicationInterface", "unit::r::core", "Core Web UI"), "properties": {"source": "unit::r::core", "role": "web"}}
+    BILLING = _el("ac_billing", "ApplicationComponent", "unit::r::billing", "Billing")
+
+    def test_the_providers_interface_of_the_channel_serves_the_consumer(self):
+        relationships = derive_graph_link_relationships([self.REST, self.WEB, self.BILLING], [self.RULE], {"Q": [("unit::r::core", "unit::r::billing", "rest")]})
+
+        assert _triples(relationships) == {("ai_core__rest", "Serving", "ac_billing")}
+
+    def test_a_provider_without_an_interface_of_the_channel_gets_no_line(self):
+        assert derive_graph_link_relationships([self.REST, self.WEB, self.BILLING], [self.RULE], {"Q": [("unit::r::core", "unit::r::billing", "rpc")]}) == []
+
+    def test_the_query_rows_carry_the_channel(self):
+        from deriva.modules.derivation.base import graph_link_pairs
+
+        rows = [{"a": "unit::r::core", "b": "unit::r::billing", "channel": "rest"}, {"a": "x", "b": "y"}]
+        assert graph_link_pairs(SimpleNamespace(query=lambda q: rows), "Q") == [("unit::r::core", "unit::r::billing", "rest"), ("x", "y")]  # type: ignore[arg-type]

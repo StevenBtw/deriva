@@ -37,6 +37,7 @@ from deriva.common.settings import GraphSettings
 
 from .models import (
     BusinessConceptNode,
+    DataDomainNode,
     DataEntityNode,
     DeployableUnitNode,
     DeploymentNode,
@@ -69,6 +70,7 @@ GraphNode = (
     | ExternalDependencyNode
     | DeployableUnitNode
     | DataEntityNode
+    | DataDomainNode
     | EnvironmentNode
     | DeploymentNode
     | SoftwareNode

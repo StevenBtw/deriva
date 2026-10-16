@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
@@ -311,6 +312,31 @@ def benchmark_conventions(
     typer.echo(f"Checked {len(payload['results'])} repositories; summary: {out}/summary.md")
     for name, page in payload["pages"].items():
         typer.echo(f"  {name}: {page}")
+
+
+@app.command("reference")
+def benchmark_reference(
+    session_id: Annotated[str, typer.Argument(help="Benchmark session whose exported runs are evaluated")],
+    run: Annotated[int | None, typer.Option("--run", help="Evaluate only this run number (default: every run)")] = None,
+    output: Annotated[str | None, typer.Option("-o", "--output", help="Output folder (default: workspace/analysis/reference/<session>)")] = None,
+    references: Annotated[str | None, typer.Option("--references", help="Reference model folder (default: workspace/goldens/dev)")] = None,
+    benchmarks: Annotated[str | None, typer.Option("--benchmarks", help="Benchmark folder (default: workspace/benchmarks)")] = None,
+) -> None:
+    """Recall and precision against the development reference models, per element type, relationship kind and chain."""
+    from deriva.bench.reference_eval import evaluate_session, table_lines, write_report
+
+    session_dir = (Path(benchmarks) if benchmarks else workspace() / "benchmarks") / session_id
+    if not (session_dir / "models").is_dir():
+        typer.echo(f"Error: no exported models in {session_dir}", err=True)
+        raise typer.Exit(1)
+    payload = evaluate_session(session_dir, references or workspace() / "goldens" / "dev", run=run)
+    if not payload["repositories"]:
+        typer.echo("Error: no exported run has a reference model", err=True)
+        raise typer.Exit(1)
+    for line in table_lines(payload):
+        typer.echo(line)
+    pages = write_report(payload, output or workspace() / "analysis" / "reference" / session_id)
+    typer.echo(f"Summary and pages: {Path(next(iter(pages.values()))).parent}")
 
 
 @app.command("analyze")

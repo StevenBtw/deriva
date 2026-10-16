@@ -25,6 +25,7 @@ _NODE_STEPS = {
     "Test": "Test",
     "DeployableUnit": "DeployableUnit",
     "DataEntity": "DataEntity",
+    "DataDomain": "DataDomain",
     "Environment": "Deployment",
     "Deployment": "Deployment",
     "Software": "Deployment",
@@ -52,10 +53,13 @@ _EDGE_STEPS: dict[tuple[str, str | None, str | None], str] = {
     ("INCLUDES", "DeployableUnit", None): "DeployableUnit",
     ("INCLUDES", "DataEntity", None): "DataEntity",
     ("NAMED_IN", "DataEntity", None): "DataEntity",
+    ("INCLUDES", "DataDomain", None): "DataDomain",
     ("RUNS", "Environment", None): "Deployment",
     ("DEPLOYS", "Deployment", None): "Deployment",
     ("HOSTS", "Environment", None): "Deployment",
     ("SERVES", "Software", None): "Deployment",
+    ("CONSUMES", "DeployableUnit", None): "Cooperation",
+    ("SENDS_TO", "DeployableUnit", None): "Cooperation",
 }
 
 IMPORT_STUB = "External package discovered via import"

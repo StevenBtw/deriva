@@ -1741,3 +1741,38 @@ def test_a_document_with_the_members_name_is_no_member():
     edges, _, _ = TestJavaAndScriptImports._edges(imports, "app/cbl/PROGA.cbl", files)
 
     assert TestJavaAndScriptImports._targets(edges) == {("IMPORTS", "file::r::other_cpy_RECA.cpy"), ("IMPORTS", "file::r::app_cpy_RECB")}
+
+
+class TestPythonSubmoduleImports:
+    """``from <package> import <module>`` imports the module's file, relative or absolute."""
+
+    def _targets(self, module, names, all_files, file_path="app/routes.py"):
+        from deriva.adapters.treesitter.models import ExtractedImport
+        from deriva.modules.extraction.edges import _extract_import_edges
+
+        edges, _, _ = _extract_import_edges(
+            imports=[ExtractedImport(module=module, names=names, line=1, is_from_import=True)],
+            file_path=file_path,
+            repo_name="r",
+            all_file_paths=all_files,
+            external_packages=set(),
+            edge_types={EdgeType.IMPORTS, EdgeType.USES},
+        )
+        return sorted(e["to_node_id"].split("::")[-1] for e in edges if e["relationship_type"] == "IMPORTS")
+
+    def test_a_relative_import_of_a_sibling_module_reaches_its_file(self):
+        assert self._targets(".", ["services"], {"app/routes.py", "app/services.py", "app/models.py"}) == ["app_services.py"]
+
+    def test_an_absolute_import_of_a_package_module_reaches_its_file(self):
+        assert self._targets("app", ["services", "models"], {"app/routes.py", "app/services.py", "app/models.py", "main.py"}, "main.py") == ["app_models.py", "app_services.py"]
+
+    def test_names_that_are_no_module_keep_the_package_target(self):
+        assert self._targets(".", ["helper"], {"app/routes.py", "app/__init__.py"}) == ["app___init__.py"]
+        assert self._targets(".schemas", ["Thing"], {"app/routes.py", "app/schemas.py"}) == ["app_schemas.py"]
+
+    def test_the_calls_step_knows_the_imported_modules(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+        from deriva.modules.extraction.edges import _imported_paths
+
+        imports = [ExtractedImport(module=".", names=["services"], line=1, is_from_import=True)]
+        assert _imported_paths(imports, "app/routes.py", {"app/routes.py", "app/services.py"}, set()) == {"app/services.py"}

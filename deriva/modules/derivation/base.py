@@ -263,6 +263,9 @@ class GraphLinkRule:
     target: str  # e.g. ApplicationInterface
     relationship: str  # e.g. Composition
     query: str  # Graph query returning a, b (source node ids)
+    # The query also returns ``channel``: the source end is the element (made from a) whose role is that channel,
+    # such as the provider's interface of a unit (a unit has an interface per channel)
+    source_channel: bool = False
 
 
 @dataclass(frozen=True)
@@ -3141,6 +3144,18 @@ def unit_scopes(graph_manager: GraphManager) -> UnitScopes:
     for row in graph_manager.query("MATCH (d:Graph:DataEntity)-[:`Graph:NAMED_IN`]->(f:Graph:File) RETURN d.id AS entity, f.filePath AS path"):
         if row.get("entity") and row.get("path"):
             entity_files[row["entity"]].add(str(row["path"]).replace(chr(92), "/"))
+    # A domain is used where its members are: its entities' types and files, and the types it holds itself
+    for row in graph_manager.query("MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(m) RETURN d.id AS domain, m.id AS node, m.filePath AS path"):
+        domain, node = row.get("domain"), row.get("node")
+        if not domain or not node:
+            continue
+        if node in entity_nodes or node in entity_files:
+            entity_nodes[domain] |= entity_nodes.get(node, set())
+            entity_files[domain] |= entity_files.get(node, set())
+        else:
+            entity_nodes[domain].add(node)
+            if row.get("path"):
+                entity_files[domain].add(str(row["path"]).replace(chr(92), "/"))
     return UnitScopes(
         files={u: frozenset(p) for u, p in files.items()},
         nodes={u: frozenset(n) for u, n in nodes.items()},
@@ -3328,14 +3343,18 @@ def derive_same_name_relationships(elements: list[dict[str, Any]], rules: list[S
     return relationships
 
 
-def graph_link_pairs(graph_manager: GraphManager, query: str) -> list[tuple[str, str]]:
-    """The (a, b) source node id pairs a link query returns, each pair once, in order."""
-    pairs = {(str(row["a"]), str(row["b"])) for row in graph_manager.query(query) if row.get("a") and row.get("b")}
+def graph_link_pairs(graph_manager: GraphManager, query: str) -> list[tuple[str, ...]]:
+    """The (a, b) source node id pairs a link query returns, each pair once, in order; (a, b, channel) when a row has a channel."""
+    pairs = {
+        (str(row["a"]), str(row["b"]), str(row["channel"])) if row.get("channel") else (str(row["a"]), str(row["b"]))
+        for row in graph_manager.query(query)
+        if row.get("a") and row.get("b")
+    }
     return sorted(pairs)
 
 
 def derive_graph_link_relationships(
-    elements: list[dict[str, Any]], rules: list[GraphLinkRule], links: dict[str, list[tuple[str, str]]], scopes: UnitScopes | None = None
+    elements: list[dict[str, Any]], rules: list[GraphLinkRule], links: dict[str, list[tuple[str, ...]]], scopes: UnitScopes | None = None
 ) -> list[dict[str, Any]]:
     """Elements whose source nodes are linked relate as the rule says. ``links``: query -> its (a, b) pairs.
     A linked node that no element is made from is lifted to the elements whose deployable unit includes it."""
@@ -3355,7 +3374,14 @@ def derive_graph_link_relationships(
                 direct = [element for entity in scopes.entities_of(node) for element in of_source[kind].get(entity, [])]
             return direct or (unit_owners(lifted[kind], scopes, node, None) if scopes is not None and lifted.get(kind) else [])
 
-        found = {(s, t) for a, b in links.get(rule.query, []) for s in ends(a, rule.source) for t in ends(b, rule.target) if s != t}
+        role = {e["identifier"]: str((e.get("properties") or {}).get("role") or "") for e in elements}
+
+        def sources(link: tuple[str, ...]) -> list[str]:
+            found = ends(link[0], rule.source)
+            # On a channel: only the source element of that role (no channel on the link: no line)
+            return [s for s in found if len(link) > 2 and role.get(s) == link[2]] if rule.source_channel else found
+
+        found = {(s, t) for link in links.get(rule.query, []) for s in sources(link) for t in ends(link[1], rule.target) if s != t}
         relationships.extend({"source": s, "target": t, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "graph_link"} for s, t in sorted(found))
     return relationships
 

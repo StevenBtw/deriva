@@ -2774,3 +2774,151 @@ class TestDeploymentStep:
     def test_the_signals_are_validated(self, graph, tmp_path):
         with pytest.raises(ValueError, match="Deployment"):
             _run_extraction_step(self._cfg({**self.PARAMS, "markers": [{"pattern": "("}]}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+
+class TestCooperationStep:
+    """The Cooperation step writes CONSUMES and SENDS_TO edges between deployable units, from structure (no LLM)."""
+
+    PARAMS = {"send_markers": ["convertAndSend"], "listen_markers": ["@JmsListener"]}
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _cfg(self, params):
+        return SimpleNamespace(node_type="Cooperation", params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+
+    def _repo(self, graph, root, files, variables=None):
+        from deriva.adapters.graph.models import DeployableUnitNode, DeploymentNode, FileNode
+
+        for name in ("core", "billing"):
+            graph.add_node(DeployableUnitNode(name=name, path=f"r/{name}", unit_kind="container", repository_name="r"), node_id=f"unit::r::{name}")
+            graph.add_node(
+                DeploymentNode(name=name, environment="compose", repository_name="r", variables=(variables or {}).get(name, {}), ports=[]),
+                node_id=f"deployment::r::compose::{name}",
+            )
+            graph.add_edge(f"deployment::r::compose::{name}", f"unit::r::{name}", "DEPLOYS")
+        for path, text in files.items():
+            (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / path).write_text(text, encoding="utf-8")
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="config", subtype=""), node_id=f"file::r::{path}")
+            graph.add_edge(f"unit::r::{path.split('/', 1)[0]}", f"file::r::{path}", "INCLUDES")
+
+    def test_uses_and_message_flows_are_written_with_their_evidence(self, graph, tmp_path):
+        files = {
+            "core/application.properties": "server.port = 8110\nin.queueName=orders\n",
+            "core/Listener.java": '@JmsListener(destination = "${in.queueName}") void on() {}',
+            "billing/application.properties": "core.url=http://localhost:8110\nout.queueName=orders\n",
+            "billing/Sender.java": '@Value("${out.queueName}") String q; void s() { jms.convertAndSend(q, x); }',
+        }
+        self._repo(graph, tmp_path, files)
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == [] and result["links"] == {"endpoint": 1, "messaging": 1}
+        rows = graph.query("MATCH (a:Graph:DeployableUnit)-[r]->(b:Graph:DeployableUnit) RETURN a.id AS a, type(r) AS t, b.id AS b, r.channel AS c, r.evidence AS e ORDER BY t")
+        assert [(r["a"], r["t"], r["b"], r["c"], r["e"]) for r in rows] == [
+            ("unit::r::billing", "Graph:CONSUMES", "unit::r::core", "rest", "endpoint"),
+            ("unit::r::billing", "Graph:SENDS_TO", "unit::r::core", "messaging", "messaging"),
+        ]
+
+    def test_a_rerun_without_the_evidence_sweeps_the_line(self, graph, tmp_path):
+        self._repo(graph, tmp_path, {"core/application.properties": "server.port = 8110\n", "billing/application.properties": "core.url=http://localhost:8110\n"})
+        _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        (tmp_path / "billing/application.properties").write_text("nothing=here\n", encoding="utf-8")
+
+        _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert graph.query("MATCH (:Graph:DeployableUnit)-[r:`Graph:CONSUMES`]->(:Graph:DeployableUnit) RETURN count(r) AS n")[0]["n"] == 0
+
+    def test_the_compose_environment_of_a_service_counts_as_its_configuration(self, graph, tmp_path):
+        self._repo(graph, tmp_path, {"core/application.properties": "x=1\n"}, variables={"billing": {"CORE_URL": "http://core:8110"}})
+
+        _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        rows = graph.query("MATCH (a)-[r:`Graph:CONSUMES`]->(b) RETURN a.id AS a, b.id AS b")
+        assert [(r["a"], r["b"]) for r in rows] == [("unit::r::billing", "unit::r::core")]
+
+    def test_the_signals_are_validated(self, graph, tmp_path):
+        with pytest.raises(ValueError, match="Cooperation"):
+            _run_extraction_step(self._cfg({"send_markers": "convertAndSend"}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+
+class TestDataDomainStep:
+    """The DataDomain step groups the data entities into information domains and writes them with INCLUDES edges (no LLM)."""
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _cfg(self, params=None):
+        return SimpleNamespace(
+            node_type="DataDomain",
+            params=json.dumps(params or {"identity_words": ["user"]}),
+            input_sources="",
+            instruction="",
+            example="",
+            temperature=None,
+            max_tokens=None,
+            batch_size=1,
+        )
+
+    def _type(self, graph, root, name, text):
+        from deriva.adapters.graph.models import FileNode, TypeDefinitionNode
+
+        path = f"shop/{name}.java"
+        (root / "shop").mkdir(exist_ok=True)
+        (root / path).write_text(text, encoding="utf-8")
+        graph.add_node(FileNode(name=f"{name}.java", path=path, repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}")
+        graph.add_node(TypeDefinitionNode(name=name, type_category="class", file_path=path, repository_name="r", decorators=["Entity"]), node_id=f"typedef::r::{name}")
+
+    def _run(self, graph, root, params=None):
+        entity_params = json.dumps({"entity_annotations": ["Entity"]})
+        entity_cfg = SimpleNamespace(node_type="DataEntity", params=entity_params, input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+        _run_extraction_step(entity_cfg, SimpleNamespace(name="r"), root, [], [], graph, None, MagicMock())  # the entities come first
+        with patch("deriva.services.extraction.config.get_extraction_config", return_value=entity_cfg):
+            return _run_extraction_step(self._cfg(params), SimpleNamespace(name="r"), root, [], [], graph, None, MagicMock())
+
+    def test_entities_owned_by_one_parent_form_its_domain(self, graph, tmp_path):
+        self._type(graph, tmp_path, "Order", '@Entity public class Order { @OneToMany(mappedBy = "order", cascade = {CascadeType.ALL}) private List<OrderLine> lines; }')
+        self._type(graph, tmp_path, "OrderLine", "@Entity public class OrderLine { @ManyToOne(optional = false) private Order order; }")
+        self._type(graph, tmp_path, "Supplier", "@Entity public class Supplier { }")
+
+        result = self._run(graph, tmp_path)
+
+        assert result["errors"] == [] and result["domains"] == 2
+        rows = graph.query("MATCH (d:Graph:DataDomain) RETURN d.id AS id, d.name AS name, d.nameCandidates AS names, d.businessObject AS bo ORDER BY id")
+        assert [(r["id"], r["name"], list(r["names"]), r["bo"]) for r in rows] == [
+            ("domain::r::order", "Order", ["Order Data"], "Order"),
+            ("domain::r::supplier", "Supplier", ["Supplier Data"], "Supplier"),
+        ]
+        members = graph.query("MATCH (d:Graph:DataDomain {id: 'domain::r::order'})-[:`Graph:INCLUDES`]->(m) RETURN m.id AS id ORDER BY id")
+        assert [m["id"] for m in members] == ["entity::r::order", "entity::r::orderline"]
+
+    def test_a_domain_is_used_where_its_members_are(self, graph, tmp_path):
+        from deriva.modules.derivation.base import unit_scopes
+
+        self._type(graph, tmp_path, "Order", "@Entity public class Order { @OneToMany(cascade = {CascadeType.ALL}) private List<OrderLine> lines; }")
+        self._type(graph, tmp_path, "OrderLine", "@Entity public class OrderLine { }")
+        self._run(graph, tmp_path)
+
+        scopes = unit_scopes(graph)
+
+        assert scopes.entity_files["domain::r::order"] == {"r/shop/Order.java", "r/shop/OrderLine.java"}
+        assert "domain::r::order" in scopes.entities_of("typedef::r::OrderLine")
+
+    def test_the_signals_are_validated(self, graph, tmp_path):
+        with pytest.raises(ValueError, match="DataDomain"):
+            self._run(graph, tmp_path, {"identity_words": "user"})

@@ -24,6 +24,8 @@ from deriva.common.naming import name_key
 from deriva.modules.derivation.base import (
     NamedInCodeRule,
     UnitScopes,
+    build_choice_prompt,
+    choice_schema,
     derive_named_in_code_relationships,
     element_identifier,
     extract_response_content,
@@ -67,6 +69,20 @@ class ComponentServicesConfig:
     # An object that at least this share of the members reach does not decide the grouping (1: only an object that every
     # member reaches is left out); a member that reaches only such objects groups by them
     ubiquity: float = 1.0
+    # group_by "unit" (services per component, gap 3): a group of at least min_members members is a service of its own
+    min_members: int = 2
+    max_per_component: int = 3  # At most this many services per component; the most similar groups merge first
+    min_family: int = 3  # Members that extend one base type, at least this many, are one service
+    kind_words: tuple[str, ...] = ()  # Words a member's name drops for a service name candidate (Holder, Controller, ...)
+    generic_names: tuple[str, ...] = ()  # Member names that never name a service (routes, index, main, ...)
+    service_templates: tuple[str, ...] = ()  # Name candidates on the group's business object ("{object} Management")
+    function_templates: tuple[str, ...] = ()  # Business function name candidates on its business object
+    function_nouns: tuple[str, ...] = ()  # Documentation terms "<object words> <noun>" that name a business function
+    max_candidates: int = 8  # Name candidates per service at most
+    max_hops: int = 2  # Import hops a member's reach follows (routes -> services -> models)
+    # Decorator patterns (full match) that make a type, or a type with such a method, an endpoint of its unit
+    endpoint_markers: tuple[str, ...] = ()
+    choose_instruction: str = ""  # The closed-set naming instruction (config text)
 
 
 def _source(element: dict[str, Any]) -> str:
@@ -460,3 +476,294 @@ def by_id_name(by_id: dict[str, dict[str, Any]], service: dict[str, Any]) -> str
     """The name of the service's first component (its structural fallback name)."""
     source = service["properties"]["source"]
     return next((e["name"] for e in by_id.values() if e.get("element_type") != ELEMENT_TYPE and _source(e) == source), service["name"])
+
+
+# ------------------------------------------------------------------------------------------------ services per component
+
+
+def _name_words(text: str) -> list[str]:
+    return re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", text)
+
+
+def clean_member_name(name: str, kind_words: tuple[str, ...], generic_names: tuple[str, ...]) -> str | None:
+    """A member's name as a service name candidate: the extension and the kind words (prefix or suffix) dropped,
+    words spaced and title-cased; None for a generic or empty name."""
+    stem = re.sub(r"\.[A-Za-z0-9]+$", "", str(name).rsplit("/", 1)[-1])
+    if stem.casefold() in {g.casefold() for g in generic_names}:
+        return None
+    # A single upper-case code identifier (a program or member id such as CBPAUP0J) names no behaviour
+    if re.fullmatch(r"[A-Z0-9$#@-]+", stem):
+        return None
+    words = _name_words(stem)
+    kinds: list[list[str]] = sorted((_name_words(k) for k in kind_words), key=lambda words: len(words), reverse=True)
+    changed = True
+    while changed and words:
+        changed = False
+        for kind in kinds:
+            n = len(kind)
+            if n and len(words) > n and [w.casefold() for w in words[-n:]] == [k.casefold() for k in kind]:
+                words, changed = words[:-n], True
+            elif n and len(words) > n and [w.casefold() for w in words[:n]] == [k.casefold() for k in kind]:
+                words, changed = words[n:], True
+    if not words or " ".join(words).casefold() in {g.casefold() for g in generic_names}:
+        return None
+    return " ".join(w if w.isupper() and len(w) > 1 else w[:1].upper() + w[1:] for w in words)
+
+
+def _choose(candidates: list[str], source: dict[str, Any], element_type: str, instruction: str, llm_query_fn: Callable[..., Any], llm_kwargs: dict[str, Any]) -> str:
+    """One of the candidates: the only one without a call, else the LLM's choice (an answer outside the set takes the first)."""
+    if len(candidates) == 1:
+        return candidates[0]
+    try:
+        content, error = extract_response_content(llm_query_fn(build_choice_prompt(source, element_type, instruction, candidates), choice_schema(candidates), **llm_kwargs))
+        answer = None if error else json.loads(extract_json_from_response(content)).get("name")
+    except (ValueError, AttributeError) as exc:
+        logger.warning("Unusable name choice for %s %s: %s", element_type, source.get("component") or source.get("name"), exc)
+        answer = None
+    return answer if answer in candidates else candidates[0]
+
+
+def derive_unit_services(
+    elements: list[dict[str, Any]],
+    node_paths: dict[str, str],
+    imports: list[tuple[str, str]],
+    config: ComponentServicesConfig,
+    instruction: str,
+    llm_query_fn: Callable[..., Any],
+    scopes: UnitScopes,
+    deciding: set[str],
+    business_objects: dict[str, str],
+    bases: dict[str, set[str]],
+    lines: set[tuple[str, str]],
+    documents: dict[str, str],
+    llm_kwargs: dict[str, Any] | None = None,
+    member_links: list[tuple[str, str]] | None = None,
+    object_links: list[tuple[str, str]] | None = None,
+    type_names: dict[str, set[str]] | None = None,
+    domain_names: dict[str, set[str]] | None = None,
+    endpoints: dict[str, list[tuple[str, str]]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Application services per component and business functions across components (``group_by`` "unit").
+
+    A component's services group the members of its interfaces: members that extend one base type (at least
+    ``min_family``) are one group, the others group by the data domain they reach most (only ``deciding``
+    domains decide; the rest is one group); Web UI pages join the largest group. Several services only when at
+    least two groups hold ``min_members`` members, at most ``max_per_component``. A pure front end (only a Web
+    UI, it uses other components, no member reaches a domain) offers no service. A business function is a
+    business domain (``business_objects``) whose services of components connected by a cooperation line
+    (``lines``: (unit, unit)) access it. Names are closed sets; one candidate needs no call.
+
+    Args:
+        elements: The model's elements (components and interfaces made from units, data objects made from domains)
+        node_paths: Node id -> repository path of the members, linked nodes and objects' sources
+        imports: (importing file, imported file)
+        config: Grouping thresholds, kind words, name templates
+        instruction: The closed-set naming instruction (config text)
+        llm_query_fn: Called once per service or function with several name candidates
+        scopes: Units' and domains' members (``unit_scopes``)
+        deciding: Domain ids that decide the grouping (business and exception domains)
+        business_objects: Domain id -> its BusinessObject's name
+        bases: Member node -> the names of its base types
+        lines: Cooperation lines between units (either direction)
+        documents: Repository path -> documentation text (business function terms)
+        llm_kwargs: Extra arguments of the query function
+        member_links: (linked node, member) pairs (a program and the screen it sends)
+        object_links: (node, object source) pairs (a program and the record it uses)
+        type_names: File path -> name keys of the types it defines (a member reaches a domain whose entity it uses)
+        domain_names: Domain id -> name keys of its entities and member types
+        endpoints: Unit id -> (node, name) of the unit's endpoint types (structural markers), members as well
+    """
+    llm_kwargs = llm_kwargs or {}
+    components = {_source(e): e for e in elements if e.get("element_type") == config.component_type}
+    interfaces = sorted((e for e in elements if e.get("element_type") == config.interface_type and (e.get("properties") or {}).get("members")), key=lambda e: e["identifier"])
+    data_objects = [e for e in elements if e.get("element_type") == "DataObject"]
+    object_of = {_source(e): e["identifier"] for e in data_objects}
+    files_of = {d: set(scopes.entity_files.get(d, ())) for d in object_of}
+    nodes_of = {d: set(scopes.entity_nodes.get(d, ())) for d in object_of}
+    imported: dict[str, set[str]] = defaultdict(set)
+    for a, b in imports:
+        imported[a].add(b)
+    linked: dict[str, set[str]] = defaultdict(set)
+    for node, member in member_links or []:
+        linked[member].add(node)
+    record_links: dict[str, set[str]] = defaultdict(set)
+    for node, target in object_links or []:
+        record_links[node].add(target)
+
+    names_of = {d: set((domain_names or {}).get(d, ())) for d in object_of}
+
+    def reached(member: str) -> Counter:
+        nodes = {member} | linked.get(member, set())
+        files = {p for n in nodes if (p := node_paths.get(n))}
+        frontier = set(files)
+        for _ in range(max(config.max_hops, 0)):
+            frontier = {t for f in frontier for t in imported.get(f, ())} - files
+            files |= frontier
+        targets = {t for n in nodes for t in record_links.get(n, ())}
+        used = {key for f in files for key in (type_names or {}).get(f, ())}
+        hits: Counter = Counter()
+        for domain in object_of:
+            hits[domain] = len(files & files_of[domain]) + len((nodes | targets) & nodes_of[domain]) + len(used & names_of[domain])
+        return Counter({d: n for d, n in hits.items() if n})
+
+    # Members per component (through the interfaces made from the component's unit)
+    per_unit: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    for interface in interfaces:
+        unit, role = _source(interface), str(interface["properties"].get("role") or "")
+        for member in interface["properties"]["members"]:
+            node = str(member.get("source") or "")
+            entry = per_unit[unit].setdefault(node, {"name": member.get("name") or node, "interfaces": set(), "roles": set()})
+            entry["interfaces"].add(interface["identifier"])
+            entry["roles"].add(role)
+    # Endpoint types the structure marks join the members, through the unit's interfaces other than its Web UI
+    for unit, found in sorted((endpoints or {}).items()):
+        own = [i for i in interfaces if _source(i) == unit and str(i["properties"].get("role") or "") != "web"]
+        for node, name in found:
+            if own and node not in per_unit[unit]:
+                per_unit[unit][node] = {"name": name, "interfaces": {i["identifier"] for i in own}, "roles": {str(i["properties"].get("role") or "") for i in own}}
+    consumers = {a for a, _ in lines}
+
+    services: list[dict[str, Any]] = []
+    for unit, members in sorted(per_unit.items()):
+        if unit not in components:
+            continue
+        reach = {m: reached(m) for m in members}
+        all_web = all(entry["roles"] <= {"web"} for entry in members.values())
+        if all_web and unit in consumers and not any(reach[m] for m in members):
+            continue  # A pure front end presents the services of the components it uses
+        pages = {m for m, entry in members.items() if entry["roles"] <= {"web"}}
+        groups: dict[str, list[str]] = defaultdict(list)
+        family_of: dict[str, str] = {}
+        base_count = Counter(b for m in members if m not in pages for b in bases.get(m, ()))
+        for m in sorted(members):
+            if m in pages:
+                continue
+            family = sorted(b for b in bases.get(m, ()) if base_count[b] >= config.min_family)
+            if family:
+                family_of[m] = family[0]
+                groups[f"family:{family[0]}"].append(m)
+                continue
+            deciding_hits = Counter({d: n for d, n in reach[m].items() if d in deciding})
+            key = max(sorted(deciding_hits), key=lambda d: deciding_hits[d]) if deciding_hits else "rest"
+            groups[key].append(m)
+
+        def domains(group: list[str]) -> set[str]:
+            return {d for m in group for d in reach[m] if d in deciding}
+
+        # A group that reaches no domain is no service of its own: it joins the largest group
+        big = [k for k, g in groups.items() if k != "rest" and (len(g) >= config.min_members or k.startswith("family:"))]
+        if len(big) <= 1:
+            merged = {"all": sorted(members)}
+        else:
+            merged = {k: list(groups[k]) for k in big}
+            for k in sorted(k for k in groups if k not in big):
+                home = max(sorted(merged), key=lambda h: (len(domains(merged[h]) & domains(groups[k])), len(merged[h])))
+                if k == "rest":
+                    home = max(sorted(merged), key=lambda h: len(merged[h]))
+                merged[home] += groups[k]
+            while len(merged) > max(config.max_per_component, 1):
+                keys = sorted(merged)
+                pairs = [(_jaccard(domains(merged[a]), domains(merged[b])), -len(merged[a]) - len(merged[b]), a, b) for i, a in enumerate(keys) for b in keys[i + 1 :]]
+                _, _, a, b = max(pairs)
+                merged[a] = merged[a] + merged.pop(b)
+            largest = max(sorted(merged), key=lambda k: len(merged[k]))
+            merged[largest] += sorted(pages)
+        for key, group in sorted(merged.items()):
+            group = sorted(set(group))
+            group_domains = sorted({d for m in group for d in reach[m]})
+            group_interfaces = sorted({i for m in group for i in members[m]["interfaces"]})
+            candidates: list[str] = []
+            if key.startswith("family:"):
+                if family := clean_member_name(key.removeprefix("family:"), config.kind_words, config.generic_names):
+                    candidates.append(family)
+            for m in group:
+                if m not in pages and (name := clean_member_name(members[m]["name"], config.kind_words, config.generic_names)):
+                    candidates.append(name)
+            # Templates on every business domain the group reaches: the most reached first, then the larger domain
+            weight = Counter()
+            for m in group:
+                weight.update(reach[m])
+            reached_objects = sorted((d for d in weight if d in business_objects), key=lambda d: (-weight[d], -len(names_of.get(d) or files_of.get(d) or ()), d))
+            for domain in reached_objects:
+                candidates += [t.format(object=business_objects[domain]) for t in config.service_templates]
+            taken = {name_key(components[unit]["name"])} | {name_key(e["name"]) for e in interfaces if _source(e) == unit}
+
+            def usable(found: list[str]) -> list[str]:
+                seen: set[str] = set()
+                return [c for c in found if name_key(c) not in taken and not (name_key(c) in seen or seen.add(name_key(c)))][: config.max_candidates]
+
+            candidates = usable(candidates)
+            if not candidates:
+                # Nothing names the behaviour: the templates on the component's own name without its kind words
+                stem = clean_member_name(components[unit]["name"], config.kind_words, ())
+                candidates = usable([t.format(object=stem) for t in config.service_templates] if stem else []) or [components[unit]["name"]]
+            source = {
+                "component": components[unit]["name"],
+                "interfaces": [e["name"] for e in interfaces if e["identifier"] in group_interfaces],
+                "members": [members[m]["name"] for m in group][:20],
+                "data": [e["name"] for e in data_objects if _source(e) in group_domains],
+            }
+            name = _choose(candidates, source, ELEMENT_TYPE, instruction, llm_query_fn, llm_kwargs)
+            identity = f"{unit}::{key if len(merged) > 1 else 'all'}"
+            services.append(
+                {
+                    "identifier": element_identifier(ELEMENT_TYPE, identity),
+                    "name": name,
+                    "element_type": ELEMENT_TYPE,
+                    "documentation": "",
+                    "properties": {
+                        "source": identity,
+                        "sources": [unit],
+                        "interfaces": group_interfaces,
+                        "objects": sorted(object_of[d] for d in group_domains),
+                        "members": sorted(({"name": members[m]["name"], "source": m} for m in group), key=lambda x: (x["name"], x["source"])),
+                        "name_candidates": candidates,
+                        "structure_name": candidates[0],
+                        "confidence": 1.0,
+                        "derived_at": current_timestamp(),
+                    },
+                }
+            )
+
+    # Business functions: a business domain that services of cooperating components access
+    undirected = {frozenset(pair) for pair in lines if len(set(pair)) == 2}
+    functions: list[dict[str, Any]] = []
+    nouns = "|".join(re.escape(n) for n in config.function_nouns)
+    for domain, object_name in sorted(business_objects.items()):
+        if domain not in object_of:
+            continue
+        users = sorted({s["properties"]["sources"][0] for s in services if object_of[domain] in s["properties"]["objects"]})
+        connected = sorted({u for u in users for v in users if u != v and frozenset((u, v)) in undirected})
+        if len(connected) < 2:
+            continue
+        served_by = sorted(s["identifier"] for s in services if s["properties"]["sources"][0] in connected and object_of[domain] in s["properties"]["objects"])
+        candidates = [t.format(object=object_name) for t in config.function_templates]
+        if nouns:
+            for text in documents.values():
+                for m in re.finditer(rf"(?i)\b{re.escape(object_name)}\s+({nouns})\b", text):
+                    candidates.append(f"{object_name} {m.group(1).lower().capitalize()}")
+        seen = set()
+        candidates = [c for c in candidates if not (name_key(c) in seen or seen.add(name_key(c)))] or [object_name]
+        # A function never takes a service's name (the same name on two types is a duplicate)
+        service_names = {name_key(s["name"]) for s in services}
+        candidates = [c for c in candidates if name_key(c) not in service_names] or candidates
+        name = _choose(candidates, {"name": object_name, "components": [components[u]["name"] for u in connected]}, "BusinessFunction", instruction, llm_query_fn, llm_kwargs)
+        functions.append(
+            {
+                "identifier": element_identifier("BusinessFunction", f"function::{domain}"),
+                "name": name,
+                "element_type": "BusinessFunction",
+                "documentation": "",
+                "properties": {"source": domain, "services": served_by, "name_candidates": candidates, "confidence": 1.0, "derived_at": current_timestamp()},
+            }
+        )
+
+    # Names are unique within the type: a repeated name falls back to the next candidate, then a number
+    for items in (services, functions):
+        used: set[str] = set()
+        for item in items:
+            if name_key(item["name"]) in used:
+                options = [c for c in item["properties"]["name_candidates"] if name_key(c) not in used]
+                item["name"] = options[0] if options else f"{item['name']} {len(used) + 1}"
+            used.add(name_key(item["name"]))
+    return services, functions

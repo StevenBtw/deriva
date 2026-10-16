@@ -58,6 +58,7 @@ class DeployedService:
     kind: str = "service"  # service (compose, Kubernetes) or container (cloud)
     depends_on: list[str] = field(default_factory=list)
     environment: dict[str, str] = field(default_factory=dict)
+    ports: list[int] = field(default_factory=list)  # Published and container ports (compose)
 
 
 @dataclass
@@ -182,9 +183,19 @@ def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Env
                 image=image,
                 depends_on=sorted(str(d) for d in (depends if isinstance(depends, list) else depends.keys())),
                 environment={str(k): str(v) for k, v in variables.items()} if isinstance(variables, dict) else {},
+                ports=_ports(spec.get("ports")),
             )
         )
     return env
+
+
+def _ports(entries: Any) -> list[int]:
+    """The port numbers of compose ``ports`` entries ("8080:80", "127.0.0.1:5432:5432", 9000, {target, published})."""
+    found: set[int] = set()
+    for entry in entries if isinstance(entries, list) else []:
+        values = [entry.get("target"), entry.get("published")] if isinstance(entry, dict) else str(entry).split("/")[0].split(":")
+        found |= {int(v) for v in values if str(v).isdigit()} - {0}
+    return sorted(p for p in found if p < 65536)
 
 
 def _kubernetes(manifests: dict[str, list[Any]], units: _Units, rules: DeploymentRules) -> Environment | None:

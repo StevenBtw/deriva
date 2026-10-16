@@ -737,19 +737,15 @@ class PythonExtractor(LanguageExtractor):
         module_node = self.find_child_by_field(node, "module_name")
         module = self.get_node_text(module_node, source) if module_node else ""
 
-        # Handle relative imports
-        prefix = ""
-        for child in node.children:
-            if child.type == "relative_import":
-                for subchild in child.children:
-                    if subchild.type == "import_prefix":
-                        prefix = self.get_node_text(subchild, source)
-                    elif subchild.type == "dotted_name":
-                        module = self.get_node_text(subchild, source)
-                break
-
-        if prefix:
-            module = prefix + module
+        # A relative import's module node is the whole relative part: its dots, then the dotted name if any
+        if module_node is not None and module_node.type == "relative_import":
+            prefix, name = "", ""
+            for subchild in module_node.children:
+                if subchild.type == "import_prefix":
+                    prefix = self.get_node_text(subchild, source)
+                elif subchild.type == "dotted_name":
+                    name = self.get_node_text(subchild, source)
+            module = prefix + name
 
         # Extract imported names
         names: list[str] = []
@@ -761,6 +757,11 @@ class PythonExtractor(LanguageExtractor):
                 name = self.get_node_text(child, source)
                 if name and name not in ("from", "import", ","):
                     names.append(name)
+            elif child.type == "aliased_import":
+                # from x import y as z: y is what is imported
+                original = self.find_child_by_field(child, "name")
+                if original is not None:
+                    names.append(self.get_node_text(original, source))
             elif child.type == "wildcard_import":
                 names.append("*")
 

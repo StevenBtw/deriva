@@ -802,10 +802,16 @@ async def async_resource():
 
     def test_extracts_relative_import(self, manager):
         """Should extract relative imports."""
-        source = "from . import sibling\nfrom ..parent import something"
+        source = "from . import sibling\nfrom ..parent import something\nfrom .pkg import mod"
         imports = manager.extract_imports(source, language="python")
 
-        assert len(imports) == 2
+        assert [(i.module, i.names) for i in imports] == [(".", ["sibling"]), ("..parent", ["something"]), (".pkg", ["mod"])]
+
+    def test_an_aliased_from_import_keeps_the_imported_name(self, manager):
+        """``from x import y as z`` imports y (a module or a member of x)."""
+        imports = manager.extract_imports("from app import services as svc\nfrom . import routes as r, views", language="python")
+
+        assert [(i.module, i.names) for i in imports] == [("app", ["services"]), (".", ["routes", "views"])]
 
     def test_handles_empty_class_body(self, manager):
         """Should handle class with pass statement only."""

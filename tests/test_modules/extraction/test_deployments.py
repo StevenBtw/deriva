@@ -219,3 +219,11 @@ def test_a_unit_outside_the_environment_is_served_by_its_own_runtime_without_com
     assert layer.deployed == ["unit::r::shop"]
     [java] = layer.software
     assert (java.name, java.in_environment, java.serves) == ("Java runtime", False, ["unit::r::services/billing"])
+
+
+def test_compose_services_carry_their_published_and_container_ports():
+    compose = 'services:\n  shop:\n    build: ./shop\n    ports: ["8080:80", "9000"]\n  db:\n    image: postgres\n    ports:\n      - "127.0.0.1:5432:5432"\n'
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary
+
+    assert {s.name: s.ports for s in env.services} == {"shop": [80, 8080, 9000], "db": [5432]}

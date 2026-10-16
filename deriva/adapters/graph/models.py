@@ -29,6 +29,7 @@ __all__ = [
     "ExternalDependencyNode",
     "DeployableUnitNode",
     "DataEntityNode",
+    "DataDomainNode",
     "EnvironmentNode",
     "DeploymentNode",
     "SoftwareNode",
@@ -588,6 +589,36 @@ class DataEntityNode:
 
 
 @dataclass
+class DataDomainNode:
+    """An information domain: a group of data entities (and the parts and value objects of an aggregate),
+    named by closed choice; its members hang below it by ``INCLUDES`` edges."""
+
+    name: str  # The anchor's name
+    kind: str  # aggregate, naming, ownership, context, single
+    repository_name: str
+    name_candidates: list[str] = field(default_factory=list)
+    business_object: str | None = None  # The BusinessObject it realizes (None: no BusinessObject)
+    exception: bool = False  # A technical-word domain admitted by evidence
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"DataDomain_{self.repository_name}_{self.name}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "nameCandidates": list(self.name_candidates),
+            "nameSources": ["structure"] * len(self.name_candidates),
+            "businessObject": self.business_object,
+            "exception": self.exception,
+            "repository_name": self.repository_name,
+            "type": "DataDomain",
+        }
+
+
+@dataclass
 class EnvironmentNode:
     """A deployment environment (Docker Compose, Kubernetes, a cloud, a mainframe): the repository's
     primary one; it ``RUNS`` its deployed services and ``HOSTS`` the system software that runs in it."""
@@ -622,6 +653,8 @@ class DeploymentNode:
     environment: str  # The environment kind
     repository_name: str
     image: str = ""
+    variables: dict[str, str] = field(default_factory=dict)  # The service's environment variables
+    ports: list[int] = field(default_factory=list)
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -629,7 +662,15 @@ class DeploymentNode:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for graph storage."""
-        return {"name": self.name, "environment": self.environment, "image": self.image, "repository_name": self.repository_name, "type": "Deployment"}
+        return {
+            "name": self.name,
+            "environment": self.environment,
+            "image": self.image,
+            "variables": dict(self.variables),
+            "ports": list(self.ports),
+            "repository_name": self.repository_name,
+            "type": "Deployment",
+        }
 
 
 @dataclass
