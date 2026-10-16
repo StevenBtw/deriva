@@ -710,6 +710,8 @@ class EnvironmentNode:
     repository_name: str
     file: str = ""  # The compose file, the folder of the manifests or of the templates
     others: list[str] = field(default_factory=list)  # The other environments, "kind file" (reported, not modelled)
+    # The other environments' services as JSON ({name, unit, environment, ports}): configuration refers to them (Cooperation)
+    other_services: list[str] = field(default_factory=list)
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -722,6 +724,7 @@ class EnvironmentNode:
             "kind": self.kind,
             "file": self.file,
             "others": list(self.others),
+            "otherServices": list(self.other_services),
             "repository_name": self.repository_name,
             "type": "Environment",
         }

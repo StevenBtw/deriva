@@ -1110,6 +1110,14 @@ class TestModelSettings:
             manager.query("Hello", **kwargs)
             return agent_class.return_value.run_sync.call_args.kwargs["model_settings"]
 
+    def test_top_p_and_seed_are_never_sent_and_recorded_as_none(self, tmp_path):
+        manager = self._manager(tmp_path, provider="openai", model="gpt-6-luna", temperature=0.0)
+
+        sent = self._sent(manager)
+
+        assert "top_p" not in sent and "seed" not in sent
+        assert (manager.last_call["temperature"], manager.last_call["top_p"], manager.last_call["seed"]) == (0.0, None, None)
+
     def test_a_model_without_sampling_gets_no_temperature(self, tmp_path):
         from deriva.adapters.llm.cache import CacheManager
 
@@ -1287,3 +1295,29 @@ class TestRedact:
         text = "LocalProtocolError: Illegal header value b'sk-secret-123 '"
         assert manager._redact(text) == "LocalProtocolError: Illegal header value b'*** '"
         assert manager._redact("no secret here") == "no secret here"
+
+
+class TestModelTemperature:
+    """A model config's own temperature (LLM_{NAME}_TEMPERATURE) wins over LLM_TEMPERATURE; an explicit one over both."""
+
+    def _config(self, temperature=None):
+        return BenchmarkModelConfig(name="m", provider="ollama", model="llama3", api_url="http://localhost:11434/api/chat", temperature=temperature)
+
+    def test_the_model_temperature_is_used(self, tmp_path):
+        with patch("deriva.common.settings.read_env_file", return_value={}), patch.dict("os.environ", {"LLM_TEMPERATURE": "0.6"}, clear=True):
+            own = LLMManager.from_config(self._config(0.0), cache_dir=str(tmp_path / "c"))
+            explicit = LLMManager.from_config(self._config(0.0), cache_dir=str(tmp_path / "c"), temperature=0.3)
+            plain = LLMManager.from_config(self._config(), cache_dir=str(tmp_path / "c"))
+
+        assert (own.temperature, explicit.temperature, plain.temperature) == (0.0, 0.3, 0.6)
+
+    def test_a_temperature_out_of_range_is_refused(self):
+        with pytest.raises(ValueError, match="temperature"):
+            self._config(3.0)
+
+    def test_the_config_reads_the_model_temperature(self):
+        from deriva.adapters.llm.manager import load_benchmark_models
+
+        env = {"LLM_M_PROVIDER": "ollama", "LLM_M_MODEL": "llama3", "LLM_M_TEMPERATURE": "0"}
+        with patch("deriva.common.settings.read_env_file", return_value={}), patch.dict("os.environ", env, clear=True):
+            assert load_benchmark_models()["m"].temperature == 0.0

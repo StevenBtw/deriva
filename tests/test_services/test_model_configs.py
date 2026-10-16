@@ -42,6 +42,7 @@ def test_models_are_listed_with_masked_keys(env):
             "key_env": None,
             "sampling": None,
             "reasoning": None,
+            "temperature": None,
             "default": False,
         },
         {
@@ -53,6 +54,7 @@ def test_models_are_listed_with_masked_keys(env):
             "key_env": "OTHER_KEY",
             "sampling": None,
             "reasoning": None,
+            "temperature": None,
             "default": False,
         },
     ]
@@ -280,3 +282,15 @@ def test_deleting_the_default_model_removes_a_quoted_or_commented_default(tmp_pa
     delete_model(path, "mistral-small")
 
     assert "LLM_DEFAULT_MODEL" not in path.read_text(encoding="utf-8")
+
+
+def test_a_model_temperature_is_saved_listed_and_removed(env):
+    set_model(env, "mistral-small4", provider="mistral", model="mistral-small-2603", temperature="0")
+
+    assert "LLM_MISTRAL_SMALL4_TEMPERATURE=0\n" in env.read_text(encoding="utf-8")
+    (saved,) = [m for m in list_models(env) if m["name"] == "mistral-small4"]
+    assert saved["temperature"] == "0"
+    with pytest.raises(ValueError, match="temperature"):
+        set_model(env, "mistral-small4", provider="mistral", model="mistral-small-2603", temperature="cold")
+    set_model(env, "mistral-small4", provider="mistral", model="mistral-small-2603", temperature="")
+    assert "SMALL4_TEMPERATURE" not in env.read_text(encoding="utf-8")

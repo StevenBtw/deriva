@@ -68,6 +68,7 @@ class BenchmarkModelConfig:
         api_key_env: Environment variable name for API key
         sampling: False for models that take no temperature (Claude Haiku 5.5); the call leaves it out
         reasoning: Reasoning level ("none" turns it off; see ``model_registry.reasoning_settings``)
+        temperature: The model's own temperature (0 to 2), over LLM_TEMPERATURE; unused when sampling is off
     """
 
     name: str
@@ -78,6 +79,7 @@ class BenchmarkModelConfig:
     api_key_env: str | None = None
     sampling: bool = True
     reasoning: str | None = None
+    temperature: float | None = None
 
     def __post_init__(self):
         """Validate provider and reasoning level."""
@@ -93,6 +95,8 @@ class BenchmarkModelConfig:
         if self.provider not in VALID_PROVIDERS:
             raise ValueError(f"Invalid provider: {self.provider}. Must be one of {VALID_PROVIDERS}")
         reasoning_settings(self.provider, self.reasoning)
+        if self.temperature is not None and not 0.0 <= self.temperature <= 2.0:
+            raise ValueError(f"temperature must be between 0 and 2, got {self.temperature}")
 
     def get_api_key(self) -> str | None:
         """Get API key from direct value or environment variable."""

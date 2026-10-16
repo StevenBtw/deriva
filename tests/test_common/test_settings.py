@@ -140,7 +140,16 @@ def test_named_model_configs(dotenv, monkeypatch):
     configs = model_configs()
 
     assert set(configs) == {"MISTRAL_DEVSTRAL", "LOCAL"}
-    assert configs["MISTRAL_DEVSTRAL"] == {"provider": "mistral", "model": "devstral-2512", "url": None, "key": "sk-1", "key_env": None, "sampling": None, "reasoning": None}
+    assert configs["MISTRAL_DEVSTRAL"] == {
+        "provider": "mistral",
+        "model": "devstral-2512",
+        "url": None,
+        "key": "sk-1",
+        "key_env": None,
+        "sampling": None,
+        "reasoning": None,
+        "temperature": None,
+    }
     assert configs["LOCAL"]["url"] == "http://localhost:11434/api/chat"
 
 

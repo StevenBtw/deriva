@@ -490,6 +490,13 @@ def benchmark_analyze(
                     typer.echo(f"{v['repository'][:24]:<24} {v['model'][:18]:<18} {v['runs']:>4}  {text(v['elements']):<22} {text(v['relationships']):<26}")
                 typer.echo("")
 
+        if summary.naming_fallbacks:
+            typer.echo("NAME CHOICES (closed set; an unusable answer takes the structural first candidate)")
+            for f in summary.naming_fallbacks:
+                share = f["unusable"] / f["choices"] if f["choices"] else 0.0
+                typer.echo(f"  {f['model']:<28} {f['unusable']}/{f['choices']} unusable ({share:.1%}): {f['unparsable']} no JSON, {f['outside']} outside the candidates")
+            typer.echo("")
+
         solves = [q for q in summary.model_quality if q.get("solve")]
         if solves:
             typer.echo("MILP SAFETY NET (joint_consistency per run)")

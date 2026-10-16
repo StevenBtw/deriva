@@ -2862,7 +2862,7 @@ class TestModelConfigCommands:
 
         assert result.exit_code == 0, result.output
         mock_session_class.return_value.save_model_config.assert_called_once_with(
-            "mistral-small", provider="mistral", model="mistral-small-latest", url=None, key="sk-x", key_env=None, sampling=None, reasoning=None
+            "mistral-small", provider="mistral", model="mistral-small-latest", url=None, key="sk-x", key_env=None, sampling=None, reasoning=None, temperature=None
         )
         assert "sk-x" not in result.output
 

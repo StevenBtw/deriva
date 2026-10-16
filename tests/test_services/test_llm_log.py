@@ -149,6 +149,8 @@ def test_record_call_keeps_the_generation_settings(tmp_path):
     (call,) = LlmCallLog.read(tmp_path / "llm.jsonl")
     assert (call["provider"], call["model"], call["temperature"], call["max_tokens"]) == ("mistral", "devstral-2512", 0.0, 4000)
     assert summarize_call(call)["temperature"] == 0.0
+    # Never sent, recorded as such: the provider's defaults applied
+    assert (call["top_p"], call["seed"]) == (None, None) and {"top_p", "seed"} <= set(call)
 
 
 def test_record_call_keeps_structured_answers_and_errors(tmp_path):

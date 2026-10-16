@@ -190,6 +190,7 @@ def load_benchmark_models() -> dict[str, BenchmarkModelConfig]:
         LLM_{NAME}_KEY_ENV (optional, env var name for key)
         LLM_{NAME}_SAMPLING (optional, false: the model takes no temperature)
         LLM_{NAME}_REASONING (optional, reasoning level; none turns reasoning off)
+        LLM_{NAME}_TEMPERATURE (optional, the model's own temperature over LLM_TEMPERATURE)
 
     Returns:
         Dict mapping config name to BenchmarkModelConfig
@@ -214,6 +215,7 @@ def load_benchmark_models() -> dict[str, BenchmarkModelConfig]:
                 api_key_env=fields["key_env"],
                 sampling=parse_sampling(fields.get("sampling")),
                 reasoning=(fields.get("reasoning") or "").strip().lower() or None,
+                temperature=float(own) if (own := (fields.get("temperature") or "").strip()) else None,
             )
         except ValueError:
             continue
@@ -330,7 +332,7 @@ class LLMManager:
             cache_dir: Directory for response caching (default: workspace/cache/llm in the Deriva home folder)
             max_retries: Number of retry attempts
             timeout: Request timeout in seconds
-            temperature: Sampling temperature, defaults to LLM_TEMPERATURE from env
+            temperature: Sampling temperature, defaults to the model config's own, then LLM_TEMPERATURE from env
             nocache: Whether to disable caching (default True for benchmarking)
 
         Returns:
@@ -338,7 +340,7 @@ class LLMManager:
         """
         settings.export_provider_keys()  # pydantic-ai providers read their keys from the process environment
         llm = LlmSettings()
-        effective_temperature = temperature if temperature is not None else llm.temperature
+        effective_temperature = temperature if temperature is not None else config.temperature if config.temperature is not None else llm.temperature
 
         instance = object.__new__(cls)
 
@@ -654,6 +656,9 @@ class LLMManager:
             "provider": self.provider_name,
             "model": self.model,
             "temperature": effective_temperature,
+            # Never sent: the provider's defaults apply (recorded so a settings table can say so)
+            "top_p": None,
+            "seed": None,
             "max_tokens": effective_max_tokens,
             "reasoning": self.reasoning,
             # The model the provider says answered (a retired id can be served by another model)

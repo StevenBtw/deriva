@@ -1233,6 +1233,7 @@ class PipelineSession:
         key_env: str | None = None,
         sampling: str | None = None,
         reasoning: str | None = None,
+        temperature: str | None = None,
         env_path: str | Path | None = None,
     ) -> None:
         """Add or change a model config in .env; a blank key keeps the stored key."""
@@ -1246,6 +1247,7 @@ class PipelineSession:
             key_env=key_env,
             sampling=sampling,
             reasoning=reasoning,
+            temperature=temperature,
         )
 
     def set_default_model(self, name: str, env_path: str | Path | None = None) -> None:

@@ -56,9 +56,12 @@ from deriva.adapters.grafeo import close_database, database_file, use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.llm import LLMManager
 from deriva.adapters.llm.manager import load_benchmark_models
+from deriva.adapters.llm.model_registry import reasoning_settings
 from deriva.adapters.llm.models import BenchmarkModelConfig
+from deriva.common.json_utils import extract_json_from_response
 from deriva.common.ocel import OCELLog, create_run_id, hash_content, load_benchmark_ocel
 from deriva.common.paths import workspace
+from deriva.common.settings import LlmSettings
 from deriva.common.timing import query_stats, summarize_run_events
 from deriva.modules.analysis import compute_consistency_score, decision_content, decision_stability
 from deriva.modules.analysis.model_quality import compute_model_quality
@@ -368,6 +371,23 @@ class BenchmarkConfig:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON storage."""
         return asdict(self)
+
+
+def generation_settings(config: Any) -> dict[str, Any]:
+    """The generation settings a model config sends with every call: temperature (none when sampling is off), top_p and
+    seed (never sent), the reasoning level and the provider settings it becomes (thinking off, reasoning effort)."""
+    own, reasoning = getattr(config, "temperature", None), getattr(config, "reasoning", None)
+    temperature = (own if own is not None else LlmSettings().temperature) if getattr(config, "sampling", True) else None
+    provider = str(getattr(config, "provider", ""))
+    return {
+        "provider": provider,
+        "model": getattr(config, "model", None),
+        "temperature": temperature,
+        "top_p": None,
+        "seed": None,
+        "reasoning": reasoning,
+        "provider_settings": reasoning_settings(provider, reasoning) if reasoning else {},
+    }
 
 
 def validate_config(config: BenchmarkConfig) -> None:
@@ -1646,6 +1666,8 @@ class BenchmarkOrchestrator:
             "object_types": list(self.ocel_log.object_types),
             # Above 1 means majority voting: consistency is then not single-call behaviour
             "llm_samples": self._llm_samples,
+            # What each model was sent, for the settings table (top_p and seed are never sent: provider defaults)
+            "generation_settings": {name: generation_settings(config) for name, config in sorted(getattr(self, "_model_configs", {}).items()) if name in self.config.models},
         }
         with open(output_dir / "session_metadata.json", "w") as f:
             json.dump(summary, f, indent=2)
@@ -2152,6 +2174,41 @@ def _run_snapshots(session_dir: Path, repositories: list[str], models: list[str]
     return found
 
 
+def naming_fallbacks_for_session(session_dir: Path) -> list[dict[str, Any]]:
+    """Per model, the closed-set name choices whose answer was unusable, so the structural first candidate was taken:
+    no readable JSON (``unparsable``) or a name that is none of the candidates in the prompt (``outside``)."""
+    rows: dict[str, dict[str, Any]] = {}
+    for path in sorted((Path(session_dir) / "llm").glob("*.jsonl")):
+        for line in path.open(encoding="utf-8"):
+            try:
+                call = json.loads(line)
+            except ValueError:
+                continue
+            if call.get("schema") != "element_name_choice" or call.get("error"):
+                continue
+            row = rows.setdefault(str(call.get("model")), {"model": str(call.get("model")), "choices": 0, "unusable": 0, "unparsable": 0, "outside": 0})
+            row["choices"] += 1
+            # The candidates are the "- " lines of the prompt's Candidates section (``build_choice_prompt``)
+            listed = str(call.get("prompt") or "").split("## Candidates", 1)[-1].split("\n\nReturn", 1)[0]
+            candidates = set()
+            for item in listed.splitlines():
+                if item.startswith("- "):
+                    try:
+                        candidates.add(json.loads(item[2:]))
+                    except ValueError:
+                        continue
+            try:
+                answer = json.loads(extract_json_from_response(str(call.get("response") or ""))).get("name")
+            except ValueError, AttributeError:
+                row["unparsable"] += 1
+                row["unusable"] += 1
+                continue
+            if answer not in candidates:
+                row["outside"] += 1
+                row["unusable"] += 1
+    return [rows[m] for m in sorted(rows)]
+
+
 def variance_split_for_session(session_dir: Path, repositories: list[str], models: list[str]) -> list[dict[str, Any]]:
     """Which share of the run-to-run differences comes from extraction and which from derivation (extraction per run).
 
@@ -2281,6 +2338,7 @@ class AnalysisSummary:
     detail_level: list[dict[str, Any]] = field(default_factory=list)  # the export's detail level per repository and model
     variance_split: list[dict[str, Any]] = field(default_factory=list)  # extraction vs derivation share (extraction per run)
     extraction_stability: list[dict[str, Any]] = field(default_factory=list)  # decision stability of the LLM extraction steps
+    naming_fallbacks: list[dict[str, Any]] = field(default_factory=list)  # unusable name choices per model (structural fallback)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -2295,6 +2353,7 @@ class AnalysisSummary:
             "detail_level": self.detail_level,
             "variance_split": self.variance_split,
             "extraction_stability": self.extraction_stability,
+            "naming_fallbacks": self.naming_fallbacks,
         }
 
 
@@ -3037,6 +3096,7 @@ class BenchmarkAnalyzer:
             detail_level=self.compute_detail_level(),
             variance_split=variance_split_for_session(*self._session_scope()),
             extraction_stability=extraction_stability_for_session(*self._session_scope()),
+            naming_fallbacks=naming_fallbacks_for_session(self._session_scope()[0]),
         )
 
     def compute_model_quality(self) -> list[dict[str, Any]]:

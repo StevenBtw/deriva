@@ -155,3 +155,22 @@ def test_per_run_mode_needs_both_stages_and_no_cache(stages, use_cache, error):
 
     with pytest.raises(ValueError, match=error):
         validate_config(BenchmarkConfig(repositories=["a"], models=["m"], stages=stages, use_cache=use_cache, extract_per_run=True))
+
+
+class TestNamingFallbacks:
+    def test_unusable_name_choices_are_counted_per_model(self, tmp_path):
+        """An answer that is no JSON or names no candidate takes the structural first candidate: counted per model."""
+        from deriva.bench.benchmarking import naming_fallbacks_for_session
+
+        prompt = 'Choose.\n\n## Candidates\n- "Order Handling"\n- "Order Processing"\n\nReturn {"name": "..."} with one candidate exactly as written.'
+        calls = [
+            {"model": "x1", "schema": "element_name_choice", "prompt": prompt, "response": '{"name": "Order Handling"}'},
+            {"model": "x1", "schema": "element_name_choice", "prompt": prompt, "response": '{"name": "Orders"}\n\nNote: closest is {"name": "Order Processing"}'},
+            {"model": "x1", "schema": "element_name_choice", "prompt": prompt, "response": '{"name": "Something Else"}'},
+            {"model": "x1", "schema": "business_concept_classification", "prompt": "p", "response": "not json"},
+        ]
+        folder = tmp_path / "llm"
+        folder.mkdir()
+        (folder / "s_r_m_1.jsonl").write_text("\n".join(json.dumps(c) for c in calls) + "\n", encoding="utf-8")
+
+        assert naming_fallbacks_for_session(tmp_path) == [{"model": "x1", "choices": 3, "unusable": 2, "unparsable": 1, "outside": 1}]

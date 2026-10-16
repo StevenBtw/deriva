@@ -890,7 +890,12 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
     env_id = f"environment::{repo.name}::{env.kind}" if env else None
     if env and env_id:
         others = [f"{e.kind} {e.file}" for e in layer.deployments.others]
-        graph_manager.add_node(EnvironmentNode(name=env.name, kind=env.kind, repository_name=repo.name, file=env.file, others=others), node_id=env_id)
+        other_services = [
+            json.dumps({"name": s.name, "unit": s.unit, "environment": s.environment, "ports": s.ports}, sort_keys=True) for e in layer.deployments.others for s in e.services
+        ]
+        graph_manager.add_node(
+            EnvironmentNode(name=env.name, kind=env.kind, repository_name=repo.name, file=env.file, others=others, other_services=other_services), node_id=env_id
+        )
         nodes += 1
         for service in env.services:
             deployment_id = f"deployment::{repo.name}::{env.kind}::{_slug(service.name)}"
@@ -983,6 +988,14 @@ def _extract_cooperation(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
             "RETURN d.name AS name, u.id AS unit, d.variables AS variables, d.ports AS ports"
         )
     ]
+    # The other environments' services too (a cloud primary can hide the compose names and ports configuration uses)
+    named = {s["name"] for s in services}
+    for row in q("MATCH (e:Graph:Environment) WHERE e.repository_name = $repo_name RETURN e.otherServices AS services"):
+        for raw in row.get("services") or []:
+            other = json.loads(raw)
+            if other.get("unit") and other.get("name") not in named:
+                named.add(other["name"])
+                services.append({"name": other["name"], "unit": other["unit"], "environment": dict(other.get("environment") or {}), "ports": list(other.get("ports") or [])})
     patterns = rules.config_files + rules.gateway_files + rules.code_files + ("dockerfile", "dockerfile.*", "*.dockerfile")
     paths = [norm(r["path"]) for r in q("MATCH (f:Graph:File) WHERE f.active = true AND f.repository_name = $repo_name RETURN f.filePath AS path") if r.get("path")]
     files = {

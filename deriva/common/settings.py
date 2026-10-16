@@ -211,7 +211,7 @@ class RepositorySettings(_Group):
 
 
 def model_configs() -> dict[str, dict[str, str | None]]:
-    """Named model configs: LLM_{NAME}_PROVIDER with its _MODEL, _URL, _KEY, _KEY_ENV, _SAMPLING and _REASONING (NAME as written)."""
+    """Named model configs: LLM_{NAME}_PROVIDER with its _MODEL, _URL, _KEY, _KEY_ENV, _SAMPLING, _REASONING and _TEMPERATURE (NAME as written)."""
     env = environment()
     configs: dict[str, dict[str, str | None]] = {}
     for key, value in env.items():
@@ -225,5 +225,6 @@ def model_configs() -> dict[str, dict[str, str | None]]:
                 "key_env": env.get(f"LLM_{name}_KEY_ENV"),
                 "sampling": env.get(f"LLM_{name}_SAMPLING"),
                 "reasoning": env.get(f"LLM_{name}_REASONING"),
+                "temperature": env.get(f"LLM_{name}_TEMPERATURE"),
             }
     return configs

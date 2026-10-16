@@ -2379,6 +2379,36 @@ class TestSessionMetadataSamples:
         metadata = json.loads(Path("workspace/benchmarks/s/session_metadata.json").read_text(encoding="utf-8"))
         assert metadata["llm_samples"] == {"DocConcepts": 1, "TypeA.naming": 1}
 
+    def test_the_generation_settings_sent_per_model_are_recorded(self, tmp_path, monkeypatch):
+        """For the paper's settings table: what each model was sent (temperature, top_p, seed, reasoning, thinking)."""
+        import json
+        from pathlib import Path
+
+        from deriva.adapters.llm.models import BenchmarkModelConfig
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+        monkeypatch.setenv("LLM_TEMPERATURE", "0.6")
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), config=BenchmarkConfig(repositories=["r"], models=["h", "g", "p"])
+        )
+        orchestrator.session_id = "s"
+        orchestrator._model_configs = {
+            "h": BenchmarkModelConfig(name="h", provider="anthropic", model="claude-haiku-5-5", sampling=False, reasoning="none"),
+            "g": BenchmarkModelConfig(name="g", provider="openai", model="gpt-6-luna", reasoning="none", temperature=0.0),
+            "p": BenchmarkModelConfig(name="p", provider="mistral", model="mistral-small-2603"),
+        }
+
+        orchestrator._export_ocel()
+
+        settings = json.loads(Path("workspace/benchmarks/s/session_metadata.json").read_text(encoding="utf-8"))["generation_settings"]
+        assert settings["h"] == {
+            "provider": "anthropic", "model": "claude-haiku-5-5", "temperature": None, "top_p": None, "seed": None,
+            "reasoning": "none", "provider_settings": {"anthropic_thinking": {"type": "disabled"}},
+        }  # fmt: skip
+        assert (settings["g"]["temperature"], settings["g"]["provider_settings"]) == (0.0, {"openai_reasoning_effort": "none"})
+        assert settings["p"]["temperature"] == 0.6  # no own temperature: LLM_TEMPERATURE
+
 
 class TestRunSnapshotCandidates:
     """The run snapshot records every candidate decision, so keep rates per type can be measured."""

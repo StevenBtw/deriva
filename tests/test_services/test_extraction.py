@@ -2817,6 +2817,9 @@ class TestDeploymentStep:
         assert [(r["d"], r["u"]) for r in deploys] == [("billingService", "unit::r::billing"), ("shopService", "unit::r::shop")]
         hosted = graph.query("MATCH (e:Graph:Environment)-[:`Graph:HOSTS`]->(s:Graph:Software) RETURN s.name AS s ORDER BY s")
         assert [r["s"] for r in hosted] == ["Amazon RDS for PostgreSQL"]
+        # The other environments' services stay on the environment, for Cooperation (names, ports, variables)
+        (other,) = graph.query("MATCH (e:Graph:Environment) RETURN e.otherServices AS s")[0]["s"]
+        assert json.loads(other) == {"name": "shop", "unit": "unit::r::shop", "environment": {}, "ports": []}
 
     def test_a_run_with_another_environment_sweeps_the_old_one(self, graph, tmp_path):
         self._repo(graph, tmp_path, {"docker-compose.yml": "services:\n  shop:\n    build: ./shop\n", "shop/a.cbl": "EXEC CICS RETURN"})
@@ -2893,6 +2896,24 @@ class TestCooperationStep:
         _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
 
         assert graph.query("MATCH (:Graph:DeployableUnit)-[r:`Graph:CONSUMES`]->(:Graph:DeployableUnit) RETURN count(r) AS n")[0]["n"] == 0
+
+    def test_the_services_of_the_other_environments_are_used_too(self, graph, tmp_path):
+        """A cloud primary (no ports, no variables) does not hide the compose services that configuration refers to."""
+        from deriva.adapters.graph.models import DeployableUnitNode, EnvironmentNode
+
+        for name in ("core", "billing"):
+            graph.add_node(DeployableUnitNode(name=name, path=f"r/{name}", unit_kind="container", repository_name="r"), node_id=f"unit::r::{name}")
+        compose = [
+            {"name": "core", "unit": "unit::r::core", "environment": {}, "ports": [8110]},
+            {"name": "billing", "unit": "unit::r::billing", "environment": {"CORE_URL": "http://core:8110"}, "ports": []},
+        ]
+        graph.add_node(EnvironmentNode(name="AWS ECS Fargate", kind="cloud", repository_name="r", other_services=[json.dumps(s) for s in compose]), node_id="environment::r::cloud")
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == []
+        rows = graph.query("MATCH (a:Graph:DeployableUnit)-[r:`Graph:CONSUMES`]->(b:Graph:DeployableUnit) RETURN a.id AS a, b.id AS b")
+        assert [(r["a"], r["b"]) for r in rows] == [("unit::r::billing", "unit::r::core")]
 
     def test_the_compose_environment_of_a_service_counts_as_its_configuration(self, graph, tmp_path):
         self._repo(graph, tmp_path, {"core/application.properties": "x=1\n"}, variables={"billing": {"CORE_URL": "http://core:8110"}})
