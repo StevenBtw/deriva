@@ -27,8 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from deriva.bench import reference_eval, session_metrics
-from deriva.common.naming import name_key
-from deriva.modules.analysis.semantic_matching import match_elements, parse_archi_xml, parse_exchange_format_xml
+from deriva.modules.analysis.semantic_matching import parse_archi_xml, parse_exchange_format_xml
 
 MEASURES = ("recall", "precision", "relationship_recall", "relationship_precision")
 GATE_LEVELS = ("enterprise", "solution", "union")  # Each is measured and judged; levels without a measure do not vote
@@ -77,22 +76,11 @@ def golden_relationships(
 ) -> dict[str, Any]:
     """Relationship recall over the golden relationships with both ends in ``scope``, and precision over all derived ones.
 
-    A derived element maps to the golden element the element matcher gives it (same type, same or similar name) or
-    whose accepted names (``aliases``) hold its name; a derived relationship is right when a golden relationship of
-    its type joins the golden elements of its source and target, in that direction.
+    A derived element maps to golden elements as the element scores map it (``session_metrics.golden_mapping``: by
+    name, by the user's accepted names, then by structural refs); a derived relationship is right when a golden
+    relationship of its type joins the golden elements of its source and target, in that direction.
     """
-    to_golden: dict[str, set[str]] = {}
-    for m in match_elements(derived, reference):
-        if m.match_type in session_metrics.NAME_MATCHES and m.derived_type == m.reference_type and m.reference_id:
-            to_golden.setdefault(m.derived_id, set()).add(m.reference_id)
-    by_key: dict[tuple[str, str], list[str]] = {}
-    for d in derived:
-        by_key.setdefault((d["type"], name_key(str(d.get("name") or ""))), []).append(d["id"])
-    for r in reference:
-        names = aliases.get(r.identifier)
-        for alias in names if isinstance(names, list) else []:
-            for derived_id in by_key.get((r.element_type, name_key(str(alias))), []):
-                to_golden.setdefault(derived_id, set()).add(r.identifier)
+    to_golden = session_metrics.golden_mapping(derived, reference, aliases)
     wanted = {(g.source, g.relationship_type, g.target) for g in golden}
     found: set[tuple[str, str, str]] = set()
     correct = 0
@@ -124,7 +112,10 @@ def _golden_row(path: Path, reference_dir: Path, repo: str, snapshots: list[dict
         scope = {r.identifier for r in reference if isinstance(derivable.get(r.identifier), dict) and derivable[r.identifier].get("derivable")}
     elements, relationships = [], []
     for snapshot in snapshots:
-        derived = [{"id": e["identifier"], "name": e.get("name"), "type": str(e["type"]).removeprefix("Model:")} for e in snapshot.get("elements", [])]
+        derived = [
+            {"id": e["identifier"], "name": e.get("name"), "type": str(e["type"]).removeprefix("Model:"), "source": e.get("source"), "lineage": e.get("lineage") or []}
+            for e in snapshot.get("elements", [])
+        ]
         elements.append(session_metrics.golden_comparison(derived, reference, aliases=aliases, derivable=derivable))
         relationships.append(golden_relationships(derived, snapshot.get("relationships", []), reference, golden_rels, aliases, scope))
     recall_key = "derivable_types_recall" if provisional else "derivable_recall"
@@ -151,7 +142,7 @@ def measure(sessions: list[Path], goldens_dir: Path, reference_dir: Path, model:
         for repo, run_model, _, snapshot in session_metrics.run_snapshots(session):
             runs.setdefault(repo, {}).setdefault(run_model, []).append(snapshot)
     references = reference_eval.load_references(goldens_dir) if Path(goldens_dir).is_dir() else {}
-    consistency = {(r["repository"], r["model"]): r["identities"]["id"] for r in session_metrics.consistency_rows(sessions)}
+    consistency = {(r["repository"], r["model"]): r["identities"]["id"] for r in session_metrics.consistency_rows(sessions, level=level)}
 
     out: dict[str, dict[str, Any]] = {}
     for repo, by_model in sorted(runs.items()):
