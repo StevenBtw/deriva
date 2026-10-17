@@ -2315,6 +2315,37 @@ class TestExtractionLLMLogging:
 class TestRunModelSnapshot:
     """Each exported run also writes a JSON snapshot with source nodes and relationship provenance."""
 
+    def test_levels_and_cross_level_links_are_in_the_snapshot(self, tmp_path, monkeypatch):
+        """The abstraction levels the refine step wrote, per element and relationship (None: not tagged, enterprise)."""
+        import json
+        from pathlib import Path
+
+        from deriva.adapters.archimate.models import Relationship
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [
+            Element(name="Shop", element_type="ApplicationComponent", identifier="ac_sys", properties={"source": "module::r::r", "levels": ["enterprise"]}),
+            Element(name="Orders", element_type="ApplicationComponent", identifier="ac_orders", properties={"source": "unit::r::orders", "levels": ["solution"]}),
+        ]
+        archimate_manager.get_relationships.return_value = [
+            Relationship(
+                source="ac_sys", target="ac_orders", relationship_type="Composition", identifier="r1", properties={"derived_from": "roll_up", "levels": [], "cross_level": True}
+            ),
+        ]
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, config=BenchmarkConfig(repositories=["r"], models=["m"], export_models=True)
+        )
+        orchestrator.session_id = "s"
+
+        with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
+            xml_path = orchestrator._export_run_model("r", "m", 1, solve_report={})
+
+        snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
+        assert [e["levels"] for e in snapshot["elements"]] == [["enterprise"], ["solution"]]
+        assert (snapshot["relationships"][0]["levels"], snapshot["relationships"][0]["cross_level"]) == ([], True)
+
     def test_closed_set_names_carry_their_candidates_and_the_recorded_choice(self, tmp_path, monkeypatch):
         """The candidates in order next to name and structure name; name_choice as recorded wins over their number."""
         import json
@@ -2395,6 +2426,7 @@ class TestRunModelSnapshot:
                 "name_choice": False,
                 "structure_name": "Orders",
                 "name_candidates": None,
+                "levels": None,
             },
             {
                 "identifier": "bo_order",
@@ -2405,10 +2437,11 @@ class TestRunModelSnapshot:
                 "name_choice": False,
                 "structure_name": "Order",
                 "name_candidates": None,
+                "levels": None,
             },
         ]
         assert snapshot["relationships"] == [
-            {"source": "ac_orders", "target": "bo_order", "type": "Access", "derived_from": "llm", "confidence": 0.8},
+            {"source": "ac_orders", "target": "bo_order", "type": "Access", "derived_from": "llm", "confidence": 0.8, "levels": None, "cross_level": False},
         ]
         assert snapshot["detail"] == {"elements": [], "relationships": [], "properties": {}}  # no lineage in the graph
 
