@@ -141,12 +141,19 @@ def _identity_report(views: list[dict[str, Any]], identity: str) -> dict[str, An
     return report
 
 
-def consistency_rows(sessions: list[Path]) -> list[dict[str, Any]]:
-    """Per repository and model (and over all models when the sessions hold several), both identities."""
+def consistency_rows(sessions: list[Path], *, level: str | None = None) -> list[dict[str, Any]]:
+    """Per repository and model (and over all models when the sessions hold several), both identities.
+
+    ``level`` (``enterprise``, ``solution`` or ``union``) compares only that abstraction level of each run; ``None``
+    compares the whole model, as before levels existed.
+    """
+    from deriva.bench.reference_eval import snapshot_at_level
+
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for session in sessions:
         calls = _calls(session)
-        for repo, model, number, snapshot in run_snapshots(session):
+        for repo, model, number, whole in run_snapshots(session):
+            snapshot = snapshot_at_level(whole, level)
             classified = {str(c.get("step")) for c in calls.get((repo, model, number), []) if _decision_type(c).endswith(" classification")}
             grouped.setdefault((repo, model), []).append(_run_view(snapshot, classified))
     rows = []
@@ -298,6 +305,62 @@ NAME_MATCHES = frozenset({"exact", "fuzzy_name"})
 DERIVED_TYPES = frozenset(ELEMENT_TYPES) - {"Artifact"}  # Artifact belongs to the export's detail level
 
 
+def accepted(entry: Any) -> tuple[list[str], list[str]]:
+    """The names and structural refs the user accepted for a golden element: a list of names, or
+    ``{"names": [...], "structure_refs": [...]}``."""
+    if isinstance(entry, list):
+        return [str(n) for n in entry], []
+    if isinstance(entry, dict):
+        return [str(n) for n in entry.get("names") or []], [str(r) for r in entry.get("structure_refs") or []]
+    return [], []
+
+
+def _clean_path(path: str) -> str:
+    path = str(path).replace(chr(92), "/").strip()
+    while path.startswith("./"):
+        path = path[2:]
+    return path.strip("/")
+
+
+def _structural_match(element: dict[str, Any], refs: list[str]) -> bool:
+    """A structural ref names the element's source (or lineage) id, or (``path:``) the folder or file of that id itself."""
+    ids = [str(i) for i in [element.get("source"), *(element.get("lineage") or [])] if i]
+    paths = {_clean_path(i.split("::")[2]) for i in ids if len(i.split("::")) >= 3}
+    return any((_clean_path(r[5:]) in paths) if r.startswith("path:") else (r in ids) for r in refs)
+
+
+def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases: dict[str, Any] | None = None) -> dict[str, set[str]]:
+    """Derived element id -> the golden elements it is matched to.
+
+    First by name, as always: the element matcher (same type, the same or a similar name) and the names the user
+    accepted. Then a golden element still unmatched takes, through its structural refs, the first derived element of
+    its type (by id) that no golden element has yet, so one derived element matches one golden element there.
+    """
+    aliases = aliases or {}
+    mapping: dict[str, set[str]] = {}
+    for m in match_elements(derived, reference):
+        if m.match_type in NAME_MATCHES and m.derived_type == m.reference_type and m.reference_id:
+            mapping.setdefault(m.derived_id, set()).add(m.reference_id)
+    by_key: dict[tuple[str, str], list[str]] = {}
+    for d in derived:
+        by_key.setdefault((str(d.get("type")), name_key(str(d.get("name") or ""))), []).append(str(d["id"]))
+    for r in reference:
+        for alias in accepted(aliases.get(r.identifier))[0]:
+            for derived_id in by_key.get((r.element_type, name_key(alias)), []):
+                mapping.setdefault(derived_id, set()).add(r.identifier)
+    found = set().union(*mapping.values()) if mapping else set()
+    for r in sorted(reference, key=lambda r: r.identifier):
+        refs = accepted(aliases.get(r.identifier))[1]
+        if r.identifier in found or not refs:
+            continue
+        for d in sorted(derived, key=lambda d: str(d["id"])):
+            if str(d["id"]) not in mapping and str(d.get("type")) == r.element_type and _structural_match(d, refs):
+                mapping[str(d["id"])] = {r.identifier}
+                found.add(r.identifier)
+                break
+    return mapping
+
+
 def golden_comparison(
     derived: list[dict[str, Any]],
     reference: list[Any],
@@ -312,12 +375,16 @@ def golden_comparison(
     derived types. Precision counts each found reference element once, as the model-quality report does.
     """
     aliases, derivable = aliases or {}, derivable or {}
-    found = {m.reference_id for m in match_elements(derived, reference) if m.match_type in NAME_MATCHES and m.derived_type == m.reference_type}
+    by_name = {m.reference_id for m in match_elements(derived, reference) if m.match_type in NAME_MATCHES and m.derived_type == m.reference_type}
     by_type: dict[str, set[str]] = {}
     for d in derived:
         by_type.setdefault(str(d.get("type")), set()).add(name_key(str(d.get("name") or "")))
-    manual = {r.identifier for r in reference if r.identifier not in found and any(name_key(a) in by_type.get(r.element_type, set()) for a in aliases.get(r.identifier, []))}
-    found |= manual
+    manual = {
+        r.identifier for r in reference if r.identifier not in by_name and any(name_key(a) in by_type.get(r.element_type, set()) for a in accepted(aliases.get(r.identifier))[0])
+    }
+    mapped = golden_mapping(derived, reference, aliases)
+    found = set().union(*mapped.values()) if mapped else set()
+    structural = found - by_name - manual
 
     def share(part: int, whole: int) -> float | None:
         return round(part / whole, 3) if whole else None
@@ -340,6 +407,7 @@ def golden_comparison(
         "derivable_recall": share(sum(1 for r in can if r.identifier in found), len(can)),
         "derivable_labelled": len(labelled),
         "manual_matches": len(manual),
+        "structure_matches": len(structural),
     }
 
 
