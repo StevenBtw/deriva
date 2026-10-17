@@ -219,6 +219,30 @@ def test_finished_runs_are_kept_on_disk_newest_first(tmp_path):
     assert len(manager().history(limit=1)) == 1
 
 
+def test_a_finished_run_is_in_the_history_before_and_without_its_summary_on_disk(tmp_path, monkeypatch):
+    """The run's status changes before run.json is written (and a failed write is swallowed): history must not lose it."""
+    from pathlib import Path
+
+    from deriva.studio.provider import SessionProvider
+    from deriva.studio.runs import RunManager
+
+    real_write = Path.write_text
+
+    def no_summary(self, *args, **kwargs):
+        if self.name == "run.json":
+            raise OSError("disk full")
+        return real_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", no_summary)
+    session = FakeSession(run_extraction_iter=steps(1), use_repository=None)
+    manager = RunManager(SessionProvider(factory=lambda: session), runs_dir=tmp_path)
+
+    run_id = manager.start("extraction", "deriva")
+    wait_for(lambda: manager.get(run_id).status == "finished")
+
+    assert [(h["run_id"], h["status"]) for h in manager.history(limit=5)] == [(run_id, "finished")]
+
+
 def test_a_running_run_heads_the_history(tmp_path):
     from deriva.studio.provider import SessionProvider
     from deriva.studio.runs import RunManager
