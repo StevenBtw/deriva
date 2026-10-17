@@ -8,7 +8,7 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
-## v0.8.2 - Pre-benchmark refinement (Unreleased)
+## v0.8.2 - Pre-benchmark refinement (October 17 2026)
 
 Most of the model now comes from structure: new structural extraction steps find deployable units, data entities and domains, deployments, cooperation lines and lifecycles, and the LLM mainly chooses among structural candidates.
 
