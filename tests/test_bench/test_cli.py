@@ -1331,3 +1331,38 @@ def test_conventions_with_a_run_no_snapshot_has_exits_1(tmp_path, monkeypatch):
     assert result.exit_code == 1 and "no run snapshots" in result.output
     # Nothing is written: an earlier report in the folder stays as it was
     assert (out / "summary.md").read_text(encoding="utf-8") == "an earlier report" and not (out / "conventions.json").exists()
+
+
+def test_gate_compares_a_candidate_with_a_baseline_and_writes_markdown_and_json(tmp_path):
+    """Sessions by id under --benchmarks; the verdict on the console, gate.md and gate.json in the output folder."""
+    import json as _json
+
+    from typer.testing import CliRunner as _Runner
+
+    from deriva.bench.cli import app as bench_app
+
+    benchmarks, goldens = tmp_path / "benchmarks", tmp_path / "goldens"
+    goldens.mkdir()
+    reference = {"repository": "shop", "elements": [{"key": "a", "type": "ApplicationComponent", "name": "Core"}, {"key": "b", "type": "ApplicationComponent", "name": "Web"}]}
+    (goldens / "shop.json").write_text(_json.dumps(reference), encoding="utf-8")
+    for session, names in (("bench_base", ["Core"]), ("bench_new", ["Core", "Web"])):
+        models = benchmarks / session / "models"
+        models.mkdir(parents=True)
+        (benchmarks / session / "session_metadata.json").write_text(_json.dumps({"config": {"repositories": ["shop"], "models": ["m"]}}), encoding="utf-8")
+        snapshot = {"elements": [{"identifier": n, "type": "ApplicationComponent", "name": n, "source": n} for n in names], "relationships": []}
+        for n in (1, 2):
+            (models / f"shop_m_run{n}.json").write_text(_json.dumps(snapshot), encoding="utf-8")
+    args = ["gate", "--baseline", "bench_base", "--candidate", "bench_new", "--benchmarks", str(benchmarks), "--goldens", str(goldens)]
+
+    result = _Runner().invoke(bench_app, [*args, "--reference", str(tmp_path / "none"), "-o", str(tmp_path / "out")])
+
+    assert result.exit_code == 0, result.output
+    assert "**PASS**: 1/1 measured repositories better" in result.output
+    payload = _json.loads((tmp_path / "out" / "gate.json").read_text(encoding="utf-8"))
+    assert payload["verdict"]["verdict"] == "PASS" and payload["baseline"]["shop"]["recall"] == 0.5
+    assert "| shop | reference | 50.0% | 100.0% |" in (tmp_path / "out" / "gate.md").read_text(encoding="utf-8")
+
+    # The baseline alone: its table, no verdict
+    alone = _Runner().invoke(bench_app, ["gate", "--baseline", "bench_base", "--benchmarks", str(benchmarks), "--goldens", str(goldens), "-o", str(tmp_path / "alone")])
+    assert alone.exit_code == 0, alone.output
+    assert "| shop | reference | 2 | 50.0% | 100.0% |" in alone.output and "Verdict" not in alone.output

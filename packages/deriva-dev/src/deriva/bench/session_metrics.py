@@ -38,7 +38,7 @@ def _metadata(session: Path) -> dict[str, Any]:
     return json.loads((Path(session) / "session_metadata.json").read_text(encoding="utf-8")).get("config", {})
 
 
-def _runs(session: Path) -> list[tuple[str, str, int, dict[str, Any]]]:
+def run_snapshots(session: Path) -> list[tuple[str, str, int, dict[str, Any]]]:
     """(repository, model, run number, snapshot) of every exported run of a session."""
     config = _metadata(session)
     found = []
@@ -146,7 +146,7 @@ def consistency_rows(sessions: list[Path]) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for session in sessions:
         calls = _calls(session)
-        for repo, model, number, snapshot in _runs(session):
+        for repo, model, number, snapshot in run_snapshots(session):
             classified = {str(c.get("step")) for c in calls.get((repo, model, number), []) if _decision_type(c).endswith(" classification")}
             grouped.setdefault((repo, model), []).append(_run_view(snapshot, classified))
     rows = []
@@ -190,7 +190,7 @@ def two_level_rows(sessions: list[Path]) -> list[dict[str, Any]]:
     for session in sessions:
         calls = _calls(session)
         runs: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
-        for repo, model, number, snapshot in _runs(session):
+        for repo, model, number, snapshot in run_snapshots(session):
             runs.setdefault((repo, model), []).append((number, snapshot))
         for (repo, model), numbered in sorted(runs.items()):
             if len(numbered) < 2:

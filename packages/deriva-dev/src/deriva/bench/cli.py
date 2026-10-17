@@ -373,6 +373,50 @@ def benchmark_reference(
     typer.echo(f"Summary and pages: {Path(next(iter(pages.values()))).parent}")
 
 
+@app.command("gate")
+def benchmark_gate(
+    baseline: Annotated[str, typer.Option("--baseline", help="Comma-separated sessions of the baseline (one or more per repository)")],
+    candidate: Annotated[str | None, typer.Option("--candidate", help="Comma-separated sessions of the change (without it: the baseline's table)")] = None,
+    model: Annotated[str | None, typer.Option("--model", help="The model config to read when the sessions hold several")] = None,
+    output: Annotated[str | None, typer.Option("-o", "--output", help="Output folder (default: workspace/analysis/gate/<baseline>[_vs_<candidate>])")] = None,
+    goldens: Annotated[str | None, typer.Option("--goldens", help="Development reference folder (default: workspace/goldens/dev)")] = None,
+    reference: Annotated[str | None, typer.Option("--reference", help="Golden model folder (default: workspace/reference)")] = None,
+    benchmarks: Annotated[str | None, typer.Option("--benchmarks", help="Benchmark folder (default: workspace/benchmarks)")] = None,
+) -> None:
+    """Recall, precision and consistency by id per repository, and the verdict of a candidate against a baseline.
+
+    Accepted when recall or precision rises on at least two thirds of the measured repositories, none drops by more
+    than 2 points on either, and element and relationship consistency by id stay at 95% or more everywhere.
+    """
+    from deriva.bench import gate
+
+    root = Path(benchmarks) if benchmarks else workspace() / "benchmarks"
+    goldens_dir = Path(goldens) if goldens else workspace() / "goldens" / "dev"
+    reference_dir = Path(reference) if reference else workspace() / "reference"
+    sides = {"baseline": [s.strip() for s in baseline.split(",") if s.strip()], "candidate": [s.strip() for s in (candidate or "").split(",") if s.strip()]}
+    for side in sides.values():
+        if missing := [s for s in side if not (root / s / "session_metadata.json").is_file()]:
+            typer.echo(f"Error: no benchmark session {', '.join(missing)} in {root}", err=True)
+            raise typer.Exit(1)
+    try:
+        measures = {name: gate.measure([root / s for s in side], goldens_dir, reference_dir, model=model) for name, side in sides.items() if side}
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    lines = [f"# Gate: {', '.join(sides['baseline'])}" + (f" vs {', '.join(sides['candidate'])}" if sides["candidate"] else ""), ""]
+    lines += gate.table_markdown(measures["baseline"], f"Baseline ({', '.join(sides['baseline'])})")
+    payload: dict = {"sessions": sides, "baseline": measures["baseline"]}
+    if "candidate" in measures:
+        lines += gate.table_markdown(measures["candidate"], f"Candidate ({', '.join(sides['candidate'])})")
+        payload |= {"candidate": measures["candidate"], "verdict": gate.verdict(measures["baseline"], measures["candidate"])}
+        lines += gate.verdict_markdown(payload["verdict"])
+    for line in lines:
+        typer.echo(line)
+    name = "_".join(sides["baseline"]) + (f"_vs_{'_'.join(sides['candidate'])}" if sides["candidate"] else "")
+    paths = gate.write(Path(output) if output else workspace() / "analysis" / "gate" / name, payload, lines)
+    typer.echo(f"Written: {paths['markdown']} and gate.json")
+
+
 def _pct(value: float | None) -> str:
     return "-" if value is None else f"{value:.0%}"
 
