@@ -1231,6 +1231,9 @@ class ElementDerivationBase(ABC):
         without a call; several are chosen from by one call whose schema allows only them. An
         answer outside the set takes the first free candidate. The LLM never writes the name.
         """
+        # Every candidate in order, a taken one included: what the name was chosen from (for review), and no call yet
+        element_data["properties"]["name_candidates"] = list(choices)
+        element_data["properties"]["name_choice"] = False
         blocked = {_display_key(n) for n in taken} | {key for node_id, key in structure_names.items() if node_id != candidate.node_id}
         free = [c for c in choices if _display_key(c) not in blocked]
         if not free:
