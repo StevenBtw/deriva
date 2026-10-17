@@ -1,6 +1,6 @@
 # Benchmarks
 
-An LLM does not always give the same answer twice, so two runs of Deriva on the same repository can produce slightly different models. Benchmarks repeat runs, show how consistent the model is across them, and point to the pipeline steps and prompts that cause the differences.
+An LLM does not always give the same answer twice, so two runs of Deriva on the same repository can produce slightly different models. Benchmarks repeat runs, show how consistent the model is across them and how close it comes to a reference model, per abstraction level, and point to the pipeline steps and prompts that cause the differences.
 
 ## Install benchmarking
 
@@ -135,6 +135,28 @@ This writes the event logs of one or more sessions to one folder, so the runs of
 
 In the studio, **Process mining logs** downloads the same files for the selected sessions.
 
+## Score against a reference
+
+A reference model says what the model of a repository should contain. Two kinds are read:
+
+- **Development references** (`workspace/goldens/dev/`): reference models whose elements and relationships may carry their levels (enterprise when they do not). `benchmark reference <session_id>` reports recall and precision per element type, relationship kind and chain.
+- **Golden models** (`workspace/reference/<repo>.archimate`): models drawn by hand. Next to each, `<repo>.derivable.json` marks which golden elements can be derived from the code at all, and `<repo>.matches.json` lists, per golden element, the names you accepted for it and its structure refs. Recall is measured on the derivable part.
+
+A golden element is matched first by name: a derived element of its type with the same or a similar name, or with a name you accepted. A golden element still unmatched is then matched by structure: a structure ref names a structural id or, with `path:`, a folder or file, and the first derived element of its type made from exactly that structure matches, one derived element per golden element.
+
+```json
+{"golden-id-1": ["Order Service"],
+ "golden-id-2": {"names": ["Billing"], "structure_refs": ["path:services/billing"]}}
+```
+
+`benchmark gate` compares a candidate session with a baseline session on every measured repository:
+
+```bash
+deriva-cli benchmark gate --baseline <session_id> --candidate <session_id>
+```
+
+The gate scores each level on its own (enterprise, solution) and both together (union), with recall, precision and consistency by id per level. A candidate passes a level when one of the four measures (element or relationship recall or precision) rises by at least 1 point on at least two thirds of the measured repositories, none drops by more than 2 points anywhere, and element and relationship consistency by id stay at 95% or more. The overall verdict passes when every level with a measured repository passes; a reference without solution-level elements has no solution measure and no vote there.
+
 ## Measure well
 
 - **Measure without the cache.** Cached runs repeat earlier answers and always look perfectly consistent.
@@ -176,6 +198,8 @@ In the studio, **Process mining logs** downloads the same files for the selected
 | `benchmark list [-l N]` | List recent sessions |
 | `benchmark analyze <session_id> [-o file] [-f json\|markdown]` | Analyze a session |
 | `benchmark deviations <session_id> [-o file] [-s deviation_count\|consistency_score\|total_objects]` | Variation per step |
+| `benchmark reference <session_id> [--run N] [-o folder] [--references folder]` | Recall and precision against the development references |
+| `benchmark gate --baseline <ids> [--candidate <ids>] [--model name] [-o folder]` | The verdict of a candidate against a baseline, per level |
 | `benchmark export <session_id> -o <zip>` | Bundle a session with its configurations, environment and checksums |
 | `benchmark ocel <session_ids> -o <folder>` | Event logs of sessions for process mining (OCEL 2.0, CSV, XES) |
 | `benchmark conventions <session_ids> [-o folder] [--run N]` | Check the run snapshots against ArchiMate modelling conventions: a review page per repository and model, and a summary |

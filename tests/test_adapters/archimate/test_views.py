@@ -10,21 +10,22 @@ from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 
 NS = {"a": "http://www.opengroup.org/xsd/archimate/3.0/", "xsi": "http://www.w3.org/2001/XMLSchema-instance"}
 
+BOTH, ENTERPRISE, SOLUTION = ["enterprise", "solution"], ["enterprise"], ["solution"]
 ELEMENTS = [
-    Element(name="Shop", element_type="ApplicationComponent", identifier="ac_shop"),
-    Element(name="Shop REST API", element_type="ApplicationInterface", identifier="ai_shop"),
-    Element(name="Ordering", element_type="ApplicationService", identifier="as_order"),
-    Element(name="Order Data", element_type="DataObject", identifier="do_order"),
-    Element(name="Order", element_type="BusinessObject", identifier="bo_order"),
-    Element(name="Docker Compose", element_type="Node", identifier="node_env"),
-    Element(name="Customer", element_type="BusinessActor", identifier="ba_customer"),
+    Element(name="Shop", element_type="ApplicationComponent", identifier="ac_shop", properties={"levels": BOTH}),
+    Element(name="Shop REST API", element_type="ApplicationInterface", identifier="ai_shop", properties={"levels": SOLUTION}),
+    Element(name="Ordering", element_type="ApplicationService", identifier="as_order", properties={"levels": ENTERPRISE}),
+    Element(name="Order Data", element_type="DataObject", identifier="do_order", properties={"levels": SOLUTION}),
+    Element(name="Order", element_type="BusinessObject", identifier="bo_order", properties={"levels": ENTERPRISE}),
+    Element(name="Docker Compose", element_type="Node", identifier="node_env", properties={"levels": ENTERPRISE}),
+    Element(name="Customer", element_type="BusinessActor", identifier="ba_customer", properties={"levels": ENTERPRISE}),
     Element(name="Order Line", element_type="DataObject", identifier="do_detail_line", properties={"level": "detail", "parent": "do_order"}),
 ]
 RELATIONSHIPS = [
-    Relationship(source="ac_shop", target="ai_shop", relationship_type="Composition", identifier="r1"),
-    Relationship(source="ac_shop", target="as_order", relationship_type="Realization", identifier="r2"),
-    Relationship(source="do_order", target="do_detail_line", relationship_type="Composition", identifier="r3"),
-    Relationship(source="do_order", target="bo_order", relationship_type="Realization", identifier="r4"),
+    Relationship(source="ac_shop", target="ai_shop", relationship_type="Composition", identifier="r1", properties={"levels": SOLUTION}),
+    Relationship(source="ac_shop", target="as_order", relationship_type="Realization", identifier="r2", properties={"levels": ENTERPRISE}),
+    Relationship(source="do_order", target="do_detail_line", relationship_type="Composition", identifier="r3", properties={"level": "detail"}),
+    Relationship(source="do_order", target="bo_order", relationship_type="Realization", identifier="r4", properties={"levels": [], "cross_level": True}),
 ]
 
 
@@ -32,20 +33,48 @@ def _by_name(views):
     return {v.name: v for v in views}
 
 
-def test_each_viewpoint_shows_its_types_and_only_detail_views_show_detail_elements():
+def _nodes(view):
+    return {n.element for n in view.nodes}
+
+
+def test_each_level_has_its_viewpoints_with_the_elements_and_relationships_of_that_level():
     views = _by_name(build_views(ELEMENTS, RELATIONSHIPS))
 
-    assert set(views) >= {"Layered", "Application Cooperation", "Information Structure", "Information Structure (detail)", "Implementation and Deployment"}
-    assert {n.element for n in views["Information Structure"].nodes} == {"do_order", "bo_order"}
-    assert {n.element for n in views["Information Structure (detail)"].nodes} == {"do_order", "bo_order", "do_detail_line"}
-    assert "do_detail_line" not in {n.element for n in views["Layered"].nodes}
-    assert {c.relationship for c in views["Information Structure (detail)"].connections} == {"r3", "r4"}
-    assert views["Layered"].viewpoint == "Layered" and views["Business"].viewpoint == "Business Process Cooperation"
+    assert set(views) == {
+        "Layered (enterprise)",
+        "Application Cooperation (enterprise)",
+        "Information Structure (enterprise)",
+        "Implementation and Deployment (enterprise)",
+        "Business (enterprise)",
+        "Application Structure (solution)",
+        "Application Cooperation (solution)",
+        "Information Structure (solution)",
+        "Implementation and Deployment (solution)",
+        "Information Structure (detail)",
+    }
+    assert _nodes(views["Application Cooperation (enterprise)"]) == {"ac_shop", "as_order"}
+    assert _nodes(views["Application Cooperation (solution)"]) == {"ac_shop", "ai_shop"}
+    assert _nodes(views["Information Structure (enterprise)"]) == {"bo_order"}
+    assert _nodes(views["Information Structure (solution)"]) == {"do_order"}
+    assert _nodes(views["Information Structure (detail)"]) == {"do_order", "do_detail_line"}
+    assert _nodes(views["Application Structure (solution)"]) == {"ac_shop"}
+    assert {c.relationship for c in views["Application Cooperation (solution)"].connections} == {"r1"}
+    assert {c.relationship for c in views["Layered (enterprise)"].connections} == {"r2"}
+    assert {c.relationship for c in views["Information Structure (detail)"].connections} == {"r3"}
+    assert {v.name: v.level for v in views.values()}["Application Structure (solution)"] == "solution"
+    assert views["Application Structure (solution)"].viewpoint == "Application Structure" and views["Business (enterprise)"].viewpoint == "Business Process Cooperation"
+
+
+def test_a_cross_level_link_is_in_no_view_and_detail_elements_only_in_detail_views():
+    views = build_views(ELEMENTS, RELATIONSHIPS)
+
+    assert not any(c.relationship == "r4" for v in views for c in v.connections)
+    assert all("do_detail_line" not in _nodes(v) for v in views if v.level != "detail")
 
 
 def test_the_layout_puts_layers_in_bands_and_is_the_same_for_any_input_order():
-    first = _by_name(build_views(ELEMENTS, RELATIONSHIPS))["Layered"]
-    second = _by_name(build_views(list(reversed(ELEMENTS)), list(reversed(RELATIONSHIPS))))["Layered"]
+    first = _by_name(build_views(ELEMENTS, RELATIONSHIPS))["Layered (enterprise)"]
+    second = _by_name(build_views(list(reversed(ELEMENTS)), list(reversed(RELATIONSHIPS))))["Layered (enterprise)"]
 
     assert [(n.element, n.x, n.y) for n in first.nodes] == [(n.element, n.x, n.y) for n in second.nodes]
     y = {n.element: n.y for n in first.nodes}
@@ -64,6 +93,9 @@ def test_the_export_writes_the_level_property_and_the_views(tmp_path):
     assert line.findtext("a:properties/a:property/a:value", namespaces=NS) == "detail"
     diagrams = root.findall("a:views/a:diagrams/a:view", NS)
     assert len(diagrams) == len(views)
+    # Each view carries its level, as elements and relationships do
+    levels = {d.findtext("a:name", namespaces=NS): d.findtext("a:properties/a:property/a:value", namespaces=NS) for d in diagrams}
+    assert levels["Application Structure (solution)"] == "solution" and levels["Layered (enterprise)"] == "enterprise"
     ids = {e.identifier for e in ELEMENTS} | {r.identifier for r in RELATIONSHIPS}
     refs = [n.get("elementRef") for n in root.iter(f"{{{NS['a']}}}node")] + [c.get("relationshipRef") for c in root.iter(f"{{{NS['a']}}}connection")]
     assert refs and set(refs) <= ids
@@ -77,8 +109,8 @@ def test_a_view_needs_its_own_elements():
     architect_only = [e for e in ELEMENTS if e.element_type != "BusinessActor" and (e.properties or {}).get("level") != "detail"]
     names = {v.name for v in build_views(architect_only, [])}
 
-    assert "Business" not in names
-    assert "Information Structure (detail)" not in names and "Information Structure" in names
+    assert "Business (enterprise)" not in names
+    assert "Information Structure (detail)" not in names and "Information Structure (enterprise)" in names
 
 
 def test_each_element_type_starts_its_own_row_in_its_band():

@@ -233,6 +233,10 @@ def config_update(
         int | None,
         typer.Option("--max-candidates", help="Maximum candidates for derivation"),
     ] = None,
+    sequence: Annotated[
+        int | None,
+        typer.Option("--sequence", min=0, help="New place in its phase (derivation only)"),
+    ] = None,
 ) -> None:
     """Update a configuration with versioning."""
     if step_type not in ("extraction", "derivation"):
@@ -286,6 +290,7 @@ def config_update(
                 batch_size=batch_size,
                 max_candidates=max_candidates,
                 temperature=temperature,
+                sequence=sequence,
             )
         elif step_type == "extraction":
             result = config.create_extraction_config_version(
@@ -307,6 +312,8 @@ def config_update(
             typer.echo(f"  Version: {result['old_version']} -> {result['new_version']}")
             if params:
                 typer.echo("  Params: updated")
+            if sequence is not None:
+                typer.echo(f"  Sequence: {sequence}")
         else:
             typer.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
             raise typer.Exit(1)
@@ -330,7 +337,8 @@ def config_sequence(
     """Update the execution sequence of derivation steps.
 
     Reorders steps based on the provided order list. Each step's sequence
-    number is set to its position in the list (1-indexed).
+    number is set to its position in the list (1-indexed); a step that moves
+    gets a new config version, so every reorder is recorded.
 
     Example (ArchiMate bottom-up: Technology -> Application -> Business):
 

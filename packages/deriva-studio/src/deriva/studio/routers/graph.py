@@ -45,10 +45,11 @@ def model_stats(session: Any = Depends(get_session)) -> dict[str, Any]:
 
 @router.get("/model")
 def model(level: str = Query("architect", pattern="^(architect|detail)$"), session: Any = Depends(get_session)) -> dict[str, Any]:
-    """The model at one export level (detail: with the members of the architect elements), and the views of that level."""
+    """The model at one export level (detail: with the members of the architect elements), and the views of that level.
+    The architect level is every model level but detail (enterprise, solution, both; "architect" in earlier models)."""
     levels = session.get_model_levels()
-    elements = [e for e in levels["elements"] if level == "detail" or e.get("level") == "architect"]
-    views = [v for v in levels["views"] if level == "detail" or v.get("level") == "architect"]
+    elements = [e for e in levels["elements"] if level == "detail" or e.get("level") != "detail"]
+    views = [v for v in levels["views"] if level == "detail" or v.get("level") != "detail"]
     return {**to_widget_model(elements, levels["relationships"]), "views": views}
 
 

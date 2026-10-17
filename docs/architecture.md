@@ -1,6 +1,6 @@
 # Architecture
 
-Deriva reads a repository into a graph, derives an ArchiMate model from that graph and exports it. This page shows how the code is organized: the pipeline, the three packages, the layers and the rules between them, and where Deriva keeps its data.
+Deriva reads a repository into a graph, derives an ArchiMate model from that graph and exports it. This page shows how the code is organized: the pipeline, the abstraction levels of the model, the three packages, the layers and the rules between them, and where Deriva keeps its data.
 
 ## The pipeline
 
@@ -13,18 +13,54 @@ Repository --> Extraction --> Graph --> Derivation --> ArchiMate model --> Expor
 
 2. Extract    Graph namespace
               Repository -> Directory -> File -> TypeDefinition -> Method
-              plus Technology, ExternalDependency, Test and BusinessConcept
+              plus deployable units, build modules, deployments,
+              Technology, ExternalDependency, Test and BusinessConcept
 
 3. Derive     prep:          graph algorithms (PageRank, Louvain, k-core, ...)
-              generate:      ArchiMate elements, one step per type (13 types)
+              generate:      ArchiMate elements, one step per type
               relationship:  one pass over all elements
-              refine:        duplicates, orphans and structural checks
+              refine:        duplicates, orphans, structural checks,
+                             the component hierarchy and lifted relationships,
+                             the joint selection, then the level tags
               Result: the Model namespace
 
-4. Export     Open Exchange XML, which Archi and other tools import
+4. Export     Open Exchange XML with a level on every element, relationship
+              and view, which Archi and other tools import
 ```
 
 Most extraction is deterministic: directories and files come from the file system, type definitions and methods from parsing the code with tree-sitter (Python, JavaScript, Java and C#) or with structural parsers (COBOL programs and copybooks, JCL jobs and BMS screen maps), dependencies and tests from parsers. LLM steps classify within closed sets, for example which documented terms are business concepts. Derivation picks its candidates from the graph with queries and graph properties, and asks the LLM to classify and name them.
+
+## Abstraction levels
+
+One model holds two abstraction levels, and the export adds a third. Every element and relationship carries the levels it belongs to, so each level is a filter on the same model, and an element that belongs to both levels exists once with one identifier.
+
+| Level | Holds |
+| --- | --- |
+| Enterprise | The business layer, application and technology services, the top-level components, the platform node of each environment |
+| Solution | Deployable units, build modules and libraries, interfaces, data objects, system software, one node per deployed service |
+| Detail | The members of those elements (endpoints, entities, programs, deployed artifacts); written only to the export |
+
+Which element types sit on which level is a versioned table (the `abstraction_levels` step's params); components are placed by the hierarchy below.
+
+### The component hierarchy
+
+The `BuildModule` extraction step finds the folders with a build manifest and code of their own (manifests such as Maven's, npm's, uv's or Gradle's, from a versioned list), and a parent system where an aggregator manifest lists at least two of them. The hierarchy goes from systems to units to modules to libraries:
+
+- a system holds the units and modules in its folders;
+- the only deployable unit at a module's folder holds that module; several units there are the module's entry points, and the module holds them;
+- a unit holds a module that only it builds, and a module holds the modules nested in it.
+
+A component without a parent is top-level: on both levels when it is a unit or a module, on the enterprise level when it is a system. Every other component is on the solution level, and the top-level component realizes the services of the components below it, so the enterprise level stands on its own. Each environment's node composes one node per deployment it runs.
+
+### Relationships between the levels
+
+A relationship is on the levels both its ends share; with none shared it is a cross-level link, such as the Composition from a top-level component to a component below it. A Serving, Access, Flow or Triggering relationship below the enterprise level also implies one between the nearest enterprise elements above its ends, and an Access to a data object reaches the business object it realizes. These lifted relationships are on the enterprise level only, and each lists the relationships it comes from.
+
+The hierarchy's relationships and the lifted ones are proposals like any other: the `abstraction_hierarchy` step makes them just before the joint selection (`joint_consistency`), which decides on all relationships together. After the selection only the level tags are written; a step there that adds or removes an element or relationship is reported as an error of the run.
+
+### Views per level
+
+The export has the enterprise views (Layered, Application Cooperation, Information Structure, Implementation and Deployment, Business), the solution views (Application Structure, Application Cooperation, Information Structure, Implementation and Deployment) and two detail views. A view shows the elements and relationships of its level; cross-level links are in no view.
 
 ## Packages
 
@@ -159,3 +195,4 @@ The graph and the model share one embedded database and are kept apart by namesp
 5. **Graph algorithms guide derivation.** PageRank, Louvain communities and k-core levels decide which nodes are worth considering, before any LLM call.
 6. **Parsing over LLMs where possible.** Tree-sitter extracts types and methods in several languages deterministically and without LLM cost.
 7. **One embedded database.** Grafeo runs inside the process, so Deriva needs no database server, and namespaces keep the graph and the model apart.
+8. **Levels from structure.** The levels, the component hierarchy and the lifted relationships come from build manifests, folders and the graph, never from an LLM, so every level is as consistent as the structure it comes from.

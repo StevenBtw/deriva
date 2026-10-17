@@ -75,6 +75,11 @@ def _relationship_level(relationship: Relationship, detail: bool) -> str:
     return " ".join(sorted(str(v) for v in levels)) if isinstance(levels, list) else "enterprise"
 
 
+def _view_levels(level: str) -> frozenset[str]:
+    """The levels a relationship's exported ``level`` names (cross-level: none)."""
+    return frozenset() if level == "cross-level" else frozenset(level.split())
+
+
 def stable_ids(relationships: list[tuple[Relationship, str]]) -> list[Relationship]:
     """The relationships with ids from their ends, type and level (a repeat of all four gets its position appended)."""
     seen: dict[str, int] = {}
@@ -103,7 +108,9 @@ def leveled_model(elements: list[Element], relationships: list[Relationship], li
         elements=all_elements,
         relationships=all_relationships,
         properties=properties,
-        views=build_views(all_elements, all_relationships),
+        views=build_views(
+            all_elements, all_relationships, {r.identifier: _view_levels(p["level"]) for r, p in ((r, relationship_properties[r.identifier]) for r in all_relationships)}
+        ),
         detail=detail,
         architect_count=len(elements),
         relationship_properties=relationship_properties,

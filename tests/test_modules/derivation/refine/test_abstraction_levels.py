@@ -261,3 +261,42 @@ def test_an_unknown_stage_is_refused():
     result = run_refine_step("abstraction_levels", archimate_manager=MagicMock(), graph_manager=MagicMock(), params={**PARAMS, "stage": "later"})
 
     assert not result.success and "stage" in result.errors[0]
+
+
+def test_a_lift_between_two_top_level_units_is_enterprise_only_also_after_annotate(am):
+    """Both units are on both levels; the lift exists for the enterprise level (the solution level has the original)."""
+    for identifier, element_type, source in (
+        ("ac_a", "ApplicationComponent", "unit::r::a"),
+        ("ai_a", "ApplicationInterface", "unit::r::a"),
+        ("ac_b", "ApplicationComponent", "unit::r::b"),
+    ):
+        am.add_element(Element(name=identifier, element_type=element_type, identifier=identifier, properties={"source": source}))
+    am.add_relationship(Relationship(source="ac_a", target="ai_a", relationship_type="Composition", identifier="rel-c", properties={"derived_from": "containment"}))
+    am.add_relationship(Relationship(source="ai_a", target="ac_b", relationship_type="Serving", identifier="rel-s", properties={"derived_from": "graph_link"}))
+    graph = _graph(
+        [
+            {"id": "unit::r::a", "path": "r/a", "labels": ["Graph", "DeployableUnit"], "system": None},
+            {"id": "unit::r::b", "path": "r/b", "labels": ["Graph", "DeployableUnit"], "system": None},
+        ]
+    )
+
+    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, "stage": "structure"})
+    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, "stage": "annotate"})
+
+    lifted = [r for r in am.get_relationships() if (r.properties or {}).get("derived_from") == "lifted"]
+    assert [(r.source, r.target, r.properties["levels"], r.properties["cross_level"]) for r in lifted] == [("ac_a", "ac_b", ["enterprise"], False)]
+
+
+def test_abstraction_hierarchy_is_the_structure_stage_under_its_own_name(am):
+    """The step before the joint selection: the hierarchy's relationships and the lifts; its report has its own key."""
+    graph = _two_systems(am)
+
+    result = run_refine_step("abstraction_hierarchy", archimate_manager=am, graph_manager=graph, params=PARAMS)
+
+    assert result.success and result.step_name == "abstraction_hierarchy" and result.report["stage"] == "structure" and result.report["lifted"] == 1
+
+
+def test_abstraction_hierarchy_refuses_another_stage():
+    result = run_refine_step("abstraction_hierarchy", archimate_manager=MagicMock(), graph_manager=MagicMock(), params={**PARAMS, "stage": "annotate"})
+
+    assert not result.success and "stage" in result.errors[0]

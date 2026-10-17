@@ -741,8 +741,12 @@ class TestPipelineSessionExport:
         assert [(e["name"], e["level"], e["layer"]) for e in levels["elements"]] == [("Order Data", "enterprise", "Application"), ("Order Line", "detail", "Application")]
         assert len(levels["relationships"]) == 1
         views = {v["name"]: v for v in levels["views"]}
-        assert views["Information Structure"] == {"name": "Information Structure", "viewpoint": "Information Structure", "level": "architect", "elements": ["do_order"]}
-        assert views["Information Structure (detail)"]["level"] == "detail" and len(views["Information Structure (detail)"]["elements"]) == 2
+        assert views["Information Structure (enterprise)"] == {
+            "name": "Information Structure (enterprise)",
+            "viewpoint": "Information Structure",
+            "level": "enterprise",
+            "elements": ["do_order"],
+        }
 
     def test_export_model_no_elements(self, connected_session, tmp_path):
         """Should return error when no elements found."""

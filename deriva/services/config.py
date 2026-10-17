@@ -442,7 +442,8 @@ def update_derivation_sequence(
     """
     Update the sequence of derivation configurations in bulk.
 
-    This updates the sequence number for each step based on its position in the list.
+    Each step's sequence becomes its position in the list. A step that moves gets a new config version (the
+    reorder is recorded like any other change); a step already in place keeps its version.
     Useful for reordering elements (e.g., Technology → Application → Business).
 
     Args:
@@ -465,26 +466,18 @@ def update_derivation_sequence(
     errors = []
 
     for idx, step_name in enumerate(step_order, start=1):
-        query = """
-            UPDATE derivation_config
-            SET sequence = ?
-            WHERE step_name = ? AND is_active = TRUE
-        """
-        params = [idx, step_name]
-
-        if phase is not None:
-            query = """
-                UPDATE derivation_config
-                SET sequence = ?
-                WHERE step_name = ? AND phase = ? AND is_active = TRUE
-            """
-            params = [idx, step_name, phase]
-
         try:
-            if _affected_rows(engine.execute(query, params)) > 0:
-                updated.append({"step_name": step_name, "sequence": idx})
-            else:
+            row = engine.execute("SELECT phase, sequence FROM derivation_config WHERE step_name = ? AND is_active = TRUE", [step_name]).fetchone()
+            if not row or (phase is not None and row[0] != phase):
                 errors.append(f"Step '{step_name}' not found or not active")
+                continue
+            # A step that moves gets a new version (the reorder is recorded); one already in place keeps its version
+            if row[1] != idx:
+                result = create_derivation_config_version(engine, step_name, sequence=idx)
+                if not result.get("success"):
+                    errors.append(f"Failed to update '{step_name}': {result.get('error')}")
+                    continue
+            updated.append({"step_name": step_name, "sequence": idx})
         except Exception as e:
             errors.append(f"Failed to update '{step_name}': {e}")
 
@@ -882,6 +875,7 @@ def create_derivation_config_version(
     max_tokens: int | None = None,
     batch_size: int | None = None,
     max_candidates: int | None = None,
+    sequence: int | None = None,
 ) -> dict[str, Any]:
     """
     Create a new version of a derivation config (versioned update).
@@ -899,10 +893,13 @@ def create_derivation_config_version(
         enabled: Enable/disable (or None to keep current)
         temperature: LLM temperature override (or None to keep current)
         max_tokens: LLM max_tokens override (or None to keep current)
+        sequence: New place in the phase (or None to keep current)
 
     Returns:
         Dict with success, new_version, old_version
     """
+    if sequence is not None and sequence < 0:
+        raise ValueError(f"sequence must be >= 0, got {sequence}")
     # Get current config
     current = engine.execute(
         """
@@ -922,7 +919,7 @@ def create_derivation_config_version(
         old_id,
         old_version,
         phase,
-        sequence,
+        cur_sequence,
         cur_enabled,
         llm,
         cur_graph_query,
@@ -948,6 +945,7 @@ def create_derivation_config_version(
     new_max_tokens = max_tokens if max_tokens is not None else cur_max_tokens
     new_batch_size = batch_size if batch_size is not None else cur_batch_size
     new_max_candidates = max_candidates if max_candidates is not None else cur_max_candidates
+    sequence_new = sequence if sequence is not None else cur_sequence
 
     # Deactivate old config
     engine.execute(
@@ -973,7 +971,7 @@ def create_derivation_config_version(
             step_name,
             phase,
             new_version,
-            sequence,
+            sequence_new,
             new_enabled,
             llm,
             new_graph_query,

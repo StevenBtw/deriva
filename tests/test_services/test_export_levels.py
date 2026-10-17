@@ -58,7 +58,7 @@ def test_the_leveled_model_adds_the_detail_level_and_keeps_the_architect_level()
     assert model.properties["bp_order"]["states"] == "DRAFT, PAID"
     assert {r.relationship_type for r in model.relationships} == {"Realization", "Composition", "Assignment"}
     assert [e.identifier for e in model.elements[: len(ELEMENTS)]] == [e.identifier for e in ELEMENTS]
-    assert {v.name for v in model.views} >= {"Layered", "Information Structure (detail)", "Implementation and Deployment (detail)"}
+    assert {v.name for v in model.views} >= {"Layered (enterprise)", "Implementation and Deployment (detail)"}
     assert model.summary() == {"architect_elements": 4, "detail_elements": 3, "detail_relationships": 4}
 
 

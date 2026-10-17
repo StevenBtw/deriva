@@ -40,9 +40,19 @@ def _relationship_id(source: str, relationship_type: str, target: str) -> str:
     return f"rel-{hash_content(f'{source}|{relationship_type}|{target}')[:16]}"
 
 
+def _levels_of(origin: str | None, source: frozenset[str], target: frozenset[str]) -> tuple[frozenset[str], bool]:
+    """A relationship's levels: those both ends share; a lifted relationship exists for the enterprise level only (the
+    solution level holds the relationships it was lifted from), the one exception to the shared-levels rule."""
+    shared, cross = relationship_levels(source, target)
+    return (shared & {"enterprise"}, cross) if origin == "lifted" else (shared, cross)
+
+
 @register_refine_step("abstraction_levels")
 class AbstractionLevelsStep:
     """Levels on elements and relationships, roll-ups and service lifts, from structure."""
+
+    STEP_NAME = "abstraction_levels"
+    STAGE: str | None = None  # A stage the step always runs (None: from params, default all)
 
     def run(
         self,
@@ -63,9 +73,9 @@ class AbstractionLevelsStep:
                 relationships lifted to the enterprise level (``levels.lifts``), for a step before the joint selection;
                 ``annotate`` the level tags only, adding or removing nothing (for a step after it)
         """
-        result = RefineResult(success=True, step_name="abstraction_levels")
-        types, roles, stage = (params or {}).get("types"), (params or {}).get("roles", {}), (params or {}).get("stage", "all")
-        if stage not in ("all", "structure", "annotate"):
+        result = RefineResult(success=True, step_name=self.STEP_NAME)
+        types, roles, stage = (params or {}).get("types"), (params or {}).get("roles", {}), (params or {}).get("stage", self.STAGE or "all")
+        if stage not in ("all", "structure", "annotate") or (self.STAGE is not None and stage != self.STAGE):
             result.success = False
             result.errors.append(f"abstraction_levels params stage is all, structure or annotate, got {stage!r}")
             return result
@@ -137,10 +147,10 @@ class AbstractionLevelsStep:
         self._add(archimate_manager, added, existing, levels, result)
         lifted = self._lifts(archimate_manager, elements, levels) if stage == "structure" else []
         self._add(archimate_manager, [(s, t, g, "lifted") for s, t, g, _ in lifted], existing, levels, result, {(s, t, g): list(ids) for s, t, g, ids in lifted})
-        # Every relationship on the levels both its ends share
+        # Every relationship on the levels both its ends share (a lifted one on the enterprise level only)
         updates = {}
         for r in archimate_manager.get_relationships():
-            shared, cross = relationship_levels(levels.get(r.source, frozenset()), levels.get(r.target, frozenset()))
+            shared, cross = _levels_of((r.properties or {}).get("derived_from"), levels.get(r.source, frozenset()), levels.get(r.target, frozenset()))
             updates[r.identifier] = {"levels": sorted(shared), "cross_level": cross}
         archimate_manager.update_relationship_properties(updates)
         result.report = {
@@ -169,7 +179,7 @@ class AbstractionLevelsStep:
         for source, relationship_type, target, origin in added:
             if (source, relationship_type, target) in existing:
                 continue
-            shared, cross = relationship_levels(levels.get(source, frozenset()), levels.get(target, frozenset()))
+            shared, cross = _levels_of(origin, levels.get(source, frozenset()), levels.get(target, frozenset()))
             archimate_manager.add_relationship(
                 Relationship(
                     source=source,
@@ -239,3 +249,13 @@ class AbstractionLevelsStep:
             if listed and all(m in paths for m in listed):
                 candidates[e.identifier] = (component_of[str(e.properties["source"])], frozenset(paths[m] for m in listed))
         return interface_owners(candidates, builds, kinds, {m: frozenset(p) for m, p in own_files.items()})
+
+
+@register_refine_step("abstraction_hierarchy")
+class AbstractionHierarchyStep(AbstractionLevelsStep):
+    """The structure stage before the joint selection: the hierarchy's relationships (roll-ups, interface moves, service
+    lifts, the removal of Compositions against the hierarchy) and the relationships lifted to the enterprise level,
+    as proposals the joint selection decides on. ``abstraction_levels`` after it only tags."""
+
+    STEP_NAME = "abstraction_hierarchy"
+    STAGE = "structure"

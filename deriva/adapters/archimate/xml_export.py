@@ -108,7 +108,7 @@ class ArchiMateXMLExporter:
                 definition = etree.SubElement(definitions, "propertyDefinition", attrib={"identifier": definition_of[key], "type": "string"})
                 etree.SubElement(definition, "name").text = key
         if views:
-            self._add_views(root, views)
+            self._add_views(root, views, definition_of.get("level"))
 
         # Write to file
         tree = etree.ElementTree(root)
@@ -193,8 +193,9 @@ class ArchiMateXMLExporter:
                 value_elem.set(f"{{{self.XML_NS}}}lang", "en")
                 value_elem.text = value
 
-    def _add_views(self, root: etree.Element, views: Sequence[View]) -> None:
-        """Add the diagrams: element nodes with their bounds, relationship connections between them."""
+    def _add_views(self, root: etree.Element, views: Sequence[View], level_definition: str | None = None) -> None:
+        """Add the diagrams: element nodes with their bounds, relationship connections between them, and each view's
+        level as a property where the model declares one."""
         diagrams = etree.SubElement(etree.SubElement(root, "views"), "diagrams")
         for view in views:
             diagram = etree.SubElement(
@@ -205,6 +206,11 @@ class ArchiMateXMLExporter:
             name_elem = etree.SubElement(diagram, "name")
             name_elem.set(f"{{{self.XML_NS}}}lang", "en")
             name_elem.text = view.name
+            if level_definition:
+                prop = etree.SubElement(etree.SubElement(diagram, "properties"), "property", attrib={"propertyDefinitionRef": level_definition})
+                value_elem = etree.SubElement(prop, "value")
+                value_elem.set(f"{{{self.XML_NS}}}lang", "en")
+                value_elem.text = view.level
             for node in view.nodes:
                 etree.SubElement(
                     diagram,

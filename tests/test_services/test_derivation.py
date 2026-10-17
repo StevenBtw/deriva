@@ -3208,3 +3208,49 @@ class TestUnitConfigs:
             derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": {"generic_words": "app"}}}))
         with pytest.raises(ValueError, match="guards"):
             derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": ["app"]}}))
+
+
+class TestNothingChangesTheModelAfterTheJointSelection:
+    """Obs. 2: after joint_consistency no refine step adds or removes an element or a relationship (tags may change)."""
+
+    @staticmethod
+    def _run(after_step):
+        from deriva.adapters.archimate import ArchimateManager
+        from deriva.adapters.archimate.models import Element, Relationship
+        from deriva.adapters.grafeo.manager import close_database
+
+        close_database()
+        am = ArchimateManager()
+        am.connect()
+        am.add_element(Element(name="a", element_type="ApplicationComponent", identifier="ac_a"))
+        am.add_element(Element(name="b", element_type="ApplicationComponent", identifier="ac_b"))
+        configs = []
+        for name in ("joint_consistency", "abstraction_levels"):
+            cfg = MagicMock()
+            cfg.step_name, cfg.params, cfg.llm = name, None, False
+            configs.append(cfg)
+
+        def step(step_name, archimate_manager, **_):
+            if step_name == "abstraction_levels":
+                after_step(archimate_manager, Relationship)
+            return MagicMock(elements_disabled=0, relationships_deleted=0, issues_found=0, errors=[], report=None)
+
+        try:
+            with (
+                patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: configs if phase == "refine" else []),
+                patch.object(derivation, "run_refine_step", side_effect=step),
+            ):
+                return derivation.run_derivation(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=am, phases=["refine"])
+        finally:
+            am.disconnect()
+            close_database()
+
+    def test_a_step_that_adds_a_relationship_after_the_selection_is_an_error(self):
+        result = self._run(lambda am, Relationship: am.add_relationship(Relationship(source="ac_a", target="ac_b", relationship_type="Serving", identifier="rel-x")))
+
+        assert any("after the joint selection" in e and "abstraction_levels" in e for e in result["errors"])
+
+    def test_tags_after_the_selection_are_no_change(self):
+        result = self._run(lambda am, Relationship: am.update_element_properties({"ac_a": {"levels": ["enterprise"]}}))
+
+        assert not any("after the joint selection" in e for e in result["errors"])

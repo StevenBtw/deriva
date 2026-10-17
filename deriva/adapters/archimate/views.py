@@ -1,7 +1,8 @@
 """Generated views (pure): ArchiMate viewpoints per level with a deterministic band layout.
 
-Each viewpoint (ArchiMate 3.2 Specification, chapter 13) shows the architect elements of its types; a detail
-variant adds the detail elements (property ``level`` = detail) nested under those types. The layout puts the
+Each viewpoint (ArchiMate 3.2 Specification, chapter 13) shows the elements of its types on its level (enterprise or
+solution, from the element's ``levels``) and the relationships on that level; a cross-level link is in no view. A
+detail variant shows the solution elements of its types with their detail elements (property ``level`` = detail). The layout puts the
 layers in horizontal bands (business, application, technology) and the elements of a band in a grid, ordered by
 type and name, each detail element right after its parent, so the same model gives the same view in every run.
 """
@@ -12,23 +13,30 @@ from dataclasses import dataclass, field
 
 from .models import Element, Relationship, layer_of
 
-# (view name, viewpoint, element types, with detail elements)
-VIEWPOINTS: tuple[tuple[str, str, frozenset[str] | None, bool], ...] = (
-    ("Layered", "Layered", None, False),
-    ("Application Cooperation", "Application Cooperation", frozenset({"ApplicationComponent", "ApplicationInterface", "ApplicationService"}), False),
-    ("Information Structure", "Information Structure", frozenset({"BusinessObject", "DataObject"}), False),
-    ("Information Structure (detail)", "Information Structure", frozenset({"BusinessObject", "DataObject"}), True),
-    ("Implementation and Deployment", "Implementation and Deployment", frozenset({"ApplicationComponent", "Node", "Device", "SystemSoftware", "TechnologyService"}), False),
+ENTERPRISE, SOLUTION, DETAIL = "enterprise", "solution", "detail"
+DEPLOYMENT = frozenset({"ApplicationComponent", "Node", "Device", "SystemSoftware", "TechnologyService"})
+# (view name, viewpoint, element types, level), in export order
+VIEWPOINTS: tuple[tuple[str, str, frozenset[str] | None, str], ...] = (
+    ("Layered (enterprise)", "Layered", None, ENTERPRISE),
+    ("Application Cooperation (enterprise)", "Application Cooperation", frozenset({"ApplicationComponent", "ApplicationInterface", "ApplicationService"}), ENTERPRISE),
+    ("Information Structure (enterprise)", "Information Structure", frozenset({"BusinessObject", "DataObject"}), ENTERPRISE),
+    ("Implementation and Deployment (enterprise)", "Implementation and Deployment", DEPLOYMENT, ENTERPRISE),
     (
-        "Implementation and Deployment (detail)",
-        "Implementation and Deployment",
-        frozenset({"ApplicationComponent", "Node", "Device", "SystemSoftware", "TechnologyService", "Artifact"}),
-        True,
+        "Business (enterprise)",
+        "Business Process Cooperation",
+        frozenset({"BusinessActor", "BusinessProcess", "BusinessFunction", "BusinessEvent", "ApplicationService"}),
+        ENTERPRISE,
     ),
-    ("Business", "Business Process Cooperation", frozenset({"BusinessActor", "BusinessProcess", "BusinessFunction", "BusinessEvent", "ApplicationService"}), False),
+    ("Application Structure (solution)", "Application Structure", frozenset({"ApplicationComponent"}), SOLUTION),
+    ("Application Cooperation (solution)", "Application Cooperation", frozenset({"ApplicationComponent", "ApplicationInterface"}), SOLUTION),
+    ("Information Structure (solution)", "Information Structure", frozenset({"DataObject"}), SOLUTION),
+    ("Implementation and Deployment (solution)", "Implementation and Deployment", DEPLOYMENT, SOLUTION),
+    ("Information Structure (detail)", "Information Structure", frozenset({"DataObject"}), DETAIL),
+    ("Implementation and Deployment (detail)", "Implementation and Deployment", DEPLOYMENT | {"Artifact"}, DETAIL),
 )
+
 # A view needs an element of its anchor types (the Business view: a business element, not application services alone)
-ANCHORS = {"Business": frozenset({"BusinessActor", "BusinessProcess", "BusinessFunction", "BusinessEvent"})}
+ANCHORS = {"Business (enterprise)": frozenset({"BusinessActor", "BusinessProcess", "BusinessFunction", "BusinessEvent"})}
 BANDS = ("Business", "Application", "Technology", "Other")
 TYPE_ORDER = (
     "BusinessActor", "BusinessFunction", "BusinessProcess", "BusinessEvent", "BusinessObject",
@@ -61,13 +69,30 @@ class View:
     identifier: str
     name: str
     viewpoint: str
-    level: str = "architect"  # detail: the view shows the detail elements too
+    level: str = ENTERPRISE  # enterprise, solution or detail (a detail view shows the detail elements too)
     nodes: list[ViewNode] = field(default_factory=list)
     connections: list[ViewConnection] = field(default_factory=list)
 
 
 def _level(e: Element) -> str:
     return str((e.properties or {}).get("level") or "architect")
+
+
+def _levels(properties: dict | None) -> frozenset[str]:
+    """The levels of an element or relationship: ``level`` detail, else ``levels`` (empty: a cross-level link), else the
+    enterprise level (a model from before the levels)."""
+    properties = properties or {}
+    if properties.get("level") == DETAIL:
+        return frozenset({DETAIL})
+    levels = properties.get("levels")
+    if isinstance(levels, list):
+        return frozenset(str(v) for v in levels)
+    return frozenset() if properties.get("cross_level") else frozenset({ENTERPRISE})
+
+
+def _on(level: str, levels: frozenset[str]) -> bool:
+    """Whether something on ``levels`` belongs in a view of ``level`` (a detail view: the solution level and the detail)."""
+    return bool(levels & ({SOLUTION, DETAIL} if level == DETAIL else {level}))
 
 
 def _order(e: Element) -> tuple[int, str, str]:
@@ -102,19 +127,25 @@ def _layout(view: View, shown: list[Element]) -> None:
         y += BAND_GAP
 
 
-def build_views(elements: list[Element], relationships: list[Relationship]) -> list[View]:
-    """The views of the model, one per viewpoint that has elements, in VIEWPOINTS order."""
+def build_views(elements: list[Element], relationships: list[Relationship], relationship_levels: dict[str, frozenset[str]] | None = None) -> list[View]:
+    """The views of the model, one per viewpoint that has elements on its level, in VIEWPOINTS order.
+
+    Args:
+        relationship_levels: Relationship id -> its levels, where the relationship's own properties do not say (the
+            export's detail relationships); else from the properties
+    """
     views: list[View] = []
-    for number, (name, viewpoint, types, with_detail) in enumerate(VIEWPOINTS, 1):
-        shown = [e for e in elements if (types is None or e.element_type in types) and (with_detail or _level(e) != "detail")]
+    for number, (name, viewpoint, types, level) in enumerate(VIEWPOINTS, 1):
+        shown = [e for e in elements if (types is None or e.element_type in types) and _on(level, _levels(e.properties))]
         anchors = ANCHORS.get(name)
-        if not shown or (anchors and not any(e.element_type in anchors for e in shown)) or (with_detail and not any(_level(e) == "detail" for e in shown)):
+        if not shown or (anchors and not any(e.element_type in anchors for e in shown)) or (level == DETAIL and not any(_level(e) == DETAIL for e in shown)):
             continue
-        view = View(identifier=f"view-{number}", name=name, viewpoint=viewpoint, level="detail" if with_detail else "architect")
+        view = View(identifier=f"view-{number}", name=name, viewpoint=viewpoint, level=level)
         _layout(view, shown)
         node_of = {n.element: n.identifier for n in view.nodes}
         for r in sorted(relationships, key=lambda r: r.identifier):
-            if r.source in node_of and r.target in node_of:
+            on = (relationship_levels or {}).get(r.identifier) or _levels(r.properties)
+            if r.source in node_of and r.target in node_of and _on(level, on):
                 connection = ViewConnection(identifier=f"{view.identifier}-c-{r.identifier}", relationship=r.identifier, source=node_of[r.source], target=node_of[r.target])
                 view.connections.append(connection)
         views.append(view)
