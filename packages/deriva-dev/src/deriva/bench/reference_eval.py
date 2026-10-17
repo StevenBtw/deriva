@@ -102,7 +102,7 @@ def map_elements(reference: Reference, model: dict[str, Any]) -> dict[str, str]:
     return mapping
 
 
-# Element types whose name is a closed choice among structural candidates (C36: what the LLM name adds)
+# Element types whose name is a closed choice among structural candidates (what the LLM name adds)
 NAMED_TYPES = ("ApplicationComponent", "ApplicationService", "DataObject", "BusinessFunction", "BusinessProcess")
 
 

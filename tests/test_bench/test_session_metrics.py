@@ -1,5 +1,5 @@
-"""The paper's numbers from the run snapshots and call logs: identities (C2), layers and origin (C24), J̄, the two-level table,
-the out-of-candidate rate and agreement across LLMs (C42)."""
+"""Session measures from the run snapshots and call logs: identities, layers and origin, J̄, the two-level table,
+the out-of-candidate rate and agreement across LLMs."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from deriva.bench import paper_metrics as pm
+from deriva.bench import session_metrics as pm
 
 
 def _element(identifier, type_, name, source, name_choice=False):
@@ -130,7 +130,7 @@ class TestOutOfCandidates:
 
 
 class TestGolden:
-    """Lineage-free golden comparison: name + type, plus the user's manual matches and derivable labels (C5)."""
+    """Lineage-free golden comparison: name + type, plus the user's manual matches and derivable labels."""
 
     def _reference(self):
         from deriva.modules.analysis.types import ReferenceElement

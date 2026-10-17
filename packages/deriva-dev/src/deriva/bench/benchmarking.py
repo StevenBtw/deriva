@@ -59,7 +59,7 @@ from deriva.adapters.llm.manager import load_benchmark_models
 from deriva.adapters.llm.model_registry import reasoning_settings
 from deriva.adapters.llm.models import BenchmarkModelConfig
 from deriva.adapters.repository import RepoManager
-from deriva.bench import baseline_b1, paper_metrics
+from deriva.bench import baseline_b1, session_metrics
 from deriva.common.json_utils import extract_json_from_response
 from deriva.common.ocel import OCELLog, create_run_id, hash_content, load_benchmark_ocel
 from deriva.common.paths import workspace
@@ -1478,9 +1478,9 @@ class BenchmarkOrchestrator:
                         "name": e.name,
                         "source": (e.properties or {}).get("source"),
                         "level": "architect",
-                        # The name came from an LLM choice among several candidates (origin split, C24)
+                        # The name came from an LLM choice among several candidates (origin split)
                         "name_choice": bool((e.properties or {}).get("name_choice")) or len((e.properties or {}).get("name_candidates") or []) > 1,
-                        # The structural name (first candidate) next to the chosen one: what LLM naming adds (C36)
+                        # The structural name (first candidate) next to the chosen one: what LLM naming adds
                         # (no naming call: the name is the structural one)
                         "structure_name": (e.properties or {}).get("structure_name") or next(iter((e.properties or {}).get("name_candidates") or []), None) or e.name,
                     }
@@ -2181,10 +2181,10 @@ def model_quality_for_session(
                     row["solve"] = None
                 row["reference"] = None
                 if reference:
-                    # Lineage-free: name + type, the user's manual matches and derivable labels next to the reference (C5)
+                    # Lineage-free: name + type, the user's manual matches and derivable labels next to the reference
                     derived = [{"id": e.identifier, "name": e.name, "type": e.element_type} for e in elements]
-                    aliases, derivable = paper_metrics.manual_inputs(reference_models[repo])
-                    row["reference"] = paper_metrics.golden_comparison(derived, reference, aliases=aliases, derivable=derivable)
+                    aliases, derivable = session_metrics.manual_inputs(reference_models[repo])
+                    row["reference"] = session_metrics.golden_comparison(derived, reference, aliases=aliases, derivable=derivable)
                 rows.append(row)
     return rows
 
@@ -2381,7 +2381,7 @@ class AnalysisSummary:
     variance_split: list[dict[str, Any]] = field(default_factory=list)  # extraction vs derivation share (extraction per run)
     extraction_stability: list[dict[str, Any]] = field(default_factory=list)  # decision stability of the LLM extraction steps
     naming_fallbacks: list[dict[str, Any]] = field(default_factory=list)  # unusable name choices per model (structural fallback)
-    paper: dict[str, Any] = field(default_factory=dict)  # identities, layers/origin, two levels, out of candidates (paper_metrics)
+    metrics: dict[str, Any] = field(default_factory=dict)  # identities, layers/origin, two levels, out of candidates (session_metrics)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -2397,7 +2397,7 @@ class AnalysisSummary:
             "variance_split": self.variance_split,
             "extraction_stability": self.extraction_stability,
             "naming_fallbacks": self.naming_fallbacks,
-            "paper": self.paper,
+            "metrics": self.metrics,
         }
 
 
@@ -3141,7 +3141,7 @@ class BenchmarkAnalyzer:
             variance_split=variance_split_for_session(*self._session_scope()),
             extraction_stability=extraction_stability_for_session(*self._session_scope()),
             naming_fallbacks=naming_fallbacks_for_session(self._session_scope()[0]),
-            paper=paper_metrics.session_report([self._session_scope()[0]]),
+            metrics=session_metrics.session_report([self._session_scope()[0]]),
         )
 
     def compute_model_quality(self) -> list[dict[str, Any]]:

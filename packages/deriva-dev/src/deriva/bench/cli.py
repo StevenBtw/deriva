@@ -395,28 +395,28 @@ def _print_consistency(rows: list[dict]) -> None:
     typer.echo("")
 
 
-def _print_paper_report(paper: dict) -> None:
-    """Identities (C2), J, layers and origin (C24), the two-level table and the out-of-candidate rate (C42)."""
-    if not paper:
+def _print_metrics_report(metrics: dict) -> None:
+    """Consistency by identity (cons, J), layers and origin, the two-level table and the out-of-candidate rate."""
+    if not metrics:
         return
-    if paper.get("consistency"):
+    if metrics.get("consistency"):
         typer.echo("CONSISTENCY BY IDENTITY (cons / mean pairwise Jaccard; id = source-derived, name = type + name key; LLM part by id)")
-        _print_consistency(paper["consistency"])
-    if paper.get("two_level"):
+        _print_consistency(metrics["consistency"])
+    if metrics.get("two_level"):
         typer.echo("TWO LEVELS (answers: same prompt answered alike; decisions: each item decided alike; alpha: Krippendorff, nominal)")
         header = f"{'Repository':<24} {'Model':<18} {'Decision':<36} {'Answers':>9} {'Decisions':>11} {'alpha':>6}"
         typer.echo("-" * len(header))
         typer.echo(header)
         typer.echo("-" * len(header))
-        for r in paper["two_level"]:
+        for r in metrics["two_level"]:
             answers = f"{r['answers']['identical']}/{r['answers']['prompts']}" if r["answers"]["prompts"] else "-"
             decisions = f"{r['decisions']['stable']}/{r['decisions']['items']}" if r["decisions"]["items"] else "-"
             alpha = "-" if r["alpha"] is None else f"{r['alpha']:.2f}"
             typer.echo(f"{r['repository'][:24]:<24} {r['model'][:18]:<18} {r['decision'][:36]:<36} {answers:>9} {decisions:>11} {alpha:>6}")
         typer.echo("")
-    if paper.get("out_of_candidates"):
+    if metrics.get("out_of_candidates"):
         typer.echo("OUT OF CANDIDATES (per model and decision type: calls, typed answers asked again, answers outside the candidates)")
-        for r in paper["out_of_candidates"]:
+        for r in metrics["out_of_candidates"]:
             typer.echo(f"  {r['model'][:24]:<24} {r['decision'][:36]:<36} {r['calls']:>5} calls  {r['re_asked']:>3} asked again  {r['outside']:>3} outside")
         typer.echo("")
 
@@ -556,12 +556,12 @@ def benchmark_analyze(
                     typer.echo(f"{v['repository'][:24]:<24} {v['model'][:18]:<18} {v['runs']:>4}  {text(v['elements']):<22} {text(v['relationships']):<26}")
                 typer.echo("")
 
-        _print_paper_report(summary.paper)
+        _print_metrics_report(summary.metrics)
         if also:
-            from deriva.bench import paper_metrics
+            from deriva.bench import session_metrics
 
             sessions = [workspace() / "benchmarks" / s for s in [session_id, *also]]
-            agreement = [r for r in paper_metrics.consistency_rows(sessions) if r["model"] == paper_metrics.ALL_MODELS]
+            agreement = [r for r in session_metrics.consistency_rows(sessions) if r["model"] == session_metrics.ALL_MODELS]
             typer.echo(f"AGREEMENT ACROSS LLMS ({', '.join([session_id, *also])})")
             _print_consistency(agreement)
             target = workspace() / "benchmarks" / session_id / "analysis" / "agreement.json"

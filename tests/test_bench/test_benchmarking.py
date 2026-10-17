@@ -2396,7 +2396,7 @@ class TestSessionMetadataSamples:
         assert metadata["llm_samples"] == {"DocConcepts": 1, "TypeA.naming": 1}
 
     def test_the_generation_settings_sent_per_model_are_recorded(self, tmp_path, monkeypatch):
-        """For the paper's settings table: what each model was sent (temperature, top_p, seed, reasoning, thinking)."""
+        """For a settings table: what each model was sent (temperature, top_p, seed, reasoning, thinking)."""
         import json
         from pathlib import Path
 

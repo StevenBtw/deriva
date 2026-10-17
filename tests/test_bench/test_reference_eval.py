@@ -121,7 +121,7 @@ def test_the_reference_command_prints_a_table_and_writes_the_summary_and_a_page_
 
 
 def test_naming_compares_the_chosen_and_the_structural_name_with_the_reference_by_lineage():
-    """C36: per named type, how often the LLM-chosen name and the structural name match the reference element the
+    """Per named type, how often the LLM-chosen name and the structural name match the reference element the
     element's lineage maps to (normalized, and with aliases); elements without lineage or structure name are left out."""
     reference = {
         "repository": "shop",

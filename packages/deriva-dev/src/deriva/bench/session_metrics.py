@@ -1,14 +1,14 @@
-"""The paper's numbers from a benchmark's run snapshots and call logs (read-only; one or more sessions).
+"""Session measures from a benchmark's run snapshots and call logs (read-only; one or more sessions).
 
-- **Identities (C2):** consistency under the source-derived id and under a common identity every system has (type +
+- **Identities:** consistency under the source-derived id and under a common identity every system has (type +
   canonical name key), so a baseline without source ids is compared like Deriva.
 - **cons and J̄:** the share of objects in every run, and the mean Jaccard over all run pairs.
-- **Layers and origin (C24):** element consistency per ArchiMate layer; LLM-dependent elements (an LLM-created source
+- **Layers and origin:** element consistency per ArchiMate layer; LLM-dependent elements (an LLM-created source
   node, a name chosen by a call, or a type whose step classified with the LLM in that run) apart from structural ones;
   a relationship depends on the LLM when an endpoint does or an LLM derived it.
-- **Two levels (C42):** per decision type, answer stability (the same prompt answered alike in every run), decision
+- **Two levels:** per decision type, answer stability (the same prompt answered alike in every run), decision
   stability (each item decided alike) and Krippendorff's alpha (nominal) over the items, next to model consistency.
-- **Out of candidates (C42):** per model and decision type, the calls, the typed answers that were asked again and the
+- **Out of candidates:** per model and decision type, the calls, the typed answers that were asked again and the
   answers outside the candidates (name choices, extraction labels that matched no item).
 - **Agreement across LLMs:** the same over the runs of all sessions' models together.
 """
