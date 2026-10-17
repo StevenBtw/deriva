@@ -3,7 +3,18 @@ element (components by their place, other types by the versioned table), roll-up
 
 from __future__ import annotations
 
-from deriva.modules.derivation.levels import Component, LevelRules, ancestors, assign_levels, component_parents, interface_owners, relationship_levels, rollups, service_lifts
+from deriva.modules.derivation.levels import (
+    Component,
+    LevelRules,
+    ancestors,
+    assign_levels,
+    component_parents,
+    interface_owners,
+    lifts,
+    relationship_levels,
+    rollups,
+    service_lifts,
+)
 
 RULES = LevelRules(
     types={
@@ -143,3 +154,38 @@ def test_a_role_can_place_an_element_type_on_its_own_levels():
     elements = [{"identifier": "env", "type": "Node", "role": "environment"}, {"identifier": "svc", "type": "Node", "role": "service"}, {"identifier": "x", "type": "Node"}]
 
     assert assign_levels(elements, [], rules) == {"env": frozenset({"enterprise"}), "svc": frozenset({"solution"}), "x": frozenset({"enterprise"})}
+
+
+def test_solution_relationships_lift_to_the_enterprise_elements_above_their_ends():
+    """An interface serving a unit lifts to its top-level component serving the other's; Access to a domain lifts onto the
+    business object it realizes; a pair inside one enterprise element, or one already related, gets no lift."""
+    levels = {
+        "sysA": frozenset({"enterprise"}),
+        "unitA": frozenset({"solution"}),
+        "apiA": frozenset({"solution"}),
+        "sysB": frozenset({"enterprise"}),
+        "unitB": frozenset({"solution"}),
+        "libB": frozenset({"solution"}),
+        "dom": frozenset({"solution"}),
+        "bo": frozenset({"enterprise"}),
+        "sysC": frozenset({"enterprise"}),
+        "unitC": frozenset({"solution"}),
+    }
+    composer = {"unitA": "sysA", "apiA": "unitA", "unitB": "sysB", "libB": "sysB", "unitC": "sysC"}
+    relationships = [
+        ("r1", "apiA", "Serving", "unitB"),
+        ("r2", "unitB", "Access", "dom"),
+        ("r3", "libB", "Serving", "unitB"),  # inside sysB: nothing at the enterprise level
+        ("r4", "unitC", "Serving", "unitA"),  # sysC and sysA are related already
+        ("r5", "sysC", "Flow", "sysA"),
+        ("r6", "unitA", "Serving", "unitB"),  # the same lift as r1
+        ("r7", "unitA", "Composition", "apiA"),  # not a lifted type
+    ]
+    types = {
+        i: t for i, t in [("sysA", "C"), ("unitA", "C"), ("apiA", "I"), ("sysB", "C"), ("unitB", "C"), ("libB", "C"), ("dom", "D"), ("bo", "B"), ("sysC", "C"), ("unitC", "C")]
+    }
+
+    lifted = lifts(relationships, levels, composer, {"dom": "bo"}, types, lambda s, r, t: True)
+
+    assert lifted == [("sysA", "Serving", "sysB", ("r1", "r6")), ("sysB", "Access", "bo", ("r2",))]
+    assert lifts(relationships, levels, composer, {"dom": "bo"}, types, lambda s, r, t: r != "Access") == [("sysA", "Serving", "sysB", ("r1", "r6"))]

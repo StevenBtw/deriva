@@ -17,6 +17,7 @@ Pure functions: the caller passes the components (with their kind and folder), t
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 ENTERPRISE, SOLUTION = "enterprise", "solution"
@@ -169,3 +170,55 @@ def interface_owners(
         if len(holding) == 1:
             owners[interface] = holding[0]
     return owners
+
+
+LIFTED_TYPES = ("Serving", "Access", "Flow", "Triggering")
+
+
+def lifts(
+    relationships: list[tuple[str, str, str, str]],
+    levels: dict[str, frozenset[str]],
+    composer: dict[str, str],
+    realizes: dict[str, str],
+    types: dict[str, str],
+    is_valid: Callable[[str, str, str], bool],
+    lifted_types: tuple[str, ...] = LIFTED_TYPES,
+) -> list[tuple[str, str, str, tuple[str, ...]]]:
+    """(source, type, target, lifted from) per enterprise relationship that a relationship below the enterprise level
+    implies: each end goes up through Composition (``composer``: element -> the element composing it) to the nearest
+    enterprise element; an Access to an element with none above it goes to the business object it realizes
+    (``realizes``). A pair inside one enterprise element, a pair the model already relates, or a relationship the
+    metamodel does not allow for the two types adds nothing. Sorted, one per (source, type, target).
+
+    Args:
+        relationships: (identifier, source, type, target) of the model's relationships
+        levels: Element -> its levels
+        composer: Element -> the element that composes it
+        realizes: Element -> the business object it realizes
+        types: Element -> its element type
+        is_valid: (source type, relationship type, target type) -> allowed
+    """
+
+    def enterprise_end(element: str) -> str | None:
+        seen: set[str] = set()
+        while element not in seen:
+            if ENTERPRISE in levels.get(element, frozenset()):
+                return element
+            seen.add(element)
+            if element not in composer:
+                return None
+            element = composer[element]
+        return None
+
+    related = {(s, t) for _, s, _, t in relationships}
+    found: dict[tuple[str, str, str], list[str]] = {}
+    for identifier, source, relationship_type, target in sorted(relationships):
+        if relationship_type not in lifted_types or ENTERPRISE in (levels.get(source, frozenset()) & levels.get(target, frozenset())):
+            continue
+        a, b = enterprise_end(source), enterprise_end(target)
+        if b is None and relationship_type == "Access" and target in realizes:
+            b = realizes[target]
+        if a is None or b is None or a == b or (a, b) in related or not is_valid(types.get(a, ""), relationship_type, types.get(b, "")):
+            continue
+        found.setdefault((a, relationship_type, b), []).append(identifier)
+    return [(a, r, b, tuple(sorted(ids))) for (a, r, b), ids in sorted(found.items())]

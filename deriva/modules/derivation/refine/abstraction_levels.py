@@ -18,7 +18,7 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from deriva.common.ocel import hash_content
-from deriva.modules.derivation.levels import Component, LevelRules, assign_levels, component_parents, interface_owners, relationship_levels, rollups, service_lifts
+from deriva.modules.derivation.levels import Component, LevelRules, assign_levels, component_parents, interface_owners, lifts, relationship_levels, rollups, service_lifts
 
 from .base import RefineResult, register_refine_step
 
@@ -58,10 +58,17 @@ class AbstractionLevelsStep:
             graph_manager: The graph (the sources' folders and kinds)
             llm_query_fn: Not used
             params: ``types``: element type -> its levels (a type not listed is enterprise); ``roles`` (optional):
-                element type -> role -> the levels of that type's elements of that role
+                element type -> role -> the levels of that type's elements of that role; ``stage`` (optional):
+                ``all`` (default) the hierarchy's relationships and the level tags; ``structure`` those plus the
+                relationships lifted to the enterprise level (``levels.lifts``), for a step before the joint selection;
+                ``annotate`` the level tags only, adding or removing nothing (for a step after it)
         """
         result = RefineResult(success=True, step_name="abstraction_levels")
-        types, roles = (params or {}).get("types"), (params or {}).get("roles", {})
+        types, roles, stage = (params or {}).get("types"), (params or {}).get("roles", {}), (params or {}).get("stage", "all")
+        if stage not in ("all", "structure", "annotate"):
+            result.success = False
+            result.errors.append(f"abstraction_levels params stage is all, structure or annotate, got {stage!r}")
+            return result
         is_levels = lambda v: isinstance(v, list) and all(level in ("enterprise", "solution") for level in v)  # noqa: E731 - a one-line helper
         if not isinstance(types, dict) or not all(is_levels(v) for v in types.values()):
             result.success = False
@@ -71,7 +78,6 @@ class AbstractionLevelsStep:
             result.success = False
             result.errors.append("abstraction_levels params roles: element type -> role -> a list of enterprise and/or solution")
             return result
-        from deriva.adapters.archimate.models import Relationship  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
         rules = LevelRules(types={str(k): tuple(v) for k, v in types.items()}, roles={str(t): {str(r): tuple(v) for r, v in by.items()} for t, by in roles.items()})
         elements = archimate_manager.get_elements()
@@ -104,15 +110,19 @@ class AbstractionLevelsStep:
         archimate_manager.update_element_properties({identifier: {"levels": sorted(lv)} for identifier, lv in levels.items()})
 
         relationships = archimate_manager.get_relationships()
-        moved = self._interface_owners(elements, components, sources, graph_manager) if graph_manager else {}
+        moved = self._interface_owners(elements, components, sources, graph_manager) if graph_manager and stage != "annotate" else {}
         # The module composes the interface instead of its unit (the unit reaches it through its roll-up)
         unit_of = {e.identifier: str((e.properties or {}).get("source") or "") for e in elements if e.identifier in moved}
         component_of = {source: identifier for identifier, source in sources.items()}
         dropped = [r for r in relationships if r.relationship_type == "Composition" and r.target in moved and r.source == component_of.get(unit_of[r.target])]
-        rolled = [(p, "Composition", c, "roll_up") for p, c, _, _ in rollups(components, levels, units_at, built_by)]
+        rolled = [(p, "Composition", c, "roll_up") for p, c, _, _ in rollups(components, levels, units_at, built_by)] if stage != "annotate" else []
         # The hierarchy alone composes one component into another: any other Composition between components is removed
         parents = component_parents(components, units_at, built_by)
-        reversed_ = [r for r in relationships if r.relationship_type == "Composition" and r.source in parents and r.target in parents and parents[r.target] != r.source]
+        reversed_ = [
+            r
+            for r in relationships
+            if stage != "annotate" and r.relationship_type == "Composition" and r.source in parents and r.target in parents and parents[r.target] != r.source
+        ]
         if dropped or reversed_:
             archimate_manager.delete_relationships([r.identifier for r in dropped + reversed_])
             relationships = archimate_manager.get_relationships()
@@ -122,7 +132,40 @@ class AbstractionLevelsStep:
         realizations = [
             (r.source, r.target) for r in relationships if r.relationship_type == "Realization" and by_id.get(r.target) and by_id[r.target].element_type == "ApplicationService"
         ]
-        added += [(top, "Realization", service, "level_lift") for top, service in service_lifts(components, levels, realizations, units_at, built_by)]
+        if stage != "annotate":
+            added += [(top, "Realization", service, "level_lift") for top, service in service_lifts(components, levels, realizations, units_at, built_by)]
+        self._add(archimate_manager, added, existing, levels, result)
+        lifted = self._lifts(archimate_manager, elements, levels) if stage == "structure" else []
+        self._add(archimate_manager, [(s, t, g, "lifted") for s, t, g, _ in lifted], existing, levels, result, {(s, t, g): list(ids) for s, t, g, ids in lifted})
+        # Every relationship on the levels both its ends share
+        updates = {}
+        for r in archimate_manager.get_relationships():
+            shared, cross = relationship_levels(levels.get(r.source, frozenset()), levels.get(r.target, frozenset()))
+            updates[r.identifier] = {"levels": sorted(shared), "cross_level": cross}
+        archimate_manager.update_relationship_properties(updates)
+        result.report = {
+            "stage": stage,
+            "components": {kind: sum(1 for c in components if c.kind == kind) for kind in ("system", "module", "unit")},
+            "elements": {level: sum(1 for lv in levels.values() if level in lv) for level in ("enterprise", "solution")},
+            "relationships": {"cross_level": sum(1 for u in updates.values() if u["cross_level"]), "total": len(updates)},
+            "interfaces_moved": len(dropped),
+            "reversed": len(reversed_),
+            "lifted": len(lifted),
+        }
+        return result
+
+    @staticmethod
+    def _add(
+        archimate_manager: ArchimateManager,
+        added: list[tuple[str, str, str, str]],
+        existing: set[tuple[str, str, str]],
+        levels: dict[str, frozenset[str]],
+        result: RefineResult,
+        lifted_from: dict[tuple[str, str, str], list[str]] | None = None,
+    ) -> None:
+        """Add each (source, type, target, origin) the model lacks, with its levels and a stable id."""
+        from deriva.adapters.archimate.models import Relationship  # noqa: TID251 - known layer exception (see docs/architecture.md)
+
         for source, relationship_type, target, origin in added:
             if (source, relationship_type, target) in existing:
                 continue
@@ -133,25 +176,38 @@ class AbstractionLevelsStep:
                     target=target,
                     relationship_type=relationship_type,
                     identifier=_relationship_id(source, relationship_type, target),
-                    properties={"derived_from": origin, "levels": sorted(shared), "cross_level": cross},
+                    properties={
+                        "derived_from": origin,
+                        "levels": sorted(shared),
+                        "cross_level": cross,
+                        **({"liftedFrom": lifted_from[(source, relationship_type, target)]} if lifted_from else {}),
+                    },
                 )
             )
             existing.add((source, relationship_type, target))
             result.relationships_created += 1
-        # Every relationship on the levels both its ends share
-        updates = {}
-        for r in archimate_manager.get_relationships():
-            shared, cross = relationship_levels(levels.get(r.source, frozenset()), levels.get(r.target, frozenset()))
-            updates[r.identifier] = {"levels": sorted(shared), "cross_level": cross}
-        archimate_manager.update_relationship_properties(updates)
-        result.report = {
-            "components": {kind: sum(1 for c in components if c.kind == kind) for kind in ("system", "module", "unit")},
-            "elements": {level: sum(1 for lv in levels.values() if level in lv) for level in ("enterprise", "solution")},
-            "relationships": {"cross_level": sum(1 for u in updates.values() if u["cross_level"]), "total": len(updates)},
-            "interfaces_moved": len(dropped),
-            "reversed": len(reversed_),
-        }
-        return result
+
+    @staticmethod
+    def _lifts(archimate_manager: ArchimateManager, elements: list[Any], levels: dict[str, frozenset[str]]) -> list[tuple[str, str, str, tuple[str, ...]]]:
+        """The relationships the model's solution-level relationships imply at the enterprise level (``levels.lifts``)."""
+        types = {e.identifier: e.element_type for e in elements}
+        relationships = archimate_manager.get_relationships()
+        composer: dict[str, str] = {}
+        realizes: dict[str, str] = {}
+        for r in sorted(relationships, key=lambda r: r.identifier):
+            if r.relationship_type == "Composition":
+                composer.setdefault(r.target, r.source)
+            elif r.relationship_type == "Realization" and types.get(r.target) == "BusinessObject":
+                realizes.setdefault(r.source, r.target)
+        metamodel = archimate_manager.metamodel
+        return lifts(
+            [(r.identifier, r.source, r.relationship_type, r.target) for r in relationships],
+            levels,
+            composer,
+            realizes,
+            types,
+            lambda s, t, g: bool(metamodel.can_relate(s, t, g)[0]),
+        )
 
     @staticmethod
     def _interface_owners(elements: list[Any], components: list[Component], sources: dict[str, str], graph_manager: GraphManager) -> dict[str, str]:

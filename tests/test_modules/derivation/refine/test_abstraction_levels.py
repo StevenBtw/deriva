@@ -203,3 +203,61 @@ def test_only_the_hierarchy_composes_one_component_into_another(am):
     compositions = sorted((r.source, r.target) for r in am.get_relationships() if r.relationship_type == "Composition")
     assert compositions == [("ac_mod", "ac_src"), ("ac_unit", "ac_mod")]
     assert result.report["reversed"] == 1
+
+
+def _two_systems(am):
+    """Two systems, each with a unit; the first unit's interface serves the second unit."""
+    for identifier, element_type, source in (
+        ("ac_a", "ApplicationComponent", "module::r::a"),
+        ("ac_ua", "ApplicationComponent", "unit::r::a/u"),
+        ("ai_ua", "ApplicationInterface", "unit::r::a/u"),
+        ("ac_b", "ApplicationComponent", "module::r::b"),
+        ("ac_ub", "ApplicationComponent", "unit::r::b/u"),
+    ):
+        am.add_element(
+            Element(
+                name=identifier, element_type=element_type, identifier=identifier, properties={"source": source, "role": "rest" if element_type == "ApplicationInterface" else None}
+            )
+        )
+    am.add_relationship(Relationship(source="ac_ua", target="ai_ua", relationship_type="Composition", identifier="rel-c", properties={"derived_from": "containment"}))
+    am.add_relationship(Relationship(source="ai_ua", target="ac_ub", relationship_type="Serving", identifier="rel-s", properties={"derived_from": "graph_link"}))
+    return _graph(
+        [
+            {"id": "module::r::a", "path": "r/a", "labels": ["Graph", "BuildModule"], "system": True},
+            {"id": "unit::r::a/u", "path": "r/a/u", "labels": ["Graph", "DeployableUnit"], "system": None},
+            {"id": "module::r::b", "path": "r/b", "labels": ["Graph", "BuildModule"], "system": True},
+            {"id": "unit::r::b/u", "path": "r/b/u", "labels": ["Graph", "DeployableUnit"], "system": None},
+        ]
+    )
+
+
+def test_the_structure_stage_lifts_a_solution_relationship_to_the_enterprise_level(am):
+    graph = _two_systems(am)
+
+    result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, "stage": "structure"})
+
+    lifted = [r for r in am.get_relationships() if (r.properties or {}).get("derived_from") == "lifted"]
+    assert [(r.source, r.relationship_type, r.target, r.properties["liftedFrom"], r.properties["levels"]) for r in lifted] == [
+        ("ac_a", "Serving", "ac_b", ["rel-s"], ["enterprise"])
+    ]
+    assert result.report["lifted"] == 1
+
+
+def test_the_default_stage_lifts_nothing_and_the_annotate_stage_only_tags(am):
+    graph = _two_systems(am)
+    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params=PARAMS)
+    assert not [r for r in am.get_relationships() if (r.properties or {}).get("derived_from") == "lifted"]
+
+    am.clear_model()
+    graph = _two_systems(am)
+    before = sorted((r.source, r.relationship_type, r.target) for r in am.get_relationships())
+    result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, "stage": "annotate"})
+
+    assert sorted((r.source, r.relationship_type, r.target) for r in am.get_relationships()) == before
+    assert result.relationships_created == 0 and {e.identifier: e.properties.get("levels") for e in am.get_elements()}["ac_ua"] == ["solution"]
+
+
+def test_an_unknown_stage_is_refused():
+    result = run_refine_step("abstraction_levels", archimate_manager=MagicMock(), graph_manager=MagicMock(), params={**PARAMS, "stage": "later"})
+
+    assert not result.success and "stage" in result.errors[0]
