@@ -241,3 +241,24 @@ def test_the_overall_verdict_needs_every_measured_level_to_pass():
 
     assert overall_verdict({"enterprise": passing, "solution": unmeasured, "union": passing}) == ("PASS", ["enterprise", "union"])
     assert overall_verdict({"enterprise": passing, "solution": failing, "union": passing})[0] == "FAIL"
+
+
+def test_golden_elements_and_relationships_match_through_structure_refs(tmp_path, folders):
+    """A golden element tied to a folder is found by the element derived from it, and its relationships follow."""
+    _, references = folders
+    (references / "ledger.derivable.json").write_text(
+        json.dumps({"g-ledger": {"derivable": True}, "g-reporting": {"derivable": True}, "g-target": {"derivable": False}, "g-group": {"derivable": False}}), encoding="utf-8"
+    )
+    (references / "ledger.matches.json").write_text(json.dumps({"g-reporting": {"names": [], "structure_refs": ["path:reports"]}}), encoding="utf-8")
+    run = {
+        "elements": [
+            {"identifier": "l", "type": "ApplicationComponent", "name": "Ledger", "source": "unit::ledger::core"},
+            {"identifier": "r", "type": "ApplicationComponent", "name": "Statements", "source": "unit::ledger::reports"},
+        ],
+        "relationships": [{"source": "l", "type": "Serving", "target": "r", "derived_from": "rule"}],
+    }
+
+    ledger = measure([_session(tmp_path, "s1", "ledger", [run, run])], *folders)["ledger"]
+
+    assert ledger["recall"] == 1.0 and ledger["precision"] == 1.0  # Statements is the reports folder: Reporting
+    assert (ledger["relationship_recall"], ledger["relationship_precision"]) == (1.0, 1.0)
