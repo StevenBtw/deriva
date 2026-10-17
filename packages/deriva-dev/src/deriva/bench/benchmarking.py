@@ -506,6 +506,8 @@ class BenchmarkOrchestrator:
         self._call_logs: dict[str, LlmCallLog] = {}
         # LLM answers per decision per step, recorded in the session metadata
         self._llm_samples: dict[str, int] = {}
+        # The code commit and dirty flag when the session started, recorded in the session metadata
+        self._code: dict[str, Any] = {"commit": None, "dirty": None}
         self._current_model: str | None = None
         self._current_repo: str | None = None
 
@@ -1478,11 +1480,16 @@ class BenchmarkOrchestrator:
                         "name": e.name,
                         "source": (e.properties or {}).get("source"),
                         "level": "architect",
-                        # The name came from an LLM choice among several candidates (origin split)
-                        "name_choice": bool((e.properties or {}).get("name_choice")) or len((e.properties or {}).get("name_candidates") or []) > 1,
+                        # The name came from an LLM choice among several candidates (origin split): as the naming
+                        # step recorded it, else (steps that record none) several candidates mean a choice
+                        "name_choice": bool((e.properties or {})["name_choice"])
+                        if "name_choice" in (e.properties or {})
+                        else len((e.properties or {}).get("name_candidates") or []) > 1,
                         # The structural name (first candidate) next to the chosen one: what LLM naming adds
                         # (no naming call: the name is the structural one)
                         "structure_name": (e.properties or {}).get("structure_name") or next(iter((e.properties or {}).get("name_candidates") or []), None) or e.name,
+                        # A closed-set name's candidates in order (None for a name that is no choice)
+                        "name_candidates": list((e.properties or {}).get("name_candidates") or []) or None,
                     }
                     for e in elements
                 ],
@@ -1569,11 +1576,19 @@ class BenchmarkOrchestrator:
                 self.session_start.isoformat(),
             ],
         )
+        self._capture_code()
         try:
             self._write_session_inputs()
         except Exception as exc:
             # A record that cannot be written does not stop the session (as a failed model export does not fail its run)
             logger.warning("Could not record the inputs of session %s: %s", self.session_id, exc)
+
+    def _capture_code(self) -> None:
+        """The commit the session starts on, with a dirty flag (the code may change while the session runs)."""
+        try:
+            self._code = export_bundle.code_commit()
+        except Exception as exc:  # A commit that cannot be read does not stop the session
+            logger.warning("Could not read the code commit of session %s: %s", self.session_id, exc)
 
     def _write_session_inputs(self) -> None:
         """Everything that changes results, as it is when the session starts, into the session folder.
@@ -1703,6 +1718,8 @@ class BenchmarkOrchestrator:
         summary = {
             "session_id": self.session_id,
             "config": self.config.to_dict(),
+            # The code the session ran: its commit and whether the working tree had changes at the start
+            "code": self._code,
             "started_at": self.session_start.isoformat() if self.session_start else None,
             "completed_at": datetime.now().isoformat(),
             "total_events": len(self.ocel_log.events),
