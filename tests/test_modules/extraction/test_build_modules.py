@@ -132,5 +132,94 @@ def test_the_root_takes_the_repository_name_and_colliding_names_their_paths():
     modules = _by_path(detect_modules("ShopApp", files, manifests, RULES))
 
     assert modules["ShopApp"].name == "Shop App"
-    # Both are "Web": each takes the words of its path below the repository instead
-    assert (modules["ShopApp/web"].name, modules["ShopApp/packages/web"].name) == ("Web", "Packages Web")
+    # Both are "Web": the full manifest names tell them apart
+    assert (modules["ShopApp/web"].name, modules["ShopApp/packages/web"].name) == ("Web", "Shop App Web")
+
+
+QUALITY = ModuleRules(
+    manifests=RULES.manifests,
+    code_subtypes=RULES.code_subtypes,
+    iac_dependencies=("aws-cdk-lib", "aws-cdk", "cdktf", "@cdktf/*", "pulumi", "@pulumi/*", "serverless"),
+    test_dependencies=("cypress", "jest", "mocha", "@playwright/test", "junit*", "pytest*"),
+)
+
+
+def test_an_infrastructure_as_code_module_and_a_test_only_module_are_no_components():
+    files = [
+        _f("r/infra/package.json", "json", "build"),
+        _f("r/infra/app.ts", "javascript"),
+        _f("r/e2e/package.json", "json", "build"),
+        _f("r/e2e/spec.js", "javascript"),
+        _f("r/web/package.json", "json", "build"),
+        _f("r/web/app.js", "javascript"),
+    ]
+    manifests = {
+        "r/infra/package.json": '{"name": "shop-infra", "dependencies": {"aws-cdk-lib": "2", "constructs": "10"}, "devDependencies": {"typescript": "5"}}',
+        "r/e2e/package.json": '{"name": "shop-e2e", "dependencies": {"cypress": "9"}}',
+        "r/web/package.json": '{"name": "shop-web", "dependencies": {"react": "18"}, "devDependencies": {"jest": "29"}}',
+    }
+
+    modules = _by_path(detect_modules("r", files, manifests, QUALITY))
+
+    assert (modules["r/infra"].excluded, modules["r/e2e"].excluded, modules["r/web"].excluded) == ("infrastructure-as-code", "test-only", None)
+
+
+def test_a_module_takes_its_folder_name_where_the_folder_says_more_and_collisions_keep_the_full_name():
+    """A manifest named just "client" in risk-management-client is the Risk Management Client; two manifests that share
+    a name: the one whose folder carries that name keeps it in full, the other takes its folder."""
+    files = [
+        _f("deriva/packages/deriva-studio/pyproject.toml", "toml", "build"),
+        _f("deriva/packages/deriva-studio/app.py", "python"),
+        _f("deriva/studio/package.json", "json", "build"),
+        _f("deriva/studio/main.js", "javascript"),
+        _f("deriva/risk-management-client/package.json", "json", "build"),
+        _f("deriva/risk-management-client/c.js", "javascript"),
+    ]
+    manifests = {
+        "deriva/packages/deriva-studio/pyproject.toml": '[project]\nname = "deriva-studio"\n',
+        "deriva/studio/package.json": '{"name": "deriva-studio"}',
+        "deriva/risk-management-client/package.json": '{"name": "client"}',
+    }
+
+    modules = _by_path(detect_modules("deriva", files, manifests, RULES))
+
+    assert modules["deriva/risk-management-client"].name == "Risk Management Client"
+    assert (modules["deriva/packages/deriva-studio"].name, modules["deriva/studio"].name) == ("Deriva Studio", "Studio")
+
+
+def test_a_module_named_with_a_test_word_holds_tests():
+    rules = ModuleRules(manifests=RULES.manifests, code_subtypes=RULES.code_subtypes, test_words=("test", "tests", "e2e"))
+    files = [
+        _f("r/rest-integration-test/pom.xml", "xml", "build"),
+        _f("r/rest-integration-test/T.java"),
+        _f("r/latest/pom.xml", "xml", "build"),
+        _f("r/latest/L.java"),  # "latest" holds no test word: the words are compared whole
+        _f("r/probe/pom.xml", "xml", "build"),
+        _f("r/probe/P.java"),
+    ]
+    manifests = {
+        "r/rest-integration-test/pom.xml": "<project><artifactId>rest-it</artifactId></project>",
+        "r/latest/pom.xml": "<project><artifactId>latest</artifactId></project>",
+        "r/probe/pom.xml": "<project><artifactId>probe-tests</artifactId></project>",  # the manifest name holds one
+    }
+
+    modules = _by_path(detect_modules("r", files, manifests, rules))
+
+    assert {p: m.excluded for p, m in modules.items()} == {"r/rest-integration-test": "test-only", "r/latest": None, "r/probe": "test-only"}
+
+
+def test_gradle_dependencies_in_map_form_count_and_a_dotted_folder_is_named_by_its_last_part():
+    rules = ModuleRules(manifests=RULES.manifests, code_subtypes=RULES.code_subtypes, test_dependencies=("junit*",))
+    gradle = "dependencies {\n    testCompile 'junit:junit:4.12'\n    compile group: 'com.google.guava', name: 'guava', version: '19.0'\n}\n"
+    files = [
+        _f("r/commons/build.gradle", "gradle", "build"),
+        _f("r/commons/src/C.java"),
+        _f("r/svc/tools.acme.shop.entities/pom.xml", "xml", "build"),
+        _f("r/svc/tools.acme.shop.entities/E.java"),
+    ]
+    manifests = {"r/commons/build.gradle": gradle, "r/svc/tools.acme.shop.entities/pom.xml": "<project><artifactId>entities</artifactId></project>"}
+
+    modules = _by_path(detect_modules("r", files, manifests, rules))
+
+    assert modules["r/commons"].excluded is None  # guava is no test framework
+    assert modules["r/svc/tools.acme.shop.entities"].name == "Entities"  # not "Tools Acme Shop Entities"

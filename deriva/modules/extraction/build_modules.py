@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
+from deriva.modules.extraction.deployments import manifest_dependencies
+
 
 @dataclass(frozen=True)
 class ModuleRules:
@@ -27,6 +29,12 @@ class ModuleRules:
     manifests: tuple[str, ...]  # Build manifest file names (case-insensitive patterns)
     code_subtypes: frozenset[str]  # File subtypes that count as the repository's own code
     min_members: int = 2  # An aggregator is a parent system when it lists at least this many modules
+    # A module whose manifest depends on one of these (patterns) is infrastructure as code, no application component
+    iac_dependencies: tuple[str, ...] = ()
+    # A module whose manifest depends on these only (patterns) holds tests, no application component
+    test_dependencies: tuple[str, ...] = ()
+    # A module whose folder or manifest name holds one of these words (compared whole) holds tests
+    test_words: tuple[str, ...] = ()
 
 
 @dataclass
@@ -39,6 +47,7 @@ class BuildModule:
     parent: str | None = None  # Path of the nearest module or system folder above it
     files: list[str] = field(default_factory=list)  # The files it holds itself, sorted
     members: list[str] = field(default_factory=list)  # For a system: the module paths it lists, sorted
+    excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only)
 
 
 def module_id(repository: str, path: str) -> str:
@@ -64,6 +73,20 @@ def display_name(raw: str, repository: str) -> str:
     if prefix and [w.casefold() for w in words[: len(prefix)]] == prefix and len(words) > len(prefix):
         words = words[len(prefix) :]
     return " ".join(w[0].upper() + w[1:] if w.islower() else w for w in words)
+
+
+def _folder_name(folder: str) -> str:
+    """A folder's own name; a dotted folder (a qualified name, tools.acme.shop.entities) is named by its last part."""
+    name = PurePosixPath(folder).name
+    return name.rsplit(".", 1)[-1] if "." in name.strip(".") else name
+
+
+def _dependencies(path: str, text: str) -> list[str]:
+    """The manifest's dependency names, Gradle's map form (group: 'g', name: 'n') included."""
+    found = set(manifest_dependencies(path, text))
+    if PurePosixPath(path).name.lower().startswith("build.gradle"):
+        found |= {n.lower() for n in re.findall(r"""\bname\s*:\s*['"]([\w.\-]+)['"]""", text)}
+    return sorted(found)
 
 
 def _manifest_name(path: str, text: str) -> str | None:
@@ -153,7 +176,21 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
             if f.get("file_type") == "source" and f.get("subtype") in rules.code_subtypes:
                 code.add(folder)
 
-    modules = set(code)
+    def excluded(folder: str) -> str | None:
+        manifest = candidates[folder]
+        dependencies = _dependencies(manifest, manifests.get(manifest, ""))
+        matches = lambda name, patterns: any(fnmatch.fnmatchcase(name, p.lower()) for p in patterns)  # noqa: E731 - a one-line helper
+        if any(matches(d, rules.iac_dependencies) for d in dependencies):
+            return "infrastructure-as-code"
+        if rules.test_dependencies and dependencies and all(matches(d, rules.test_dependencies) for d in dependencies):
+            return "test-only"
+        named = {w.casefold() for w in _words(_folder_name(folder)) + _words(_manifest_name(manifest, manifests.get(manifest, "")) or "")}
+        if named & {w.casefold() for w in rules.test_words}:
+            return "test-only"
+        return None
+
+    reasons = {folder: reason for folder in code if (reason := excluded(folder))}
+    modules = set(code) - set(reasons)
     systems: dict[str, list[str]] = {}
     for folder, manifest in candidates.items():
         listed: set[str] = set()
@@ -164,11 +201,17 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
             systems[folder] = sorted(listed)
 
     out = []
+    raws: dict[str, str] = {}
     kept = sorted(modules | set(systems))
-    for folder in kept:
+    for folder in sorted(set(kept) | set(reasons)):
         above = [k for k in kept if k != folder and folder.startswith(k + "/")]
         manifest = candidates[folder]
-        raw = _manifest_name(manifest, manifests.get(manifest, "")) or PurePosixPath(folder).name
+        raw = _manifest_name(manifest, manifests.get(manifest, "")) or _folder_name(folder)
+        # A folder that says more than the manifest's name (risk-management-client for "client") names it
+        folder_words, raw_words = {w.casefold() for w in _words(_folder_name(folder))}, {w.casefold() for w in _words(raw.rsplit("/", 1)[-1])}
+        if raw_words and raw_words < folder_words:
+            raw = _folder_name(folder)
+        raws[folder] = raw
         out.append(
             BuildModule(
                 path=folder,
@@ -179,17 +222,33 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
                 parent=sorted(above, key=lambda p: (len(p), p))[-1] if above else None,
                 files=sorted(own.get(folder, [])),
                 members=systems.get(folder, []),
+                excluded=reasons.get(folder),
             )
         )
     # The root holds the repository: it takes the repository's name (an aggregator's own name is often "parent")
     for m in out:
         if m.path == repository:
             m.name = display_name(repository, "")
-    # Names two modules share take the words of their path below the repository instead
-    counts: dict[str, int] = {}
-    for m in out:
-        counts[m.name.casefold()] = counts.get(m.name.casefold(), 0) + 1
-    for m in out:
-        if counts[m.name.casefold()] > 1 and m.path != repository:
-            m.name = display_name(m.path[len(repository) + 1 :].replace("/", " "), repository)
+    _settle_collisions([m for m in out if m.excluded is None and m.path != repository], raws, repository)
     return out
+
+
+def _settle_collisions(modules: list[BuildModule], raws: dict[str, str], repository: str) -> None:
+    """Names two modules share: first the full manifest name (the repository's name kept); then the module whose folder
+    carries the manifest name keeps it and the others take their folder name; then the words of their path."""
+
+    def colliding() -> list[BuildModule]:
+        counts: dict[str, int] = {}
+        for m in modules:
+            counts[m.name.casefold()] = counts.get(m.name.casefold(), 0) + 1
+        return [m for m in modules if counts[m.name.casefold()] > 1]
+
+    for m in colliding():
+        m.name = display_name(raws[m.path], "")
+    clashes = colliding()
+    for m in clashes:
+        carries = _folder_name(m.path).casefold() == raws[m.path].rsplit("/", 1)[-1].casefold()
+        if not carries or sum(1 for o in clashes if o.name.casefold() == m.name.casefold() and _folder_name(o.path).casefold() == raws[o.path].rsplit("/", 1)[-1].casefold()) > 1:
+            m.name = display_name(_folder_name(m.path), repository)
+    for m in colliding():
+        m.name = display_name(m.path[len(repository) + 1 :].replace("/", " "), repository)

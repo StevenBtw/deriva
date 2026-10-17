@@ -2443,6 +2443,72 @@ class TestBuildModuleStep:
             ("module::r::r", None, ["R"]),
         ]
 
+    def test_a_module_named_like_a_unit_takes_its_kind_noun_and_an_excluded_module_says_why(self, graph):
+        """The root system named after the repository meets a unit of that name: the system becomes "<name> System"."""
+        files = {
+            "pyproject.toml": ("build", "toml", '[project]\nname = "r"\n[tool.uv.workspace]\nmembers = ["packages/*"]\n'),
+            "app.py": ("source", "python", "x = 1\n"),
+            "packages/a/pyproject.toml": ("build", "toml", '[project]\nname = "a"\n[project.scripts]\nr = "a.main:run"\n'),
+            "packages/a/a/main.py": ("source", "python", "def run(): pass\n"),
+            "packages/b/pyproject.toml": ("build", "toml", '[project]\nname = "b"\n'),
+            "packages/b/b.py": ("source", "python", "y = 2\n"),
+            "infra/pyproject.toml": ("build", "toml", '[project]\nname = "infra"\ndependencies = ["aws-cdk-lib>=2"]\n'),
+            "infra/stack.py": ("source", "python", "z = 3\n"),
+        }
+        params = {**self.MODULE_PARAMS, "iac_dependencies": ["aws-cdk-lib"], "test_dependencies": ["pytest*"], "kind_nouns": {"system": "System", "module": "Module"}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["python"]})
+            self._step(graph, tmpdir, "BuildModule", params)
+
+        rows = {r["id"]: (r["name"], r["excluded"]) for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.name AS name, m.excluded AS excluded")}
+        assert rows["module::r::r"] == ("R System", None)  # the unit of the "r" script keeps the name
+        assert rows["module::r::infra"] == ("Infra", "infrastructure-as-code")
+
+    def test_module_names_are_unique_as_derivation_sees_them(self, graph):
+        """Without the repository's name, the unit "deriva-studio" and the modules "Deriva Studio" and "Studio" are one name.
+        The module whose path says no more than its name goes first and takes its kind noun; "Studio Module" is then
+        taken, so the other takes the words of its path. A module that is one unit's folder keeps its name (no candidate)."""
+        files = {
+            "packages/deriva-studio/pyproject.toml": ("build", "toml", '[project]\nname = "deriva-studio"\n[project.scripts]\nderiva-studio = "app:run"\nderiva = "app:main"\n'),
+            "packages/deriva-studio/app.py": ("source", "python", "x = 1\n"),
+            "studio/package.json": ("build", "json", '{"name": "deriva-studio"}'),
+            "studio/main.js": ("source", "javascript", "let y = 2\n"),
+            "shop/Dockerfile": ("config", None, "FROM base\n"),
+            "shop/package.json": ("build", "json", '{"name": "shop"}'),
+            "shop/index.js": ("source", "javascript", "let z = 3\n"),
+        }
+        params = {**self.MODULE_PARAMS, "code_subtypes": ["python", "javascript"], "kind_nouns": {"system": "System", "module": "Module"}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files, repo="deriva")
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["python", "javascript"]}, repo="deriva")
+            self._step(graph, tmpdir, "BuildModule", params, repo="deriva")
+
+        names = {r["id"]: r["name"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.name AS name")}
+        assert names["module::deriva::studio"] == "Studio Module"
+        assert names["module::deriva::packages/deriva-studio"] == "Packages Deriva Studio"
+        assert names["module::deriva::shop"] == "Shop"  # the shop unit's own folder: one element with the unit, no noun
+
+    def test_a_module_named_like_one_of_a_units_name_candidates_takes_its_kind_noun(self, graph):
+        """The unit's name candidates hold its manifest's name: a module of that name would lose the claim to the unit."""
+        files = {
+            "gui/Dockerfile": ("config", None, "FROM base" + chr(10)),
+            "gui/package.json": ("build", "json", '{"name": "portal"}'),
+            "gui/server.js": ("source", "javascript", "let a = 1" + chr(10)),
+            "gui/src/package.json": ("build", "json", '{"name": "portal-app"}'),
+            "gui/src/index.js": ("source", "javascript", "let b = 2" + chr(10)),
+        }
+        params = {**self.MODULE_PARAMS, "code_subtypes": ["javascript"], "kind_nouns": {"system": "System", "module": "Module"}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["javascript"]})
+            self._step(graph, tmpdir, "BuildModule", params)
+
+        candidates = [list(r["names"]) for r in graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.nameCandidates AS names")]
+        names = {r["id"]: r["name"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.name AS name")}
+        assert any("Portal" in c for c in candidates)
+        assert names["module::r::gui"] == "Portal Module"
+
     def test_the_params_name_the_manifests_and_the_code(self, graph):
         with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="manifests"):
             self._step(graph, tmpdir, "BuildModule", {"code_subtypes": ["java"]})
@@ -3187,3 +3253,14 @@ def test_names_that_share_a_slug_get_ids_of_their_own():
     assert ids["web"] == "deployment::r::compose::web"
     assert ids["my_api"] != ids["my-api"] and all(ids[n].startswith("deployment::r::compose::my-api-") for n in ("my_api", "my-api"))
     assert _slug_ids("deployment::r::compose", ["my-api", "my_api"]) == {n: ids[n] for n in ("my-api", "my_api")}
+
+
+def test_services_with_one_name_get_ids_of_their_own_from_their_units():
+    """Two cloud services of one name that deploy different units are two deployments, told apart by the unit."""
+    from deriva.services.extraction import _service_ids
+
+    ids = _service_ids("deployment::r::cloud", [("Service", "unit::r::backend"), ("web", "unit::r::web"), ("Service", "unit::r::bridge"), ("Service", None)])
+
+    assert ids[1] == "deployment::r::cloud::web"
+    assert ids[0] == "deployment::r::cloud::service-backend" and ids[2] == "deployment::r::cloud::service-bridge"
+    assert ids[3] == "deployment::r::cloud::service-3"

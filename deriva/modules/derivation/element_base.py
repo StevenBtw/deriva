@@ -62,6 +62,7 @@ from deriva.modules.derivation.base import (
     build_naming_prompt,
     build_role_prompt,
     build_single_candidate_prompt,
+    candidate_identifier,
     choice_schema,
     choose_name,
     compute_candidate_strength,
@@ -981,7 +982,10 @@ class ElementDerivationBase(ABC):
                 if key in seen:
                     duplicates.add(c.node_id)
                 seen.add(key)
-            planned = [(element_identifier(self.ELEMENT_TYPE, c.node_id), names[c.node_id], [c], role_of[c.node_id] or "") for c in chosen if c.node_id not in duplicates]
+            sources = [c.node_id for c in candidates]
+            planned = [
+                (candidate_identifier(self.ELEMENT_TYPE, c.node_id, sources), names[c.node_id], [c], role_of[c.node_id] or "") for c in chosen if c.node_id not in duplicates
+            ]
         else:
             members: dict[str, list[Candidate]] = {}
             for c in ordered:
@@ -1621,7 +1625,7 @@ class ElementDerivationBase(ABC):
                 self.ELEMENT_TYPE,
                 enrichments,
                 repo_name=repo_name,
-                source_names={cand.node_id: cand.name},
+                source_names={**{c.node_id: c.name for c in filtered}, cand.node_id: cand.name},
             )
             if not element_result["success"]:
                 result.errors.extend(element_result.get("errors", []))

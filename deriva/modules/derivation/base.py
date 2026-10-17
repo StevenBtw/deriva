@@ -15,6 +15,7 @@ import json
 import logging
 import re
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -2452,6 +2453,15 @@ def element_identifier(element_type: str, source_id: str) -> str:
     return sanitize_identifier(f"{prefix}_{tail}")
 
 
+def candidate_identifier(element_type: str, source_id: str, sources: Iterable[str]) -> str:
+    """``element_identifier`` among the step's candidate sources: a module whose plain identifier is a unit's (the
+    unit's folder, with modules inside) keeps its kind in it, so the unit keeps the plain one."""
+    identifier = element_identifier(element_type, source_id)
+    if source_id.startswith("module::") and any(s.startswith(UNIT_PREFIX) and element_identifier(element_type, s) == identifier for s in sources):
+        return sanitize_identifier(f"{identifier.split('_', 1)[0]}_module::{source_id.split('::', 2)[2]}")
+    return identifier
+
+
 def build_element(
     derived: dict[str, Any],
     element_type: str,
@@ -2489,7 +2499,7 @@ def build_element(
     if not name:
         return {"success": False, "errors": [f"Empty name for source {source_id!r}"]}
 
-    identifier = element_identifier(element_type, source_id)
+    identifier = candidate_identifier(element_type, source_id, source_names)
     # Clamp confidence to [0.0, 1.0] range (LLM may return out-of-range values)
     confidence = clamp_confidence(derived.get("confidence"))
 

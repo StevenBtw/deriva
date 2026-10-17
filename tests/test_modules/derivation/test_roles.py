@@ -524,3 +524,33 @@ class TestNamePriority:
         stages = self._stages(dataclasses.replace(ROLES, name_priority=("DeployableUnit", "BuildModule")))
 
         assert stages["module::r::shop"] == "duplicate_removed" and stages.get("unit::r::shop") != "duplicate_removed"
+
+
+def test_a_unit_and_the_module_at_its_folder_both_become_elements_with_their_own_identifiers():
+    """Both sources end in the folder's path: the module keeps its kind in its identifier, the unit the plain one."""
+    roles = dataclasses.replace(
+        ROLES, labels=frozenset({"BuildModule", "DeployableUnit"}), names={"component": "Component"}, element_per="candidate", structural=(("kind", ".+", "component"),)
+    )
+    module = Candidate(node_id="module::r::shop", name="Shop Module", labels=["Graph", "BuildModule"], properties={"kind": "module"}, pagerank=0.9)
+    unit = Candidate(node_id="unit::r::shop", name="Shop", labels=["Graph", "DeployableUnit"], properties={"kind": "unit"}, pagerank=0.1)
+    am = MagicMock(get_elements=MagicMock(return_value=[]))
+    with (
+        patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+        patch("deriva.modules.derivation.element_base.query_candidates", return_value=[module, unit]),
+    ):
+        Derivation().generate(
+            graph_manager=MagicMock(query=MagicMock(return_value=[])),
+            archimate_manager=am,
+            llm_query_fn=MagicMock(return_value=SimpleNamespace(content='{"items": []}')),
+            query="MATCH (n) RETURN n",
+            instruction="Test",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            existing_elements=[],
+            prompt=TEST_PROMPT,
+            roles=roles,
+        )
+
+    created = {c.args[0].properties["source"]: c.args[0].identifier for c in am.add_element.call_args_list}
+    assert created == {"module::r::shop": "te_module__shop", "unit::r::shop": "te_shop"}

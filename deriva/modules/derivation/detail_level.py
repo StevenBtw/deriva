@@ -5,7 +5,7 @@ The architect level is the derived model. Its members, kept as lineage, become d
 - a data domain (DataObject) composes its entities (DataObject);
 - a channel interface (ApplicationInterface) composes its endpoint members (ApplicationInterface);
 - the environment (Node) is assigned to an artifact per deployed container, which realizes the component of the
-  unit it deploys;
+  unit it deploys; where the deployment is a service node of its own, that node is assigned to the artifact;
 - a mainframe unit (ApplicationComponent) composes its programs (ApplicationComponent);
 - a lifecycle's states stay a property of its process (the hand-off states are already events).
 
@@ -46,6 +46,7 @@ def detail_level(elements: list[dict[str, Any]], lineage: DetailLineage) -> Deta
     out = DetailLevel()
     seen: set[str] = set()
     component_of = {str((e.get("properties") or {}).get("source")): e["identifier"] for e in elements if e.get("element_type") == "ApplicationComponent"}
+    service_node = {str((e.get("properties") or {}).get("source")): e["identifier"] for e in elements if e.get("element_type") == "Node"}
 
     def member(element_type: str, identity: str, name: str, parent: str, source: str) -> str:
         identifier = element_identifier(element_type, f"detail::{identity}")
@@ -69,8 +70,9 @@ def detail_level(elements: list[dict[str, Any]], lineage: DetailLineage) -> Deta
                     out.relationships.append(_relationship("Composition", parent, child))
         elif kind == "Node":
             for deployment, name, unit in lineage.deployments.get(source, []):
-                artifact = member("Artifact", deployment, name, parent, deployment)
-                out.relationships.append(_relationship("Assignment", parent, artifact))
+                holder = service_node.get(deployment, parent)
+                artifact = member("Artifact", deployment, name, holder, deployment)
+                out.relationships.append(_relationship("Assignment", holder, artifact))
                 if unit and unit in component_of:
                     out.relationships.append(_relationship("Realization", artifact, component_of[unit]))
         elif kind == "ApplicationComponent":
