@@ -293,6 +293,12 @@ def _plain(text: str) -> str:
     return " ".join(re.sub(r"[*_`]+", "", text).split())
 
 
+def _doc_name(text: str) -> str:
+    """A documentation text used as a name: plain, without the separator that introduces a description
+    ("**Media Bridge:** relays audio", "| Media Bridge, |")."""
+    return _plain(text).rstrip(":;,").strip()
+
+
 def _first_heading(text: str) -> str | None:
     for line in text.splitlines():
         if match := re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line):
@@ -381,7 +387,7 @@ class _Naming:
                         parts = parts[:-1]
                     elif part not in (".", ""):
                         parts.append(part)
-                label = _plain(match.group(1))
+                label = _doc_name(match.group(1))
                 if "/".join(parts) == folder and _name_like(label):
                     found.append((order, match.start(), label))
         words = _words(name)
@@ -391,7 +397,7 @@ class _Naming:
             ]
             cells += [(m.start(), m.group(1).strip()) for m in re.finditer(r"\*\*([^*]+)\*\*", self.root_readme)]
             for position, cell in cells:
-                text = _plain(cell)
+                text = _doc_name(cell)
                 cell_words = _words(text)
                 if len(cell_words) >= len(words) and _key(" ".join(cell_words[-len(words) :])) == _key(" ".join(words)) and _name_like(text):
                     found.append((0, position, text))
