@@ -184,7 +184,7 @@ def config_add(
     with PipelineSession() as session:
         try:
             if step_type == "extraction":
-                added = session.add_extraction_step(name, sequence, extraction_method=method or "structural", params=params)
+                added = session.add_extraction_step(name, sequence, extraction_method="structural" if method is None else method, params=params)
             else:
                 added = session.add_derivation_step(name, phase or "", sequence, params=params)
         except ValueError as e:

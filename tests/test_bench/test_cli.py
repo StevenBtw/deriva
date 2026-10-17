@@ -1322,6 +1322,12 @@ def test_conventions_with_a_run_no_snapshot_has_exits_1(tmp_path, monkeypatch):
     (models / "shop_m_run1.json").write_text(_json.dumps({"elements": [], "relationships": [], "disabled": []}), encoding="utf-8")
     monkeypatch.setattr(conventions_report, "workspace", lambda: tmp_path)
 
-    result = _Runner().invoke(bench_app, ["conventions", "bench_1", "-o", str(tmp_path / "out"), "--run", "7"])
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "summary.md").write_text("an earlier report", encoding="utf-8")
+
+    result = _Runner().invoke(bench_app, ["conventions", "bench_1", "-o", str(out), "--run", "7"])
 
     assert result.exit_code == 1 and "no run snapshots" in result.output
+    # Nothing is written: an earlier report in the folder stays as it was
+    assert (out / "summary.md").read_text(encoding="utf-8") == "an earlier report" and not (out / "conventions.json").exists()

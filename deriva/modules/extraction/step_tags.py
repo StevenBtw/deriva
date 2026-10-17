@@ -46,7 +46,8 @@ _EDGE_STEPS: dict[tuple[str, str | None, str | None], str] = {
     ("CONTAINS", "File", "Test"): "Test",
     ("INHERITS", None, None): "TypeDefinition",
     ("IMPORTS", None, None): "Imports",
-    ("USES", None, None): "Imports",
+    # USES: Imports writes it with the imported module, ExternalDependency (a declared dependency) without (edge_step)
+    ("USES", None, None): "ExternalDependency",
     ("CALLS", None, None): "Calls",
     ("DECORATED_BY", None, None): "Decorators",
     ("REFERENCES", "Method", "TypeDefinition"): "References",
@@ -82,9 +83,11 @@ def node_step(labels: list[str], properties: dict[str, Any]) -> str | None:
     return _NODE_STEPS.get(kind)
 
 
-def edge_step(edge_type: str, source_kind: str, target_kind: str) -> str | None:
-    """The step that writes an edge, from its type and the kinds of its ends; None when no rule says."""
+def edge_step(edge_type: str, source_kind: str, target_kind: str, properties: dict[str, Any] | None = None) -> str | None:
+    """The step that writes an edge, from its type, the kinds of its ends and (for USES) its properties; None when no rule says."""
     edge_type = edge_type.removeprefix("Graph:")
+    if edge_type == "USES" and (properties or {}).get("module"):
+        return "Imports"
     for (kind, source, target), step in _EDGE_STEPS.items():
         if kind == edge_type and source in (None, source_kind) and target in (None, target_kind):
             return step

@@ -160,10 +160,11 @@ def test_without_the_interface_service_name_rule_the_listed_assignment_stays():
 
 
 # A data entity merges the same concept's types across units: its element relates through all of them
+# (the batch unit holds the record's copybook, so it holds one of the entity's types: REC in r/cpy/REC.cpy)
 ENTITY_SCOPES = UnitScopes(
-    files=dict(SCOPES.files),
+    files={**SCOPES.files, "unit::r::batch": SCOPES.files["unit::r::batch"] | {"r/cpy/REC.cpy"}},
     nodes=dict(SCOPES.nodes),
-    entity_files={"entity::r::order": frozenset({"r/pkg/core/orders.py", "r/cbl/BAT1.cbl"})},
+    entity_files={"entity::r::order": frozenset({"r/pkg/core/orders.py", "r/cpy/REC.cpy"})},
     entity_nodes={"entity::r::order": frozenset({"typedef::r::pkg/core/orders.py::Order", "typedef::r::REC"})},
 )
 

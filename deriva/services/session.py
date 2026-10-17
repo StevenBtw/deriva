@@ -440,12 +440,12 @@ class PipelineSession:
         return extraction.tag_steps(self._graph_manager, repo_name)
 
     def later_extraction_steps(self, step: str) -> list[str]:
-        """The enabled extraction steps after ``step`` (they may read what it writes)."""
+        """The enabled extraction steps after ``step`` (they may read what it writes); ``step`` itself may be disabled."""
         self._ensure_connected()
         assert self._engine is not None
-        configs = sorted(config.get_extraction_configs(self._engine, enabled_only=True), key=lambda c: c.sequence)
+        configs = sorted(config.get_extraction_configs(self._engine), key=lambda c: c.sequence)
         current = next((c.sequence for c in configs if c.node_type == step), None)
-        return [c.node_type for c in configs if current is not None and c.sequence > current]
+        return [c.node_type for c in configs if current is not None and c.sequence > current and c.enabled]
 
     def clear_model(self) -> dict[str, Any]:
         """Clear all ArchiMate model data."""

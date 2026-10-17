@@ -30,3 +30,16 @@ def test_the_catalog_is_read_from_the_step_params():
     catalog = catalog_from_params([{"name": "Redis", "kind": "cache", "aliases": ["redis", "redis-py"]}])
 
     assert catalog == (Technology(name="Redis", kind="cache", aliases=("redis", "redis-py")),)
+
+
+def test_a_catalog_that_gives_one_alias_two_technologies_is_rejected():
+    import pytest
+
+    entries = [{"name": "Redis", "kind": "cache", "aliases": ["kv"]}, {"name": "Memcached", "kind": "cache", "aliases": [" KV "]}]
+
+    with pytest.raises(ValueError, match="'kv' names both Redis and Memcached"):
+        catalog_from_params(entries)
+    with pytest.raises(ValueError, match="'redis' names both"):
+        catalog_from_params([{"name": "Redis", "kind": "cache"}, {"name": "redis", "kind": "database"}])
+    # An alias that repeats its own entry's name is no conflict
+    assert catalog_from_params([{"name": "Redis", "kind": "cache", "aliases": ["redis", "Redis"]}])[0].name == "Redis"

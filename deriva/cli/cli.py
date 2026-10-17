@@ -127,9 +127,13 @@ def run_stage(
     with PipelineSession(repository=repo) as session, ExitStack() as step_scope:
         typer.echo("Connected to grafeo")
 
+        later_steps: list[str] = []
         if only_step:
             step_type = "extraction" if stage in ("extraction", "all") else "derivation"
             typer.echo(f"Enabling only {step_type} step: {only_step} (restored afterwards)")
+            # Before the others are switched off: the later steps that may read what this one writes
+            if step_type == "extraction":
+                later_steps = session.later_extraction_steps(only_step)
             try:
                 step_scope.enter_context(session.only_step(step_type, only_step))
             except ValueError as e:
@@ -165,6 +169,8 @@ def run_stage(
                     phases=phases,
                 )
             _print_extraction_result(result)
+            if later_steps:
+                typer.echo(f"Later steps that may read what {only_step} writes (run them again to update them): {', '.join(later_steps)}")
 
         elif stage == "derivation":
             if no_llm:

@@ -572,6 +572,7 @@ class DataEntityNode:
     name_candidates: list[str] = field(default_factory=list)
     name_sources: list[str] = field(default_factory=list)
     paths: list[str] = field(default_factory=list)
+    type_count: int | None = None  # The types it includes (several can share a file); None: one per path
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -585,7 +586,7 @@ class DataEntityNode:
             "nameCandidates": list(self.name_candidates),
             "nameSources": list(self.name_sources),
             "paths": list(self.paths),
-            "typeCount": len(self.paths),
+            "typeCount": self.type_count if self.type_count is not None else len(self.paths),
             "repository_name": self.repository_name,
             "type": "DataEntity",
         }
@@ -738,7 +739,7 @@ class DeploymentNode:
     environment: str  # The environment kind
     repository_name: str
     image: str = ""
-    variables: dict[str, str] = field(default_factory=dict)  # The service's environment variables
+    variables: dict[str, str] = field(default_factory=dict)  # The service's environment variables, secret values redacted (deployments._redacted)
     ports: list[int] = field(default_factory=list)
 
     def generate_id(self) -> str:

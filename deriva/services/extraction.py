@@ -31,11 +31,12 @@ Usage:
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import logging
 import re
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from types import ModuleType
@@ -431,13 +432,13 @@ def tag_steps(graph_manager: GraphManager, repo_name: str) -> dict[str, Any]:
         graph_manager.batch_update_properties(updates)
     edges = graph_manager.query(
         f"MATCH (n)-[r]->(b) WHERE r.extractStep IS NULL AND n.id IS NOT NULL AND b.id IS NOT NULL AND {in_repo} "
-        "RETURN n.id AS a, type(r) AS t, b.id AS b, labels(n) AS la, labels(b) AS lb",
+        "RETURN n.id AS a, type(r) AS t, b.id AS b, labels(n) AS la, labels(b) AS lb, r.module AS module",
         params,
     )
     for row in edges:
         kind = lambda labels: next((str(label) for label in labels or [] if label != "Graph"), "?")  # noqa: E731 - a one-line helper
         edge_type = str(row["t"]).removeprefix("Graph:")
-        step = step_tags.edge_step(edge_type, kind(row["la"]), kind(row["lb"]))
+        step = step_tags.edge_step(edge_type, kind(row["la"]), kind(row["lb"]), {"module": row.get("module")})
         if step is None:
             report["untagged_edges"][f"{edge_type} {kind(row['la'])}->{kind(row['lb'])}"] += 1
             continue
@@ -497,6 +498,11 @@ def _run_extraction_step(
         result = _run_step_writes(cfg, repo, repo_path, classified_files, undefined_files, graph_manager, llm_query_fn, engine, model)
     if result.get("errors"):
         logger.warning("Extraction step %s had errors: nothing swept", step)
+        # A rewritten node keeps the other steps that own it (writing a node sets only this step), so a later sweep
+        # of this step cannot remove a node another step still produces
+        restore = {node: sorted({*prior_nodes[node], step}) for node in set(writes.nodes) if node in prior_nodes and set(prior_nodes[node]) - {step}}
+        if restore:
+            graph_manager.batch_update_properties({node: {"extractSteps": steps} for node, steps in restore.items()})
         return {**result, "swept": {"nodes": 0, "edges": 0, "skipped": "errors"}}
     produced_nodes = set(writes.nodes)
     produced_edges = {(a, t.removeprefix("Graph:"), b) for a, t, b in writes.edge_ends}
@@ -722,9 +728,14 @@ def _entity_facts(q: Callable[..., list[dict[str, Any]]]) -> tuple[list[dict[str
         for t in types
         if t.get("id")
     ]
+    # Importers are programs: the importing file holds a program (a copybook's COPY of a record does not count)
     importers = Counter(
         r["f"]
-        for r in q("MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(f:Graph:File) WHERE f.repository_name = $repo_name RETURN DISTINCT f.filePath AS f, a.filePath AS a")
+        for r in q(
+            "MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(f:Graph:File), (p:Graph:TypeDefinition) "
+            "WHERE f.repository_name = $repo_name AND p.category = 'program' AND p.filePath = a.filePath "
+            "RETURN DISTINCT f.filePath AS f, a.filePath AS a"
+        )
         if r.get("f")
     )
     # The unit that holds a file names it; a dotted unit name is known by its last part
@@ -756,6 +767,7 @@ def _extract_data_entities(cfg: config.ExtractionConfig, repo: Any, repo_path: P
                 name_candidates=[n for n, _ in entity.name_candidates],
                 name_sources=[s for _, s in entity.name_candidates],
                 paths=entity.paths,
+                type_count=len(entity.type_ids),
             ),
             node_id=node_id,
         )
@@ -859,6 +871,16 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.casefold()).strip("-")
 
 
+def _slug_ids(prefix: str, names: Iterable[str]) -> dict[str, str]:
+    """Node ids by name: the slug, and for names that share one (my_api, my-api) the slug with a hash of the name."""
+    by_slug: dict[str, set[str]] = {}
+    for name in names:
+        by_slug.setdefault(_slug(name), set()).add(name)
+    return {
+        name: f"{prefix}::{slug}" if len(group) == 1 else f"{prefix}::{slug}-{hashlib.sha1(name.encode()).hexdigest()[:8]}" for slug, group in by_slug.items() for name in group
+    }
+
+
 def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
     """The primary environment (RUNS its deployed services, which DEPLOY units; HOSTS the software that
     runs in it) and the system software (SERVES the units that use it), from the checkout (no LLM)."""
@@ -897,8 +919,9 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
             EnvironmentNode(name=env.name, kind=env.kind, repository_name=repo.name, file=env.file, others=others, other_services=other_services), node_id=env_id
         )
         nodes += 1
+        deployment_ids = _slug_ids(f"deployment::{repo.name}::{env.kind}", (s.name for s in env.services))
         for service in env.services:
-            deployment_id = f"deployment::{repo.name}::{env.kind}::{_slug(service.name)}"
+            deployment_id = deployment_ids[service.name]
             graph_manager.add_node(
                 DeploymentNode(name=service.name, environment=env.kind, repository_name=repo.name, image=service.image or "", variables=service.environment, ports=service.ports),
                 node_id=deployment_id,
@@ -908,8 +931,9 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
             if service.unit:
                 graph_manager.add_edge(deployment_id, service.unit, "DEPLOYS")
                 edges += 1
+    software_ids = _slug_ids(f"software::{repo.name}", (s.name for s in layer.software))
     for software in layer.software:
-        software_id = f"software::{repo.name}::{_slug(software.name)}"
+        software_id = software_ids[software.name]
         graph_manager.add_node(
             SoftwareNode(
                 name=software.name,

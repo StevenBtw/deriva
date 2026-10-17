@@ -312,3 +312,80 @@ def test_an_engine_that_runs_in_the_environment_itself_stays_separate():
     layer = technology_layer("r", {"r/docker-compose.yml": COMPOSE}, UNITS, QUALIFIED, catalog, {})
 
     assert [s.name for s in layer.software] == ["PostgreSQL"]  # no managed service of the engine: nothing to merge into
+
+
+def test_the_environment_folder_is_the_common_leading_part_of_its_files():
+    """r/team-a/k8s and r/team-b/k8s share only r: a later equal folder name is no common folder."""
+    manifest = "kind: Deployment\nmetadata:\n  name: {0}\nspec:\n  template:\n    spec:\n      containers:\n        - image: acme/{0}\n"
+    files = {"r/team-a/k8s/shop.yaml": manifest.format("shop"), "r/team-b/k8s/billing.yaml": manifest.format("billing")}
+    template = "Resources:\n  App:\n    Type: AWS::ECS::Service\n"
+
+    assert detect_deployments("r", files, UNITS, RULES).primary.file == "r"
+    cloud = detect_deployments("r", {"r/a/infra/t.yaml": template, "r/b/infra/t.yaml": template}, UNITS, RULES).primary
+    assert cloud.file == "r"
+
+
+def test_a_registry_variable_before_the_image_name_is_dropped_with_its_slash():
+    from deriva.modules.extraction.deployments import built_images
+
+    files = {"r/build.sh": 'docker build -t "${REGISTRY}/shop-base:1" ./base\ndocker build -t "$REGISTRY/app" .\n'}
+
+    assert built_images("r", files, ("*.sh",)) == {"shop-base": "r/base/Dockerfile", "app": "r/Dockerfile"}
+
+
+def test_a_build_context_that_several_units_share_is_matched_by_name_or_not_at_all():
+    units = [{"id": "unit::r::api", "path": "r/app", "name": "api"}, {"id": "unit::r::worker", "path": "r/app", "name": "worker"}]
+    compose = "services:\n  worker:\n    build: ./app\n  jobs:\n    build: ./app\n"
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+
+    assert {s.name: s.unit for s in env.services} == {"worker": "unit::r::worker", "jobs": None}
+
+
+def test_managed_resources_without_a_container_still_make_a_cloud_environment():
+    """A serverless template (functions and managed services, no container) is a cloud environment of its own;
+    an environment that runs services comes first."""
+    template = "Resources:\n  Fn:\n    Type: AWS::Lambda::Function\n  Files:\n    Type: AWS::S3::Bucket\n"
+
+    alone = detect_deployments("r", {"r/infra/template.yaml": template}, UNITS, RULES)
+    assert (alone.primary.kind, alone.primary.services, alone.primary.managed) == ("cloud", [], ["AWS::Lambda::Function", "AWS::S3::Bucket"])
+
+    with_compose = detect_deployments("r", {"r/infra/template.yaml": template, "r/docker-compose.yml": COMPOSE}, UNITS, RULES)
+    assert with_compose.primary.kind == "compose" and [e.kind for e in with_compose.others] == ["cloud"]
+
+
+def test_a_final_stage_built_on_an_earlier_stage_takes_that_stages_base_image():
+    dockerfile = "FROM python:3.12-slim AS base\nRUN pip install x\nFROM base AS runtime\nCOPY . /app\n"
+    chained = "FROM node:20 AS deps\nFROM deps AS build\nFROM build\n"
+
+    result = detect_deployments("r", {"r/shop/Dockerfile": dockerfile, "r/services/billing/Dockerfile": chained}, UNITS, RULES)
+
+    assert result.base_images == {"unit::r::shop": ["python:3.12-slim"], "unit::r::services/billing": ["node:20"]}
+
+
+def test_a_bracketed_ipv6_host_is_no_port():
+    compose = 'services:\n  db:\n    image: postgres\n    ports: ["[2001:1:2::1]:5432:80", "[::1]:9000:9000/tcp"]\n'
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary
+
+    assert env.services[0].ports == [80, 5432, 9000]
+
+
+def test_secret_values_are_not_kept_but_hosts_are():
+    """Passwords, keys and tokens never reach the graph; a URL keeps its host (cooperation reads it) without its password."""
+    compose = (
+        "services:\n  shop:\n    build: ./shop\n    environment:\n"
+        "      DB_PASSWORD: s3cret\n      API_KEY: abc123\n      DB_URL: postgres://app:pw@db:5432/x\n"
+        "      TOKEN_URL: http://auth:8080/token\n      CLIENT_SECRET: ${CLIENT_SECRET}\n      MODE: prod\n"
+    )
+
+    (shop,) = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary.services
+
+    assert shop.environment == {
+        "DB_PASSWORD": "***",
+        "API_KEY": "***",
+        "DB_URL": "postgres://app:***@db:5432/x",
+        "TOKEN_URL": "http://auth:8080/token",
+        "CLIENT_SECRET": "${CLIENT_SECRET}",  # a reference, no value
+        "MODE": "prod",
+    }

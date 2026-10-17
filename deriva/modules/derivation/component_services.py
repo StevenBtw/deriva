@@ -63,6 +63,7 @@ class ComponentServicesConfig:
     # "components": a service per group of offering components; "members": a service per group of the
     # interfaces' members (endpoints, screens, jobs), grouped across components by the objects they reach
     group_by: str = "components"
+    # member_min_names, max_groups and ubiquity apply to group_by "members" only
     member_min_names: int = 1  # Code names carrying a business object's words that make a member reach it
     # At most this many services (0: no limit); the most similar groups merge first, groups that share no object never
     max_groups: int = 0

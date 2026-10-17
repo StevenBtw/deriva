@@ -39,14 +39,19 @@ def _snapshots(session_ids: list[str], benchmarks_dir: Path, run: int | None) ->
 
 
 def write_reports(session_ids: list[str], out_dir: str | Path, run: int | None = None, benchmarks_dir: str | Path | None = None) -> dict[str, Any]:
-    """Check every repository's runs of the sessions; write ``<repository>.md``, ``summary.md`` and ``conventions.json``."""
+    """Check every repository's runs of the sessions; write ``<repository>_<model>.md``, ``summary.md`` and ``conventions.json``.
+
+    Raises LookupError when no run snapshot matches (nothing is written then, so an earlier report stays).
+    """
     conventions = load_conventions()
     folder = Path(benchmarks_dir) if benchmarks_dir is not None else workspace() / "benchmarks"
+    found = _snapshots(session_ids, folder, run)
+    if not found:
+        raise LookupError("no run snapshots matched the selected sessions and run")
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     results: dict[str, dict[str, dict[str, Any]]] = {}
     pages: dict[str, str] = {}
-    found = _snapshots(session_ids, folder, run)
     models_of: dict[str, set[str]] = defaultdict(set)
     for repository, model in found:
         models_of[repository].add(model)

@@ -72,6 +72,7 @@ def test_dtos_configs_and_technical_records_are_out_with_their_reason():
         _t("NotificationLog", "r/core/Log.java", decorators=["Entity"]),
         _t("DatabaseManagementEntity", "r/core/Db.java", decorators=["Entity"]),
         _t("Payment", "r/core/Payment.java", decorators=["Entity"]),
+        _t("ShopSetup", "r/core/ShopSetup.java", decorators=["Entity", "Configuration"]),  # a config marker, no config suffix
     ]
 
     result = detect_entities(types, {}, {}, RULES)
@@ -79,6 +80,7 @@ def test_dtos_configs_and_technical_records_are_out_with_their_reason():
     assert _names(result) == ["Payment"]
     reasons = _reasons(result)
     assert reasons["OrderDto"] == "dto" and reasons["Invoice"] == "dto" and reasons["ShopConfig"] == "config"
+    assert reasons["ShopSetup"] == "config"
     assert reasons["NotificationLog"] == "technical word: log" and reasons["DatabaseManagementEntity"] == "technical word: database"
 
 
@@ -158,10 +160,74 @@ def test_a_table_is_named_in_the_code_files_that_query_it():
         "r/app/other.py": 'conn.execute("SELECT * FROM benchmark_runs_archive")',  # another table
         "r/app/loop.py": "# the pipeline runs twice\nfor runs in range(3): pass",  # the word, not the table
         "r/app/history.py": 'conn.execute("insert into runs (id) values (?)")',
-        "r/cbl/PROG.cbl": "EXEC SQL SELECT TR_TYPE FROM CARDDEMO.TRANSACTION_TYPE END-EXEC.",
+        "r/cbl/PROG.cbl": "EXEC SQL SELECT TR_TYPE FROM LEDGER.TRANSACTION_TYPE END-EXEC.",
+        "r/app/join.py": 'q = "SELECT * FROM a JOIN accounts ON a.id = accounts.id"',
+        "r/app/update.java": 'String q = "UPDATE balances SET amount = 0";',
+        "r/app/drop.sql.py": 'conn.execute("TRUNCATE TABLE audits")',
     }
-    tables = {"benchmarkrun": ["benchmark_runs"], "run": ["runs"], "transactiontype": ["TRANSACTION_TYPE"]}
+    tables = {
+        "benchmarkrun": ["benchmark_runs"],
+        "run": ["runs"],
+        "transactiontype": ["TRANSACTION_TYPE"],
+        "account": ["accounts"],
+        "balance": ["balances"],
+        "audit": ["audits"],
+    }
 
     found = table_mentions(tables, files, own_files={"r/db/schema.sql"})
 
-    assert found == {"benchmarkrun": ["r/app/store.py"], "run": ["r/app/history.py"], "transactiontype": ["r/cbl/PROG.cbl"]}
+    assert found == {
+        "benchmarkrun": ["r/app/store.py"],
+        "run": ["r/app/history.py"],
+        "transactiontype": ["r/cbl/PROG.cbl"],
+        "account": ["r/app/join.py"],
+        "balance": ["r/app/update.java"],
+        "audit": ["r/app/drop.sql.py"],
+    }
+
+
+def test_a_schema_name_and_comments_are_no_table_mention():
+    """users.orders names the table orders in the schema users; a query in a comment is no use of the table."""
+    from deriva.modules.extraction.data_entities import table_mentions
+
+    files = {
+        "r/app/a.py": 'conn.execute("SELECT * FROM users.orders")',
+        "r/app/b.py": "# SELECT * FROM users\nx = 1",
+        "r/app/c.java": "// SELECT * FROM users\n/* UPDATE users SET x = 1 */ int y = 0;",
+        "r/app/d.sql": "-- SELECT * FROM users\nSELECT 1;",
+        "r/app/e.py": 'conn.execute("SELECT * FROM users")  # the real use',
+    }
+
+    found = table_mentions({"user": ["users"], "order": ["orders"]}, files)
+
+    assert found == {"user": ["r/app/e.py"], "order": ["r/app/a.py"]}
+
+
+def test_ancestry_does_not_follow_an_ambiguous_base_name():
+    """Two types named Base: an ORM base and an unrelated one. Thing(Base) cannot be told apart, so it is no ORM entity."""
+    types = [
+        _t("Base", "r/orm/base.py", bases=["DeclarativeBase"]),
+        _t("Base", "r/ui/base.py"),
+        _t("Thing", "r/ui/thing.py", bases=["Base"]),
+        _t("Order", "r/orm/order.py", bases=["OrmBase"]),
+        _t("OrmBase", "r/orm/ormbase.py", bases=["DeclarativeBase"]),
+    ]
+
+    result = detect_entities(types, {}, {}, RULES)
+
+    assert _names(result) == ["Order"]  # one unambiguous step through OrmBase still counts
+
+
+def test_a_generated_table_follows_a_type_with_a_name_outside_ascii():
+    """Names in other scripts keep their letters: two such types never share an empty key."""
+    types = [
+        _t("Заказ", "r/orm/order.py", decorators=["Entity"]),
+        _t("Клиент", "r/orm/client.py", decorators=["Entity"]),
+        _t("ЗАКАЗ", "r/db/setup.sql", category="table"),
+    ]
+
+    result = detect_entities(types, {}, {}, RULES)
+
+    by_name = {e.name_candidates[0][0]: e for e in result.entities}
+    assert sorted(by_name) == ["Заказ", "Клиент"]
+    assert len(by_name["Заказ"].type_ids) == 2 and len(by_name["Клиент"].type_ids) == 1  # the table follows its own type

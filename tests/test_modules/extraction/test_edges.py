@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deriva.modules.extraction.base import generate_method_node_id
 from deriva.modules.extraction.edges import (
     ALL_EDGE_TYPES,
     PYTHON_STDLIB,
@@ -572,6 +573,20 @@ class TestExtractEdgesBatch:
         )
 
         assert result["stats"]["files_processed"] == 2
+
+    def test_the_java_file_index_is_built_once_per_batch(self):
+        """Every Java file with imports resolves against one index of the repository's Java files, not a fresh scan per file."""
+        java = "package org.acme;\nimport org.acme.util.Error;\nclass Op%d { void f() { new Error(); } }\n"
+        files = [{"path": f"src/org/acme/Op{i}.java", "file_type": "source", "subtype": "java", "content": java % i} for i in range(3)]
+        files.append({"path": "src/org/acme/util/Error.java", "file_type": "source", "subtype": "java", "content": "package org.acme.util;\nclass Error {}\n"})
+
+        from deriva.modules.extraction import edges as edges_module
+
+        with patch.object(edges_module, "_java_file_index", wraps=edges_module._java_file_index) as index:
+            result = extract_edges_batch(files=files, repo_name="r", repo_path="/repo")
+
+        assert index.call_count == 1
+        assert result["stats"]["imports"]["internal"] == 3
 
 
 # =============================================================================
@@ -1273,6 +1288,24 @@ class TestResolveCallee:
         )
 
         assert result is not None
+
+    @pytest.mark.parametrize(
+        ("file_path", "is_method_call", "expected_class"),
+        [
+            ("main.py", False, None),  # a bare f() in Python is the module function
+            ("main.js", False, None),
+            ("Main.java", True, "Caller"),  # a bare f() in Java is this.f()
+            ("Main.cs", False, "Caller"),  # a bare F() in C# is this.F(), with no target recorded
+        ],
+    )
+    def test_a_bare_call_prefers_the_callers_own_method_only_where_the_language_calls_it(self, file_path, is_method_call, expected_class):
+        from deriva.modules.extraction.edges import _resolve_callee
+
+        method_lookup = {"func": [{"class_name": "Caller", "line_start": 1, "line_end": 10}, {"class_name": None, "line_start": 20, "line_end": 30}]}
+
+        result = _resolve_callee("func", None, is_method_call, "Caller", method_lookup, "r", file_path)
+
+        assert result == generate_method_node_id("r", file_path, "func", expected_class)
 
 
 # =============================================================================

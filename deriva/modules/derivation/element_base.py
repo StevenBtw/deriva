@@ -1426,6 +1426,8 @@ class ElementDerivationBase(ABC):
         # Element names come from the candidates' own names (structure), not the LLM
         source_names = {c.node_id: c.name for c in batch}
         candidates_by_id = {c.node_id: c for c in batch}
+        # The names a naming answer may not take, read once per batch (not per element)
+        reserved = self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming is not None and naming.guards.reserved_labels else set()
         for derived in parse_result.get("data", []):
             element_result = build_element(
                 derived,
@@ -1451,7 +1453,7 @@ class ElementDerivationBase(ABC):
                     repo_name,
                     taken,
                     structure_names,
-                    self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming.guards.reserved_labels else set(),
+                    reserved,
                 )
             taken.append(element_data["name"])
 
@@ -1572,6 +1574,8 @@ class ElementDerivationBase(ABC):
         created_by_source: dict[str, dict[str, Any]] = {}
         # Names already taken (``taken``) are checked after each call, never put in a prompt
         # (prompts depend on structure only, so one LLM drift cannot cascade)
+        # The names a naming answer may not take, read once (not per candidate)
+        reserved = self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming is not None and naming.guards.reserved_labels else set()
 
         for cand in filtered:
             prompt = build_single_candidate_prompt(
@@ -1624,7 +1628,7 @@ class ElementDerivationBase(ABC):
                     repo_name,
                     taken,
                     structure_names,
-                    self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming.guards.reserved_labels else set(),
+                    reserved,
                 )
 
             try:

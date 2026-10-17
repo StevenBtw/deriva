@@ -89,8 +89,8 @@ def _compact(words: list[str]) -> str:
 
 
 def _flat(name: str) -> str:
-    """A name without case or separators, as a generated table name writes its type's name."""
-    return re.sub(r"[^0-9a-z]", "", name.casefold())
+    """A name without case or separators, as a generated table name writes its type's name (letters of any script kept)."""
+    return re.sub(r"[\W_]", "", name.casefold())
 
 
 def _cased(word: str) -> str:
@@ -125,6 +125,25 @@ def entity_name(type_name: str, unit_name: str, rules: EntityRules, table: bool 
     return " ".join(_cased(w) for w in words)
 
 
+# Line comment markers per file suffix; SQL comments (-- and /* */) are left out in every file
+_LINE_COMMENTS = {
+    "#": (".py", ".rb", ".sh", ".bash", ".yml", ".yaml", ".pl", ".r", ".toml", ".cfg", ".ini", ".properties"),
+    "//": (".java", ".js", ".jsx", ".ts", ".tsx", ".cs", ".go", ".kt", ".scala", ".swift", ".c", ".cpp", ".h", ".php", ".groovy", ".rs"),
+}
+
+
+def _without_comments(path: str, text: str) -> str:
+    """The text without comments, so a query in a comment is no use of a table (strings and embedded SQL are kept)."""
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+    text = re.sub(r"(?m)(^|\s)--.*$", r"\1", text)  # an SQL comment (not a decrement such as i--)
+    lower = path.lower()
+    for marker, suffixes in _LINE_COMMENTS.items():
+        if lower.endswith(suffixes):
+            # A marker at the start of a line or after whitespace (not inside a URL or a string like "a#b")
+            text = re.sub(rf"(?m)(^|\s){re.escape(marker)}.*$", r"\1", text)
+    return text
+
+
 def table_mentions(tables: dict[str, list[str]], files: dict[str, str], own_files: set[str] | None = None) -> dict[str, list[str]]:
     """The files that query a table, per entity key; the files that define it are left out.
 
@@ -133,10 +152,12 @@ def table_mentions(tables: dict[str, list[str]], files: dict[str, str], own_file
     without a schema in front, case-insensitive. A table named like a common word only counts there.
     """
     found: dict[str, list[str]] = {}
+    texts = {path: _without_comments(path, text) for path, text in files.items() if path not in (own_files or set())}
     for key, names in sorted(tables.items()):
         alternatives = "|".join(re.escape(n) for n in sorted(names) if n)
-        pattern = re.compile(rf"\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+(?:[\w$#@\"`\[\]]+\.)?[\"`\[]?(?:{alternatives})(?![A-Za-z0-9_])", re.IGNORECASE)
-        hits = sorted(path for path, text in files.items() if path not in (own_files or set()) and pattern.search(text))
+        # A name followed by a dot is a schema (users.orders names orders), not the table
+        pattern = re.compile(rf"\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+(?:[\w$#@\"`\[\]]+\.)?[\"`\[]?(?:{alternatives})(?![A-Za-z0-9_.])", re.IGNORECASE)
+        hits = sorted(path for path, text in texts.items() if pattern.search(text))
         if hits:
             found[key] = hits
     return found
@@ -156,9 +177,12 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
     dto_bases, dto_suffixes, dto_dirs = lower(rules.dto_bases), lower(rules.dto_suffixes), lower(rules.dto_dirs)
     configs, config_suffixes, technical = lower(rules.config_markers), lower(rules.config_suffixes), lower(rules.technical_words)
 
-    bases_of: dict[str, set[str]] = {}
+    # A base is known by name only: follow it a second step only when one type has that name (two types named
+    # alike could be unrelated, and their bases would mix)
+    named: dict[str, list[dict[str, Any]]] = {}
     for t in types:
-        bases_of.setdefault(str(t["name"]).casefold(), set()).update(_bare(b) for b in t.get("bases") or [])
+        named.setdefault(str(t["name"]).casefold(), []).append(t)
+    bases_of = {name: {_bare(b) for b in same[0].get("bases") or []} for name, same in named.items() if len(same) == 1}
 
     def ancestors(t: dict[str, Any]) -> set[str]:
         direct = {_bare(b) for b in t.get("bases") or []}
@@ -168,7 +192,9 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
         return {_bare(d) for d in t.get("decorators") or [] if ":" not in str(d)} | ancestors(t)
 
     root_names = {str(t["name"]).casefold() for t in types if marks(t) & roots}
-    orm_names = {str(t["name"]).casefold() for t in types if t.get("bases")} & {b for t in types for b in ancestors(t) if ancestors(t) & orm}
+    # ORM bases of the repository itself: types other types name as their base that descend from an ORM base
+    referenced = {_bare(b) for t in types for b in t.get("bases") or []}
+    orm_names = {str(t["name"]).casefold() for t in types if t.get("bases") and ancestors(t) & orm and str(t["name"]).casefold() in referenced}
     has_roots = bool(root_names)
     result = EntityResult()
     found: dict[str, Entity] = {}

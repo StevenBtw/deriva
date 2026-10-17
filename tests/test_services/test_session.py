@@ -772,6 +772,21 @@ class TestPipelineSessionConfigMethods:
             session._mock_config = mock_config  # type: ignore[attr-defined]
             yield session
 
+    def test_later_steps_of_a_disabled_target_are_the_enabled_later_ones(self, connected_session):
+        """--only-step enables a disabled step for the run: its later steps are found all the same."""
+        from types import SimpleNamespace
+
+        configs = [
+            SimpleNamespace(node_type="A", sequence=1, enabled=True),
+            SimpleNamespace(node_type="B", sequence=2, enabled=False),
+            SimpleNamespace(node_type="C", sequence=3, enabled=True),
+            SimpleNamespace(node_type="D", sequence=4, enabled=False),
+        ]
+        connected_session._mock_config.get_extraction_configs.side_effect = lambda engine, enabled_only=False: [c for c in configs if c.enabled or not enabled_only]
+
+        assert connected_session.later_extraction_steps("B") == ["C"]
+        assert connected_session.later_extraction_steps("A") == ["C"]
+
     def test_list_steps_delegates_to_config(self, connected_session):
         """Should delegate list_steps to config service."""
         connected_session._mock_config.list_steps.return_value = [{"name": "step1"}]

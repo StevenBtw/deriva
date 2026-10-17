@@ -154,3 +154,18 @@ def test_a_member_reaches_a_data_entity_through_any_of_its_types():
     invoicing = next(s for s in services if "do_invoice" in s["properties"]["objects"])
     # The two members that import the entity's type file reach it (the others join their interface's group)
     assert {"BillingPage", "InvoiceController"} <= {m["name"] for m in invoicing["properties"]["members"]}
+
+
+def test_a_member_reaches_a_data_entity_through_a_linked_type_node():
+    """No file of the entity is imported: the member reaches it through object_links to one of the entity's type nodes."""
+    from deriva.modules.derivation.base import UnitScopes
+
+    entity = _el("do_invoice", "DataObject", "entity::r::invoice", "Invoice")
+    scopes = UnitScopes(files={}, nodes={}, entity_files={}, entity_nodes={"entity::r::invoice": frozenset({"typedef::invoice"})})
+    object_links = [("file::invoice_ctl", "typedef::invoice")]
+
+    services = derive_member_services([*COMPONENTS, *INTERFACES, entity], {}, [], [], {}, CONFIG, "NAME", _llm([]), scopes=scopes, object_links=object_links)
+
+    # Reached through the type node alone (no paths, no imports); OrderController reaches nothing and joins its interface's group
+    invoicing = next(s for s in services if "do_invoice" in s["properties"]["objects"])
+    assert "InvoiceController" in {m["name"] for m in invoicing["properties"]["members"]}

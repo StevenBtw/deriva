@@ -53,4 +53,11 @@ def catalog_from_params(entries: Any) -> tuple[Technology, ...]:
         isinstance(e, dict) and isinstance(e.get("name"), str) and e["name"] and isinstance(e.get("kind"), str) and isinstance(e.get("aliases", []), list) for e in entries
     ):
         raise ValueError("technologies: a list of {name, kind, aliases}")
+    # One alias (or name) names one technology: matching would otherwise depend on the list order
+    owner: dict[str, int] = {}
+    for i, e in enumerate(entries):
+        for alias in {_norm(str(a)) for a in [e["name"], *e.get("aliases", [])]}:
+            if alias in owner and owner[alias] != i:
+                raise ValueError(f"technologies: {alias!r} names both {entries[owner[alias]]['name']} and {e['name']}")
+            owner[alias] = i
     return tuple(Technology(name=e["name"], kind=e["kind"], aliases=tuple(str(a) for a in e.get("aliases", []))) for e in entries)

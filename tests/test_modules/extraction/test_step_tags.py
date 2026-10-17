@@ -27,7 +27,9 @@ def test_edges_are_owned_by_their_type_and_endpoints():
     assert edge_step("REFERENCES", "File", "BusinessConcept") == "BusinessConcept"
     assert edge_step("INCLUDES", "DataEntity", "TypeDefinition") == "DataEntity"
     assert edge_step("INHERITS", "TypeDefinition", "TypeDefinition") == "TypeDefinition"
-    assert edge_step("USES", "File", "ExternalDependency") == "Imports"
+    # An import's USES edge names the imported module; a declared dependency's (ExternalDependency) does not
+    assert edge_step("USES", "File", "ExternalDependency", {"module": "requests"}) == "Imports"
+    assert edge_step("USES", "File", "ExternalDependency", {}) == "ExternalDependency"
     assert edge_step("RUNS", "Environment", "Deployment") == "Deployment"
     assert edge_step("DEPLOYS", "Deployment", "DeployableUnit") == "Deployment"
     assert edge_step("HOSTS", "Environment", "Software") == "Deployment"

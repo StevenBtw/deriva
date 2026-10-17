@@ -2533,6 +2533,22 @@ class TestDataEntityStep:
             graph.add_edge(node_id, f"typedef::r::{base}", "INHERITS")
         return node_id
 
+    def test_a_record_is_imported_by_programs_not_by_copybooks(self, graph):
+        """min_importers counts the programs that import a record file; a copybook's COPY of it does not count."""
+        from deriva.adapters.graph.models import FileNode, TypeDefinitionNode
+        from deriva.services.extraction import _entity_facts
+
+        for path in ("app/REC.cpy", "app/A.cbl", "app/B.cbl", "app/OTHER.cpy"):
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="source", subtype="cobol"), node_id=f"file::r::{path}")
+        for name, path in (("A", "app/A.cbl"), ("B", "app/B.cbl")):
+            graph.add_node(TypeDefinitionNode(name=name, type_category="program", file_path=path, repository_name="r"), node_id=f"typedef::r::{name}")
+        for source in ("app/A.cbl", "app/B.cbl", "app/OTHER.cpy"):
+            graph.add_edge(f"file::r::{source}", "file::r::app/REC.cpy", "IMPORTS")
+
+        _, importers, _ = _entity_facts(lambda query, params=None: graph.query(query, {**(params or {}), "repo_name": "r"}))
+
+        assert importers == {"r/app/REC.cpy": 2}  # stored paths carry the repository
+
     def test_entities_are_written_with_their_types_and_the_rest_is_reported(self, graph):
         from deriva.adapters.graph.models import TypeDefinitionNode
 
@@ -2549,6 +2565,7 @@ class TestDataEntityStep:
         assert (entity["id"], entity["name"], entity["signal"], list(entity["names"])) == ("entity::r::policy", "Policy", "aggregate root", ["Policy"])
         types = graph.query("MATCH (d:Graph:DataEntity)-[:`Graph:INCLUDES`]->(t:Graph:TypeDefinition) RETURN t.id AS id ORDER BY id")
         assert [t["id"] for t in types] == sorted([a, b])
+        assert graph.query("MATCH (d:Graph:DataEntity) RETURN d.typeCount AS n")[0]["n"] == 2  # the included types
         assert result["excluded"] == [{"type": "PolicyItem", "reason": "part of an aggregate"}]
 
         self._run_again = _run_extraction_step(self._cfg({**params, "root_markers": []}), SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
@@ -2665,6 +2682,24 @@ class TestRerunnableSteps:
 
         assert result["swept"] == {"nodes": 0, "edges": 0, "skipped": "errors"}
         assert graph.node_exists("entity::r::order")
+
+    def test_a_run_with_errors_keeps_the_other_owners_of_what_it_wrote(self, graph):
+        """A node another step also produces keeps that owner when this step rewrites it and then fails."""
+        from deriva.adapters.graph.models import DataEntityNode
+
+        self._types(graph, ["Order"])
+        self._run(graph)
+        graph.batch_update_properties({"entity::r::order": {"extractSteps": ["DataEntity", "Other"]}})
+
+        def failing(*args, **kwargs):
+            graph.add_node(DataEntityNode(name="Order", signal="orm entity", repository_name="r"), node_id="entity::r::order")
+            return {"nodes_created": 1, "edges_created": 0, "errors": ["boom"]}
+
+        with patch("deriva.services.extraction._run_step_writes", side_effect=failing):
+            self._run(graph)
+
+        (row,) = graph.query("MATCH (n {id: 'entity::r::order'}) RETURN n.extractSteps AS steps")
+        assert sorted(row["steps"]) == ["DataEntity", "Other"]
 
 
 class TestTagSteps:
@@ -3055,3 +3090,14 @@ class TestBusinessLayerStep:
     def test_the_signals_are_validated(self, graph, tmp_path):
         with pytest.raises(ValueError, match="BusinessLayer"):
             _run_extraction_step(self._cfg({"markers": "require_role"}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+
+def test_names_that_share_a_slug_get_ids_of_their_own():
+    """my_api and my-api are two services: each keeps a node of its own, whatever their order; a lone name keeps its plain slug."""
+    from deriva.services.extraction import _slug_ids
+
+    ids = _slug_ids("deployment::r::compose", ["my_api", "web", "my-api"])
+
+    assert ids["web"] == "deployment::r::compose::web"
+    assert ids["my_api"] != ids["my-api"] and all(ids[n].startswith("deployment::r::compose::my-api-") for n in ("my_api", "my-api"))
+    assert _slug_ids("deployment::r::compose", ["my-api", "my_api"]) == {n: ids[n] for n in ("my-api", "my_api")}

@@ -17,9 +17,11 @@ find make a mainframe environment when there is no other one.
 from __future__ import annotations
 
 import fnmatch
+import itertools
 import json
 import re
 import shlex
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
@@ -135,8 +137,11 @@ class _Units:
                 last.setdefault(words[-1], []).append(str(u["id"]))
         self.by_last = {word: ids[0] for word, ids in last.items() if len(ids) == 1}
 
-    def by_folder(self, folder: str) -> str | None:
+    def by_folder(self, folder: str, *names: str | None) -> str | None:
+        """The unit in a folder; units that share it are told apart by name (``by_name``), else none is."""
         exact = [u for u in self.units if u["path"] == folder]
+        if len(exact) > 1:
+            return _Units(exact).by_name(*names)
         if exact:
             return str(exact[0]["id"])
         below = [u for u in self.units if str(u["path"]).startswith(folder + "/")]
@@ -182,8 +187,8 @@ def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Env
         spec = spec if isinstance(spec, dict) else {}
         build = spec.get("build")
         context = build.get("context") if isinstance(build, dict) else build
-        unit = units.by_folder(_normalize(f"{_parent(path)}/{context}")) if isinstance(context, str) else None
         image = spec.get("image") if isinstance(spec.get("image"), str) else None
+        unit = units.by_folder(_normalize(f"{_parent(path)}/{context}"), image, str(name)) if isinstance(context, str) else None
         unit = unit or (units.by_name(image, str(name)) if (image or not context) else None)
         depends = spec.get("depends_on") or []
         variables = spec.get("environment") or {}
@@ -195,18 +200,30 @@ def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Env
                 unit=unit,
                 image=image,
                 depends_on=sorted(str(d) for d in (depends if isinstance(depends, list) else depends.keys())),
-                environment={str(k): str(v) for k, v in variables.items()} if isinstance(variables, dict) else {},
+                environment={str(k): _redacted(str(k), str(v)) for k, v in variables.items()} if isinstance(variables, dict) else {},
                 ports=_ports(spec.get("ports")),
             )
         )
     return env
 
 
+_SECRET_KEY = re.compile(r"(?i)pass(?:word|wd)?|secret|token|api_?key|access_?key|private_?key|credential")
+_URL_PASSWORD = re.compile(r"(://[^:/@\s]+:)[^@/\s]+@")
+
+
+def _redacted(key: str, value: str) -> str:
+    """A variable's value without secrets: a secret-looking key keeps only a URL or a ``${reference}``; a URL loses its password."""
+    if _SECRET_KEY.search(key) and "://" not in value and not _VARIABLE.fullmatch(value):
+        return "***"
+    return _URL_PASSWORD.sub(r"\1***@", value)
+
+
 def _ports(entries: Any) -> list[int]:
     """The port numbers of compose ``ports`` entries ("8080:80", "127.0.0.1:5432:5432", 9000, {target, published})."""
     found: set[int] = set()
     for entry in entries if isinstance(entries, list) else []:
-        values = [entry.get("target"), entry.get("published")] if isinstance(entry, dict) else str(entry).split("/")[0].split(":")
+        # A bracketed IPv6 host ("[::1]:5432:5432") is one address, no port
+        values = [entry.get("target"), entry.get("published")] if isinstance(entry, dict) else re.sub(r"^\[[^\]]*\]:", "", str(entry).split("/")[0]).split(":")
         found |= {int(v) for v in values if str(v).isdigit()} - {0}
     return sorted(p for p in found if p < 65536)
 
@@ -225,9 +242,13 @@ def _kubernetes(manifests: dict[str, list[Any]], units: _Units, rules: Deploymen
             services.append(DeployedService(name=name, unit=units.by_name(name, image), image=image))
     if not services:
         return None
-    folders = [PurePosixPath(p).parent.parts for p in manifests]
-    common = [parts[0] for parts in zip(*folders, strict=False) if len(set(parts)) == 1]
-    return Environment(kind="kubernetes", name=dict(rules.environment_names).get("kubernetes", "Kubernetes"), file="/".join(common), services=services)
+    return Environment(kind="kubernetes", name=dict(rules.environment_names).get("kubernetes", "Kubernetes"), file=_common_folder(manifests), services=services)
+
+
+def _common_folder(paths: Iterable[str]) -> str:
+    """The leading folders all paths share (up to the first that differs)."""
+    folders = [PurePosixPath(p).parent.parts for p in paths]
+    return "/".join(parts[0] for parts in itertools.takewhile(lambda parts: len(set(parts)) == 1, zip(*folders, strict=False)))
 
 
 def _qualified(kind: str, resource: dict[str, Any], rules: DeploymentRules) -> str:
@@ -260,18 +281,27 @@ def _cloud(templates: dict[str, dict[str, Any]], units: _Units, rules: Deploymen
                     names.add(str(resource["Environment"]))
             elif role in ("function", "managed"):
                 managed.add(_qualified(str(kind), resource, rules))
-    if not services:
-        return None, sorted(managed)
-    folders = [PurePosixPath(p).parent.parts for p in templates]
-    common = [parts[0] for parts in zip(*folders, strict=False) if len(set(parts)) == 1]
+    if not services and not managed:
+        return None, []
+    # Functions and managed services without a container (a serverless app) are a cloud environment all the same
     name = next(iter(names)) if len(names) == 1 else dict(rules.environment_names).get("cloud", "Cloud")
-    env = Environment(kind="cloud", name=name, file="/".join(common), services=services, managed=sorted(managed))
+    env = Environment(kind="cloud", name=name, file=_common_folder(templates), services=services, managed=sorted(managed))
     return env, sorted(managed)
 
 
 def _last_from(text: str) -> str | None:
-    images = [m.group(1) for m in re.finditer(r"(?im)^\s*FROM\s+(?:--\S+\s+)*(\S+)", text)]
-    return images[-1] if images else None
+    """The base image of a Dockerfile's last stage; a stage built on an earlier stage (``FROM build``) takes that stage's base."""
+    stages = [(m.group(1), (m.group(2) or "").casefold()) for m in re.finditer(r"(?im)^\s*FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?", text)]
+    if not stages:
+        return None
+    image, seen = stages[-1][0], set()
+    while image.casefold() not in seen:
+        seen.add(image.casefold())
+        earlier = next((base for base, alias in stages if alias and alias == image.casefold()), None)
+        if earlier is None:
+            break
+        image = earlier
+    return image
 
 
 def detect_deployments(
@@ -333,7 +363,8 @@ def detect_deployments(
     if cloud:
         environments.append(cloud)
     order = {"cloud": 0, "compose": 1, "kubernetes": 2}
-    ranked = sorted(environments, key=lambda e: (order[e.kind], len(PurePosixPath(e.file).parts), e.file))
+    # An environment that runs services comes before one that only holds managed services
+    ranked = sorted(environments, key=lambda e: (not e.services, order[e.kind], len(PurePosixPath(e.file).parts), e.file))
     if ranked:
         result.primary, result.others = ranked[0], ranked[1:]
     return result
@@ -439,7 +470,7 @@ def built_images(repository: str, files: dict[str, str], scripts: tuple[str, ...
             context = _normalize(f"{base}/{positional[-1]}")
             target = _normalize(f"{base}/{dockerfile}") if dockerfile else f"{context}/Dockerfile"
             for tag in tags:
-                name = image_name(_VARIABLE.sub("", tag))
+                name = image_name(_VARIABLE.sub("", tag).lstrip("/"))
                 if name and re.match(r"[a-z0-9]", name):
                     built.setdefault(name, target)
     return built

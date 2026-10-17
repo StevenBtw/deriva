@@ -457,6 +457,7 @@ def extract_edges_from_file(
     global_type_lookup: dict[str, list[dict]] | None = None,
     call_languages: dict[str, frozenset[str]] | None = None,
     scope_of: Callable[[str], str] | None = None,
+    java_files: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """
     Extract edges from a single source file using a single AST parse.
@@ -469,6 +470,7 @@ def extract_edges_from_file(
         external_packages: Set of known external package names
         edge_types: Which edge types to extract (default: all)
         ts_manager: Optional TreeSitterManager instance to reuse
+        java_files: Optional index of the repository's Java files by name (built from all_file_paths when missing)
 
     Returns:
         Dictionary with:
@@ -510,6 +512,8 @@ def extract_edges_from_file(
 
         # Get language-specific filter constants
         filter_constants = manager.get_filter_constants(file_path=file_path)
+        if java_files is None and file_path.endswith(".java") and imports:
+            java_files = _java_file_index(all_file_paths)
 
         # Build lookups once (shared across edge types)
         type_lookup = {t.name: t for t in types}
@@ -525,6 +529,7 @@ def extract_edges_from_file(
                 external_packages=external_packages,
                 edge_types=edge_types,
                 filter_constants=filter_constants,
+                java_files=java_files,
             )
             edges.extend(import_edges)
             nodes.extend(import_nodes)
@@ -539,7 +544,7 @@ def extract_edges_from_file(
                 repo_name=repo_name,
                 filter_constants=filter_constants,
                 global_method_lookup=global_method_lookup,
-                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants),
+                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants, java_files),
                 call_languages=call_languages,
                 scope_of=scope_of,
             )
@@ -639,6 +644,7 @@ def extract_edges_batch(
 
     # Build set of all file paths for internal import resolution
     all_file_paths = {f["path"] for f in files}
+    java_files = _java_file_index(all_file_paths)
 
     # Filter to only source files that Tree-sitter can parse
     source_files = [f for f in files if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES]
@@ -677,6 +683,7 @@ def extract_edges_batch(
             global_type_lookup=global_type_lookup,
             call_languages=call_languages,
             scope_of=scope_of,
+            java_files=java_files,
         )
 
         all_edges.extend(result["data"]["edges"])
@@ -730,6 +737,7 @@ def _extract_import_edges(
     external_packages: set[str],
     edge_types: set[EdgeType],
     filter_constants: FilterConstants | None = None,
+    java_files: dict[str, list[str]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     """Extract IMPORTS and USES edges from import statements.
 
@@ -747,7 +755,8 @@ def _extract_import_edges(
     stdlib_modules = filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
 
     source_file_id = generate_file_node_id(repo_name, file_path)
-    java_files = _java_file_index(all_file_paths) if file_path.endswith(".java") and imports else None
+    if java_files is None and file_path.endswith(".java") and imports:
+        java_files = _java_file_index(all_file_paths)
 
     for imp in imports:
         # from <package> import <module>: the module's own file (and the package for names that are no module)
@@ -848,10 +857,12 @@ def _imported_paths(
     all_file_paths: set[str],
     external_packages: set[str],
     filter_constants: FilterConstants | None = None,
+    java_files: dict[str, list[str]] | None = None,
 ) -> set[str]:
     """The repository files a file imports (its internal imports, resolved as the IMPORTS edges are)."""
     stdlib_modules = filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
-    java_files = _java_file_index(all_file_paths) if file_path.endswith(".java") and imports else None
+    if java_files is None and file_path.endswith(".java") and imports:
+        java_files = _java_file_index(all_file_paths)
     paths: set[str] = set()
     for imp in imports:
         submodules, only_modules = _python_submodules(imp.module, imp.names, file_path, all_file_paths) if imp.is_from_import else ([], False)
@@ -1284,6 +1295,10 @@ def _resolve_caller(
     return None
 
 
+# Languages where a bare f() inside a class calls the class's own method (this.f())
+_IMPLICIT_RECEIVER_LANGUAGES = frozenset({"java", "csharp"})
+
+
 def _language_of(path: str) -> str | None:
     """The parser language of a file, from its extension."""
     return TreeSitterManager.detect_language(path)
@@ -1326,9 +1341,11 @@ def _resolve_callee(
     if len(candidates) == 1:
         return generate_method_node_id(repo_name, file_path, callee_name, candidates[0]["class_name"])
 
-    for c in candidates:
-        if caller_class and c["class_name"] == caller_class:
-            return generate_method_node_id(repo_name, file_path, callee_name, caller_class)
+    # A bare call means the caller's own method only where the language has an implicit receiver
+    if caller_class and (callee_qualifier or _language_of(file_path) in _IMPLICIT_RECEIVER_LANGUAGES):
+        for c in candidates:
+            if c["class_name"] == caller_class:
+                return generate_method_node_id(repo_name, file_path, callee_name, caller_class)
 
     for c in candidates:
         if c["class_name"] is None:
