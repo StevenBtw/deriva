@@ -97,9 +97,9 @@ class TestSourcePaths:
     def test_paths_of_directory_file_and_type_sources(self, graph):
         from deriva.adapters.graph.models import DirectoryNode, FileNode, TypeDefinitionNode
 
-        graph.add_node(DirectoryNode(name="core", path="r/core", repository_name="r"), node_id="dir::r::core")
-        graph.add_node(FileNode(name="Find.java", path="r/core/Find.java", repository_name="r", file_type="source"), node_id="file::r::core/Find.java")
-        graph.add_node(TypeDefinitionNode(name="Order", type_category="class", file_path="r/core/Order.java", repository_name="r"), node_id="typedef::r::core/Order.java::Order")
+        graph.add_node(DirectoryNode(name="core", path="core", repository_name="r"), node_id="dir::r::core")
+        graph.add_node(FileNode(name="Find.java", path="core/Find.java", repository_name="r", file_type="source"), node_id="file::r::core/Find.java")
+        graph.add_node(TypeDefinitionNode(name="Order", type_category="class", file_path="core/Order.java", repository_name="r"), node_id="typedef::r::core/Order.java::Order")
         elements = [
             _el("ac_core", "ApplicationComponent", "dir::r::core"),
             _el("ai_find", "ApplicationInterface", "file::r::core/Find.java"),
@@ -114,9 +114,9 @@ class TestSourcePaths:
     def test_a_source_a_directory_represents_lies_in_that_directory(self, graph):
         from deriva.adapters.graph.models import BusinessConceptNode, DirectoryNode
 
-        graph.add_node(DirectoryNode(name="billing", path="r/apps/billing", repository_name="r"), node_id="dir::r::apps_billing")
-        graph.add_node(DirectoryNode(name="ledger", path="r/apps/ledger/ui", repository_name="r"), node_id="dir::r::apps_ledger_ui")
-        graph.add_node(DirectoryNode(name="ledger", path="r/apps/ledger/api", repository_name="r"), node_id="dir::r::apps_ledger_api")
+        graph.add_node(DirectoryNode(name="billing", path="apps/billing", repository_name="r"), node_id="dir::r::apps_billing")
+        graph.add_node(DirectoryNode(name="ledger", path="apps/ledger/ui", repository_name="r"), node_id="dir::r::apps_ledger_ui")
+        graph.add_node(DirectoryNode(name="ledger", path="apps/ledger/api", repository_name="r"), node_id="dir::r::apps_ledger_api")
         for key in ("billing", "ledger", "invoicing"):
             graph.add_node(BusinessConceptNode(name=key, concept_type="capability", description="", origin_source="", repository_name="r"), node_id=f"concept::r::{key}")
         graph.add_edge(src_id="dir::r::apps_billing", dst_id="concept::r::billing", relationship="REPRESENTS")
@@ -238,7 +238,7 @@ class TestLlmProposals:
             relationship_rules=rules,
             llm_query_fn=lambda prompt, schema, **kw: SimpleNamespace(content=json.dumps({"relationships": proposals})),
             graph_manager=Connected(paths),
-            llm_config=RelationshipLLMConfig(instruction="rules", min_confidence=0.5, persona="P"),
+            llm_config=RelationshipLLMConfig(instruction="rules", persona="P"),
             containment=RULES,
         )
 

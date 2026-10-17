@@ -16,7 +16,7 @@ from deriva.modules.derivation.base import (
     parse_relationship_response,
 )
 
-REL_CFG = RelationshipLLMConfig(instruction="Relationship rules.", min_confidence=0.6, persona="P")
+REL_CFG = RelationshipLLMConfig(instruction="Relationship rules.", persona="P")
 
 
 class TestBuildDerivationPrompt:
@@ -1093,33 +1093,10 @@ class TestDeriveBatchRelationships:
             outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
             inbound_rules=[],
             llm_query_fn=mock_llm,
-            llm_config=RelationshipLLMConfig(instruction="CUSTOM RULES FROM CONFIG", min_confidence=0.6, persona="P"),
+            llm_config=RelationshipLLMConfig(instruction="CUSTOM RULES FROM CONFIG", persona="P"),
         )
 
         assert "CUSTOM RULES FROM CONFIG" in mock_llm.call_args[0][0]
-
-    def test_min_confidence_comes_from_config(self):
-        """Relationships below the configured cutoff are dropped."""
-        from unittest.mock import MagicMock
-
-        from deriva.modules.derivation.base import RelationshipLLMConfig, RelationshipRule, derive_batch_relationships
-
-        mock_llm = MagicMock()
-        mock_llm.return_value.content = '{"relationships": [{"source": "new_app", "target": "old_svc", "relationship_type": "Serving", "confidence": 0.7}]}'
-
-        def run(min_confidence):
-            return derive_batch_relationships(
-                new_elements=[{"identifier": "new_app", "element_type": "ApplicationComponent"}],
-                existing_elements=[{"identifier": "old_svc", "element_type": "ApplicationService"}],
-                element_type="ApplicationComponent",
-                outbound_rules=[RelationshipRule(target_type="ApplicationService", rel_type="Serving")],
-                inbound_rules=[],
-                llm_query_fn=mock_llm,
-                llm_config=RelationshipLLMConfig(instruction="rules", min_confidence=min_confidence, persona="P"),
-            )
-
-        assert len(run(0.65)) == 1
-        assert run(0.75) == []
 
     def test_llm_relationships_are_tagged_llm(self):
         """LLM-proposed relationships carry derived_from='llm' for tiering."""
@@ -2202,6 +2179,77 @@ class TestDeriveDeterministicRelationships:
         # Should find relationship based on "Invoice" word overlap
         assert len(result) >= 0  # Depends on threshold, verify no crash
 
+    def test_a_wildcard_skip_switches_the_word_tier_off(self):
+        """name_match_skip with "*" on a side skips every type there: {("*", "*")} switches the tier off."""
+        from deriva.modules.derivation.base import RelationshipRule, derive_deterministic_relationships
+
+        new = [{"identifier": "ledger_app", "name": "Ledger Keeping", "properties": {"source": "unit::r::a"}}]
+        existing = [{"identifier": "ledger_svc", "name": "Ledger Keeping Service", "element_type": "ApplicationService", "properties": {"source": "unit::r::b"}}]
+        rules = [RelationshipRule(target_type="ApplicationService", rel_type="Realization")]
+
+        assert derive_deterministic_relationships(new, existing, "ApplicationComponent", rules, [])  # shared words link them
+        for skip in ({("*", "*")}, {("ApplicationComponent", "*")}, {("*", "ApplicationService")}):
+            assert derive_deterministic_relationships(new, existing, "ApplicationComponent", rules, [], skip=skip) == [], skip
+
+    def test_names_written_by_a_naming_call_do_not_decide_a_name_match(self):
+        """The words of properties.structure_name decide (rule 6d): LLM names that share a word link nothing."""
+        from deriva.modules.derivation.base import RelationshipRule, derive_deterministic_relationships
+
+        service = {"identifier": "as_cards", "name": "Card Management", "properties": {"structure_name": "LISTPGM", "source": "typedef::r::a"}}
+        interface = {
+            "identifier": "ai_online",
+            "name": "Credit Card Web UI",
+            "element_type": "ApplicationInterface",
+            "properties": {"structure_name": "Ledger Online Web UI", "source": "unit::r::online"},
+        }
+        rules = [RelationshipRule(target_type="ApplicationInterface", rel_type="Serving")]  # inbound: the source type
+
+        assert derive_deterministic_relationships([service], [interface], "ApplicationService", [], rules) == []
+
+    def test_structure_names_that_share_words_match_whatever_the_written_names(self):
+        from deriva.modules.derivation.base import RelationshipRule, derive_deterministic_relationships
+
+        service = {"identifier": "as_pay", "name": "Settlement", "properties": {"structure_name": "Payment Gateway", "source": "typedef::r::a"}}
+        interface = {
+            "identifier": "ai_pay",
+            "name": "Checkout Web UI",
+            "element_type": "ApplicationInterface",
+            "properties": {"structure_name": "Payment Gateway REST API", "source": "unit::r::pay"},
+        }
+        rules = [RelationshipRule(target_type="ApplicationInterface", rel_type="Serving")]  # inbound: the source type
+
+        result = derive_deterministic_relationships([service], [interface], "ApplicationService", [], rules)
+
+        assert [(r["source"], r["target"], r["relationship_type"]) for r in result] == [("ai_pay", "as_pay", "Serving")]
+
+    def test_a_skipped_type_pair_gets_no_name_match_link(self):
+        """params.name_match_skip: interface -> service is decided by the service's member list, never by words."""
+        from deriva.modules.derivation.base import RelationshipRule, derive_deterministic_relationships
+
+        service = {"identifier": "as_pay", "name": "Settlement", "properties": {"structure_name": "Payment Gateway", "source": "typedef::r::a"}}
+        interface = {
+            "identifier": "ai_pay",
+            "name": "Checkout Web UI",
+            "element_type": "ApplicationInterface",
+            "properties": {"structure_name": "Payment Gateway REST API", "source": "unit::r::pay"},
+        }
+        rules = [RelationshipRule(target_type="ApplicationInterface", rel_type="Serving")]  # inbound: the source type
+
+        result = derive_deterministic_relationships([service], [interface], "ApplicationService", [], rules, skip={("ApplicationInterface", "ApplicationService")})
+
+        assert result == []
+
+    def test_an_element_without_a_structure_name_matches_on_its_name(self):
+        from deriva.modules.derivation.base import RelationshipRule, derive_deterministic_relationships
+
+        service = {"identifier": "as_pay", "name": "Payment Processing", "properties": {"source": "typedef::r::a"}}
+        interface = {"identifier": "ai_pay", "name": "Payment REST API", "element_type": "ApplicationInterface", "properties": {"source": "unit::r::pay"}}
+        rules = [RelationshipRule(target_type="ApplicationInterface", rel_type="Serving")]  # inbound: the source type
+
+        result = derive_deterministic_relationships([service], [interface], "ApplicationService", [], rules)
+
+        assert [(r["source"], r["target"]) for r in result] == [("ai_pay", "as_pay")]
+
 
 class TestConsolidatedRelationshipsDedup:
     """A pair found by both endpoint types' passes is persisted once."""
@@ -2309,6 +2357,25 @@ class TestIsolatedNaming:
         )
 
         assert naming_source(cand) == {"kind": "Method", "name": "run", "path": "r/a.py", "type": "X"}
+
+    def test_a_units_readme_title_is_naming_evidence(self):
+        from deriva.modules.derivation.base import Candidate, naming_source
+
+        cand = Candidate(
+            node_id="unit::r::shop",
+            name="shop",
+            labels=["Graph", "DeployableUnit"],
+            properties={"path": "r/shop", "unitKind": "container", "manifestName": "shop-app", "readmeTitle": "Storefront Service", "webEntries": ["r/shop/index.html"]},
+        )
+
+        assert naming_source(cand) == {
+            "kind": "DeployableUnit",
+            "name": "shop",
+            "path": "r/shop",
+            "unit_kind": "container",
+            "manifest_name": "shop-app",
+            "readme_title": "Storefront Service",
+        }
 
     def test_prompt_depends_only_on_source_type_and_instruction(self):
         from deriva.modules.derivation.base import build_naming_prompt

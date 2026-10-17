@@ -203,14 +203,14 @@ class TestRelationshipConfigThreading:
         return derive
 
     def test_batch_mode_passes_relationship_config(self):
-        config = RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+        config = RelationshipLLMConfig(instruction="rules", persona="P")
 
         derive = self._generate(ConcreteDerivation(), config)
 
         assert derive.call_args.kwargs["llm_config"] is config
 
     def test_per_candidate_mode_passes_relationship_config(self):
-        config = RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+        config = RelationshipLLMConfig(instruction="rules", persona="P")
 
         derive = self._generate(ConcreteDerivation(), config, PerCandidateConfig(min_pool=1, rules="R", persona="P"))
 
@@ -1034,6 +1034,78 @@ class TestIsolatedNamingStep:
         created, _ = self._created([Candidate(node_id="n1", name="crud", labels=["Directory"], properties={})], ["CRUD Service"] * 3, per_candidate=False)
 
         assert [e["name"] for e in created] == ["CRUD Service"]
+
+
+@pytest.mark.parametrize("per_candidate", [True, False])
+def test_a_naming_answer_that_names_a_technology_gets_the_structure_name_in_every_flow(per_candidate):
+    """``naming.guards.reserved_labels`` hold in the batch and per-candidate flows too, not only for role elements."""
+    from deriva.modules.derivation.base import NameGuards, NamingConfig
+
+    candidates = [Candidate(node_id="dir_store", name="store", labels=["Directory"], properties={})]
+
+    def llm(prompt, schema, **kwargs):
+        if schema.get("name") == "element_naming":
+            return SimpleNamespace(content=json.dumps({"name": "Redis"}))
+        elements = [{"identifier": "x", "name": "n", "documentation": "d", "source": c.node_id, "confidence": 0.9} for c in candidates if f'"{c.node_id}"' in prompt]
+        return SimpleNamespace(content=json.dumps({"elements": elements}))
+
+    def query(cypher, params=None):
+        return [{"props": {"techName": "Redis"}}] if "Graph:Technology" in cypher else []
+
+    with (
+        patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+        patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+    ):
+        result = ConcreteDerivation().generate(
+            graph_manager=MagicMock(query=MagicMock(side_effect=query)),
+            archimate_manager=MagicMock(),
+            llm_query_fn=llm,
+            query="MATCH (n) RETURN n",
+            instruction="Test",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            existing_elements=[],
+            prompt=TEST_PROMPT,
+            per_candidate=PerCandidateConfig(min_pool=1, rules="R", persona="P") if per_candidate else None,
+            naming=NamingConfig(instruction="NAMING RULES", samples=1, guards=NameGuards(reserved_labels=("Technology",))),
+        )
+
+    assert [e["name"] for e in result.created_elements] == ["Store"]
+
+
+@pytest.mark.parametrize("per_candidate", [True, False])
+def test_per_batch_relationships_leave_out_the_name_match_skip_pairs(per_candidate):
+    """Without the deferred relationship pass, the elements' own pass gets the configured pairs."""
+    candidates = [Candidate(node_id="dir_store", name="store", labels=["Directory"], properties={})]
+
+    def llm(prompt, schema, **kwargs):
+        elements = [{"identifier": "x", "name": "n", "documentation": "d", "source": c.node_id, "confidence": 0.9} for c in candidates if f'"{c.node_id}"' in prompt]
+        return SimpleNamespace(content=json.dumps({"elements": elements}))
+
+    skip = {("ApplicationInterface", "ApplicationService")}
+    with (
+        patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+        patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+        patch("deriva.modules.derivation.element_base.derive_batch_relationships", return_value=[]) as relationships,
+    ):
+        ConcreteDerivation().generate(
+            graph_manager=MagicMock(query=MagicMock(return_value=[])),
+            archimate_manager=MagicMock(),
+            llm_query_fn=llm,
+            query="MATCH (n) RETURN n",
+            instruction="Test",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            existing_elements=[{"identifier": "e1", "name": "Existing", "element_type": "ApplicationComponent", "properties": {}}],
+            defer_relationships=False,
+            prompt=TEST_PROMPT,
+            per_candidate=PerCandidateConfig(min_pool=1, rules="R", persona="P") if per_candidate else None,
+            name_match_skip=skip,
+        )
+
+    assert relationships.call_args.kwargs["name_match_skip"] == skip
 
 
 class TestStructureDecidesUniqueness:

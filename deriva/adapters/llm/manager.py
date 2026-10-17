@@ -41,7 +41,7 @@ import time
 from pathlib import Path
 from typing import Any, TypeVar, cast, overload
 
-import httpx
+import httpx2
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
@@ -64,8 +64,8 @@ from .models import (
     ValidationError,
 )
 from .rate_limiter import RateLimitConfig, RateLimiter, get_default_rate_limit
-from .retry import classify_exception
-from .schemas import EXTRACTION_SCHEMAS
+from .retry import classify_exception, transport_error
+from .schemas import EXTRACTION_SCHEMAS, ArchiMateModelResponse
 
 # Thread pool for running LLM calls outside of existing event loops
 _llm_executor: concurrent.futures.ThreadPoolExecutor | None = None
@@ -82,12 +82,16 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
 def _is_retriable(error: Exception) -> bool:
     """Timeouts, connection errors, rate limits and 5xx are worth another try; other errors are not.
 
-    Output validation retries are handled by the pydantic-ai agent itself.
+    pydantic-ai wraps what the HTTP layer raises (a timeout arrives as a ``ModelAPIError`` whose
+    cause chain ends in the httpx2 transport error), so the transport error is looked for behind
+    the exception, not only on it. Output validation retries are handled by the pydantic-ai agent
+    itself.
     """
-    if isinstance(error, (httpx.LocalProtocolError, httpx.UnsupportedProtocol)):
+    transport = transport_error(error)
+    if transport is not None:
         # Client-side and permanent: a malformed header or URL never succeeds on retry
-        return False
-    if isinstance(error, (httpx.TransportError, TimeoutError, ConnectionError)):
+        return not isinstance(transport, (httpx2.LocalProtocolError, httpx2.UnsupportedProtocol))
+    if isinstance(error, (TimeoutError, ConnectionError)):
         return True
     return isinstance(error, ModelHTTPError) and classify_exception(error)[0] in (
         "rate_limited",
@@ -115,6 +119,7 @@ _SCHEMA_NAME_TO_MODEL: dict[str, type[BaseModel]] = {
     "test_extraction": EXTRACTION_SCHEMAS["Test"],
     "methods_extraction": EXTRACTION_SCHEMAS["Method"],
     "directory_classification": EXTRACTION_SCHEMAS["DirectoryClassification"],
+    "archimate_model_generation": ArchiMateModelResponse,
 }
 
 
@@ -186,6 +191,7 @@ def load_benchmark_models() -> dict[str, BenchmarkModelConfig]:
         LLM_{NAME}_KEY_ENV (optional, env var name for key)
         LLM_{NAME}_SAMPLING (optional, false: the model takes no temperature)
         LLM_{NAME}_REASONING (optional, reasoning level; none turns reasoning off)
+        LLM_{NAME}_TEMPERATURE (optional, the model's own temperature over LLM_TEMPERATURE)
 
     Returns:
         Dict mapping config name to BenchmarkModelConfig
@@ -210,6 +216,7 @@ def load_benchmark_models() -> dict[str, BenchmarkModelConfig]:
                 api_key_env=fields["key_env"],
                 sampling=parse_sampling(fields.get("sampling")),
                 reasoning=(fields.get("reasoning") or "").strip().lower() or None,
+                temperature=float(own) if (own := (fields.get("temperature") or "").strip()) else None,
             )
         except ValueError:
             continue
@@ -326,7 +333,7 @@ class LLMManager:
             cache_dir: Directory for response caching (default: workspace/cache/llm in the Deriva home folder)
             max_retries: Number of retry attempts
             timeout: Request timeout in seconds
-            temperature: Sampling temperature, defaults to LLM_TEMPERATURE from env
+            temperature: Sampling temperature, defaults to the model config's own, then LLM_TEMPERATURE from env
             nocache: Whether to disable caching (default True for benchmarking)
 
         Returns:
@@ -334,7 +341,7 @@ class LLMManager:
         """
         settings.export_provider_keys()  # pydantic-ai providers read their keys from the process environment
         llm = LlmSettings()
-        effective_temperature = temperature if temperature is not None else llm.temperature
+        effective_temperature = temperature if temperature is not None else config.temperature if config.temperature is not None else llm.temperature
 
         instance = object.__new__(cls)
 
@@ -650,6 +657,9 @@ class LLMManager:
             "provider": self.provider_name,
             "model": self.model,
             "temperature": effective_temperature,
+            # Never sent: the provider's defaults apply (recorded so a settings table can say so)
+            "top_p": None,
+            "seed": None,
             "max_tokens": effective_max_tokens,
             "reasoning": self.reasoning,
             # The model the provider says answered (a retired id can be served by another model)
@@ -811,7 +821,8 @@ class LLMManager:
             )
 
         except Exception as e:
-            call["error_type"] = type(e).__name__
+            # A wrapped transport error is reported under its own name (ReadTimeout, not ModelAPIError)
+            call["error_type"] = type(transport_error(e) or e).__name__
             # Classify the error and update rate limiter state
             category, retry_after = classify_exception(e)
 

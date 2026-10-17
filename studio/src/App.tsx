@@ -12,7 +12,7 @@ import { Menu } from "./shell/Menu";
 import { type Mode, TopBar } from "./shell/TopBar";
 import { Workspace } from "./workspace/Workspace";
 
-type ShellStatus = { db: DbStatus; version?: string; benchmark: boolean; noModel: boolean };
+type ShellStatus = { db: DbStatus; version?: string; benchmark: boolean; noModel: boolean; environment?: { os?: string; python?: string } };
 
 /** Database ownership, version, installed features and whether a model exists; polled so the banners follow changes. */
 function useShellStatus(intervalMs = 10000): ShellStatus {
@@ -22,7 +22,7 @@ function useShellStatus(intervalMs = 10000): ShellStatus {
     let cancelled = false;
     const poll = () => {
       fetchStatus()
-        .then((s) => !cancelled && setShell((now) => ({ ...now, db: s.db, version: s.version, benchmark: s.features?.benchmark ?? true })))
+        .then((s) => !cancelled && setShell((now) => ({ ...now, db: s.db, version: s.version, benchmark: s.features?.benchmark ?? true, environment: s.environment })))
         .catch(() => !cancelled && setShell((now) => ({ ...now, db: { state: "not_connected" } })));
       modelConfigs
         .list()
@@ -56,13 +56,13 @@ function NotFound() {
 
 export function Shell() {
   const [chosenMode, setMode] = useState<Mode>("run");
-  const { db, version, benchmark, noModel } = useShellStatus();
+  const { db, version, benchmark, noModel, environment } = useShellStatus();
   // Without benchmarking installed there is only Run mode
   const mode = benchmark ? chosenMode : "run";
 
   return (
     <div className="app">
-      <TopBar mode={mode} onModeChange={setMode} db={db} version={version} benchmark={benchmark} />
+      <TopBar mode={mode} onModeChange={setMode} db={db} version={version} benchmark={benchmark} environment={environment} />
       <Banner db={db} noModel={noModel} />
       <div className="body">
         <Menu />

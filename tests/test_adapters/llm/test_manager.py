@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel, ValidationError
+from pydantic_ai.exceptions import ModelAPIError
 
 from deriva.adapters.llm.manager import (
     LLMManager,
@@ -23,6 +24,14 @@ from deriva.adapters.llm.models import (
     FailedResponse,
     LiveResponse,
 )
+
+
+def _api_error(cause: Exception) -> ModelAPIError:
+    """What pydantic-ai raises when a provider call fails: a ModelAPIError with the transport error as its cause."""
+    try:
+        raise ModelAPIError(model_name="test-model", message=str(cause)) from cause
+    except ModelAPIError as error:
+        return error
 
 
 class TestSchemaRegistry:
@@ -905,9 +914,7 @@ class TestTimeoutAndRetry:
         assert timeout == 7.0 and isinstance(timeout, float)
 
     def test_timeout_is_retried_then_succeeds(self, tmp_path):
-        import httpx
-
-        response, run, sleep = self._query(self._manager(tmp_path), [httpx.ReadTimeout("slow"), MagicMock(output="ok")])
+        response, run, sleep = self._query(self._manager(tmp_path), [_api_error(httpx2.ReadTimeout("slow")), MagicMock(output="ok")])
 
         assert run.call_count == 2
         assert sleep.call_count == 1
@@ -941,10 +948,8 @@ class TestTimeoutAndRetry:
         assert record.call_count == 3  # two retried attempts + the final failure
 
     def test_gives_up_after_max_retries(self, tmp_path):
-        import httpx
-
         manager = self._manager(tmp_path)
-        response, run, _ = self._query(manager, httpx.ReadTimeout("slow"))
+        response, run, _ = self._query(manager, _api_error(httpx2.ReadTimeout("slow")))
 
         assert run.call_count == 3  # first try + LLM_MAX_RETRIES
         assert isinstance(response, FailedResponse)
@@ -959,18 +964,14 @@ class TestTimeoutAndRetry:
         assert isinstance(response, FailedResponse)
 
     def test_a_failed_query_counts_once_for_the_circuit_breaker(self, tmp_path):
-        import httpx
-
         manager = self._manager(tmp_path)
-        self._query(manager, httpx.ReadTimeout("slow"))
+        self._query(manager, _api_error(httpx2.ReadTimeout("slow")))
 
         assert manager._rate_limiter.get_stats()["consecutive_failures"] == 1
 
     def test_backoff_is_jittered(self, tmp_path):
-        import httpx
-
         with patch("deriva.adapters.llm.manager.random.uniform", return_value=0.25) as uniform:
-            _, _, sleep = self._query(self._manager(tmp_path), [httpx.ReadTimeout("slow"), MagicMock(output="ok")])
+            _, _, sleep = self._query(self._manager(tmp_path), [_api_error(httpx2.ReadTimeout("slow")), MagicMock(output="ok")])
 
         uniform.assert_called_once_with(0, 2.0)
         sleep.assert_called_once_with(0.25)
@@ -978,28 +979,22 @@ class TestTimeoutAndRetry:
     def test_latency_is_recorded_for_failed_calls(self, tmp_path):
         import itertools
 
-        import httpx
-
         manager = self._manager(tmp_path)
         with patch("deriva.adapters.llm.manager.time.perf_counter", side_effect=itertools.count(0, 1.0)):
-            self._query(manager, httpx.ReadTimeout("slow"))
+            self._query(manager, _api_error(httpx2.ReadTimeout("slow")))
 
         assert manager.last_call["latency_ms"] >= 1000
 
     def test_requests_include_failed_attempts(self, tmp_path):
-        import httpx
-
         manager = self._manager(tmp_path)
         result = MagicMock(output="ok")
         result.usage.return_value = MagicMock(requests=1, input_tokens=3, output_tokens=2)
-        self._query(manager, [httpx.ReadTimeout("slow"), result])
+        self._query(manager, [_api_error(httpx2.ReadTimeout("slow")), result])
 
         assert manager.last_call["requests"] == 2
 
     def test_backoff_does_not_sleep_on_the_event_loop_thread(self, tmp_path):
         import threading
-
-        import httpx
 
         sleeping_threads = []
         with (
@@ -1007,7 +1002,7 @@ class TestTimeoutAndRetry:
             patch("deriva.adapters.llm.manager.Agent") as agent_class,
             patch("deriva.adapters.llm.manager.time.sleep", side_effect=lambda _: sleeping_threads.append(threading.current_thread())),
         ):
-            agent_class.return_value.run_sync.side_effect = [httpx.ReadTimeout("slow"), MagicMock(output="ok")]
+            agent_class.return_value.run_sync.side_effect = [_api_error(httpx2.ReadTimeout("slow")), MagicMock(output="ok")]
             self._manager(tmp_path).query("Hello")
 
         assert sleeping_threads and threading.main_thread() not in sleeping_threads
@@ -1095,7 +1090,7 @@ def test_a_string_model_finds_its_provider_key_in_the_home_env(monkeypatch, tmp_
 
     assert manager.config["api_key"] == "sk-from-file"
     assert os.environ["MISTRAL_API_KEY"] == "sk-from-file"
-    assert type(infer_model(manager._pydantic_model)).__name__ == "MistralModel"
+    assert type(infer_model(manager._pydantic_model)).__name__ == "OpenAIChatModel"  # mistral goes through its OpenAI-compatible API
 
 
 class TestModelSettings:
@@ -1114,6 +1109,14 @@ class TestModelSettings:
             agent_class.return_value.run_sync.return_value = response or MagicMock(output="ok")
             manager.query("Hello", **kwargs)
             return agent_class.return_value.run_sync.call_args.kwargs["model_settings"]
+
+    def test_top_p_and_seed_are_never_sent_and_recorded_as_none(self, tmp_path):
+        manager = self._manager(tmp_path, provider="openai", model="gpt-6-luna", temperature=0.0)
+
+        sent = self._sent(manager)
+
+        assert "top_p" not in sent and "seed" not in sent
+        assert (manager.last_call["temperature"], manager.last_call["top_p"], manager.last_call["seed"]) == (0.0, None, None)
 
     def test_a_model_without_sampling_gets_no_temperature(self, tmp_path):
         from deriva.adapters.llm.cache import CacheManager
@@ -1218,22 +1221,59 @@ class TestLoadBenchmarkModelsStripping:
         assert result["haiku"].api_url == "https://api.anthropic.com/v1/messages"
         assert result["haiku"].api_key == "sk-ant-123"
 
+    def test_strips_padding_inside_quotes(self):
+        """Padding inside the quotes goes too: ' sk-ant-123 ' comes out clean."""
+        env_vars = {
+            "LLM_HAIKU_PROVIDER": "' anthropic '",
+            "LLM_HAIKU_MODEL": '" claude-haiku-5-5 "',
+            "LLM_HAIKU_URL": '" https://api.anthropic.com/v1/messages "',
+            "LLM_HAIKU_KEY": "' sk-ant-123 '",
+        }
+
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            with patch.dict("os.environ", env_vars, clear=True):
+                result = load_benchmark_models()
+
+        assert result["haiku"].provider == "anthropic"
+        assert result["haiku"].model == "claude-haiku-5-5"
+        assert result["haiku"].api_url == "https://api.anthropic.com/v1/messages"
+        assert result["haiku"].api_key == "sk-ant-123"
+
 
 class TestIsRetriable:
-    """Permanent client errors are not retried; transient network errors are."""
+    """Permanent client errors are not retried; transient network errors are, also behind pydantic-ai's wrapper."""
 
     def test_local_protocol_error_is_not_retriable(self):
         """An illegal header value can never succeed on retry."""
-        assert _is_retriable(httpx.LocalProtocolError("Illegal header value b'key '")) is False
+        assert _is_retriable(httpx2.LocalProtocolError("Illegal header value b'key '")) is False
 
     def test_unsupported_protocol_is_not_retriable(self):
-        assert _is_retriable(httpx.UnsupportedProtocol("unsupported")) is False
+        assert _is_retriable(httpx2.UnsupportedProtocol("unsupported")) is False
 
     def test_connect_error_is_retriable(self):
-        assert _is_retriable(httpx.ConnectError("connection refused")) is True
+        assert _is_retriable(httpx2.ConnectError("connection refused")) is True
 
     def test_timeout_is_retriable(self):
         assert _is_retriable(TimeoutError("timed out")) is True
+
+    def test_a_wrapped_timeout_is_retriable(self):
+        """pydantic-ai wraps the httpx2 timeout in a ModelAPIError; the wrapper must not hide it."""
+        assert _is_retriable(_api_error(httpx2.ReadTimeout("slow"))) is True
+
+    def test_a_wrapped_connection_error_is_retriable(self):
+        assert _is_retriable(_api_error(httpx2.ConnectError("connection refused"))) is True
+
+    def test_a_wrapped_local_protocol_error_is_not_retriable(self):
+        assert _is_retriable(_api_error(httpx2.LocalProtocolError("Illegal header value b'key '"))) is False
+
+    def test_a_model_api_error_without_a_transport_error_is_not_retriable(self):
+        assert _is_retriable(ModelAPIError(model_name="m", message="unexpected model behavior")) is False
+
+    def test_an_httpx_error_is_not_retriable(self):
+        """Only httpx2 matches: pydantic-ai and the provider SDKs run on httpx2, not on httpx."""
+        import httpx
+
+        assert _is_retriable(httpx.ReadTimeout("slow")) is False
 
 
 class TestRedact:
@@ -1255,3 +1295,29 @@ class TestRedact:
         text = "LocalProtocolError: Illegal header value b'sk-secret-123 '"
         assert manager._redact(text) == "LocalProtocolError: Illegal header value b'*** '"
         assert manager._redact("no secret here") == "no secret here"
+
+
+class TestModelTemperature:
+    """A model config's own temperature (LLM_{NAME}_TEMPERATURE) wins over LLM_TEMPERATURE; an explicit one over both."""
+
+    def _config(self, temperature=None):
+        return BenchmarkModelConfig(name="m", provider="ollama", model="llama3", api_url="http://localhost:11434/api/chat", temperature=temperature)
+
+    def test_the_model_temperature_is_used(self, tmp_path):
+        with patch("deriva.common.settings.read_env_file", return_value={}), patch.dict("os.environ", {"LLM_TEMPERATURE": "0.6"}, clear=True):
+            own = LLMManager.from_config(self._config(0.0), cache_dir=str(tmp_path / "c"))
+            explicit = LLMManager.from_config(self._config(0.0), cache_dir=str(tmp_path / "c"), temperature=0.3)
+            plain = LLMManager.from_config(self._config(), cache_dir=str(tmp_path / "c"))
+
+        assert (own.temperature, explicit.temperature, plain.temperature) == (0.0, 0.3, 0.6)
+
+    def test_a_temperature_out_of_range_is_refused(self):
+        with pytest.raises(ValueError, match="temperature"):
+            self._config(3.0)
+
+    def test_the_config_reads_the_model_temperature(self):
+        from deriva.adapters.llm.manager import load_benchmark_models
+
+        env = {"LLM_M_PROVIDER": "ollama", "LLM_M_MODEL": "llama3", "LLM_M_TEMPERATURE": "0"}
+        with patch("deriva.common.settings.read_env_file", return_value={}), patch.dict("os.environ", env, clear=True):
+            assert load_benchmark_models()["m"].temperature == 0.0

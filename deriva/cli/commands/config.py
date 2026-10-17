@@ -149,24 +149,49 @@ def config_disable(
 
 @app.command("add")
 def config_add(
-    step_type: Annotated[str, typer.Argument(help="Type of configuration (derivation)")],
-    name: Annotated[str, typer.Argument(help="Step name")],
-    phase: Annotated[str, typer.Option("--phase", help="prep, generate or refine")],
-    sequence: Annotated[int, typer.Option("--sequence", help="Execution order within the phase")],
+    step_type: Annotated[str, typer.Argument(help="Type of configuration (extraction or derivation)")],
+    name: Annotated[str, typer.Argument(help="Step name (the node type for an extraction step)")],
+    sequence: Annotated[int, typer.Option("--sequence", help="Execution order (within the phase for derivation)")],
+    phase: Annotated[str | None, typer.Option("--phase", help="prep, generate or refine (derivation)")] = None,
+    method: Annotated[str | None, typer.Option("--method", help="structural (default), treesitter, ast or llm (extraction)")] = None,
     params: Annotated[str | None, typer.Option("--params", "-p", help="Params JSON")] = None,
+    params_file: Annotated[str | None, typer.Option("--params-file", help="Read params JSON from file")] = None,
 ) -> None:
-    """Add a new derivation step (created disabled; enable with 'config enable')."""
-    if step_type != "derivation":
-        typer.echo("Error: only 'derivation' steps can be added", err=True)
+    """Add a new step (created disabled; enable with 'config enable')."""
+    if step_type not in ("extraction", "derivation"):
+        typer.echo("Error: step_type must be 'extraction' or 'derivation'", err=True)
         raise typer.Exit(1)
+    if step_type == "derivation" and not phase:
+        typer.echo("Error: a derivation step needs --phase", err=True)
+        raise typer.Exit(1)
+    # Options that do not apply to the step type, or that conflict, are refused rather than ignored
+    if step_type == "extraction" and phase:
+        typer.echo("Error: --phase applies to derivation steps only", err=True)
+        raise typer.Exit(1)
+    if step_type == "derivation" and method:
+        typer.echo("Error: --method applies to extraction steps only", err=True)
+        raise typer.Exit(1)
+    if params is not None and params_file:
+        typer.echo("Error: give the params either with --params or with --params-file", err=True)
+        raise typer.Exit(1)
+    if params_file:
+        try:
+            with open(params_file, encoding="utf-8") as f:
+                params = f.read()
+        except OSError as e:
+            typer.echo(f"Error reading params file: {e}", err=True)
+            raise typer.Exit(1) from e
     with PipelineSession() as session:
         try:
-            added = session.add_derivation_step(name, phase, sequence, params=params)
+            if step_type == "extraction":
+                added = session.add_extraction_step(name, sequence, extraction_method="structural" if method is None else method, params=params)
+            else:
+                added = session.add_derivation_step(name, phase or "", sequence, params=params)
         except ValueError as e:
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1) from e
         if added:
-            typer.echo(f"Added derivation step: {name} (disabled)")
+            typer.echo(f"Added {step_type} step: {name} (disabled)")
         else:
             typer.echo(f"Step already exists: {step_type}/{name}")
             raise typer.Exit(1)
@@ -361,7 +386,7 @@ def config_versions() -> None:
 
 
 # =============================================================================
-# Read-Only Query Commands (safe during benchmarks)
+# Read-Only Query Commands
 # =============================================================================
 
 
@@ -370,11 +395,11 @@ def config_query(
     step_type: Annotated[str, typer.Argument(help="Type: 'extraction' or 'derivation'")],
     name: Annotated[str | None, typer.Argument(help="Config name (optional)")] = None,
 ) -> None:
-    """Query configs with read-only connection (safe during benchmarks).
+    """Query configs with a read-only connection.
 
-    This command uses a read-only database connection, so it can safely
-    query configurations even while a benchmark is running without causing
-    lock contention.
+    The connection is read-only, so it never changes a configuration. On Windows it cannot open
+    the database while another process (a running benchmark) holds it: DuckDB locks the file, so
+    query after the benchmark has finished.
     """
     if step_type not in ("extraction", "derivation"):
         typer.echo(
@@ -383,7 +408,7 @@ def config_query(
         )
         raise typer.Exit(1)
 
-    # Use read-only connection for safe concurrent access
+    # Read-only: it never writes (on Windows it fails while another process holds the file)
     engine = config.read_only_connection()
 
     try:
@@ -676,11 +701,14 @@ def model_set(
     key_env: Annotated[str | None, typer.Option("--key-env", help="Environment variable that holds the key")] = None,
     sampling: Annotated[str | None, typer.Option("--sampling", help="false for models that take no temperature ('' removes it)")] = None,
     reasoning: Annotated[str | None, typer.Option("--reasoning", help="Reasoning level: none (off), low, medium, high ... ('' removes it)")] = None,
+    temperature: Annotated[str | None, typer.Option("--temperature", help="The model's own temperature, 0 to 2, over LLM_TEMPERATURE ('' removes it)")] = None,
 ) -> None:
     """Add or change a model config in .env (other lines and comments are kept)."""
     secret = _read_key() if key else None
     try:
-        PipelineSession().save_model_config(name, provider=provider, model=model, url=url, key=secret, key_env=key_env, sampling=sampling, reasoning=reasoning)
+        PipelineSession().save_model_config(
+            name, provider=provider, model=model, url=url, key=secret, key_env=key_env, sampling=sampling, reasoning=reasoning, temperature=temperature
+        )
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from e

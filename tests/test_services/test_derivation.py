@@ -452,7 +452,7 @@ class TestContainmentConfig:
 
     @staticmethod
     def _row(containment):
-        params = {"min_confidence": 0.6, "persona": "P"}
+        params = {"persona": "P"}
         if containment is not None:
             params["containment"] = containment
         return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
@@ -504,7 +504,7 @@ class TestNamedInCodeConfig:
 
     @staticmethod
     def _row(**structure):
-        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        params = {"persona": "P", **structure}
         return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
 
     def test_without_the_key_there_are_no_rules(self):
@@ -544,7 +544,7 @@ class TestSameNameConfig:
 
     @staticmethod
     def _row(**structure):
-        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        params = {"persona": "P", **structure}
         return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
 
     def test_without_the_key_there_are_no_rules(self):
@@ -591,7 +591,7 @@ class TestDependencyConfig:
 
     @staticmethod
     def _row(**structure):
-        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        params = {"persona": "P", **structure}
         return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
 
     def test_without_the_key_there_are_no_rules(self):
@@ -637,7 +637,7 @@ class TestTechnologyStructureConfig:
 
     @staticmethod
     def _row(**structure):
-        params = {"min_confidence": 0.6, "persona": "P", **structure}
+        params = {"persona": "P", **structure}
         return SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params=json.dumps(params))
 
     def test_without_the_keys_there_are_no_rules(self):
@@ -2143,32 +2143,32 @@ class TestRelationshipLLMConfig:
     """The enabled relationship-phase config row drives the LLM relationship pass."""
 
     @staticmethod
-    def _row(instruction="rules", params='{"temperature": 0.0, "min_confidence": 0.6, "persona": "P"}', name="GlobalRelationships"):
+    def _row(instruction="rules", params='{"temperature": 0.0, "persona": "P"}', name="GlobalRelationships"):
         return SimpleNamespace(step_name=name, instruction=instruction, params=params)
 
     def test_no_enabled_row_skips_the_llm_pass(self):
         assert derivation._relationship_llm_config([]) is None
 
     def test_row_supplies_instruction_and_cutoff(self):
-        assert derivation._relationship_llm_config([self._row()]) == RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+        assert derivation._relationship_llm_config([self._row()]) == RelationshipLLMConfig(instruction="rules", persona="P")
 
-    def test_row_without_min_confidence_is_an_error(self):
-        with pytest.raises(ValueError, match="min_confidence"):
+    def test_row_without_persona_is_an_error(self):
+        with pytest.raises(ValueError, match="persona"):
             derivation._relationship_llm_config([self._row(params='{"temperature": 0.0}')])
 
     def test_llm_proposals_off_leaves_relationships_to_structure(self):
-        row = self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": false}')
+        row = self._row(params='{"persona": "P", "llm_proposals": false}')
 
         assert derivation._relationship_llm_config([row]) is None
 
     def test_llm_proposals_on_keeps_the_llm_pass(self):
-        row = self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": true}')
+        row = self._row(params='{"persona": "P", "llm_proposals": true}')
 
-        assert derivation._relationship_llm_config([row]) == RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+        assert derivation._relationship_llm_config([row]) == RelationshipLLMConfig(instruction="rules", persona="P")
 
     def test_llm_proposals_must_be_a_boolean(self):
         with pytest.raises(ValueError, match="llm_proposals"):
-            derivation._relationship_llm_config([self._row(params='{"min_confidence": 0.6, "persona": "P", "llm_proposals": "no"}')])
+            derivation._relationship_llm_config([self._row(params='{"persona": "P", "llm_proposals": "no"}')])
 
     @pytest.mark.parametrize("runner", ["run_derivation", "run_derivation_iter"])
     def test_runs_that_never_derive_relationships_do_not_read_the_row(self, runner):
@@ -2209,7 +2209,7 @@ def _run_derivation_iter(**kwargs):
 class TestRelationshipConfigReachesTheRelationshipPass:
     """Both runners pass the relationship row to both relationship paths."""
 
-    EXPECTED = RelationshipLLMConfig(instruction="rules", min_confidence=0.6, persona="P")
+    EXPECTED = RelationshipLLMConfig(instruction="rules", persona="P")
 
     @staticmethod
     def _configs(engine, enabled_only, phase):
@@ -2229,7 +2229,7 @@ class TestRelationshipConfigReachesTheRelationshipPass:
                 )
             ]
         if phase == "relationship":
-            return [SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6, "persona": "P"}')]
+            return [SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"persona": "P"}')]
         return []
 
     def _run(self, runner, defer):
@@ -2361,6 +2361,33 @@ class TestNamingConfig:
             runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
 
         assert gen.call_args.kwargs["naming"] == NamingConfig(instruction="N", samples=3)
+
+    @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
+    def test_per_batch_relationships_receive_the_name_match_skip_pairs(self, runner):
+        """Without the deferred relationship pass the elements' own relationship pass leaves the configured pairs out too."""
+        cfg = SimpleNamespace(
+            step_name="ApplicationComponent",
+            element_type="ApplicationComponent",
+            input_graph_query="MATCH (n) RETURN n",
+            instruction="Gen",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            temperature=None,
+            max_tokens=None,
+            params=None,
+        )
+        row = SimpleNamespace(
+            step_name="GlobalRelationships", params=json.dumps({"llm_proposals": False, "name_match_skip": [{"source": "ApplicationInterface", "target": "ApplicationService"}]})
+        )
+        generated = {"success": True, "elements_created": 0, "relationships_created": 0, "created_elements": [], "errors": []}
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: {"generate": [cfg], "relationship": [row]}.get(phase, [])),
+            patch.object(derivation, "generate_element", return_value=generated) as gen,
+        ):
+            runner(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), llm_query_fn=MagicMock(), defer_relationships=False, phases=["generate"])
+
+        assert gen.call_args.kwargs["name_match_skip"] == {("ApplicationInterface", "ApplicationService")}
 
 
 class TestPatternLabelsConfig:
@@ -2934,7 +2961,7 @@ class TestRelationshipTemperature:
     """The relationship row's temperature column sets the consolidated relationship pass temperature."""
 
     def test_row_temperature_is_part_of_the_config(self):
-        row = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6, "persona": "P"}', temperature=0.0)
+        row = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"persona": "P"}', temperature=0.0)
 
         assert derivation._relationship_llm_config([row]).temperature == 0.0
 
@@ -2952,7 +2979,7 @@ class TestRelationshipTemperature:
             max_tokens=None,
             params=None,
         )
-        rel = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"min_confidence": 0.6, "persona": "P"}', temperature=0.0)
+        rel = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"persona": "P"}', temperature=0.0)
         generated = {"success": True, "elements_created": 1, "relationships_created": 0, "created_elements": [{"identifier": "e1"}], "errors": []}
         with (
             patch.object(
@@ -3054,12 +3081,17 @@ class TestGraphLinkConfig:
 
         assert derivation._graph_link_rules([TestNamedInCodeConfig._row()]) == []
         assert derivation._graph_link_rules([row]) == [GraphLinkRule(source="ApplicationComponent", target="ApplicationInterface", relationship="Composition", query=self.QUERY)]
+        exclusive = TestNamedInCodeConfig._row(
+            graph_links=[{"source": "ApplicationComponent", "target": "ApplicationInterface", "relationship": "Composition", "query": self.QUERY, "exclusive": True}]
+        )
+        assert derivation._graph_link_rules([exclusive])[0].exclusive is True
 
     @pytest.mark.parametrize(
         "item",
         [
             {"source": "ApplicationComponent", "target": "ApplicationInterface", "relationship": "Composition"},
             {"source": "BusinessObject", "target": "ApplicationComponent", "relationship": "Composition", "query": "Q"},
+            {"source": "ApplicationComponent", "target": "ApplicationInterface", "relationship": "Composition", "query": "Q", "exclusive": "yes"},
         ],
     )
     def test_an_incomplete_or_invalid_rule_is_an_error(self, item):
@@ -3080,3 +3112,99 @@ class TestGraphLinkConfig:
         assert derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": True}})).structural_as_written is True
         with pytest.raises(ValueError, match="structural_as_written"):
             derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": "yes"}}))
+
+
+class TestUnitConfigs:
+    """Config parsing of the deployable-unit modes: roles per unit, services grouped by members."""
+
+    def test_roles_per_unit_need_a_container_and_a_template_with_it(self):
+        base = {"names": {"rest": "REST API"}, "labels": ["File"], "instruction": "x", "element_per": "unit"}
+
+        config = derivation._role_config(json.dumps({"roles": {**base, "container_type": "ApplicationComponent", "name_template": "{container} {role}"}}))
+
+        assert config is not None and config.element_per == "unit"
+        # Each requirement on its own: the container type, and the container in the template
+        with pytest.raises(ValueError, match="unit"):
+            derivation._role_config(json.dumps({"roles": {**base, "name_template": "{container} {role}"}}))
+        with pytest.raises(ValueError, match="unit"):
+            derivation._role_config(json.dumps({"roles": {**base, "container_type": "ApplicationComponent", "name_template": "{role}"}}))
+
+    def test_services_can_group_by_members_with_a_limit(self):
+        config = derivation._component_services_config(json.dumps({"component_services": {"group_by": "members", "member_min_names": 2, "max_groups": 7}}))
+
+        assert config is not None and (config.group_by, config.member_min_names, config.max_groups) == ("members", 2, 7)
+        with pytest.raises(ValueError, match="group_by"):
+            derivation._component_services_config(json.dumps({"component_services": {"group_by": "packages"}}))
+        with pytest.raises(ValueError, match="max_groups"):
+            derivation._component_services_config(json.dumps({"component_services": {"max_groups": -1}}))
+
+    def test_services_by_members_read_no_documentation_files(self):
+        """The member services' prompts carry no documentation, so the checkout's documents are not read."""
+        config = derivation._component_services_config(json.dumps({"component_services": {"group_by": "members"}}))
+        assert config is not None
+        with (
+            patch("deriva.services.derivation._documentation_files") as documents,
+            patch("deriva.services.derivation.derive_member_services", return_value=[]) as member_services,
+            patch("deriva.services.derivation.element_source_paths", return_value={}),
+            patch("deriva.services.derivation.file_imports", return_value=[]),
+            patch("deriva.services.derivation.code_names_with_paths", return_value=[]),
+            patch("deriva.services.derivation.source_concept_names", return_value={}),
+            patch("deriva.services.derivation.unit_scopes"),
+        ):
+            derivation._component_services_step(config, "NAME", MagicMock(), MagicMock(), MagicMock(), [])
+
+        documents.assert_not_called()
+        assert member_services.call_args.args[4] == {}
+
+    def test_unit_roles_name_a_known_channel_and_need_roles_per_unit(self):
+        base = {
+            "names": {"web": "Web UI"},
+            "labels": ["File"],
+            "instruction": "x",
+            "element_per": "unit",
+            "container_type": "ApplicationComponent",
+            "name_template": "{container} {role}",
+        }
+
+        config = derivation._role_config(json.dumps({"roles": {**base, "unit_roles": [{"property": "webEntries", "role": "web"}]}}))
+
+        assert config is not None and config.unit_roles == (("webEntries", "web"),)
+        with pytest.raises(ValueError, match="unit_roles"):
+            derivation._role_config(json.dumps({"roles": {**base, "unit_roles": [{"property": "webEntries", "role": "desktop"}]}}))
+        # The property is read in a graph query: only a plain property name can be
+        with pytest.raises(ValueError, match="unit_roles"):
+            derivation._role_config(json.dumps({"roles": {**base, "unit_roles": [{"property": "web-entries", "role": "web"}]}}))
+        with pytest.raises(ValueError, match="unit_roles"):
+            derivation._role_config(
+                json.dumps({"roles": {**base, "element_per": "candidate", "name_template": "{subject}", "unit_roles": [{"property": "webEntries", "role": "web"}]}})
+            )
+
+    def test_name_match_skip_pairs_are_read_from_the_relationship_row(self):
+        row = SimpleNamespace(params=json.dumps({"name_match_skip": [{"source": "ApplicationInterface", "target": "ApplicationService"}]}))
+
+        assert derivation._name_match_skip([row]) == {("ApplicationInterface", "ApplicationService")}
+        assert derivation._name_match_skip([]) == set()
+        with pytest.raises(ValueError, match="name_match_skip"):
+            derivation._name_match_skip([SimpleNamespace(params=json.dumps({"name_match_skip": [{"source": "ApplicationInterface"}]}))])
+
+    def test_the_choice_instruction_is_read_from_the_naming_params(self):
+        config = derivation._naming_config(json.dumps({"naming": {"instruction": "x", "choose_instruction": "CHOOSE"}}))
+
+        assert config is not None and config.choose_instruction == "CHOOSE"
+        assert derivation._naming_config(json.dumps({"naming": {"instruction": "x"}})).choose_instruction == ""
+        with pytest.raises(ValueError, match="choose_instruction"):
+            derivation._naming_config(json.dumps({"naming": {"instruction": "x", "choose_instruction": 3}}))
+
+    def test_naming_guards_are_read_from_the_naming_params(self):
+        guards = {"generic_words": ["App", "cli"], "kind_nouns": {"container": "Server", "*": "Application"}, "reserved_labels": ["Technology", "ExternalDependency"]}
+
+        config = derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": guards}}))
+
+        assert config is not None
+        assert config.guards.generic_words == frozenset({"app", "cli"}) and config.guards.kind_nouns["container"] == "Server"
+        assert config.guards.reserved_labels == ("Technology", "ExternalDependency")
+        assert derivation._naming_config(json.dumps({"naming": {"instruction": "x"}})).guards.generic_words == frozenset()
+        with pytest.raises(ValueError, match="guards"):
+            derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": {"generic_words": "app"}}}))
+        with pytest.raises(ValueError, match="guards"):
+            derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": ["app"]}}))

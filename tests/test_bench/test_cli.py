@@ -245,6 +245,53 @@ class TestBenchmarkAnalyzeCommand:
         assert "repo1" in result.stdout and "1.50" in result.stdout and "20%" in result.stdout
         assert "ApplicationService-ApplicationComponent 3/4" in result.stdout
 
+    @patch("deriva.bench.cli.PipelineSession")
+    def test_analyze_shows_the_milp_solve_per_run(self, mock_session_class):
+        """The joint_consistency report of each run (the MILP as a safety net) is printed."""
+        mock_session = MagicMock()
+        mock_analyzer = MagicMock()
+        mock_summary = MagicMock()
+        mock_summary.intra_model = []
+        mock_summary.inter_model = []
+        mock_summary.localization.hotspots = []
+        row = {
+            "repository": "repo1",
+            "model": "gpt4",
+            "run": 2,
+            "elements": 3,
+            "relationships": 4,
+            "relationships_per_element": 1.3,
+            "orphan_share": 0.0,
+            "composition_violations": 0,
+            "duplicate_pairs": 0,
+            "duplicate_elements": 0,
+            "chains": {},
+            "reference": None,
+        }
+        solve = {
+            "status": "optimal",
+            "seconds": 0.012,
+            "proposals": 4,
+            "merge_candidates": 1,
+            "rows": {"H1": 2, "H5": 1},
+            "cycle_cuts": 1,
+            "kept": 3,
+            "dropped": 1,
+            "merges": 0,
+            "redirects": 0,
+        }
+        mock_summary.model_quality = [{**row, "solve": solve}, {**row, "run": 3, "solve": None}]
+        mock_analyzer.compute_full_analysis.return_value = mock_summary
+        mock_analyzer.export_summary.return_value = "output.json"
+        mock_session.analyze_benchmark.return_value = mock_analyzer
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["benchmark", "analyze", "session_123"])
+
+        assert result.exit_code == 0
+        assert "MILP SAFETY NET" in result.stdout
+        assert "H1 2, H5 1" in result.stdout and "optimal" in result.stdout and "0.012" in result.stdout
+
 
 class TestBenchmarkDeviationsCommand:
     """Tests for benchmark deviations command."""
@@ -1232,3 +1279,55 @@ class TestBenchmarkMarkFailed:
 
         assert result.exit_code == 1
         assert "completed, not running" in result.output
+
+
+def test_conventions_writes_a_review_per_repository_and_a_summary(tmp_path, monkeypatch):
+    """The command reads the run snapshots of a session and writes the checklist views."""
+    import json as _json
+
+    from typer.testing import CliRunner as _Runner
+
+    from deriva.bench import conventions_report
+    from deriva.bench.cli import app as bench_app
+
+    models = tmp_path / "benchmarks" / "bench_1" / "models"
+    models.mkdir(parents=True)
+    snapshot = {"elements": [{"identifier": "ac_shop", "type": "ApplicationComponent", "name": "Shop", "source": "dir::r::shop"}], "relationships": [], "disabled": []}
+    for n in (1, 2):
+        (models / f"shop_m_run{n}.json").write_text(_json.dumps(snapshot), encoding="utf-8")
+    (models / "other-repo_m_run1.json").write_text(_json.dumps(snapshot), encoding="utf-8")
+    monkeypatch.setattr(conventions_report, "workspace", lambda: tmp_path)
+
+    result = _Runner().invoke(bench_app, ["conventions", "bench_1", "-o", str(tmp_path / "out")])
+
+    assert result.exit_code == 0, result.output
+    review = (tmp_path / "out" / "shop_m.md").read_text(encoding="utf-8")
+    assert "| check | run1 | run2 | target |" in review and "| unconnected elements | fail 1 | fail 1 | 0 |" in review
+    assert (tmp_path / "out" / "other-repo_m.md").is_file()
+    summary = (tmp_path / "out" / "summary.md").read_text(encoding="utf-8")
+    assert "| shop |" in summary and "| other-repo |" in summary
+
+
+def test_conventions_with_a_run_no_snapshot_has_exits_1(tmp_path, monkeypatch):
+    """A --run that matches no snapshot is an error, not an empty report."""
+    import json as _json
+
+    from typer.testing import CliRunner as _Runner
+
+    from deriva.bench import conventions_report
+    from deriva.bench.cli import app as bench_app
+
+    models = tmp_path / "benchmarks" / "bench_1" / "models"
+    models.mkdir(parents=True)
+    (models / "shop_m_run1.json").write_text(_json.dumps({"elements": [], "relationships": [], "disabled": []}), encoding="utf-8")
+    monkeypatch.setattr(conventions_report, "workspace", lambda: tmp_path)
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "summary.md").write_text("an earlier report", encoding="utf-8")
+
+    result = _Runner().invoke(bench_app, ["conventions", "bench_1", "-o", str(out), "--run", "7"])
+
+    assert result.exit_code == 1 and "no run snapshots" in result.output
+    # Nothing is written: an earlier report in the folder stays as it was
+    assert (out / "summary.md").read_text(encoding="utf-8") == "an earlier report" and not (out / "conventions.json").exists()

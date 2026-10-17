@@ -25,11 +25,35 @@ def test_a_models_own_key_is_used(no_provider_environment, provider, model):
 
 
 def test_without_a_key_the_providers_environment_variable_still_applies(no_provider_environment, monkeypatch):
-    identifier = get_pydantic_ai_model({"provider": "mistral", "model": "devstral-2512"})
-
-    assert identifier == "mistral:devstral-2512"
+    """Without a config key, the mistral client reads MISTRAL_API_KEY (the home .env exports it)."""
     monkeypatch.setenv("MISTRAL_API_KEY", "sk-env-0000")
-    assert infer_model(identifier).model_name == "devstral-2512"
+    resolved = infer_model(get_pydantic_ai_model({"provider": "mistral", "model": "devstral-2512"}))
+
+    assert resolved.model_name == "devstral-2512"
+    assert str(resolved.base_url).rstrip("/") == "https://api.mistral.ai/v1"
+    assert resolved.client.api_key == "sk-env-0000"
+
+
+def test_mistral_goes_through_the_openai_compatible_client(no_provider_environment):
+    """Mistral's API is OpenAI-compatible, so the mistralai package is not needed."""
+    resolved = infer_model(get_pydantic_ai_model({"provider": "mistral", "model": "devstral-2512", "api_key": "sk-test-0000"}))
+
+    assert type(resolved).__name__ == "OpenAIChatModel"
+    assert str(resolved.base_url).rstrip("/") == "https://api.mistral.ai/v1"
+
+
+def test_a_mistral_model_uses_its_configured_url(no_provider_environment):
+    resolved = infer_model(
+        get_pydantic_ai_model({"provider": "mistral", "model": "devstral-2512", "api_key": "sk-test-0000", "api_url": "https://mistral.example.com/v1/chat/completions"})
+    )
+
+    assert str(resolved.base_url).rstrip("/") == "https://mistral.example.com/v1"
+
+
+def test_a_mistral_model_without_any_key_is_refused(no_provider_environment):
+    """A clear error, not a client that would silently use another provider's key."""
+    with pytest.raises(ValueError, match="MISTRAL_API_KEY"):
+        get_pydantic_ai_model({"provider": "mistral", "model": "devstral-2512"})
 
 
 def test_an_ollama_model_uses_its_configured_url(no_provider_environment):

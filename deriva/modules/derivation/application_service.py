@@ -166,29 +166,11 @@ class ApplicationServiceDerivation(HybridDerivation):
         candidates: list[Candidate],
         max_candidates: int,
     ) -> list[Candidate]:
-        """Filter BusinessConcept candidates by confidence.
+        """The BusinessConcept candidates in a stable order (name, node id), at most ``max_candidates``.
 
-        BusinessConcepts are already semantically identified as services,
-        so we just filter by confidence and limit count.
+        BusinessConcepts are already classified as services in extraction (a closed label); no confidence decides.
         """
-        MIN_CONFIDENCE = 0.85  # ROC analysis: AUC=0.972 at threshold 0.85
-
-        filtered = []
-        for c in candidates:
-            confidence = c.properties.get("confidence", 0)
-            if confidence >= MIN_CONFIDENCE:
-                filtered.append(c)
-
-        # Sort by confidence descending
-        filtered.sort(key=lambda c: c.properties.get("confidence", 0), reverse=True)
-
-        self.logger.debug(
-            "ApplicationService filter (BusinessConcept): %d total -> %d passed confidence >= %.1f",
-            len(candidates),
-            len(filtered),
-            MIN_CONFIDENCE,
-        )
-
+        filtered = sorted((c for c in candidates), key=lambda c: (c.name, c.node_id))
         return filtered[:max_candidates]
 
     def _filter_typedef_candidates(

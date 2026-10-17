@@ -33,6 +33,19 @@ class TestModelQualityForSession:
         assert rows[1]["orphans"] == 2
         assert rows[0]["reference"] is None
 
+    def test_only_the_architect_level_is_measured(self, tmp_path):
+        """The export holds both levels; the benchmark measures the architect level (detail elements are reported apart)."""
+        path = tmp_path / "models" / "shop-repo_model-a_run1.xml"
+        path.parent.mkdir(parents=True)
+        line = Element(name="Order Line", element_type="DataObject", identifier="do_line")
+        composes = Relationship(source="ac_shop", target="do_line", relationship_type="Access", identifier="r2")
+        levels = {"ac_shop": {"level": "architect"}, "as_ordering": {"level": "architect"}, "do_line": {"level": "detail"}}
+        ArchiMateXMLExporter().export([SHOP, ORDERING, line], [composes], str(path), model_name="test", properties=levels)
+
+        rows = model_quality_for_session(tmp_path, ["shop-repo"], ["model-a"], reference_models={})
+
+        assert (rows[0]["elements"], rows[0]["relationships"]) == (2, 0)
+
     def test_names_are_matched_against_the_reference_model(self, tmp_path):
         _export(tmp_path / "models" / "shop-repo_model-a_run1.xml", [SHOP, ORDERING], [])
         reference = tmp_path / "reference.xml"
@@ -50,6 +63,19 @@ class TestModelQualityForSession:
         # Shop matches, Ordering does not: half of the derived and half of the reference elements
         assert rows[0]["reference"]["precision"] == 0.5
         assert rows[0]["reference"]["recall"] == 0.5
+
+    def test_each_run_carries_the_solve_report_of_its_snapshot(self, tmp_path):
+        import json
+
+        _export(tmp_path / "models" / "shop-repo_model-a_run1.xml", [SHOP], [])
+        _export(tmp_path / "models" / "shop-repo_model-a_run2.xml", [SHOP], [])
+        solve = {"status": "optimal", "rows": {"H1": 2}, "dropped": 2}
+        (tmp_path / "models" / "shop-repo_model-a_run1.json").write_text(json.dumps({"elements": [], "relationships": [], "solve": solve}), encoding="utf-8")
+
+        rows = model_quality_for_session(tmp_path, ["shop-repo"], ["model-a"], reference_models={})
+
+        assert rows[0]["solve"] == solve
+        assert rows[1]["solve"] is None  # no snapshot (or an older one without the report)
 
     def test_a_session_without_exported_models_has_no_rows(self, tmp_path):
         assert model_quality_for_session(tmp_path, ["shop-repo"], ["model-a"], reference_models={}) == []
@@ -148,3 +174,43 @@ class TestCombinedSessions:
         rows = model_quality_for_session(tmp_path, ["beta", "alpha"], ["model-a"], reference_models={"alpha": "unused.xml"})
 
         assert [(r["repository"], r["run"], r["reference"]) for r in rows] == [("alpha_beta", 1, None)]
+
+
+class TestDetailLevelForSession:
+    """The export's detail level, reported apart from the architect level: its size and its consistency over runs."""
+
+    @staticmethod
+    def _snapshot(path: Path, detail: list[tuple[str, str]], relationships: list[tuple[str, str]]) -> None:
+        import json
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "elements": [],
+            "detail": {
+                "elements": [{"identifier": i, "type": t, "name": i, "level": "detail"} for i, t in detail],
+                "relationships": [{"source": s, "target": t, "type": "Composition"} for s, t in relationships],
+            },
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_detail_elements_and_their_consistency_per_repository(self, tmp_path):
+        from deriva.bench.benchmarking import detail_level_for_session
+
+        models = tmp_path / "models"
+        self._snapshot(models / "shop-repo_model-a_run1.json", [("do_a", "DataObject"), ("ai_x", "ApplicationInterface")], [("p", "do_a")])
+        self._snapshot(models / "shop-repo_model-a_run2.json", [("do_a", "DataObject"), ("ai_y", "ApplicationInterface")], [("p", "do_a")])
+        self._snapshot(models / "other_model-a_run1.json", [], [])  # an older snapshot or an empty detail level
+
+        rows = detail_level_for_session(tmp_path, ["shop-repo"], ["model-a"])
+
+        assert rows == [
+            {
+                "repository": "shop-repo",
+                "model": "model-a",
+                "runs": 2,
+                "elements": 2.0,
+                "by_type": {"ApplicationInterface": 1.0, "DataObject": 1.0},
+                "element_consistency": round(1 / 3, 3),  # do_a in every run, of do_a, ai_x, ai_y
+                "relationship_consistency": 1.0,
+            }
+        ]

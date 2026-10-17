@@ -263,6 +263,11 @@ class GraphLinkRule:
     target: str  # e.g. ApplicationInterface
     relationship: str  # e.g. Composition
     query: str  # Graph query returning a, b (source node ids)
+    # The query also returns ``channel``: the source end is the element (made from a) whose role is that channel,
+    # such as the provider's interface of a unit (a unit has an interface per channel)
+    source_channel: bool = False
+    # Only the graph relates the two types by this relationship type, in either direction: no other tier adds one
+    exclusive: bool = False
 
 
 @dataclass(frozen=True)
@@ -323,7 +328,6 @@ class RelationshipLLMConfig:
     """
 
     instruction: str  # Conventions and rules inserted into the relationship prompt
-    min_confidence: float  # LLM relationships below this confidence are dropped
     persona: str  # Opening line of the relationship prompt; {element_type} is the type just created
     temperature: float | None = None  # Temperature of the consolidated relationship pass (row column)
 
@@ -847,6 +851,11 @@ def extract_file_path_from_source(source_id: str | None) -> str | None:
     return None
 
 
+def _match_name(element: dict[str, Any]) -> str:
+    """The name that name matching reads: the structure name when a naming call wrote the name (rule 6d)."""
+    return str((element.get("properties") or {}).get("structure_name") or element.get("name") or "")
+
+
 def elements_share_source_file(elem1: dict[str, Any], elem2: dict[str, Any]) -> bool:
     """
     Check if two elements are derived from the same source file.
@@ -1324,6 +1333,7 @@ def derive_deterministic_relationships(
     element_type: str,
     outbound_rules: list[RelationshipRule],
     inbound_rules: list[RelationshipRule],
+    skip: set[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships deterministically from rules without LLM.
@@ -1347,6 +1357,10 @@ def derive_deterministic_relationships(
     relationships = []
     created_pairs: set[tuple[str, str, str]] = set()  # (source, target, type)
 
+    def skipped(source_type: str, target_type: str) -> bool:
+        """A pair the config never links by words; "*" stands for any type ({("*", "*")} switches the tier off)."""
+        return bool(skip) and bool({(source_type, target_type), (source_type, "*"), ("*", target_type), ("*", "*")} & skip)
+
     # Relationship types that benefit from lower threshold (more connections)
     # Flow relationships are about data/control flow, not ownership
     loose_match_types = {"Flow", "Triggering", "Access"}
@@ -1358,8 +1372,10 @@ def derive_deterministic_relationships(
         if not new_id or not new_name:
             continue
 
-        # Process OUTBOUND rules (FROM new TO existing)
+        # Process OUTBOUND rules (FROM new TO existing); configured pairs are never linked by words (params.name_match_skip)
         for rule in outbound_rules:
+            if skipped(element_type, rule.target_type):
+                continue
             # Validate rule against ArchiMate metamodel
             is_valid, msg = validate_relationship_rule(element_type, rule.rel_type, rule.target_type)
             if not is_valid:
@@ -1384,8 +1400,8 @@ def derive_deterministic_relationships(
                 if not target_id or not target_name:
                     continue
 
-                # Strategy 1: Name matching (with relationship-specific threshold)
-                name_match = names_match_for_relationship(new_name, target_name, threshold=threshold)
+                # Strategy 1: Name matching (with relationship-specific threshold), on structure names
+                name_match = names_match_for_relationship(_match_name(new_elem), _match_name(target), threshold=threshold)
 
                 # Strategy 2: File proximity (elements from same source file)
                 file_match = elements_share_source_file(new_elem, target)
@@ -1408,6 +1424,8 @@ def derive_deterministic_relationships(
 
         # Process INBOUND rules (FROM existing TO new)
         for rule in inbound_rules:
+            if skipped(rule.target_type, element_type):
+                continue
             # Validate rule against ArchiMate metamodel
             # For INBOUND: source=rule.target_type, target=element_type
             is_valid, msg = validate_relationship_rule(rule.target_type, rule.rel_type, element_type)
@@ -1433,8 +1451,8 @@ def derive_deterministic_relationships(
                 if not source_id or not source_name:
                     continue
 
-                # Strategy 1: Name matching
-                name_match = names_match_for_relationship(source_name, new_name, threshold=threshold)
+                # Strategy 1: Name matching, on structure names
+                name_match = names_match_for_relationship(_match_name(source), _match_name(new_elem), threshold=threshold)
 
                 # Strategy 2: File proximity
                 file_match = elements_share_source_file(source, new_elem)
@@ -2082,6 +2100,39 @@ def structure_element_name(source_id: str, source_name: str, repo_name: str = ""
 
 
 @dataclass(frozen=True)
+class NameGuards:
+    """Structural checks on a naming call's answer (``params.naming.guards``); empty: the answer is kept.
+
+    An answer that names a technology (``reserved_labels``: graph node labels whose names are taken)
+    gets the structure name, and a structure name that collides as well gets the noun of its unit
+    kind (``kind_nouns``, ``"*"`` for any other kind). An answer made only of ``generic_words`` gets
+    the product name in front.
+    """
+
+    generic_words: frozenset[str] = frozenset()
+    kind_nouns: dict[str, str] = field(default_factory=dict)
+    reserved_labels: tuple[str, ...] = ()
+
+
+def guard_name(name: str, *, structure_name: str, kind: str, product: str, reserved: set[str], guards: NameGuards) -> str:
+    """The name after the structural guards: a taken name falls back to structure, a generic one gets the product name."""
+    if not (guards.generic_words or guards.kind_nouns or guards.reserved_labels):
+        return name
+    taken = {name_key(r) for r in reserved}
+    if name_key(name) in taken:
+        name = structure_name
+        if name_key(name) in taken:
+            name = f"{name} {guards.kind_nouns.get(kind) or guards.kind_nouns.get('*', '')}".strip()
+    words = [w.lower() for w in re.findall(r"[A-Za-z0-9]+", name)]
+    # The product's words in a row in the answer: the answer already names the product
+    product_words = [w.lower() for w in re.findall(r"[A-Za-z0-9]+", product)]
+    has_product = any(words[i : i + len(product_words)] == product_words for i in range(len(words) - len(product_words) + 1))
+    if guards.generic_words and words and all(w in guards.generic_words for w in words) and product_words and not has_product:
+        name = f"{product} {name}"
+    return name
+
+
+@dataclass(frozen=True)
 class NamingConfig:
     """Isolated naming step for an element type (element config ``params.naming``).
 
@@ -2092,6 +2143,9 @@ class NamingConfig:
 
     instruction: str  # Naming convention for the element type
     samples: int = 1  # Answers per element; above 1 they are combined by majority (voting, reported per session)
+    guards: NameGuards = field(default_factory=NameGuards)  # Structural checks on the answer (unit names)
+    # Closed-set naming: a source that lists nameCandidates is named by choosing one of them with this instruction
+    choose_instruction: str = ""
 
 
 # Structural source fields that are the same in every run (no LLM-written text)
@@ -2101,6 +2155,14 @@ _NAMING_FIELDS = (
     ("typeName", "type"),
     ("category", "category"),
     ("conceptTypes", "concept_types"),
+    # A deployable unit: what it is, its entry point, its manifest and the documentation lines naming it
+    ("unitKind", "unit_kind"),
+    ("entry", "entry"),
+    ("module", "module"),
+    ("manifestName", "manifest_name"),
+    ("manifestDescription", "manifest_description"),
+    ("readmeTitle", "readme_title"),
+    ("readmeLines", "documentation"),
 )
 
 NAMING_SCHEMA: dict[str, Any] = {
@@ -2113,6 +2175,37 @@ NAMING_SCHEMA: dict[str, Any] = {
         "additionalProperties": False,
     },
 }
+
+
+def choice_schema(candidates: list[str]) -> dict[str, Any]:
+    """The output contract of a closed-set naming call: one of the candidates, as written."""
+    return {
+        "name": "element_name_choice",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "enum": list(candidates)}},
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def build_choice_prompt(source: dict[str, Any], element_type: str, instruction: str, candidates: list[str]) -> str:
+    """Prompt for choosing one element's name from its candidates; depends only on its source, type, instruction and candidates."""
+    source_json = json.dumps(source, sort_keys=True, separators=(",", ":"), default=str)
+    listed = "\n".join(f"- {json.dumps(c)}" for c in candidates)
+    return f"""{instruction}
+
+## ArchiMate {element_type} derived from this source
+```json
+{source_json}
+```
+
+## Candidates
+{listed}
+
+Return {{"name": "..."}} with one candidate exactly as written."""
 
 
 def naming_source(candidate: Candidate) -> dict[str, Any]:
@@ -2210,6 +2303,9 @@ class RoleConfig:
     structural: tuple[tuple[str, str, str], ...] = ()
     # A candidate with a structural role keeps its own name as written: no template, no naming call
     structural_as_written: bool = False
+    # element_per "unit" only: roles a deployable unit shows itself, (unit property, role key). A unit whose
+    # property lists files (such as webEntries) gets that role's element with those files as members, no call
+    unit_roles: tuple[tuple[str, str], ...] = ()
 
 
 ROLE_SCHEMA: dict[str, Any] = {
@@ -2594,6 +2690,7 @@ def derive_batch_relationships(
     llm_config: RelationshipLLMConfig | None = None,
     decided: dict[tuple[str, str], tuple[str, str, set[str], set[str] | None]] | None = None,
     owner_pairs: set[frozenset[str]] | None = None,
+    name_match_skip: set[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for a batch of newly created elements.
@@ -2754,6 +2851,7 @@ def derive_batch_relationships(
         element_type=element_type,
         outbound_rules=outbound_rules,
         inbound_rules=inbound_rules,
+        skip=name_match_skip,
     )
     for rel in kept(deterministic_rels):
         key = (rel["source"], rel["target"], rel["relationship_type"])
@@ -2901,23 +2999,12 @@ def derive_batch_relationships(
                 )
                 continue
 
-        # Enforce minimum confidence threshold for consistency
-        confidence = rel_data.get("confidence", 0.5)
-        if confidence < llm_config.min_confidence:
-            logger.debug(
-                "Skipping low-confidence relationship (%s -> %s, confidence=%s)",
-                source,
-                target,
-                confidence,
-            )
-            continue
-
         llm_relationships.append(
             {
                 "source": source,
                 "target": target,
                 "relationship_type": rel_type,
-                "confidence": confidence,
+                "confidence": rel_data.get("confidence", 0.5),  # logged only; no gate reads it
                 "derived_from": "llm",
             }
         )
@@ -3008,10 +3095,99 @@ def element_source_paths(graph_manager: GraphManager, elements: list[dict[str, A
     return paths
 
 
+UNIT_PREFIX = "unit::"
+
+
+@dataclass(frozen=True)
+class UnitScopes:
+    """What each deployable unit includes (graph ``INCLUDES``): member file paths and member node ids;
+    and the types (and their files) each data entity merges."""
+
+    files: dict[str, frozenset[str]]
+    nodes: dict[str, frozenset[str]]
+    entity_files: dict[str, frozenset[str]] = field(default_factory=dict)
+    entity_nodes: dict[str, frozenset[str]] = field(default_factory=dict)
+
+    def entities_of(self, node: str) -> list[str]:
+        """The data entities that merge a type node."""
+        return sorted(e for e, members in self.entity_nodes.items() if node in members)
+
+    def size(self, unit: str) -> int:
+        return len(self.files.get(unit, ())) + len(self.nodes.get(unit, ()))
+
+
+def unit_scopes(graph_manager: GraphManager) -> UnitScopes:
+    """The members of every deployable unit in the graph."""
+    files: dict[str, set[str]] = defaultdict(set)
+    nodes: dict[str, set[str]] = defaultdict(set)
+    for row in graph_manager.query("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(m) RETURN u.id AS unit, m.id AS node, m.filePath AS path, labels(m) AS labels"):
+        if not row.get("unit"):
+            continue
+        if "File" in (row.get("labels") or []) and row.get("path"):
+            files[row["unit"]].add(str(row["path"]).replace(chr(92), "/"))
+        elif row.get("node"):
+            nodes[row["unit"]].add(row["node"])
+    entity_files: dict[str, set[str]] = defaultdict(set)
+    entity_nodes: dict[str, set[str]] = defaultdict(set)
+    for row in graph_manager.query("MATCH (d:Graph:DataEntity)-[:`Graph:INCLUDES`]->(t) RETURN d.id AS entity, t.id AS node, t.filePath AS path"):
+        if row.get("entity") and row.get("node"):
+            entity_nodes[row["entity"]].add(row["node"])
+            if row.get("path"):
+                entity_files[row["entity"]].add(str(row["path"]).replace(chr(92), "/"))
+    # The code files that name a table (NAMED_IN) use it as well
+    for row in graph_manager.query("MATCH (d:Graph:DataEntity)-[:`Graph:NAMED_IN`]->(f:Graph:File) RETURN d.id AS entity, f.filePath AS path"):
+        if row.get("entity") and row.get("path"):
+            entity_files[row["entity"]].add(str(row["path"]).replace(chr(92), "/"))
+    # A domain is used where its members are: its entities' types and files, and the types it holds itself
+    for row in graph_manager.query("MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(m) RETURN d.id AS domain, m.id AS node, m.filePath AS path"):
+        domain, node = row.get("domain"), row.get("node")
+        if not domain or not node:
+            continue
+        if node in entity_nodes or node in entity_files:
+            entity_nodes[domain] |= entity_nodes.get(node, set())
+            entity_files[domain] |= entity_files.get(node, set())
+        else:
+            entity_nodes[domain].add(node)
+            if row.get("path"):
+                entity_files[domain].add(str(row["path"]).replace(chr(92), "/"))
+    return UnitScopes(
+        files={u: frozenset(p) for u, p in files.items()},
+        nodes={u: frozenset(n) for u, n in nodes.items()},
+        entity_files={e: frozenset(p) for e, p in entity_files.items()},
+        entity_nodes={e: frozenset(n) for e, n in entity_nodes.items()},
+    )
+
+
+def unit_owners(owners: list[tuple[str, str]], scopes: UnitScopes, source: str, path: str | None) -> list[str]:
+    """The owner elements (unit id, element id) of a node made from a unit: the element of that very unit,
+    else every element whose unit includes the node or its file, or a file below a directory path."""
+    same = sorted(element for unit, element in owners if unit == source)
+    if same:
+        return same
+    if source in scopes.entity_files or source in scopes.entity_nodes:
+        # A data entity: every unit that holds one of its types
+        files, nodes = scopes.entity_files.get(source, frozenset()), scopes.entity_nodes.get(source, frozenset())
+        return sorted({element for unit, element in owners if scopes.files.get(unit, frozenset()) & files or scopes.nodes.get(unit, frozenset()) & nodes})
+    found = set()
+    for unit, element in owners:
+        members = scopes.files.get(unit, frozenset())
+        if source in scopes.nodes.get(unit, ()) or (path and (path in members or any(m.startswith(path + "/") for m in members))):
+            found.add(element)
+    return sorted(found)
+
+
+def _unit_owned(elements: list[dict[str, Any]], element_type: str) -> list[tuple[str, str]]:
+    """(unit id, element id) of the elements of a type made from a deployable unit."""
+    return [
+        (src, e["identifier"]) for e in elements if e.get("element_type") == element_type and str(src := (e.get("properties") or {}).get("source") or "").startswith(UNIT_PREFIX)
+    ]
+
+
 def derive_containment_relationships(
     elements: list[dict[str, Any]],
     source_paths: dict[str, str],
     rules: list[ContainmentRule],
+    scopes: UnitScopes | None = None,
 ) -> list[dict[str, Any]]:
     """Relationships from containment: the nearest enclosing container owns each element.
 
@@ -3028,13 +3204,32 @@ def derive_containment_relationships(
         if path and e.get("element_type") in container_types:
             containers[e["element_type"]].append((path, e["identifier"]))
 
+    units = {rule.container: _unit_owned(elements, rule.container) for rule in rules} if scopes is not None else {}
+    unit_size = {element: scopes.size(unit) for owned in units.values() for unit, element in owned} if scopes is not None else {}
     relationships: list[dict[str, Any]] = []
     for e in sorted(elements, key=lambda x: x.get("identifier", "")):
-        path = source_paths.get((e.get("properties") or {}).get("source", ""))
-        if not path:
-            continue
+        source = str((e.get("properties") or {}).get("source", "") or "")
+        path = source_paths.get(source)
         for rule in rules:
             if e.get("element_type") != rule.contained:
+                continue
+            # Containers made from deployable units own what their units include (one owner: the smallest unit)
+            if scopes is not None and units.get(rule.container):
+                owned = [o for o in unit_owners(units[rule.container], scopes, source, path) if o != e["identifier"]]
+                if owned and source in scopes.entity_files:
+                    # A data entity is used by every unit that holds one of its types (access, not ownership)
+                    relationships.extend(
+                        {"source": o, "target": e["identifier"], "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "containment"} for o in owned
+                    )
+                    continue
+                if owned:
+                    owner = min(owned, key=lambda o: (unit_size.get(o, 0), o))
+                    relationships.append({"source": owner, "target": e["identifier"], "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "containment"})
+                    continue
+                # A deployable unit is no part of another unit's folder: an element made from one is never placed by path
+                if source.startswith(UNIT_PREFIX):
+                    continue
+            if not path:
                 continue
             owners = [(p, cid) for p, cid in containers.get(rule.container, []) if cid != e["identifier"] and path.startswith(p + "/")]
             if not owners:
@@ -3088,16 +3283,24 @@ def derive_configuration_relationships(
     source_paths: dict[str, str],
     configured: dict[str, set[str]],
     rules: list[ConfigurationRule],
+    scopes: UnitScopes | None = None,
 ) -> list[dict[str, Any]]:
-    """A provider serves the consumer whose directory (nearest enclosing) holds a file configuring one of its technologies."""
+    """A provider serves the consumer whose directory (nearest enclosing) holds a file configuring one of its technologies;
+    a consumer made from a deployable unit, when its unit includes that file."""
     relationships: list[dict[str, Any]] = []
     for rule in rules:
+        unit_consumers = _unit_owned(elements, rule.consumer) if scopes is not None else []
         consumers = [
             (source_paths[src], e["identifier"]) for e in elements if e.get("element_type") == rule.consumer and (src := (e.get("properties") or {}).get("source")) in source_paths
         ]
         providers = [(e["identifier"], set(_member_technologies(e))) for e in elements if e.get("element_type") == rule.provider]
         used: dict[str, set[str]] = defaultdict(set)  # consumer id -> configured technologies
         for path, techs in configured.items():
+            in_units = unit_owners(unit_consumers, scopes, "", path) if scopes is not None and unit_consumers else []
+            if in_units:
+                for consumer in in_units:
+                    used[consumer].update(techs)
+                continue
             owners = [(p, cid) for p, cid in consumers if path.startswith(p + "/")]
             if owners:
                 used[max(owners, key=lambda o: len(o[0]))[1]].update(techs)
@@ -3134,14 +3337,21 @@ def derive_same_name_relationships(elements: list[dict[str, Any]], rules: list[S
     return relationships
 
 
-def graph_link_pairs(graph_manager: GraphManager, query: str) -> list[tuple[str, str]]:
-    """The (a, b) source node id pairs a link query returns, each pair once, in order."""
-    pairs = {(str(row["a"]), str(row["b"])) for row in graph_manager.query(query) if row.get("a") and row.get("b")}
+def graph_link_pairs(graph_manager: GraphManager, query: str) -> list[tuple[str, ...]]:
+    """The (a, b) source node id pairs a link query returns, each pair once, in order; (a, b, channel) when a row has a channel."""
+    pairs = {
+        (str(row["a"]), str(row["b"]), str(row["channel"])) if row.get("channel") else (str(row["a"]), str(row["b"]))
+        for row in graph_manager.query(query)
+        if row.get("a") and row.get("b")
+    }
     return sorted(pairs)
 
 
-def derive_graph_link_relationships(elements: list[dict[str, Any]], rules: list[GraphLinkRule], links: dict[str, list[tuple[str, str]]]) -> list[dict[str, Any]]:
-    """Elements whose source nodes are linked relate as the rule says. ``links``: query -> its (a, b) pairs."""
+def derive_graph_link_relationships(
+    elements: list[dict[str, Any]], rules: list[GraphLinkRule], links: dict[str, list[tuple[str, ...]]], scopes: UnitScopes | None = None
+) -> list[dict[str, Any]]:
+    """Elements whose source nodes are linked relate as the rule says. ``links``: query -> its (a, b) pairs.
+    A linked node that no element is made from is lifted to the elements whose deployable unit includes it."""
     relationships: list[dict[str, Any]] = []
     for rule in rules:
         of_source: dict[str, dict[str, list[str]]] = {rule.source: defaultdict(list), rule.target: defaultdict(list)}
@@ -3149,7 +3359,23 @@ def derive_graph_link_relationships(elements: list[dict[str, Any]], rules: list[
             source = (e.get("properties") or {}).get("source")
             if source and e.get("element_type") in of_source:
                 of_source[e["element_type"]][str(source)].append(e["identifier"])
-        found = {(s, t) for a, b in links.get(rule.query, []) for s in of_source[rule.source].get(a, []) for t in of_source[rule.target].get(b, []) if s != t}
+        lifted = {kind: _unit_owned(elements, kind) for kind in (rule.source, rule.target)} if scopes is not None else {}
+
+        def ends(node: str, kind: str) -> list[str]:
+            direct = of_source[kind].get(node, [])
+            # A type that a data entity merges stands for the entity's element
+            if not direct and scopes is not None:
+                direct = [element for entity in scopes.entities_of(node) for element in of_source[kind].get(entity, [])]
+            return direct or (unit_owners(lifted[kind], scopes, node, None) if scopes is not None and lifted.get(kind) else [])
+
+        role = {e["identifier"]: str((e.get("properties") or {}).get("role") or "") for e in elements}
+
+        def sources(link: tuple[str, ...]) -> list[str]:
+            found = ends(link[0], rule.source)
+            # On a channel: only the source element of that role (no channel on the link: no line)
+            return [s for s in found if len(link) > 2 and role.get(s) == link[2]] if rule.source_channel else found
+
+        found = {(s, t) for link in links.get(rule.query, []) for s in sources(link) for t in ends(link[1], rule.target) if s != t}
         relationships.extend({"source": s, "target": t, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "graph_link"} for s, t in sorted(found))
     return relationships
 
@@ -3203,8 +3429,10 @@ def derive_named_in_code_relationships(
     code_names: list[tuple[str, str]],
     rules: list[NamedInCodeRule],
     concept_names: dict[str, str] | None = None,
+    scopes: UnitScopes | None = None,
 ) -> list[dict[str, Any]]:
     """The owner whose directory holds the most code names carrying a named element's words relates to it.
+    An owner made from a deployable unit holds the code names of the files its unit includes (shared files count for each).
 
     Args:
         elements: The model's elements (owners need a source with a path, see ``element_source_paths``)
@@ -3215,18 +3443,32 @@ def derive_named_in_code_relationships(
     """
     relationships: list[dict[str, Any]] = []
     for rule in rules:
+        unit_held = _unit_owned(elements, rule.owner) if scopes is not None else []
         owners = sorted(
-            ((path, e["identifier"]) for e in elements if e.get("element_type") == rule.owner and (path := source_paths.get((e.get("properties") or {}).get("source", "")))),
+            (
+                (path, e["identifier"])
+                for e in elements
+                if e.get("element_type") == rule.owner
+                and not str((e.get("properties") or {}).get("source") or "").startswith(UNIT_PREFIX)
+                and (path := source_paths.get((e.get("properties") or {}).get("source", "")))
+            ),
             key=lambda owner: (-len(owner[0]), owner[1]),
         )
-        if not owners:
+        if not owners and not unit_held:
             continue
-        # Each code name belongs to the nearest owner above it (the longest owner path that holds it)
+        # Each code name belongs to the nearest owner above it (the longest owner path that holds it), or to the units that include its file
         held: dict[str, set[tuple[str, ...]]] = defaultdict(set)
         for name, path in code_names:
-            owner = next((identifier for owner_path, identifier in owners if path == owner_path or path.startswith(owner_path + "/")), None)
             words = _code_words(name)
-            if owner and words:
+            if not words:
+                continue
+            in_units = unit_owners(unit_held, scopes, "", path) if scopes is not None and unit_held else []
+            for owner in in_units:
+                held[owner].add(words)
+            if in_units:
+                continue
+            owner = next((identifier for owner_path, identifier in owners if path == owner_path or path.startswith(owner_path + "/")), None)
+            if owner:
                 held[owner].add(words)
         for e in sorted((x for x in elements if x.get("element_type") == rule.named), key=lambda x: x.get("identifier", "")):
             source = (e.get("properties") or {}).get("source", "")
@@ -3253,8 +3495,12 @@ def derive_dependency_relationships(
     source_paths: dict[str, str],
     imports: list[tuple[str, str]],
     rules: list[DependencyRule],
+    scopes: UnitScopes | None = None,
 ) -> list[dict[str, Any]]:
     """The provider serves the consumer whose files import its files, drawn between siblings.
+
+    Elements made from deployable units own the files their units include: an import from a file of
+    one unit to a file of another (not in the first) is a dependency between the two.
 
     Each file belongs to its nearest enclosing element. A dependency between two elements
     is lifted to the two elements just below the deepest element holding both, so a part
@@ -3263,6 +3509,15 @@ def derive_dependency_relationships(
     """
     relationships: list[dict[str, Any]] = []
     for rule in rules:
+        consumers, providers = (_unit_owned(elements, rule.consumer), _unit_owned(elements, rule.provider)) if scopes is not None else ([], [])
+        if scopes is not None and consumers and providers:
+            unit_pairs: set[tuple[str, str]] = set()
+            for importer, imported in imports:
+                using, used = set(unit_owners(consumers, scopes, "", importer)), set(unit_owners(providers, scopes, "", imported))
+                unit_pairs |= {(p, c) for c in using for p in used - using if p != c}
+            for provider_id, consumer_id in sorted(unit_pairs):
+                relationships.append({"source": provider_id, "target": consumer_id, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "dependency"})
+            continue
         holders = sorted(
             (source_paths[src], e["identifier"])
             for e in elements
@@ -3311,6 +3566,7 @@ def derive_consolidated_relationships(
     named_in_code: list[NamedInCodeRule] | None = None,
     listed_members: list[ListedMembersRule] | None = None,
     graph_links: list[GraphLinkRule] | None = None,
+    name_match_skip: set[tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Derive relationships for all elements in a single consolidated pass.
@@ -3364,16 +3620,22 @@ def derive_consolidated_relationships(
         decided[(from_type, to_type)] = (kind, side, placed, owners)
 
     paths = element_source_paths(graph_manager, all_elements) if graph_manager and (containment or configuration or dependency or named_in_code) else {}
+    # Elements made from deployable units own what their units include (unit scopes)
+    scopes = unit_scopes(graph_manager) if graph_manager and any(str((e.get("properties") or {}).get("source") or "").startswith(UNIT_PREFIX) for e in all_elements) else None
     # A link the graph holds says more than a path: the element it places is not placed again by containment
     linked: set[tuple[str, str, str, str]] = set()
+    # (types, relationship type) that only the graph relates (exclusive graph links)
+    graph_only = {(frozenset((r.source, r.target)), r.relationship) for r in graph_links or [] if r.exclusive}
     if graph_links and graph_manager:
-        rels = derive_graph_link_relationships(all_elements, graph_links, {query: graph_link_pairs(graph_manager, query) for query in sorted({r.query for r in graph_links})})
+        rels = derive_graph_link_relationships(
+            all_elements, graph_links, {query: graph_link_pairs(graph_manager, query) for query in sorted({r.query for r in graph_links})}, scopes=scopes
+        )
         structural.extend(rels)
         linked = {(type_of.get(r["source"], ""), r["relationship_type"], type_of.get(r["target"], ""), r["target"]) for r in rels}
     if containment:
         rels = [
             r
-            for r in derive_containment_relationships(all_elements, paths, containment)
+            for r in derive_containment_relationships(all_elements, paths, containment, scopes=scopes)
             if (type_of.get(r["source"], ""), r["relationship_type"], type_of.get(r["target"], ""), r["target"]) not in linked
         ]
         structural.extend(rels)
@@ -3390,19 +3652,21 @@ def derive_consolidated_relationships(
             else:
                 decide(rels, rule.member, rule.group, rule.relationship, "source", groups)
     if configuration and graph_manager:
-        rels = derive_configuration_relationships(all_elements, paths, configured_technologies(graph_manager), configuration)
+        rels = derive_configuration_relationships(all_elements, paths, configured_technologies(graph_manager), configuration, scopes=scopes)
         structural.extend(rels)
         for rule in configuration:
             decide(rels, rule.provider, rule.consumer, rule.relationship, "target")
     if dependency and graph_manager:
-        structural.extend(derive_dependency_relationships(all_elements, paths, file_imports(graph_manager), dependency))
+        structural.extend(derive_dependency_relationships(all_elements, paths, file_imports(graph_manager), dependency, scopes=scopes))
     if same_name:
         structural.extend(derive_same_name_relationships(all_elements, same_name))
     if listed_members:
         structural.extend(derive_listed_member_relationships(all_elements, listed_members))
     if named_in_code and graph_manager:
         structural.extend(
-            derive_named_in_code_relationships(all_elements, paths, code_names_with_paths(graph_manager), named_in_code, source_concept_names(graph_manager, all_elements))
+            derive_named_in_code_relationships(
+                all_elements, paths, code_names_with_paths(graph_manager), named_in_code, source_concept_names(graph_manager, all_elements), scopes=scopes
+            )
         )
     all_relationships.extend(structural)
     owner_pairs = {frozenset((r["source"], r["target"])) for r in structural}
@@ -3446,7 +3710,9 @@ def derive_consolidated_relationships(
             llm_config=llm_config,
             decided=decided,
             owner_pairs=owner_pairs,
+            name_match_skip=name_match_skip,
         )
+        relationships = [r for r in relationships if (frozenset((type_of.get(r["source"], ""), type_of.get(r["target"], ""))), r["relationship_type"]) not in graph_only]
 
         all_relationships.extend(relationships)
         logger.debug(

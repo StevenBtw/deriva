@@ -818,3 +818,10 @@ class Config:
         assert result["success"] is True
         for node in result["data"]["nodes"]:
             assert node["properties"]["confidence"] == 1.0
+
+
+def test_a_ddl_table_is_a_table_type():
+    result = extract_types_from_source("db/schema.sql", "CREATE TABLE IF NOT EXISTS benchmark_runs (id INT);\n", "r")
+
+    (node,) = result["data"]["nodes"]
+    assert node["properties"]["typeName"] == "benchmark_runs" and node["properties"]["category"] == "table"

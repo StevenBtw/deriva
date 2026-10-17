@@ -29,6 +29,7 @@ from typing import Annotated
 import typer
 
 from deriva.cli.commands.config import app as config_app
+from deriva.cli.commands.graph import app as graph_app
 from deriva.cli.commands.repo import app as repo_app
 from deriva.cli.commands.run import (
     _print_derivation_result,
@@ -49,6 +50,7 @@ app = typer.Typer(
 # Add subcommand groups
 app.add_typer(config_app, name="config")
 app.add_typer(repo_app, name="repo")
+app.add_typer(graph_app, name="graph")
 BENCHMARK_MISSING = "Benchmarking is part of deriva-dev: uv tool install --python 3.14 deriva-dev"
 
 if about.features()["benchmark"]:
@@ -125,9 +127,13 @@ def run_stage(
     with PipelineSession(repository=repo) as session, ExitStack() as step_scope:
         typer.echo("Connected to grafeo")
 
+        later_steps: list[str] = []
         if only_step:
             step_type = "extraction" if stage in ("extraction", "all") else "derivation"
             typer.echo(f"Enabling only {step_type} step: {only_step} (restored afterwards)")
+            # Before the others are switched off: the later steps that may read what this one writes
+            if step_type == "extraction":
+                later_steps = session.later_extraction_steps(only_step)
             try:
                 step_scope.enter_context(session.only_step(step_type, only_step))
             except ValueError as e:
@@ -163,6 +169,8 @@ def run_stage(
                     phases=phases,
                 )
             _print_extraction_result(result)
+            if later_steps:
+                typer.echo(f"Later steps that may read what {only_step} writes (run them again to update them): {', '.join(later_steps)}")
 
         elif stage == "derivation":
             if no_llm:
@@ -297,6 +305,9 @@ def export(
         if result["success"]:
             typer.echo(f"  Elements exported: {result['elements_exported']}")
             typer.echo(f"  Relationships exported: {result['relationships_exported']}")
+            if result.get("detail_elements") is not None:
+                typer.echo(f"  Detail level: {result['detail_elements']} elements, {result['detail_relationships']} relationships")
+                typer.echo(f"  Views: {result['views_exported']}")
             typer.echo(f"\nExported to: {result['output_path']}")
             typer.echo("Model can be opened with Archi or other ArchiMate-compatible tools.")
         else:

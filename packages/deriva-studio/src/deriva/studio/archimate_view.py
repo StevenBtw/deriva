@@ -17,7 +17,7 @@ def to_widget_model(elements: list[dict[str, Any]], relationships: list[dict[str
                 "id": e["identifier"],
                 "name": e.get("name") or e["identifier"],
                 "type": e["element_type"],
-                "layer": LAYER_MAP.get(e["element_type"], "Other"),
+                "layer": LAYER_MAP.get(e["element_type"]) or e.get("layer") or "Other",
                 "documentation": e.get("documentation") or "",
                 "source": (e.get("properties") or {}).get("source"),
             }

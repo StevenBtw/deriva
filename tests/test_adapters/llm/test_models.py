@@ -339,6 +339,22 @@ class TestBenchmarkModelConfigCredentials:
         assert config.api_key == "sk-ant-123"
         assert config.api_key_env == "MY_KEY"
 
+    def test_strips_padding_inside_quotes(self):
+        """Padding inside the quotes goes too: ' sk-ant-123 ' comes out clean."""
+        config = BenchmarkModelConfig(
+            name="test-anthropic",
+            provider="' anthropic '",
+            model='" claude-3-sonnet "',
+            api_url="' https://api.anthropic.com/v1/messages '",
+            api_key='" sk-ant-123 "',
+            api_key_env="' MY_KEY '",
+        )
+
+        assert (config.provider, config.model) == ("anthropic", "claude-3-sonnet")
+        assert config.api_url == "https://api.anthropic.com/v1/messages"
+        assert config.api_key == "sk-ant-123"
+        assert config.api_key_env == "MY_KEY"
+
     def test_get_api_key_strips_the_env_value(self, monkeypatch):
         monkeypatch.setenv("DERIVA_TEST_LLM_KEY", "  sk-env-key ")
         config = BenchmarkModelConfig(

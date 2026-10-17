@@ -42,7 +42,10 @@ FUZZY_MATCH_THRESHOLD = 0.85  # Similarity ratio for Tier 2
 
 @register_refine_step("duplicate_elements")
 class DuplicateElementsStep:
-    """Find and merge/disable duplicate ArchiMate elements."""
+    """Flag elements of one type with equal or similar names (propose-only).
+
+    It never merges: merges are decided only in joint_consistency (the MILP), from structural identity.
+    """
 
     def run(
         self,
@@ -59,7 +62,6 @@ class DuplicateElementsStep:
             llm_query_fn: Unused (the step makes no LLM call; part of the refine step interface)
             params: Optional parameters:
                 - fuzzy_threshold: Similarity threshold for Tier 2 (default: 0.85)
-                - auto_merge_tier2: Whether to auto-merge Tier 2 matches (default: False)
                 - extra_synonyms: Dict of additional synonym mappings {"from": "to"}
                 - use_lemmatization: Apply lemmatization before matching (default: False)
 
@@ -68,7 +70,6 @@ class DuplicateElementsStep:
         """
         params = params or {}
         fuzzy_threshold = params.get("fuzzy_threshold", FUZZY_MATCH_THRESHOLD)
-        auto_merge_tier2 = params.get("auto_merge_tier2", False)
         extra_synonyms = params.get("extra_synonyms", None)  # Additional synonym mappings
         use_lemmatization = params.get("use_lemmatization", False)  # Apply lemmatization
 
@@ -128,62 +129,36 @@ class DuplicateElementsStep:
                         if similarity >= fuzzy_threshold and not differ_in_a_code(elem_a.name, elem_b.name):
                             tier2_duplicates.append((elem_a, elem_b, similarity))
 
-            # Process Tier 1: Auto-merge exact duplicates
+            # Flag them (propose-only): equal names are tier 1, similar names tier 2; nothing is merged here
             for elem_a, elem_b in tier1_duplicates:
-                survivor, duplicate = self._select_survivor(elem_a, elem_b)
-                self._merge_elements(archimate_manager, survivor, duplicate, "exact_name_match")
-                result.elements_merged += 1
-                result.elements_disabled += 1
+                result.issues_found += 1
                 result.details.append(
                     {
                         "tier": 1,
-                        "action": "merged",
-                        "survivor": survivor.identifier,
-                        "duplicate": duplicate.identifier,
-                        "name": survivor.name,
-                        "reason": "exact_name_match",
+                        "action": "flagged",
+                        "element_a": elem_a.identifier,
+                        "element_b": elem_b.identifier,
+                        "name_a": elem_a.name,
+                        "name_b": elem_b.name,
+                        "reason": "same_name",
+                    }
+                )
+            for elem_a, elem_b, similarity in tier2_duplicates:
+                result.issues_found += 1
+                result.details.append(
+                    {
+                        "tier": 2,
+                        "action": "flagged",
+                        "element_a": elem_a.identifier,
+                        "element_b": elem_b.identifier,
+                        "name_a": elem_a.name,
+                        "name_b": elem_b.name,
+                        "similarity": similarity,
+                        "reason": "potential_duplicate",
                     }
                 )
 
-            # Process Tier 2: Fuzzy matches
-            for elem_a, elem_b, similarity in tier2_duplicates:
-                if auto_merge_tier2:
-                    survivor, duplicate = self._select_survivor(elem_a, elem_b)
-                    self._merge_elements(
-                        archimate_manager,
-                        survivor,
-                        duplicate,
-                        f"fuzzy_match_{similarity:.2f}",
-                    )
-                    result.elements_merged += 1
-                    result.elements_disabled += 1
-                    result.details.append(
-                        {
-                            "tier": 2,
-                            "action": "merged",
-                            "survivor": survivor.identifier,
-                            "duplicate": duplicate.identifier,
-                            "similarity": similarity,
-                            "reason": "fuzzy_match",
-                        }
-                    )
-                else:
-                    # Flag for review (don't merge)
-                    result.issues_found += 1
-                    result.details.append(
-                        {
-                            "tier": 2,
-                            "action": "flagged",
-                            "element_a": elem_a.identifier,
-                            "element_b": elem_b.identifier,
-                            "name_a": elem_a.name,
-                            "name_b": elem_b.name,
-                            "similarity": similarity,
-                            "reason": "potential_duplicate",
-                        }
-                    )
-
-            logger.info(f"Duplicate detection complete: {result.elements_merged} merged, {result.issues_found} flagged")
+            logger.info(f"Duplicate detection complete: {result.issues_found} flagged")
 
         except Exception as e:
             logger.exception(f"Error in duplicate element detection: {e}")
@@ -191,61 +166,6 @@ class DuplicateElementsStep:
             result.errors.append(str(e))
 
         return result
-
-    def _select_survivor(self, elem_a, elem_b):
-        """Select which element to keep based on properties.
-
-        Prefers element with:
-        1. Higher source pagerank (if available)
-        2. More documentation
-        3. First alphabetically (deterministic fallback)
-        """
-        # Check for pagerank in properties
-        rank_a = elem_a.properties.get("source_pagerank", 0)
-        rank_b = elem_b.properties.get("source_pagerank", 0)
-
-        if rank_a > rank_b:
-            return elem_a, elem_b
-        if rank_b > rank_a:
-            return elem_b, elem_a
-
-        # Check documentation length
-        doc_a = len(elem_a.documentation or "")
-        doc_b = len(elem_b.documentation or "")
-
-        if doc_a > doc_b:
-            return elem_a, elem_b
-        if doc_b > doc_a:
-            return elem_b, elem_a
-
-        # Deterministic fallback: alphabetical by identifier
-        if elem_a.identifier < elem_b.identifier:
-            return elem_a, elem_b
-        return elem_b, elem_a
-
-    def _merge_elements(
-        self,
-        archimate_manager: ArchimateManager,
-        survivor,
-        duplicate,
-        reason: str,
-    ) -> None:
-        """Merge duplicate into survivor and disable duplicate.
-
-        - Combines documentation
-        - Redirects relationships (handled by keeping survivor)
-        - Disables duplicate
-        """
-        # Combine documentation if duplicate has additional info
-        if duplicate.documentation and survivor.documentation:
-            if duplicate.documentation not in survivor.documentation:
-                # Could update survivor documentation here if needed
-                pass
-
-        # Disable the duplicate
-        archimate_manager.disable_element(duplicate.identifier, reason=f"duplicate_of:{survivor.identifier}:{reason}")
-
-        logger.debug(f"Merged {duplicate.identifier} into {survivor.identifier} ({reason})")
 
 
 def _build_repo_context(graph_manager: GraphManager | None) -> RepoContext:

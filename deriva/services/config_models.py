@@ -24,7 +24,7 @@ class ExtractionConfigModel(BaseModel):
     input_sources: str | None = Field(default=None, description="JSON string of input sources")
     instruction: str | None = Field(default=None, description="LLM instruction prompt")
     example: str | None = Field(default=None, description="Example output for LLM")
-    extraction_method: Literal["llm", "ast", "structural"] = Field(default="llm", description="Extraction method to use")
+    extraction_method: Literal["llm", "ast", "structural", "treesitter"] = Field(default="llm", description="Extraction method to use")
     temperature: float | None = Field(default=None, ge=0.0, le=2.0, description="LLM temperature override")
     max_tokens: int | None = Field(default=None, ge=1, description="LLM max_tokens override")
 
@@ -33,7 +33,7 @@ class DerivationConfigModel(BaseModel):
     """Unified derivation step configuration with validation."""
 
     step_name: str = Field(..., min_length=1, description="The derivation step name")
-    phase: Literal["prep", "generate", "refine", "relationship"] = Field(..., description="Derivation phase")
+    phase: Literal["prep", "generate", "refine", "relationship", "baseline"] = Field(..., description="Derivation phase (baseline: never run by the pipeline)")
     sequence: int = Field(default=0, ge=0, description="Execution order within phase")
     enabled: bool = Field(default=True, description="Whether this derivation step is enabled")
     llm: bool = Field(default=False, description="True = uses LLM, False = pure graph algorithm")

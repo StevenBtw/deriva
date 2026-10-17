@@ -8,133 +8,147 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
-## v0.8.1 - Cleanup (October 12 2026)
+## v0.8.2 - Pre-benchmark refinement (Unreleased)
 
-### Packaging
+Most of the model now comes from structure: new structural extraction steps find deployable units, data entities and domains, deployments, cooperation lines and lifecycles, and the LLM mainly chooses among structural candidates.
 
-- **Smaller install**: deriva-cli depends on `pydantic-ai-slim` with only the providers Deriva builds (openai, anthropic, mistral; azure, ollama and lmstudio go through the openai client) instead of the full `pydantic-ai`, which also installed google-genai, logfire, opentelemetry, fastmcp and mcp. `sqlglot`, `authlib` and `nest-asyncio` (never imported) and the `pyasn1` and `pyjwt` floors (for packages no longer installed) are removed: 52 fewer packages in the lock, deriva-cli installs 86 packages instead of 146
-- **Library boundaries in Ruff**: `TID251` also checks third-party imports: the engines behind an adapter stay in `adapters/`, the web stack stays in the studio and bench, and packages Deriva does not declare are banned. The benchmark's Ollama warm-up used `requests`, which Deriva never declared; it uses httpx
-- **Studio without the notebook stack**: deriva-studio requires anywidget-graph 0.4.3 and anywidget-archimate 0.3.1; the widgets moved marimo to an `examples` extra, so the studio no longer installs it (15 fewer packages in the lock). The model view also keeps its zoom over redraws, and the fit button returns to the whole diagram
+### Application layer
+
+- **Deployable units**: new structural step `DeployableUnit` finds what runs on its own (a folder with a container file and its own code, a manifest entry point, a mainframe application split into online and batch); a repository without any is one unit
+- **One component per deployable unit**, instead of one per module, package or folder
+- **One interface per unit and channel** (REST API, Web UI, Commands, Messaging API, RPC API, Batch Jobs) with the endpoints, screens or jobs as its `members`; page files give a Web UI interface without an LLM call
+- **Services per component** (`component_services.group_by: "unit"`): members that extend one base type form one service, the others group by the data domain they reach; at most `max_per_component` per component, none for a pure front end
+- **Business functions across components**: a business domain that the services of two or more cooperating components access
+- **Names chosen from a closed set**: component, service and function names come from structural and documentation candidates, and one call chooses only when there are several. Component names agree in 97% of runs (was 81%) with 10 naming calls per run instead of 36
+- **Relationships follow the units**: the relationship rules find a node's component through the units' members
+- **Name matching reads structure**: the name tier compares `structure_name`, never an LLM name (relationship consistency 89.7% to 95.2%)
+- **Convention checklist**: `benchmark conventions <session...>` checks run snapshots against ArchiMate modelling conventions and writes a review page per repository and model, and a summary
+- `config add extraction <node type> --sequence N` adds an extraction step (disabled)
+
+### Data
+
+- **Data entities from structure**: new step `DataEntity` finds aggregate roots, ORM entities, shared mainframe records and DDL tables, and leaves out ids, value objects, DTOs, configuration and technical records with their reason; with `table_mentions` a table links to the code files that query it
+- **Information domains**: new step `DataDomain` groups the entities as an architect would (an aggregate with its parts, an entity with its owner, a lookup with the domain that uses it)
+- **Data and business objects per domain**: one DataObject per domain and one BusinessObject per domain with a business anchor, which the data object realizes. Element and relationship consistency 93.1% and 94.3% to 97.0% and 98.9%, LLM calls per session 611 to 346
+
+### Technology layer
+
+- **Deployment from structure**: new step `Deployment` reads compose files, Kubernetes manifests, cloud templates and Dockerfiles. The primary environment (the cloud, else the root compose file, else Kubernetes) runs services that deploy units; a unit's runtime comes from its own Dockerfile, through build commands and the `FROM` chain. Secret-looking variables and URL passwords are not stored
+- **System software from a closed list** (`technologies`): images, runtimes, managed services, manifest dependencies and content markers are matched to a versioned list where each alias names one technology; mainframe subsystems make a mainframe environment
+- **Nodes and system software without an LLM**, from the environment and the listed software; TechnologyService and Device are switched off. The technology layer is identical in every run
+- **AWS CDK apps without synth**: read statically with tree-sitter TypeScript through a versioned construct table (`cdk_constructs`), from literal values and literal loops only
+- **Engine-qualified managed services** (`cloud_qualifiers`), such as `Amazon RDS for PostgreSQL`; an engine found through drivers merges into its managed service
+
+### Cooperation and business
+
+- **Cooperation from structure**: new step `Cooperation` finds `CONSUMES` and `SENDS_TO` lines between units from endpoint URLs, message destinations, service catalogs, gateway routes and code edges; the provider's interface serves the consumer, and messages are a Flow
+- **Business layer from structure**: new step `BusinessLayer` finds lifecycles (a status attribute with its states, transitions from guarded assignments, `UPDATE ... WHERE`, transition tables and documented flows), the events that hand them on and the roles that act in them: a BusinessProcess per lifecycle, a BusinessEvent per hand-off, a BusinessActor per role
+- **Business functions from a process catalog**: `BusinessFunctionModel` classifies documentation against APQC PCF (notice in THIRD_PARTY_NOTICES.md); disabled by default
+
+### Pipeline
+
+- **Re-runnable extraction steps**: every node and edge carries the step and config version that wrote it, and after a clean run a step removes what it no longer produces; `graph tag-steps` tags an existing graph, and `--only-step` lists the later steps that may read its output
+- **Joint decision as the last refine step**: the MILP decides relationships and merges in a canonical order, with evidence tiers from a versioned table; its solve report is in every run snapshot
+- **No confidence gates**: no step filters on an LLM-reported confidence; `circular_relationships` and `relationship_consolidation` are removed
+- **SQL tables without an LLM**: `CREATE TABLE` statements in `.sql` and `.ddl` files
+
+### Export
+
+- **Two levels in one file**: the architect level (the derived model) and a detail level with the members of its elements (entities, endpoints, programs, deployed artifacts); every element carries a `level`
+- **Generated views**: Layered, Application Cooperation, Information Structure, Implementation and Deployment, and Business Process Cooperation, laid out deterministically; the files validate against the ArchiMate 3.1 exchange schema and open in Archi
+- The studio's model panel switches level and view; the metamodel knows Artifact
+
+### Benchmark
+
+- **Reference models**: `benchmark reference <session>` compares the runs with reference models (JSON or Archi format): recall and precision per element type, layer and relationship kind, split elements, chain completeness, accepted names and a derivable subset
+- **Extraction per run**: `benchmark run --extract-per-run` repeats the whole pipeline in every run, on a graph of its own and with the run's own model
+- **What each run sent**: every call records temperature, top_p, seed, reasoning level and the model that answered; a model config can set its own temperature (`LLM_{NAME}_TEMPERATURE`)
+- **More in `benchmark analyze`**: consistency by source identity and by type and name (share and mean Jaccard) per layer; answer and decision stability and Krippendorff's alpha per decision type; answers outside their candidates; the share of differences from extraction or derivation; `--also` for agreement across sessions
+- **Baseline B1**: `benchmark run --baseline b1` lets the LLM generate the whole model in one go from raw repository material, validated against the ArchiMate rules and repaired at most twice (config row `BaselineB1`)
+
+### Studio
+
+- A GitHub link and a Report issue button with the environment filled in
 
 ### Fixes
 
-- **LLM configuration**: keys, URLs and model names are stripped of padding and quotes when read, so a pasted key with a trailing space no longer fails every call with a misleading `Connection error`. Permanent client errors (an illegal header value, an unsupported protocol) are no longer retried into the circuit breaker, and the API key is redacted from logged and reported error text (h11 quotes header values in its exceptions)
-- **CLI output**: the derivation summary shows how many elements refine disabled, and so why the export writes fewer than were created; pydantic-ai's first-run banner no longer prints on every start
+- **Imports inside functions and blocks** (Python) and `require()` or dynamic `import()` (JavaScript) are extracted
+- **Call resolution**: the caller's own file first (paths now compare), then the files it imports, then its module root, always in the caller's language (`call_languages` for cross-language calls); a bare call means the caller's own method only in Java and C#
+- **Python from-imports**: `from . import x` and `import y as z` resolve correctly
+- A top folder named like the repository is no longer dropped from stored paths
+- LLM config values are stripped of padding inside quotes; `config query` no longer claims to be safe during a benchmark; small studio layout fixes
+
+## v0.8.1 - Cleanup (October 12 2026)
+
+- **Smaller install**: `pydantic-ai-slim` with only the providers Deriva builds, and unused dependencies removed; deriva-cli installs 86 packages instead of 146
+- **Library boundaries in Ruff**: `TID251` also checks third-party imports; the Ollama warm-up uses httpx
+- **Studio without the notebook stack**: anywidget-graph 0.4.3 and anywidget-archimate 0.3.1 no longer install marimo; the model view keeps its zoom
+- **LLM configuration**: keys, URLs and model names are stripped of padding and quotes, permanent client errors are not retried, and API keys are redacted from error text
+- **CLI output**: the derivation summary counts the elements refine disabled; no pydantic-ai banner on start
 
 ## v0.8.0 - Studio (October 11 2026)
 
 ### Studio
 
-- **Fresh installs work out of the box**: the configuration ships as seed data (`deriva/adapters/database/data/`, the active config rows with their version numbers, file types, name patterns and settings), and the configuration database is created and seeded on first use; before, a fresh clone had no step configurations. Existing databases are never touched. `uv run python -m deriva.adapters.database.db_tool export --active-only` refreshes the seed files
-- **Visual identity**: Deriva has a logo, the inverted isoline: contour lines that are messy at the edge and grow calmer inward to a perfect core, from raw code to a derived model. Colours "Tide" (soft blue at the edge to mint at the core, dark-first), wordmark in STIX Two Text. The SVGs (marks for dark and light backgrounds, one-colour, icon, favicon, lockups and README banners, lettering outlined) are in `assets/brand/`; the studio shows the mark in its top bar and as favicon, and its accent colour moves from blue to Tide teal (dark text on filled buttons in the dark theme)
-- **Deriva Studio replaces the marimo app**: `uv run deriva` starts a local web UI (FastAPI backend, React front end, own design) on http://127.0.0.1:8765, with the API documented at `/docs`. The marimo app, its `deriva-app` command and the marimo dependency are removed
-- **Workspace**: pick a repository and a scope (everything, extraction, derivation, or structural steps only), start and cancel runs, and follow them live; the intermediate graph and the output graph (anywidget-graph) refresh after each step, linked in one canvas or side by side; the output model opens in anywidget-archimate, with XML export
-- **Live dual graph**: the Workspace shows the repository, the intermediate graph and the output graph as lanes of one canvas, followed by the model. The repository's links fan out into the intermediate graph, which grows step by step during extraction; during derivation each new element appears in the output lane with soft links back to the graph nodes it was derived from, the running step's candidates pulse, and model relationships draw in. Output elements carry their ArchiMate layer colour, and the model glyph at the end opens the model panel. A Linked | Separate switch keeps the two separate graphs with their query bars. Deriva now requires anywidget-graph 0.4 (linked lanes, incremental append, pulse, host theme, lane actions)
-- **A realistic sample of large graphs**: a view of the intermediate graph used to fill its 300 nodes type by type (repositories, directories, technologies, concepts, then types), so files and methods, half of a typical graph, never showed. Each node type now gets slots in proportion to its count (at least one), filled with the most connected nodes first, so the sample keeps its relationships: on the development set 8 to 13 times as many edges as a random pick per type, with almost no unconnected nodes. The linked view always shows the whole output graph and the repositories and samples the intermediate graph with the rest of the budget, starting from the nodes the elements were derived from. The lane notes and the widget's legend count what is shown against the totals ("233 of 2,756 graph nodes")
-- **Which elements made it into the model**: the linked view also shows the elements refine rejected, in grey in their layer's row; each element in the exported model has a link to the model glyph. During a run, nodes that leave the sample and elements that leave the model fade out in place instead of redrawing the canvas
-- **A readable linked view**: the intermediate graph is spread by forces in a wider lane, the output graph stands in rows by ArchiMate layer (business on top, then application and technology), and each lane labels its largest nodes. The intermediate node types get colours checked for colour-blind readers in both themes (code in violet, structure in grey, business evidence in amber, technology evidence in green-teal), and the legend shows the same colours as the nodes. Deriva now requires anywidget-graph 0.4.2 (lane layouts and rows, lane labels, colours per type, removal in batches, totals, links into action lanes)
-- **Graph labels**: graph views showed no node labels at all (the studio left the widget's label setting unset); methods were labelled with their class name, repositories and external dependencies with their ids. Elements of models derived before elements kept their own properties now link to their source through the stored source id
-- **Views stay live during runs**: after each step of a run the studio follows, the session is left free for a moment, so the graphs refresh mid-run instead of answering busy; a refresh that still misses its turn keeps what is drawn, and the views refresh once more when the run ends
-- **Full runs start from an empty model**: a derivation run on top of an earlier model skipped every candidate that model already had (the duplicate check), so re-running derivation gave a smaller, mixed model (on the Deriva repository 47 elements and 15 relationships instead of 66 and 43). Full runs from the CLI (`run derivation` or `run all` without `--phase` or `--only-step`) and from the studio now clear the model first, as benchmarks already did; runs of one phase or one step keep it. The `derivation_clear_model` system setting switches this off, from the CLI or, with benchmarking installed, in the studio's General page
-- **First-run hints**: the top bar shows the installed version; a banner points to General when no LLM model is configured (structural steps run without one); an install without benchmarking shows no Benchmark mode (the server reports its features in `/api/status`)
-- **Theme switch reaches every view**: the graphs follow the top bar's theme switch at once; before, they kept the old theme until a reload
-- **Repositories, settings and file types**: clone, inspect and delete repositories; edit the excluded directories and the file type registry
-- **Configuration**: extraction and derivation steps with their versions; instructions and examples are edited in a code editor and saved as a new version (earlier versions stay); steps can be switched on and off
-- **One owner of the databases**: the studio keeps one session behind a lock; while a CLI run holds the config database the studio answers with the holder's process id instead of failing, and data views wait for a running step instead of reading at the same time
-- **Read-only graph queries**: queries typed into the graph view run inside a grafeo transaction that is always rolled back, behind a write guard, so nothing can change the graphs from there
-- `PipelineSession.save_extraction_config` and `save_derivation_config` accept an `example`
-
-### Distribution
-
-- **Three packages on PyPI, released together**: `deriva-studio` (the studio and the command line), `deriva-cli` (the command line only, for scripts, CI and servers) and `deriva-dev` (both, plus benchmarking), installed as tools with `uv tool install --python 3.14 deriva-studio` or tried with `uvx --python 3.14 deriva-studio`. The repository is a uv workspace built with the uv build backend; the three share the namespace package `deriva`, and `uv sync` in a checkout installs all three as editable
-- **grafeo 0.6.0 beta 1**: the minimum grafeo version is now `0.6.0b1`, installed from PyPI like every other dependency (a checkout no longer needs a local grafeo build). Graph files written by an earlier grafeo version are not read by it: move the old files out of the graph folder (`GRAFEO_DB_DIR`; `workspace/graphs` in the home folder unless you set it), that is the `.grafeo` files and any `.pre-0.6` copies next to them, and extract the repositories again
-- **One home folder**: an installed Deriva keeps `.env`, the configuration database and `workspace/` in `~/.deriva` (`DERIVA_HOME` moves it; a source checkout is its own home folder, as before). Relative paths in `.env` are read from the home folder, so Deriva finds its files from any working directory, and `deriva-cli status` shows the home folder in use
-- **One settings layer**: all configuration is read in one place (`deriva/common/settings.py`, pydantic-settings): the home `.env` merged with the process environment, where a variable set in the environment wins over the file, and an empty number or switch counts as unset. Only the LLM provider keys are passed on to the process environment, for pydantic-ai, and never over a variable that was already set
-- **spaCy pipelines on first use**: the English, German and French pipelines are no longer dependencies installed from URLs (PyPI refuses those); the business concept step downloads them on its first run into `workspace/cache/nlp`, pinned by version and SHA-256, like its translation models
-- **Benchmarking is optional**: it lives in the `deriva-dev` package (`deriva.bench`); without it, `deriva-cli benchmark` says how to install it and the studio shows no Benchmark mode
-- `deriva` opens the studio in the browser once it answers; `--no-browser` leaves the browser closed
-- **Release workflow**: a version tag checks that the three versions and the pins between them match the tag, builds the packages, smoke tests the wheels and the rebuilt source distributions, and publishes them to PyPI with trusted publishing and PEP 740 attestations; each GitHub release carries a `constraints.txt` with the exact dependency versions (`uv tool install --python 3.14 deriva-dev==0.8.0 -c constraints.txt`). CI builds the three packages and installs them as tools on Linux, Windows and macOS
-- **Documentation**: the architecture, benchmarking, optimization and ArchiMate guides moved to `docs/` and are published at docs.deriva.dev
-- Known limitation: ISI's deriva-py (on PyPI as `deriva`) also installs a top-level `deriva` package, so the two cannot share one Python environment; install Deriva as a tool or in an environment of its own
-- **A first start works end to end** (found by installing the three packages as tools in an empty home): the graphs persist in the home folder by default (`workspace/graphs`; a fresh install kept them in memory, so `deriva-cli export` after `deriva-cli run` found nothing; an empty `GRAFEO_DB_DIR` still means in-memory). The first model saved in General becomes `LLM_DEFAULT_MODEL`; before, the banner went away but the LLM steps still found no model. A model's own key and URL now reach the provider for OpenAI, Anthropic, Mistral and Ollama; before, only the providers' environment variables (such as `MISTRAL_API_KEY`) worked, so a key saved in the studio was ignored. Without a model, the error says how to add one
-- `deriva-cli run` without `-v` no longer crashes at its second step (the progress display looked tasks up by list position), and `--no-llm` no longer loads the LLM for extraction and `all`
-- Clones allow long paths on Windows (`core.longpaths`), so a deep home folder no longer breaks `git clone`
-- **Structure without an LLM**: `--no-llm` and the studio's **Structural steps only** make no LLM call at all. TypeDefinition, Method and ExternalDependency run their parsers (they were skipped as "LLM required"; files only the LLM can read are counted in a warning), and derivation runs only its prep phase (graph metrics) and keeps the model; before, `run all --no-llm` and the studio's structural runs still called a configured LLM, and `run all` cleared the model first. `run derivation --no-llm` refuses the phases that can call the LLM
-- **A fresh studio opens on a repository**: a new session reads the shared `default` graph, which is no repository; the run panel tried to switch to it, failed with "Repository not found: default" and left the graphs on that database. It now starts on the first cloned repository. The studio page is served with `Cache-Control: no-cache`, so after an upgrade a browser never keeps a page that names bundles of the old build
-- **Benchmark views read several models**: with sessions of different models selected, the Steps tab was empty (prompts were compared across models, which share none) and Flips counted every element one model never derives as a flip of the other (24 where the two models had 0 and 2). Answer stability and flips are now found per repository and model, as the Results table already was; the Steps columns and each flip name their model when the sessions hold more than one. The model inspector and its element trace read one model at a time, chosen in a Model to inspect picker when the sessions hold several
-- **`benchmark mark-failed <session>`** ends a session whose process stopped without finishing (it stayed `running`, with its unfinished runs) as failed; the session folder is kept
-- `deriva-cli config model set` changes a key on every line it appears: a key written twice in `.env` was changed on the first line only, while the second one is read, so the change did nothing
-- **Runs survive a reload**: a studio page opened or reloaded during or after a run follows that run (live log, prompts), a run under Recent runs opens with a click, and the LLM calls of runs from before a studio restart open under Prompts. The Repository picker shows the session's repository, and during a run the run's, instead of switching the session to the first repository
-- **One run is not consistent**: a benchmark session with one run per repository and model reads "not measured" in `benchmark analyze` (it showed 0-0 and a HIGH hotspot) and n/a in the studio's Results table (it showed 100.0)
-- **`benchmark analyze` compares the runs of one repository with one model**: its scores per object type and stage compared all runs of a session at once and counted each repository's shared extraction as an extra run, so a session on two repositories read 2.7% element consistency where each repository had 97% or more. Each score is now the mean over the repositories and models, a type that none of the runs logged is left out instead of reading 100%, and the report lists the elements and relationships in every run per repository and model (it showed node and edge counts the runs no longer have, 0-0). Edges are not compared within a session, whose runs share one extraction
-- The packages job of CI installs every workspace wheel by path (uv reuses a cached build of the same version otherwise), all workflow actions are pinned by commit SHA, and each wheel carries the license text
-
-### Security
-
-- **Cache files cannot run code**: the LLM and graph caches store JSON, and a row that a cache file marks as pickled is now refused instead of unpickled, so a changed cache file cannot make Deriva run code (diskcache CVE-2025-69872, which has no fixed release)
-- **Read-only CI token**: the CI workflow's token can only read the repository
-- **Studio API input checks**: a graph node type must be a plain label and node lists have a bounded limit; the model export writes only into `workspace/output`; repository names cannot leave the repositories folder; free-form graph queries see only their own database's nodes, and the write guard ignores keywords in strings and comments; error answers no longer echo internal details; `deriva` refuses to listen beyond this machine without `--allow-remote`
-- **Secrets stay out of exports**: benchmark bundles skip links in a session folder (they could point at any file), and system settings named like a secret (`..._key`, `..._token`) are recorded by name only in session inputs and bundles
-- **Safer `.env` writes**: a model config value with a line break is refused (it would add another assignment), the file is written next to `.env` and moved into place (an interrupted write loses no keys), and inline comments stay on changed lines
-
-### Observability
-
-- **Every LLM call is kept**: the LLM cache holds only the last answer per prompt, so runs overwrote each other there. Now each call's prompt, system prompt, answer, call kind, cache key, tokens, latency, cache hit and error are appended to a log per run: `workspace/benchmarks/<session>/llm/<run>.jsonl` for benchmark runs, `workspace/runs/<run>/llm.jsonl` for studio runs
-- **LLM calls in the studio's live log**: a step's calls appear when the step ends (that is when they get its name), each with its step, tokens, latency and cache state; prompt and answer unfold on click, and a Prompts tab lists the run's calls
-- **Element trace**: clicking an element in the model shows its source graph nodes with their properties, its relationships, and the run's LLM calls that mention its sources (the deciding calls of its own step and the upstream calls), also at `GET /api/trace/{element}`
-- **Benchmark export**: `deriva benchmark export <session> -o <zip>` (and `GET /api/benchmarks/{session}/export`) writes one zip with the session folder, the full config texts at the session's versions, the environment (Deriva commit, grafeo build, solvOR, Python, model configs without keys) and a manifest with the sha256 of every file; the same session always exports to identical bytes
-- Model statistics count elements by their type (every element was counted as "Unknown")
-- **Session inputs**: every benchmark session writes `session_inputs.json` into its folder when it starts: the config versions, LLM samples per step, the file type registry, derivation name patterns and system settings (these keep no version history, so they are captured as they are, with a sha256 per table), and the environment (git commit with dirty flag, a sha256 over the package source files, versions, model configs without keys). A session that fails still records what it ran on, and the export bundle carries it
-- **Studio runs record their inputs**: each studio run writes `inputs.json` next to its call log, in the same format as a benchmark session's inputs (config versions, LLM samples, file types, name patterns, settings, environment) with the session's LLM provider, model and default generation settings; model records keep generation limits such as `max_tokens` (only names ending in key, token, secret or password count as secrets)
-- **Trace an element of a benchmark run**: picking an element in the model inspector shows, per run of the selected sessions, whether it is in the model and under which name, its candidate stage, the refine rule that disabled it or the cause it is missing, and the calls of its own step with prompt and answer; built from the session files alone (`GET /api/benchmarks/trace`)
-- **Answer stability with its counts**: the Steps tab shows the identical and total prompts next to each share, and says that one changed label in a batched classification makes the whole answer differ
-- **Generation settings per call**: every logged LLM call records the provider, model, temperature and max tokens it ran with (after defaults); the studio's live log shows the temperature
-- **Capped candidates are named**: a derivation candidate that passed the step's filters but fell beyond `max_candidates` gets the stage `over_cap` instead of `filtered_out`, so a binding cap shows in the run snapshot and in flip causes
-- **Output stability**: BusinessConcept reports what each decision does (the concept type, or rejected for every reject label) next to the raw label; step benchmarks report this output stability next to the decision stability, so flips between two reject labels no longer count as instability
-- **Refine disables are recorded**: run snapshots list the elements a refine step disabled with the reason (for example `no_cross_layer_anchor`), a created candidate whose element was disabled carries that reason, and flips name it ("disabled in refine (no_cross_layer_anchor)") instead of "candidate created"
-- **Process mining logs**: benchmark sessions write their event log in the OCEL 2.0 JSON format (`ocel/benchmark_events.json`: object and event types, relationships qualified by role, typed attributes), which PM4Py and other OCEL 2.0 tools read; before, the file said version 2.0 but had an OCEL 1.0-style layout. Next to it, a flat log with one case per run (`ocel/cases.csv`, `ocel/cases.xes`) for Disco and other case-centric tools: steps and LLM calls as activities (`Derive · <step>`, `LLM · <step> · <call kind>`) with their start and end, the model as resource, and duration, cache hit, tokens and waits. `deriva-cli benchmark ocel <sessions> -o <folder>` and the studio's **Process mining logs** (`GET /api/benchmarks/ocel`) export several sessions as one log
-- **Newer models, and the model that answered**: a model config can take no temperature (`LLM_{NAME}_SAMPLING=false`, for Claude Haiku 5.5, which rejects any temperature but its default) and set a reasoning level (`LLM_{NAME}_REASONING`: `none` turns reasoning off; for OpenAI, Azure and Anthropic models, so GPT-6 Luna keeps the step temperatures). `deriva-cli config model set` writes both; the cache key and every logged call record them, and keys of configs without them are unchanged. Each call also records the model the provider says answered: a retired model id can be served by another model (Mistral answers `devstral-2512` with Mistral Medium 3.5). The README and `.env.example` use current models (devstral-2512 is retired) and the `STRUCTURED_OUTPUT` model setting is gone (no code read it; a small A/B found no failure it would prevent): `config model set` has no `--structured-output` and a delete removes an old line of it
-- **The event log names what each step created**: extraction steps list every graph node and edge they wrote, derivation steps their elements, and the relationship step its relationships. Before, nodes and the relationships derived after the elements were never logged and edges only partly, so their consistency compared empty sets and `benchmark deviations` had nothing to compare. Extraction steps name the benchmark model by its configuration name, as the runs and calls do
+- **Deriva Studio replaces the marimo app**: `uv run deriva` starts a local web UI (FastAPI, React) on http://127.0.0.1:8765 with the API documented at `/docs`; the marimo app and `deriva-app` are removed
+- **Workspace**: pick a repository and a scope, then start, follow and cancel runs. The repository, the intermediate graph and the output graph are lanes of one live canvas (anywidget-graph) that grows step by step, each element linked to its sources, followed by the model (anywidget-archimate) with XML export
+- **Readable large graphs**: samples keep every node type in proportion, most connected first (8 to 13 times as many edges as a random pick); layer rows, lane labels and colours checked for colour-blind readers; elements refine rejected show in grey
+- **Configuration**: steps with their versions; instruction, example, params, candidate query and batch size are edited and saved as a new version, with a history diff, an overfit scan before saving and a read-only dry run
+- **Ontology pages**: the graph's node types with counts, the steps that produce and read them and the schema; the 13 ArchiMate element types with their steps, and the allowed relationships per pair
+- **Repositories, settings, file types and model configs** (also `config model list|set|delete`; keys are masked and only written)
+- **Fresh installs work out of the box**: the configuration ships as seed data, and the database is created on first use
+- **Visual identity**: the inverted isoline logo and the "Tide" colours (SVGs in `assets/brand/`)
+- **One owner of the databases**: one session behind a lock; typed graph queries run in a transaction that is always rolled back, behind a write guard
+- **Full runs start from an empty model** (`derivation_clear_model` switches it off); runs of one phase or step keep it
+- First-run hints, a theme switch that reaches every view, and runs that survive a reload
 
 ### Benchmark mode
 
-- **Start benchmarks from the studio**: end to end (separate one-run sessions, the measuring protocol) or derivation only on the current graphs, with the cache policy and runs per repository; samples per LLM call stay 1
-- **Read sessions together**: pick one or more sessions and read their runs as one set: consistency per repository by name and by source (elements, relationships, concepts, technologies, with breakdowns per type, provenance and extraction route), and answer stability per step as a heatmap
-- **Flips with their cause**: every element missing from a run gets the cause in that run (its candidate stage, no candidate, or a source node the run never extracted); with the runs' LLM call logs, the deciding calls are compared: the same prompt with a different answer points at the LLM, a different prompt points upstream
-- **Model inspector**: the runs' models as layers: all runs (agreement), one run, or two side by side; everything, only differences or only stable elements; identity by source or by name; grouped by layer or by cause; shown as boxes or as an ArchiMate diagram whose elements carry their comparison status and a badge (2/3, missing in 1 run, name differs)
-- **Export logs** downloads the selected session as one verified bundle
-- `deriva-cli benchmark models` without models shows the `LLM_{NAME}_*` pattern the models are read from (it showed an old `LLM_BENCH_` prefix)
+- **Start benchmarks from the studio**: end to end or derivation only, with single calls
+- **Read sessions together**: consistency per repository by name and by source, and answer stability per step as a heatmap
+- **Flips with their cause**: the candidate stage, no candidate or a missing source node; the deciding calls show whether the LLM or something upstream changed
+- **Model inspector**: all runs, one run or two side by side, as boxes or as an ArchiMate diagram with comparison badges
+- **Trace an element** across runs, and **export** a session as one verified bundle
 
-### Extraction quality
+### Observability
 
-- **BusinessConcept candidates keep their tie group**: the evidence cut keeps the smallest prefix of ranked candidates holding the configured share of the evidence; candidates with equal evidence at the cut were split by key, so alphabetical order decided which ones the classifier saw. With the new param `evidence_keep_ties` the prefix runs to the end of that tie group (equal evidence, same decision); the step stats report `ties_added`. Config versions without the param keep the old behaviour, so they reproduce
-- **Pipeline structure terms are no directory concepts**: directory classification skips directories named after the intermediate ontology's own node types (repository, directory, file, method, type definition, external dependency, business concept, technology), as it already skipped generic code-structure names
-- **Domain-free prompt examples**: the element derivation prompts and the directory classification used an insurance running example (claims, policies, policyholders, premiums) and shop words in their naming examples. Every example now uses abstract placeholders (`<Concept>`, `<Party>`, `<Work Area>`, `<Amount>`) with the same rules and structure, so no prompt carries the vocabulary of a particular domain. Measured on an insurance and a non-insurance development repository: the insurance repository's model is unchanged in content, and no placeholder appears in any output
-- **Proper names keep their spelling**: names chosen by the naming step were split at every inner capital, so a proper name such as a product written in camel case lost its spelling; a word the element's source writes as one word now stays whole, while code names the source itself splits (`EntityProcessor`) are still split
-- **Licence and project metadata files are no BusinessConcept input**: licence, notice, copying, changelog, contributing, code of conduct and security files are registered as file type `meta`; their terms (warranty, liability, ...) are not domain concepts
+- **Every LLM call is kept** in a log per run (prompt, answer, kind, tokens, latency, cache state, error, generation settings), shown in the live log, the Prompts tab and the element trace (`GET /api/trace/{element}`)
+- **Inputs recorded**: every benchmark session and studio run records its config versions, samples per step, file types, name patterns, settings and environment (`session_inputs.json`, `inputs.json`)
+- **Benchmark export**: `benchmark export <session> -o <zip>` writes a reproducible zip with the config texts, the environment and a sha256 manifest
+- **Process mining logs** in OCEL 2.0 and as a case log (`cases.csv`, `cases.xes`); `benchmark ocel` exports several sessions as one log
+- **Newer models**: a model config can take no temperature (`LLM_{NAME}_SAMPLING`) and set a reasoning level (`LLM_{NAME}_REASONING`); each call records the model that answered, as a retired id can be served by another model
+- Run snapshots record refine disables with their reason, capped candidates (`over_cap`) and BusinessConcept output stability; the event log names every node, edge, element and relationship a step created
+
+### Distribution
+
+- **Three packages on PyPI**: `deriva-studio` (studio and CLI), `deriva-cli` (CLI only) and `deriva-dev` (both, plus benchmarking), installed with `uv tool install --python 3.14 deriva-studio`
+- **One home folder** (`~/.deriva`, moved with `DERIVA_HOME`) and **one settings layer** (pydantic-settings; the environment wins over `.env`)
+- **grafeo 0.6.0b1** from PyPI (graph files of earlier versions are extracted again); spaCy pipelines are downloaded on first use, pinned by version and SHA-256
+- **Release workflow**: version checks, wheel smoke tests, trusted publishing with PEP 740 attestations and a `constraints.txt` per release; CI installs the packages as tools on Linux, Windows and macOS
+- **Documentation** moved to `docs/` and is published at docs.deriva.dev
+- Known limitation: ISI's deriva-py (`deriva` on PyPI) cannot share a Python environment with Deriva
+
+### Security
+
+- **Cache files cannot run code**: pickled cache rows are refused (diskcache CVE-2025-69872)
+- **Studio API input checks**: plain labels, bounded limits, exports only into `workspace/output`, no listening beyond this machine without `--allow-remote`; the CI token is read-only
+- **Secrets stay out** of exports and session inputs; `.env` writes are atomic and refuse line breaks
 
 ### Model quality
 
-- **Business concepts the code names are kept and connected**: a business element whose words appear in the names of types and directories below a component is now related to that component (objects are accessed, actors, processes and functions are served), and to any other component with at least half as many such names; a new rule family in the relationship configuration (`named_in_code`), computed from the graph without an LLM call. A single-word concept that at least four type or directory names carry also stays in the model without such a link (`code_support.single_word_names`). Before, most business layers were removed for lack of a link to the application layer
-- **Mainframe sources are parsed**: COBOL programs and copybooks, JCL jobs and procedures and BMS screen maps are read by structural parsers and land in the graph like any other language: programs, records, jobs and screens as types, paragraphs and job steps as methods, copybook use as imports, program calls and job steps as calls. Register the file types to switch it on (`.cbl`, `.cob`, `.cpy`, `.jcl`, `.prc`, `.bms`)
-- **Roles the source shows need no LLM call**: an element step can give a candidate its role from the candidate's own structure (`roles.structural`: an annotation or a kind), for example a type annotated as a REST controller or a screen map as an interface, a copybook record as a data object, a program as a component; `roles.structural_as_written` keeps such an element's name exactly as the source writes it. File candidates with the same name in different directories are no longer treated as one candidate, and names that differ only in a code (`SCREEN0A`, `SCREEN1A`) are no duplicates; a word of capitals and digits stays whole in a name
-- **Application services are capabilities**: a service is derived per group of components that offer at least one interface; components that work on the same objects form one service. Which services exist, their identity and their relationships (realized by the components, assigned the interfaces, accessing the objects) come from structure; one LLM call per service writes only the capability name and one sentence, from the components, interfaces, objects and the documentation lines that mention them (`component_services`)
-- **Relationships from links in the graph**: a new rule family in the relationship configuration (`graph_links`) relates two elements when a graph query links their sources, for example a program to the screens it sends, to the jobs that run it and to the records it uses; `listed_members` relates an element to the members it lists. Both run without an LLM call
-- **Repositories with submodules**: `repo clone` fetches git submodules, so a repository that keeps its modules as submodules is no longer extracted nearly empty
-
-### Definitions and editing
-
-- **Model configs from the studio and the CLI**: the LLM model configs in `.env` can be listed, added, changed and deleted in General (and with `deriva-cli config model list|set|delete`; `--key` asks for the key, hidden, or reads it from stdin, so it stays out of the shell history); API keys are shown masked and only ever written, the rest of `.env` (other keys, comments) stays as it is, and a model never touches another whose name extends it
-- **Fuller config editor**: params (JSON object), the candidate query of derivation steps and the batch size are edited next to the instruction and example; the History tab lists every version with a line diff against the current text; changed texts are scanned for overfitting before they are saved (findings hold the save until confirmed; the scan runs where the local scanner exists); a dry run executes the candidate query read-only without the LLM
-- **Ontology pages**: the intermediate ontology lists the graph's node types with their counts, the extraction steps that produce them (switchable), the derivation steps that read them, a sample node and the schema as a graph; the output ontology lists the 13 ArchiMate element types per layer with their derivation step (switchable) and counts, the relationship types with counts, and the allowed relationships per pair (direct and derived, ArchiMate 3.2)
+- **Business concepts the code names are kept and connected** (`named_in_code`, `code_support.single_word_names`)
+- **Mainframe sources are parsed**: COBOL programs and copybooks, JCL and BMS maps, by structural parsers
+- **Roles from structure** (`roles.structural`): an annotation or a kind gives a candidate its role without an LLM call
+- **Application services as capabilities** (`component_services`): identity and relationships come from structure, one call writes the name and a sentence
+- **Relationships from graph links** (`graph_links`, `listed_members`), without an LLM call
+- BusinessConcept tie groups (`evidence_keep_ties`); pipeline terms and licence files are no concepts; domain-free prompt examples; proper names keep their spelling; `repo clone` fetches submodules
 
 ### Fixes
 
-- **Runs and benchmarks end cleanly**: a step that fails and lets the run go on keeps its LLM calls (they were stamped with the next step's name); a benchmark stopped part way (a studio cancel, Ctrl+C, a crash) ends its session as failed instead of leaving it running; a session whose inputs record cannot be written still runs; stopping the studio asks a run to stop and waits at most a few seconds; a call log with a partial last line is still read
-- **Benchmark views and analysis**: a run that derived no elements gets an empty snapshot, so consistency counts it; runs of several models keep apart in the inspector and the element trace (their labels name the model); answers read from call logs compare with older sessions' event logs, and a failed call counts as no answer; a flip on the same prompt is no longer called a different prompt because benchmark runs use their own cache keys; the steps view lists steps in pipeline order; the ontology lists every endpoint pair of an edge type; candidates left out by a cap of 0 are recorded as over the cap; the config history shows the candidate cap, temperature, token limit and model query of each version
-- **Valid JSON with backticks inside**: an answer that is valid JSON but quotes a code fence in a text field was cut at the fence and failed to parse; it is now taken whole (no recorded answer was affected)
-- **A half-made configuration database**: the database of a fresh install is built next to its place and moved in once seeded, so a failed setup no longer leaves an empty database that later starts take for a configured one
-- **Studio**: unset excluded directories show the built-in list (saving no longer drops `.git` and `node_modules`); a benchmark still running is followed again after a switch to Run mode or a reload; a run whose stream the server lost no longer stays running; a stale answer (flips, inspector, model, ontology, traces) no longer shows after its inputs change, and a failed flips request no longer reads as every element stable; the config editor locks while it scans and saves (one version per save), asks before a switch discards edits, and its history shows batch size and settings; errors that are not JSON keep their status and message; one failed graph keeps the other in the separate view; widgets announce changes as they are set; the trace of a run from before a restart reads its saved calls; plus keyboard access (elements, repositories, node types, tabs with arrow keys), live-region and expanded states, higher contrast for faint text and light layer headings, a page for unknown addresses, and `DERIVA_STUDIO_API` for the dev server's API target
+- **A first start works end to end**: graphs persist in the home folder by default, the first saved model becomes the default, and a model's own key and URL reach the provider
+- **Structure without an LLM**: `--no-llm` and **Structural steps only** make no LLM call
+- **`benchmark analyze`** compares the runs of one repository with one model (a two-repository session read 2.7%), and a single run reads "not measured"
+- `benchmark mark-failed`; `config model set` on duplicated keys; long paths on Windows; `run` without `-v`; runs and benchmarks that end cleanly; JSON answers that quote a code fence; half-made configuration databases; and many studio fixes (keyboard access, live regions, contrast)
 
 # v0.7.x - Deriva (March 2026 - )
 

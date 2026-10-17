@@ -19,6 +19,7 @@ import type {
   Model,
   ModelConfigInput,
   ModelConfigRow,
+  ModelLevel,
   OutputOntology,
   Repository,
   RunKind,
@@ -147,7 +148,7 @@ export const graph = {
 };
 
 export const model = {
-  get: () => api.get<Model>("/api/model"),
+  get: (level: ModelLevel = "architect") => api.get<Model>(`/api/model?level=${level}`),
   stats: () => api.get<{ total_elements: number; total_relationships: number; by_type: Record<string, number> }>("/api/model/stats"),
   clear: () => api.del<{ success: boolean }>("/api/model"),
   exportXml: (path: string) => api.post<{ success: boolean; path?: string; error?: string }>("/api/model/export", { path }),

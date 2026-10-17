@@ -1389,6 +1389,53 @@ class TestExtractEdges:
             assert "edges_created" in result
             mock_batch.assert_called_once()
 
+    def test_lookups_carry_repo_relative_paths_so_the_same_file_is_preferred(self):
+        """The graph stores repo-prefixed paths; the files being parsed are repo-relative, so the lookups drop the prefix."""
+        from deriva.services.extraction import _extract_edges
+
+        mock_repo = MagicMock()
+        mock_repo.name = "shop"
+        nodes = {
+            "Method": [{"id": "m1", "properties": {"methodName": "run", "typeName": "", "filePath": "shop/shop/jobs.py"}}],
+            "TypeDefinition": [{"id": "t1", "properties": {"typeName": "Order", "filePath": "shop/orders/model.py"}}],
+        }
+        graph_manager = MagicMock()
+        graph_manager.get_nodes_by_type.side_effect = lambda node_type: nodes.get(node_type, [])
+
+        with patch("deriva.modules.extraction.edges.extract_edges_batch") as mock_batch:
+            mock_batch.return_value = {"data": {"edges": []}, "stats": {}, "errors": []}
+            _extract_edges(mock_repo, Path("."), [], graph_manager)
+
+        kwargs = mock_batch.call_args.kwargs
+        assert kwargs["global_method_lookup"][("run", None)][0]["file_path"] == "shop/jobs.py"
+        assert kwargs["global_type_lookup"]["Order"][0]["file_path"] == "orders/model.py"
+
+    def test_the_calls_step_passes_its_cross_language_calls_and_module_roots(self):
+        """Calls params: ``call_languages`` (caller language -> callee languages it may call) and ``module_files``
+        (a folder holding one is a module root; a call without an import stays within its module root)."""
+        from deriva.services.extraction import _run_step_writes
+
+        params = {"call_languages": {"jcl": ["cobol"]}, "module_files": ["pom.xml", "Dockerfile*"]}
+        cfg = SimpleNamespace(node_type="Calls", params=json.dumps(params))
+        files = [{"path": p} for p in ("svc/pom.xml", "svc/src/A.java", "svc/web/Dockerfile.web", "svc/web/app.js", "app/cbl/A.cbl")]
+        graph_manager = MagicMock()
+        graph_manager.get_nodes_by_type.return_value = []
+        with patch("deriva.modules.extraction.edges.extract_edges_batch") as mock_batch:
+            mock_batch.return_value = {"data": {"edges": []}, "stats": {}, "errors": []}
+            _run_step_writes(cfg, SimpleNamespace(name="r"), Path("."), files, [], graph_manager, None, MagicMock())
+
+        kwargs = mock_batch.call_args.kwargs
+        assert kwargs["call_languages"] == {"jcl": frozenset({"cobol"})}
+        scope = kwargs["scope_of"]
+        assert (scope("svc/src/A.java"), scope("svc/web/app.js"), scope("app/cbl/A.cbl")) == ("svc", "svc/web", "")
+
+    def test_the_calls_step_validates_its_params(self):
+        from deriva.services.extraction import _run_step_writes
+
+        cfg = SimpleNamespace(node_type="Calls", params=json.dumps({"call_languages": [["jcl", "cobol"]]}))
+        with pytest.raises(ValueError, match="Calls params"):
+            _run_step_writes(cfg, SimpleNamespace(name="r"), Path("."), [], [], MagicMock(), None, MagicMock())
+
 
 class TestExtractImports:
     """Tests for _extract_imports function."""
@@ -1432,7 +1479,7 @@ class TestExtractCalls:
             with patch("deriva.services.extraction._extract_edges") as mock_extract:
                 mock_extract.return_value = {"edges_created": 0, "errors": []}
 
-                _extract_calls(mock_repo, Path(tmpdir), [], graph_manager)
+                _extract_calls(SimpleNamespace(params=None), mock_repo, Path(tmpdir), [], graph_manager)
 
             mock_extract.assert_called_once()
 
@@ -1494,9 +1541,9 @@ class TestExtractDirectoryClassification:
         close_database()
         with GraphManager() as gm:
             for name in ("zeta", "alpha"):
-                gm.add_node(DirectoryNode(name=name, path=f"r/{name}", repository_name="r"), node_id=f"dir::r::{name}")
+                gm.add_node(DirectoryNode(name=name, path=name, repository_name="r"), node_id=f"dir::r::{name}")
             for i, (file_type, subtype) in enumerate([("source", "java"), ("source", "java"), ("docs", "markdown"), ("test", "java"), ("config", "yaml")]):
-                gm.add_node(FileNode(name=f"f{i}", path=f"r/alpha/f{i}", repository_name="r", file_type=file_type, subtype=subtype), node_id=f"file::r::f{i}")
+                gm.add_node(FileNode(name=f"f{i}", path=f"alpha/f{i}", repository_name="r", file_type=file_type, subtype=subtype), node_id=f"file::r::f{i}")
                 gm.add_edge("dir::r::alpha", f"file::r::f{i}", "CONTAINS")
             cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
@@ -1520,10 +1567,10 @@ class TestExtractDirectoryClassification:
         close_database()
         with GraphManager() as gm:
             for path in ("r/lib", "r/lib/records", "r/utils"):
-                gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r"), node_id=f"dir::r::{path}")
+                gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path.removeprefix("r/"), repository_name="r"), node_id=f"dir::r::{path}")
             gm.add_edge("dir::r::r/lib", "dir::r::r/lib/records", "CONTAINS")
             for path in ("r/lib/records", "r/utils"):
-                gm.add_node(FileNode(name="f", path=f"{path}/f", repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}/f")
+                gm.add_node(FileNode(name="f", path=f"{path.removeprefix('r/')}/f", repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}/f")
                 gm.add_edge(f"dir::r::{path}", f"file::r::{path}/f", "CONTAINS")
             params = {"skip_names": ["utils"], "skip_trees": [], "skip_pass_through": True}
             cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
@@ -1579,7 +1626,7 @@ class TestExtractDirectoryClassification:
         close_database()
         with GraphManager() as gm:
             for path in ("r/a/records", "r/b", "r/c/records"):
-                gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r"), node_id=f"dir::r::{path}")
+                gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path.removeprefix("r/"), repository_name="r"), node_id=f"dir::r::{path}")
             cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=2)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
                 _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
@@ -1587,6 +1634,28 @@ class TestExtractDirectoryClassification:
 
         (batch,) = [c.kwargs["directories"] for c in classify.call_args_list]
         assert [(g["name"], g["paths"]) for g in batch] == [("records", ["r/a/records", "r/c/records"]), ("b", ["r/b"])]
+
+    def test_each_directory_name_reports_its_decision(self):
+        """Per name entry the nodes it became (None: no concept or technology), for decision stability (real graph)."""
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode
+        from deriva.services.extraction import _extract_directory_classification
+
+        close_database()
+        with GraphManager() as gm:
+            for name in ("billing", "misc"):
+                gm.add_node(DirectoryNode(name=name, path=f"r/{name}", repository_name="r"), node_id=f"dir::r::{name}")
+            answer = {
+                "nodes": [{"id": "concept::r::billing", "labels": ["Graph:BusinessConcept"], "properties": {"conceptName": "Billing"}}],
+                "edges": [{"source": "dir::r::billing", "target": "concept::r::billing", "relationship_type": "REPRESENTS"}],
+            }
+            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
+            with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": answer}):
+                result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
+        close_database()
+
+        assert result["stats"]["decisions"] == {"billing": ["concept::r::billing"], "misc": None}
 
     def test_queries_directories_from_graph(self):
         """Should query directories from graph."""
@@ -2291,3 +2360,744 @@ def test_the_nodes_and_edges_a_step_writes_reach_the_run_log(tmp_path):
 
     assert [c.args[0] for c in step_ctx.add_object.call_args_list] == ["dir::test_repo::a", "dir::test_repo::b"]
     assert [c.args[0] for c in step_ctx.add_edge.call_args_list] == ["CONTAINS_dir::test_repo::a_dir::test_repo::b", "IMPORTS_dir::test_repo::b_dir::test_repo::a"]
+
+
+class TestDeployableUnitStep:
+    """The DeployableUnit step writes one node per unit with INCLUDES edges to its member files, and replaces what it wrote before."""
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _run(self, graph, tmpdir, files, params=None, repo="r"):
+        from deriva.adapters.graph.models import FileNode
+
+        for path, (file_type, subtype, text) in files.items():
+            (Path(tmpdir) / path).parent.mkdir(parents=True, exist_ok=True)
+            (Path(tmpdir) / path).write_text(text, encoding="utf-8")
+            node = FileNode(name=Path(path).name, path=path, repository_name=repo, file_type=file_type, subtype=subtype)
+            graph.add_node(node, node_id=f"file::{repo}::{path.replace('/', '_')}")
+        cfg = SimpleNamespace(
+            node_type="DeployableUnit",
+            params=json.dumps(params or {"code_subtypes": ["java", "python"]}),
+            input_sources="",
+            instruction="",
+            example="",
+            temperature=None,
+            max_tokens=None,
+            batch_size=1,
+        )
+        return _run_extraction_step(cfg, SimpleNamespace(name=repo), Path(tmpdir), [], [], graph, None, MagicMock())
+
+    def test_each_repository_of_a_combined_graph_keeps_its_own_units(self, graph):
+        """A combined graph runs the step once per repository: a pass reads and replaces only its repository's units."""
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            self._run(graph, first, {"shop/Dockerfile": ("config", None, "FROM base\n"), "shop/Shop.java": ("source", "java", "class Shop {}\n")}, repo="a")
+            self._run(graph, second, {"desk/Dockerfile": ("config", None, "FROM base\n"), "desk/Desk.java": ("source", "java", "class Desk {}\n")}, repo="b")
+
+        units = graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.repository_name AS repo ORDER BY id")
+        assert [(u["id"], u["repo"]) for u in units] == [("unit::a::shop", "a"), ("unit::b::desk", "b")]
+        members = graph.query("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) RETURN u.id AS unit, f.filePath AS path ORDER BY unit, path")
+        assert [(m["unit"], m["path"]) for m in members] == [
+            ("unit::a::shop", "a/shop/Dockerfile"),
+            ("unit::a::shop", "a/shop/Shop.java"),
+            ("unit::b::desk", "b/desk/Desk.java"),
+            ("unit::b::desk", "b/desk/Dockerfile"),
+        ]
+
+    def test_the_member_count_counts_the_pages_too(self, graph):
+        files = {
+            "pyproject.toml": ("config", None, '[project]\nname = "shop"\n[project.scripts]\nshop = "app.main:run"\n'),
+            "app/main.py": ("source", "python", "def run(): pass\n"),
+            "app/templates/home.html": ("config", None, "<html></html>\n"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, files)
+
+        (unit,) = graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.memberCount AS count")
+        assert unit["count"] == 2
+
+    def test_naming_must_be_an_object(self, graph):
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="naming"):
+            self._run(graph, tmpdir, {}, params={"code_subtypes": ["java"], "naming": ["Server"]})
+
+    def test_units_and_their_members_are_written(self, graph):
+        files = {
+            "shop/Dockerfile": ("config", None, "FROM base\n"),
+            "shop/src/Shop.java": ("source", "java", "class Shop {}\n"),
+            "proxy/Dockerfile": ("config", None, "FROM nginx\n"),
+            "README.md": ("docs", None, "- shop: the storefront\n"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = self._run(graph, tmpdir, files)
+
+        assert result["errors"] == [] and result["nodes_created"] == 1
+        units = graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.name AS name, u.unitKind AS kind, u.readmeLines AS readme")
+        assert [(u["id"], u["name"], u["kind"], list(u["readme"])) for u in units] == [("unit::r::shop", "shop", "container", ["shop: the storefront"])]
+        members = graph.query("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) RETURN f.filePath AS path ORDER BY path")
+        assert [m["path"] for m in members] == ["r/shop/Dockerfile", "r/shop/src/Shop.java"]
+
+    def test_a_second_run_replaces_the_units_of_the_first(self, graph):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, {"shop/Dockerfile": ("config", None, "FROM base\n"), "shop/Shop.java": ("source", "java", "class Shop {}\n")})
+            graph.delete_node("file::r::shop_Dockerfile")
+            self._run(graph, tmpdir, {})
+
+        # Without the Dockerfile there is no container unit: the repository is the unit
+        assert [u["id"] for u in graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id")] == ["unit::r::r"]
+
+    def test_web_entries_and_the_readme_title_are_written_on_the_unit(self, graph):
+        files = {
+            "pyproject.toml": ("config", None, '[project]\nname = "shop"\n[project.scripts]\nshop = "app.main:run"\n'),
+            "app/main.py": ("source", "python", "def run(): pass\n"),
+            "app/templates/home.html": ("config", None, "<html></html>\n"),
+            "README.md": ("docs", None, "# Shop Platform\n"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, files)
+
+        (unit,) = graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.webEntries AS web, u.readmeTitle AS title")
+        assert list(unit["web"]) == ["r/app/templates/home.html"] and unit["title"] == "Shop Platform"
+        # A script unit's members are its import closure; its pages hang below it too
+        members = graph.query("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) RETURN f.filePath AS path ORDER BY path")
+        assert [m["path"] for m in members] == ["r/app/main.py", "r/app/templates/home.html"]
+
+    def test_the_web_signals_come_from_the_params(self, graph):
+        files = {"shop/Dockerfile": ("config", None, "FROM base\n"), "shop/Shop.java": ("source", "java", "class Shop {}\n"), "shop/web/start.page": ("config", None, "x\n")}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, files, params={"code_subtypes": ["java"], "web_ui": {"files": ["*.page"]}})
+
+        (unit,) = graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.webEntries AS web")
+        assert list(unit["web"]) == ["r/shop/web/start.page"]
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="web_ui"):
+            self._run(graph, tmpdir, {}, params={"code_subtypes": ["java"], "web_ui": {"files": "*.page"}})
+
+    def test_name_candidates_are_written_and_skip_the_technologies_in_the_graph(self, graph):
+        from deriva.adapters.graph.models import TechnologyNode
+
+        graph.add_node(TechnologyNode(name="Shop Admin", tech_category="service", repository_name="r"), node_id="tech::r::shopadmin")
+        files = {
+            "README.md": ("docs", None, "# Shop - Tea Store\n\n| Part | Runtime |\n|---|---|\n| Order Desk | Java |\n"),
+            "desk/Dockerfile": ("config", None, "FROM base\n"),
+            "desk/Desk.java": ("source", "java", "class Desk {}\n"),
+            "shop-admin/Dockerfile": ("config", None, "FROM base\n"),
+            "shop-admin/Admin.java": ("source", "java", "class Admin {}\n"),
+        }
+        params = {
+            "code_subtypes": ["java"],
+            "naming": {"generic_words": ["Server", "Application"], "title_cut_words": ["with"], "kind_nouns": {"container": "Server", "*": "Application"}},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, files, params=params)
+
+        units = {u["id"]: u for u in graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.product AS product, u.nameCandidates AS names, u.nameSources AS sources")}
+        assert units["unit::r::desk"]["product"] == "Shop"
+        assert list(units["unit::r::desk"]["names"]) == ["Order Desk", "Desk"] and list(units["unit::r::desk"]["sources"]) == ["docs", "structure"]
+        assert list(units["unit::r::shop-admin"]["names"]) == ["Shop Admin Server"]  # the technology's name is taken
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="naming"):
+            self._run(graph, tmpdir, {}, params={"code_subtypes": ["java"], "naming": {"generic_words": "Server"}})
+
+    def test_the_rules_need_code_subtypes(self, graph):
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="code_subtypes"):
+            self._run(graph, tmpdir, {}, params={"container_files": ["Dockerfile"]})
+
+
+class TestDataEntityStep:
+    """The DataEntity step writes one node per persistent concept with INCLUDES edges to its types, and replaces what it wrote before."""
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _cfg(self, params):
+        return SimpleNamespace(node_type="DataEntity", params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+
+    def _add_type(self, graph, name, path, decorators=(), bases=()):
+        from deriva.adapters.graph.models import TypeDefinitionNode
+
+        node_id = f"typedef::r::{path}::{name}"
+        graph.add_node(TypeDefinitionNode(name=name, type_category="class", file_path=path, repository_name="r", decorators=list(decorators)), node_id=node_id)
+        for base in bases:
+            graph.add_edge(node_id, f"typedef::r::{base}", "INHERITS")
+        return node_id
+
+    def test_a_record_is_imported_by_programs_not_by_copybooks(self, graph):
+        """min_importers counts the programs that import a record file; a copybook's COPY of it does not count."""
+        from deriva.adapters.graph.models import FileNode, TypeDefinitionNode
+        from deriva.services.extraction import _entity_facts
+
+        for path in ("app/REC.cpy", "app/A.cbl", "app/B.cbl", "app/OTHER.cpy"):
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="source", subtype="cobol"), node_id=f"file::r::{path}")
+        for name, path in (("A", "app/A.cbl"), ("B", "app/B.cbl")):
+            graph.add_node(TypeDefinitionNode(name=name, type_category="program", file_path=path, repository_name="r"), node_id=f"typedef::r::{name}")
+        for source in ("app/A.cbl", "app/B.cbl", "app/OTHER.cpy"):
+            graph.add_edge(f"file::r::{source}", "file::r::app/REC.cpy", "IMPORTS")
+
+        _, importers, _ = _entity_facts(lambda query, params=None: graph.query(query, {**(params or {}), "repo_name": "r"}))
+
+        assert importers == {"r/app/REC.cpy": 2}  # stored paths carry the repository
+
+    def test_entities_are_written_with_their_types_and_the_rest_is_reported(self, graph):
+        from deriva.adapters.graph.models import TypeDefinitionNode
+
+        graph.add_node(TypeDefinitionNode(name="RootEntity", type_category="interface", file_path="lib/RootEntity.java", repository_name="r"), node_id="typedef::r::RootEntity")
+        a = self._add_type(graph, "PolicyAggregateRoot", "policy/Policy.java", decorators=["Entity"], bases=["RootEntity"])
+        b = self._add_type(graph, "PolicyAggregateRoot", "quotes/Policy.java", decorators=["Entity"], bases=["RootEntity"])
+        self._add_type(graph, "PolicyItem", "policy/Item.java", decorators=["Entity"])
+        params = {"root_markers": ["RootEntity"], "entity_annotations": ["Entity"], "name_suffixes": ["AggregateRoot"]}
+
+        result = _run_extraction_step(self._cfg(params), SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
+
+        assert result["errors"] == [] and result["nodes_created"] == 1
+        (entity,) = graph.query("MATCH (d:Graph:DataEntity) RETURN d.id AS id, d.name AS name, d.signal AS signal, d.nameCandidates AS names")
+        assert (entity["id"], entity["name"], entity["signal"], list(entity["names"])) == ("entity::r::policy", "Policy", "aggregate root", ["Policy"])
+        types = graph.query("MATCH (d:Graph:DataEntity)-[:`Graph:INCLUDES`]->(t:Graph:TypeDefinition) RETURN t.id AS id ORDER BY id")
+        assert [t["id"] for t in types] == sorted([a, b])
+        assert graph.query("MATCH (d:Graph:DataEntity) RETURN d.typeCount AS n")[0]["n"] == 2  # the included types
+        assert result["excluded"] == [{"type": "PolicyItem", "reason": "part of an aggregate"}]
+
+        self._run_again = _run_extraction_step(self._cfg({**params, "root_markers": []}), SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
+        names = sorted(r["name"] for r in graph.query("MATCH (d:Graph:DataEntity) RETURN d.name AS name"))
+        assert names == ["Policy", "Policy Item"]  # without roots both are ORM entities; the old nodes are gone
+
+    def test_only_the_repositories_own_types_count_and_its_entities_carry_the_repository(self, graph):
+        from deriva.adapters.graph.models import TypeDefinitionNode
+
+        graph.add_node(TypeDefinitionNode(name="Order", type_category="class", file_path="Order.java", repository_name="r", decorators=["Entity"]), node_id="typedef::r::Order")
+        graph.add_node(
+            TypeDefinitionNode(name="Invoice", type_category="class", file_path="Invoice.java", repository_name="other", decorators=["Entity"]), node_id="typedef::other::Invoice"
+        )
+
+        _run_extraction_step(self._cfg({"entity_annotations": ["Entity"]}), SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
+
+        rows = graph.query("MATCH (d:Graph:DataEntity) RETURN d.name AS name, d.repository_name AS repo")
+        assert [(r["name"], r["repo"]) for r in rows] == [("Order", "r")]
+
+    def test_a_table_is_linked_to_the_code_files_that_name_it(self, graph, tmp_path):
+        from deriva.adapters.graph.models import FileNode, TypeDefinitionNode
+        from deriva.modules.derivation.base import unit_scopes
+
+        (tmp_path / "db").mkdir()
+        (tmp_path / "app").mkdir()
+        (tmp_path / "db/schema.sql").write_text("CREATE TABLE benchmark_runs (id INT);", encoding="utf-8")
+        (tmp_path / "app/store.py").write_text('q = "SELECT * FROM benchmark_runs"', encoding="utf-8")
+        (tmp_path / "app/util.py").write_text("x = 1", encoding="utf-8")
+        for path, subtype in (("db/schema.sql", "sql"), ("app/store.py", "python"), ("app/util.py", "python")):
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="source", subtype=subtype), node_id=f"file::r::{path}")
+        graph.add_node(TypeDefinitionNode(name="benchmark_runs", type_category="table", file_path="db/schema.sql", repository_name="r"), node_id="typedef::r::benchmark_runs")
+
+        _run_extraction_step(self._cfg({"table_mentions": True}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        named = graph.query("MATCH (d:Graph:DataEntity)-[:`Graph:NAMED_IN`]->(f:Graph:File) RETURN d.name AS entity, f.filePath AS path")
+        assert [(r["entity"], r["path"]) for r in named] == [("Benchmark Run", "r/app/store.py")]
+        assert "r/app/store.py" in unit_scopes(graph).entity_files["entity::r::benchmarkrun"]
+
+    def test_the_signals_are_validated(self, graph):
+        with pytest.raises(ValueError, match="DataEntity"):
+            _run_extraction_step(self._cfg({"technical_words": "log"}), SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
+
+
+class TestRerunnableSteps:
+    """A step run removes what it wrote before and no longer produces; running it twice leaves the graph as it was."""
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _types(self, graph, entities):
+        from deriva.adapters.graph.models import TypeDefinitionNode
+
+        for name in entities:
+            graph.add_node(
+                TypeDefinitionNode(name=name, type_category="class", file_path=f"{name}.java", repository_name="r", decorators=["Entity"]), node_id=f"typedef::r::{name}"
+            )
+
+    def _run(self, graph):
+        cfg = SimpleNamespace(
+            node_type="DataEntity",
+            params=json.dumps({"entity_annotations": ["Entity"]}),
+            input_sources="",
+            instruction="",
+            example="",
+            temperature=None,
+            max_tokens=None,
+            batch_size=1,
+        )
+        return _run_extraction_step(cfg, SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
+
+    @staticmethod
+    def _snapshot(graph):
+        nodes = sorted((r["id"], sorted(r["p"].items())) for r in graph.query("MATCH (n) WHERE n.id IS NOT NULL RETURN n.id AS id, properties(n) AS p"))
+        edges = sorted(
+            (r["a"], r["t"], r["b"], sorted((r["p"] or {}).items())) for r in graph.query("MATCH (a)-[r]->(b) RETURN a.id AS a, type(r) AS t, b.id AS b, properties(r) AS p")
+        )
+        return nodes, edges
+
+    def test_running_a_step_twice_leaves_the_graph_as_it_was(self, graph):
+        self._types(graph, ["Order", "Invoice"])
+        self._run(graph)
+        first = self._snapshot(graph)
+
+        self._run(graph)
+
+        assert self._snapshot(graph) == first
+
+    def test_an_entity_no_longer_produced_goes_and_one_produced_again_keeps_other_edges(self, graph):
+        self._types(graph, ["Order", "Invoice"])
+        self._run(graph)
+        graph.add_edge("typedef::r::Order", "entity::r::order", "REFERENCES")  # written by someone else
+        graph.delete_node("typedef::r::Invoice")
+
+        result = self._run(graph)
+
+        assert sorted(r["id"] for r in graph.query("MATCH (d:Graph:DataEntity) RETURN d.id AS id")) == ["entity::r::order"]
+        assert graph.query("MATCH (a {id: 'typedef::r::Order'})-[r]->(b {id: 'entity::r::order'}) RETURN count(r) AS n")[0]["n"] == 1
+        assert result["swept"] == {"nodes": 1, "edges": 0}
+
+    def test_a_run_with_errors_sweeps_nothing(self, graph):
+        self._types(graph, ["Order"])
+        self._run(graph)
+        graph.delete_node("typedef::r::Order")
+
+        with patch("deriva.services.extraction._run_step_writes", return_value={"nodes_created": 0, "edges_created": 0, "errors": ["boom"]}):
+            result = self._run(graph)
+
+        assert result["swept"] == {"nodes": 0, "edges": 0, "skipped": "errors"}
+        assert graph.node_exists("entity::r::order")
+
+    def test_a_run_with_errors_keeps_the_other_owners_of_what_it_wrote(self, graph):
+        """A node another step also produces keeps that owner when this step rewrites it and then fails."""
+        from deriva.adapters.graph.models import DataEntityNode
+
+        self._types(graph, ["Order"])
+        self._run(graph)
+        graph.batch_update_properties({"entity::r::order": {"extractSteps": ["DataEntity", "Other"]}})
+
+        def failing(*args, **kwargs):
+            graph.add_node(DataEntityNode(name="Order", signal="orm entity", repository_name="r"), node_id="entity::r::order")
+            return {"nodes_created": 1, "edges_created": 0, "errors": ["boom"]}
+
+        with patch("deriva.services.extraction._run_step_writes", side_effect=failing):
+            self._run(graph)
+
+        (row,) = graph.query("MATCH (n {id: 'entity::r::order'}) RETURN n.extractSteps AS steps")
+        assert sorted(row["steps"]) == ["DataEntity", "Other"]
+
+
+class TestTagSteps:
+    """graph tag-steps: nodes and edges written before steps were tagged get their owner by rule; the rest is reported."""
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def test_untagged_nodes_and_edges_get_their_step_and_unknown_ones_are_reported(self, graph):
+        from deriva.adapters.graph.models import BusinessConceptNode, FileNode, TypeDefinitionNode
+        from deriva.services.extraction import tag_steps
+
+        graph.add_node(FileNode(name="a.py", path="a.py", repository_name="r", file_type="source"), node_id="file::r::a")
+        graph.add_node(TypeDefinitionNode(name="A", type_category="class", file_path="a.py", repository_name="r"), node_id="typedef::r::a::A")
+        graph.add_node(BusinessConceptNode("Billing", "entity", "", "", "r", 0.9, extraction_method="llm-directory"), node_id="concept::r::billing")
+        graph.add_edge("file::r::a", "typedef::r::a::A", "CONTAINS")
+        graph.add_edge("typedef::r::a::A", "file::r::a", "CONTAINS")  # no rule for this one
+
+        report = tag_steps(graph, "r")
+
+        steps = {r["id"]: list(r["s"]) for r in graph.query("MATCH (n) WHERE n.id IS NOT NULL RETURN n.id AS id, n.extractSteps AS s")}
+        assert steps == {"file::r::a": ["File"], "typedef::r::a::A": ["TypeDefinition"], "concept::r::billing": ["DirectoryClassification"]}
+        edge = graph.query("MATCH (a {id: 'file::r::a'})-[r]->(b) RETURN r.extractStep AS s")[0]["s"]
+        assert edge == "TypeDefinition"
+        assert report["nodes"] == {"File": 1, "TypeDefinition": 1, "DirectoryClassification": 1} and report["untagged_nodes"] == {}
+        assert report["untagged_edges"] == {"CONTAINS TypeDefinition->File": 1}
+        assert tag_steps(graph, "r")["nodes"] == {}  # tagged nodes are left as they are
+
+
+def test_a_steps_own_node_it_only_links_to_again_is_kept():
+    """A placeholder the step made before and now only links to (it exists, so it is not written again) stays."""
+    from deriva.adapters.grafeo.manager import close_database
+    from deriva.adapters.graph import GraphManager
+    from deriva.adapters.graph.models import TypeDefinitionNode
+    from deriva.services import extraction as service
+
+    def step(cfg, repo, repo_path, classified, undefined, gm, llm, engine, model=None):
+        if not gm.node_exists("typedef::r::Base"):
+            gm.add_node(TypeDefinitionNode(name="Base", type_category="class", file_path="external", repository_name="r"), node_id="typedef::r::Base")
+        gm.add_node(TypeDefinitionNode(name="A", type_category="class", file_path="a.py", repository_name="r"), node_id="typedef::r::A")
+        gm.add_edge("typedef::r::A", "typedef::r::Base", "INHERITS")
+        return {"nodes_created": 1, "edges_created": 1, "errors": []}
+
+    close_database()
+    with GraphManager() as gm:
+        cfg = SimpleNamespace(node_type="TypeDefinition")
+        with patch.object(service, "_run_step_writes", side_effect=step):
+            service._run_extraction_step(cfg, SimpleNamespace(name="r"), Path("."), [], [], gm, None, MagicMock())
+            result = service._run_extraction_step(cfg, SimpleNamespace(name="r"), Path("."), [], [], gm, None, MagicMock())
+        assert result["swept"] == {"nodes": 0, "edges": 0}
+        assert gm.node_exists("typedef::r::Base")
+    close_database()
+
+
+class TestDeploymentStep:
+    """The Deployment step writes the primary environment, its deployed services and the system software (no LLM)."""
+
+    PARAMS = {
+        "technologies": [
+            {"name": "PostgreSQL", "kind": "database", "aliases": ["postgres", "psycopg2"]},
+            {"name": "Java runtime", "kind": "runtime", "aliases": ["eclipse-temurin"]},
+            {"name": "CICS", "kind": "transaction monitor", "aliases": ["cics"]},
+        ],
+        "cloud_resources": {"AWS::ECS::Service": "container"},
+        "markers": [{"pattern": r"EXEC\s+CICS", "technology": "cics"}],
+        "marker_suffixes": [".cbl"],
+        "manifest_runtimes": {"pyproject.toml": "python"},
+    }
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _cfg(self, params):
+        return SimpleNamespace(node_type="Deployment", params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+
+    def _repo(self, graph, root, files):
+        from deriva.adapters.graph.models import DeployableUnitNode, FileNode
+
+        for path, text in files.items():
+            (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / path).write_text(text, encoding="utf-8")
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="other", subtype=""), node_id=f"file::r::{path}")
+        for name in ("shop", "billing"):
+            graph.add_node(DeployableUnitNode(name=name, path=f"r/{name}", unit_kind="container", repository_name="r"), node_id=f"unit::r::{name}")
+
+    def test_the_environment_its_services_and_the_software_are_written(self, graph, tmp_path):
+        compose = "services:\n  shop:\n    build: ./shop\n    depends_on: [db]\n  billing:\n    build: ./billing\n  db:\n    image: postgres:15\n"
+        self._repo(graph, tmp_path, {"docker-compose.yml": compose, "shop/Dockerfile": "FROM eclipse-temurin:21\n"})
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == []
+        (env,) = graph.query("MATCH (e:Graph:Environment) RETURN e.id AS id, e.name AS name, e.kind AS kind, e.repository_name AS repo")
+        assert (env["id"], env["name"], env["kind"], env["repo"]) == ("environment::r::compose", "Docker Compose", "compose", "r")
+        deploys = graph.query(
+            "MATCH (e:Graph:Environment)-[:`Graph:RUNS`]->(d:Graph:Deployment)-[:`Graph:DEPLOYS`]->(u:Graph:DeployableUnit) RETURN d.name AS d, u.id AS u ORDER BY d"
+        )
+        assert [(r["d"], r["u"]) for r in deploys] == [("billing", "unit::r::billing"), ("shop", "unit::r::shop")]
+        hosted = graph.query("MATCH (e:Graph:Environment)-[:`Graph:HOSTS`]->(s:Graph:Software) RETURN s.name AS s ORDER BY s")
+        assert [r["s"] for r in hosted] == ["Java runtime", "PostgreSQL"]
+        serves = graph.query("MATCH (s:Graph:Software)-[:`Graph:SERVES`]->(u:Graph:DeployableUnit) RETURN s.name AS s, u.id AS u ORDER BY s")
+        assert [(r["s"], r["u"]) for r in serves] == [("Java runtime", "unit::r::shop"), ("PostgreSQL", "unit::r::shop")]
+        assert result["software"] == {"listed": 2, "fallback": 0, "unconnected": 0}
+
+    def test_a_cdk_app_is_read_statically_and_is_the_primary_environment(self, graph, tmp_path):
+        params = {
+            **self.PARAMS,
+            "technologies": [*self.PARAMS["technologies"], {"name": "Amazon RDS for PostgreSQL", "kind": "managed service", "aliases": ["aws::rds::dbinstance::postgres"]}],
+            "cloud_resources": {"AWS::ECS::Service": "container", "AWS::RDS::DBInstance": "managed"},
+            "cloud_qualifiers": {"AWS::RDS::DBInstance": {"property": "Engine"}},
+            "cdk_constructs": {
+                "aws-ecs.FargateService": {"type": "AWS::ECS::Service", "environment": "AWS ECS Fargate"},
+                "aws-rds.DatabaseInstance": {"type": "AWS::RDS::DBInstance"},
+            },
+        }
+        app = (
+            "import * as ecs from 'aws-cdk-lib/aws-ecs';\nimport * as rds from 'aws-cdk-lib/aws-rds';\n"
+            "const NAMES = ['shop', 'billing'];\n"
+            "export class S { constructor(s: any) {\n"
+            "  for (const n of NAMES) { new ecs.FargateService(s, `${n}Service`, { serviceName: n }); }\n"
+            "  new rds.DatabaseInstance(s, 'Db', { engine: rds.DatabaseInstanceEngine.postgres({}) });\n} }\n"
+        )
+        compose = "services:\n  shop:\n    build: ./shop\n"
+        self._repo(
+            graph,
+            tmp_path,
+            {"docker-compose.yml": compose, "infra/cdk.json": '{"app": "npx ts-node bin/app.ts"}', "infra/lib/stack.ts": app, "shop/x.ts": "new ecs.FargateService(a, 'Nope');"},
+        )
+
+        result = _run_extraction_step(self._cfg(params), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == []
+        (env,) = graph.query("MATCH (e:Graph:Environment) RETURN e.name AS name, e.kind AS kind")
+        assert (env["name"], env["kind"]) == ("AWS ECS Fargate", "cloud")
+        deploys = graph.query("MATCH (:Graph:Environment)-[:`Graph:RUNS`]->(d:Graph:Deployment)-[:`Graph:DEPLOYS`]->(u) RETURN d.name AS d, u.id AS u ORDER BY d")
+        assert [(r["d"], r["u"]) for r in deploys] == [("billingService", "unit::r::billing"), ("shopService", "unit::r::shop")]
+        hosted = graph.query("MATCH (e:Graph:Environment)-[:`Graph:HOSTS`]->(s:Graph:Software) RETURN s.name AS s ORDER BY s")
+        assert [r["s"] for r in hosted] == ["Amazon RDS for PostgreSQL"]
+        # The other environments' services stay on the environment, for Cooperation (names, ports, variables)
+        (other,) = graph.query("MATCH (e:Graph:Environment) RETURN e.otherServices AS s")[0]["s"]
+        assert json.loads(other) == {"name": "shop", "unit": "unit::r::shop", "environment": {}, "ports": []}
+
+    def test_a_run_with_another_environment_sweeps_the_old_one(self, graph, tmp_path):
+        self._repo(graph, tmp_path, {"docker-compose.yml": "services:\n  shop:\n    build: ./shop\n", "shop/a.cbl": "EXEC CICS RETURN"})
+        _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        (tmp_path / "docker-compose.yml").unlink()
+
+        _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert [r["id"] for r in graph.query("MATCH (e:Graph:Environment) RETURN e.id AS id")] == ["environment::r::mainframe"]
+        assert [r["n"] for r in graph.query("MATCH (d:Graph:Deployment) RETURN d.name AS n")] == ["shop"]
+
+    def test_the_signals_are_validated(self, graph, tmp_path):
+        with pytest.raises(ValueError, match="Deployment"):
+            _run_extraction_step(self._cfg({**self.PARAMS, "markers": [{"pattern": "("}]}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+
+class TestCooperationStep:
+    """The Cooperation step writes CONSUMES and SENDS_TO edges between deployable units, from structure (no LLM)."""
+
+    PARAMS = {"send_markers": ["convertAndSend"], "listen_markers": ["@JmsListener"]}
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _cfg(self, params):
+        return SimpleNamespace(node_type="Cooperation", params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+
+    def _repo(self, graph, root, files, variables=None):
+        from deriva.adapters.graph.models import DeployableUnitNode, DeploymentNode, FileNode
+
+        for name in ("core", "billing"):
+            graph.add_node(DeployableUnitNode(name=name, path=f"r/{name}", unit_kind="container", repository_name="r"), node_id=f"unit::r::{name}")
+            graph.add_node(
+                DeploymentNode(name=name, environment="compose", repository_name="r", variables=(variables or {}).get(name, {}), ports=[]),
+                node_id=f"deployment::r::compose::{name}",
+            )
+            graph.add_edge(f"deployment::r::compose::{name}", f"unit::r::{name}", "DEPLOYS")
+        for path, text in files.items():
+            (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / path).write_text(text, encoding="utf-8")
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="config", subtype=""), node_id=f"file::r::{path}")
+            graph.add_edge(f"unit::r::{path.split('/', 1)[0]}", f"file::r::{path}", "INCLUDES")
+
+    def test_uses_and_message_flows_are_written_with_their_evidence(self, graph, tmp_path):
+        files = {
+            "core/application.properties": "server.port = 8110\nin.queueName=orders\n",
+            "core/Listener.java": '@JmsListener(destination = "${in.queueName}") void on() {}',
+            "billing/application.properties": "core.url=http://localhost:8110\nout.queueName=orders\n",
+            "billing/Sender.java": '@Value("${out.queueName}") String q; void s() { jms.convertAndSend(q, x); }',
+        }
+        self._repo(graph, tmp_path, files)
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == [] and result["links"] == {"endpoint": 1, "messaging": 1}
+        rows = graph.query("MATCH (a:Graph:DeployableUnit)-[r]->(b:Graph:DeployableUnit) RETURN a.id AS a, type(r) AS t, b.id AS b, r.channel AS c, r.evidence AS e ORDER BY t")
+        assert [(r["a"], r["t"], r["b"], r["c"], r["e"]) for r in rows] == [
+            ("unit::r::billing", "Graph:CONSUMES", "unit::r::core", "rest", "endpoint"),
+            ("unit::r::billing", "Graph:SENDS_TO", "unit::r::core", "messaging", "messaging"),
+        ]
+
+    def test_a_rerun_without_the_evidence_sweeps_the_line(self, graph, tmp_path):
+        self._repo(graph, tmp_path, {"core/application.properties": "server.port = 8110\n", "billing/application.properties": "core.url=http://localhost:8110\n"})
+        _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        (tmp_path / "billing/application.properties").write_text("nothing=here\n", encoding="utf-8")
+
+        _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert graph.query("MATCH (:Graph:DeployableUnit)-[r:`Graph:CONSUMES`]->(:Graph:DeployableUnit) RETURN count(r) AS n")[0]["n"] == 0
+
+    def test_the_services_of_the_other_environments_are_used_too(self, graph, tmp_path):
+        """A cloud primary (no ports, no variables) does not hide the compose services that configuration refers to."""
+        from deriva.adapters.graph.models import DeployableUnitNode, EnvironmentNode
+
+        for name in ("core", "billing"):
+            graph.add_node(DeployableUnitNode(name=name, path=f"r/{name}", unit_kind="container", repository_name="r"), node_id=f"unit::r::{name}")
+        compose = [
+            {"name": "core", "unit": "unit::r::core", "environment": {}, "ports": [8110]},
+            {"name": "billing", "unit": "unit::r::billing", "environment": {"CORE_URL": "http://core:8110"}, "ports": []},
+        ]
+        graph.add_node(EnvironmentNode(name="AWS ECS Fargate", kind="cloud", repository_name="r", other_services=[json.dumps(s) for s in compose]), node_id="environment::r::cloud")
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == []
+        rows = graph.query("MATCH (a:Graph:DeployableUnit)-[r:`Graph:CONSUMES`]->(b:Graph:DeployableUnit) RETURN a.id AS a, b.id AS b")
+        assert [(r["a"], r["b"]) for r in rows] == [("unit::r::billing", "unit::r::core")]
+
+    def test_the_compose_environment_of_a_service_counts_as_its_configuration(self, graph, tmp_path):
+        self._repo(graph, tmp_path, {"core/application.properties": "x=1\n"}, variables={"billing": {"CORE_URL": "http://core:8110"}})
+
+        _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        rows = graph.query("MATCH (a)-[r:`Graph:CONSUMES`]->(b) RETURN a.id AS a, b.id AS b")
+        assert [(r["a"], r["b"]) for r in rows] == [("unit::r::billing", "unit::r::core")]
+
+    def test_the_signals_are_validated(self, graph, tmp_path):
+        with pytest.raises(ValueError, match="Cooperation"):
+            _run_extraction_step(self._cfg({"send_markers": "convertAndSend"}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+
+class TestDataDomainStep:
+    """The DataDomain step groups the data entities into information domains and writes them with INCLUDES edges (no LLM)."""
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _cfg(self, params=None):
+        return SimpleNamespace(
+            node_type="DataDomain",
+            params=json.dumps(params or {"identity_words": ["user"]}),
+            input_sources="",
+            instruction="",
+            example="",
+            temperature=None,
+            max_tokens=None,
+            batch_size=1,
+        )
+
+    def _type(self, graph, root, name, text):
+        from deriva.adapters.graph.models import FileNode, TypeDefinitionNode
+
+        path = f"shop/{name}.java"
+        (root / "shop").mkdir(exist_ok=True)
+        (root / path).write_text(text, encoding="utf-8")
+        graph.add_node(FileNode(name=f"{name}.java", path=path, repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}")
+        graph.add_node(TypeDefinitionNode(name=name, type_category="class", file_path=path, repository_name="r", decorators=["Entity"]), node_id=f"typedef::r::{name}")
+
+    def _run(self, graph, root, params=None):
+        entity_params = json.dumps({"entity_annotations": ["Entity"]})
+        entity_cfg = SimpleNamespace(node_type="DataEntity", params=entity_params, input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+        _run_extraction_step(entity_cfg, SimpleNamespace(name="r"), root, [], [], graph, None, MagicMock())  # the entities come first
+        with patch("deriva.services.extraction.config.get_extraction_config", return_value=entity_cfg):
+            return _run_extraction_step(self._cfg(params), SimpleNamespace(name="r"), root, [], [], graph, None, MagicMock())
+
+    def test_entities_owned_by_one_parent_form_its_domain(self, graph, tmp_path):
+        self._type(graph, tmp_path, "Order", '@Entity public class Order { @OneToMany(mappedBy = "order", cascade = {CascadeType.ALL}) private List<OrderLine> lines; }')
+        self._type(graph, tmp_path, "OrderLine", "@Entity public class OrderLine { @ManyToOne(optional = false) private Order order; }")
+        self._type(graph, tmp_path, "Supplier", "@Entity public class Supplier { }")
+
+        result = self._run(graph, tmp_path)
+
+        assert result["errors"] == [] and result["domains"] == 2
+        rows = graph.query("MATCH (d:Graph:DataDomain) RETURN d.id AS id, d.name AS name, d.nameCandidates AS names, d.businessObject AS bo ORDER BY id")
+        assert [(r["id"], r["name"], list(r["names"]), r["bo"]) for r in rows] == [
+            ("domain::r::order", "Order", ["Order Data"], "Order"),
+            ("domain::r::supplier", "Supplier", ["Supplier Data"], "Supplier"),
+        ]
+        members = graph.query("MATCH (d:Graph:DataDomain {id: 'domain::r::order'})-[:`Graph:INCLUDES`]->(m) RETURN m.id AS id ORDER BY id")
+        assert [m["id"] for m in members] == ["entity::r::order", "entity::r::orderline"]
+
+    def test_a_domain_is_used_where_its_members_are(self, graph, tmp_path):
+        from deriva.modules.derivation.base import unit_scopes
+
+        self._type(graph, tmp_path, "Order", "@Entity public class Order { @OneToMany(cascade = {CascadeType.ALL}) private List<OrderLine> lines; }")
+        self._type(graph, tmp_path, "OrderLine", "@Entity public class OrderLine { }")
+        self._run(graph, tmp_path)
+
+        scopes = unit_scopes(graph)
+
+        assert scopes.entity_files["domain::r::order"] == {"r/shop/Order.java", "r/shop/OrderLine.java"}
+        assert "domain::r::order" in scopes.entities_of("typedef::r::OrderLine")
+
+    def test_the_signals_are_validated(self, graph, tmp_path):
+        with pytest.raises(ValueError, match="DataDomain"):
+            self._run(graph, tmp_path, {"identity_words": "user"})
+
+
+class TestBusinessLayerStep:
+    """The BusinessLayer step writes lifecycles (processes), their events and the roles assigned to them (no LLM)."""
+
+    PARAMS = {"markers": [r"require_role\(([^)]*)\)"], "generic_roles": ["admin"], "status_words": ["status"], "min_states": 3}
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _cfg(self, params):
+        return SimpleNamespace(node_type="BusinessLayer", params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+
+    def test_a_lifecycle_its_events_and_the_roles_on_it_are_written(self, graph, tmp_path):
+        from deriva.adapters.graph.models import DataDomainNode, DataEntityNode, DeployableUnitNode, FileNode, TypeDefinitionNode
+
+        files = {
+            "loan/models.py": 'class LoanApplication(Base):\n    status = Column(String(20), default="DRAFT")\n',
+            "loan/routes.py": 'require_role("ADMIN", "LOAN_OFFICER")\ndef submit(app):\n    app.status = "SUBMITTED"\n',
+            "uw/routes.py": 'require_role("UNDERWRITER")\ndef approve(app):\n    app.status = "APPROVED"\n',
+        }
+        for path, text in files.items():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_text(text, encoding="utf-8")
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="source", subtype="python"), node_id=f"file::r::{path}")
+        for unit in ("loan", "uw"):
+            graph.add_node(DeployableUnitNode(name=f"{unit}-service", path=f"r/{unit}", unit_kind="container", repository_name="r"), node_id=f"unit::r::{unit}")
+        graph.add_node(TypeDefinitionNode(name="LoanApplication", type_category="class", file_path="loan/models.py", repository_name="r"), node_id="typedef::r::LoanApplication")
+        graph.add_node(DataEntityNode(name="Loan Application", signal="orm entity", repository_name="r"), node_id="entity::r::loanapplication")
+        graph.add_edge("entity::r::loanapplication", "typedef::r::LoanApplication", "INCLUDES")
+        graph.add_node(DataDomainNode(name="Loan Application", kind="single", repository_name="r", business_object="Loan Application"), node_id="domain::r::loanapplication")
+        graph.add_edge("domain::r::loanapplication", "entity::r::loanapplication", "INCLUDES")
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == [] and result["lifecycles"] == 1 and result["roles"] == 2
+        (life,) = graph.query("MATCH (l:Graph:Lifecycle) RETURN l.id AS id, l.name AS name, l.states AS states, l.events AS events, l.stateSites AS sites")
+        assert "SUBMITTED>r/loan/routes.py" in list(life["sites"]) and "APPROVED>r/uw/routes.py" in list(life["sites"])
+        assert (life["name"], list(life["states"]), list(life["events"])) == ("Loan Application Lifecycle", ["DRAFT", "SUBMITTED", "APPROVED"], ["SUBMITTED", "APPROVED"])
+        chain = graph.query("MATCH (a)-[:`Graph:TRIGGERS`]->(b:Graph:LifecycleEvent) RETURN a.id AS a, b.name AS b ORDER BY b")
+        assert [r["b"] for r in chain] == ["Loan Application Approved", "Loan Application Submitted"]
+        assert {r["a"] for r in chain} == {life["id"]}  # no transition in code links the two: both hang off the lifecycle
+        roles = graph.query("MATCH (r:Graph:Role)-[:`Graph:ASSIGNED`]->(l:Graph:Lifecycle) RETURN r.name AS r ORDER BY r")
+        assert [r["r"] for r in roles] == ["Loan Officer", "Underwriter"]
+
+    def test_the_signals_are_validated(self, graph, tmp_path):
+        with pytest.raises(ValueError, match="BusinessLayer"):
+            _run_extraction_step(self._cfg({"markers": "require_role"}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+
+def test_names_that_share_a_slug_get_ids_of_their_own():
+    """my_api and my-api are two services: each keeps a node of its own, whatever their order; a lone name keeps its plain slug."""
+    from deriva.services.extraction import _slug_ids
+
+    ids = _slug_ids("deployment::r::compose", ["my_api", "web", "my-api"])
+
+    assert ids["web"] == "deployment::r::compose::web"
+    assert ids["my_api"] != ids["my-api"] and all(ids[n].startswith("deployment::r::compose::my-api-") for n in ("my_api", "my-api"))
+    assert _slug_ids("deployment::r::compose", ["my-api", "my_api"]) == {n: ids[n] for n in ("my-api", "my_api")}

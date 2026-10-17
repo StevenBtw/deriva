@@ -249,6 +249,40 @@ class DerivedRelationshipResponse(BaseModel):
 # Schema Registry - Maps extraction types to Pydantic models
 # =============================================================================
 
+# =============================================================================
+# Baseline B1: a whole ArchiMate model in one generation (closed type enums)
+# =============================================================================
+
+B1ElementType = Literal[
+    "BusinessActor", "BusinessProcess", "BusinessFunction", "BusinessEvent", "BusinessObject",
+    "ApplicationComponent", "ApplicationInterface", "ApplicationService", "DataObject",
+    "Node", "Device", "SystemSoftware", "TechnologyService",
+]  # fmt: skip
+B1RelationshipType = Literal[
+    "Composition", "Aggregation", "Assignment", "Realization", "Serving", "Access",
+    "Influence", "Triggering", "Flow", "Specialization", "Association",
+]  # fmt: skip
+
+
+class B1Element(BaseModel):
+    id: str = Field(description="Identifier, unique in the model")
+    type: B1ElementType = Field(description="ArchiMate element type")
+    name: str = Field(description="Element name")
+
+
+class B1Relationship(BaseModel):
+    source: str = Field(description="Id of the source element")
+    target: str = Field(description="Id of the target element")
+    type: B1RelationshipType = Field(description="ArchiMate relationship type")
+
+
+class ArchiMateModelResponse(BaseModel):
+    """A complete ArchiMate model (baseline B1)."""
+
+    elements: list[B1Element] = Field(default_factory=list)
+    relationships: list[B1Relationship] = Field(default_factory=list)
+
+
 EXTRACTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "BusinessConcept": BusinessConceptClassificationResponse,
     "TypeDefinition": TypeDefinitionResponse,

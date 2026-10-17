@@ -137,6 +137,8 @@ def record_call(
         model=metrics.get("model"),
         served_model=metrics.get("served_model"),
         temperature=metrics.get("temperature"),
+        top_p=metrics.get("top_p"),
+        seed=metrics.get("seed"),
         reasoning=metrics.get("reasoning"),
         max_tokens=metrics.get("max_tokens"),
         cache_hit=metrics.get("cache_hit"),

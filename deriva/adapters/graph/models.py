@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "normalize_path",
+    "repo_relative",
     "RepositoryNode",
     "DirectoryNode",
     "ModuleNode",
@@ -26,6 +27,16 @@ __all__ = [
     "TestNode",
     "ServiceNode",
     "ExternalDependencyNode",
+    "DeployableUnitNode",
+    "DataEntityNode",
+    "DataDomainNode",
+    "EnvironmentNode",
+    "DeploymentNode",
+    "LifecycleNode",
+    "LifecycleEventNode",
+    "RoleNode",
+    "SoftwareNode",
+    "INCLUDES",
 ]
 
 
@@ -33,7 +44,7 @@ def normalize_path(path: str, repo_name: str | None = None) -> str:
     """Normalize a path for consistent storage.
 
     Args:
-        path: Path string to normalize
+        path: Repository-relative path string to normalize (a top folder named like the repository is kept)
         repo_name: Optional repository name for prefixing paths
 
     Returns:
@@ -46,10 +57,6 @@ def normalize_path(path: str, repo_name: str | None = None) -> str:
         # Handle empty or invalid paths
         if not normalized or normalized == ".":
             return ""
-
-        # Remove repo prefix if present
-        if repo_name and normalized.startswith(f"{repo_name}/"):
-            normalized = normalized[len(repo_name) + 1 :]
 
         # Remove any leading/trailing slashes
         normalized = normalized.strip("/")
@@ -65,6 +72,12 @@ def normalize_path(path: str, repo_name: str | None = None) -> str:
         # Log error but don't fail - return empty string
         logger.error("Failed to normalize path '%s': %s", path, e)
         return ""
+
+
+def repo_relative(path: str, repo_name: str) -> str:
+    """The repository-relative path of a stored path (the inverse of ``normalize_path`` with a repository name)."""
+    path = str(path or "").replace("\\", "/")
+    return path[len(repo_name) + 1 :] if path.startswith(f"{repo_name}/") else path
 
 
 @dataclass
@@ -493,7 +506,290 @@ class ExternalDependencyNode:
         }
 
 
+@dataclass
+class DeployableUnitNode:
+    """A deployable unit: what runs on its own (a container, a declared entry point, a mainframe application).
+
+    Its members (files, and for mainframe units programs and screens) hang below it by ``INCLUDES``
+    edges; the structural evidence and the naming evidence (manifest name and description, the
+    documentation lines that name it, the mainframe module) are properties.
+    """
+
+    name: str
+    path: str
+    unit_kind: str  # container, script, start, bin, war, spring-boot, application, online, batch, module, repository
+    repository_name: str
+    evidence: list[str] = field(default_factory=list)
+    entry: str | None = None
+    manifest_name: str | None = None
+    manifest_description: str | None = None
+    module: str | None = None
+    readme_lines: list[str] = field(default_factory=list)
+    readme_title: str | None = None
+    web_entries: list[str] = field(default_factory=list)  # Files that serve pages (Web UI signals)
+    product: str = ""
+    name_candidates: list[str] = field(default_factory=list)  # The closed set its component is named from
+    name_sources: list[str] = field(default_factory=list)  # Where each candidate comes from (readme, docs, manifest, ...)
+    member_count: int = 0
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"DeployableUnit_{self.path}_{self.entry or self.unit_kind}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "path": self.path,
+            "unitKind": self.unit_kind,
+            "evidence": list(self.evidence),
+            "entry": self.entry,
+            "manifestName": self.manifest_name,
+            "manifestDescription": self.manifest_description,
+            "module": self.module,
+            "readmeLines": list(self.readme_lines),
+            "readmeTitle": self.readme_title,
+            "webEntries": list(self.web_entries),
+            "product": self.product,
+            "nameCandidates": list(self.name_candidates),
+            "nameSources": list(self.name_sources),
+            "memberCount": self.member_count,
+            # Unit ids carry no prefix the graph manager reads the repository from
+            "repository_name": self.repository_name,
+            "type": "DeployableUnit",
+        }
+
+
+@dataclass
+class DataEntityNode:
+    """A data entity: one persistent concept of the code (an aggregate root, an ORM entity, a shared
+    record, a table), merging the same concept's types across units; its types hang below it by
+    ``INCLUDES`` edges."""
+
+    name: str
+    signal: str  # aggregate root, orm entity, shared record, table
+    repository_name: str
+    name_candidates: list[str] = field(default_factory=list)
+    name_sources: list[str] = field(default_factory=list)
+    paths: list[str] = field(default_factory=list)
+    type_count: int | None = None  # The types it includes (several can share a file); None: one per path
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"DataEntity_{self.repository_name}_{self.name}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "signal": self.signal,
+            "nameCandidates": list(self.name_candidates),
+            "nameSources": list(self.name_sources),
+            "paths": list(self.paths),
+            "typeCount": self.type_count if self.type_count is not None else len(self.paths),
+            "repository_name": self.repository_name,
+            "type": "DataEntity",
+        }
+
+
+@dataclass
+class DataDomainNode:
+    """An information domain: a group of data entities (and the parts and value objects of an aggregate),
+    named by closed choice; its members hang below it by ``INCLUDES`` edges."""
+
+    name: str  # The anchor's name
+    kind: str  # aggregate, naming, ownership, context, single
+    repository_name: str
+    name_candidates: list[str] = field(default_factory=list)
+    business_object: str | None = None  # The BusinessObject it realizes (None: no BusinessObject)
+    exception: bool = False  # A technical-word domain admitted by evidence
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"DataDomain_{self.repository_name}_{self.name}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "nameCandidates": list(self.name_candidates),
+            "nameSources": ["structure"] * len(self.name_candidates),
+            "businessObject": self.business_object,
+            "exception": self.exception,
+            "repository_name": self.repository_name,
+            "type": "DataDomain",
+        }
+
+
+@dataclass
+class LifecycleNode:
+    """A business process from structure: the lifecycle of a business domain's status, its states in order; it
+    ``TRIGGERS`` its first event."""
+
+    name: str
+    domain: str
+    entity: str
+    attribute: str
+    repository_name: str
+    states: list[str] = field(default_factory=list)
+    events: list[str] = field(default_factory=list)
+    sites: list[str] = field(default_factory=list)  # Files that set its states
+    name_candidates: list[str] = field(default_factory=list)
+    flow: str = ""  # The documented flow it follows ("path#heading")
+    transitions: list[str] = field(default_factory=list)  # "FROM>TO": the transitions code or the flow shows
+    state_sites: list[str] = field(default_factory=list)  # "STATE>path": the files that set each state
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"Lifecycle_{self.repository_name}_{self.entity}_{self.attribute}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "domain": self.domain,
+            "entity": self.entity,
+            "attribute": self.attribute,
+            "states": list(self.states),
+            "events": list(self.events),
+            "sites": list(self.sites),
+            "nameCandidates": list(self.name_candidates),
+            "nameSources": ["structure"] * len(self.name_candidates),
+            "flow": self.flow,
+            "transitions": list(self.transitions),
+            "stateSites": list(self.state_sites),
+            "repository_name": self.repository_name,
+            "type": "Lifecycle",
+        }
+
+
+@dataclass
+class LifecycleEventNode:
+    """A business event: a state where the lifecycle passes to another unit (or its start); it ``TRIGGERS`` the next."""
+
+    name: str
+    lifecycle: str
+    state: str
+    repository_name: str
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"LifecycleEvent_{self.lifecycle}_{self.state}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {"name": self.name, "lifecycle": self.lifecycle, "state": self.state, "repository_name": self.repository_name, "type": "LifecycleEvent"}
+
+
+@dataclass
+class RoleNode:
+    """An actor or role from structure (an authorization role, a person a Web UI component's README names); it is
+    ``ASSIGNED`` to the lifecycles it works on."""
+
+    name: str
+    kind: str  # role or actor
+    source: str
+    repository_name: str
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"Role_{self.repository_name}_{self.name}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {"name": self.name, "kind": self.kind, "source": self.source, "repository_name": self.repository_name, "type": "Role"}
+
+
+@dataclass
+class EnvironmentNode:
+    """A deployment environment (Docker Compose, Kubernetes, a cloud, a mainframe): the repository's
+    primary one; it ``RUNS`` its deployed services and ``HOSTS`` the system software that runs in it."""
+
+    name: str
+    kind: str  # compose, kubernetes, cloud, mainframe
+    repository_name: str
+    file: str = ""  # The compose file, the folder of the manifests or of the templates
+    others: list[str] = field(default_factory=list)  # The other environments, "kind file" (reported, not modelled)
+    # The other environments' services as JSON ({name, unit, environment, ports}): configuration refers to them (Cooperation)
+    other_services: list[str] = field(default_factory=list)
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"Environment_{self.repository_name}_{self.kind}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "file": self.file,
+            "others": list(self.others),
+            "otherServices": list(self.other_services),
+            "repository_name": self.repository_name,
+            "type": "Environment",
+        }
+
+
+@dataclass
+class DeploymentNode:
+    """A service an environment runs; it ``DEPLOYS`` its deployable unit (none for a ready-made image)."""
+
+    name: str
+    environment: str  # The environment kind
+    repository_name: str
+    image: str = ""
+    variables: dict[str, str] = field(default_factory=dict)  # The service's environment variables, secret values redacted (deployments._redacted)
+    ports: list[int] = field(default_factory=list)
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"Deployment_{self.repository_name}_{self.environment}_{self.name}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "environment": self.environment,
+            "image": self.image,
+            "variables": dict(self.variables),
+            "ports": list(self.ports),
+            "repository_name": self.repository_name,
+            "type": "Deployment",
+        }
+
+
+@dataclass
+class SoftwareNode:
+    """A system software from the closed list (or a fallback image off it), with its evidence; it
+    ``SERVES`` the deployable units that demonstrably use it."""
+
+    name: str
+    kind: str  # The list entry's kind (database, runtime, ...), "fallback" off the list
+    listed: bool
+    repository_name: str
+    in_environment: bool = False
+    evidence: list[str] = field(default_factory=list)
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"Software_{self.repository_name}_{self.name}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "listed": self.listed,
+            "inEnvironment": self.in_environment,
+            "evidence": list(self.evidence),
+            "repository_name": self.repository_name,
+            "type": "Software",
+        }
+
+
 # Relationship types
+INCLUDES = "INCLUDES"  # For deployableunit->file (and ->program/screen type) membership
 CONTAINS = "CONTAINS"  # For repository->module, repository->directory, directory->file, module->file relationships
 DEPENDS_ON = "DEPENDS_ON"  # For module->module, file->file, service->service dependencies
 REFERENCES = "REFERENCES"  # For file->businessconcept relationships

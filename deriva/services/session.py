@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 from deriva.adapters.archimate import ArchimateManager
+from deriva.adapters.archimate.models import layer_of
 from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 from deriva.adapters.database import get_connection, run_migrations
 from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, use_database
@@ -44,7 +45,7 @@ from deriva.common.paths import home, resolve, workspace
 from deriva.common.settings import RepositorySettings
 from deriva.common.types import HasToDict, RunLoggerProtocol
 
-from . import config, derivation, export_bundle, extraction, model_configs, ontology, overfit, pipeline, trace
+from . import config, derivation, export_bundle, export_levels, extraction, model_configs, ontology, overfit, pipeline, trace
 from .llm_log import record_call
 
 
@@ -330,6 +331,27 @@ class PipelineSession:
         rels = self._archimate_manager.get_relationships()
         return [r.to_dict() if hasattr(r, "to_dict") else dict(r) for r in rels]
 
+    def get_model_levels(self) -> dict[str, Any]:
+        """The enabled model at both export levels: elements (with ``level`` and ``layer``), relationships and views.
+
+        Each view names its viewpoint, its level (a view with detail elements is a detail view) and its element ids.
+        """
+        self._ensure_connected()
+        assert self._archimate_manager is not None
+        leveled = self._leveled_model(self._archimate_manager.get_elements(enabled_only=True))
+        return {
+            "elements": [{**e.to_dict(), "level": leveled.properties[e.identifier]["level"], "layer": layer_of(e.element_type)} for e in leveled.elements],
+            "relationships": [r.to_dict() for r in leveled.relationships],
+            "views": [{"name": v.name, "viewpoint": v.viewpoint, "level": v.level, "elements": [n.element for n in v.nodes]} for v in leveled.views],
+        }
+
+    def _leveled_model(self, elements: list[Any]) -> export_levels.LeveledModel:
+        """The enabled elements and the relationships between them, with the detail level from the graph."""
+        assert self._archimate_manager is not None
+        enabled_ids = {e.identifier for e in elements}
+        relationships = [r for r in self._archimate_manager.get_relationships() if r.source in enabled_ids and r.target in enabled_ids]
+        return export_levels.leveled_model(elements, relationships, export_levels.detail_lineage(self._graph_manager))
+
     def query_graph(self, cypher: str) -> list[dict]:
         """Run arbitrary Cypher query on Graph namespace."""
         self._ensure_connected()
@@ -410,6 +432,20 @@ class PipelineSession:
             return {"success": True, "message": "Graph layer cleared"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def tag_graph_steps(self, repo_name: str) -> dict[str, Any]:
+        """Tag the graph's untagged nodes and edges with the extraction step that wrote them, by rule (no LLM)."""
+        self._ensure_connected()
+        assert self._graph_manager is not None
+        return extraction.tag_steps(self._graph_manager, repo_name)
+
+    def later_extraction_steps(self, step: str) -> list[str]:
+        """The enabled extraction steps after ``step`` (they may read what it writes); ``step`` itself may be disabled."""
+        self._ensure_connected()
+        assert self._engine is not None
+        configs = sorted(config.get_extraction_configs(self._engine), key=lambda c: c.sequence)
+        current = next((c.sequence for c in configs if c.node_type == step), None)
+        return [c.node_type for c in configs if current is not None and c.sequence > current and c.enabled]
 
     def clear_model(self) -> dict[str, Any]:
         """Clear all ArchiMate model data."""
@@ -727,7 +763,6 @@ class PipelineSession:
         try:
             # Only export enabled elements
             elements = self._archimate_manager.get_elements(enabled_only=True)
-            all_relationships = self._archimate_manager.get_relationships()
 
             if not elements:
                 return {
@@ -735,23 +770,26 @@ class PipelineSession:
                     "error": "No ArchiMate elements found. Run derivation first.",
                 }
 
-            # Filter relationships to only include those between enabled elements
-            enabled_ids = {e.identifier for e in elements}
-            relationships = [r for r in all_relationships if r.source in enabled_ids and r.target in enabled_ids]
-
+            # One file, two levels: the architect elements and their members (detail), with views per level
+            # (relationships only between enabled elements)
+            leveled = self._leveled_model(elements)
             exporter = ArchiMateXMLExporter()
             exporter.export(
-                elements=elements,
-                relationships=relationships,
+                elements=leveled.elements,
+                relationships=leveled.relationships,
                 output_path=output_path,
                 model_name=model_name,
+                properties=leveled.properties,
+                views=leveled.views,
             )
 
             return {
                 "success": True,
                 "output_path": output_path,
                 "elements_exported": len(elements),
-                "relationships_exported": len(relationships),
+                "relationships_exported": len(leveled.relationships) - len(leveled.detail.relationships),
+                **leveled.summary(),
+                "views_exported": len(leveled.views),
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1061,6 +1099,12 @@ class PipelineSession:
             example=example,
         )
 
+    def add_extraction_step(self, node_type: str, sequence: int, extraction_method: str = "structural", params: str | None = None) -> bool:
+        """Add a new extraction step (disabled, version 1)."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.add_extraction_step(self._engine, node_type, sequence, extraction_method=extraction_method, params=params)
+
     def add_derivation_step(self, step_name: str, phase: str, sequence: int, params: str | None = None) -> bool:
         """Add a new derivation step (disabled, version 1)."""
         self._ensure_connected()
@@ -1189,6 +1233,7 @@ class PipelineSession:
         key_env: str | None = None,
         sampling: str | None = None,
         reasoning: str | None = None,
+        temperature: str | None = None,
         env_path: str | Path | None = None,
     ) -> None:
         """Add or change a model config in .env; a blank key keeps the stored key."""
@@ -1202,6 +1247,7 @@ class PipelineSession:
             key_env=key_env,
             sampling=sampling,
             reasoning=reasoning,
+            temperature=temperature,
         )
 
     def set_default_model(self, name: str, env_path: str | Path | None = None) -> None:

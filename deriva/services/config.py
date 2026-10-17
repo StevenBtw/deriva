@@ -35,7 +35,8 @@ import re
 from typing import Any
 
 # Phases a derivation_config row can belong to (same set as DerivationConfigModel.phase)
-DERIVATION_PHASES = ("prep", "generate", "refine", "relationship")
+# "baseline": rows the pipeline never runs (the benchmark's baseline B1 loads its own by name)
+DERIVATION_PHASES = ("prep", "generate", "refine", "relationship", "baseline")
 
 
 def _affected_rows(result: Any) -> int:
@@ -580,6 +581,33 @@ def add_derivation_step(
     engine.execute(
         "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, llm, params, is_active) VALUES (?, ?, ?, 1, ?, FALSE, FALSE, ?, TRUE)",
         [next_id, step_name, phase, sequence, params],
+    )
+    return True
+
+
+EXTRACTION_METHODS = ("structural", "treesitter", "ast", "llm")
+
+
+def add_extraction_step(engine: Any, node_type: str, sequence: int, extraction_method: str = "structural", params: str | None = None) -> bool:
+    """Add a new extraction step as version 1, disabled. Returns False if it exists.
+
+    Raises:
+        ValueError: the method is unknown, sequence is negative, or params is not a JSON object.
+    """
+    if extraction_method not in EXTRACTION_METHODS:
+        raise ValueError(f"extraction_method must be one of {', '.join(EXTRACTION_METHODS)}, got {extraction_method!r}")
+    if sequence < 0:
+        raise ValueError(f"sequence must be >= 0, got {sequence}")
+    if params is not None:
+        validate_params(params)
+    exists = engine.execute("SELECT 1 FROM extraction_config WHERE node_type = ? LIMIT 1", [node_type]).fetchone()
+    if exists:
+        return False
+    next_id = engine.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM extraction_config").fetchone()[0]
+    engine.execute(
+        "INSERT INTO extraction_config (id, node_type, version, sequence, enabled, input_sources, instruction, example, is_active, extraction_method, batch_size, params) "
+        "VALUES (?, ?, 1, ?, FALSE, '', '', NULL, TRUE, ?, 1, ?)",
+        [next_id, node_type, sequence, extraction_method, params],
     )
     return True
 

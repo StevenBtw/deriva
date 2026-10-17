@@ -161,30 +161,11 @@ class BusinessProcessDerivation(HybridDerivation):
         candidates: list[Candidate],
         max_candidates: int,
     ) -> list[Candidate]:
-        """Filter BusinessConcept candidates by confidence.
+        """The BusinessConcept candidates in a stable order (name, node id), at most ``max_candidates``.
 
-        BusinessConcepts are already semantically identified as processes,
-        so we just filter by confidence and limit count.
+        BusinessConcepts are already classified as processes in extraction (a closed label); no confidence decides.
         """
-        # Filter by confidence - ROC analysis found 0.85 optimal
-        MIN_CONFIDENCE = 0.85
-
-        filtered = []
-        for c in candidates:
-            confidence = c.properties.get("confidence", 0)
-            if confidence >= MIN_CONFIDENCE:
-                filtered.append(c)
-
-        # Sort by confidence descending
-        filtered.sort(key=lambda c: c.properties.get("confidence", 0), reverse=True)
-
-        self.logger.debug(
-            "BusinessProcess filter (BusinessConcept): %d total -> %d passed confidence >= %.1f",
-            len(candidates),
-            len(filtered),
-            MIN_CONFIDENCE,
-        )
-
+        filtered = sorted((c for c in candidates), key=lambda c: (c.name, c.node_id))
         return filtered[:max_candidates]
 
     def _filter_method_candidates(

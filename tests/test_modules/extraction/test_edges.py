@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deriva.modules.extraction.base import generate_method_node_id
 from deriva.modules.extraction.edges import (
     ALL_EDGE_TYPES,
     PYTHON_STDLIB,
@@ -572,6 +573,20 @@ class TestExtractEdgesBatch:
         )
 
         assert result["stats"]["files_processed"] == 2
+
+    def test_the_java_file_index_is_built_once_per_batch(self):
+        """Every Java file with imports resolves against one index of the repository's Java files, not a fresh scan per file."""
+        java = "package org.acme;\nimport org.acme.util.Error;\nclass Op%d { void f() { new Error(); } }\n"
+        files = [{"path": f"src/org/acme/Op{i}.java", "file_type": "source", "subtype": "java", "content": java % i} for i in range(3)]
+        files.append({"path": "src/org/acme/util/Error.java", "file_type": "source", "subtype": "java", "content": "package org.acme.util;\nclass Error {}\n"})
+
+        from deriva.modules.extraction import edges as edges_module
+
+        with patch.object(edges_module, "_java_file_index", wraps=edges_module._java_file_index) as index:
+            result = extract_edges_batch(files=files, repo_name="r", repo_path="/repo")
+
+        assert index.call_count == 1
+        assert result["stats"]["imports"]["internal"] == 3
 
 
 # =============================================================================
@@ -1274,6 +1289,24 @@ class TestResolveCallee:
 
         assert result is not None
 
+    @pytest.mark.parametrize(
+        ("file_path", "is_method_call", "expected_class"),
+        [
+            ("main.py", False, None),  # a bare f() in Python is the module function
+            ("main.js", False, None),
+            ("Main.java", True, "Caller"),  # a bare f() in Java is this.f()
+            ("Main.cs", False, "Caller"),  # a bare F() in C# is this.F(), with no target recorded
+        ],
+    )
+    def test_a_bare_call_prefers_the_callers_own_method_only_where_the_language_calls_it(self, file_path, is_method_call, expected_class):
+        from deriva.modules.extraction.edges import _resolve_callee
+
+        method_lookup = {"func": [{"class_name": "Caller", "line_start": 1, "line_end": 10}, {"class_name": None, "line_start": 20, "line_end": 30}]}
+
+        result = _resolve_callee("func", None, is_method_call, "Caller", method_lookup, "r", file_path)
+
+        assert result == generate_method_node_id("r", file_path, "func", expected_class)
+
 
 # =============================================================================
 # _extract_decorator_edges Tests
@@ -1741,3 +1774,38 @@ def test_a_document_with_the_members_name_is_no_member():
     edges, _, _ = TestJavaAndScriptImports._edges(imports, "app/cbl/PROGA.cbl", files)
 
     assert TestJavaAndScriptImports._targets(edges) == {("IMPORTS", "file::r::other_cpy_RECA.cpy"), ("IMPORTS", "file::r::app_cpy_RECB")}
+
+
+class TestPythonSubmoduleImports:
+    """``from <package> import <module>`` imports the module's file, relative or absolute."""
+
+    def _targets(self, module, names, all_files, file_path="app/routes.py"):
+        from deriva.adapters.treesitter.models import ExtractedImport
+        from deriva.modules.extraction.edges import _extract_import_edges
+
+        edges, _, _ = _extract_import_edges(
+            imports=[ExtractedImport(module=module, names=names, line=1, is_from_import=True)],
+            file_path=file_path,
+            repo_name="r",
+            all_file_paths=all_files,
+            external_packages=set(),
+            edge_types={EdgeType.IMPORTS, EdgeType.USES},
+        )
+        return sorted(e["to_node_id"].split("::")[-1] for e in edges if e["relationship_type"] == "IMPORTS")
+
+    def test_a_relative_import_of_a_sibling_module_reaches_its_file(self):
+        assert self._targets(".", ["services"], {"app/routes.py", "app/services.py", "app/models.py"}) == ["app_services.py"]
+
+    def test_an_absolute_import_of_a_package_module_reaches_its_file(self):
+        assert self._targets("app", ["services", "models"], {"app/routes.py", "app/services.py", "app/models.py", "main.py"}, "main.py") == ["app_models.py", "app_services.py"]
+
+    def test_names_that_are_no_module_keep_the_package_target(self):
+        assert self._targets(".", ["helper"], {"app/routes.py", "app/__init__.py"}) == ["app___init__.py"]
+        assert self._targets(".schemas", ["Thing"], {"app/routes.py", "app/schemas.py"}) == ["app_schemas.py"]
+
+    def test_the_calls_step_knows_the_imported_modules(self):
+        from deriva.adapters.treesitter.models import ExtractedImport
+        from deriva.modules.extraction.edges import _imported_paths
+
+        imports = [ExtractedImport(module=".", names=["services"], line=1, is_from_import=True)]
+        assert _imported_paths(imports, "app/routes.py", {"app/routes.py", "app/services.py"}, set()) == {"app/services.py"}

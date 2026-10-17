@@ -22,7 +22,7 @@ from dotenv import dotenv_values
 from deriva.adapters.llm.model_registry import VALID_PROVIDERS, parse_sampling, reasoning_settings
 from deriva.common.paths import env_file
 
-FIELDS = ("PROVIDER", "MODEL", "URL", "KEY", "KEY_ENV", "SAMPLING", "REASONING")
+FIELDS = ("PROVIDER", "MODEL", "URL", "KEY", "KEY_ENV", "SAMPLING", "REASONING", "TEMPERATURE")
 # Keys of settings Deriva no longer has (no code read them): a delete still removes them with their model
 LEGACY_FIELDS = ("STRUCTURED_OUTPUT",)
 NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
@@ -121,6 +121,7 @@ def list_models(env_path: str | Path) -> list[dict[str, Any]]:
                 "key_env": field["KEY_ENV"],
                 "sampling": field["SAMPLING"],
                 "reasoning": field["REASONING"],
+                "temperature": field["TEMPERATURE"],
                 "default": values.get(DEFAULT_MODEL) == env.lower().replace("_", "-"),
             }
         )
@@ -138,6 +139,7 @@ def set_model(
     key_env: str | None = None,
     sampling: str | None = None,
     reasoning: str | None = None,
+    temperature: str | None = None,
 ) -> None:
     """Add or change a model config; ``None`` keeps a field, ``""`` removes it (a blank key keeps the stored key).
 
@@ -158,6 +160,7 @@ def set_model(
         ("key_env", key_env),
         ("sampling", sampling),
         ("reasoning", reasoning),
+        ("temperature", temperature),
     ):
         if value and any(c in value for c in "\r\n\0"):
             raise ValueError(f"The {field} cannot hold a line break")
@@ -165,6 +168,13 @@ def set_model(
         parse_sampling(sampling)
     if reasoning:
         reasoning_settings(provider.lower(), reasoning.strip().lower())
+    if temperature:
+        try:
+            degrees = float(temperature)
+        except ValueError:
+            degrees = -1.0
+        if not 0.0 <= degrees <= 2.0:
+            raise ValueError(f"temperature must be a number between 0 and 2, got {temperature!r}")
     env = _env_name(name)
     path = Path(env_path)
     lines, newline = _read_lines(path)
@@ -176,6 +186,7 @@ def set_model(
         ("KEY_ENV", key_env),
         ("SAMPLING", sampling.strip().lower() if sampling else sampling),
         ("REASONING", reasoning.strip().lower() if reasoning else reasoning),
+        ("TEMPERATURE", temperature.strip() if temperature else temperature),
     ):
         variable = f"LLM_{env}_{field}"
         if value is None:

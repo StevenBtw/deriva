@@ -1,15 +1,15 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/deriva-banner-dark.svg">
-  <img alt="Deriva: from code repositories to ArchiMate models" src="assets/brand/deriva-banner-light.svg">
-</picture>
-
 [![Research Project](https://img.shields.io/badge/Research-Project-blueviolet.svg)](#)
 [![Build Status](https://github.com/StevenBtw/Deriva/actions/workflows/ci.yml/badge.svg)](https://github.com/StevenBtw/Deriva/actions/workflows/ci.yml)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 [![Grafeo](https://img.shields.io/badge/Grafeo-embedded-green.svg)](https://github.com/StevenBtw/grafeo)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE) 
 
-Deriva reads a software repository, builds a graph of what is in it, and derives an [ArchiMate](https://www.opengroup.org/archimate-forum) enterprise architecture model you can open in [Archi](https://www.archimatetool.com/).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/deriva-banner-dark.svg">
+  <img alt="Deriva: from code repositories to ArchiMate models" src="assets/brand/deriva-banner-light.svg">
+</picture>
+
+Deriva reads a software repository, builds a graph of what is in it, and derives an [ArchiMate](https://www.opengroup.org/archimate-forum) enterprise architecture model you can open in tools like [Archi](https://www.archimatetool.com/).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/studio-dark.png">
@@ -148,7 +148,7 @@ LLM_MISTRAL_SMALL_MODEL=mistral-small-2603
 LLM_MISTRAL_SMALL_KEY=your-mistral-api-key
 ```
 
-Name a dated model version (`mistral-small-2603`) rather than a `-latest` alias, so a run says which model answered; each LLM call also records the model the provider reports. Some models need two more settings:
+Name a dated model version (`mistral-small-2603`) rather than a `-latest` alias, so a run says which model answered; each LLM call also records the model the provider reports. Some models need more settings:
 
 ```bash
 # .env: models without a temperature, or with reasoning to switch off
@@ -158,10 +158,11 @@ LLM_ANTHROPIC_HAIKU_SAMPLING=false    # takes no temperature: Deriva leaves it o
 LLM_ANTHROPIC_HAIKU_REASONING=none    # thinking off
 LLM_OPENAI_LUNA_PROVIDER=openai
 LLM_OPENAI_LUNA_MODEL=gpt-6-luna
-LLM_OPENAI_LUNA_REASONING=none        # reasoning off, so the step temperatures apply
+LLM_OPENAI_LUNA_REASONING=none        # reasoning off, so the temperature applies
+LLM_OPENAI_LUNA_TEMPERATURE=0         # this model's own temperature, over LLM_TEMPERATURE
 ```
 
-`REASONING` is a level (`none`, `low`, `medium`, `high`) for OpenAI, Azure and Anthropic models. A model with `SAMPLING=false` runs at its provider's default sampling, so its answers can vary more than those of a model at temperature 0. `deriva-cli config model set <name> --provider <provider> --model <model id> --sampling false --reasoning none` writes both.
+`REASONING` is a level (`none`, `low`, `medium`, `high`) for OpenAI, Azure and Anthropic models. A model with `SAMPLING=false` runs at its provider's default sampling, so its answers can vary more than those of a model at temperature 0. `TEMPERATURE` (0 to 2) sets one model's temperature; models without it use `LLM_TEMPERATURE`. Every LLM call records the temperature it sent (none with `SAMPLING=false`); top_p and seed are never sent, so the provider's defaults apply. `deriva-cli config model set <name> --provider <provider> --model <model id> --sampling false --reasoning none --temperature 0` writes these settings.
 
 A local model needs no key:
 
@@ -552,6 +553,8 @@ This project is licensed under the **GNU Affero General Public License v3.0 or l
 This means you can freely use, modify, and distribute this software, but if you run a modified version as a network service, you must make the source code available to users of that service.
 
 See [LICENSE](LICENSE) for the full license text.
+
+The bundled business function model is an excerpt of APQC's Process Classification Framework® (PCF), used under APQC's license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Acknowledgments
 

@@ -25,6 +25,7 @@ Usage:
 
 from __future__ import annotations
 
+from .db_tool import DATA_DIR
 from .db_tool import export_all as export_database
 from .db_tool import import_all as import_database
 from .manager import (
@@ -37,7 +38,11 @@ from .manager import (
     seed_database,
 )
 
+# Bundled business function models (a config path names one of them, or a user-supplied file)
+FUNCTION_MODELS_DIR = DATA_DIR / "function_models"
+
 __all__ = [
+    "FUNCTION_MODELS_DIR",
     "ensure_database",
     "get_connection",
     "init_database",

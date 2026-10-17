@@ -34,13 +34,38 @@ def test_widget_model_maps_types_layers_and_skips_disabled_elements():
     assert model["relationships"] == [{"id": "r1", "source": "n_application_server", "target": "ac_core", "type": "Serving", "name": ""}]
 
 
-def test_model_endpoint_returns_the_widget_model(make_client):
-    client = make_client(FakeSession(get_archimate_elements=ELEMENTS, get_archimate_relationships=RELATIONSHIPS))
+LEVELS = {
+    "elements": [
+        {**ELEMENTS[0], "level": "architect", "layer": "Technology"},
+        {**ELEMENTS[1], "level": "architect", "layer": "Application"},
+        {"identifier": "art_core", "name": "core", "element_type": "Artifact", "properties": {}, "enabled": True, "level": "detail", "layer": "Technology"},
+    ],
+    "relationships": [*RELATIONSHIPS[:1], {"identifier": "r3", "source": "n_application_server", "target": "art_core", "relationship_type": "Assignment"}],
+    "views": [
+        {"name": "Layered", "viewpoint": "Layered", "level": "architect", "elements": ["n_application_server", "ac_core"]},
+        {
+            "name": "Implementation and Deployment (detail)",
+            "viewpoint": "Implementation and Deployment",
+            "level": "detail",
+            "elements": ["n_application_server", "ac_core", "art_core"],
+        },
+    ],
+}
 
-    body = client.get("/api/model").json()
 
-    assert [e["id"] for e in body["elements"]] == ["n_application_server", "ac_core"]
-    assert len(body["relationships"]) == 1
+def test_model_endpoint_returns_the_widget_model_per_level_with_its_views(make_client):
+    client = make_client(FakeSession(get_model_levels=LEVELS))
+
+    architect = client.get("/api/model").json()
+    detail = client.get("/api/model?level=detail").json()
+
+    assert [e["id"] for e in architect["elements"]] == ["n_application_server", "ac_core"]
+    assert len(architect["relationships"]) == 1
+    assert [v["name"] for v in architect["views"]] == ["Layered"]
+    assert [e["id"] for e in detail["elements"]] == ["n_application_server", "ac_core", "art_core"]
+    assert detail["elements"][2]["layer"] == "Technology"  # a type the widget does not know keeps Deriva's layer
+    assert [v["name"] for v in detail["views"]] == ["Layered", "Implementation and Deployment (detail)"]
+    assert client.get("/api/model?level=other").status_code == 422
 
 
 def test_graph_stats_nodes_and_clear(make_client):

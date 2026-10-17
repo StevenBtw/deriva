@@ -178,5 +178,6 @@ In the studio, **Process mining logs** downloads the same files for the selected
 | `benchmark deviations <session_id> [-o file] [-s deviation_count\|consistency_score\|total_objects]` | Variation per step |
 | `benchmark export <session_id> -o <zip>` | Bundle a session with its configurations, environment and checksums |
 | `benchmark ocel <session_ids> -o <folder>` | Event logs of sessions for process mining (OCEL 2.0, CSV, XES) |
+| `benchmark conventions <session_ids> [-o folder] [--run N]` | Check the run snapshots against ArchiMate modelling conventions: a review page per repository and model, and a summary |
 | `benchmark mark-failed <session_id>` | End a session whose process stopped without finishing (still `running`) as failed; its files stay |
 | `benchmark models` | List the configured models |

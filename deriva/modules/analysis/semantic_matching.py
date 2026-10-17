@@ -299,6 +299,7 @@ def parse_archi_xml(
 
 def parse_exchange_format_xml(
     xml_path: str | Path,
+    level: str | None = None,
 ) -> tuple[list[ReferenceElement], list[ReferenceRelationship]]:
     """
     Parse an ArchiMate Exchange Format XML file (Deriva-generated).
@@ -311,6 +312,8 @@ def parse_exchange_format_xml(
 
     Args:
         xml_path: Path to the .archimate file
+        level: Only the elements of this export level (property ``level``; an element without it is
+            architect), and the relationships between them. None: every element.
 
     Returns:
         Tuple of (elements, relationships)
@@ -328,10 +331,21 @@ def parse_exchange_format_xml(
         """Create namespaced tag."""
         return f"{{{ns_uri}}}{name}"
 
+    # The level property's definition, if the file declares one
+    level_refs = {d.get("identifier") for d in root.iterfind(f"{_tag('propertyDefinitions')}/{_tag('propertyDefinition')}") if d.findtext(_tag("name")) == "level"}
+
+    def _level_of(elem: ET.Element) -> str:
+        for prop in elem.iterfind(f"{_tag('properties')}/{_tag('property')}"):
+            if prop.get("propertyDefinitionRef") in level_refs:
+                return prop.findtext(_tag("value")) or "architect"
+        return "architect"
+
     # Find elements section
     elements_section = root.find(_tag("elements"))
     if elements_section is not None:
         for elem in elements_section:
+            if level is not None and _level_of(elem) != level:
+                continue
             elem_type = elem.get("{http://www.w3.org/2001/XMLSchema-instance}type", "")
             elem_id = elem.get("identifier", "")
 
@@ -355,6 +369,7 @@ def parse_exchange_format_xml(
                 )
 
     # Find relationships section
+    kept = {e.identifier for e in elements}
     relationships_section = root.find(_tag("relationships"))
     if relationships_section is not None:
         for rel in relationships_section:
@@ -362,6 +377,8 @@ def parse_exchange_format_xml(
             rel_id = rel.get("identifier", "")
             source = rel.get("source", "")
             target = rel.get("target", "")
+            if level is not None and not (source in kept and target in kept):
+                continue
 
             # Get name from child element
             name_elem = rel.find(_tag("name"))

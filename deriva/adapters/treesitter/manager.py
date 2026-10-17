@@ -12,6 +12,7 @@ Supported Languages:
     - COBOL (.cbl, .cob, .cobol, .cpy) - Structural (programs, paragraphs, copybook records)
     - JCL (.jcl, .prc, .proc) - Structural (jobs, procedures, steps)
     - BMS (.bms) - Structural (screen maps)
+    - SQL (.sql, .ddl) - Structural (CREATE TABLE statements)
 
 Structural Support Note:
     COBOL, JCL and BMS have no grammar in the tree-sitter packages. Their
@@ -83,7 +84,7 @@ class TreeSitterManager:
     """
 
     # Supported languages
-    SUPPORTED_LANGUAGES = {"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms"}
+    SUPPORTED_LANGUAGES = {"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms", "sql"}
 
     # Extension to language mapping
     EXTENSION_MAP: dict[str, str] = {
@@ -108,6 +109,8 @@ class TreeSitterManager:
         ".prc": "jcl",
         ".proc": "jcl",
         ".bms": "bms",
+        ".sql": "sql",
+        ".ddl": "sql",
     }
 
     def __init__(self) -> None:

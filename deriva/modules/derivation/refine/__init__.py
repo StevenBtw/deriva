@@ -7,10 +7,10 @@ cross-graph logic to improve ArchiMate model quality:
 1. duplicate_elements: Find and merge/disable duplicate elements
 2. orphan_elements: Find elements with no relationships
 3. duplicate_relationships: Find and remove duplicate relationships
-4. circular_relationships: Detect and break circular Composition chains
-5. cross_layer: Validate cross-layer coherence
-6. structural_consistency: Validate source graph patterns are preserved
-7. graph_relationships: Derive relationships from graph structure
+4. cross_layer: Validate cross-layer coherence
+5. structural_consistency: Validate source graph patterns are preserved
+6. graph_relationships: Derive relationships from graph structure
+7. joint_consistency: The joint MILP decision over elements and relationships
 
 All refine steps work on the Model namespace (ArchiMate elements)
 and may reference the Graph namespace (source code representation).
@@ -32,14 +32,12 @@ Usage:
 
 # Import modules to trigger registration
 from . import (
-    circular_relationships,
     cross_layer,
     duplicate_elements,
     duplicate_relationships,
     graph_relationships,
     joint_consistency,
     orphan_elements,
-    relationship_consolidation,
     structural_consistency,
 )
 from .base import (
@@ -55,13 +53,11 @@ __all__ = [
     "RefineStep",
     "run_refine_step",
     # Modules imported for side-effect registration
-    "circular_relationships",
     "cross_layer",
     "duplicate_elements",
     "duplicate_relationships",
     "graph_relationships",
     "joint_consistency",
     "orphan_elements",
-    "relationship_consolidation",
     "structural_consistency",
 ]

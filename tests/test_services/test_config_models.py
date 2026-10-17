@@ -35,6 +35,13 @@ class TestExtractionConfigModel:
         with pytest.raises(ValidationError):
             ExtractionConfigModel(node_type="Test", temperature=3.0)
 
+    def test_accepts_every_method_a_step_can_be_added_with(self):
+        """The model and ``config add`` know the same extraction methods."""
+        from deriva.services.config import EXTRACTION_METHODS
+
+        for method in EXTRACTION_METHODS:
+            assert ExtractionConfigModel(node_type="Test", extraction_method=method).extraction_method == method
+
     def test_validates_extraction_method(self):
         """Should validate extraction_method."""
         config = ExtractionConfigModel(node_type="Test", extraction_method="ast")

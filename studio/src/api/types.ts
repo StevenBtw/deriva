@@ -2,8 +2,8 @@
 
 export type DbStatus = { state: "owned" | "held" | "not_connected"; held_by?: number | null; error?: string | null; busy?: boolean };
 
-/** `features` lists optional parts of the install; without it everything is available (older servers). */
-export type Status = { version: string; db: DbStatus; features?: { benchmark?: boolean } };
+/** `features` lists optional parts of the install; `environment` is the machine the server runs on. Both are absent on older servers. */
+export type Status = { version: string; db: DbStatus; features?: { benchmark?: boolean }; environment?: { os?: string; python?: string } };
 
 export type Repository = {
   name: string;
@@ -82,7 +82,11 @@ export type LinkedView = { lanes: Lane[]; nodes: WidgetNode[]; edges: WidgetEdge
 
 export type ModelElement = { id: string; name: string; type: string; layer: string; documentation: string; source?: string | null };
 export type ModelRelationship = { id: string; source: string; target: string; type: string; name: string };
-export type Model = { elements: ModelElement[]; relationships: ModelRelationship[] };
+/** The export levels: the derived model (architect) and, with it, the members of its elements (detail). */
+export type ModelLevel = "architect" | "detail";
+/** A generated view: its ArchiMate viewpoint, its level and the elements it shows. */
+export type ModelView = { name: string; viewpoint: string; level: ModelLevel; elements: string[] };
+export type Model = { elements: ModelElement[]; relationships: ModelRelationship[]; views?: ModelView[] };
 
 export type RunKind = "all" | "extraction" | "derivation";
 export type RunSummary = { run_id: string; kind: RunKind | "benchmark"; repository: string | null; status: string; events: number; started_at: number; finished_at: number | null };

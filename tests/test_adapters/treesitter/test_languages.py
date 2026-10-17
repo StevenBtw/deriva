@@ -431,6 +431,63 @@ class TestImportExtraction:
         modules = [i.module for i in imports]
         assert any(module in m for m in modules)
 
+    def test_python_extracts_imports_inside_functions_and_blocks(self, manager):
+        """Imports in functions, methods and if/try blocks are dependencies too (lazy and optional imports)."""
+        source = """import os
+
+if TYPE_CHECKING:
+    from pkg.types import Thing
+
+try:
+    import fast_json as json
+except ImportError:
+    import json
+
+
+def run():
+    from pkg.services import worker
+    import pkg.tools
+
+
+class Runner:
+    def go(self):
+        from .local import helper
+"""
+        imports = manager.extract_imports(source, language="python")
+
+        assert sorted(i.module for i in imports) == [".local", "fast_json", "json", "os", "pkg.services", "pkg.tools", "pkg.types"]
+        worker = next(i for i in imports if i.module == "pkg.services")
+        assert worker.names == ["worker"] and worker.is_from_import and worker.line == 13
+
+    def test_javascript_extracts_require_and_dynamic_import_inside_functions_and_blocks(self, manager):
+        """A require() anywhere, bare or assigned, and a dynamic import() are dependencies too."""
+        source = """const a = require('./a');
+
+function load() {
+  const b = require('./b');
+  require('./c');
+  return import('./d');
+}
+
+if (ready) {
+  const { e } = require('./e');
+}
+"""
+        imports = manager.extract_imports(source, language="javascript")
+
+        assert sorted(i.module for i in imports) == ["./a", "./b", "./c", "./d", "./e"]
+        assert next(i for i in imports if i.module == "./e").names == ["e"]
+        assert next(i for i in imports if i.module == "./c").line == 5
+
+    def test_javascript_an_awaited_dynamic_import_keeps_its_binding_name(self, manager):
+        source = """async function load() {
+  const mod = await import('./mod');
+}
+"""
+        (imp,) = manager.extract_imports(source, language="javascript")
+
+        assert imp.module == "./mod" and imp.names == ["mod"]
+
 
 # =============================================================================
 # EDGE CASES
@@ -745,10 +802,16 @@ async def async_resource():
 
     def test_extracts_relative_import(self, manager):
         """Should extract relative imports."""
-        source = "from . import sibling\nfrom ..parent import something"
+        source = "from . import sibling\nfrom ..parent import something\nfrom .pkg import mod"
         imports = manager.extract_imports(source, language="python")
 
-        assert len(imports) == 2
+        assert [(i.module, i.names) for i in imports] == [(".", ["sibling"]), ("..parent", ["something"]), (".pkg", ["mod"])]
+
+    def test_an_aliased_from_import_keeps_the_imported_name(self, manager):
+        """``from x import y as z`` imports y (a module or a member of x)."""
+        imports = manager.extract_imports("from app import services as svc\nfrom . import routes as r, views", language="python")
+
+        assert [(i.module, i.names) for i in imports] == [("app", ["services"]), (".", ["routes", "views"])]
 
     def test_handles_empty_class_body(self, manager):
         """Should handle class with pass statement only."""
@@ -911,3 +974,54 @@ class TestCSharpSpecificExtraction:
 
         # Should have some imports
         assert len(imports) >= 1
+
+
+class TestSqlDdl:
+    """CREATE TABLE statements are table types, parsed without an LLM."""
+
+    def test_tables_with_schema_quotes_and_if_not_exists(self, manager):
+        source = """-- schema
+CREATE TABLE IF NOT EXISTS order_items (
+    id INTEGER PRIMARY KEY,
+    order_id INTEGER
+);
+
+create table "Shop"."Customer" (id int);
+CREATE TABLE SHOP.TRANSACTION_TYPE
+  (TR_TYPE CHAR(2) NOT NULL);
+CREATE INDEX idx_x ON order_items (order_id);
+"""
+        types = manager.extract_types(source, language="sql")
+
+        assert [(t.name, t.kind, t.line_start) for t in types] == [("order_items", "table", 2), ("Customer", "table", 7), ("TRANSACTION_TYPE", "table", 8)]
+        assert types[2].decorators == ["schema:SHOP"]
+
+    def test_ddl_files_are_sql(self, manager):
+        assert manager.extract_types("CREATE TABLE T1 (a int);", file_path="db/T1.ddl")[0].name == "T1"
+
+    def test_a_quoted_name_is_one_identifier_even_with_spaces_and_dots(self, manager):
+        types = manager.extract_types('CREATE TABLE [dbo].[my table] (a int);\nCREATE TABLE "app"."order.lines" (a int);', language="sql")
+
+        assert [(t.name, t.decorators) for t in types] == [("my table", ["schema:dbo"]), ("order.lines", ["schema:app"])]
+
+    def test_create_table_in_comments_and_literals_is_no_table(self, manager):
+        source = """-- CREATE TABLE old_orders (id int);
+/* CREATE TABLE draft (id int); */
+INSERT INTO notes VALUES ('CREATE TABLE fake (x int)');
+CREATE TABLE real_one (id int);
+"""
+        assert [t.name for t in manager.extract_types(source, language="sql")] == ["real_one"]
+
+    def test_a_table_ends_at_its_own_terminator(self, manager):
+        source = """CREATE TABLE settings (
+    sep CHAR(1) DEFAULT ';',
+    name TEXT
+);
+CREATE TABLE plain (
+    id INT
+)
+"""
+        settings, plain = manager.extract_types(source, language="sql")
+
+        assert (settings.line_start, settings.line_end) == (1, 4)
+        assert (plain.line_start, plain.line_end) == (5, 7)

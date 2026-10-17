@@ -122,7 +122,7 @@ class _Group(BaseSettings):
     def _plain_values(cls, value: Any, info: ValidationInfo) -> Any:
         """Numbers, flags and optional values: padding and quotes stripped, empty means the default. Text stays as given."""
         if isinstance(value, str) and info.field_name is not None and cls.model_fields[info.field_name].annotation is not str:
-            value = value.strip().strip("'\"")
+            value = value.strip().strip("'\"").strip()
             if value == "":
                 raise PydanticUseDefault()
         return value
@@ -169,7 +169,7 @@ class LlmSettings(_Group):
     def _credentials_plain(cls, value: Any, info: ValidationInfo) -> Any:
         """Keys, URLs and model names: padding and quotes stripped; a pasted key with a trailing space breaks every call."""
         if isinstance(value, str) and info.field_name is not None and (info.field_name.endswith(("_api_key", "_api_url", "_model")) or info.field_name == "provider"):
-            value = value.strip().strip("'\"")
+            value = value.strip().strip("'\"").strip()
             if value == "":
                 raise PydanticUseDefault()
         return value
@@ -211,7 +211,7 @@ class RepositorySettings(_Group):
 
 
 def model_configs() -> dict[str, dict[str, str | None]]:
-    """Named model configs: LLM_{NAME}_PROVIDER with its _MODEL, _URL, _KEY, _KEY_ENV, _SAMPLING and _REASONING (NAME as written)."""
+    """Named model configs: LLM_{NAME}_PROVIDER with its _MODEL, _URL, _KEY, _KEY_ENV, _SAMPLING, _REASONING and _TEMPERATURE (NAME as written)."""
     env = environment()
     configs: dict[str, dict[str, str | None]] = {}
     for key, value in env.items():
@@ -225,5 +225,6 @@ def model_configs() -> dict[str, dict[str, str | None]]:
                 "key_env": env.get(f"LLM_{name}_KEY_ENV"),
                 "sampling": env.get(f"LLM_{name}_SAMPLING"),
                 "reasoning": env.get(f"LLM_{name}_REASONING"),
+                "temperature": env.get(f"LLM_{name}_TEMPERATURE"),
             }
     return configs

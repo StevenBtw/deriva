@@ -6,8 +6,10 @@ Provides commands for multi-model benchmarking.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
@@ -73,6 +75,22 @@ def benchmark_run(
             help="Re-run LLM extraction steps only (keep structural/AST cached; LLM answers still come from the LLM cache unless --no-cache)",
         ),
     ] = False,
+    extract_per_run: Annotated[
+        bool,
+        typer.Option(
+            "--extract-per-run",
+            help="Every run repeats the complete pipeline: extraction with the run's model, no cache, on its own graph "
+            "(kept in the session's graphs folder). Needs --stages extraction,derivation and --no-cache",
+        ),
+    ] = False,
+    baseline: Annotated[
+        str | None,
+        typer.Option(
+            "--baseline",
+            help="Run a baseline instead of Deriva: b1 (one generation of the whole model from raw repository material, "
+            "validated and repaired at most N times; the BaselineB1 config row). Needs --no-cache",
+        ),
+    ] = None,
     only_extraction_step: Annotated[
         str | None,
         typer.Option(
@@ -97,6 +115,22 @@ def benchmark_run(
     use_cache = not no_cache
     export_models = not no_export_models
     clear_between_runs = not no_clear
+    from deriva.bench.benchmarking import BenchmarkConfig, validate_config
+
+    try:
+        validate_config(
+            BenchmarkConfig(
+                repositories=repos_list,
+                models=models_list,
+                stages=stages_list or ["extraction", "derivation"],
+                use_cache=use_cache,
+                extract_per_run=extract_per_run,
+                baseline=baseline,
+            )
+        )
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
 
     # Calculate total runs based on mode
     if per_repo:
@@ -127,6 +161,8 @@ def benchmark_run(
         typer.echo("Extraction cache: disabled (full re-extraction)")
     elif no_cache_extraction_llm:
         typer.echo("Extraction cache: structural/AST only (LLM steps re-run)")
+    if extract_per_run:
+        typer.echo("Extraction: per run (the run's model, no cache, a graph per run)")
     typer.echo(f"{'=' * 60}\n")
 
     with _benchmarks() as session:
@@ -179,6 +215,8 @@ def benchmark_run(
                 per_repo=per_repo,
                 no_cache_extraction=no_cache_extraction,
                 no_cache_extraction_llm=no_cache_extraction_llm,
+                extract_per_run=extract_per_run,
+                baseline=baseline,
             )
 
         typer.echo(f"\n{'=' * 60}")
@@ -290,11 +328,108 @@ def benchmark_list(
         typer.echo("")
 
 
+@app.command("conventions")
+def benchmark_conventions(
+    session_ids: Annotated[list[str], typer.Argument(help="Benchmark sessions whose run snapshots are checked")],
+    output: Annotated[str | None, typer.Option("-o", "--output", help="Output folder (default: workspace/analysis/conventions/<first session>)")] = None,
+    run: Annotated[int | None, typer.Option("--run", help="Check only this run number (default: every run)")] = None,
+) -> None:
+    """ArchiMate convention checklist: a review page per repository and model, a summary and a JSON with the findings."""
+    from deriva.bench.conventions_report import write_reports
+
+    out = output or str(workspace() / "analysis" / "conventions" / session_ids[0])
+    try:
+        payload = write_reports(list(session_ids), out, run=run)
+    except (FileNotFoundError, LookupError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Checked {len(payload['results'])} repositories; summary: {out}/summary.md")
+    for name, page in payload["pages"].items():
+        typer.echo(f"  {name}: {page}")
+
+
+@app.command("reference")
+def benchmark_reference(
+    session_id: Annotated[str, typer.Argument(help="Benchmark session whose exported runs are evaluated")],
+    run: Annotated[int | None, typer.Option("--run", help="Evaluate only this run number (default: every run)")] = None,
+    output: Annotated[str | None, typer.Option("-o", "--output", help="Output folder (default: workspace/analysis/reference/<session>)")] = None,
+    references: Annotated[str | None, typer.Option("--references", help="Reference model folder (default: workspace/goldens/dev)")] = None,
+    benchmarks: Annotated[str | None, typer.Option("--benchmarks", help="Benchmark folder (default: workspace/benchmarks)")] = None,
+) -> None:
+    """Recall and precision against the development reference models, per element type, relationship kind and chain."""
+    from deriva.bench.reference_eval import evaluate_session, table_lines, write_report
+
+    session_dir = (Path(benchmarks) if benchmarks else workspace() / "benchmarks") / session_id
+    if not (session_dir / "models").is_dir():
+        typer.echo(f"Error: no exported models in {session_dir}", err=True)
+        raise typer.Exit(1)
+    payload = evaluate_session(session_dir, references or workspace() / "goldens" / "dev", run=run)
+    if not payload["repositories"]:
+        typer.echo("Error: no exported run has a reference model", err=True)
+        raise typer.Exit(1)
+    for line in table_lines(payload):
+        typer.echo(line)
+    pages = write_report(payload, output or workspace() / "analysis" / "reference" / session_id)
+    typer.echo(f"Summary and pages: {Path(next(iter(pages.values()))).parent}")
+
+
+def _pct(value: float | None) -> str:
+    return "-" if value is None else f"{value:.0%}"
+
+
+def _print_consistency(rows: list[dict]) -> None:
+    header = f"{'Repository':<24} {'Model':<18} {'Runs':>4}  {'id: E / J':<11} {'R / J':<11} {'name: E / J':<12} {'R / J':<11} {'LLM part E / R (n)':<20} Layers B/A/T"
+    typer.echo("-" * len(header))
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for r in rows:
+        i, n = r["identities"]["id"], r["identities"]["name"]
+        llm = i["origin"]["llm"]
+        layers = "/".join(_pct(i["layers"].get(layer)) for layer in ("Business", "Application", "Technology"))
+        typer.echo(
+            f"{r['repository'][:24]:<24} {r['model'][:18]:<18} {r['runs']:>4}  "
+            f"{_pct(i['elements']['cons']) + ' / ' + _pct(i['elements']['jbar']):<11} {_pct(i['relationships']['cons']) + ' / ' + _pct(i['relationships']['jbar']):<11} "
+            f"{_pct(n['elements']['cons']) + ' / ' + _pct(n['elements']['jbar']):<12} {_pct(n['relationships']['cons']) + ' / ' + _pct(n['relationships']['jbar']):<11} "
+            f"{_pct(llm['elements']) + ' / ' + _pct(llm['relationships']) + f' ({llm["count"]})':<20} {layers}"
+        )
+    typer.echo("")
+
+
+def _print_metrics_report(metrics: dict) -> None:
+    """Consistency by identity (cons, J), layers and origin, the two-level table and the out-of-candidate rate."""
+    if not metrics:
+        return
+    if metrics.get("consistency"):
+        typer.echo("CONSISTENCY BY IDENTITY (cons / mean pairwise Jaccard; id = source-derived, name = type + name key; LLM part by id)")
+        _print_consistency(metrics["consistency"])
+    if metrics.get("two_level"):
+        typer.echo("TWO LEVELS (answers: same prompt answered alike; decisions: each item decided alike; alpha: Krippendorff, nominal)")
+        header = f"{'Repository':<24} {'Model':<18} {'Decision':<36} {'Answers':>9} {'Decisions':>11} {'alpha':>6}"
+        typer.echo("-" * len(header))
+        typer.echo(header)
+        typer.echo("-" * len(header))
+        for r in metrics["two_level"]:
+            answers = f"{r['answers']['identical']}/{r['answers']['prompts']}" if r["answers"]["prompts"] else "-"
+            decisions = f"{r['decisions']['stable']}/{r['decisions']['items']}" if r["decisions"]["items"] else "-"
+            alpha = "-" if r["alpha"] is None else f"{r['alpha']:.2f}"
+            typer.echo(f"{r['repository'][:24]:<24} {r['model'][:18]:<18} {r['decision'][:36]:<36} {answers:>9} {decisions:>11} {alpha:>6}")
+        typer.echo("")
+    if metrics.get("out_of_candidates"):
+        typer.echo("OUT OF CANDIDATES (per model and decision type: calls, typed answers asked again, answers outside the candidates)")
+        for r in metrics["out_of_candidates"]:
+            typer.echo(f"  {r['model'][:24]:<24} {r['decision'][:36]:<36} {r['calls']:>5} calls  {r['re_asked']:>3} asked again  {r['outside']:>3} outside")
+        typer.echo("")
+
+
 @app.command("analyze")
 def benchmark_analyze(
     session_id: Annotated[str, typer.Argument(help="Benchmark session ID to analyze")],
     output: Annotated[str | None, typer.Option("-o", "--output", help="Output file for analysis")] = None,
     format: Annotated[str, typer.Option("-f", "--format", help="Output format")] = "json",
+    also: Annotated[
+        list[str] | None,
+        typer.Option("--also", help="Further sessions (other LLMs on the same repositories): agreement across all their runs"),
+    ] = None,
 ) -> None:
     """Analyze benchmark results."""
     if format not in ("json", "markdown"):
@@ -372,6 +507,94 @@ def benchmark_analyze(
                 chains = ", ".join(f"{name} {linked}/{total}" for name, (linked, total) in q.get("chains", {}).items())
                 if chains:
                     typer.echo(f"    chains: {chains}")
+            typer.echo("")
+
+        if summary.detail_level:
+            typer.echo("DETAIL LEVEL (the export's members of the architect elements; not in the numbers above)")
+            header = f"{'Repository':<24} {'Model':<18} {'Runs':>4} {'Elem':>6} {'Elem cons.':>10} {'Rel cons.':>9}  By type"
+            typer.echo("-" * len(header))
+            typer.echo(header)
+            typer.echo("-" * len(header))
+            for d in summary.detail_level:
+                by_type = ", ".join(f"{t} {n:g}" for t, n in d["by_type"].items()) or "-"
+                typer.echo(
+                    f"{d['repository'][:24]:<24} {d['model'][:18]:<18} {d['runs']:>4} {d['elements']:>6.1f} "
+                    f"{d['element_consistency']:>10.0%} {d['relationship_consistency']:>9.0%}  {by_type}"
+                )
+            typer.echo("")
+
+        if summary.extraction_stability or summary.variance_split:
+            # Extraction per run: how stable each LLM extraction step is, and which share of the differences it causes
+            from deriva.bench.analysis import BenchmarkAnalyzer as ReportAnalyzer
+
+            answers = ReportAnalyzer([session_id], session._engine).analyze_answer_stability()
+            typer.echo("EXTRACTION PER RUN (each run extracted with its model, no cache)")
+            header = f"{'Repository':<24} {'Model':<18} {'Step':<24} {'Decisions':>12} {'Answers':>12}"
+            typer.echo("-" * len(header))
+            typer.echo(header)
+            typer.echo("-" * len(header))
+            for row in summary.extraction_stability:
+                per_step = {a.step: a for key, found in answers.items() if key in (row["repository"], f"{row['repository']} · {row['model']}") for a in found}
+                for step, d in row["steps"].items():
+                    a = per_step.get(step)
+                    decided = f"{d['stable']}/{d['items']}" if d["items"] else "-"
+                    answered = f"{a.identical}/{a.prompts}" if a and a.prompts else "-"
+                    typer.echo(f"{row['repository'][:24]:<24} {row['model'][:18]:<18} {step[:24]:<24} {decided:>12} {answered:>12}")
+            typer.echo("")
+            if summary.variance_split:
+                typer.echo("VARIANCE SPLIT (a missing element or relationship: its source node missing too = extraction, else derivation)")
+                header = f"{'Repository':<24} {'Model':<18} {'Runs':>4}  {'Elements extr/deriv':<22} {'Relationships extr/deriv':<26}"
+                typer.echo("-" * len(header))
+                typer.echo(header)
+                typer.echo("-" * len(header))
+                for v in summary.variance_split:
+
+                    def text(part: dict) -> str:
+                        share = part["extraction_share"]
+                        return f"{part['extraction']}/{part['derivation']}" + (f" ({share:.0%} extr.)" if share is not None else "")
+
+                    typer.echo(f"{v['repository'][:24]:<24} {v['model'][:18]:<18} {v['runs']:>4}  {text(v['elements']):<22} {text(v['relationships']):<26}")
+                typer.echo("")
+
+        _print_metrics_report(summary.metrics)
+        if also:
+            from deriva.bench import session_metrics
+
+            sessions = [workspace() / "benchmarks" / s for s in [session_id, *also]]
+            agreement = [r for r in session_metrics.consistency_rows(sessions) if r["model"] == session_metrics.ALL_MODELS]
+            typer.echo(f"AGREEMENT ACROSS LLMS ({', '.join([session_id, *also])})")
+            _print_consistency(agreement)
+            target = workspace() / "benchmarks" / session_id / "analysis" / "agreement.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps({"sessions": [session_id, *also], "agreement": agreement}, indent=1), encoding="utf-8")
+            typer.echo(f"  -> {target}")
+            typer.echo("")
+
+        if summary.naming_fallbacks:
+            typer.echo("NAME CHOICES (closed set; an unusable answer takes the structural first candidate)")
+            for f in summary.naming_fallbacks:
+                share = f["unusable"] / f["choices"] if f["choices"] else 0.0
+                typer.echo(f"  {f['model']:<28} {f['unusable']}/{f['choices']} unusable ({share:.1%}): {f['unparsable']} no JSON, {f['outside']} outside the candidates")
+            typer.echo("")
+
+        solves = [q for q in summary.model_quality if q.get("solve")]
+        if solves:
+            typer.echo("MILP SAFETY NET (joint_consistency per run)")
+            header = (
+                f"{'Repository':<24} {'Run':>3} {'Status':<9} {'Props':>5} {'Merge c.':>8} {'Rows (H1-H6)':<22} "
+                f"{'Cuts':>4} {'Kept':>5} {'Drop':>4} {'Merge':>5} {'Redir':>5} {'Sec':>6}"
+            )
+            typer.echo("-" * len(header))
+            typer.echo(header)
+            typer.echo("-" * len(header))
+            for q in solves:
+                s = q["solve"]
+                rows = ", ".join(f"{k} {v}" for k, v in sorted((s.get("rows") or {}).items())) or "-"
+                typer.echo(
+                    f"{q['repository'][:24]:<24} {q['run']:>3} {str(s.get('status'))[:9]:<9} {s.get('proposals', 0):>5} "
+                    f"{s.get('merge_candidates', 0):>8} {rows[:22]:<22} "
+                    f"{s.get('cycle_cuts', 0):>4} {s.get('kept', 0):>5} {s.get('dropped', 0):>4} {s.get('merges', 0):>5} {s.get('redirects', 0):>5} {s.get('seconds', 0):>6.3f}"
+                )
             typer.echo("")
 
         if summary.localization.hotspots:

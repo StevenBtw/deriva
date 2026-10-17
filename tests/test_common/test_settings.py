@@ -140,7 +140,16 @@ def test_named_model_configs(dotenv, monkeypatch):
     configs = model_configs()
 
     assert set(configs) == {"MISTRAL_DEVSTRAL", "LOCAL"}
-    assert configs["MISTRAL_DEVSTRAL"] == {"provider": "mistral", "model": "devstral-2512", "url": None, "key": "sk-1", "key_env": None, "sampling": None, "reasoning": None}
+    assert configs["MISTRAL_DEVSTRAL"] == {
+        "provider": "mistral",
+        "model": "devstral-2512",
+        "url": None,
+        "key": "sk-1",
+        "key_env": None,
+        "sampling": None,
+        "reasoning": None,
+        "temperature": None,
+    }
     assert configs["LOCAL"]["url"] == "http://localhost:11434/api/chat"
 
 
@@ -208,3 +217,19 @@ def test_llm_credentials_are_stripped(dotenv, monkeypatch):
     assert llm.anthropic_api_key == "sk-ant-123"
     assert llm.anthropic_model == "claude-sonnet-4-20250514"
     assert llm.ollama_api_url == "http://localhost:11434/api/chat"
+
+
+def test_llm_credentials_strip_padding_inside_quotes(dotenv, monkeypatch):
+    """Padding inside quotes goes too: '  sk-ant-123  ' comes out clean."""
+    for name in list(os.environ):
+        if name.startswith("LLM_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("LLM_PROVIDER", "' openai '")
+    monkeypatch.setenv("LLM_ANTHROPIC_API_KEY", '"  sk-ant-123  "')
+    monkeypatch.setenv("LLM_ANTHROPIC_MODEL", "' claude-sonnet-4-20250514 '")
+
+    llm = LlmSettings()
+
+    assert llm.provider == "openai"
+    assert llm.anthropic_api_key == "sk-ant-123"
+    assert llm.anthropic_model == "claude-sonnet-4-20250514"

@@ -33,7 +33,7 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -56,17 +56,20 @@ from deriva.modules.derivation.base import (
     RoleConfig,
     UnitFilter,
     batch_candidates,
+    build_choice_prompt,
     build_derivation_prompt,
     build_element,
     build_naming_prompt,
     build_role_prompt,
     build_single_candidate_prompt,
+    choice_schema,
     choose_name,
     compute_candidate_strength,
     derive_batch_relationships,
     element_identifier,
     extract_response_content,
     get_enrichments_from_graph,
+    guard_name,
     name_from_source,
     naming_source,
     parse_derivation_response,
@@ -125,6 +128,27 @@ def _each_word_once(text: str) -> str:
     return " ".join(words)
 
 
+def _compact(words: list[str]) -> str:
+    return "".join(w.casefold() for w in words)
+
+
+def _merge_channel(container: str, channel: str) -> str:
+    """A unit interface's name: the component's name and the channel words, merged on their longest overlap.
+
+    The longest leading run of channel words that, compared without spaces and case, equals a trailing run
+    of the component's words is not repeated ("CardDemo Batch" + "Batch Jobs" -> "CardDemo Batch Jobs";
+    "WebUI" meets "Web UI"). When no channel word is left, "Interface" goes at the end, so the name never
+    equals the component's.
+    """
+    words, channel_words = container.split(), channel.split()
+    for i in range(len(channel_words), 0, -1):
+        prefix = _compact(channel_words[:i])
+        if any(_compact(words[-j:]) == prefix for j in range(1, len(words) + 1)):
+            rest = channel_words[i:]
+            return " ".join([*words, *rest]) if rest else f"{container} Interface"
+    return " ".join([*words, *channel_words])
+
+
 def _relative_path(path: str, repo_name: str) -> str:
     """A node path relative to the repository, with forward slashes."""
     path = path.replace("\\", "/").strip("/")
@@ -172,7 +196,6 @@ class ElementDerivationBase(ABC):
     INBOUND_RULES: list[RelationshipRule]
 
     # Confidence gate: elements below this threshold are not created
-    MIN_ELEMENT_CONFIDENCE: float = 0.5
 
     def __init__(self) -> None:
         """Initialize the derivation class."""
@@ -401,6 +424,7 @@ class ElementDerivationBase(ABC):
         relationship_config: RelationshipLLMConfig | None = None,
         per_candidate: PerCandidateConfig | None = None,
         naming: NamingConfig | None = None,
+        name_match_skip: set[tuple[str, str]] | None = None,
         patterns: dict[str, set[str]] | None = None,
         roles: RoleConfig | None = None,
         skip_when_directory_is: frozenset[str] | None = None,
@@ -442,6 +466,8 @@ class ElementDerivationBase(ABC):
                 (None uses batch mode)
             naming: Isolated naming step from the element config (None keeps the
                 structure name)
+            name_match_skip: (source type, target type) pairs the per-batch name matching
+                never links (the relationship row's ``params.name_match_skip``)
             patterns: The step's include/exclude patterns from config (None: none)
             roles: Candidates classified into roles from the element config (None: every
                 candidate takes the keep and naming path)
@@ -743,6 +769,7 @@ class ElementDerivationBase(ABC):
                     taken=taken,
                     relationship_config=relationship_config,
                     naming=naming,
+                    name_match_skip=name_match_skip,
                 )
             marked_ids = {c.node_id for c in marked}
             filtered = [c for c in filtered if c.node_id not in marked_ids]
@@ -775,6 +802,7 @@ class ElementDerivationBase(ABC):
                 taken=taken,
                 relationship_config=relationship_config,
                 naming=naming,
+                name_match_skip=name_match_skip,
             )
         elif batches and prompt is None:
             result.success = False
@@ -802,6 +830,7 @@ class ElementDerivationBase(ABC):
                     element_prompt=cast(ElementPrompt, prompt),
                     relationship_config=relationship_config,
                     naming=naming,
+                    name_match_skip=name_match_skip,
                 )
 
         self.logger.info(
@@ -836,6 +865,7 @@ class ElementDerivationBase(ABC):
         candidate with a role is its own element, named as written or by ``name_template``.
         """
         ordered = sorted(candidates, key=lambda c: c.node_id)
+        reserved = self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming is not None and naming.guards.reserved_labels else set()
         # Structure first: a candidate whose annotation or kind shows its role is not asked
         role_of: dict[str, str | None] = {c.node_id: role for c in ordered if (role := structural_role(c, roles.structural)) is not None}
         as_written = set(role_of) if roles.structural_as_written else set()
@@ -860,7 +890,57 @@ class ElementDerivationBase(ABC):
         containers: dict[str, str] = {}
         subjects: dict[str, str] = {}
         duplicates: set[str] = set()
-        if roles.element_per == "candidate":
+        unit_of_element: dict[str, str] = {}  # element identifier -> its deployable unit (element_per "unit")
+        structure_of_element: dict[str, str] = {}  # element identifier -> its name from structure (element_per "unit")
+        container_of_element: dict[str, str] = {}  # element identifier -> its unit's container name (element_per "unit")
+        outside: set[str] = set()  # candidates with a role that no unit with a container element includes
+        if roles.element_per == "unit":
+            # One element per (unit, role): the unit's container element names it, the candidates are its members
+            chosen = [c for c in ordered if role_of.get(c.node_id) is not None]
+            units_of = self._units_of(chosen, graph_manager)
+            containers_of_units = [
+                e
+                for e in (archimate_manager.get_elements(element_type=roles.container_type) if roles.container_type else [])
+                if str(e.properties.get("source") or "").startswith("unit::")
+            ]
+            container_names = {str(e.properties.get("source")): e.name for e in containers_of_units}
+            # The container's name from structure (its naming call's fallback): what name matching may read (rule 6d)
+            container_structure = {str(e.properties.get("source")): str(e.properties.get("structure_name") or e.name) for e in containers_of_units}
+            groups: dict[tuple[str, str], list[Candidate]] = defaultdict(list)
+            for c in chosen:
+                units = [u for u in units_of.get(c.node_id, []) if u in container_names]
+                if not units:
+                    outside.add(c.node_id)
+                for unit in units:
+                    groups[(unit, role_of[c.node_id] or "")].append(c)
+            # Roles the unit shows itself (roles.unit_roles): its listed files join that role's element, without a call
+            for unit, key, node_id, path in self._unit_role_members(sorted(container_names), roles.unit_roles, graph_manager):
+                if all(c.node_id != node_id for c in groups[(unit, key)]):
+                    groups[(unit, key)].append(Candidate(node_id=node_id, name=path.rsplit("/", 1)[-1], labels=["Graph", "File"], properties={"filePath": path}))
+
+            def unit_name(container: str, key: str) -> str:
+                # The channel words merge into the container's words where they overlap; the name never equals the container's
+                if roles.name_template.strip() == "{container} {role}":
+                    return _merge_channel(container, roles.names[key])
+                name = " ".join(_each_word_once(roles.name_template.format(container=container, subject="", role=roles.names[key])).split())
+                return f"{name} Interface" if _display_key(name) == _display_key(container) else name
+
+            planned = []
+            seen = {_display_key(name) for name in taken}
+            for (unit, key), group in sorted(groups.items()):
+                group.sort(key=lambda c: c.node_id)
+                name = unit_name(container_names[unit], key)
+                if _display_key(name) in seen:
+                    duplicates.update(c.node_id for c in group)
+                    continue
+                seen.add(_display_key(name))
+                identifier = element_identifier(self.ELEMENT_TYPE, f"{unit}::{key}")
+                unit_of_element[identifier] = unit
+                structure_of_element[identifier] = unit_name(container_structure[unit], key)
+                # Per element, not per candidate: a file that several units include is in each unit's group
+                container_of_element[identifier] = container_names[unit]
+                planned.append((identifier, name, group, key))
+        elif roles.element_per == "candidate":
             chosen = [c for c in ordered if role_of.get(c.node_id) is not None]
             if roles.name_template:
                 # The name from structure: container + subject + role name, each word once
@@ -914,19 +994,28 @@ class ElementDerivationBase(ABC):
             }
             if roles.element_per == "role":
                 properties["sources"] = [c.node_id for c in group]
+            if roles.element_per == "unit":
+                # Grounded in the unit; the endpoints, screens or jobs it bundles are a property, not elements
+                properties["source"] = unit_of_element[identifier]
+                properties["sources"] = [c.node_id for c in group]
+                properties["members"] = [{"name": c.name, "source": c.node_id} for c in group]
+                properties["structure_name"] = structure_of_element[identifier]
             element_data: dict[str, Any] = {
                 "identifier": identifier,
                 "name": name,
                 "element_type": self.ELEMENT_TYPE,
                 "documentation": roles.documentation.format(
-                    members=", ".join(c.name for c in group), role=roles.names[key], container=containers.get(source.node_id, ""), subject=subjects.get(source.node_id, "")
+                    members=", ".join(c.name for c in group),
+                    role=roles.names[key],
+                    container=container_of_element.get(identifier, containers.get(source.node_id, "")),
+                    subject=subjects.get(source.node_id, ""),
                 ),
                 "properties": properties,
             }
             # The step's naming call may rename a candidate's element (the usual uniqueness rules apply)
             if roles.naming_call and naming is not None and roles.element_per == "candidate" and source.node_id not in as_written:
                 try:
-                    self._apply_naming(element_data, source, naming, llm_query_fn, llm_kwargs, repo_name, taken, structure_names or {})
+                    self._apply_naming(element_data, source, naming, llm_query_fn, llm_kwargs, repo_name, taken, structure_names or {}, reserved)
                 except Exception as e:
                     self.logger.warning("Naming failed for %s: %s", source.node_id, e)
             try:
@@ -960,11 +1049,38 @@ class ElementDerivationBase(ABC):
                     in_degree=c.in_degree,
                     out_degree=c.out_degree,
                     confidence=c.properties.get("confidence"),
-                    stage="created" if c.node_id in element_of else ("duplicate_removed" if c.node_id in duplicates else ("llm_rejected" if answered else "llm_unanswered")),
+                    stage="created"
+                    if c.node_id in element_of
+                    else ("duplicate_removed" if c.node_id in duplicates else ("no_unit" if c.node_id in outside else ("llm_rejected" if answered else "llm_unanswered"))),
                     became_element=c.node_id in element_of,
                     element_id=element_of.get(c.node_id),
                 )
             )
+
+    def _units_of(self, candidates: list[Candidate], graph_manager: GraphManager) -> dict[str, list[str]]:
+        """Per candidate id, the deployable units that include it: the candidate node itself, or its file."""
+        if not candidates:
+            return {}
+        ids = sorted(c.node_id for c in candidates)
+        paths = sorted({str(c.properties.get("filePath") or c.properties.get("path") or "").replace(chr(92), "/") for c in candidates} - {""})
+        rows = graph_manager.query(
+            "MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(m) WHERE m.id IN $ids OR m.filePath IN $paths RETURN u.id AS unit, m.id AS node, m.filePath AS path",
+            {"ids": ids, "paths": paths},
+        )
+        by_node: dict[str, set[str]] = defaultdict(set)
+        by_path: dict[str, set[str]] = defaultdict(set)
+        for row in rows:
+            if row.get("node"):
+                by_node[row["node"]].add(row["unit"])
+            if row.get("path"):
+                by_path[str(row["path"]).replace(chr(92), "/")].add(row["unit"])
+        found: dict[str, list[str]] = {}
+        for c in candidates:
+            path = str(c.properties.get("filePath") or c.properties.get("path") or "").replace(chr(92), "/")
+            units = by_node.get(c.node_id) or by_path.get(path) or set()
+            if units:
+                found[c.node_id] = sorted(units)
+        return found
 
     def _containers_of(
         self,
@@ -1084,6 +1200,79 @@ class ElementDerivationBase(ABC):
             self.logger.debug("Could not read active repository name: %s", e)
         return ""
 
+    def _unit_role_members(self, units: list[str], unit_roles: tuple[tuple[str, str], ...], graph_manager: GraphManager) -> list[tuple[str, str, str, str]]:
+        """(unit, role key, file node id, path) for the files a unit lists under a unit_roles property, in id order."""
+        members: list[tuple[str, str, str, str]] = []
+        for prop, key in unit_roles:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prop):
+                continue
+            rows = graph_manager.query(
+                f"MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) WHERE u.id IN $units AND f.filePath IN u.{prop} "
+                "RETURN u.id AS unit, f.id AS node, f.filePath AS path",
+                {"units": units},
+            )
+            members += [(str(r["unit"]), key, str(r["node"]), str(r["path"])) for r in rows if r.get("unit") and r.get("node")]
+        return sorted(members)
+
+    def _apply_choice(
+        self,
+        element_data: dict[str, Any],
+        candidate: Candidate,
+        naming: NamingConfig,
+        choices: list[str],
+        llm_query_fn: Callable[..., Any],
+        llm_kwargs: dict[str, Any],
+        taken: list[str],
+        structure_names: dict[str, str],
+    ) -> None:
+        """Name an element from its structural candidates (closed-set naming), in place.
+
+        Candidates another element already took are passed over; one free candidate is the name
+        without a call; several are chosen from by one call whose schema allows only them. An
+        answer outside the set takes the first free candidate. The LLM never writes the name.
+        """
+        blocked = {_display_key(n) for n in taken} | {key for node_id, key in structure_names.items() if node_id != candidate.node_id}
+        free = [c for c in choices if _display_key(c) not in blocked]
+        if not free:
+            self.logger.warning("Every name candidate of %s is taken; the structure name stays", candidate.node_id)
+            return
+        name = free[0]
+        if len(free) > 1:
+            # The name depends on an LLM call (recorded for the origin split of the consistency report)
+            element_data["properties"]["name_choice"] = True
+            prompt = build_choice_prompt(naming_source(candidate), self.ELEMENT_TYPE, naming.choose_instruction, free)
+            try:
+                content, error = extract_response_content(llm_query_fn(prompt, choice_schema(free), **llm_kwargs))
+                text = (content or "").strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                answer = None if error else json.loads(text).get("name")
+                if answer in free:
+                    name = answer
+                else:
+                    self.logger.warning("Name choice for %s outside its candidates (%r); the first candidate stays", candidate.node_id, answer)
+            except (ValueError, AttributeError) as e:
+                self.logger.warning("Unusable name choice for %s: %s; the first candidate stays", candidate.node_id, e)
+        if name != element_data["name"]:
+            element_data["properties"]["structure_name"] = element_data["name"]
+            element_data["name"] = name
+
+    def _reserved_names(self, graph_manager: GraphManager, labels: tuple[str, ...]) -> set[str]:
+        """Names a naming answer may not take: those of the active graph nodes with these labels (technologies, dependencies)."""
+        names: set[str] = set()
+        for label in labels:
+            if not re.fullmatch(r"[A-Za-z]+", label):
+                continue
+            try:
+                rows = graph_manager.query(f"MATCH (n:Graph:{label}) WHERE n.active = true RETURN properties(n) AS props")
+            except Exception as e:
+                self.logger.warning("Reserved names of %s unavailable: %s", label, e)
+                continue
+            for row in rows:
+                props = row.get("props") or {}
+                name = props.get("techName") or props.get("dependencyName") or props.get("name")
+                if name:
+                    names.add(str(name))
+        return names
+
     def _apply_naming(
         self,
         element_data: dict[str, Any],
@@ -1094,6 +1283,7 @@ class ElementDerivationBase(ABC):
         repo_name: str,
         taken: list[str],
         structure_names: dict[str, str],
+        reserved: set[str] | None = None,
     ) -> None:
         """Name an element with the isolated naming step, in place.
 
@@ -1107,6 +1297,10 @@ class ElementDerivationBase(ABC):
         """
         from deriva.modules.derivation.refine.normalization import strip_repo_prefix
 
+        choices = [str(n) for n in (candidate.properties.get("nameCandidates") or []) if str(n).strip()]
+        if naming.choose_instruction and choices:
+            self._apply_choice(element_data, candidate, naming, choices, llm_query_fn, llm_kwargs, taken, structure_names)
+            return
         source = naming_source(candidate)
         prompt = build_naming_prompt(source, self.ELEMENT_TYPE, naming.instruction)
         answers: list[str | None] = []
@@ -1128,6 +1322,17 @@ class ElementDerivationBase(ABC):
         # Words the source spells with capitals keep its spelling, so casing never differs between runs
         if name:
             name = source_casing(name, candidate.name)
+        # Structural guards (params.naming.guards): a technology's name falls back to structure, a generic one gets the product name
+        if name:
+            product = str(candidate.properties.get("manifestName") or repo_name or "")
+            name = guard_name(
+                name,
+                structure_name=element_data["name"],
+                kind=str(candidate.properties.get("unitKind") or ""),
+                product=" ".join(w.capitalize() for w in re.findall(r"[A-Za-z0-9]+", product)),
+                reserved=reserved or set(),
+                guards=naming.guards,
+            )
         blocked = {_display_key(n) for n in taken} | {key for node_id, key in structure_names.items() if node_id != candidate.node_id}
         if name and name != element_data["name"] and _display_key(name) not in blocked:
             element_data["properties"]["structure_name"] = element_data["name"]
@@ -1155,6 +1360,7 @@ class ElementDerivationBase(ABC):
         strength: dict[str, Any] | None = None,
         relationship_config: RelationshipLLMConfig | None = None,
         naming: NamingConfig | None = None,
+        name_match_skip: set[tuple[str, str]] | None = None,
     ) -> None:
         """
         Process a single batch of candidates.
@@ -1220,6 +1426,8 @@ class ElementDerivationBase(ABC):
         # Element names come from the candidates' own names (structure), not the LLM
         source_names = {c.node_id: c.name for c in batch}
         candidates_by_id = {c.node_id: c for c in batch}
+        # The names a naming answer may not take, read once per batch (not per element)
+        reserved = self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming is not None and naming.guards.reserved_labels else set()
         for derived in parse_result.get("data", []):
             element_result = build_element(
                 derived,
@@ -1235,17 +1443,6 @@ class ElementDerivationBase(ABC):
 
             element_data = element_result["data"]
 
-            # Confidence gate: skip elements the LLM flagged as poor matches
-            confidence = element_data.get("properties", {}).get("confidence", 1.0)
-            if confidence < self.MIN_ELEMENT_CONFIDENCE:
-                self.logger.debug(
-                    "Skipping low-confidence element %s (%.2f < %.2f)",
-                    element_data.get("name", "?"),
-                    confidence,
-                    self.MIN_ELEMENT_CONFIDENCE,
-                )
-                continue
-
             if naming is not None:
                 self._apply_naming(
                     element_data,
@@ -1256,6 +1453,7 @@ class ElementDerivationBase(ABC):
                     repo_name,
                     taken,
                     structure_names,
+                    reserved,
                 )
             taken.append(element_data["name"])
 
@@ -1333,6 +1531,7 @@ class ElementDerivationBase(ABC):
                 archimate_manager=archimate_manager,
                 result=result,
                 relationship_config=relationship_config,
+                name_match_skip=name_match_skip,
             )
 
     def _process_per_candidate(
@@ -1355,6 +1554,7 @@ class ElementDerivationBase(ABC):
         taken: list[str],
         relationship_config: RelationshipLLMConfig | None = None,
         naming: NamingConfig | None = None,
+        name_match_skip: set[tuple[str, str]] | None = None,
     ) -> None:
         """Derive elements one candidate per LLM call, then batch relationships.
 
@@ -1374,6 +1574,8 @@ class ElementDerivationBase(ABC):
         created_by_source: dict[str, dict[str, Any]] = {}
         # Names already taken (``taken``) are checked after each call, never put in a prompt
         # (prompts depend on structure only, so one LLM drift cannot cascade)
+        # The names a naming answer may not take, read once (not per candidate)
+        reserved = self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming is not None and naming.guards.reserved_labels else set()
 
         for cand in filtered:
             prompt = build_single_candidate_prompt(
@@ -1415,9 +1617,6 @@ class ElementDerivationBase(ABC):
                 continue
 
             element_data = element_result["data"]
-            confidence = element_data.get("properties", {}).get("confidence", 1.0)
-            if confidence < self.MIN_ELEMENT_CONFIDENCE:
-                continue
 
             if naming is not None:
                 self._apply_naming(
@@ -1429,6 +1628,7 @@ class ElementDerivationBase(ABC):
                     repo_name,
                     taken,
                     structure_names,
+                    reserved,
                 )
 
             try:
@@ -1478,6 +1678,7 @@ class ElementDerivationBase(ABC):
                 archimate_manager=archimate_manager,
                 result=result,
                 relationship_config=relationship_config,
+                name_match_skip=name_match_skip,
             )
 
     def _derive_relationships(
@@ -1491,6 +1692,7 @@ class ElementDerivationBase(ABC):
         archimate_manager: ArchimateManager,
         result: GenerationResult,
         relationship_config: RelationshipLLMConfig | None = None,
+        name_match_skip: set[tuple[str, str]] | None = None,
     ) -> None:
         """
         Derive relationships for newly created elements.
@@ -1505,6 +1707,7 @@ class ElementDerivationBase(ABC):
             archimate_manager: For creating relationships
             result: GenerationResult to update
             relationship_config: Relationship config row settings (None skips the LLM pass)
+            name_match_skip: (source type, target type) pairs the name matching never links
         """
         relationships = derive_batch_relationships(
             new_elements=batch_elements,
@@ -1517,6 +1720,7 @@ class ElementDerivationBase(ABC):
             max_tokens=max_tokens,
             graph_manager=graph_manager,
             llm_config=relationship_config,
+            name_match_skip=name_match_skip,
         )
 
         for rel_data in relationships:

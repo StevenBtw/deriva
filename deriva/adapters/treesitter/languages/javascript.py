@@ -544,25 +544,31 @@ class JavaScriptExtractor(LanguageExtractor):
         return methods
 
     def extract_imports(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedImport]:
-        """Extract import statements."""
+        """Extract import statements, and require() and dynamic import() calls anywhere (functions, blocks, bare calls)."""
         imports: list[ExtractedImport] = []
         root = tree.root_node
 
         for node in root.children:
             if node.type == "import_statement":
                 imports.append(self._extract_es6_import(node, source))
-            elif node.type in ("lexical_declaration", "variable_declaration"):
-                # Handle require() calls
-                for declarator in self.find_children_by_type(node, "variable_declarator"):
-                    value = self.find_child_by_field(declarator, "value")
-                    if value and value.type == "call_expression":
-                        func = self.find_child_by_field(value, "function")
-                        if func and self.get_node_text(func, source) == "require":
-                            imp = self._extract_require(node, declarator, value, source)
-                            if imp:
-                                imports.append(imp)
 
-        return imports
+        for call in self.walk_tree(root, {"call_expression"}):
+            func = self.find_child_by_field(call, "function")
+            if func is None or not (func.type == "import" or self.get_node_text(func, source) == "require"):
+                continue
+            # `const mod = await import(...)`: the await sits between the call and its declarator
+            parent = call.parent
+            if parent is not None and parent.type == "await_expression":
+                parent = parent.parent
+            declarator = parent if parent is not None and parent.type == "variable_declarator" else None
+            if declarator is not None and declarator.parent is not None:
+                imp = self._extract_require(declarator.parent, declarator, call, source)
+            else:
+                imp = self._extract_require(call, None, call, source)
+            if imp and imp.module:
+                imports.append(imp)
+
+        return sorted(imports, key=lambda i: i.line)
 
     def extract_calls(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedCall]:
         """Extract function and method calls from JavaScript source code."""
@@ -937,11 +943,11 @@ class JavaScriptExtractor(LanguageExtractor):
     def _extract_require(
         self,
         decl_node: tree_sitter.Node,
-        declarator: tree_sitter.Node,
+        declarator: tree_sitter.Node | None,
         call_node: tree_sitter.Node,
         source: bytes,
     ) -> ExtractedImport | None:
-        """Extract CommonJS require() call."""
+        """Extract a CommonJS require() or dynamic import() call; the names come from the declarator it is assigned to, if any."""
         # Get module name from arguments
         args = self.find_child_by_field(call_node, "arguments")
         if not args:
@@ -954,7 +960,7 @@ class JavaScriptExtractor(LanguageExtractor):
                 break
 
         # Get variable name
-        name_node = self.find_child_by_field(declarator, "name")
+        name_node = self.find_child_by_field(declarator, "name") if declarator is not None else None
         names: list[str] = []
 
         if name_node:

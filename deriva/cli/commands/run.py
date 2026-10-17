@@ -162,9 +162,13 @@ def run_stage(
         typer.echo("Connected to grafeo")
 
         # Handle --only-step option
+        later_steps: list[str] = []
         if only_step:
             step_type = "extraction" if stage in ("extraction", "all") else "derivation"
             typer.echo(f"Enabling only {step_type} step: {only_step}")
+            # Before the others are switched off: the later steps that may read what this one writes
+            if step_type == "extraction":
+                later_steps = session.later_extraction_steps(only_step)
 
             if step_type == "extraction":
                 extraction_configs = session.get_extraction_configs()
@@ -206,6 +210,8 @@ def run_stage(
                     phases=phases,
                 )
             _print_extraction_result(result)
+            if later_steps:
+                typer.echo(f"Later steps that may read what {only_step} writes (run them again to update them): {', '.join(later_steps)}")
 
         elif stage == "derivation":
             if not llm_info:

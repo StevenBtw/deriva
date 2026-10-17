@@ -48,6 +48,15 @@ class TestNormalizePath:
         result = normalize_path("src/main.py", repo_name="myrepo")
         assert result == "myrepo/src/main.py"
 
+    def test_keeps_a_top_folder_named_like_the_repo(self):
+        """A repository-relative path that starts with a folder named like the repository keeps that folder."""
+        assert normalize_path("myrepo/services/session.py", repo_name="myrepo") == "myrepo/myrepo/services/session.py"
+        assert normalize_path("myrepo", repo_name="myrepo") == "myrepo/myrepo"
+
+    def test_file_node_path_keeps_a_top_folder_named_like_the_repo(self):
+        node = FileNode(name="session.py", path="myrepo/services/session.py", repository_name="myrepo", file_type="source")
+        assert node.to_dict()["filePath"] == "myrepo/myrepo/services/session.py"
+
 
 class TestRepositoryNode:
     """Tests for RepositoryNode dataclass."""

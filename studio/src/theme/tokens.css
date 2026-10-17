@@ -347,6 +347,10 @@ tbody tr.clickable:hover td {
   border-color: var(--line);
   color: var(--text);
 }
+.util svg {
+  vertical-align: -2px;
+  margin-right: 3px;
+}
 .dot {
   width: 8px;
   height: 8px;
@@ -894,6 +898,10 @@ table.results th {
   overflow: auto;
   min-height: 0;
 }
+/* The diagram sits below the bar with the bar's spacing and side margins, never against it */
+.inspector > .widget-host {
+  margin: 8px 14px 14px;
+}
 
 .modelbar {
   display: flex;
@@ -1180,10 +1188,13 @@ table.rules tbody th {
 }
 .lanes-switch {
   position: absolute;
-  top: 14px;
-  right: 16px;
+  /* Tucked into the lane box's top right corner: its top and right edges on the box's border (the lane's 8px margin),
+     its outer corner rounded like the box, its inner corner like a segmented control */
+  top: 8px;
+  right: 8px;
   z-index: 3;
   background: var(--bg2);
+  border-radius: 0 8px 0 7px;
 }
 .lane-linked {
   flex: 1;

@@ -1,6 +1,6 @@
 [project]
 name = "deriva-cli"
-version = "0.8.1"
+version = "0.8.2"
 description = "Deriva is a research project aimed at enabling digital architects by automating the derivation of enterprise architecture models. Deriva uses dual knowledge graphs, heuristics and LLM's."
 # The PyPI page; README.md is the repository's own
 readme = "packages/README-deriva-cli.md"
@@ -55,21 +55,19 @@ dependencies = [
     "python-docx>=1.2",
     # NLP (business concept candidate terms; pinned, the versions decide the output; the spaCy pipelines download on first use)
     "spacy==3.8.16",
-    "ctranslate2==4.8.2",
+    "ctranslate2==4.8.3",
     "sentencepiece==0.2.2",
     # Graph Algorithms
     "solvor>=0.6.3",
     # LLM
-    "backoff>=2.2.1",
     # CVE-2026-107286, CVE-2026-107287 fixed in 2.53; slim with only the providers model_registry.py
-    # builds (azure, ollama and lmstudio go through the openai client), so no google, logfire or mcp stack
-    "pydantic-ai-slim[openai,anthropic,mistral]>=2.55",
+    # builds (azure, ollama, lmstudio and mistral go through the openai client), so no google, logfire or mcp stack
+    "pydantic-ai-slim[openai,anthropic]>=2.55",
     # Utilities
-    # CVE-2026-32597 fix
-    "diskcache>=5.6.3",
-    "structlog>=26.1.0",
+    "httpx2>=2.13",
+    "lmdb>=1.6",
     "typer>=0.27",
-    "httpx>=0.28.1",
+    "tree-sitter-typescript==0.23.2",
 ]
 
 [dependency-groups]
@@ -95,7 +93,7 @@ Changelog = "https://github.com/StevenBtw/deriva/blob/main/CHANGELOG.md"
 deriva-cli = "deriva.cli.cli:main"
 
 [build-system]
-requires = ["uv_build>=0.12.21,<0.13"]
+requires = ["uv_build>=0.12.21,<0.14"]
 build-backend = "uv_build"
 
 # deriva is a namespace shared by three packages; this one holds the pipeline and the CLI
@@ -192,7 +190,8 @@ docstring-quotes = "double"
 # ruff.toml files set their own to allow the libraries of their layer
 [tool.ruff.lint.flake8-tidy-imports.extend-banned-api]
 # Not declared by any Deriva package
-"requests" = { msg = "Not a dependency of Deriva (only installed through other packages); use httpx" }
+"requests" = { msg = "Not a dependency of Deriva (only installed through other packages); use httpx2" }
+"httpx" = { msg = "Not a direct dependency of Deriva (only installed through other packages); Deriva's HTTP client is httpx2, the client pydantic-ai and the provider SDKs run on" }
 "anywidget" = { msg = "The studio serves the widgets' front end only (anywidget_graph.ui, anywidget_archimate.ui)" }
 "ipywidgets" = { msg = "The studio serves the widgets' front end only (anywidget_graph.ui, anywidget_archimate.ui)" }
 "marimo" = { msg = "Not a dependency of Deriva (the marimo app was replaced by the studio)" }
