@@ -1490,6 +1490,8 @@ class BenchmarkOrchestrator:
                         "structure_name": (e.properties or {}).get("structure_name") or next(iter((e.properties or {}).get("name_candidates") or []), None) or e.name,
                         # A closed-set name's candidates in order (None for a name that is no choice)
                         "name_candidates": list((e.properties or {}).get("name_candidates") or []) or None,
+                        # The abstraction levels the abstraction_levels step wrote (None: not tagged, enterprise)
+                        "levels": list((e.properties or {})["levels"]) if isinstance((e.properties or {}).get("levels"), list) else None,
                     }
                     for e in elements
                 ],
@@ -1500,6 +1502,9 @@ class BenchmarkOrchestrator:
                         "type": r.relationship_type,
                         "derived_from": (r.properties or {}).get("derived_from"),
                         "confidence": (r.properties or {}).get("confidence"),
+                        # Its levels (those both ends share); a cross-level link (no shared level) counts in the union only
+                        "levels": list((r.properties or {})["levels"]) if isinstance((r.properties or {}).get("levels"), list) else None,
+                        "cross_level": bool((r.properties or {}).get("cross_level")),
                     }
                     for r in relationships
                 ],
@@ -2193,13 +2198,25 @@ def model_quality_for_session(
                 row: dict[str, Any] = {"repository": repo, "model": model, "run": int(run), **compute_model_quality(elements, relationships).to_dict()}
                 snapshot_path = path.with_suffix(".json")
                 try:
-                    row["solve"] = json.loads(snapshot_path.read_text(encoding="utf-8")).get("solve") if snapshot_path.is_file() else None
+                    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8")) if snapshot_path.is_file() else {}
                 except OSError, ValueError:
-                    row["solve"] = None
+                    snapshot = {}
+                row["solve"] = snapshot.get("solve")
                 row["reference"] = None
                 if reference:
-                    # Lineage-free: name + type, the user's manual matches and derivable labels next to the reference
-                    derived = [{"id": e.identifier, "name": e.name, "type": e.element_type} for e in elements]
+                    # Name + type, the user's accepted names and structural refs (sources and lineage from the run's
+                    # snapshot: the XML carries none) and derivable labels: the gate's matching (golden_mapping)
+                    structure = {str(e.get("identifier")): e for e in snapshot.get("elements", []) if isinstance(e, dict)}
+                    derived = [
+                        {
+                            "id": e.identifier,
+                            "name": e.name,
+                            "type": e.element_type,
+                            "source": structure.get(e.identifier, {}).get("source"),
+                            "lineage": structure.get(e.identifier, {}).get("lineage") or [],
+                        }
+                        for e in elements
+                    ]
                     aliases, derivable = session_metrics.manual_inputs(reference_models[repo])
                     row["reference"] = session_metrics.golden_comparison(derived, reference, aliases=aliases, derivable=derivable)
                 rows.append(row)
