@@ -109,13 +109,22 @@ def at_level(reference: Reference, model: dict[str, Any], level: str | None) -> 
         relationships=[r for r in reference.relationships if level in r.levels and r.source in keys and r.target in keys],
         chains=[c for c in reference.chains if all(a in keys and b in keys for a, _, b, _ in c.steps)],
     )
+    return leveled, snapshot_at_level(model, level)
+
+
+def snapshot_at_level(model: dict[str, Any], level: str | None) -> dict[str, Any]:
+    """A run model at one level: its elements tagged with the level (no tag: enterprise) and the relationships on it
+    between them; ``None`` or ``union``: the whole model."""
+    if level is None or level == "union":
+        return model
+    if level not in LEVELS:
+        raise ValueError(f"level is one of {', '.join(LEVELS)}, union or None, not {level!r}")
     ids = {e["identifier"] for e in model.get("elements", []) if level in _levels_of(e)}
-    kept = {
+    return {
         **model,
         "elements": [e for e in model.get("elements", []) if e["identifier"] in ids],
         "relationships": [r for r in model.get("relationships", []) if level in _levels_of(r) and r["source"] in ids and r["target"] in ids],
     }
-    return leveled, kept
 
 
 def _type(value: str) -> str:
