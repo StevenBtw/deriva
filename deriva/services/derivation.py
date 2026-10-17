@@ -961,7 +961,11 @@ def _role_config(params: str | None) -> RoleConfig | None:
         raise ValueError(f"params.roles.unit_roles rules need a unit property (a plain property name) and a role key of names, got {unit_roles!r}")
     if unit_roles and element_per != "unit":
         raise ValueError("params.roles.unit_roles are roles a deployable unit shows itself: they need element_per 'unit'")
+    name_priority = settings.get("name_priority", [])
+    if not isinstance(name_priority, list) or not all(isinstance(label, str) and label for label in name_priority):
+        raise ValueError(f"params.roles.name_priority is a list of graph labels, got {name_priority!r}")
     return RoleConfig(
+        name_priority=tuple(name_priority),
         unit_roles=tuple((rule["property"], rule["role"]) for rule in unit_roles),
         structural=tuple((rule["property"], rule["pattern"], rule["role"]) for rule in structural),
         labels=frozenset(settings.get("labels") or []),

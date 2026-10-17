@@ -488,3 +488,39 @@ class TestStructuralRoles:
             elements, prompts = self._generate([endpoint], {})
 
         assert prompts == [] and len(elements) == 1
+
+
+class TestNamePriority:
+    """With params.roles.name_priority, candidates with an earlier label claim their structure name first."""
+
+    @staticmethod
+    def _stages(roles):
+        # The module ranks first (more connected), as modules that hold units do
+        module = Candidate(node_id="module::r::shop", name="Shop", labels=["Graph", "BuildModule"], properties={}, pagerank=0.9)
+        unit = Candidate(node_id="unit::r::shop", name="Shop", labels=["Graph", "DeployableUnit"], properties={}, pagerank=0.1)
+        with (
+            patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+            patch("deriva.modules.derivation.element_base.query_candidates", return_value=[module, unit]),
+        ):
+            result = Derivation().generate(
+                graph_manager=MagicMock(query=MagicMock(return_value=[])),
+                archimate_manager=MagicMock(get_elements=MagicMock(return_value=[])),
+                llm_query_fn=MagicMock(return_value=SimpleNamespace(content='{"items": []}')),
+                query="MATCH (n) RETURN n",
+                instruction="Test",
+                example="{}",
+                max_candidates=10,
+                batch_size=5,
+                existing_elements=[],
+                prompt=TEST_PROMPT,
+                roles=roles,
+            )
+        return {d.node_id: d.stage for d in result.candidate_decisions}
+
+    def test_without_a_priority_the_higher_ranked_candidate_keeps_the_name(self):
+        assert self._stages(ROLES)["unit::r::shop"] == "duplicate_removed"
+
+    def test_a_unit_claims_its_name_before_a_module(self):
+        stages = self._stages(dataclasses.replace(ROLES, name_priority=("DeployableUnit", "BuildModule")))
+
+        assert stages["module::r::shop"] == "duplicate_removed" and stages.get("unit::r::shop") != "duplicate_removed"

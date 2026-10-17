@@ -1,17 +1,22 @@
-"""The export's two levels: the architect level (the derived model) and the detail level (its members, from the graph).
+"""The export's levels: the derived model's abstraction levels (enterprise, solution) and the detail level (its
+members, from the graph).
 
-One exchange file holds both: every element carries a ``level`` property (architect or detail), lifecycle states
-are a property of their process, and the views show each viewpoint per level. The benchmark measures the
-architect level; the detail level is reported on its own.
+One exchange file holds them all: every element carries a ``level`` property, the set of its levels (``enterprise``,
+``solution``, ``enterprise solution``; ``detail`` for a member), and so does every relationship (the levels both its
+ends share; ``cross-level`` without one). Relationship ids come from the ends, the type and the level, so they are
+the same in every run. Lifecycle states are a property of their process, and the views show each viewpoint per
+level. The benchmark measures the derived model; the detail level is reported on its own.
 """
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
 from deriva.adapters.archimate.models import Element, Relationship
 from deriva.adapters.archimate.views import View, build_views
+from deriva.common.ocel import hash_content
 from deriva.modules.derivation.detail_level import DetailLevel, DetailLineage, detail_level
 
 ENTITIES = "MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(e:Graph:DataEntity) RETURN d.id AS d, e.id AS e, e.name AS n"
@@ -28,6 +33,7 @@ class LeveledModel:
     views: list[View]
     detail: DetailLevel = field(default_factory=DetailLevel)
     architect_count: int = 0
+    relationship_properties: dict[str, dict[str, str]] = field(default_factory=dict)  # exported properties per relationship id (level)
 
     def summary(self) -> dict[str, int]:
         return {"architect_elements": self.architect_count, "detail_elements": len(self.detail.elements), "detail_relationships": len(self.detail.relationships)}
@@ -53,14 +59,46 @@ def detail_lineage(graph_manager: Any | None) -> DetailLineage:
     )
 
 
+def _level_set(properties: dict[str, Any] | None) -> str:
+    """An element's exported level: its levels as one value (none recorded: enterprise)."""
+    levels = (properties or {}).get("levels")
+    return " ".join(sorted(str(v) for v in levels)) if isinstance(levels, list) and levels else "enterprise"
+
+
+def _relationship_level(relationship: Relationship, detail: bool) -> str:
+    if detail:
+        return "detail"
+    properties = relationship.properties or {}
+    levels = properties.get("levels")
+    if properties.get("cross_level") or (isinstance(levels, list) and not levels):
+        return "cross-level"
+    return " ".join(sorted(str(v) for v in levels)) if isinstance(levels, list) else "enterprise"
+
+
+def stable_ids(relationships: list[tuple[Relationship, str]]) -> list[Relationship]:
+    """The relationships with ids from their ends, type and level (a repeat of all four gets its position appended)."""
+    seen: dict[str, int] = {}
+    out = []
+    for relationship, level in relationships:
+        base = f"rel-{hash_content(f'{relationship.source}|{relationship.relationship_type}|{relationship.target}|{level}')[:16]}"
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        renamed = copy.copy(relationship)
+        renamed.identifier = base if count == 0 else f"{base}-{count + 1}"
+        out.append(renamed)
+    return out
+
+
 def leveled_model(elements: list[Element], relationships: list[Relationship], lineage: DetailLineage) -> LeveledModel:
-    """The architect elements and relationships plus the detail level, the exported properties and the views."""
+    """The derived elements and relationships plus the detail level, the exported properties, stable relationship ids and the views."""
     detail = detail_level([e.to_dict() for e in elements], lineage)
-    properties: dict[str, dict[str, str]] = {e.identifier: {"level": "architect", **detail.properties.get(e.identifier, {})} for e in elements}
+    properties: dict[str, dict[str, str]] = {e.identifier: {"level": _level_set(e.properties), **detail.properties.get(e.identifier, {})} for e in elements}
     detail_elements = [Element.from_dict(d) for d in detail.elements]
     properties |= {e.identifier: {"level": "detail"} for e in detail_elements}
     all_elements = list(elements) + detail_elements
-    all_relationships = list(relationships) + [Relationship.from_dict(r) for r in detail.relationships]
+    leveled = [(r, _relationship_level(r, False)) for r in relationships] + [(Relationship.from_dict(r), "detail") for r in detail.relationships]
+    all_relationships = stable_ids(leveled)
+    relationship_properties = {r.identifier: {"level": level} for r, (_, level) in zip(all_relationships, leveled, strict=True)}
     return LeveledModel(
         elements=all_elements,
         relationships=all_relationships,
@@ -68,4 +106,5 @@ def leveled_model(elements: list[Element], relationships: list[Relationship], li
         views=build_views(all_elements, all_relationships),
         detail=detail,
         architect_count=len(elements),
+        relationship_properties=relationship_properties,
     )

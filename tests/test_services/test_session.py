@@ -738,7 +738,7 @@ class TestPipelineSessionExport:
 
         levels = connected_session.get_model_levels()
 
-        assert [(e["name"], e["level"], e["layer"]) for e in levels["elements"]] == [("Order Data", "architect", "Application"), ("Order Line", "detail", "Application")]
+        assert [(e["name"], e["level"], e["layer"]) for e in levels["elements"]] == [("Order Data", "enterprise", "Application"), ("Order Line", "detail", "Application")]
         assert len(levels["relationships"]) == 1
         views = {v["name"]: v for v in levels["views"]}
         assert views["Information Structure"] == {"name": "Information Structure", "viewpoint": "Information Structure", "level": "architect", "elements": ["do_order"]}

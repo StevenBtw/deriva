@@ -1459,6 +1459,7 @@ class BenchmarkOrchestrator:
                 model_name=model_display_name,
                 properties=leveled.properties,
                 views=leveled.views,
+                relationship_properties=leveled.relationship_properties,
             )
 
             # JSON snapshot for consistency analysis: the XML carries no properties,

@@ -87,3 +87,21 @@ def test_each_element_type_starts_its_own_row_in_its_band():
     y = {n.element: n.y for n in build_views(elements, [])[0].nodes}
 
     assert y["ac_0"] == y["ac_1"] < y["ai_api"]
+
+
+def test_relationships_carry_their_level_property(tmp_path):
+    """Relationships take exported properties too, declared with the element ones, after name and documentation."""
+    out = tmp_path / "model.xml"
+    ArchiMateXMLExporter().export(
+        ELEMENTS,
+        RELATIONSHIPS,
+        str(out),
+        properties={e.identifier: {"level": e.properties.get("level", "enterprise")} for e in ELEMENTS},
+        relationship_properties={RELATIONSHIPS[0].identifier: {"level": "cross-level"}},
+    )
+
+    root = etree.parse(str(out)).getroot()
+    assert [d.findtext("a:name", namespaces=NS) for d in root.findall("a:propertyDefinitions/a:propertyDefinition", NS)] == ["level"]
+    rel = root.find(f"a:relationships/a:relationship[@identifier='{RELATIONSHIPS[0].identifier}']", NS)
+    assert rel.findtext("a:properties/a:property/a:value", namespaces=NS) == "cross-level"
+    assert [etree.QName(child).localname for child in rel][-1] == "properties"

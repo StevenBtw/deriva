@@ -334,17 +334,29 @@ def parse_exchange_format_xml(
     # The level property's definition, if the file declares one
     level_refs = {d.get("identifier") for d in root.iterfind(f"{_tag('propertyDefinitions')}/{_tag('propertyDefinition')}") if d.findtext(_tag("name")) == "level"}
 
-    def _level_of(elem: ET.Element) -> str:
+    def _levels_of(elem: ET.Element) -> set[str]:
+        """The element's levels: a set written as one value; "architect" (earlier exports) is enterprise; none: enterprise."""
         for prop in elem.iterfind(f"{_tag('properties')}/{_tag('property')}"):
             if prop.get("propertyDefinitionRef") in level_refs:
-                return prop.findtext(_tag("value")) or "architect"
-        return "architect"
+                text: str = prop.findtext(_tag("value")) or ""
+                values = set(text.split())
+                if not values:
+                    values = {"enterprise"}
+                if "architect" in values:
+                    values = (values - {"architect"}) | {"enterprise"}
+                return {str(v) for v in values}
+        return {"enterprise"}
+
+    def _at_level(elem: ET.Element) -> bool:
+        levels = _levels_of(elem)
+        # "architect": every derived element (any level but detail)
+        return bool(levels - {"detail"}) if level == "architect" else level in levels
 
     # Find elements section
     elements_section = root.find(_tag("elements"))
     if elements_section is not None:
         for elem in elements_section:
-            if level is not None and _level_of(elem) != level:
+            if level is not None and not _at_level(elem):
                 continue
             elem_type = elem.get("{http://www.w3.org/2001/XMLSchema-instance}type", "")
             elem_id = elem.get("identifier", "")

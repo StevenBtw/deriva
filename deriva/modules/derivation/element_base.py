@@ -323,6 +323,7 @@ class ElementDerivationBase(ABC):
         self,
         candidates: list[Candidate],
         threshold: float = 0.85,
+        priority: tuple[str, ...] = (),
     ) -> list[Candidate]:
         """Merge near-duplicate candidates before sending to LLM.
 
@@ -337,6 +338,7 @@ class ElementDerivationBase(ABC):
         Args:
             candidates: Filtered candidates (post graph filtering)
             threshold: Similarity threshold for grouping (default 0.85)
+            priority: Graph labels whose candidates are kept first (``roles.name_priority``), then by PageRank
 
         Returns:
             Consolidated candidates with near-duplicates merged
@@ -379,12 +381,15 @@ class ElementDerivationBase(ABC):
             root = find(i)
             groups.setdefault(root, []).append(c)
 
-        # From each group, keep highest pagerank (tiebreaker: alphabetical node_id)
+        # From each group, keep the earliest priority label, then the highest pagerank (tiebreaker: alphabetical node_id)
+        def rank(c: Candidate) -> int:
+            return next((i for i, label in enumerate(priority) if label in c.labels), len(priority))
+
         result = []
         for group in groups.values():
             survivor = max(
                 group,
-                key=lambda c: (c.pagerank or 0, c.node_id),
+                key=lambda c: (-rank(c), c.pagerank or 0, c.node_id),
             )
             result.append(survivor)
             if len(group) > 1:
@@ -673,7 +678,7 @@ class ElementDerivationBase(ABC):
             return result
 
         # Consolidate near-duplicate candidate names before LLM
-        consolidated = self._consolidate_near_duplicates(filtered)
+        consolidated = self._consolidate_near_duplicates(filtered, priority=roles.name_priority if roles is not None else ())
         kept_ids = {c.node_id for c in consolidated}
         for c in filtered:
             if c.node_id not in kept_ids:
@@ -699,7 +704,10 @@ class ElementDerivationBase(ABC):
         repo_name = self._active_repo_name(graph_manager)
         structure_names: dict[str, str] = {}  # candidate id -> key of its structure name
         distinct = distinct_candidate_names(filtered)
-        for c in filtered:
+        # Candidates with an earlier label of roles.name_priority claim first (a stable sort: the ranking within a label)
+        priority = list(roles.name_priority) if roles is not None else []
+        claim_order = sorted(filtered, key=lambda c: next((i for i, label in enumerate(priority) if label in c.labels), len(priority))) if priority else filtered
+        for c in claim_order:
             key = _display_key(structure_element_name(c.node_id, distinct[c.node_id], repo_name))
             if key in structure_names.values():
                 result.candidate_decisions.append(
