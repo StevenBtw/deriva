@@ -18,6 +18,7 @@ front and without kind suffixes (``PersistenceOrder`` -> ``Order``, ``ACCOUNT-RE
 
 from __future__ import annotations
 
+import itertools
 import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
@@ -177,16 +178,31 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
     dto_bases, dto_suffixes, dto_dirs = lower(rules.dto_bases), lower(rules.dto_suffixes), lower(rules.dto_dirs)
     configs, config_suffixes, technical = lower(rules.config_markers), lower(rules.config_suffixes), lower(rules.technical_words)
 
-    # A base is known by name only: follow it a second step only when one type has that name (two types named
-    # alike could be unrelated, and their bases would mix)
-    named: dict[str, list[dict[str, Any]]] = {}
+    # A base is known by name: the definition nearest to the type (the most leading folders in common) gives its
+    # bases, so a Base declared in every service resolves per service, and an unrelated Base next to the type wins.
+    # Equally near definitions with different bases are not followed; placeholders of unresolved names define nothing.
+    named: dict[str, list[tuple[tuple[str, ...], frozenset[str]]]] = {}
     for t in types:
-        named.setdefault(str(t["name"]).casefold(), []).append(t)
-    bases_of = {name: {_bare(b) for b in same[0].get("bases") or []} for name, same in named.items() if len(same) == 1}
+        if t.get("category") != "external_reference":
+            folder = PurePosixPath(str(t.get("path") or "")).parent.parts
+            named.setdefault(str(t["name"]).casefold(), []).append((folder, frozenset(_bare(b) for b in t.get("bases") or [])))
+    known: dict[str, set[str]] = {}
 
     def ancestors(t: dict[str, Any]) -> set[str]:
+        if str(t["id"]) in known:
+            return known[str(t["id"])]
         direct = {_bare(b) for b in t.get("bases") or []}
-        return direct | {a for b in direct for a in bases_of.get(b, set())}
+        folder = PurePosixPath(str(t.get("path") or "")).parent.parts
+        found = set(direct)
+        for base in direct:
+            definitions = named.get(base, [])
+            shared = [(sum(1 for _ in itertools.takewhile(lambda p: p[0] == p[1], zip(folder, where, strict=False))), bases) for where, bases in definitions]
+            nearest = max((n for n, _ in shared), default=0)
+            choices = {bases for n, bases in shared if n == nearest}
+            if len(choices) == 1:
+                found |= next(iter(choices))
+        known[str(t["id"])] = found
+        return found
 
     def marks(t: dict[str, Any]) -> set[str]:
         return {_bare(d) for d in t.get("decorators") or [] if ":" not in str(d)} | ancestors(t)
