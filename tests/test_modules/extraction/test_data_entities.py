@@ -218,6 +218,22 @@ def test_ancestry_does_not_follow_an_ambiguous_base_name():
     assert _names(result) == ["Order"]  # one unambiguous step through OrmBase still counts
 
 
+def test_a_base_defined_in_every_service_is_resolved_through_the_nearest_definition():
+    """Each service declares its own Base(DeclarativeBase); unresolved references to Base are placeholders, no definitions."""
+    types = [
+        _t("Base", "r/services/loans/app/database.py", bases=["DeclarativeBase"]),
+        _t("LoanApplication", "r/services/loans/app/models.py", bases=["Base"]),
+        _t("Base", "r/services/payments/app/database.py", bases=["DeclarativeBase"]),
+        _t("Payment", "r/services/payments/app/models.py", bases=["Base"]),
+        _t("Base", "r/external", category="external_reference"),
+        _t("Widget", "r/ui/widget.py", bases=["Base"]),  # nearest Base is a service's ORM base two folders up: still an ORM type
+    ]
+
+    result = detect_entities(types, {}, {}, RULES)
+
+    assert _names(result) == ["Loan Application", "Payment", "Widget"]
+
+
 def test_a_generated_table_follows_a_type_with_a_name_outside_ascii():
     """Names in other scripts keep their letters: two such types never share an empty key."""
     types = [
