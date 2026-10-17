@@ -2362,6 +2362,92 @@ def test_the_nodes_and_edges_a_step_writes_reach_the_run_log(tmp_path):
     assert [c.args[0] for c in step_ctx.add_edge.call_args_list] == ["CONTAINS_dir::test_repo::a_dir::test_repo::b", "IMPORTS_dir::test_repo::b_dir::test_repo::a"]
 
 
+class TestBuildModuleStep:
+    """The BuildModule step writes the modules and parent systems, their own files (INCLUDES), the nesting (NESTS)
+    and which unit builds which module (BUILDS)."""
+
+    MODULE_PARAMS = {"manifests": ["pom.xml", "package.json", "pyproject.toml"], "code_subtypes": ["java", "python"]}
+
+    @pytest.fixture
+    def graph(self):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+
+        close_database()
+        with GraphManager() as gm:
+            yield gm
+        close_database()
+
+    def _step(self, graph, tmpdir, node_type, params, repo="r"):
+        cfg = SimpleNamespace(node_type=node_type, params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+        return _run_extraction_step(cfg, SimpleNamespace(name=repo), Path(tmpdir), [], [], graph, None, MagicMock())
+
+    def _files(self, graph, tmpdir, files, repo="r"):
+        from deriva.adapters.graph.models import FileNode
+
+        for path, (file_type, subtype, text) in files.items():
+            (Path(tmpdir) / path).parent.mkdir(parents=True, exist_ok=True)
+            (Path(tmpdir) / path).write_text(text, encoding="utf-8")
+            graph.add_node(FileNode(name=Path(path).name, path=path, repository_name=repo, file_type=file_type, subtype=subtype), node_id=f"file::{repo}::{path.replace('/', '_')}")
+
+    def test_modules_systems_nesting_and_the_units_that_build_them_are_written(self, graph):
+        pom = "<project><artifactId>shop</artifactId><modules><module>orders</module><module>billing</module></modules></project>"
+        files = {
+            "pom.xml": ("build", "xml", pom),
+            "orders/pom.xml": ("build", "xml", "<project><artifactId>shop-orders</artifactId></project>"),
+            "orders/Dockerfile": ("config", None, "FROM base\n"),
+            "orders/src/Order.java": ("source", "java", "class Order {}\n"),
+            "billing/pom.xml": ("build", "xml", "<project><artifactId>shop-billing</artifactId></project>"),
+            "billing/src/Bill.java": ("source", "java", "class Bill {}\n"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["java"]})
+            result = self._step(graph, tmpdir, "BuildModule", self.MODULE_PARAMS)
+
+        assert result["errors"] == []
+        modules = graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.name AS name, m.isModule AS module, m.isSystem AS system ORDER BY id")
+        assert [(m["id"], m["name"], m["module"], m["system"]) for m in modules] == [
+            ("module::r::billing", "Shop Billing", True, False),
+            ("module::r::orders", "Shop Orders", True, False),
+            ("module::r::r", "R", False, True),  # the root takes the repository name
+        ]
+        nests = graph.query("MATCH (a:Graph:BuildModule)-[:`Graph:NESTS`]->(b:Graph:BuildModule) RETURN a.id AS a, b.id AS b ORDER BY b")
+        assert [(n["a"], n["b"]) for n in nests] == [("module::r::r", "module::r::billing"), ("module::r::r", "module::r::orders")]
+        builds = graph.query("MATCH (u:Graph:DeployableUnit)-[:`Graph:BUILDS`]->(m:Graph:BuildModule) RETURN u.id AS u, m.id AS m ORDER BY m")
+        assert [(b["u"], b["m"]) for b in builds] == [("unit::r::orders", "module::r::orders")]
+        own = graph.query("MATCH (m:Graph:BuildModule)-[:`Graph:INCLUDES`]->(f:Graph:File) WHERE m.id = 'module::r::orders' RETURN f.filePath AS path ORDER BY path")
+        assert [o["path"] for o in own] == ["r/orders/Dockerfile", "r/orders/pom.xml", "r/orders/src/Order.java"]
+
+    def test_a_module_that_is_one_units_folder_is_marked_the_same_and_names_come_with_one_candidate(self, graph):
+        """The component step names a module from its one structural candidate (no naming call) and skips a module
+        that is the folder of exactly one unit and holds no other module: that structure is one element."""
+        pom = "<project><artifactId>shop</artifactId><modules><module>orders</module><module>billing</module></modules></project>"
+        files = {
+            "pom.xml": ("build", "xml", pom),
+            "orders/pom.xml": ("build", "xml", "<project><artifactId>shop-orders</artifactId></project>"),
+            "orders/Dockerfile": ("config", None, "FROM base\n"),
+            "orders/src/Order.java": ("source", "java", "class Order {}\n"),
+            "billing/pom.xml": ("build", "xml", "<project><artifactId>shop-billing</artifactId></project>"),
+            "billing/src/Bill.java": ("source", "java", "class Bill {}\n"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["java"]})
+            self._step(graph, tmpdir, "BuildModule", self.MODULE_PARAMS)
+
+        rows = graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.sameAs AS same, m.nameCandidates AS names ORDER BY id")
+        assert [(r["id"], r["same"], list(r["names"])) for r in rows] == [
+            ("module::r::billing", None, ["Shop Billing"]),  # a library: no unit builds it from its own folder
+            ("module::r::orders", "unit::r::orders", ["Shop Orders"]),
+            ("module::r::r", None, ["R"]),
+        ]
+
+    def test_the_params_name_the_manifests_and_the_code(self, graph):
+        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="manifests"):
+            self._step(graph, tmpdir, "BuildModule", {"code_subtypes": ["java"]})
+
+
 class TestDeployableUnitStep:
     """The DeployableUnit step writes one node per unit with INCLUDES edges to its member files, and replaces what it wrote before."""
 
