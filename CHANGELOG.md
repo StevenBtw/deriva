@@ -8,6 +8,22 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
+## v0.8.3 - Adding abstraction to consistency (Unreleased)
+
+### Benchmark
+
+- **Gate for a change**: `deriva-cli benchmark gate --baseline <sessions> [--candidate <sessions>]` reports per repository the element and relationship recall and precision (against a development reference model, or a golden model on the subset marked as derivable, provisional while that subset is unlabelled) and the consistency by id. With a candidate it gives the verdict: better when one of the four measures rises by at least 1 point on two thirds of the measured repositories, no measure dropping more than 2 points anywhere, element and relationship consistency by id at 95% or more. Repositories without a reference are listed and left out of the count. It reports and judges each abstraction level (enterprise, solution, union) on its own: a level without a reference does not vote, and the change passes when every level that votes passes. Markdown and JSON output
+- **Reference levels**: a development reference can tag its elements and relationships with the levels they belong to (`levels`, enterprise when absent); the reference evaluation scores one level or all (`level`)
+
+- **Name candidates next to every chosen name**: an element named by a closed-set choice keeps its full candidate list in order (`name_candidates`, next to `name` and `structure_name`) in the model and in each run snapshot, so a reviewer sees what the name was chosen from; whether a call made the choice (`name_choice`) is recorded by the naming step
+- **Commit in every session**: `session_metadata.json` records the code commit the session started on and whether the working tree had changes (`code`: `commit`, `dirty`), next to the full environment in `session_inputs.json`
+
+### Fixes
+
+- **Data entities lost in 0.8.2 when every service declares its own ORM base**: 0.8.2 followed a base class only when a single type had its name, so a repository whose services each declare `class Base(DeclarativeBase)` got 0 data entities, and with them no data domains, lifecycles, business events or the data and business elements built on them. A base class is now resolved through its nearest definition (the one sharing the most leading folders); equally near definitions with different bases are still not followed
+- **Names from documentation lists**: a bold term, table cell or link label used as a component name loses the separator that introduces its description ("**Process Engine:** runs processes" gave the component and its interfaces the name "Process Engine:")
+- **Studio run history**: a run that has just ended is listed in the history at once; it was missing until its summary file was written, and for good when that write failed
+
 ## v0.8.2 - Pre-benchmark refinement (October 17 2026)
 
 Most of the model now comes from structure: new structural extraction steps find deployable units, data entities and domains, deployments, cooperation lines and lifecycles, and the LLM mainly chooses among structural candidates.
