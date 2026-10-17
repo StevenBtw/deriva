@@ -172,3 +172,22 @@ def test_links_in_the_session_folder_are_not_followed(tmp_path):
     assert not [f["path"] for f in manifest["files"] if "link" in f["path"]]
     with zipfile.ZipFile(tmp_path / "out.zip") as bundle:
         assert all(b"api key" not in bundle.read(name) for name in bundle.namelist())
+
+
+def test_the_code_commit_of_a_clean_and_a_changed_checkout(tmp_path):
+    """The commit and whether the working tree has changes; outside a checkout both are None."""
+    import subprocess
+
+    from deriva.services.export_bundle import code_commit
+
+    assert code_commit(tmp_path) == {"commit": None, "dirty": None}
+    git = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True, text=True).stdout.strip()  # noqa: E731
+    git("init", "-q")
+    (tmp_path / "a.txt").write_text("1", encoding="utf-8")
+    git("add", "a.txt")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "one")
+    head = git("rev-parse", "HEAD")
+
+    assert code_commit(tmp_path) == {"commit": head, "dirty": False}
+    (tmp_path / "a.txt").write_text("2", encoding="utf-8")
+    assert code_commit(tmp_path) == {"commit": head, "dirty": True}
