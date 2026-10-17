@@ -383,10 +383,10 @@ def benchmark_gate(
     reference: Annotated[str | None, typer.Option("--reference", help="Golden model folder (default: workspace/reference)")] = None,
     benchmarks: Annotated[str | None, typer.Option("--benchmarks", help="Benchmark folder (default: workspace/benchmarks)")] = None,
 ) -> None:
-    """Recall, precision and consistency by id per repository, and the verdict of a candidate against a baseline.
+    """Element and relationship recall and precision and consistency by id per repository, and the verdict of a candidate.
 
-    Accepted when recall or precision rises on at least two thirds of the measured repositories, none drops by more
-    than 2 points on either, and element and relationship consistency by id stay at 95% or more everywhere.
+    Accepted when one of the four measures rises by 1 point or more on at least two thirds of the measured repositories,
+    none of them drops by more than 2 points anywhere, and element and relationship consistency by id stay at 95% or more.
     """
     from deriva.bench import gate
 
@@ -399,17 +399,27 @@ def benchmark_gate(
             typer.echo(f"Error: no benchmark session {', '.join(missing)} in {root}", err=True)
             raise typer.Exit(1)
     try:
-        measures = {name: gate.measure([root / s for s in side], goldens_dir, reference_dir, model=model) for name, side in sides.items() if side}
+        measures = {
+            level: {name: gate.measure([root / s for s in side], goldens_dir, reference_dir, model=model, level=level) for name, side in sides.items() if side}
+            for level in gate.GATE_LEVELS
+        }
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
     lines = [f"# Gate: {', '.join(sides['baseline'])}" + (f" vs {', '.join(sides['candidate'])}" if sides["candidate"] else ""), ""]
-    lines += gate.table_markdown(measures["baseline"], f"Baseline ({', '.join(sides['baseline'])})")
-    payload: dict = {"sessions": sides, "baseline": measures["baseline"]}
-    if "candidate" in measures:
-        lines += gate.table_markdown(measures["candidate"], f"Candidate ({', '.join(sides['candidate'])})")
-        payload |= {"candidate": measures["candidate"], "verdict": gate.verdict(measures["baseline"], measures["candidate"])}
-        lines += gate.verdict_markdown(payload["verdict"])
+    payload: dict = {"sessions": sides, "levels": {}}
+    for level, by_side in measures.items():
+        lines += [f"## {level.capitalize()} level", ""]
+        lines += gate.table_markdown(by_side["baseline"], f"Baseline ({', '.join(sides['baseline'])})")
+        payload["levels"][level] = {"baseline": by_side["baseline"]}
+        if "candidate" in by_side:
+            lines += gate.table_markdown(by_side["candidate"], f"Candidate ({', '.join(sides['candidate'])})")
+            payload["levels"][level] |= {"candidate": by_side["candidate"], "verdict": gate.verdict(by_side["baseline"], by_side["candidate"])}
+            lines += gate.verdict_markdown(payload["levels"][level]["verdict"])
+    if sides["candidate"]:
+        result, voting = gate.overall_verdict({level: entry["verdict"] for level, entry in payload["levels"].items()})
+        payload["verdict"] = {"verdict": result, "levels": voting}
+        lines += [f"**Overall: {result}** (levels that voted: {', '.join(voting) or 'none'})", ""]
     for line in lines:
         typer.echo(line)
     name = "_".join(sides["baseline"]) + (f"_vs_{'_'.join(sides['candidate'])}" if sides["candidate"] else "")
