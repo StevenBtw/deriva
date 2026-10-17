@@ -147,3 +147,92 @@ def test_naming_compares_the_chosen_and_the_structural_name_with_the_reference_b
     naming = evaluate(parse_reference(reference), model)["naming"]["ApplicationComponent"]
 
     assert naming == {"compared": 3, "chosen": 1, "chosen_alias": 2, "structural": 2, "structural_alias": 2}
+
+
+LEVELED = {
+    "repository": "shop",
+    "elements": [
+        {"key": "core", "type": "ApplicationComponent", "name": "Customer Core", "levels": ["enterprise", "solution"]},
+        {"key": "web", "type": "ApplicationComponent", "name": "Web Shop"},  # no levels: enterprise
+        {"key": "lib", "type": "ApplicationComponent", "name": "Pricing Library", "levels": ["solution"]},
+    ],
+    "relationships": [
+        {"source": "core", "target": "web", "type": "Serving", "kind": "cooperation"},
+        {"source": "lib", "target": "core", "type": "Serving", "kind": "module-dependency", "levels": ["solution"]},
+    ],
+}
+
+
+def _leveled_model():
+    model = _model(
+        [("ac_core", "ApplicationComponent", "Customer Core", "unit::shop::core"), ("ac_lib", "ApplicationComponent", "Pricing Library", "module::shop::lib")],
+        [("ac_lib", "Serving", "ac_core")],
+    )
+    model["elements"][0]["levels"] = ["enterprise", "solution"]
+    model["elements"][1]["levels"] = ["solution"]
+    model["relationships"][0]["levels"] = ["solution"]
+    return model
+
+
+def test_a_level_filters_the_reference_and_the_model_and_none_keeps_todays_behaviour():
+    reference, model = parse_reference(LEVELED), _leveled_model()
+
+    enterprise = evaluate(reference, model, level="enterprise")
+    solution = evaluate(reference, model, level="solution")
+
+    # Enterprise: core and web are required, only core is derived at that level; the library is not counted
+    assert (enterprise["element_recall"], enterprise["element_precision"], enterprise["model_size"]) == (0.5, 1.0, 1)
+    assert enterprise["relationship_recall"] == 0.0  # core -> web is missing
+    # Solution: core and the library, both derived; the module dependency is there
+    assert (solution["element_recall"], solution["element_precision"], solution["relationship_recall"]) == (1.0, 1.0, 1.0)
+    # Union and None: every element and relationship, whatever its level
+    union = evaluate(reference, model, level="union")
+    assert (union["reference_size"], union["model_size"]) == (3, 2) and evaluate(reference, model)["reference_size"] == 3
+
+
+def test_an_unknown_level_is_refused():
+    import pytest
+
+    with pytest.raises(ValueError, match="level"):
+        evaluate(parse_reference(LEVELED), _leveled_model(), level="detail")
+
+
+def test_a_cross_level_relationship_counts_only_in_the_union():
+    """A roll-up joins an enterprise element to a solution element: no level holds both ends, so only the union scores it."""
+    data = {
+        "repository": "shop",
+        "elements": [
+            {"key": "system", "type": "ApplicationComponent", "name": "Shop System"},
+            {"key": "core", "type": "ApplicationComponent", "name": "Customer Core", "levels": ["solution"]},
+        ],
+        "relationships": [{"source": "system", "target": "core", "type": "Composition", "kind": "roll-up", "levels": [], "cross_level": True}],
+    }
+    model = _model(
+        [("ac_sys", "ApplicationComponent", "Shop System", "unit::shop"), ("ac_core", "ApplicationComponent", "Customer Core", "unit::shop::core")],
+        [("ac_sys", "Composition", "ac_core")],
+    )
+    model["elements"][1]["levels"] = ["solution"]
+    model["relationships"][0] |= {"levels": [], "cross_level": True}
+
+    reference = parse_reference(data)
+
+    assert evaluate(reference, model, level="union")["relationship_recall"] == 1.0
+    assert evaluate(reference, model, level="enterprise")["relationship_recall"] is None  # nothing to find at that level
+    assert evaluate(reference, model, level="solution")["relationship_totals"]["model"] == 0
+
+
+def test_an_explicit_empty_level_set_is_no_level_at_all():
+    """levels: [] (with cross_level) is not the enterprise default: the item belongs to no single level."""
+    from deriva.bench.reference_eval import _levels_of
+
+    assert _levels_of({}) == frozenset({"enterprise"})
+    assert _levels_of({"levels": []}) == frozenset() and _levels_of({"levels": ["solution"], "cross_level": True}) == frozenset()
+    data = {
+        "repository": "shop",
+        "elements": [{"key": "a", "type": "ApplicationComponent", "name": "A"}, {"key": "b", "type": "ApplicationComponent", "name": "B"}],
+        "relationships": [{"source": "a", "target": "b", "type": "Serving", "kind": "x", "levels": [], "cross_level": True}],
+    }
+    model = _model([("a", "ApplicationComponent", "A", "s"), ("b", "ApplicationComponent", "B", "t")], [("a", "Serving", "b")])
+
+    assert evaluate(parse_reference(data), model, level="enterprise")["relationship_recall"] is None
+    assert evaluate(parse_reference(data), model, level="union")["relationship_recall"] == 1.0
