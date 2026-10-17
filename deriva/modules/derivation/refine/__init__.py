@@ -32,6 +32,7 @@ Usage:
 
 # Import modules to trigger registration
 from . import (
+    abstraction_levels,
     cross_layer,
     duplicate_elements,
     duplicate_relationships,
@@ -53,6 +54,7 @@ __all__ = [
     "RefineStep",
     "run_refine_step",
     # Modules imported for side-effect registration
+    "abstraction_levels",
     "cross_layer",
     "duplicate_elements",
     "duplicate_relationships",
