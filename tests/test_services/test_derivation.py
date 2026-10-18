@@ -3033,6 +3033,41 @@ def test_created_elements_and_deferred_relationships_reach_the_run_log():
     assert [c.args[0] for c in contexts["ConsolidatedRelationships"].add_relationship.call_args_list] == ["Access_e1_e2"]
 
 
+def test_relationships_a_refine_step_adds_reach_the_run_log():
+    """A refine step names the relationships it adds ({type}_{source}_{target}), so lifted and roll-up relationships are in the log."""
+    from deriva.adapters.archimate import ArchimateManager
+    from deriva.adapters.archimate.models import Element, Relationship
+    from deriva.adapters.grafeo.manager import close_database
+
+    close_database()
+    am = ArchimateManager()
+    am.connect()
+    am.add_element(Element(name="a", element_type="ApplicationComponent", identifier="ac_a"))
+    am.add_element(Element(name="b", element_type="ApplicationComponent", identifier="ac_b"))
+    am.add_relationship(Relationship(source="ac_b", target="ac_a", relationship_type="Flow", identifier="rel-old"))
+    cfg = MagicMock()
+    cfg.step_name, cfg.params, cfg.llm = "abstraction_hierarchy", None, False
+    run_logger = MagicMock()
+    contexts: dict[str, MagicMock] = {}
+    run_logger.step_start.side_effect = lambda step, message="": contexts.setdefault(step, MagicMock())
+
+    def step(step_name, archimate_manager, **_):
+        archimate_manager.add_relationship(Relationship(source="ac_a", target="ac_b", relationship_type="Serving", identifier="rel-new"))
+        return MagicMock(elements_disabled=0, relationships_deleted=0, issues_found=0, errors=[], report=None)
+
+    try:
+        with (
+            patch.object(derivation.config, "get_derivation_configs", side_effect=lambda engine, enabled_only, phase: [cfg] if phase == "refine" else []),
+            patch.object(derivation, "run_refine_step", side_effect=step),
+        ):
+            derivation.run_derivation(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=am, phases=["refine"], run_logger=run_logger)
+    finally:
+        am.disconnect()
+        close_database()
+
+    assert [c.args[0] for c in contexts["abstraction_hierarchy"].add_relationship.call_args_list] == ["Serving_ac_a_ac_b"]
+
+
 class TestStructuralRoleConfig:
     """params.roles.structural: roles the source shows; with them alone, labels and instruction may be empty."""
 
