@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from deriva.adapters.database.manager import (
     DB_PATH,
     SCRIPTS_DIR,
@@ -183,3 +185,37 @@ def test_an_existing_database_without_the_schema_keeps_its_contents(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM extraction_config").fetchone()[0] > 0
     conn.close()
     assert [p.name for p in tmp_path.iterdir() if "partial" in p.name] == []
+
+
+def test_a_database_another_process_holds_is_named_with_what_to_do(tmp_path, monkeypatch):
+    """DuckDB has one writer: when the studio or another CLI run holds the config database, the error says so."""
+    import duckdb
+
+    from deriva.adapters.database import manager
+
+    database = tmp_path / "sql.db"
+    database.touch()
+    monkeypatch.setattr(manager, "DB_PATH", database)
+
+    def locked(*_, **__):
+        raise duckdb.IOException(f'IO Error: Cannot open file "{database}": The process cannot access the file because it is being used by another process.')
+
+    monkeypatch.setattr(manager.duckdb, "connect", locked)
+
+    with pytest.raises(manager.ConfigDatabaseBusy, match="another Deriva process") as raised:
+        manager.get_connection()
+    assert str(database) in str(raised.value)
+
+
+def test_other_io_errors_are_not_called_busy(tmp_path, monkeypatch):
+    import duckdb
+
+    from deriva.adapters.database import manager
+
+    database = tmp_path / "sql.db"
+    database.touch()
+    monkeypatch.setattr(manager, "DB_PATH", database)
+    monkeypatch.setattr(manager.duckdb, "connect", lambda *_, **__: (_ for _ in ()).throw(duckdb.IOException("IO Error: disk full")))
+
+    with pytest.raises(duckdb.IOException, match="disk full"):
+        manager.get_connection()
