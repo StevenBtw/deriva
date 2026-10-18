@@ -68,9 +68,9 @@ vi.mock("../widgets/LinkedGraphWidget", () => ({
 }));
 
 vi.mock("../widgets/ArchimateWidget", () => ({
-  ArchimateWidget: ({ elements, onSelect }: { elements: { id: string; name: string }[]; onSelect?: (e: Record<string, unknown> | null) => void }) => (
+  ArchimateWidget: ({ elements, relationships, onSelect }: { elements: { id: string; name: string }[]; relationships?: unknown[]; onSelect?: (e: Record<string, unknown> | null) => void }) => (
     <div data-testid="archimate">
-      {elements.length} elements
+      {elements.length} elements, {relationships?.length ?? 0} relationships
       {elements.map((e) => (
         <button key={e.id} type="button" onClick={() => onSelect?.(e)}>
           select {e.name}
@@ -299,6 +299,30 @@ describe("Workspace", () => {
     await userEvent.click(screen.getByRole("radio", { name: "Architect" }));
     await waitFor(() => expect(screen.getByTestId("archimate")).toHaveTextContent("2 elements"));
     expect(screen.getByLabelText("Viewpoint")).toHaveValue("");
+  });
+
+  it("shows the relationships a view names, not every relationship between its elements", async () => {
+    const a = { id: "ac_a", name: "A", type: "ApplicationComponent", layer: "Application", documentation: "" };
+    const b = { id: "ac_b", name: "B", type: "ApplicationComponent", layer: "Application", documentation: "" };
+    // An enterprise-only relationship between two components on both levels
+    const lifted = { id: "r1", source: "ac_a", target: "ac_b", type: "Serving", name: "" };
+    vi.mocked(model.get).mockResolvedValue({
+      elements: [a, b],
+      relationships: [lifted],
+      views: [
+        { name: "Application Cooperation (enterprise)", viewpoint: "Application Cooperation", level: "enterprise", elements: ["ac_a", "ac_b"], relationships: ["r1"] },
+        { name: "Application Structure (solution)", viewpoint: "Application Structure", level: "solution", elements: ["ac_a", "ac_b"], relationships: [] },
+      ],
+    });
+    render(<Workspace />);
+    await userEvent.click(screen.getByRole("button", { name: /View model/ }));
+    expect(await screen.findByTestId("archimate")).toHaveTextContent("2 elements, 1 relationships");
+
+    await userEvent.selectOptions(screen.getByLabelText("Viewpoint"), "Application Structure (solution)");
+    expect(screen.getByTestId("archimate")).toHaveTextContent("2 elements, 0 relationships");
+
+    await userEvent.selectOptions(screen.getByLabelText("Viewpoint"), "Application Cooperation (enterprise)");
+    expect(screen.getByTestId("archimate")).toHaveTextContent("2 elements, 1 relationships");
   });
 
   it("reloads both graphs when a step completes", async () => {
