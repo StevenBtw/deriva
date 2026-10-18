@@ -139,7 +139,7 @@ In the studio, **Process mining logs** downloads the same files for the selected
 
 A reference model says what the model of a repository should contain. Two kinds are read:
 
-- **Development references** (`workspace/goldens/dev/`): reference models whose elements and relationships may carry their levels (enterprise when they do not). `benchmark reference <session_id>` reports recall and precision per element type, relationship kind and chain.
+- **Development references** (`workspace/goldens/dev/`): reference models whose elements and relationships may carry their levels. A reference without any level tags counts its elements as enterprise in `benchmark reference`, and the gate measures it on both levels together only. `benchmark reference <session_id>` reports recall and precision per element type, relationship kind and chain.
 - **Golden models** (`workspace/reference/<repo>.archimate`): models drawn by hand. Next to each, `<repo>.derivable.json` marks which golden elements can be derived from the code at all, and `<repo>.matches.json` lists, per golden element, the names you accepted for it and its structure refs. Recall is measured on the derivable part.
 
 A golden element is matched first by name: a derived element of its type with the same or a similar name, or with a name you accepted. A golden element still unmatched is then matched by structure: a structure ref names a structural id or, with `path:`, a folder or file, and the first derived element of its type made from exactly that structure matches, one derived element per golden element.
@@ -155,7 +155,7 @@ A golden element is matched first by name: a derived element of its type with th
 deriva-cli benchmark gate --baseline <session_id> --candidate <session_id>
 ```
 
-The gate scores each level on its own (enterprise, solution) and both together (union), with recall, precision and consistency by id per level. A candidate passes a level when one of the four measures (element or relationship recall or precision) rises by at least 1 point on at least two thirds of the measured repositories, none drops by more than 2 points anywhere, and element and relationship consistency by id stay at 95% or more. The overall verdict passes when every level with a measured repository passes; a reference without solution-level elements has no solution measure and no vote there.
+The gate scores each level on its own (enterprise, solution) and both together (union), with recall, precision and consistency by id per level. A candidate passes a level when one of the four measures (element or relationship recall or precision) rises by at least 1 point on at least two thirds of the measured repositories, none drops by more than 2 points anywhere, and element and relationship consistency by id stay at 95% or more. A level with too few repositories better but nothing dropping is held (`HELD`), not failed. The overall verdict passes when no level with a measured repository fails and at least one passes; a reference without solution-level elements has no solution measure and no vote there, and a reference without level tags (golden models included) votes on the union only, marked `no level tags`.
 
 ## Measure well
 
