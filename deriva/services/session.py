@@ -343,7 +343,7 @@ class PipelineSession:
         leveled = self._leveled_model(self._archimate_manager.get_elements(enabled_only=True))
         return {
             "elements": [{**e.to_dict(), "level": leveled.properties[e.identifier]["level"], "layer": layer_of(e.element_type)} for e in leveled.elements],
-            "relationships": [r.to_dict() for r in leveled.relationships],
+            "relationships": [{**r.to_dict(), "level": leveled.relationship_properties[r.identifier]["level"]} for r in leveled.relationships],
             "views": [
                 {"name": v.name, "viewpoint": v.viewpoint, "level": v.level, "elements": [n.element for n in v.nodes], "relationships": [c.relationship for c in v.connections]}
                 for v in leveled.views
