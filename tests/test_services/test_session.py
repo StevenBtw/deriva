@@ -746,7 +746,32 @@ class TestPipelineSessionExport:
             "viewpoint": "Information Structure",
             "level": "enterprise",
             "elements": ["do_order"],
+            "relationships": [],
         }
+
+    def test_model_views_name_their_relationships(self, connected_session):
+        """A view lists the relationships it shows: a relationship of another level between two of its elements is not
+        among them (an enterprise-only lift between components that are on both levels)."""
+        from deriva.adapters.archimate.models import Element, Relationship
+
+        both = {"levels": ["enterprise", "solution"]}
+        connected_session._mock_archimate.get_elements.return_value = [
+            Element(name="A", element_type="ApplicationComponent", identifier="ac_a", properties=both),
+            Element(name="B", element_type="ApplicationComponent", identifier="ac_b", properties=both),
+        ]
+        connected_session._mock_archimate.get_relationships.return_value = [
+            Relationship(source="ac_a", target="ac_b", relationship_type="Serving", identifier="r1", properties={"levels": ["enterprise"], "derived_from": "lifted"}),
+        ]
+        connected_session._graph_manager.query.return_value = []
+
+        levels = connected_session.get_model_levels()
+
+        (relationship,) = levels["relationships"]
+        assert relationship["level"] == "enterprise"  # the exported level, as the exchange file carries it
+        views = {v["name"]: v for v in levels["views"]}
+        assert views["Application Cooperation (enterprise)"]["relationships"] == [relationship["identifier"]]
+        assert views["Application Structure (solution)"]["elements"] == ["ac_a", "ac_b"]
+        assert views["Application Structure (solution)"]["relationships"] == []
 
     def test_export_model_no_elements(self, connected_session, tmp_path):
         """Should return error when no elements found."""

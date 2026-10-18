@@ -229,6 +229,17 @@ class TestPrintPipelineResult:
 
         assert "Total errors: 3" in output
 
+    def test_prints_the_errors_themselves(self, capsys):
+        """A failed run says what failed (the first ten), not only how many errors there were."""
+        result = {"results": {}, "errors": ["No repositories found"] + [f"err{i}" for i in range(11)]}
+
+        _print_pipeline_result(result)
+        output = capsys.readouterr().out
+
+        assert "  - No repositories found" in output
+        assert "  - err8" in output and "err9" not in output
+        assert "... and 2 more" in output
+
 
 class TestMain:
     """Tests for main entry point."""
@@ -246,6 +257,14 @@ class TestMain:
             mock_app.side_effect = SystemExit(1)
             result = main()
         assert result == 1
+
+    def test_main_names_a_busy_config_database_in_one_line(self, capsys):
+        """With the studio open the config database is locked: one line saying so, not a traceback."""
+        from deriva.services import ConfigDatabaseBusy
+
+        with patch("deriva.cli.cli.app", side_effect=ConfigDatabaseBusy("The config database x is open in another Deriva process")):
+            assert main() == 1
+        assert capsys.readouterr().err.strip() == "Error: The config database x is open in another Deriva process"
 
     def test_main_makes_stdout_line_buffered(self):
         """Progress lines must appear live, also when stdout is piped to a file."""
@@ -868,6 +887,18 @@ class TestConfigUpdateCommand:
         assert result.exit_code == 0
         assert mock_config.create_derivation_config_version.call_args.kwargs["sequence"] == 8
         assert "Sequence: 8" in result.stdout
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_update_refuses_sequence_for_an_extraction_step(self, mock_session_class, mock_config):
+        """--sequence moves derivation steps only: for an extraction step it is refused, not silently dropped."""
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+
+        result = runner.invoke(app, ["config", "update", "extraction", "BuildModule", "--sequence", "3"])
+
+        assert result.exit_code == 1
+        assert "--sequence" in result.output
+        mock_config.create_extraction_config_version.assert_not_called()
 
     def test_update_invalid_params_json(self):
         """Should reject invalid params JSON."""
@@ -2057,6 +2088,7 @@ class TestRepoListOptions:
         assert result.exit_code == 0
         assert "No repositories found" in result.stdout
         assert "Clone a repository with" in result.stdout
+        assert "  deriva-cli repo clone <url>" in result.stdout
 
     @patch("deriva.cli.commands.repo.PipelineSession")
     def test_list_detailed(self, mock_session_class):

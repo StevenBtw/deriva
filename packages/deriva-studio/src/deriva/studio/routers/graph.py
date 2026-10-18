@@ -43,14 +43,32 @@ def model_stats(session: Any = Depends(get_session)) -> dict[str, Any]:
     return session.get_archimate_stats()
 
 
+def _on_level(value: str | None, level: str) -> bool:
+    """Whether an exported ``level`` value (``enterprise solution``, ``cross-level``, ``detail``, ``architect`` in a model
+    from before the levels) belongs to the studio level: enterprise, solution, detail (the solution level and the
+    members, as the exchange file's detail views) or architect (every level but detail)."""
+    levels = set(str(value or "architect").split())
+    if level == "architect":
+        return "detail" not in levels
+    if level == "detail":
+        return bool(levels & {"solution", "detail", "architect"})
+    return level in levels or "architect" in levels
+
+
 @router.get("/model")
-def model(level: str = Query("architect", pattern="^(architect|detail)$"), session: Any = Depends(get_session)) -> dict[str, Any]:
-    """The model at one export level (detail: with the members of the architect elements), and the views of that level.
-    The architect level is every model level but detail (enterprise, solution, both; "architect" in earlier models)."""
+def model(level: str = Query("architect", pattern="^(architect|enterprise|solution|detail)$"), session: Any = Depends(get_session)) -> dict[str, Any]:
+    """The model at one abstraction level with the views of that level: enterprise, solution, detail (the solution level
+    with the members of its elements) or architect (every level but detail, the whole model of earlier studios). A
+    relationship shows on the level it is on, so a cross-level link shows on architect only."""
     levels = session.get_model_levels()
-    elements = [e for e in levels["elements"] if level == "detail" or e.get("level") != "detail"]
-    views = [v for v in levels["views"] if level == "detail" or v.get("level") != "detail"]
-    return {**to_widget_model(elements, levels["relationships"]), "views": views}
+    elements = [e for e in levels["elements"] if _on_level(e.get("level"), level)]
+    shown = {e["identifier"] for e in elements}
+    relationships = [
+        r for r in levels["relationships"] if r["source"] in shown and r["target"] in shown and ("level" not in r or level == "architect" or _on_level(r["level"], level))
+    ]
+    # A view of an earlier model ("architect") is an enterprise view
+    views = [v for v in levels["views"] if (v.get("level") != "detail" if level == "architect" else (v.get("level") or "architect").replace("architect", "enterprise") == level)]
+    return {**to_widget_model(elements, relationships), "views": views}
 
 
 @router.delete("/model")

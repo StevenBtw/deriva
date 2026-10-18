@@ -116,6 +116,16 @@ describe("BenchmarkWorkspace", () => {
     expect(followRun).toHaveBeenCalledWith("b9", expect.any(Function), expect.any(Function));
   });
 
+  it("starts on the model Deriva uses, not the first in the list", async () => {
+    vi.mocked(benchmarks.models).mockResolvedValue([
+      { name: "a-first", provider: "p", model: "x", default: false },
+      { name: "b-cheap", provider: "p", model: "y", default: true },
+    ]);
+    render(<BenchmarkWorkspace />);
+
+    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("b-cheap"));
+  });
+
   it("leaves a single run in progress to the run workspace", async () => {
     vi.mocked(runs.current).mockResolvedValue({ run_id: "r3", kind: "extraction", repository: "repo_a", status: "running", events: 2, started_at: 1, finished_at: null });
     render(<BenchmarkWorkspace />);

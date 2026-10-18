@@ -37,7 +37,7 @@ from deriva.cli.commands.run import (
     _print_pipeline_result,
 )
 from deriva.cli.progress import create_progress_reporter
-from deriva.services import about, derivation
+from deriva.services import ConfigDatabaseBusy, about, derivation
 from deriva.services.session import PipelineSession
 
 # Create main app
@@ -371,6 +371,10 @@ def main() -> int:
         return 0
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
+    except ConfigDatabaseBusy as e:
+        # The studio or another run holds the config database: say so in one line, without a traceback
+        typer.echo(f"Error: {e}", err=True)
+        return 1
 
 
 if __name__ == "__main__":

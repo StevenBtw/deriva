@@ -51,7 +51,8 @@ export function BenchmarkPanel({ run, sessions, selected, onToggleSession, onSta
       .models()
       .then((list) => {
         setModels(list);
-        setModel((current) => current || list[0]?.name || "");
+        // The model Deriva uses (LLM_DEFAULT_MODEL) first, else the first configured one
+        setModel((current) => current || (list.find((m) => m.default) ?? list[0])?.name || "");
       })
       .catch((reason: Error) => setLoadError(reason.message));
   }, []);

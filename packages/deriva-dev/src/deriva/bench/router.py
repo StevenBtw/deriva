@@ -59,8 +59,9 @@ def list_sessions(limit: int = Query(20, ge=1, le=500), session: Any = Depends(g
 
 @router.get("/models")
 def models(session: Any = Depends(get_benchmarks)) -> list[dict[str, Any]]:
-    """The configured benchmark models (name, provider, model; never keys)."""
-    return [{"name": name, "provider": cfg.provider, "model": cfg.model} for name, cfg in sorted(session.list_benchmark_models().items())]
+    """The configured benchmark models (name, provider, model; never keys), with the one Deriva uses marked ``default``."""
+    default = next((m.get("name") for m in session.list_model_configs() or [] if m.get("default")), None)
+    return [{"name": name, "provider": cfg.provider, "model": cfg.model, "default": name == default} for name, cfg in sorted(session.list_benchmark_models().items())]
 
 
 @router.post("", status_code=202)

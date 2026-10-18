@@ -238,7 +238,7 @@ def benchmark_run(
                 typer.echo(f"  ... and {len(result.errors) - 5} more")
 
         typer.echo("\nTo analyze results:")
-        typer.echo(f"  deriva benchmark analyze {result.session_id}")
+        typer.echo(f"  deriva-cli benchmark analyze {result.session_id}")
 
         if not result.success:
             raise typer.Exit(1)

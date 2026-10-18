@@ -33,6 +33,8 @@ VIEWPOINTS: tuple[tuple[str, str, frozenset[str] | None, str], ...] = (
     ("Implementation and Deployment (solution)", "Implementation and Deployment", DEPLOYMENT, SOLUTION),
     ("Information Structure (detail)", "Information Structure", frozenset({"DataObject"}), DETAIL),
     ("Implementation and Deployment (detail)", "Implementation and Deployment", DEPLOYMENT | {"Artifact"}, DETAIL),
+    # The interfaces with their members (endpoints, pages, jobs); components are left out, their members are above
+    ("Application Interfaces (detail)", "Application Cooperation", frozenset({"ApplicationInterface"}), DETAIL),
 )
 
 # A view needs an element of its anchor types (the Business view: a business element, not application services alone)

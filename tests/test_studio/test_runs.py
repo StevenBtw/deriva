@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from dataclasses import dataclass, field
@@ -317,6 +318,108 @@ def test_the_calls_of_a_run_from_before_a_restart_are_served_from_its_folder(mak
     assert [c["seq"] for c in calls] == [1, 2, 3]
     assert restarted.get(f"/api/runs/{run_id}/calls/{calls[2]['call_id']}").json()["prompt"] == "name it"
     assert restarted.get("/api/runs/nope/calls").status_code == 404
+
+
+def test_the_live_log_of_a_run_from_before_a_restart_replays_from_its_folder(make_client, tmp_path):
+    """A run's events are kept in its folder: a restarted studio replays them (also after a Last-Event-ID), as it serves
+    the calls, instead of answering 404 for a run the history lists."""
+    first = make_client(FakeSession(run_extraction_iter=steps(2), use_repository=None))
+    run_id = first.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
+    wait_for(lambda: finished(first, run_id))
+    with first.stream("GET", f"/api/runs/{run_id}/events") as response:
+        live = "".join(response.iter_text())
+
+    restarted = make_client(FakeSession())  # a new studio process on the same runs folder
+    with restarted.stream("GET", f"/api/runs/{run_id}/events") as response:
+        replayed = "".join(response.iter_text())
+    with restarted.stream("GET", f"/api/runs/{run_id}/events", headers={"Last-Event-ID": "3"}) as response:
+        resumed = "".join(response.iter_text())
+
+    assert response.status_code == 200 and replayed == live
+    assert "id: 3\n" not in resumed and "id: 4\nevent: finished" in resumed
+    assert [(h["run_id"], h["events_kept"]) for h in restarted.get("/api/runs/history").json()] == [(run_id, True)]
+    assert (tmp_path / "runs" / run_id / "events.jsonl").is_file()
+
+
+def test_a_run_without_llm_calls_has_no_calls_also_after_a_restart(make_client):
+    """A structural run makes no LLM call, so its folder has no call log: a restarted studio answers no calls, not 404."""
+    first = make_client(FakeSession(run_derivation_iter=steps(2, "derivation"), use_repository=None))
+    run_id = first.post("/api/runs", json={"kind": "derivation", "no_llm": True}).json()["run_id"]
+    wait_for(lambda: finished(first, run_id))
+
+    restarted = make_client(FakeSession())
+
+    assert restarted.get(f"/api/runs/{run_id}/calls").json() == []
+    assert restarted.get(f"/api/runs/{run_id}/calls/c1").status_code == 404
+    assert restarted.get("/api/runs/never-ran/calls").status_code == 404
+
+
+def test_a_kept_live_log_replays_up_to_its_first_unreadable_line(tmp_path):
+    """A studio stopped mid-write leaves a cut line, and a gap means lost events: the replay ends at the last whole event
+    in order. A log that cannot be read replays nothing."""
+    from deriva.studio.provider import SessionProvider
+    from deriva.studio.runs import RunManager
+
+    def event(seq):
+        return json.dumps({"seq": seq, "event": "progress", "data": {"step": f"S{seq}"}, "ts": 1.0})
+
+    runs = RunManager(SessionProvider(factory=FakeSession), runs_dir=tmp_path)
+    for run_id, lines in {"cut": [event(1), event(2), '{"seq": 3, "ev'], "gap": [event(1), event(3)], "wrong": [event(1), "[1, 2]"]}.items():
+        (tmp_path / run_id).mkdir()
+        (tmp_path / run_id / "events.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (tmp_path / "unreadable" / "events.jsonl").mkdir(parents=True)  # a folder where the log should be
+
+    assert [e["seq"] for e in runs.events("cut")] == [1, 2]
+    assert [e["seq"] for e in runs.events("cut", after=1)] == [2]
+    assert [e["seq"] for e in runs.events("gap")] == [1]
+    assert [e["seq"] for e in runs.events("wrong")] == [1]
+    assert list(runs.events("unreadable")) == []
+
+
+def test_a_run_id_never_names_a_path_outside_the_runs_folder(tmp_path):
+    from deriva.studio.provider import SessionProvider
+    from deriva.studio.runs import RunManager
+
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "events.jsonl").write_text("{}\n", encoding="utf-8")  # one level above the runs folder
+    runs = RunManager(SessionProvider(factory=FakeSession), runs_dir=tmp_path / "runs")
+
+    for run_id in ("", ".", "..", "../runs", "a/b", "a\\b"):
+        assert (runs.known(run_id), runs.events_kept(run_id), runs.log_path(run_id), list(runs.events(run_id))) == (False, False, None, [])
+
+
+def test_a_run_whose_events_cannot_be_written_still_runs_and_streams(tmp_path, monkeypatch):
+    """Keeping the live log is best effort: a run folder that refuses the log (here a folder in its place) changes nothing
+    for the run or for the studio following it."""
+    from types import SimpleNamespace
+
+    from deriva.studio import runs as runs_module
+    from deriva.studio.provider import SessionProvider
+    from deriva.studio.runs import RunManager
+
+    monkeypatch.setattr(runs_module.uuid, "uuid4", lambda: SimpleNamespace(hex="fixedrunid0000"))
+    (tmp_path / "fixedrunid00" / "events.jsonl").mkdir(parents=True)
+    runs = RunManager(SessionProvider(factory=lambda: FakeSession(run_extraction_iter=steps(2), use_repository=None)), runs_dir=tmp_path)
+
+    run_id = runs.start("extraction", "deriva")
+    wait_for(lambda: runs.get(run_id).status != "running")
+
+    assert run_id == "fixedrunid00" and runs.get(run_id).status == "finished"
+    assert [e["event"] for e in runs.events(run_id)] == ["started", "progress", "progress", "finished"]
+
+
+def test_a_run_without_a_kept_live_log_says_so_in_the_history(make_client, tmp_path):
+    """A run recorded before live logs were kept has only its summary and calls: the history says the log is not kept, so
+    the studio does not ask for it, and its events stay unknown (404). A run id never names a path outside the runs folder."""
+    folder = tmp_path / "runs" / "0e27716fc983"
+    folder.mkdir(parents=True)
+    summary = {"run_id": "0e27716fc983", "kind": "derivation", "repository": "deriva", "status": "finished", "events": 87, "started_at": 1.0, "finished_at": 2.0}
+    (folder / "run.json").write_text(json.dumps(summary), encoding="utf-8")
+    client = make_client(FakeSession())
+
+    assert [(h["run_id"], h["events_kept"]) for h in client.get("/api/runs/history").json()] == [("0e27716fc983", False)]
+    assert client.get("/api/runs/0e27716fc983/events").status_code == 404
+    assert client.get("/api/runs/..%2Fruns/events").status_code == 404
 
 
 def test_a_run_records_its_inputs_in_its_folder_before_the_first_step(make_client, tmp_path):

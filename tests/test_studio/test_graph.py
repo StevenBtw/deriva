@@ -62,9 +62,10 @@ def test_model_endpoint_returns_the_widget_model_per_level_with_its_views(make_c
     assert [e["id"] for e in architect["elements"]] == ["n_application_server", "ac_core"]
     assert len(architect["relationships"]) == 1
     assert [v["name"] for v in architect["views"]] == ["Layered"]
+    # Detail: the architect elements of a model without levels stay, with the members, and only the detail views
     assert [e["id"] for e in detail["elements"]] == ["n_application_server", "ac_core", "art_core"]
     assert detail["elements"][2]["layer"] == "Technology"  # a type the widget does not know keeps Deriva's layer
-    assert [v["name"] for v in detail["views"]] == ["Layered", "Implementation and Deployment (detail)"]
+    assert [v["name"] for v in detail["views"]] == ["Implementation and Deployment (detail)"]
     assert client.get("/api/model?level=other").status_code == 422
 
 
@@ -137,3 +138,45 @@ def test_the_architect_level_is_every_level_but_detail(make_client):
 
     assert [e["id"] for e in architect["elements"]] == ["n_application_server", "ac_core"]
     assert [v["name"] for v in architect["views"]] == ["Layered (enterprise)", "Application Structure (solution)"]
+
+
+def test_the_model_per_abstraction_level_holds_that_level_only(make_client):
+    """Enterprise and solution show their own elements, relationships and views (no cross-level link, no lift on the
+    solution level); detail is the solution level with the members, as the exchange file's detail views are."""
+
+    def element(identifier, level, element_type="ApplicationComponent"):
+        return {"identifier": identifier, "name": identifier, "element_type": element_type, "properties": {}, "enabled": True, "level": level, "layer": "Application"}
+
+    def relationship(identifier, source, target, level):
+        return {"identifier": identifier, "source": source, "target": target, "relationship_type": "Serving", "level": level}
+
+    levels = {
+        "elements": [
+            element("svc", "enterprise", "ApplicationService"),
+            element("top", "enterprise solution"),
+            element("lib", "solution"),
+            element("member", "detail", "ApplicationInterface"),
+        ],
+        "relationships": [
+            relationship("lift", "top", "svc", "enterprise"),
+            relationship("uses", "lib", "top", "solution"),
+            relationship("cross", "lib", "svc", "cross-level"),
+            relationship("part", "top", "member", "detail"),
+        ],
+        "views": [
+            {"name": "Layered (enterprise)", "viewpoint": "Layered", "level": "enterprise", "elements": ["svc", "top"], "relationships": ["lift"]},
+            {"name": "Application Structure (solution)", "viewpoint": "Application Structure", "level": "solution", "elements": ["top", "lib"], "relationships": ["uses"]},
+            {"name": "Application Interfaces (detail)", "viewpoint": "Application Cooperation", "level": "detail", "elements": ["top", "member"], "relationships": ["part"]},
+        ],
+    }
+    client = make_client(FakeSession(get_model_levels=levels))
+
+    def shown(level):
+        model = client.get(f"/api/model?level={level}").json()
+        return [e["id"] for e in model["elements"]], [r["id"] for r in model["relationships"]], [v["name"] for v in model["views"]]
+
+    assert shown("enterprise") == (["svc", "top"], ["lift"], ["Layered (enterprise)"])
+    assert shown("solution") == (["top", "lib"], ["uses"], ["Application Structure (solution)"])
+    assert shown("detail") == (["top", "lib", "member"], ["uses", "part"], ["Application Interfaces (detail)"])
+    # The whole model of earlier studios stays available
+    assert shown("architect")[0] == ["svc", "top", "lib"]

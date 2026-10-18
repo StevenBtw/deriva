@@ -334,15 +334,20 @@ class PipelineSession:
     def get_model_levels(self) -> dict[str, Any]:
         """The enabled model at both export levels: elements (with ``level`` and ``layer``), relationships and views.
 
-        Each view names its viewpoint, its level (a view with detail elements is a detail view) and its element ids.
+        Each view names its viewpoint, its level (a view with detail elements is a detail view), its element ids and the
+        ids of the relationships it shows (those of its level: a cross-level link or another level's relationship
+        between two of its elements is not shown).
         """
         self._ensure_connected()
         assert self._archimate_manager is not None
         leveled = self._leveled_model(self._archimate_manager.get_elements(enabled_only=True))
         return {
             "elements": [{**e.to_dict(), "level": leveled.properties[e.identifier]["level"], "layer": layer_of(e.element_type)} for e in leveled.elements],
-            "relationships": [r.to_dict() for r in leveled.relationships],
-            "views": [{"name": v.name, "viewpoint": v.viewpoint, "level": v.level, "elements": [n.element for n in v.nodes]} for v in leveled.views],
+            "relationships": [{**r.to_dict(), "level": leveled.relationship_properties[r.identifier]["level"]} for r in leveled.relationships],
+            "views": [
+                {"name": v.name, "viewpoint": v.viewpoint, "level": v.level, "elements": [n.element for n in v.nodes], "relationships": [c.relationship for c in v.connections]}
+                for v in leveled.views
+            ],
         }
 
     def _leveled_model(self, elements: list[Any]) -> export_levels.LeveledModel:

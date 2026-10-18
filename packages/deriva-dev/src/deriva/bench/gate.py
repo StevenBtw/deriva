@@ -133,8 +133,9 @@ def measure(sessions: list[Path], goldens_dir: Path, reference_dir: Path, model:
     """Per repository of the sessions: its model, runs, source of the measure, the four measures and consistency by id.
 
     ``level`` (``enterprise``, ``solution`` or ``union``) measures one abstraction level; ``None`` measures everything,
-    as before levels existed. A reference with no element at the level has no measure there; golden models carry no
-    levels yet, so they have no solution measure.
+    as before levels existed. A reference with no element at the level has no measure there. A reference without level
+    tags, and a golden model (none has levels yet), is measured on the union only: untagged, every element would count
+    as enterprise and the solution elements a run derives would show as missing there (``note``: no level tags).
     """
     sessions = [Path(s) for s in sessions]
     runs: dict[str, dict[str, list[dict[str, Any]]]] = {}
@@ -155,10 +156,13 @@ def measure(sessions: list[Path], goldens_dir: Path, reference_dir: Path, model:
             raise ValueError(f"{repo} has runs of several models ({', '.join(sorted(by_model))}): name one with --model")
         else:
             ((chosen, snapshots),) = by_model.items()
-        row: dict[str, Any] = {"repository": repo, "model": chosen, "runs": len(snapshots), "source": None, "provisional": False} | dict.fromkeys(MEASURES)
+        row: dict[str, Any] = {"repository": repo, "model": chosen, "runs": len(snapshots), "source": None, "provisional": False, "note": None} | dict.fromkeys(MEASURES)
         golden = Path(reference_dir) / f"{repo}.archimate"
-        has_level = level in (None, "union") or (repo in references and any(level in e.levels for e in references[repo].elements))
-        if repo in references and not has_level:
+        single = level not in (None, "union")
+        has_level = not single or (repo in references and any(level in e.levels for e in references[repo].elements))
+        if single and ((repo in references and not references[repo].tagged) or (repo not in references and golden.is_file())):
+            row["note"] = "no level tags"  # measured on the union only
+        elif repo in references and not has_level:
             pass  # no reference at this level
         elif repo in references:
             results = [reference_eval.evaluate(references[repo], s, level=level) for s in snapshots]
@@ -169,7 +173,7 @@ def measure(sessions: list[Path], goldens_dir: Path, reference_dir: Path, model:
                 "relationship_recall": _mean([r["relationship_recall"] for r in results]),
                 "relationship_precision": _mean([r["relationship_totals"]["precision"] for r in results]),
             }
-        elif golden.is_file() and level != "solution":
+        elif golden.is_file():
             row |= _golden_row(golden, Path(reference_dir), repo, snapshots)
         ids = consistency.get((repo, chosen))
         row["consistency"] = {"elements": ids["elements"]["cons"], "relationships": ids["relationships"]["cons"]} if ids else None
@@ -212,10 +216,11 @@ def verdict(baseline: dict[str, dict[str, Any]], candidate: dict[str, dict[str, 
     measured_rows = [r for r in rows if r["measured"]]
     better = sum(1 for r in measured_rows if r["better"])
     needed = math.ceil(rules.better_share * len(measured_rows) - 1e-9)
+    held: list[str] = []  # Too few better, nothing failing: the level holds (HELD), it does not fail
     if not measured_rows:
         failures.append("no repository has a measure in both the baseline and the candidate")
     elif better < needed:
-        failures.append(f"{better} of {len(measured_rows)} measured repositories better (at least {needed})")
+        held.append(f"{better} of {len(measured_rows)} measured repositories better (at least {needed})")
     consistencies = [r["consistency"] for r in rows if r["consistency"] is not None]
     return {
         "rows": rows,
@@ -226,16 +231,20 @@ def verdict(baseline: dict[str, dict[str, Any]], candidate: dict[str, dict[str, 
         "min_consistency": min(consistencies) if consistencies else None,
         "unmeasured": unmeasured,
         "failures": failures,
-        "verdict": "FAIL" if failures else "PASS",
+        "held": held,
+        "verdict": "FAIL" if failures else ("HELD" if held else "PASS"),
         "rules": {"better_share": rules.better_share, "min_rise": rules.min_rise, "max_drop": rules.max_drop, "min_consistency": rules.min_consistency},
     }
 
 
 def overall_verdict(by_level: dict[str, dict[str, Any]]) -> tuple[str, list[str]]:
-    """PASS when every level with a measured repository passes; the levels that voted."""
+    """The levels with a measured repository vote: FAIL when one fails, PASS when none fails and at least one passes
+    (a level the change only holds does not block one it improves), else HELD. Returns the verdict and the voters."""
     voting = [level for level, result in by_level.items() if result.get("measured")]
-    passed = bool(voting) and all(by_level[level]["verdict"] == "PASS" for level in voting)
-    return ("PASS" if passed else "FAIL"), voting
+    verdicts = {by_level[level]["verdict"] for level in voting}
+    if not voting or "FAIL" in verdicts:
+        return "FAIL", voting
+    return ("PASS" if "PASS" in verdicts else "HELD"), voting
 
 
 def _pct(value: float | None) -> str:
@@ -244,7 +253,7 @@ def _pct(value: float | None) -> str:
 
 def _source(row: dict[str, Any] | None) -> str:
     if not row or row["source"] is None:
-        return "no reference"
+        return (row or {}).get("note") or "no reference"
     return f"{row['source']} (provisional)" if row["provisional"] else row["source"]
 
 
@@ -284,7 +293,7 @@ def verdict_markdown(result: dict[str, Any]) -> list[str]:
     ]
     if result["unmeasured"]:
         lines.append(f"Counted out of the {result['measured']} repositories with a measure; not measured: {', '.join(result['unmeasured'])}.")
-    lines += [f"- {f}" for f in result["failures"]]
+    lines += [f"- {f}" for f in result["failures"] + result.get("held", [])]
     return [*lines, ""]
 
 

@@ -52,7 +52,8 @@ def cancel_run(run_id: str, request: Request) -> dict[str, Any]:
 @router.get("/{run_id}/events")
 def run_events(run_id: str, request: Request, after: int = 0, last_event_id: str | None = Header(default=None)) -> StreamingResponse:
     runs = request.app.state.runs
-    if runs.get(run_id) is None:
+    # A run of this process, or one of an earlier process whose folder kept its events
+    if not runs.events_kept(run_id):
         raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
     start = int(last_event_id) if last_event_id and last_event_id.isdigit() else after
 
@@ -67,7 +68,8 @@ def run_events(run_id: str, request: Request, after: int = 0, last_event_id: str
 def _log_path(request: Request, run_id: str) -> str | None:
     runs = request.app.state.runs
     path = runs.log_path(run_id)
-    if path is None and runs.get(run_id) is None:
+    # A known run without a call log made no LLM call (a structural run): no calls, not an unknown run
+    if path is None and not runs.known(run_id):
         raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
     return path
 

@@ -37,6 +37,7 @@ from typing import Any
 import yaml
 
 from deriva.common.paths import resolve
+from deriva.common.settings import RepositorySettings
 
 from .models import (
     CloneError,
@@ -494,22 +495,6 @@ def _extract_file_structure(repo_path: Path) -> FileNode:
 # =============================================================================
 
 
-def _load_config() -> dict:
-    """Load configuration from config.yaml file."""
-    config_path = Path(__file__).parent / "config.yaml"
-    default_config = {"workspace_dir": "workspace/repositories"}
-
-    if not config_path.exists():
-        return default_config
-
-    try:
-        with open(config_path) as f:
-            config = yaml.safe_load(f) or {}
-            return {**default_config, **config}
-    except Exception:
-        return default_config
-
-
 # =============================================================================
 # Repository Manager
 # =============================================================================
@@ -535,12 +520,12 @@ class RepoManager:
         """Initialize the Repository Manager.
 
         Args:
-            workspace_dir: Directory where repositories will be stored.
-                          Defaults to workspace/repositories in the Deriva home folder.
+            workspace_dir: Directory where repositories will be stored. Defaults to the
+                          REPOSITORY_WORKSPACE_DIR setting (workspace/repositories), relative
+                          to the Deriva home folder, the same folder the session lists.
         """
         if workspace_dir is None:
-            config = _load_config()
-            workspace_dir = config.get("workspace_dir", "workspace/repositories")
+            workspace_dir = RepositorySettings().workspace_dir
 
         ws_path = Path(workspace_dir)
         if not ws_path.is_absolute():

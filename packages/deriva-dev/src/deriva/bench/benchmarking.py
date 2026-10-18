@@ -297,13 +297,14 @@ class OCELStepContext:
         self._created_relationships.append(relationship_id)
 
     def _elapsed_seconds(self) -> float:
-        return round(time.perf_counter() - self._start_time, 2)
+        """The step's duration to the microsecond: the case log derives the start from it, so steps must not overlap."""
+        return round(time.perf_counter() - self._start_time, 6)
 
     def complete(self, message: str = "") -> None:
         """Mark step as completed and log to OCEL."""
         self._completed = True
         if self.logger.verbose:
-            print(f"    {self.step}: {self._elapsed_seconds()}s, {self.items_created} created")
+            print(f"    {self.step}: {self._elapsed_seconds():.2f}s, {self.items_created} created")
         config_type = "extraction" if self.logger._current_phase == "extraction" else "derivation"
         self.logger.log_config_result(
             config_type=config_type,
@@ -319,7 +320,7 @@ class OCELStepContext:
         """Mark step as errored."""
         self._completed = True
         if self.logger.verbose:
-            print(f"    {self.step}: {self._elapsed_seconds()}s, ERROR {error[:120]}")
+            print(f"    {self.step}: {self._elapsed_seconds():.2f}s, ERROR {error[:120]}")
         config_type = "extraction" if self.logger._current_phase == "extraction" else "derivation"
         self.logger.log_config_result(
             config_type=config_type,

@@ -60,7 +60,7 @@ The hierarchy's relationships and the lifted ones are proposals like any other: 
 
 ### Views per level
 
-The export has the enterprise views (Layered, Application Cooperation, Information Structure, Implementation and Deployment, Business), the solution views (Application Structure, Application Cooperation, Information Structure, Implementation and Deployment) and two detail views. A view shows the elements and relationships of its level; cross-level links are in no view.
+The export has the enterprise views (Layered, Application Cooperation, Information Structure, Implementation and Deployment, Business), the solution views (Application Structure, Application Cooperation, Information Structure, Implementation and Deployment) and three detail views (Information Structure, Implementation and Deployment, and the application interfaces with their members). A view shows the elements and relationships of its level; cross-level links are in no view.
 
 ## Packages
 

@@ -4,10 +4,17 @@ import { model as modelApi } from "../api/client";
 import type { Model, ModelLevel } from "../api/types";
 import { ArchimateWidget } from "../widgets/ArchimateWidget";
 
+// The abstraction levels, as the exchange file's views are: a cross-level link shows on none of them
+const LEVELS: readonly (readonly [ModelLevel, string])[] = [
+  ["enterprise", "Enterprise"],
+  ["solution", "Solution"],
+  ["detail", "Detail"],
+];
+
 /** The output model in anywidget-archimate at one export level, optionally one generated view of it, with export and the selected element's details. */
 export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh: number; onSelect?: (elementId: string | null) => void }) {
   const [model, setModel] = useState<Model>({ elements: [], relationships: [] });
-  const [level, setLevel] = useState<ModelLevel>("architect");
+  const [level, setLevel] = useState<ModelLevel>("enterprise");
   // A view by name ("" = the whole model at this level)
   const [viewName, setViewName] = useState("");
   // The selection is an id: its details come from the model as it is now (a refresh can rename or remove it)
@@ -44,7 +51,10 @@ export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh
     const view = (model.views ?? []).find((v) => v.name === viewName);
     if (!view) return model;
     const ids = new Set(view.elements);
-    return { elements: model.elements.filter((e) => ids.has(String(e.id))), relationships: model.relationships.filter((r) => ids.has(r.source) && ids.has(r.target)) };
+    // The relationships the view names (its level's); without the list, every relationship between its elements
+    const named = view.relationships ? new Set(view.relationships) : null;
+    const relationships = model.relationships.filter((r) => (named ? named.has(String(r.id)) : ids.has(r.source) && ids.has(r.target)));
+    return { elements: model.elements.filter((e) => ids.has(String(e.id))), relationships };
   }, [model, viewName]);
 
   const selected = selectedId === null ? null : (model.elements.find((e) => String(e.id) === selectedId) ?? null);
@@ -72,10 +82,9 @@ export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh
           {shown.elements.length} elements · {shown.relationships.length} relationships
         </span>
         <span role="radiogroup" aria-label="Level" style={{ display: "inline-flex", gap: 8 }}>
-          {(["architect", "detail"] as const).map((value) => (
+          {LEVELS.map(([value, label]) => (
             <label key={value}>
-              <input type="radio" name="model-level" value={value} checked={level === value} onChange={() => setLevel(value)} />{" "}
-              {value === "architect" ? "Architect" : "Detail"}
+              <input type="radio" name="model-level" value={value} checked={level === value} onChange={() => setLevel(value)} /> {label}
             </label>
           ))}
         </span>

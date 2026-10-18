@@ -28,6 +28,14 @@ SCRIPTS_DIR = Path(__file__).parent / "scripts"
 DATA_DIR = Path(__file__).parent / "data"
 
 
+# How DuckDB reports a database file another process holds (Windows; Linux and macOS)
+_LOCK_MESSAGES = ("being used by another process", "Could not set lock", "Conflicting lock")
+
+
+class ConfigDatabaseBusy(RuntimeError):
+    """The config database is open in another process (DuckDB allows one writer)."""
+
+
 def get_connection(read_only: bool = False) -> duckdb.DuckDBPyConnection:
     """Get a connection to the database.
 
@@ -37,11 +45,21 @@ def get_connection(read_only: bool = False) -> duckdb.DuckDBPyConnection:
 
     Returns:
         DuckDB connection
+
+    Raises:
+        ConfigDatabaseBusy: Another process (the studio, another CLI run) holds the database
     """
     # A fresh install has no database yet: create it from the schema and the shipped seed data
     if not DB_PATH.exists():
         ensure_database(DB_PATH)
-    return duckdb.connect(str(DB_PATH), read_only=read_only)
+    try:
+        return duckdb.connect(str(DB_PATH), read_only=read_only)
+    except duckdb.IOException as e:
+        if any(message in str(e) for message in _LOCK_MESSAGES):
+            raise ConfigDatabaseBusy(
+                f"The config database {DB_PATH} is open in another Deriva process (the studio or another deriva-cli run). Close it, or wait for it to finish, then try again."
+            ) from e
+        raise
 
 
 def run_sql_file(filepath: Path, conn: duckdb.DuckDBPyConnection | None = None) -> int:

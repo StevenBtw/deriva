@@ -56,7 +56,7 @@ def repo_list(
             typer.echo("\nNo repositories found.")
             typer.echo(f"Workspace: {session.workspace_dir}")
             typer.echo("\nClone a repository with:")
-            typer.echo("  deriva repo clone <url>")
+            typer.echo("  deriva-cli repo clone <url>")
             return
 
         typer.echo(f"\n{'=' * 60}")

@@ -48,6 +48,8 @@ class TestBenchmarkCommands:
 
         assert result.exit_code == 0
         assert "BENCHMARK COMPLETE" in result.stdout
+        # The follow-up names the CLI command (deriva itself starts the studio)
+        assert "  deriva-cli benchmark analyze " in result.stdout
 
     @patch("deriva.bench.cli.PipelineSession")
     def test_benchmark_list(self, mock_session_class):
@@ -1358,13 +1360,14 @@ def test_gate_compares_a_candidate_with_a_baseline_and_writes_markdown_and_json(
 
     assert result.exit_code == 0, result.output
     assert "**PASS**: 1/1 measured repositories better" in result.output
-    # Per level: the reference has no levels, so it is enterprise only; the solution level has no measure and no vote
+    # Per level: the reference has no level tags, so it is measured on the union only; the single levels do not vote
     assert "## Enterprise level" in result.output and "## Solution level" in result.output
-    assert "**Overall: PASS** (levels that voted: enterprise, union)" in result.output
+    assert "**Overall: PASS** (levels that voted: union)" in result.output
     payload = _json.loads((tmp_path / "out" / "gate.json").read_text(encoding="utf-8"))
-    assert payload["verdict"] == {"verdict": "PASS", "levels": ["enterprise", "union"]}
-    assert payload["levels"]["enterprise"]["baseline"]["shop"]["recall"] == 0.5
-    assert payload["levels"]["solution"]["baseline"]["shop"]["source"] is None
+    assert payload["verdict"] == {"verdict": "PASS", "levels": ["union"]}
+    assert payload["levels"]["union"]["baseline"]["shop"]["recall"] == 0.5
+    for level in ("enterprise", "solution"):
+        assert (payload["levels"][level]["baseline"]["shop"]["source"], payload["levels"][level]["baseline"]["shop"]["note"]) == (None, "no level tags")
     assert "| shop | reference | 50.0% -> 100.0% | 100.0% -> 100.0% |" in (tmp_path / "out" / "gate.md").read_text(encoding="utf-8")
 
     # The baseline alone: its table, no verdict
