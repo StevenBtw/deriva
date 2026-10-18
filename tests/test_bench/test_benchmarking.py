@@ -863,6 +863,19 @@ class TestOCELRunLogger:
         (event,) = [e for e in ocel_log.events if e.activity == "DeriveConfig"]
         assert event.attributes["duration_seconds"] == 2.5
 
+    def test_short_step_keeps_its_duration(self):
+        """A step of a few milliseconds is not rounded to hundredths: the case log's start (end - duration) would
+        otherwise fall before the previous step's end, and process mining tools would reorder or overlap the steps."""
+        ocel_log = OCELLog()
+        logger = OCELRunLogger(ocel_log=ocel_log, run_id="run-1", session_id="session-1", model="m", repo="r")
+        logger.phase_start("derivation", "")
+
+        with patch("deriva.bench.benchmarking.time.perf_counter", side_effect=[10.0, 10.0026]):
+            logger.step_start("joint_consistency").complete()
+
+        (event,) = [e for e in ocel_log.events if e.activity == "DeriveConfig"]
+        assert event.attributes["duration_seconds"] == pytest.approx(0.0026)
+
     def test_init(self):
         """Should initialize with required fields."""
         ocel_log = OCELLog()
