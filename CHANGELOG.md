@@ -44,6 +44,12 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 - **Data entities lost in 0.8.2 when every service declares its own ORM base**: 0.8.2 followed a base class only when a single type had its name, so a repository whose services each declare `class Base(DeclarativeBase)` got 0 data entities, and with them no data domains, lifecycles, business events or the data and business elements built on them. A base class is now resolved through its nearest definition (the one sharing the most leading folders); equally near definitions with different bases are still not followed
 - **Names from documentation lists**: a bold term, table cell or link label used as a component name loses the separator that introduces its description ("**Process Engine:** runs processes" gave the component and its interfaces the name "Process Engine:")
 - **Studio run history**: a run that has just ended is listed in the history at once; it was missing until its summary file was written, and for good when that write failed
+- **Relationships of refine steps in the event log**: a refine step names the relationships it adds in the OCEL log and the case log (the lifted relationships and roll-ups were missing, and the step reported none created)
+- **Steps in order in the case log**: a step's duration is kept to the microsecond; rounded to hundredths, a short step's start fell before the previous step's end, so process mining tools that order by start time swapped or overlapped steps
+- **Studio views show their own relationships**: a view lists the relationships it shows, so the studio no longer draws another level's relationships between two of its elements (the enterprise-only lifts appeared in the solution views)
+- **Benchmark form starts on the default model**: the studio's benchmark form selects the model Deriva uses (`LLM_DEFAULT_MODEL`) instead of the first configured one
+- **Repositories in a moved workspace**: extraction reads `REPOSITORY_WORKSPACE_DIR` like `repo list` does; with a folder other than the default, `repo list` showed the repositories and extraction found none
+- **CLI messages**: `run all` lists its errors (it only counted them); a config database held by the studio or another run gives one line saying so instead of a traceback; `config update extraction --sequence` is refused (only derivation steps move); the hints after `benchmark run` and an empty `repo list` name `deriva-cli`
 
 ## v0.8.2 - Pre-benchmark refinement (October 17 2026)
 
