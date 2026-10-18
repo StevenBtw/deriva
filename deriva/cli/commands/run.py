@@ -116,7 +116,7 @@ def run_stage(
     phase: Annotated[str | None, typer.Option("--phase", help="Run specific phase")] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
     quiet: Annotated[bool, typer.Option("-q", "--quiet", help="Disable progress bar")] = False,
-    no_llm: Annotated[bool, typer.Option("--no-llm", help="Skip LLM-based steps")] = False,
+    no_llm: Annotated[bool, typer.Option("--no-llm", help="No LLM call: extraction runs its parsers, derivation only its prep phase (no elements)")] = False,
     only_step: Annotated[
         str | None,
         typer.Option(

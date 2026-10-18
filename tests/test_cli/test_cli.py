@@ -295,6 +295,11 @@ class TestMain:
         session_class.check_repository.assert_called_once_with("typo")
         session_class.assert_not_called()
 
+    def test_the_no_llm_help_says_derivation_runs_only_its_prep_phase(self):
+        result = runner.invoke(app, ["run", "--help"], env={"COLUMNS": "300", "NO_COLOR": "1"})
+
+        assert "No LLM call: extraction runs its parsers, derivation only its prep phase (no elements)" in result.output
+
     def test_main_makes_stdout_line_buffered(self):
         """Progress lines must appear live, also when stdout is piped to a file."""
         with patch("deriva.cli.cli.app"), patch("deriva.cli.cli.sys.stdout") as stdout:
@@ -437,6 +442,20 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert f"Home: {about.home()}" in result.output
         assert f"Version: {about.version()}" in result.output
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_status_names_the_graph_it_reads(self, mock_session_class):
+        """Without --repo the counts are those of the shared graph, not of the repository run last."""
+        mock_session = MagicMock()
+        mock_session_class.return_value.__enter__.return_value = mock_session
+        mock_session.list_steps.return_value = []
+        mock_session.get_file_types.return_value = []
+
+        shared = runner.invoke(app, ["status"])
+        repository = runner.invoke(app, ["status", "--repo", "deriva"])
+
+        assert "  Graph: default (shared; use --repo <name> for a repository's graph)" in shared.output
+        assert "  Graph: deriva\n" in repository.output
 
     @patch("deriva.cli.cli.PipelineSession")
     def test_shows_status(self, mock_session_class):

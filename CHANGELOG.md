@@ -17,6 +17,8 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 - **Cancelling a studio run**: a cancel now also stops the running step: the session refuses every further LLM call of the run (`RunCancelled`), so a long step ends at its next call instead of running to its end, and the run ends as `cancelled`. A call already under way still finishes
 - **Stopping the studio during a run**: the first Ctrl+C or SIGTERM cancels the run and ends the open event streams. The server waited for those streams before its shutdown, and a stream lasted until its run ended, so stopping hung until the step was done
 - **Interrupted runs in the studio history**: a run whose studio process ended before the run did (a crash, a killed process) is listed as `interrupted`, with its kind, repository and times from its kept events; its live log replays and ends with a note that the studio stopped, instead of the run missing from the history
+- **Runs without an LLM**: with `--no-llm` an LLM-only extraction step (directory classification, business concepts, technologies) counts under `Steps skipped` with its warning, instead of as a completed step that logged "had errors"; it still keeps what it wrote in an earlier run. The `--no-llm` help says what runs: the extraction parsers and derivation's prep phase, so no elements
+- **Which graph `status` reads**: `deriva-cli status` names its graph; without `--repo` that is the shared `default` graph, with a hint to pass `--repo`
 
 ## v0.8.3 - Adding abstraction to consistency (October 18 2026)
 

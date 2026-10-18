@@ -78,7 +78,7 @@ def run_stage(
     phase: Annotated[str | None, typer.Option("--phase", help="Run specific phase")] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
     quiet: Annotated[bool, typer.Option("-q", "--quiet", help="Disable progress bar")] = False,
-    no_llm: Annotated[bool, typer.Option("--no-llm", help="Skip LLM-based steps")] = False,
+    no_llm: Annotated[bool, typer.Option("--no-llm", help="No LLM call: extraction runs its parsers, derivation only its prep phase (no elements)")] = False,
     only_step: Annotated[
         str | None,
         typer.Option(
@@ -248,6 +248,8 @@ def status(
         typer.echo("=" * 60)
         typer.echo(f"  Home: {about.home()}")
         typer.echo(f"  Version: {about.version()}")
+        # The counts below are of this graph: without --repo the shared one, not the repository run last
+        typer.echo(f"  Graph: {repo}" if repo else "  Graph: default (shared; use --repo <name> for a repository's graph)")
 
         # Count enabled steps per type
         for step_type in ["extraction", "derivation"]:

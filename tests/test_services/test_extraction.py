@@ -836,7 +836,8 @@ class TestRunExtractionStep:
         )
 
         assert result["nodes_created"] == 0
-        assert any("LLM required" in str(e) for e in result["errors"])
+        assert result["skipped"] == "LLM required for BusinessConcept"
+        assert not result.get("errors")
 
     def test_handles_unknown_node_type(self):
         """Should handle unknown node type."""
@@ -1151,6 +1152,47 @@ class TestRunExtractionConfigVersions:
                         run_extraction(engine, graph_manager, config_versions=config_versions)
 
             mock_version.assert_called_once()
+
+
+class TestLlmOnlyStepsWithoutLlm:
+    """Without an LLM an LLM-only step does not run: it counts as skipped with a warning, not as completed or failed."""
+
+    @staticmethod
+    def _configs():
+        repository, classification = MagicMock(), MagicMock()
+        repository.node_type, repository.input_sources = "Repository", None
+        classification.node_type = "DirectoryClassification"
+        return [repository, classification]
+
+    def _patched(self, tmp_path):
+        repo = MagicMock()
+        repo.name, repo.path, repo.url, repo.branch = "r", str(tmp_path), "https://example.com/r.git", "main"
+        return (
+            patch("deriva.services.extraction.RepoManager", **{"return_value.list_repositories.return_value": [repo]}),
+            patch("deriva.services.extraction.config.get_extraction_configs", return_value=self._configs()),
+            patch("deriva.services.extraction.config.get_file_types", return_value=[]),
+        )
+
+    def test_run_extraction_counts_it_as_skipped(self, tmp_path):
+        repos, configs, file_types = self._patched(tmp_path)
+        with repos, configs, file_types:
+            result = run_extraction(MagicMock(), MagicMock())
+
+        assert result["success"] is True
+        assert (result["stats"]["steps_completed"], result["stats"]["steps_skipped"]) == (1, 1)
+        assert result["warnings"] == ["LLM required for DirectoryClassification"]
+
+    def test_the_iterator_counts_it_as_skipped(self, tmp_path):
+        from deriva.services.extraction import run_extraction_iter
+
+        repos, configs, file_types = self._patched(tmp_path)
+        with repos, configs, file_types:
+            updates = list(run_extraction_iter(MagicMock(), MagicMock()))
+
+        step = next(u for u in updates if u.step == "DirectoryClassification")
+        assert (step.status, step.message) == ("complete", "skipped: LLM required for DirectoryClassification")
+        stats = updates[-1].stats["stats"]
+        assert (stats["steps_completed"], stats["steps_skipped"]) == (1, 1)
 
 
 class TestRunExtractionClassifyOnlyPhase:
@@ -2834,6 +2876,18 @@ class TestRerunnableSteps:
 
         assert result["swept"] == {"nodes": 0, "edges": 0, "skipped": "errors"}
         assert graph.node_exists("entity::r::order")
+
+    def test_a_step_skipped_without_an_llm_sweeps_nothing_and_logs_no_error(self, graph, caplog):
+        self._types(graph, ["Order"])
+        self._run(graph)
+        graph.delete_node("typedef::r::Order")
+
+        with patch("deriva.services.extraction._run_step_writes", return_value={"nodes_created": 0, "edges_created": 0, "skipped": "LLM required for DataEntity"}):
+            result = self._run(graph)
+
+        assert result["swept"] == {"nodes": 0, "edges": 0, "skipped": "not run"}
+        assert graph.node_exists("entity::r::order")
+        assert "had errors" not in caplog.text
 
     def test_a_run_with_errors_keeps_the_other_owners_of_what_it_wrote(self, graph):
         """A node another step also produces keeps that owner when this step rewrites it and then fails."""

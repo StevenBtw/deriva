@@ -332,6 +332,16 @@ def run_extraction(
                         model=model,
                     )
 
+                if result.get("skipped"):
+                    # An LLM-only step without an LLM did not run: a warning, not an error
+                    stats["steps_skipped"] += 1
+                    warnings.append(result["skipped"])
+                    if step_ctx:
+                        step_ctx.complete()
+                    if progress:
+                        progress.complete_step(f"skipped: {result['skipped']}")
+                    continue
+
                 nodes_created = result.get("nodes_created", 0)
                 edges_created = result.get("edges_created", 0)
                 if result.get("stats"):
@@ -498,6 +508,9 @@ def _run_extraction_step(
     }
     with graph_manager.step_tags(step, _step_version(engine, step)), graph_manager.recording() as writes:
         result = _run_step_writes(cfg, repo, repo_path, classified_files, undefined_files, graph_manager, llm_query_fn, engine, model)
+    if result.get("skipped"):
+        # A step that did not run (no LLM) keeps what it wrote before
+        return {**result, "swept": {"nodes": 0, "edges": 0, "skipped": "not run"}}
     if result.get("errors"):
         logger.warning("Extraction step %s had errors: nothing swept", step)
         # A rewritten node keeps the other steps that own it (writing a node sets only this step), so a later sweep
@@ -578,7 +591,7 @@ def _run_step_writes(
         result = _extract_deployments(cfg, repo, repo_path, graph_manager)
     elif node_type == "DirectoryClassification":
         if llm_query_fn is None:
-            return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
+            return {"nodes_created": 0, "edges_created": 0, "skipped": f"LLM required for {node_type}"}
         result = _extract_directory_classification(
             cfg=cfg,
             repo=repo,
@@ -587,7 +600,7 @@ def _run_step_writes(
         )
     elif node_type == "Technology":
         if llm_query_fn is None:
-            return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
+            return {"nodes_created": 0, "edges_created": 0, "skipped": f"LLM required for {node_type}"}
         result = _extract_technologies(
             cfg=cfg,
             repo=repo,
@@ -598,7 +611,7 @@ def _run_step_writes(
         )
     elif node_type == "BusinessConcept":
         if llm_query_fn is None:
-            return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
+            return {"nodes_created": 0, "edges_created": 0, "skipped": f"LLM required for {node_type}"}
         result = _extract_business_concepts(
             cfg=cfg,
             repo=repo,
@@ -610,7 +623,7 @@ def _run_step_writes(
     elif node_type in ["TypeDefinition", "Method", "ExternalDependency", "Test"]:
         # Without an LLM the parsers still run (tree-sitter, manifest files); only Test is LLM-only
         if llm_query_fn is None and node_type == "Test":
-            return {"nodes_created": 0, "edges_created": 0, "errors": [f"LLM required for {node_type}"]}
+            return {"nodes_created": 0, "edges_created": 0, "skipped": f"LLM required for {node_type}"}
         result = _extract_llm_based(
             node_type=node_type,
             cfg=cfg,
@@ -2954,6 +2967,19 @@ def run_extraction_iter(
                     llm_query_fn=llm_query_fn,
                     engine=engine,
                 )
+
+                if result.get("skipped"):
+                    # An LLM-only step without an LLM did not run: a warning, not an error
+                    stats["steps_skipped"] += 1
+                    yield ProgressUpdate(
+                        phase="extraction",
+                        step=node_type,
+                        status="complete",
+                        current=current_step,
+                        total=total_steps,
+                        message=f"skipped: {result['skipped']}",
+                    )
+                    continue
 
                 nodes_created = result.get("nodes_created", 0)
                 edges_created = result.get("edges_created", 0)
