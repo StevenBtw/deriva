@@ -102,6 +102,10 @@ def _print_pipeline_result(result: dict) -> None:
 
     if result.get("errors"):
         typer.echo(f"\nTotal errors: {len(result['errors'])}")
+        for err in result["errors"][:10]:
+            typer.echo(f"  - {err}")
+        if len(result["errors"]) > 10:
+            typer.echo(f"  ... and {len(result['errors']) - 10} more")
 
 
 @app.callback(invoke_without_command=True)
