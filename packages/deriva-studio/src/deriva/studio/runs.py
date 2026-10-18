@@ -1,4 +1,8 @@
-"""One pipeline run at a time in a worker thread; its progress kept as numbered events for live streams."""
+"""One pipeline run at a time in a worker thread; its progress kept as numbered events for live streams.
+
+Each run keeps its folder (<runs_dir>/<run_id>): the summary (run.json), the LLM calls (llm.jsonl), the inputs and the
+events (events.jsonl), so a run of an earlier studio process can still be replayed from the history.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ from deriva.studio.provider import SessionProvider
 
 RUNS_DIR = about.workspace() / "runs"
 TERMINAL = ("finished", "cancelled", "error")
+EVENTS_FILE = "events.jsonl"
 # After each step a followed run leaves the session free this long (less once a view took it), so live views refresh mid-run
 VIEW_WINDOW = 0.25
 
@@ -107,15 +112,30 @@ class RunManager:
     def get(self, run_id: str) -> RunState | None:
         return self._runs.get(run_id)
 
+    def _folder(self, run_id: str) -> Path | None:
+        """A run's folder in the runs folder (None for an id that would name a path elsewhere)."""
+        if not run_id or run_id in (".", "..") or any(sep in run_id for sep in ("/", "\\")):
+            return None
+        return self._runs_dir / run_id
+
     def log_path(self, run_id: str) -> str | None:
         """The run's call log: of a run of this process, else the one a run left in its folder (before a restart)."""
         run = self._runs.get(run_id)
         if run is not None:
             return run.log_path
-        if not run_id or run_id in (".", "..") or any(sep in run_id for sep in ("/", "\\")):
-            return None
-        path = self._runs_dir / run_id / "llm.jsonl"
-        return str(path) if path.is_file() else None
+        folder = self._folder(run_id)
+        path = folder / "llm.jsonl" if folder is not None else None
+        return str(path) if path is not None and path.is_file() else None
+
+    def known(self, run_id: str) -> bool:
+        """Whether the studio knows the run: of this process, or one whose folder kept its summary, events or calls."""
+        folder = self._folder(run_id)
+        return run_id in self._runs or (folder is not None and any((folder / name).is_file() for name in ("run.json", EVENTS_FILE, "llm.jsonl")))
+
+    def events_kept(self, run_id: str) -> bool:
+        """Whether the run's events can be streamed: a run of this process, or one whose folder kept them."""
+        folder = self._folder(run_id)
+        return run_id in self._runs or (folder is not None and (folder / EVENTS_FILE).is_file())
 
     def current(self) -> dict[str, Any] | None:
         return self._current.summary() if self._current is not None else None
@@ -129,12 +149,12 @@ class RunManager:
             except OSError, ValueError:
                 continue
             if isinstance(row, dict) and row.get("run_id"):
-                rows[str(row["run_id"])] = row
+                rows[str(row["run_id"])] = row | {"events_kept": self.events_kept(str(row["run_id"]))}
         # The latest run from memory, also once it ended: its summary is written after its status changes (or not at all
         # when the write fails), and memory is never older than the file
         current = self._current
         if current is not None:
-            rows[current.run_id] = current.summary()
+            rows[current.run_id] = current.summary() | {"events_kept": True}
         return sorted(rows.values(), key=lambda row: row.get("started_at") or 0, reverse=True)[:limit]
 
     def cancel(self, run_id: str) -> bool:
@@ -154,8 +174,12 @@ class RunManager:
             return self._changed.wait_for(lambda: run.status in TERMINAL, timeout)
 
     def events(self, run_id: str, after: int = 0, poll: float = 0.5) -> Iterator[dict[str, Any]]:
-        """Events with seq > after, waiting for new ones until the run has ended and all were sent."""
-        run = self._runs[run_id]
+        """Events with seq > after, waiting for new ones until the run has ended and all were sent; a run of an earlier
+        studio process replays the events its folder kept (it ended, or ended with that process)."""
+        run = self._runs.get(run_id)
+        if run is None:
+            yield from (e for e in self._stored_events(run_id) if e["seq"] > after)
+            return
         sent = after
         with self._changed:
             run.followers += 1
@@ -175,9 +199,36 @@ class RunManager:
             with self._changed:
                 run.followers -= 1
 
+    def _stored_events(self, run_id: str) -> list[dict[str, Any]]:
+        """The events a run's folder kept, in order (a line that cannot be read ends them: the process stopped mid-write)."""
+        folder = self._folder(run_id)
+        events: list[dict[str, Any]] = []
+        try:
+            lines = (folder / EVENTS_FILE).read_text(encoding="utf-8").splitlines() if folder is not None else []
+        except OSError:
+            return events
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                break
+            if not isinstance(event, dict) or event.get("seq") != len(events) + 1:
+                break
+            events.append(event)
+        return events
+
     def _emit(self, run: RunState, event: str, data: dict[str, Any]) -> None:
         with self._changed:
-            run.events.append({"seq": len(run.events) + 1, "event": event, "data": data, "ts": time.time()})
+            entry = {"seq": len(run.events) + 1, "event": event, "data": data, "ts": time.time()}
+            run.events.append(entry)
+            # Kept in the run's folder as it happens, so the history can replay it after a restart (best effort)
+            try:
+                folder = self._runs_dir / run.run_id
+                folder.mkdir(parents=True, exist_ok=True)
+                with open(folder / EVENTS_FILE, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, default=str) + "\n")
+            except OSError:
+                pass
             self._changed.notify_all()
 
     def _finish(self, run: RunState, status: str, data: dict[str, Any]) -> None:
