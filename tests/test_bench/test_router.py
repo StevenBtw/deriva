@@ -157,8 +157,19 @@ def test_models_are_listed_without_keys(make_client):
 
     response = client.get("/api/benchmarks/models")
 
-    assert response.json() == [{"name": "m", "provider": "azure", "model": "gpt"}]
+    assert response.json() == [{"name": "m", "provider": "azure", "model": "gpt", "default": False}]
     assert "sk-secret" not in response.text
+
+
+def test_the_default_model_is_marked(make_client):
+    """The benchmark form starts on the model Deriva uses (LLM_DEFAULT_MODEL), not the first in the list."""
+    models = {name: SimpleNamespace(name=name, provider="p", model=name) for name in ("a-first", "b-cheap")}
+    configs = [{"name": "a-first", "default": False}, {"name": "b-cheap", "default": True}]
+    client = make_client(FakeSession(list_benchmark_models=models, list_model_configs=configs))
+
+    listed = client.get("/api/benchmarks/models").json()
+
+    assert [(m["name"], m["default"]) for m in listed] == [("a-first", False), ("b-cheap", True)]
 
 
 def test_process_logs_download_as_one_zip(make_client):
