@@ -266,11 +266,11 @@ describe("Workspace", () => {
     expect(model.get).toHaveBeenCalled();
   });
 
-  it("switches the model between the architect and detail level and filters it by viewpoint", async () => {
+  it("switches the model between the enterprise, solution and detail level and filters it by viewpoint", async () => {
     const node = { id: "n1", name: "Application Server", type: "Node", layer: "Technology", documentation: "" };
     const core = { id: "ac1", name: "Core", type: "ApplicationComponent", layer: "Application", documentation: "" };
     const artifact = { id: "art1", name: "core", type: "Artifact", layer: "Technology", documentation: "" };
-    vi.mocked(model.get).mockImplementation(async (level = "architect") =>
+    vi.mocked(model.get).mockImplementation(async (level = "enterprise") =>
       level === "detail"
         ? {
             elements: [node, core, artifact],
@@ -285,6 +285,11 @@ describe("Workspace", () => {
     render(<Workspace />);
     await userEvent.click(screen.getByRole("button", { name: /View model/ }));
     expect(await screen.findByTestId("archimate")).toHaveTextContent("2 elements");
+    // The enterprise level first; the levels are enterprise, solution and detail
+    expect(model.get).toHaveBeenCalledWith("enterprise");
+    expect(screen.getAllByRole("radio").map((r) => r.getAttribute("value"))).toEqual(["enterprise", "solution", "detail"]);
+    await userEvent.click(screen.getByRole("radio", { name: "Solution" }));
+    await waitFor(() => expect(model.get).toHaveBeenLastCalledWith("solution"));
 
     await userEvent.click(screen.getByRole("radio", { name: "Detail" }));
     await waitFor(() => expect(model.get).toHaveBeenLastCalledWith("detail"));
@@ -295,8 +300,8 @@ describe("Workspace", () => {
     expect(screen.getByRole("button", { name: "select core" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "select Core" })).not.toBeInTheDocument();
 
-    // Back to the architect level: a detail view is no longer offered, the whole model shows again
-    await userEvent.click(screen.getByRole("radio", { name: "Architect" }));
+    // Back to the enterprise level: a detail view is no longer offered, the whole level shows again
+    await userEvent.click(screen.getByRole("radio", { name: "Enterprise" }));
     await waitFor(() => expect(screen.getByTestId("archimate")).toHaveTextContent("2 elements"));
     expect(screen.getByLabelText("Viewpoint")).toHaveValue("");
   });
@@ -631,12 +636,29 @@ describe("Workspace", () => {
     expect(session.useRepository).not.toHaveBeenCalled();
   });
 
+  it("replays the live log of the last run after a reload, from the log its folder kept", async () => {
+    vi.mocked(followRun).mockClear();
+    vi.mocked(runs.history).mockResolvedValue([
+      { run_id: "r8", kind: "all", repository: "deriva", status: "finished", events: 30, started_at: 1791411141, finished_at: 1791411200, events_kept: true },
+    ]);
+    render(<Workspace />);
+
+    await waitFor(() => expect(followRun).toHaveBeenLastCalledWith("r8", expect.any(Function), expect.any(Function)));
+    act(() => handlers.onEvent?.(event(2, "progress", { phase: "extraction", step: "Directory", status: "complete", message: "4 created" })));
+    expect(await screen.findByText(/4 created/)).toBeInTheDocument();
+  });
+
   it("shows the last run after a reload: its prompts from the saved calls, and why its live log is gone", async () => {
-    vi.mocked(runs.history).mockResolvedValue([{ run_id: "r8", kind: "all", repository: "deriva", status: "finished", events: 30, started_at: 1791411141, finished_at: 1791411200 }]);
+    // A run recorded before the studio kept live logs: no stream is asked for (the server has none)
+    vi.mocked(followRun).mockClear();
+    vi.mocked(runs.history).mockResolvedValue([
+      { run_id: "r8", kind: "all", repository: "deriva", status: "finished", events: 30, started_at: 1791411141, finished_at: 1791411200, events_kept: false },
+    ]);
     vi.mocked(runs.calls).mockResolvedValue([llm(1, "c3").data as never]);
     render(<Workspace />);
 
-    expect(await screen.findByText(/live log is not kept/)).toBeInTheDocument();
+    expect(await screen.findByText(/live log was not kept/)).toBeInTheDocument();
+    expect(followRun).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("tab", { name: /Prompts/ }));
     expect(await within(screen.getByRole("tabpanel")).findByText(/DirectoryClassification/)).toBeInTheDocument();
     expect(runs.calls).toHaveBeenCalledWith("r8");
