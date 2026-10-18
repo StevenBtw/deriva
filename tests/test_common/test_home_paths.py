@@ -115,6 +115,17 @@ def test_session_repositories_folder(home, monkeypatch):
     assert PipelineSession().workspace_dir == str(home / "workspace" / "repositories")
 
 
+def test_extraction_finds_the_repositories_where_the_session_lists_them(home, monkeypatch):
+    """REPOSITORY_WORKSPACE_DIR moves the repositories for every reader: extraction's RepoManager() as well as the
+    session (``repo list`` showed them while extraction found none)."""
+    from deriva.adapters.repository import RepoManager
+    from deriva.services.session import PipelineSession
+
+    monkeypatch.setenv("REPOSITORY_WORKSPACE_DIR", "elsewhere/repos")
+    assert RepoManager().workspace_dir == (home / "elsewhere" / "repos").resolve()
+    assert Path(PipelineSession().workspace_dir).resolve() == RepoManager().workspace_dir
+
+
 def test_import_time_folders_sit_in_the_workspace():
     from deriva.adapters.graph import cache
     from deriva.services import about, overfit
