@@ -1241,6 +1241,11 @@ def _model_signature(archimate_manager: Any) -> tuple[frozenset[str], frozenset[
     return elements, relationships
 
 
+def _relationship_keys(archimate_manager: Any) -> set[tuple[str, str, str]]:
+    """(type, source, target) of every relationship in the model: the run log's relationship identity."""
+    return {(str(r.relationship_type), str(r.source), str(r.target)) for r in archimate_manager.get_relationships()}
+
+
 class _SelectionGuard:
     """Nothing changes the model after the joint selection: a refine step after joint_consistency that adds or removes
     an element or a relationship is an error of the run (it may only annotate)."""
@@ -1837,6 +1842,9 @@ def run_derivation(
                 if graph_metadata:
                     refine_params["graph_metadata"] = graph_metadata
 
+                # The relationships before the step: those it adds are named in the run log
+                before = _relationship_keys(archimate_manager) if step_ctx else set()
+
                 # Run the refine step
                 refine_result = run_refine_step(
                     step_name=cfg.step_name,
@@ -1863,6 +1871,8 @@ def run_derivation(
                     cast("dict[str, Any]", stats).setdefault("refine_reports", {})[cfg.step_name] = refine_result.report
 
                 if step_ctx:
+                    for relationship_type, source, target in sorted(_relationship_keys(archimate_manager) - before):
+                        step_ctx.add_relationship(f"{relationship_type}_{source}_{target}")
                     step_ctx.complete()
 
                 if progress:
