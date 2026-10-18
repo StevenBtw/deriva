@@ -767,6 +767,7 @@ class TestPipelineSessionExport:
         levels = connected_session.get_model_levels()
 
         (relationship,) = levels["relationships"]
+        assert relationship["level"] == "enterprise"  # the exported level, as the exchange file carries it
         views = {v["name"]: v for v in levels["views"]}
         assert views["Application Cooperation (enterprise)"]["relationships"] == [relationship["identifier"]]
         assert views["Application Structure (solution)"]["elements"] == ["ac_a", "ac_b"]
