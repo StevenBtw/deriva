@@ -42,8 +42,8 @@ export function LiveLog({ events, runId = null, runStatus = "idle" }: { events: 
   if (!events.length) {
     if (!runId) return <div className="muted">Start a run to follow its progress here.</div>;
     if (runStatus === "running") return <div className="muted">Waiting for the run's first step…</div>;
-    // A run from before the studio restarted: only its summary and its LLM calls were saved
-    return <div className="muted">This run's live log is not kept after the studio restarts; its LLM calls are under Prompts.</div>;
+    // A run from before the studio kept live logs: only its summary and its LLM calls were saved
+    return <div className="muted">This run's live log was not kept (it ran before the studio kept live logs); its LLM calls are under Prompts.</div>;
   }
   // A log region: screen readers announce the lines as the run adds them
   return (
