@@ -44,7 +44,10 @@ export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh
     const view = (model.views ?? []).find((v) => v.name === viewName);
     if (!view) return model;
     const ids = new Set(view.elements);
-    return { elements: model.elements.filter((e) => ids.has(String(e.id))), relationships: model.relationships.filter((r) => ids.has(r.source) && ids.has(r.target)) };
+    // The relationships the view names (its level's); without the list, every relationship between its elements
+    const named = view.relationships ? new Set(view.relationships) : null;
+    const relationships = model.relationships.filter((r) => (named ? named.has(String(r.id)) : ids.has(r.source) && ids.has(r.target)));
+    return { elements: model.elements.filter((e) => ids.has(String(e.id))), relationships };
   }, [model, viewName]);
 
   const selected = selectedId === null ? null : (model.elements.find((e) => String(e.id) === selectedId) ?? null);
