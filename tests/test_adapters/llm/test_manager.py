@@ -1154,6 +1154,30 @@ class TestModelSettings:
         assert manager.last_call["reasoning"] is None
         assert manager.last_call["cache_key"] == CacheManager.generate_cache_key("Hello", "mistral-small-2603", None, temperature=0.0, max_tokens=100)
 
+    @staticmethod
+    def _answer(input_tokens, output_tokens):
+        from types import SimpleNamespace
+
+        usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+        return SimpleNamespace(output="ok", usage=None, response=SimpleNamespace(model_name="qwen3:8b", usage=usage))
+
+    def test_a_call_that_fills_the_model_context_is_warned(self, tmp_path, caplog):
+        """Ollama cuts a prompt longer than its context without an error: a call that used the whole window says so."""
+        with caplog.at_level("WARNING", logger="deriva.adapters.llm.manager"):
+            self._sent(self._manager(tmp_path, provider="ollama", model="qwen3:8b", context=4096), response=self._answer(3900, 150))
+            assert "context" not in caplog.text
+            self._sent(self._manager(tmp_path, provider="ollama", model="qwen3:8b", context=4096), response=self._answer(4000, 96))
+
+        assert "4096 tokens of qwen3:8b's 4096-token context" in caplog.text
+
+    def test_without_a_context_size_no_call_is_warned(self, tmp_path, caplog):
+        manager = self._manager(tmp_path, provider="ollama", model="qwen3:8b")
+
+        with caplog.at_level("WARNING", logger="deriva.adapters.llm.manager"):
+            self._sent(manager, response=self._answer(400000, 96))
+
+        assert "context" not in caplog.text
+
     def test_the_model_that_served_the_call_is_recorded(self, tmp_path):
         """A provider can serve another model under a retired name (devstral-2512 answers as mistral-medium-3-5)."""
         from types import SimpleNamespace
@@ -1181,6 +1205,45 @@ def test_benchmark_models_read_sampling_and_reasoning(monkeypatch):
 
     assert (models["haiku"].sampling, models["haiku"].reasoning) == (False, "none")
     assert (models["small"].sampling, models["small"].reasoning) == (True, None)
+
+
+def test_benchmark_models_read_the_context_size(monkeypatch):
+    from deriva.adapters.llm.manager import load_benchmark_models
+
+    env = {"LLM_QWEN_PROVIDER": "ollama", "LLM_QWEN_MODEL": "qwen3:8b", "LLM_QWEN_CONTEXT": "8192", "LLM_SMALL_PROVIDER": "mistral", "LLM_SMALL_MODEL": "m"}
+    with patch("deriva.common.settings.read_env_file", return_value=env), patch.dict("os.environ", {}, clear=True):
+        models = load_benchmark_models()
+
+    assert (models["qwen"].context, models["small"].context) == (8192, None)
+
+
+def test_unset_sampling_follows_the_model_profile(monkeypatch):
+    """pydantic-ai drops a temperature the model refuses, with a warning on every call: unset sampling is off for it."""
+    from deriva.adapters.llm.manager import load_benchmark_models
+
+    env = {
+        "LLM_NEW_PROVIDER": "anthropic",
+        "LLM_NEW_MODEL": "claude-haiku-5-5",
+        "LLM_OLD_PROVIDER": "anthropic",
+        "LLM_OLD_MODEL": "claude-haiku-4-5-20251001",
+        "LLM_KEPT_PROVIDER": "anthropic",
+        "LLM_KEPT_MODEL": "claude-haiku-5-5",
+        "LLM_KEPT_SAMPLING": "true",
+    }
+    with patch("deriva.common.settings.read_env_file", return_value=env), patch.dict("os.environ", {}, clear=True):
+        models = load_benchmark_models()
+
+    assert (models["new"].sampling, models["old"].sampling, models["kept"].sampling) == (False, True, True)
+
+
+def test_the_provider_settings_follow_the_model_profile_too(monkeypatch):
+    from deriva.adapters.llm.manager import LLMManager
+
+    env = {"LLM_PROVIDER": "anthropic", "LLM_ANTHROPIC_MODEL": "claude-haiku-5-5", "LLM_ANTHROPIC_API_KEY": "k"}
+    with patch("deriva.common.settings.read_env_file", return_value=env), patch.dict("os.environ", {}, clear=True):
+        config = LLMManager.__new__(LLMManager)._load_config_from_env()
+
+    assert config["sampling"] is False
 
 
 class TestLoadBenchmarkModelsStripping:

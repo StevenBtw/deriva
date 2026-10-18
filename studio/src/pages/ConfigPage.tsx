@@ -178,9 +178,18 @@ function DryRun({ name, query }: { name: string; query?: string }) {
 }
 
 /** The selected step's texts, params, query and batch size; remounted per step and version, so a new selection starts from the stored values. */
+/** The prompt tabs of a step: a step without LLM calls (``llm`` false) shows only the texts it has stored. */
+function promptTabs(row: ConfigRow): [Tab, string][] {
+  const shown = (text: unknown) => row.llm !== false || (typeof text === "string" && text.trim() !== "");
+  return [
+    ...(shown(row.instruction) ? ([["instruction", "Instruction"]] as [Tab, string][]) : []),
+    ...(shown(row.example) ? ([["example", "Example"]] as [Tab, string][]) : []),
+  ];
+}
+
 function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: EditorProps) {
   const [draft, setDraft] = useState<Draft>(() => draftOf(row));
-  const [tab, setTab] = useState<Tab>("instruction");
+  const [tab, setTab] = useState<Tab>(() => promptTabs(row)[0]?.[0] ?? "params");
   const [findings, setFindings] = useState<ScanResult["findings"] | null>(null);
   const [saving, setSaving] = useState(false);
   const busy = useRef(false);
@@ -188,8 +197,7 @@ function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: Edito
   const changes = changesOf(row, draft, stepType);
   const dirty = Object.keys(changes).length > 0;
   const tabs: [Tab, string][] = [
-    ["instruction", "Instruction"],
-    ["example", "Example"],
+    ...promptTabs(row),
     ["params", "Params"],
     ...(stepType === "derivation" ? ([["query", "Candidate query"]] as [Tab, string][]) : []),
     ["history", "History"],
@@ -370,15 +378,25 @@ export function ConfigPage({ stepType, title }: Props) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.name} className={`clickable${r.name === selected ? " sel" : ""}`}>
-                  <td onClick={() => choose(r.name)}>{r.sequence}</td>
-                  <td onClick={() => choose(r.name)}>{r.name}</td>
-                  <td onClick={() => choose(r.name)}>{r.version !== null ? `v${r.version}` : "off"}</td>
-                  <td>
-                    <button type="button" className="toggle" role="switch" aria-checked={r.enabled} aria-label={`Enable ${r.name}`} onClick={() => void toggle(r)} />
-                  </td>
-                </tr>
+              {rows.map((r, i) => (
+                <Fragment key={r.name}>
+                  {/* Derivation numbers its steps per phase: each phase gets a header */}
+                  {typeof r.phase === "string" && r.phase !== rows[i - 1]?.phase && (
+                    <tr>
+                      <th scope="rowgroup" colSpan={4}>
+                        {r.phase}
+                      </th>
+                    </tr>
+                  )}
+                  <tr className={`clickable${r.name === selected ? " sel" : ""}`}>
+                    <td onClick={() => choose(r.name)}>{r.sequence}</td>
+                    <td onClick={() => choose(r.name)}>{r.name}</td>
+                    <td onClick={() => choose(r.name)}>{r.version !== null ? `v${r.version}` : "off"}</td>
+                    <td>
+                      <button type="button" className="toggle" role="switch" aria-checked={r.enabled} aria-label={`Enable ${r.name}`} onClick={() => void toggle(r)} />
+                    </td>
+                  </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>

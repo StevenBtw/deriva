@@ -713,12 +713,15 @@ def model_set(
     sampling: Annotated[str | None, typer.Option("--sampling", help="false for models that take no temperature ('' removes it)")] = None,
     reasoning: Annotated[str | None, typer.Option("--reasoning", help="Reasoning level: none (off), low, medium, high ... ('' removes it)")] = None,
     temperature: Annotated[str | None, typer.Option("--temperature", help="The model's own temperature, 0 to 2, over LLM_TEMPERATURE ('' removes it)")] = None,
+    context: Annotated[
+        str | None, typer.Option("--context", help="The model's context size in tokens (a local server's window); a call that fills it is warned ('' removes it)")
+    ] = None,
 ) -> None:
     """Add or change a model config in .env (other lines and comments are kept)."""
     secret = _read_key() if key else None
     try:
         PipelineSession().save_model_config(
-            name, provider=provider, model=model, url=url, key=secret, key_env=key_env, sampling=sampling, reasoning=reasoning, temperature=temperature
+            name, provider=provider, model=model, url=url, key=secret, key_env=key_env, sampling=sampling, reasoning=reasoning, temperature=temperature, context=context
         )
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)

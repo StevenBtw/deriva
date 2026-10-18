@@ -22,7 +22,7 @@ from dotenv import dotenv_values
 from deriva.adapters.llm.model_registry import VALID_PROVIDERS, parse_sampling, reasoning_settings
 from deriva.common.paths import env_file
 
-FIELDS = ("PROVIDER", "MODEL", "URL", "KEY", "KEY_ENV", "SAMPLING", "REASONING", "TEMPERATURE")
+FIELDS = ("PROVIDER", "MODEL", "URL", "KEY", "KEY_ENV", "SAMPLING", "REASONING", "TEMPERATURE", "CONTEXT")
 # Keys of settings Deriva no longer has (no code read them): a delete still removes them with their model
 LEGACY_FIELDS = ("STRUCTURED_OUTPUT",)
 NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
@@ -122,6 +122,7 @@ def list_models(env_path: str | Path) -> list[dict[str, Any]]:
                 "sampling": field["SAMPLING"],
                 "reasoning": field["REASONING"],
                 "temperature": field["TEMPERATURE"],
+                "context": field["CONTEXT"],
                 "default": values.get(DEFAULT_MODEL) == env.lower().replace("_", "-"),
             }
         )
@@ -140,11 +141,13 @@ def set_model(
     sampling: str | None = None,
     reasoning: str | None = None,
     temperature: str | None = None,
+    context: str | None = None,
 ) -> None:
     """Add or change a model config; ``None`` keeps a field, ``""`` removes it (a blank key keeps the stored key).
 
     ``sampling`` ``false`` is for models that take no temperature; ``reasoning`` is a level
-    (``none`` turns reasoning off) for OpenAI, Azure and Anthropic models.
+    (``none`` turns reasoning off) for OpenAI, Azure and Anthropic models; ``context`` is the model's context size in
+    tokens (a local server's window), so a call that fills it is warned.
     """
     if not NAME.fullmatch(name):
         raise ValueError(f"Model names use lower case letters, digits and '-': {name!r}")
@@ -161,6 +164,7 @@ def set_model(
         ("sampling", sampling),
         ("reasoning", reasoning),
         ("temperature", temperature),
+        ("context", context),
     ):
         if value and any(c in value for c in "\r\n\0"):
             raise ValueError(f"The {field} cannot hold a line break")
@@ -175,6 +179,8 @@ def set_model(
             degrees = -1.0
         if not 0.0 <= degrees <= 2.0:
             raise ValueError(f"temperature must be a number between 0 and 2, got {temperature!r}")
+    if context and not (context.strip().isdigit() and int(context) > 0):
+        raise ValueError(f"context must be a positive whole number of tokens, got {context!r}")
     env = _env_name(name)
     path = Path(env_path)
     lines, newline = _read_lines(path)
@@ -187,6 +193,7 @@ def set_model(
         ("SAMPLING", sampling.strip().lower() if sampling else sampling),
         ("REASONING", reasoning.strip().lower() if reasoning else reasoning),
         ("TEMPERATURE", temperature.strip() if temperature else temperature),
+        ("CONTEXT", context.strip() if context else context),
     ):
         variable = f"LLM_{env}_{field}"
         if value is None:

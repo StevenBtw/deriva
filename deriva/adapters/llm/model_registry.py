@@ -29,10 +29,21 @@ PROVIDER_REASONING_LEVELS = {
 _SAMPLING_VALUES = {"true": True, "1": True, "yes": True, "on": True, "false": False, "0": False, "no": False, "off": False}
 
 
-def parse_sampling(value: str | None) -> bool:
-    """LLM_{NAME}_SAMPLING: off for models that take no temperature (unset means on)."""
+def default_sampling(provider: str, model: str) -> bool:
+    """Whether a model takes a temperature when its config does not say. pydantic-ai's model profile knows the Anthropic
+    models that refuse sampling settings (it drops them, with a warning on every call); any other model takes one."""
+    if provider == "anthropic":
+        from pydantic_ai.profiles.anthropic import anthropic_model_profile
+
+        profile = anthropic_model_profile(model) or {}
+        return not profile.get("anthropic_disallows_sampling_settings", False)
+    return True
+
+
+def parse_sampling(value: str | None, provider: str = "", model: str = "") -> bool:
+    """LLM_{NAME}_SAMPLING: off for models that take no temperature (unset: what the model's profile says)."""
     if value is None or not value.strip():
-        return True
+        return default_sampling(provider, model)
     if value.strip().lower() not in _SAMPLING_VALUES:
         raise ValueError(f"sampling must be true or false, got {value!r}")
     return _SAMPLING_VALUES[value.strip().lower()]

@@ -149,6 +149,7 @@ def test_named_model_configs(dotenv, monkeypatch):
         "sampling": None,
         "reasoning": None,
         "temperature": None,
+        "context": None,
     }
     assert configs["LOCAL"]["url"] == "http://localhost:11434/api/chat"
 

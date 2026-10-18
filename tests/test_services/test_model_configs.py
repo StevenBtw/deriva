@@ -43,6 +43,7 @@ def test_models_are_listed_with_masked_keys(env):
             "sampling": None,
             "reasoning": None,
             "temperature": None,
+            "context": None,
             "default": False,
         },
         {
@@ -55,6 +56,7 @@ def test_models_are_listed_with_masked_keys(env):
             "sampling": None,
             "reasoning": None,
             "temperature": None,
+            "context": None,
             "default": False,
         },
     ]
@@ -282,6 +284,19 @@ def test_deleting_the_default_model_removes_a_quoted_or_commented_default(tmp_pa
     delete_model(path, "mistral-small")
 
     assert "LLM_DEFAULT_MODEL" not in path.read_text(encoding="utf-8")
+
+
+def test_a_model_context_is_saved_listed_and_removed(env):
+    set_model(env, "ollama-qwen", provider="ollama", model="qwen3:8b", context="8192")
+
+    assert "LLM_OLLAMA_QWEN_CONTEXT=8192\n" in env.read_text(encoding="utf-8")
+    (saved,) = [m for m in list_models(env) if m["name"] == "ollama-qwen"]
+    assert saved["context"] == "8192"
+    for wrong in ("big", "0", "-1", "1.5"):
+        with pytest.raises(ValueError, match="context"):
+            set_model(env, "ollama-qwen", provider="ollama", model="qwen3:8b", context=wrong)
+    set_model(env, "ollama-qwen", provider="ollama", model="qwen3:8b", context="")
+    assert "QWEN_CONTEXT" not in env.read_text(encoding="utf-8")
 
 
 def test_a_model_temperature_is_saved_listed_and_removed(env):

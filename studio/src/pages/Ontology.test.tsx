@@ -148,4 +148,11 @@ describe("Output ontology", () => {
     expect(headers).toContain("A·Service");
     expect(headers).toContain("T·Service");
   });
+
+  it("abbreviates the matrix rows like its columns, with the full type on hover, so the matrix fits", async () => {
+    render(<OutputOntologyPage />);
+
+    const row = await screen.findByRole("rowheader", { name: "A·Service" });
+    expect(row).toHaveAttribute("title", "ApplicationService");
+  });
 });

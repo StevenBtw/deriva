@@ -19,6 +19,8 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 - **Interrupted runs in the studio history**: a run whose studio process ended before the run did (a crash, a killed process) is listed as `interrupted`, with its kind, repository and times from its kept events; its live log replays and ends with a note that the studio stopped, instead of the run missing from the history
 - **Runs without an LLM**: with `--no-llm` an LLM-only extraction step (directory classification, business concepts, technologies) counts under `Steps skipped` with its warning, instead of as a completed step that logged "had errors"; it still keeps what it wrote in an earlier run. The `--no-llm` help says what runs: the extraction parsers and derivation's prep phase, so no elements
 - **Which graph `status` reads**: `deriva-cli status` names its graph; without `--repo` that is the shared `default` graph, with a hint to pass `--repo`
+- **Temperature for models that refuse one**: a model config without `SAMPLING` now follows the model, as pydantic-ai knows it: an Anthropic model that takes no temperature (Claude Haiku 5.5) gets none, instead of a warning on every call that the temperature was dropped. An explicit `SAMPLING` still wins
+- **Local context windows**: a model config takes its context size (`LLM_{NAME}_CONTEXT`, `config model set --context N`), and a call that fills it is logged as a warning: Ollama cuts a prompt longer than its window (4096 tokens unless started with `OLLAMA_CONTEXT_LENGTH`) without an error, and its OpenAI-compatible API cannot set the window per call
 
 ## v0.8.3 - Adding abstraction to consistency (October 18 2026)
 

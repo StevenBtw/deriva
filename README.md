@@ -162,7 +162,7 @@ LLM_OPENAI_LUNA_REASONING=none        # reasoning off, so the temperature applie
 LLM_OPENAI_LUNA_TEMPERATURE=0         # this model's own temperature, over LLM_TEMPERATURE
 ```
 
-`REASONING` is a level (`none`, `low`, `medium`, `high`) for OpenAI, Azure and Anthropic models. A model with `SAMPLING=false` runs at its provider's default sampling, so its answers can vary more than those of a model at temperature 0. `TEMPERATURE` (0 to 2) sets one model's temperature; models without it use `LLM_TEMPERATURE`. Every LLM call records the temperature it sent (none with `SAMPLING=false`); top_p and seed are never sent, so the provider's defaults apply. `deriva-cli config model set <name> --provider <provider> --model <model id> --sampling false --reasoning none --temperature 0` writes these settings.
+`REASONING` is a level (`none`, `low`, `medium`, `high`) for OpenAI, Azure and Anthropic models. Without `SAMPLING`, an Anthropic model that refuses a temperature (such as Claude Haiku 5.5) gets none, and every other model takes one. A model with `SAMPLING=false` runs at its provider's default sampling, so its answers can vary more than those of a model at temperature 0. `TEMPERATURE` (0 to 2) sets one model's temperature; models without it use `LLM_TEMPERATURE`. Every LLM call records the temperature it sent (none with `SAMPLING=false`); top_p and seed are never sent, so the provider's defaults apply. `deriva-cli config model set <name> --provider <provider> --model <model id> --sampling false --reasoning none --temperature 0` writes these settings.
 
 A local model needs no key:
 
@@ -172,7 +172,10 @@ LLM_DEFAULT_MODEL=ollama-devstral
 LLM_OLLAMA_DEVSTRAL_PROVIDER=ollama
 LLM_OLLAMA_DEVSTRAL_MODEL=devstral-small-2
 LLM_OLLAMA_DEVSTRAL_URL=http://localhost:11434/api/chat
+LLM_OLLAMA_DEVSTRAL_CONTEXT=8192      # the server's context window, in tokens
 ```
+
+Ollama gives each model a 4096-token window unless you start it with a larger one (`OLLAMA_CONTEXT_LENGTH=8192 ollama serve`), and it cuts a longer prompt without an error. Deriva cannot set the window through Ollama's OpenAI-compatible API, so start the server with the size you need and set `CONTEXT` to the same number (`deriva-cli config model set <name> ... --context 8192`). A call that fills the window is then logged as a warning. Very small local models (about 3B parameters) can fail the classification steps with `Exceeded maximum output retries`; use a larger model when they do.
 
 | Provider | For |
 |----------|-----|

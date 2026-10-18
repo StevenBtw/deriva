@@ -53,7 +53,7 @@ from deriva.common.paths import resolve
 from deriva.common.settings import LlmSettings
 
 from .cache import CacheManager
-from .model_registry import VALID_PROVIDERS, get_pydantic_ai_model, parse_sampling, reasoning_settings
+from .model_registry import VALID_PROVIDERS, default_sampling, get_pydantic_ai_model, parse_sampling, reasoning_settings
 from .models import (
     BenchmarkModelConfig,
     CachedResponse,
@@ -214,9 +214,10 @@ def load_benchmark_models() -> dict[str, BenchmarkModelConfig]:
                 api_url=fields["url"],
                 api_key=fields["key"],
                 api_key_env=fields["key_env"],
-                sampling=parse_sampling(fields.get("sampling")),
+                sampling=parse_sampling(fields.get("sampling"), provider.lower(), model),
                 reasoning=(fields.get("reasoning") or "").strip().lower() or None,
                 temperature=float(own) if (own := (fields.get("temperature") or "").strip()) else None,
+                context=int(size) if (size := (fields.get("context") or "").strip()) else None,
             )
         except ValueError:
             continue
@@ -314,6 +315,7 @@ class LLMManager:
         self.max_tokens = self.config.get("max_tokens")
         self.sampling = self.config.get("sampling", True)
         self.reasoning = self.config.get("reasoning")
+        self.context = self.config.get("context")
 
     @classmethod
     def from_config(
@@ -357,6 +359,7 @@ class LLMManager:
             "nocache": nocache,
             "sampling": config.sampling,
             "reasoning": config.reasoning,
+            "context": config.context,
         }
 
         instance._validate_config()
@@ -389,6 +392,7 @@ class LLMManager:
         instance.max_tokens = None
         instance.sampling = config.sampling
         instance.reasoning = config.reasoning
+        instance.context = config.context
 
         return instance
 
@@ -396,6 +400,22 @@ class LLMManager:
     def provider_name(self) -> str:
         """Get the provider name."""
         return self.config.get("provider", "unknown")
+
+    def _warn_on_a_full_context(self, result: Any) -> None:
+        """A call whose last request used the model's whole context (when the config names it) lost part of its prompt
+        or answer: a local server such as Ollama cuts a prompt longer than its window without an error."""
+        if not self.context:
+            return
+        usage = getattr(getattr(result, "response", None), "usage", None)
+        used = (getattr(usage, "input_tokens", 0) or 0) + (getattr(usage, "output_tokens", 0) or 0)
+        if used >= self.context:
+            logger.warning(
+                "An LLM call used %d tokens of %s's %d-token context: part of the prompt or the answer was cut. "
+                "Raise the server's context (Ollama: OLLAMA_CONTEXT_LENGTH) and the model's context setting",
+                used,
+                self.model,
+                self.context,
+            )
 
     def _redact(self, text: str) -> str:
         """Keep the configured API key out of exception text: h11 quotes header values in its errors."""
@@ -418,10 +438,10 @@ class LLMManager:
             api_url = config.get_api_url()
             api_key = config.get_api_key()
             model = config.model
-            sampling, reasoning = config.sampling, config.reasoning
+            sampling, reasoning, context = config.sampling, config.reasoning, config.context
         else:
             provider = llm.provider
-            sampling, reasoning = True, None
+            reasoning, context = None, None
 
             if provider == "azure":
                 api_url = llm.azure_api_url
@@ -449,6 +469,7 @@ class LLMManager:
                 model = llm.lmstudio_model
             else:
                 raise ConfigurationError(f"Unknown LLM provider: {provider}")
+            sampling = default_sampling(provider, model)
 
         max_tokens = llm.max_tokens
 
@@ -466,6 +487,7 @@ class LLMManager:
             "nocache": llm.nocache,
             "sampling": sampling,
             "reasoning": reasoning,
+            "context": context,
             "requests_per_minute": llm.rate_limit_rpm,
             "min_request_delay": llm.rate_limit_delay,
             # Retry configuration
@@ -755,6 +777,8 @@ class LLMManager:
                     "completion_tokens": run_usage.output_tokens,
                     "total_tokens": run_usage.input_tokens + run_usage.output_tokens,
                 }
+
+            self._warn_on_a_full_context(result)
 
             # Handle response
             output: Any = result.output

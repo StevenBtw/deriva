@@ -262,7 +262,7 @@ export function OutputOntologyPage() {
           </div>
         ))}
       </div>
-      <div className="pad cols" style={{ gridTemplateColumns: "260px 1fr" }}>
+      <div className="pad cols" style={{ gridTemplateColumns: "260px" }}>
         <div className="card">
           <div className="hd">
             <h3>Relationship types</h3>
@@ -279,6 +279,9 @@ export function OutputOntologyPage() {
           </table>
           <div className="note">Read-only: switching a relationship kind off changes derivation, so it is decided first.</div>
         </div>
+      </div>
+      {/* The matrix gets the page's full width: next to the relationship types its columns ran past the card at 1440px */}
+      <div className="pad">
         <div className="card" style={{ overflow: "auto" }}>
           <div className="hd">
             <h3>Allowed relationships (ArchiMate 3.2)</h3>
@@ -298,7 +301,9 @@ export function OutputOntologyPage() {
             <tbody>
               {sources.map((s) => (
                 <tr key={s}>
-                  <th>{s}</th>
+                  <th scope="row" title={s}>
+                    {header(s)}
+                  </th>
                   {targets.map((t) => {
                     const cell = ruleCell(rule(s, t));
                     return (

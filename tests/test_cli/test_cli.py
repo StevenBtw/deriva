@@ -2955,9 +2955,16 @@ class TestModelConfigCommands:
 
         assert result.exit_code == 0, result.output
         mock_session_class.return_value.save_model_config.assert_called_once_with(
-            "mistral-small", provider="mistral", model="mistral-small-latest", url=None, key="sk-x", key_env=None, sampling=None, reasoning=None, temperature=None
+            "mistral-small", provider="mistral", model="mistral-small-latest", url=None, key="sk-x", key_env=None, sampling=None, reasoning=None, temperature=None, context=None
         )
         assert "sk-x" not in result.output
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_model_set_with_a_context_size(self, mock_session_class):
+        result = runner.invoke(app, ["config", "model", "set", "ollama-qwen", "--provider", "ollama", "--model", "qwen3:8b", "--context", "8192"])
+
+        assert result.exit_code == 0, result.output
+        assert mock_session_class.return_value.save_model_config.call_args.kwargs["context"] == "8192"
 
     @patch("deriva.cli.commands.config.PipelineSession")
     def test_model_set_takes_no_key_as_an_argument(self, mock_session_class):

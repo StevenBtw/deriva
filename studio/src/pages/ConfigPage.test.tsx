@@ -57,6 +57,36 @@ describe("ConfigPage", () => {
     await waitFor(() => expect(configs.list).toHaveBeenCalledTimes(2));
   });
 
+  it("heads each derivation phase, since step numbers start again per phase", async () => {
+    vi.mocked(configs.list).mockResolvedValue([
+      { name: "pagerank", phase: "prep", llm: false, sequence: 5, enabled: true, instruction: null, example: null, version: 3 },
+      { name: "ApplicationComponent", phase: "generate", llm: true, sequence: 1, enabled: true, instruction: "Name it.", example: "", version: 7 },
+      { name: "Node", phase: "generate", llm: true, sequence: 2, enabled: true, instruction: "Name it.", example: "", version: 2 },
+      { name: "joint_consistency", phase: "refine", llm: false, sequence: 8, enabled: true, instruction: null, example: null, version: 4 },
+    ]);
+    render(<ConfigPage stepType="derivation" title="Derivation config" />);
+
+    await screen.findByRole("cell", { name: "pagerank" });
+    const headers = screen.getAllByRole("rowheader").map((h) => h.textContent);
+    expect(headers).toEqual(["prep", "generate", "refine"]);
+  });
+
+  it("shows no prompt editors for a step without LLM calls and without texts", async () => {
+    vi.mocked(configs.list).mockResolvedValue([
+      { name: "pagerank", phase: "prep", llm: false, sequence: 5, enabled: true, instruction: null, example: null, params: '{"damping": 0.85}', version: 3 },
+      { name: "orphan_elements", phase: "refine", llm: false, sequence: 1, enabled: true, instruction: "Kept text.", example: null, version: 2 },
+    ]);
+    render(<ConfigPage stepType="derivation" title="Derivation config" />);
+
+    expect(await screen.findByLabelText("Params")).toHaveValue('{"damping": 0.85}');
+    expect(screen.queryByRole("tab", { name: "Instruction" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Example" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("cell", { name: "orphan_elements" }));
+    expect(await screen.findByRole("tab", { name: "Instruction" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Example" })).not.toBeInTheDocument();
+  });
+
   it("explains the overfit scan without internal rule numbers", async () => {
     render(<ConfigPage stepType="derivation" title="Derivation config" />);
     expect(await screen.findByText("Changed texts are scanned for overfitting before they are saved.")).toBeInTheDocument();
