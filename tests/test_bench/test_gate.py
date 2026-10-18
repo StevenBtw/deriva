@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from deriva.bench.gate import GateRules, measure, verdict
+from deriva.bench.gate import GateRules, measure, verdict, verdict_markdown
 
 MODEL = "anthropic-haiku55"
 REFERENCE = {
@@ -198,6 +198,19 @@ def test_a_rise_below_one_point_is_held_and_a_relationship_rise_counts():
     assert (result["better"], result["needed"], result["verdict"]) == (2, 2, "PASS")
 
 
+def test_a_level_that_only_holds_is_held_not_failed():
+    """Too few repositories better but nothing dropping and consistency kept: the change holds this level (a change aimed
+    at another level, such as one rule of the solution level, leaves the enterprise level held)."""
+    baseline = {r: _row(r, 0.50, 0.50) for r in "abcdef"}
+    candidate = {r: _row(r, 0.50, 0.50) for r in "bcdef"} | {"a": _row("a", 0.50, 0.50, rel_precision=0.535)}
+
+    result = verdict(baseline, candidate)
+
+    assert (result["better"], result["needed"], result["verdict"], result["failures"]) == (1, 4, "HELD", [])
+    assert result["held"] == ["1 of 6 measured repositories better (at least 4)"]
+    assert "**HELD**" in "\n".join(verdict_markdown(result)) and "- 1 of 6 measured repositories better (at least 4)" in "\n".join(verdict_markdown(result))
+
+
 def test_a_relationship_drop_beyond_two_points_fails():
     baseline = {r: _row(r, 0.50, 0.50) for r in "abc"}
     candidate = {r: _row(r, 0.52, 0.52) for r in "ab"} | {"c": _row("c", 0.52, 0.52, rel_precision=0.47)}
@@ -224,12 +237,36 @@ def test_a_level_measures_that_level_and_a_reference_without_it_has_no_measure(t
     assert measure(sessions, goldens, references, level="enterprise")["shop"]["recall"] == 1.0
     shop = measure(sessions, goldens, references, level="solution")["shop"]
     assert (shop["source"], shop["recall"]) == ("reference", 0.5)  # the library is missing at the solution level
-    # The golden model has no levels yet: no solution measure, the enterprise one as before
+    # The golden model has no levels: measured on the union only
     assert measure(sessions, goldens, references, level="solution")["ledger"]["source"] is None
+    assert measure(sessions, goldens, references, level="enterprise")["ledger"]["source"] is None
     assert measure(sessions, goldens, references, level="union")["ledger"]["source"] == "golden"
     # A reference without solution elements has no solution measure
     (goldens / "shop.json").write_text(json.dumps(REFERENCE), encoding="utf-8")
     assert measure(sessions, goldens, references, level="solution")["shop"]["source"] is None
+
+
+def test_a_reference_without_level_tags_is_measured_on_the_union_only(tmp_path, folders):
+    """Untagged, every reference element would count as enterprise and the solution-level elements a run derives would
+    show as missing there: such a reference does not vote on a single level, and says why."""
+    from deriva.bench.gate import table_markdown
+
+    goldens, references = folders
+    run = _snapshot([("a", "ApplicationComponent", "Customer Core")])
+    run["elements"][0]["levels"] = ["enterprise", "solution"]
+    sessions = [_session(tmp_path, "s1", "shop", [run, run]), _session(tmp_path, "s2", "ledger", [run, run])]
+
+    for level in ("enterprise", "solution"):
+        measured = measure(sessions, goldens, references, level=level)
+        for repo in ("shop", "ledger"):  # an untagged development reference, a golden model (no levels)
+            assert (measured[repo]["source"], measured[repo]["recall"], measured[repo]["note"]) == (None, None, "no level tags")
+        assert "| shop | no level tags |" in "\n".join(table_markdown(measured, level))
+    union = measure(sessions, goldens, references, level="union")
+    assert (union["shop"]["source"], union["ledger"]["source"]) == ("reference", "golden")
+    # One element with levels makes the reference a tagged one (the rest are enterprise, as written)
+    tagged = {**REFERENCE, "elements": [{**REFERENCE["elements"][0], "levels": ["enterprise"]}, *REFERENCE["elements"][1:]]}
+    (goldens / "shop.json").write_text(json.dumps(tagged), encoding="utf-8")
+    assert measure(sessions, goldens, references, level="enterprise")["shop"]["source"] == "reference"
 
 
 def test_the_overall_verdict_needs_every_measured_level_to_pass():
@@ -241,6 +278,19 @@ def test_the_overall_verdict_needs_every_measured_level_to_pass():
 
     assert overall_verdict({"enterprise": passing, "solution": unmeasured, "union": passing}) == ("PASS", ["enterprise", "union"])
     assert overall_verdict({"enterprise": passing, "solution": failing, "union": passing})[0] == "FAIL"
+
+
+def test_a_held_level_does_not_block_a_level_that_passes():
+    """The overall verdict passes when no level fails and at least one passes; held everywhere is held, not a pass."""
+    from deriva.bench.gate import overall_verdict
+
+    passing = {"verdict": "PASS", "measured": 6, "failures": []}
+    held = {"verdict": "HELD", "measured": 6, "failures": [], "held": ["1 of 6 measured repositories better (at least 4)"]}
+    failing = {"verdict": "FAIL", "measured": 6, "failures": ["x drops 3.0 points on recall (at most 2.0)"]}
+
+    assert overall_verdict({"enterprise": held, "solution": passing, "union": passing}) == ("PASS", ["enterprise", "solution", "union"])
+    assert overall_verdict({"enterprise": held, "solution": held, "union": held})[0] == "HELD"
+    assert overall_verdict({"enterprise": held, "solution": failing, "union": passing})[0] == "FAIL"
 
 
 def test_golden_elements_and_relationships_match_through_structure_refs(tmp_path, folders):
