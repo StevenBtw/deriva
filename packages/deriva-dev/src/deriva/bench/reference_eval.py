@@ -54,6 +54,7 @@ class Reference:
     elements: list[RefElement] = field(default_factory=list)
     relationships: list[RefRelationship] = field(default_factory=list)
     chains: list[Chain] = field(default_factory=list)
+    tagged: bool = False  # Whether any element or relationship names its levels; untagged, all count as enterprise
 
 
 def parse_reference(data: dict[str, Any]) -> Reference:
@@ -78,7 +79,8 @@ def parse_reference(data: dict[str, Any]) -> Reference:
     ends = {k for r in relationships for k in (r.source, r.target)} | {k for c in chains for s in c.steps for k in (s[0], s[2])}
     if unknown := ends - keys:
         raise ValueError(f"{data['repository']}: unknown element keys {sorted(unknown)}")
-    return Reference(repository=data["repository"], elements=elements, relationships=relationships, chains=chains)
+    tagged = any("levels" in item or "cross_level" in item for item in [*data["elements"], *data.get("relationships", [])])
+    return Reference(repository=data["repository"], elements=elements, relationships=relationships, chains=chains, tagged=tagged)
 
 
 LEVELS = ("enterprise", "solution")
