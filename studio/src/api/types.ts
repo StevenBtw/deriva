@@ -83,13 +83,24 @@ export type LinkedView = { lanes: Lane[]; nodes: WidgetNode[]; edges: WidgetEdge
 export type ModelElement = { id: string; name: string; type: string; layer: string; documentation: string; source?: string | null };
 export type ModelRelationship = { id: string; source: string; target: string; type: string; name: string };
 /** The export levels: the derived model (architect) and, with it, the members of its elements (detail). */
-export type ModelLevel = "architect" | "detail";
+/** The studio's model levels: enterprise, solution, detail (the solution level with the members); "architect" is the whole model of earlier studios. */
+export type ModelLevel = "enterprise" | "solution" | "detail" | "architect";
 /** A generated view: its ArchiMate viewpoint, its level (enterprise, solution or detail; "architect" in earlier models), the elements and the relationships it shows. */
-export type ModelView = { name: string; viewpoint: string; level: ModelLevel | "enterprise" | "solution"; elements: string[]; relationships?: string[] };
+export type ModelView = { name: string; viewpoint: string; level: ModelLevel; elements: string[]; relationships?: string[] };
 export type Model = { elements: ModelElement[]; relationships: ModelRelationship[]; views?: ModelView[] };
 
 export type RunKind = "all" | "extraction" | "derivation";
-export type RunSummary = { run_id: string; kind: RunKind | "benchmark"; repository: string | null; status: string; events: number; started_at: number; finished_at: number | null };
+/** A run of the studio; ``events_kept`` false: a run from before the studio kept live logs, its events cannot be replayed. */
+export type RunSummary = {
+  run_id: string;
+  kind: RunKind | "benchmark";
+  repository: string | null;
+  status: string;
+  events: number;
+  started_at: number;
+  finished_at: number | null;
+  events_kept?: boolean;
+};
 export type RunEventName = "started" | "progress" | "llm" | "finished" | "cancelled" | "error";
 export type RunEvent = {
   seq: number;
