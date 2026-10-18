@@ -48,6 +48,8 @@ class TestBenchmarkCommands:
 
         assert result.exit_code == 0
         assert "BENCHMARK COMPLETE" in result.stdout
+        # The follow-up names the CLI command (deriva itself starts the studio)
+        assert "  deriva-cli benchmark analyze " in result.stdout
 
     @patch("deriva.bench.cli.PipelineSession")
     def test_benchmark_list(self, mock_session_class):
