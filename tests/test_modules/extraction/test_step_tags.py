@@ -60,3 +60,10 @@ def test_a_node_another_step_also_produces_keeps_both_steps():
     plan = plan_sweep("DirectoryClassification", {"c": ["BusinessConcept"]}, {"c"}, set(), set())
 
     assert plan.set_steps == {"c": ["BusinessConcept", "DirectoryClassification"]} and plan.delete_nodes == []
+
+
+def test_build_modules_and_their_edges_belong_to_the_build_module_step():
+    assert node_step(["Graph", "BuildModule"], {"extractionMethod": "structural"}) == "BuildModule"
+    assert edge_step("INCLUDES", "BuildModule", "File") == "BuildModule"
+    assert edge_step("NESTS", "BuildModule", "BuildModule") == "BuildModule"
+    assert edge_step("BUILDS", "DeployableUnit", "BuildModule") == "BuildModule"

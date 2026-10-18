@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from deriva.common.types import ProgressReporter, RunLoggerProtocol
 from deriva.adapters.graph.models import (
     INCLUDES,
+    BuildModuleNode,
     BusinessConceptNode,
     DataDomainNode,
     DataEntityNode,
@@ -82,6 +83,7 @@ from deriva.common.naming import UNCOUNTABLE_WORDS, name_key
 from deriva.common.ocel import create_edge_id
 from deriva.modules import extraction
 from deriva.modules.extraction import (
+    build_modules,
     classification,
     concept_candidates,
     cooperation,
@@ -559,6 +561,9 @@ def _run_step_writes(
     elif node_type == "DeployableUnit":
         # Deployable units from structure (containers, manifest entry points, mainframe applications); no LLM
         result = _extract_deployable_units(cfg, repo, repo_path, graph_manager)
+    elif node_type == "BuildModule":
+        # Build modules and parent systems from the manifests; which unit builds which module; no LLM
+        result = _extract_build_modules(cfg, repo, repo_path, graph_manager)
     elif node_type == "BusinessLayer":
         # Processes (lifecycles), events and roles from code and documentation; no LLM
         result = _extract_business_layer(cfg, repo, repo_path, graph_manager)
@@ -881,6 +886,15 @@ def _slug_ids(prefix: str, names: Iterable[str]) -> dict[str, str]:
     }
 
 
+def _service_ids(prefix: str, services: list[tuple[str, str | None]]) -> list[str]:
+    """Node ids per (name, unit) service, in order: by name (``_slug_ids``); services that share a name are told apart by
+    the last part of their unit's id, or by their position when they deploy none."""
+    counts = Counter(name for name, _ in services)
+    keys = [name if counts[name] == 1 else f"{name} {unit.rsplit('::', 1)[-1] if unit else i}" for i, (name, unit) in enumerate(services)]
+    ids = _slug_ids(prefix, keys)
+    return [ids[k] for k in keys]
+
+
 def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
     """The primary environment (RUNS its deployed services, which DEPLOY units; HOSTS the software that
     runs in it) and the system software (SERVES the units that use it), from the checkout (no LLM)."""
@@ -919,9 +933,8 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
             EnvironmentNode(name=env.name, kind=env.kind, repository_name=repo.name, file=env.file, others=others, other_services=other_services), node_id=env_id
         )
         nodes += 1
-        deployment_ids = _slug_ids(f"deployment::{repo.name}::{env.kind}", (s.name for s in env.services))
-        for service in env.services:
-            deployment_id = deployment_ids[service.name]
+        deployment_ids = _service_ids(f"deployment::{repo.name}::{env.kind}", [(s.name, s.unit) for s in env.services])
+        for service, deployment_id in zip(env.services, deployment_ids, strict=True):
             graph_manager.add_node(
                 DeploymentNode(name=service.name, environment=env.kind, repository_name=repo.name, image=service.image or "", variables=service.environment, ports=service.ports),
                 node_id=deployment_id,
@@ -1244,6 +1257,128 @@ def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 
     except OSError:
         return None
     return None
+
+
+def _module_rules(params: str | None) -> build_modules.ModuleRules:
+    """The BuildModule step's rules (``params``): ``manifests`` (build manifest file names), ``code_subtypes`` (the
+    file subtypes of the repository's own code), ``min_members`` (modules an aggregator lists to be a system),
+    ``iac_dependencies`` and ``test_dependencies`` (dependency patterns of modules that are no components) and
+    ``test_words`` (words in a folder or manifest name that mark a test module)."""
+    settings = json.loads(params) if params else {}
+    manifests, subtypes = settings.get("manifests"), settings.get("code_subtypes")
+    if not isinstance(manifests, list) or not manifests or not all(isinstance(m, str) and m for m in manifests):
+        raise ValueError("BuildModule params need manifests: the build manifest file names (a list of strings)")
+    if not isinstance(subtypes, list) or not subtypes or not all(isinstance(s, str) and s for s in subtypes):
+        raise ValueError("BuildModule params need code_subtypes: the file subtypes that count as the repository's own code")
+    minimum = settings.get("min_members", 2)
+    if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 2:
+        raise ValueError("BuildModule params: min_members is a whole number of at least 2")
+    lists = {key: settings.get(key, []) for key in ("iac_dependencies", "test_dependencies", "test_words")}
+    if not all(isinstance(v, list) and all(isinstance(p, str) and p for p in v) for v in lists.values()):
+        raise ValueError("BuildModule params: iac_dependencies, test_dependencies and test_words are lists of strings")
+    return build_modules.ModuleRules(
+        manifests=tuple(manifests),
+        code_subtypes=frozenset(subtypes),
+        min_members=minimum,
+        iac_dependencies=tuple(lists["iac_dependencies"]),
+        test_dependencies=tuple(lists["test_dependencies"]),
+        test_words=tuple(lists["test_words"]),
+    )
+
+
+def _kind_nouns(params: str | None) -> dict[str, str]:
+    """``kind_nouns`` of the BuildModule params: the word a system or module name gets when a unit has that name."""
+    nouns = (json.loads(params) if params else {}).get("kind_nouns", {})
+    if not isinstance(nouns, dict) or not all(k in ("system", "module") and isinstance(v, str) and v for k, v in nouns.items()):
+        raise ValueError("BuildModule params: kind_nouns maps system and/or module to a word")
+    return dict(nouns)
+
+
+def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
+    """BuildModule nodes with INCLUDES (own files), NESTS (parent to nested module) and BUILDS (unit to module) edges (no LLM)."""
+    rules, nouns = _module_rules(cfg.params), _kind_nouns(cfg.params)
+    q = lambda query, params=None: graph_manager.query(query, {**(params or {}), "repo_name": repo.name})  # noqa: E731 - a one-line helper
+    norm = lambda p: str(p or "").replace(chr(92), "/")  # noqa: E731 - a one-line helper
+    files = [
+        {"id": r["id"], "path": norm(r["path"]), "name": r["name"] or "", "file_type": r["file_type"], "subtype": r["subtype"]}
+        for r in q(
+            "MATCH (f:Graph:File) WHERE f.active = true AND f.repository_name = $repo_name "
+            "RETURN f.id AS id, f.filePath AS path, f.fileName AS name, f.fileType AS file_type, f.subtype AS subtype"
+        )
+        if r.get("id") and r.get("path")
+    ]
+    patterns = [m.lower() for m in rules.manifests]
+    manifests = {
+        f["path"]: text for f in files if any(fnmatch.fnmatchcase(f["name"].lower(), p) for p in patterns) and (text := _read_checkout(repo_path, repo.name, f["path"])) is not None
+    }
+    found = build_modules.detect_modules(repo.name, files, manifests, rules)
+    file_ids = {f["path"]: f["id"] for f in files}
+    ids = {m.path: build_modules.module_id(repo.name, m.path) for m in found}
+    unit_rows = q("MATCH (u:Graph:DeployableUnit) WHERE u.repository_name = $repo_name RETURN u.id AS id, u.path AS path, u.name AS name, u.nameCandidates AS candidates")
+    units = [(str(r["id"]), norm(r["path"])) for r in unit_rows if r.get("path")]
+
+    def same_as(m: build_modules.BuildModule) -> str | None:
+        # The folder of exactly one unit, holding no other module or system: the unit and the module are one structure
+        at = [uid for uid, path in units if path == m.path]
+        nested = any(o.path.startswith(m.path + "/") for o in found)
+        return at[0] if m.excluded is None and m.module and not m.system and len(at) == 1 and not nested else None
+
+    # A component candidate named like a unit (its name or one of its name candidates) or an earlier candidate (as written, or without the repository's name, as
+    # derivation sees it) takes the first free name of: its kind noun added, the words of its path, those with the noun.
+    # Candidates whose path says no more than their name go first: they have the fewest names to choose from
+    keys = lambda name: {name_key(name), name_key(build_modules.display_name(name, repo.name))} - {""}  # noqa: E731 - a one-line helper
+    path_words = lambda m: build_modules.display_name(m.path.removeprefix(repo.name + "/").replace("/", " "), repo.name)  # noqa: E731 - a one-line helper
+    taken = set().union(*(keys(str(n or "")) for r in unit_rows for n in [r.get("name"), *(r.get("candidates") or [])]))
+    candidates = [m for m in found if m.excluded is None and not same_as(m)]
+    for m in sorted(candidates, key=lambda m: (bool(keys(path_words(m)) - keys(m.name)), m.path)):
+        noun = nouns.get("system" if m.system else "module")
+        if keys(m.name) & taken:
+            options = [f"{m.name} {noun}"] if noun else []
+            if m.path != repo.name:
+                options += [path_words(m)] + ([f"{path_words(m)} {noun}"] if noun else [])
+            if options:
+                m.name = next((o for o in options if not keys(o) & taken), options[0])
+        taken |= keys(m.name)
+
+    nodes = edges = 0
+    for m in found:
+        node = BuildModuleNode(
+            name=m.name,
+            path=m.path,
+            manifest=m.manifest,
+            repository_name=repo.name,
+            is_module=m.module,
+            is_system=m.system,
+            members=m.members,
+            same_as=same_as(m),
+            excluded=m.excluded,
+        )
+        graph_manager.add_node(node, node_id=ids[m.path])
+        nodes += 1
+        for path in m.files:
+            if path in file_ids:
+                graph_manager.add_edge(ids[m.path], file_ids[path], INCLUDES)
+                edges += 1
+        if m.parent is not None:
+            graph_manager.add_edge(ids[m.parent], ids[m.path], "NESTS")
+            edges += 1
+    # A unit builds the modules in its folder that no deeper unit holds; a unit inside a module builds that module
+    for module in (m for m in found if m.module):
+        holders = [(uid, path) for uid, path in units if module.path == path or module.path.startswith(path + "/")]
+        if holders:
+            deepest = max(len(path) for _, path in holders)
+            targets = sorted(uid for uid, path in holders if len(path) == deepest)
+        else:
+            # Units inside the module whose folder no deeper module holds
+            targets = sorted(
+                uid
+                for uid, path in units
+                if path.startswith(module.path + "/") and not any(o.module and len(o.path) > len(module.path) and (path == o.path or path.startswith(o.path + "/")) for o in found)
+            )
+        for uid in targets:
+            graph_manager.add_edge(uid, ids[module.path], "BUILDS")
+            edges += 1
+    return {"nodes_created": nodes, "edges_created": edges, "errors": [], "modules": sum(1 for m in found if m.module), "systems": sum(1 for m in found if m.system)}
 
 
 def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:

@@ -36,6 +36,7 @@ from deriva.common.ocel import create_edge_id
 from deriva.common.settings import GraphSettings
 
 from .models import (
+    BuildModuleNode,
     BusinessConceptNode,
     DataDomainNode,
     DataEntityNode,
@@ -72,6 +73,7 @@ GraphNode = (
     | ServiceNode
     | ExternalDependencyNode
     | DeployableUnitNode
+    | BuildModuleNode
     | DataEntityNode
     | DataDomainNode
     | EnvironmentNode

@@ -116,3 +116,24 @@ def test_the_model_is_exported_only_into_the_workspace_output_folder(make_client
 
     assert client.post("/api/model/export", json={"path": "workspace/output/model.xml"}).status_code == 200
     assert client.post("/api/model/export", json={"path": "workspace/output/../../evil.xml"}).status_code == 400
+
+
+def test_the_architect_level_is_every_level_but_detail(make_client):
+    """The session reports the model's levels (enterprise, solution, both); the studio's architect level shows them all."""
+    levels = {
+        "elements": [
+            {**ELEMENTS[0], "level": "enterprise", "layer": "Technology"},
+            {**ELEMENTS[1], "level": "enterprise solution", "layer": "Application"},
+            {"identifier": "art_core", "name": "core", "element_type": "Artifact", "properties": {}, "enabled": True, "level": "detail", "layer": "Technology"},
+        ],
+        "relationships": RELATIONSHIPS[:1],
+        "views": [
+            {"name": "Layered (enterprise)", "viewpoint": "Layered", "level": "enterprise", "elements": ["n_application_server", "ac_core"]},
+            {"name": "Application Structure (solution)", "viewpoint": "Application Structure", "level": "solution", "elements": ["ac_core"]},
+            {"name": "Implementation and Deployment (detail)", "viewpoint": "Implementation and Deployment", "level": "detail", "elements": ["art_core"]},
+        ],
+    }
+    architect = make_client(FakeSession(get_model_levels=levels)).get("/api/model").json()
+
+    assert [e["id"] for e in architect["elements"]] == ["n_application_server", "ac_core"]
+    assert [v["name"] for v in architect["views"]] == ["Layered (enterprise)", "Application Structure (solution)"]

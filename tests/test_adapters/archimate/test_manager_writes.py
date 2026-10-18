@@ -134,3 +134,18 @@ def test_orphan_elements_are_enabled_elements_without_relationships(am):
 
     # Sorted by identifier, with type and properties
     assert [(e.identifier, e.element_type, e.properties) for e in orphans] == [("ac_c", "ApplicationComponent", {"source": "src::ac_c"}), ("do_e", "DataObject", {})]
+
+
+def test_element_and_relationship_properties_are_merged_in_place(am):
+    """A refine step adds keys (levels) without touching the others, and an edge is updated, not duplicated."""
+    am.add_element(Element(name="Shop", element_type="ApplicationComponent", identifier="ac_shop", properties={"source": "unit::r::shop"}))
+    am.add_element(Element(name="Orders", element_type="ApplicationService", identifier="as_orders"))
+    am.add_relationship(Relationship(source="ac_shop", target="as_orders", relationship_type="Realization", identifier="rel1", properties={"derived_from": "rule"}))
+
+    assert am.update_element_properties({"ac_shop": {"levels": ["enterprise", "solution"]}, "missing": {"levels": []}}) == 1
+    assert am.update_relationship_properties({"rel1": {"levels": [], "cross_level": True}}) == 1
+
+    shop = next(e for e in am.get_elements() if e.identifier == "ac_shop")
+    assert shop.properties == {"source": "unit::r::shop", "levels": ["enterprise", "solution"]}
+    (relationship,) = am.get_relationships()
+    assert relationship.properties == {"derived_from": "rule", "levels": [], "cross_level": True}

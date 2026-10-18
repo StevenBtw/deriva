@@ -176,6 +176,20 @@ class _Units:
                 return self.by_last[words[-1]]
         return None
 
+    def by_image(self, image: str | None) -> str | None:
+        """The one unit whose name or folder name equals the image's last name segment or its tag, exact after
+        normalisation (one image repository for every service, the service in the tag: ``acme/suite:orderstore``)."""
+        if not image:
+            return None
+        reference = image.strip().split("@", 1)[0]
+        tag = reference.rsplit(":", 1)[1] if ":" in reference.rsplit("/", 1)[-1] else ""
+        keys = ["".join(_tokens(image_name(image).rsplit("/", 1)[-1])), "".join(_tokens(tag))]
+        for key in (k for k in keys if k):
+            found = [u for u in self.units if key in ("".join(_tokens(str(u.get("name") or ""))), "".join(_tokens(PurePosixPath(str(u["path"])).name)))]
+            if len(found) == 1:
+                return str(found[0]["id"])
+        return None
+
 
 def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Environment | None:
     docs = _documents(text)
@@ -189,7 +203,7 @@ def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Env
         context = build.get("context") if isinstance(build, dict) else build
         image = spec.get("image") if isinstance(spec.get("image"), str) else None
         unit = units.by_folder(_normalize(f"{_parent(path)}/{context}"), image, str(name)) if isinstance(context, str) else None
-        unit = unit or (units.by_name(image, str(name)) if (image or not context) else None)
+        unit = unit or (units.by_name(image, str(name)) if (image or not context) else None) or units.by_image(image)
         depends = spec.get("depends_on") or []
         variables = spec.get("environment") or {}
         if isinstance(variables, list):
@@ -239,7 +253,7 @@ def _kubernetes(manifests: dict[str, list[Any]], units: _Units, rules: Deploymen
             template = (spec.get("jobTemplate") or {}).get("spec", spec) if doc.get("kind") == "CronJob" else spec
             containers = ((template.get("template") or {}).get("spec") or {}).get("containers") or []
             image = next((c.get("image") for c in containers if isinstance(c, dict) and isinstance(c.get("image"), str)), None)
-            services.append(DeployedService(name=name, unit=units.by_name(name, image), image=image))
+            services.append(DeployedService(name=name, unit=units.by_name(name, image) or units.by_image(image), image=image))
     if not services:
         return None
     return Environment(kind="kubernetes", name=dict(rules.environment_names).get("kubernetes", "Kubernetes"), file=_common_folder(manifests), services=services)

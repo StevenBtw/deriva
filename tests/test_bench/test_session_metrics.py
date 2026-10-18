@@ -160,6 +160,64 @@ class TestGolden:
         assert result["derivable_recall"] == 1.0 and result["derivable_labelled"] == 3
         assert result["manual_matches"] == 1
 
+    def test_a_names_only_matches_file_gives_the_same_numbers_in_either_form(self):
+        """A list of names (today's form) and {"names": [...]} score alike, and as before structure refs existed."""
+        derived = [
+            {"id": "a", "name": "Order Service", "type": "ApplicationComponent"},
+            {"id": "b", "name": "Payments Host", "type": "Node"},
+            {"id": "c", "name": "Audit", "type": "ApplicationComponent"},
+        ]
+
+        listed = pm.golden_comparison(derived, self._reference(), aliases={"r3": ["Payments Host"]})
+        objects = pm.golden_comparison(derived, self._reference(), aliases={"r3": {"names": ["Payments Host"], "structure_refs": []}})
+
+        assert listed == objects
+        assert (listed["recall"], listed["precision"], listed["manual_matches"], listed["structure_matches"]) == (0.5, round(2 / 3, 3), 1, 0)
+
+    def test_a_structure_ref_matches_the_derived_element_of_that_folder_or_id(self):
+        """A golden element the user tied to a folder (path:) or a structural id is found by the element derived from it."""
+        from deriva.modules.analysis.types import ReferenceElement
+
+        reference = [
+            ReferenceElement(identifier="g1", name="Audit Hook", element_type="ApplicationComponent", layer="Application"),
+            ReferenceElement(identifier="g2", name="Ledger", element_type="ApplicationComponent", layer="Application"),
+            ReferenceElement(identifier="g3", name="Publisher", element_type="ApplicationComponent", layer="Application"),
+        ]
+        derived = [
+            {"id": "x", "name": "Hook Module", "type": "ApplicationComponent", "source": "module::r::libs/audit-hook"},
+            {"id": "y", "name": "Accounts", "type": "ApplicationComponent", "source": "unit::r::services/ledger"},
+            {"id": "z", "name": "Notifier", "type": "ApplicationComponent", "source": "unit::r::libs/publish/notify"},
+        ]
+        aliases = {
+            "g1": {"names": [], "structure_refs": ["path:./libs/audit-hook/"]},  # the folder itself
+            "g2": {"structure_refs": ["unit::r::services/ledger"]},  # a structural id
+            "g3": {"structure_refs": ["path:libs/publish"]},  # a parent folder of z: no match
+        }
+
+        result = pm.golden_comparison(derived, reference, aliases=aliases)
+
+        assert (result["recall"], result["structure_matches"]) == (round(2 / 3, 3), 2)
+
+    def test_one_derived_element_matches_one_golden_element_and_names_come_first(self):
+        from deriva.modules.analysis.types import ReferenceElement
+
+        reference = [
+            ReferenceElement(identifier="g1", name="Core", element_type="ApplicationComponent", layer="Application"),
+            ReferenceElement(identifier="g2", name="Core Runtime", element_type="ApplicationComponent", layer="Application"),
+            ReferenceElement(identifier="g3", name="Engine", element_type="ApplicationComponent", layer="Application"),
+        ]
+        derived = [{"id": "x", "name": "Core", "type": "ApplicationComponent", "source": "unit::r::core"}]
+        # g1 is found by name; g2 and g3 point at the same folder, but x is already taken
+        aliases = {"g2": {"structure_refs": ["path:core"]}, "g3": {"structure_refs": ["path:core"]}}
+
+        result = pm.golden_comparison(derived, reference, aliases=aliases)
+
+        assert (result["recall"], result["structure_matches"]) == (round(1 / 3, 3), 0)
+        # Without the name match, the first golden element (by id) that points at x takes it
+        alone = pm.golden_comparison([{**derived[0], "name": "Something Else"}], reference, aliases=aliases)
+        assert (alone["recall"], alone["structure_matches"]) == (round(1 / 3, 3), 1)
+        assert pm.golden_mapping([{**derived[0], "name": "Something Else"}], reference, aliases=aliases) == {"x": {"g2"}}
+
     def test_without_manual_files_the_name_match_alone(self):
         derived = [{"id": "a", "name": "Order Service", "type": "ApplicationComponent"}]
 
@@ -176,3 +234,22 @@ def test_an_element_without_a_structural_source_is_llm_generated(tmp_path):
     (row,) = pm.consistency_rows([session])
 
     assert row["identities"]["name"]["origin"]["llm"] == {"elements": 1.0, "relationships": None, "count": 1}
+
+
+def test_consistency_by_id_per_level(tmp_path):
+    """A level counts the elements tagged with it (no tag: enterprise) and the relationships on it; the union counts all."""
+    sys_ = {**_element("ac_sys", "ApplicationComponent", "Shop", "module::r::r"), "levels": ["enterprise"]}
+    orders = {**_element("ac_orders", "ApplicationComponent", "Orders", "unit::r::orders"), "levels": ["solution"]}
+    lib = {**_element("ac_lib", "ApplicationComponent", "Lib", "module::r::lib"), "levels": ["solution"]}
+    one = _run(sys_, orders, lib)
+    two = _run(sys_, orders)  # the library is missing in run 2: only the solution level differs
+    session = _session(tmp_path, "s1", "m", [one, two])
+
+    (enterprise,) = pm.consistency_rows([session], level="enterprise")
+    (solution,) = pm.consistency_rows([session], level="solution")
+    (union,) = pm.consistency_rows([session], level="union")
+
+    assert enterprise["identities"]["id"]["elements"]["cons"] == 1.0
+    assert solution["identities"]["id"]["elements"]["cons"] == 0.5
+    assert union["identities"]["id"]["elements"]["cons"] == round(2 / 3, 3)
+    assert pm.consistency_rows([session]) == pm.consistency_rows([session], level="union")  # None: as before levels

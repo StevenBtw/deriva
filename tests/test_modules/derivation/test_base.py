@@ -107,6 +107,13 @@ class TestBuildElement:
         result = build_element(derived, "ApplicationComponent", source_names={"dir::repo::auth": "auth"})
         assert result["data"]["documentation"] == "Auth docs"
 
+    def test_a_module_whose_plain_identifier_is_a_units_keeps_its_kind_in_the_identifier(self):
+        """A unit and the module at its folder (with modules inside) share a plain identifier: the unit keeps it."""
+        names = {"unit::repo::web": "web", "module::repo::web": "portal", "module::repo::lib": "lib"}
+        ids = {s: build_element({"source": s}, "ApplicationComponent", source_names=names)["data"]["identifier"] for s in names}
+
+        assert ids == {"unit::repo::web": "ac_web", "module::repo::web": "ac_module__web", "module::repo::lib": "ac_lib"}
+
 
 class TestCreateResult:
     """Tests for create_result function."""

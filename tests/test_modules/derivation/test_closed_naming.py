@@ -84,9 +84,22 @@ def test_a_candidate_another_element_took_is_passed_over():
 
 
 def test_a_name_chosen_by_a_call_is_marked_and_a_single_candidate_is_not():
-    """For the origin split (C24): an element whose name an LLM call chose depends on the LLM."""
+    """For the origin split: an element whose name an LLM call chose depends on the LLM."""
     chosen, _ = _name(_unit("Shop Online", "Mainframe Card Management Online"), answer="Mainframe Card Management Online")
     single, _ = _name(_unit("Shop Online"))
 
     assert chosen["properties"]["name_choice"] is True
-    assert "name_choice" not in single["properties"]
+    assert single["properties"]["name_choice"] is False
+
+
+def test_the_full_candidate_list_is_kept_in_order_next_to_the_name():
+    """Every closed-set name keeps all its candidates, a taken one included, so a reviewer sees what was chosen from."""
+    chosen, _ = _name(_unit("Shop Online", "Mainframe Card Management Online"), answer="Mainframe Card Management Online")
+    single, _ = _name(_unit("Shop Online"))
+    element = {"name": "App Online", "properties": {}}
+    Derivation()._apply_naming(element, _unit("Shop Online", "Shop App Online"), NAMING, lambda *a, **k: None, {}, "r", ["Shop Online"], {})
+
+    assert chosen["properties"]["name_candidates"] == ["Shop Online", "Mainframe Card Management Online"]
+    assert single["properties"]["name_candidates"] == ["Shop Online"]
+    # One candidate is taken: no call (name_choice False), but both stay listed
+    assert element["properties"]["name_candidates"] == ["Shop Online", "Shop App Online"] and element["properties"]["name_choice"] is False

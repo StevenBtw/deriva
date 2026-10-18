@@ -961,7 +961,11 @@ def _role_config(params: str | None) -> RoleConfig | None:
         raise ValueError(f"params.roles.unit_roles rules need a unit property (a plain property name) and a role key of names, got {unit_roles!r}")
     if unit_roles and element_per != "unit":
         raise ValueError("params.roles.unit_roles are roles a deployable unit shows itself: they need element_per 'unit'")
+    name_priority = settings.get("name_priority", [])
+    if not isinstance(name_priority, list) or not all(isinstance(label, str) and label for label in name_priority):
+        raise ValueError(f"params.roles.name_priority is a list of graph labels, got {name_priority!r}")
     return RoleConfig(
+        name_priority=tuple(name_priority),
         unit_roles=tuple((rule["property"], rule["role"]) for rule in unit_roles),
         structural=tuple((rule["property"], rule["pattern"], rule["role"]) for rule in structural),
         labels=frozenset(settings.get("labels") or []),
@@ -1226,6 +1230,41 @@ def generate_element(
 
 
 logger = logging.getLogger(__name__)
+
+JOINT_STEP = "joint_consistency"
+
+
+def _model_signature(archimate_manager: Any) -> tuple[frozenset[str], frozenset[tuple[str, str, str, str]]]:
+    """The enabled elements and the relationships of the model (identities only; properties such as tags may change)."""
+    elements = frozenset(str(e.identifier) for e in archimate_manager.get_elements(enabled_only=True))
+    relationships = frozenset((str(r.identifier), str(r.source), str(r.relationship_type), str(r.target)) for r in archimate_manager.get_relationships())
+    return elements, relationships
+
+
+class _SelectionGuard:
+    """Nothing changes the model after the joint selection: a refine step after joint_consistency that adds or removes
+    an element or a relationship is an error of the run (it may only annotate)."""
+
+    def __init__(self) -> None:
+        self.selected: tuple[frozenset[str], frozenset[tuple[str, str, str, str]]] | None = None
+
+    def check(self, step_name: str, archimate_manager: Any) -> str | None:
+        if self.selected is None and step_name != JOINT_STEP:
+            return None
+        now = _model_signature(archimate_manager)
+        if step_name == JOINT_STEP:
+            self.selected = now
+            return None
+        assert self.selected is not None
+        (elements, relationships), (before_elements, before_relationships) = now, self.selected
+        if (elements, relationships) == (before_elements, before_relationships):
+            return None
+        self.selected = now
+        return (
+            f"Refine step {step_name} changed the model after the joint selection: elements +{len(elements - before_elements)}/-{len(before_elements - elements)}, "
+            f"relationships +{len(relationships - before_relationships)}/-{len(before_relationships - relationships)}"
+        )
+
 
 # Step name of the consolidated relationship pass in ``run_derivation(steps=...)``
 RELATIONSHIP_STEP = "ConsolidatedRelationships"
@@ -1770,6 +1809,7 @@ def run_derivation(
         if refine_configs and verbose:
             print(f"Running {len(refine_configs)} refine steps...")
 
+        guard = _SelectionGuard()
         for cfg in refine_configs:
             if verbose:
                 print(f"  Refine: {cfg.step_name}")
@@ -1833,6 +1873,8 @@ def run_derivation(
 
                 if refine_result.errors:
                     errors.extend(refine_result.errors)
+                if changed := guard.check(cfg.step_name, archimate_manager):
+                    errors.append(changed)
 
             except Exception as e:
                 error_msg = f"Error in refine step {cfg.step_name}: {str(e)}"
@@ -2203,6 +2245,7 @@ def run_derivation_iter(
 
     # Run refine phase
     if "refine" in phases:
+        guard = _SelectionGuard()
         for cfg in refine_configs:
             current_step += 1
 
@@ -2261,6 +2304,8 @@ def run_derivation_iter(
 
                 if refine_result.errors:
                     errors.extend(refine_result.errors)
+                if changed := guard.check(cfg.step_name, archimate_manager):
+                    errors.append(changed)
 
             except Exception as e:
                 error_msg = f"Error in refine step {cfg.step_name}: {str(e)}"

@@ -214,3 +214,50 @@ class TestDetailLevelForSession:
                 "relationship_consistency": 1.0,
             }
         ]
+
+
+def test_golden_recall_and_precision_equal_the_gates_with_structure_refs(tmp_path):
+    """analyze and the gate score a golden model through one matching (names, accepted names, structural refs)."""
+    import json
+
+    from deriva.bench.gate import measure
+
+    session = tmp_path / "bench" / "s1"
+    models = session / "models"
+    models.mkdir(parents=True)
+    (session / "session_metadata.json").write_text(json.dumps({"config": {"repositories": ["shop-repo"], "models": ["model-a"]}}), encoding="utf-8")
+    statements = Element(name="Statements", element_type="ApplicationComponent", identifier="ac_statements")
+    for run in (1, 2):
+        _export(models / f"shop-repo_model-a_run{run}.xml", [SHOP, statements], [])
+        snapshot = {
+            "elements": [
+                {"identifier": "ac_shop", "type": "ApplicationComponent", "name": "Shop", "source": "unit::shop-repo::shop"},
+                {"identifier": "ac_statements", "type": "ApplicationComponent", "name": "Statements", "source": "unit::shop-repo::reports"},
+            ],
+            "relationships": [],
+        }
+        (models / f"shop-repo_model-a_run{run}.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    golden = tmp_path / "reference"
+    golden.mkdir()
+    (golden / "shop-repo.archimate").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:archimate="http://www.archimatetool.com/archimate" name="m" id="m">\n'
+        '  <folder name="Application" id="f1" type="application">\n'
+        '    <element xsi:type="archimate:ApplicationComponent" name="Shop" id="g-shop"/>\n'
+        '    <element xsi:type="archimate:ApplicationComponent" name="Reporting" id="g-reporting"/>\n'
+        '    <element xsi:type="archimate:ApplicationComponent" name="Billing" id="g-billing"/>\n'
+        "  </folder>\n</archimate:model>\n",
+        encoding="utf-8",
+    )
+    (golden / "shop-repo.matches.json").write_text(json.dumps({"g-reporting": {"names": [], "structure_refs": ["path:reports"]}}), encoding="utf-8")
+    (golden / "shop-repo.derivable.json").write_text(
+        json.dumps({"g-shop": {"derivable": True}, "g-reporting": {"derivable": True}, "g-billing": {"derivable": False}}), encoding="utf-8"
+    )
+
+    rows = model_quality_for_session(session, ["shop-repo"], ["model-a"], reference_models={"shop-repo": str(golden / "shop-repo.archimate")})
+    gate = measure([session], tmp_path / "no-goldens", golden)["shop-repo"]
+
+    analyze_recall = sum(r["reference"]["derivable_recall"] for r in rows) / len(rows)
+    analyze_precision = sum(r["reference"]["precision"] for r in rows) / len(rows)
+    assert (analyze_recall, analyze_precision) == (gate["recall"], gate["precision"]) == (1.0, 1.0)
+    assert rows[0]["reference"]["structure_matches"] == 1  # Reporting, through the reports folder

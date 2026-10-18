@@ -507,6 +507,45 @@ class ExternalDependencyNode:
 
 
 @dataclass
+class BuildModuleNode:
+    """A build module (a folder with a build manifest and code of its own) or a parent system (an aggregator manifest
+    that lists modules). Its own files hang below it by ``INCLUDES``, nested modules by ``NESTS``; a deployable unit
+    ``BUILDS`` the modules in its folder."""
+
+    name: str
+    path: str
+    manifest: str
+    repository_name: str
+    is_module: bool = False
+    is_system: bool = False
+    members: list[str] = field(default_factory=list)  # For a system: the module paths its manifest lists
+    same_as: str | None = None  # The unit whose folder it is (one unit there, no module inside): one element with it
+    excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only)
+
+    def generate_id(self) -> str:
+        """Generate a unique ID for this node."""
+        return f"BuildModule_{self.path}"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for graph storage."""
+        return {
+            "name": self.name,
+            "path": self.path,
+            "manifest": self.manifest,
+            "isModule": self.is_module,
+            "isSystem": self.is_system,
+            "members": list(self.members),
+            "sameAs": self.same_as,
+            "excluded": self.excluded,
+            # Its structural name as the one candidate of the closed-set naming (no naming call)
+            "nameCandidates": [self.name],
+            # Module ids carry no prefix the graph manager reads the repository from
+            "repository_name": self.repository_name,
+            "type": "BuildModule",
+        }
+
+
+@dataclass
 class DeployableUnitNode:
     """A deployable unit: what runs on its own (a container, a declared entry point, a mainframe application).
 

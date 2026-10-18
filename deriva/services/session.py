@@ -781,6 +781,7 @@ class PipelineSession:
                 model_name=model_name,
                 properties=leveled.properties,
                 views=leveled.views,
+                relationship_properties=leveled.relationship_properties,
             )
 
             return {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -997,6 +998,31 @@ class TestCreateDerivationConfigVersion:
         # Verify INSERT preserves old values
         insert_call = [c for c in engine.execute.call_args_list if "INSERT INTO derivation_config" in str(c)]
         assert len(insert_call) > 0
+
+    def test_a_new_version_can_move_the_step_in_its_phase(self):
+        """The sequence is versioned like the rest: the new version runs at the new place, the old keeps its own."""
+        from deriva.services.config import create_derivation_config_version
+
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.side_effect = [
+            (1, 3, "refine", 7, True, False, None, None, None, None, "{}", None, None, None, None),
+            (9,),
+        ]
+
+        result = create_derivation_config_version(engine, "joint_consistency", sequence=8)
+
+        assert result["success"] is True
+        insert = next(c for c in engine.execute.call_args_list if "INSERT INTO derivation_config" in str(c))
+        assert insert.args[1][4] == 8  # (id, step_name, phase, version, sequence, ...)
+
+    def test_a_negative_sequence_is_refused(self):
+        from deriva.services.config import create_derivation_config_version
+
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.side_effect = [(1, 3, "refine", 7, True, False, None, None, None, None, "{}", None, None, None, None), (9,)]
+
+        with pytest.raises(ValueError, match="sequence"):
+            create_derivation_config_version(engine, "joint_consistency", sequence=-1)
 
 
 class TestCreateExtractionConfigVersion:
@@ -2089,3 +2115,41 @@ class TestAddExtractionStep:
 
         with pytest.raises(ValueError, match=message):
             add_extraction_step(engine, "X", sequence, extraction_method=method, params=params)
+
+
+class TestSequenceThroughVersions:
+    """Reordering steps is versioned: each step that moves gets a new version at its new place; the old one stays."""
+
+    @pytest.fixture
+    def engine(self):
+        import duckdb
+
+        from deriva.adapters.database import manager
+
+        con = duckdb.connect(":memory:")
+        con.execute((Path(manager.__file__).parent / "scripts" / "schema.sql").read_text(encoding="utf-8"))
+        for i, (name, phase, sequence) in enumerate((("a", "refine", 1), ("b", "refine", 2), ("c", "generate", 1)), 1):
+            con.execute(
+                "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, llm, params, is_active) VALUES (?, ?, ?, 1, ?, TRUE, FALSE, '{}', TRUE)",
+                [i, name, phase, sequence],
+            )
+        yield con
+        con.close()
+
+    def test_a_reorder_makes_a_version_for_each_step_that_moves(self, engine):
+        from deriva.services.config import update_derivation_sequence
+
+        result = update_derivation_sequence(engine, ["b", "a"], phase="refine")
+
+        assert result["success"] and result["total_updated"] == 2
+        rows = engine.execute("SELECT step_name, version, sequence, is_active FROM derivation_config WHERE phase = 'refine' ORDER BY step_name, version").fetchall()
+        assert rows == [("a", 1, 1, False), ("a", 2, 2, True), ("b", 1, 2, False), ("b", 2, 1, True)]
+
+    def test_a_step_already_in_place_keeps_its_version_and_another_phase_is_no_match(self, engine):
+        from deriva.services.config import update_derivation_sequence
+
+        result = update_derivation_sequence(engine, ["a", "c"], phase="refine")
+
+        assert result["updated"] == [{"step_name": "a", "sequence": 1}]
+        assert result["errors"] == ["Step 'c' not found or not active"]
+        assert engine.execute("SELECT max(version) FROM derivation_config WHERE step_name = 'a'").fetchone()[0] == 1

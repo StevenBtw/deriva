@@ -506,6 +506,8 @@ class BenchmarkOrchestrator:
         self._call_logs: dict[str, LlmCallLog] = {}
         # LLM answers per decision per step, recorded in the session metadata
         self._llm_samples: dict[str, int] = {}
+        # The code commit and dirty flag when the session started, recorded in the session metadata
+        self._code: dict[str, Any] = {"commit": None, "dirty": None}
         self._current_model: str | None = None
         self._current_repo: str | None = None
 
@@ -1457,6 +1459,7 @@ class BenchmarkOrchestrator:
                 model_name=model_display_name,
                 properties=leveled.properties,
                 views=leveled.views,
+                relationship_properties=leveled.relationship_properties,
             )
 
             # JSON snapshot for consistency analysis: the XML carries no properties,
@@ -1478,11 +1481,18 @@ class BenchmarkOrchestrator:
                         "name": e.name,
                         "source": (e.properties or {}).get("source"),
                         "level": "architect",
-                        # The name came from an LLM choice among several candidates (origin split)
-                        "name_choice": bool((e.properties or {}).get("name_choice")) or len((e.properties or {}).get("name_candidates") or []) > 1,
+                        # The name came from an LLM choice among several candidates (origin split): as the naming
+                        # step recorded it, else (steps that record none) several candidates mean a choice
+                        "name_choice": bool((e.properties or {})["name_choice"])
+                        if "name_choice" in (e.properties or {})
+                        else len((e.properties or {}).get("name_candidates") or []) > 1,
                         # The structural name (first candidate) next to the chosen one: what LLM naming adds
                         # (no naming call: the name is the structural one)
                         "structure_name": (e.properties or {}).get("structure_name") or next(iter((e.properties or {}).get("name_candidates") or []), None) or e.name,
+                        # A closed-set name's candidates in order (None for a name that is no choice)
+                        "name_candidates": list((e.properties or {}).get("name_candidates") or []) or None,
+                        # The abstraction levels the abstraction_levels step wrote (None: not tagged, enterprise)
+                        "levels": list((e.properties or {})["levels"]) if isinstance((e.properties or {}).get("levels"), list) else None,
                     }
                     for e in elements
                 ],
@@ -1493,6 +1503,9 @@ class BenchmarkOrchestrator:
                         "type": r.relationship_type,
                         "derived_from": (r.properties or {}).get("derived_from"),
                         "confidence": (r.properties or {}).get("confidence"),
+                        # Its levels (those both ends share); a cross-level link (no shared level) counts in the union only
+                        "levels": list((r.properties or {})["levels"]) if isinstance((r.properties or {}).get("levels"), list) else None,
+                        "cross_level": bool((r.properties or {}).get("cross_level")),
                     }
                     for r in relationships
                 ],
@@ -1569,11 +1582,19 @@ class BenchmarkOrchestrator:
                 self.session_start.isoformat(),
             ],
         )
+        self._capture_code()
         try:
             self._write_session_inputs()
         except Exception as exc:
             # A record that cannot be written does not stop the session (as a failed model export does not fail its run)
             logger.warning("Could not record the inputs of session %s: %s", self.session_id, exc)
+
+    def _capture_code(self) -> None:
+        """The commit the session starts on, with a dirty flag (the code may change while the session runs)."""
+        try:
+            self._code = export_bundle.code_commit()
+        except Exception as exc:  # A commit that cannot be read does not stop the session
+            logger.warning("Could not read the code commit of session %s: %s", self.session_id, exc)
 
     def _write_session_inputs(self) -> None:
         """Everything that changes results, as it is when the session starts, into the session folder.
@@ -1703,6 +1724,8 @@ class BenchmarkOrchestrator:
         summary = {
             "session_id": self.session_id,
             "config": self.config.to_dict(),
+            # The code the session ran: its commit and whether the working tree had changes at the start
+            "code": self._code,
             "started_at": self.session_start.isoformat() if self.session_start else None,
             "completed_at": datetime.now().isoformat(),
             "total_events": len(self.ocel_log.events),
@@ -2176,13 +2199,25 @@ def model_quality_for_session(
                 row: dict[str, Any] = {"repository": repo, "model": model, "run": int(run), **compute_model_quality(elements, relationships).to_dict()}
                 snapshot_path = path.with_suffix(".json")
                 try:
-                    row["solve"] = json.loads(snapshot_path.read_text(encoding="utf-8")).get("solve") if snapshot_path.is_file() else None
+                    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8")) if snapshot_path.is_file() else {}
                 except OSError, ValueError:
-                    row["solve"] = None
+                    snapshot = {}
+                row["solve"] = snapshot.get("solve")
                 row["reference"] = None
                 if reference:
-                    # Lineage-free: name + type, the user's manual matches and derivable labels next to the reference
-                    derived = [{"id": e.identifier, "name": e.name, "type": e.element_type} for e in elements]
+                    # Name + type, the user's accepted names and structural refs (sources and lineage from the run's
+                    # snapshot: the XML carries none) and derivable labels: the gate's matching (golden_mapping)
+                    structure = {str(e.get("identifier")): e for e in snapshot.get("elements", []) if isinstance(e, dict)}
+                    derived = [
+                        {
+                            "id": e.identifier,
+                            "name": e.name,
+                            "type": e.element_type,
+                            "source": structure.get(e.identifier, {}).get("source"),
+                            "lineage": structure.get(e.identifier, {}).get("lineage") or [],
+                        }
+                        for e in elements
+                    ]
                     aliases, derivable = session_metrics.manual_inputs(reference_models[repo])
                     row["reference"] = session_metrics.golden_comparison(derived, reference, aliases=aliases, derivable=derivable)
                 rows.append(row)

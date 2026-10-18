@@ -47,10 +47,10 @@ def test_the_leveled_model_adds_the_detail_level_and_keeps_the_architect_level()
 
     levels = {e.name: model.properties[e.identifier]["level"] for e in model.elements}
     assert levels == {
-        "Order Data": "architect",
-        "Shop": "architect",
-        "Docker Compose": "architect",
-        "Order Lifecycle": "architect",
+        "Order Data": "enterprise",  # no levels: enterprise (formerly "architect")
+        "Shop": "enterprise",
+        "Docker Compose": "enterprise",
+        "Order Lifecycle": "enterprise",
         "Order": "detail",
         "Order Line": "detail",
         "shop": "detail",
@@ -58,5 +58,28 @@ def test_the_leveled_model_adds_the_detail_level_and_keeps_the_architect_level()
     assert model.properties["bp_order"]["states"] == "DRAFT, PAID"
     assert {r.relationship_type for r in model.relationships} == {"Realization", "Composition", "Assignment"}
     assert [e.identifier for e in model.elements[: len(ELEMENTS)]] == [e.identifier for e in ELEMENTS]
-    assert {v.name for v in model.views} >= {"Layered", "Information Structure (detail)", "Implementation and Deployment (detail)"}
+    assert {v.name for v in model.views} >= {"Layered (enterprise)", "Implementation and Deployment (detail)"}
     assert model.summary() == {"architect_elements": 4, "detail_elements": 3, "detail_relationships": 4}
+
+
+def test_the_level_property_is_the_level_set_and_relationships_get_theirs_with_stable_ids():
+    """architect becomes the element's levels (no levels: enterprise); a relationship's level is the shared set,
+    "cross-level" without one; relationship ids come from ends, type and level, the same in every run."""
+    elements = [
+        Element(name="Shop", element_type="ApplicationComponent", identifier="ac_sys", properties={"source": "module::r::r", "levels": ["enterprise"]}),
+        Element(name="Orders", element_type="ApplicationComponent", identifier="ac_orders", properties={"source": "unit::r::orders", "levels": ["enterprise", "solution"]}),
+        Element(name="Api", element_type="ApplicationInterface", identifier="ai_orders", properties={"source": "unit::r::orders", "levels": ["solution"]}),
+        Element(name="Plain", element_type="BusinessObject", identifier="bo_plain", properties={}),
+    ]
+    relationships = [
+        Relationship(source="ac_orders", target="ai_orders", relationship_type="Composition", properties={"levels": ["solution"], "cross_level": False}),
+        Relationship(source="ac_sys", target="ai_orders", relationship_type="Composition", properties={"levels": [], "cross_level": True}),
+    ]
+
+    first = leveled_model(elements, relationships, detail_lineage(None))
+    again = leveled_model(elements, [Relationship.from_dict({**r.to_dict(), "identifier": ""}) for r in relationships], detail_lineage(None))
+
+    assert {e: p["level"] for e, p in first.properties.items()} == {"ac_sys": "enterprise", "ac_orders": "enterprise solution", "ai_orders": "solution", "bo_plain": "enterprise"}
+    assert [first.relationship_properties[r.identifier]["level"] for r in first.relationships] == ["solution", "cross-level"]
+    assert [r.identifier for r in first.relationships] == [r.identifier for r in again.relationships]  # random input ids, stable output
+    assert all(r.identifier.startswith("rel-") for r in first.relationships) and len({r.identifier for r in first.relationships}) == 2

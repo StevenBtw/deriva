@@ -577,6 +577,35 @@ class ArchimateManager:
             key=lambda e: str(e["identifier"]),
         )
 
+    def update_element_properties(self, updates: dict[str, dict[str, Any]]) -> int:
+        """Merge keys into the properties of elements (identifier -> keys), leaving their other keys; returns how many changed."""
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+        changed = 0
+        for identifier, keys in sorted(updates.items()):
+            rows = self.db.execute(f"MATCH (e:`{self.namespace}` {{identifier: $identifier}}) RETURN e.properties AS properties", {"identifier": identifier})
+            if not rows:
+                continue
+            merged = {**(rows[0].get("properties") or {}), **keys}
+            self.db.execute_write(f"MATCH (e:`{self.namespace}` {{identifier: $identifier}}) SET e.properties = $properties", {"identifier": identifier, "properties": merged})
+            changed += 1
+        return changed
+
+    def update_relationship_properties(self, updates: dict[str, dict[str, Any]]) -> int:
+        """Merge keys into the properties of relationships (identifier -> keys), in place; returns how many changed."""
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+        changed = 0
+        for identifier, keys in sorted(updates.items()):
+            match = f"MATCH (:`{self.namespace}`)-[r {{identifier: $identifier}}]->(:`{self.namespace}`)"
+            rows = self.db.execute(f"{match} RETURN r.properties AS properties", {"identifier": identifier})
+            if not rows:
+                continue
+            merged = {**(rows[0].get("properties") or {}), **keys}
+            self.db.execute_write(f"{match} SET r.properties = $properties", {"identifier": identifier, "properties": merged})
+            changed += 1
+        return changed
+
     def delete_relationship(self, identifier: str) -> bool:
         """Delete a relationship by identifier.
 

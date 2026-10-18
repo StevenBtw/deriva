@@ -289,6 +289,15 @@ def test_table_cells_and_bold_terms_ending_in_the_folder_name_are_candidates():
     assert names == ["KVS Bridge", "Media Bridge"]
 
 
+def test_a_documentation_name_loses_the_punctuation_that_introduces_its_description():
+    """A list like "**Media Bridge:** relays audio" writes the separator inside the bold term: the name has no colon."""
+    readme = "# Clinic\n\n- **Media Bridge:** relays audio.\n- [Bridge Trigger;](bridge) starts it.\n\n| Part | Notes |\n|---|---|\n| KVS Bridge, | Java |\n"
+
+    names = [n for n, s in _named(_container("bridge"), documents={"r/README.md": readme})["r/bridge"].name_candidates if s == "docs"]
+
+    assert names == ["Media Bridge", "Bridge Trigger", "KVS Bridge"]  # in document order
+
+
 def test_a_generic_folder_name_takes_no_table_cells():
     readme = "# Clinic\n\n| Part | Notes |\n|---|---|\n| Billing Backend | Java |\n"
 

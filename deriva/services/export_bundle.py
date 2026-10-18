@@ -141,6 +141,11 @@ def _git(root: Path) -> dict[str, Any]:
         return {"commit": None, "dirty": None}
 
 
+def code_commit(repo_root: str | Path = REPO_ROOT) -> dict[str, Any]:
+    """The checkout's commit and whether its working tree has changes ({"commit", "dirty"}; None outside a checkout)."""
+    return _git(Path(repo_root))
+
+
 def source_digest(package_root: str | Path | Sequence[str | Path] = PACKAGE_ROOTS) -> dict[str, Any]:
     """The code that ran: a sha256 over every source file of the package (path and content, caches left out).
 

@@ -35,6 +35,32 @@ def test_compose_services_are_matched_to_units_by_build_context_image_or_name():
     assert by_name["billing"].environment == {"DB_URL": "postgres://db:5432/x"}
 
 
+def test_an_image_whose_tag_or_last_segment_is_a_units_name_or_folder_deploys_that_unit():
+    """One image repository for every service, the service in the tag (acme/suite:orderstore); exact after
+    normalisation, so a tag that only shares a word (orders) or a version tag names no unit."""
+    units = [
+        {"id": "unit::r::OrderStore", "path": "r/OrderStore", "name": "OrderStore"},
+        {"id": "unit::r::Gateway", "path": "r/Gateway", "name": "Gateway"},
+        {"id": "unit::r::services/PaymentDesk", "path": "r/services/PaymentDesk", "name": "desk"},
+    ]
+    compose = """
+services:
+  order-store:
+    image: acme/suite:orderstore
+  pay:
+    image: acme/suite:payment-desk
+  orders:
+    image: acme/suite:orders
+  gateway:
+    image: acme/suite:1.4
+  db:
+    image: acme/suite:mysql
+"""
+    services = {s.name: s.unit for s in detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary.services}
+
+    assert services == {"order-store": "unit::r::OrderStore", "pay": "unit::r::services/PaymentDesk", "orders": None, "gateway": "unit::r::Gateway", "db": None}
+
+
 def test_the_root_compose_is_the_primary_environment_and_the_others_are_reported():
     files = {
         "r/docker-compose.yml": COMPOSE,

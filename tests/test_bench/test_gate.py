@@ -17,6 +17,7 @@ REFERENCE = {
         {"key": "core", "type": "ApplicationComponent", "name": "Customer Core"},
         {"key": "web", "type": "ApplicationComponent", "name": "Web Shop"},
     ],
+    "relationships": [{"source": "core", "target": "web", "type": "Serving", "kind": "cooperation"}],
 }
 GOLDEN = """<?xml version="1.0" encoding="UTF-8"?>
 <archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:archimate="http://www.archimatetool.com/archimate" name="m" id="m">
@@ -27,6 +28,11 @@ GOLDEN = """<?xml version="1.0" encoding="UTF-8"?>
   </folder>
   <folder name="Other" id="f2" type="other">
     <element xsi:type="archimate:Grouping" name="Everything" id="g-group"/>
+  </folder>
+  <folder name="Relations" id="f3" type="relations">
+    <element xsi:type="archimate:ServingRelationship" id="r1" source="g-ledger" target="g-reporting"/>
+    <element xsi:type="archimate:CompositionRelationship" id="r2" source="g-ledger" target="g-target"/>
+    <element xsi:type="archimate:AggregationRelationship" id="r3" source="g-group" target="g-ledger"/>
   </folder>
 </archimate:model>
 """
@@ -67,6 +73,8 @@ def test_a_repository_with_a_development_reference_is_measured_against_it_with_i
 
     assert (shop["source"], shop["provisional"], shop["runs"]) == ("reference", False, 2)
     assert (shop["recall"], shop["precision"]) == (0.75, 0.75)  # run 1: R 1/2 P 1/2, run 2: R 2/2 P 2/2
+    # Relationships as reference_eval counts them: run 1 misses it (no precision: no end pair maps), run 2 has it
+    assert (shop["relationship_recall"], shop["relationship_precision"]) == (0.5, 1.0)
     assert shop["consistency"] == {"elements": pytest.approx(1 / 3, abs=0.001), "relationships": 0.0}
 
 
@@ -76,7 +84,10 @@ def test_a_golden_repository_is_measured_on_its_derivable_subset(tmp_path, folde
         json.dumps({"g-ledger": {"derivable": True}, "g-reporting": {"derivable": True}, "g-target": {"derivable": False}, "g-group": {"derivable": False}}), encoding="utf-8"
     )
     (references / "ledger.matches.json").write_text(json.dumps({"g-reporting": ["Report Generation"]}), encoding="utf-8")
-    run = _snapshot([("l", "ApplicationComponent", "Ledger"), ("r", "ApplicationComponent", "Report Generation"), ("x", "ApplicationComponent", "Batch")])
+    run = _snapshot(
+        [("l", "ApplicationComponent", "Ledger"), ("r", "ApplicationComponent", "Report Generation"), ("x", "ApplicationComponent", "Batch")],
+        [("l", "Serving", "r"), ("l", "Composition", "x"), ("r", "Serving", "l")],  # one right, one wrong end, one reversed
+    )
     session = _session(tmp_path, "s1", "ledger", [run, run])
 
     ledger = measure([session], *folders)["ledger"]
@@ -85,6 +96,8 @@ def test_a_golden_repository_is_measured_on_its_derivable_subset(tmp_path, folde
     assert ledger["recall"] == 1.0  # both derivable elements, one through the user's accepted name
     assert ledger["precision"] == pytest.approx(0.667, abs=0.001)
     assert ledger["consistency"]["elements"] == 1.0
+    # A golden relationship counts when both ends are derivable (only Ledger -> Reporting); type and direction must agree
+    assert (ledger["relationship_recall"], ledger["relationship_precision"]) == (1.0, pytest.approx(0.333, abs=0.001))
 
 
 def test_without_the_users_files_a_golden_repository_falls_back_to_the_templates_and_is_provisional(tmp_path, folders):
@@ -98,6 +111,8 @@ def test_without_the_users_files_a_golden_repository_falls_back_to_the_templates
     # Unlabelled: recall over the reference elements of the derived types (3 components, not the grouping)
     assert (ledger["source"], ledger["provisional"]) == ("golden", True)
     assert ledger["recall"] == pytest.approx(0.333, abs=0.001) and ledger["precision"] == 1.0
+    # Relationships between two elements of the derived types (not the grouping's): 2, none derived
+    assert (ledger["relationship_recall"], ledger["relationship_precision"]) == (0.0, None)
 
 
 def test_a_repository_without_a_reference_has_consistency_but_no_measure(tmp_path, folders):
@@ -118,7 +133,7 @@ def test_a_repository_with_several_models_needs_the_model_named(tmp_path, folder
     assert measure(sessions, *folders, model="other-model")["shop"]["model"] == "other-model"
 
 
-def _row(repo, recall, precision, consistency=1.0, source="reference"):
+def _row(repo, recall, precision, consistency=1.0, source="reference", rel_recall=0.5, rel_precision=0.5):
     return {
         "repository": repo,
         "model": MODEL,
@@ -127,6 +142,8 @@ def _row(repo, recall, precision, consistency=1.0, source="reference"):
         "provisional": False,
         "recall": recall,
         "precision": precision,
+        "relationship_recall": rel_recall if source else None,
+        "relationship_precision": rel_precision if source else None,
         "consistency": {"elements": consistency, "relationships": consistency},
     }
 
@@ -169,3 +186,79 @@ def test_repositories_without_a_measure_are_left_out_of_the_count_and_named():
     # 6 measured: two thirds of them (4) must be better
     assert (result["better"], result["measured"], result["needed"]) == (4, 6, 4)
     assert result["unmeasured"] == ["x"] and result["verdict"] == "PASS"
+
+
+def test_a_rise_below_one_point_is_held_and_a_relationship_rise_counts():
+    baseline = {r: _row(r, 0.50, 0.50) for r in "abc"}
+    candidate = {"a": _row("a", 0.505, 0.50), "b": _row("b", 0.50, 0.50, rel_recall=0.52), "c": _row("c", 0.50, 0.50, rel_precision=0.53)}
+
+    result = verdict(baseline, candidate)
+
+    assert {r["repository"]: r["better"] for r in result["rows"]} == {"a": False, "b": True, "c": True}
+    assert (result["better"], result["needed"], result["verdict"]) == (2, 2, "PASS")
+
+
+def test_a_relationship_drop_beyond_two_points_fails():
+    baseline = {r: _row(r, 0.50, 0.50) for r in "abc"}
+    candidate = {r: _row(r, 0.52, 0.52) for r in "ab"} | {"c": _row("c", 0.52, 0.52, rel_precision=0.47)}
+
+    result = verdict(baseline, candidate)
+
+    assert result["verdict"] == "FAIL" and any("c drops 3.0 points on relationship precision" in f for f in result["failures"])
+
+
+def test_a_level_measures_that_level_and_a_reference_without_it_has_no_measure(tmp_path, folders):
+    goldens, references = folders
+    leveled = {
+        "repository": "shop",
+        "elements": [
+            {"key": "core", "type": "ApplicationComponent", "name": "Customer Core", "levels": ["enterprise", "solution"]},
+            {"key": "lib", "type": "ApplicationComponent", "name": "Pricing Library", "levels": ["solution"]},
+        ],
+    }
+    (goldens / "shop.json").write_text(json.dumps(leveled), encoding="utf-8")
+    run = _snapshot([("a", "ApplicationComponent", "Customer Core")])
+    run["elements"][0]["levels"] = ["enterprise", "solution"]  # a model element without levels is enterprise only
+    sessions = [_session(tmp_path, "s1", "shop", [run, run]), _session(tmp_path, "s2", "ledger", [run, run])]
+
+    assert measure(sessions, goldens, references, level="enterprise")["shop"]["recall"] == 1.0
+    shop = measure(sessions, goldens, references, level="solution")["shop"]
+    assert (shop["source"], shop["recall"]) == ("reference", 0.5)  # the library is missing at the solution level
+    # The golden model has no levels yet: no solution measure, the enterprise one as before
+    assert measure(sessions, goldens, references, level="solution")["ledger"]["source"] is None
+    assert measure(sessions, goldens, references, level="union")["ledger"]["source"] == "golden"
+    # A reference without solution elements has no solution measure
+    (goldens / "shop.json").write_text(json.dumps(REFERENCE), encoding="utf-8")
+    assert measure(sessions, goldens, references, level="solution")["shop"]["source"] is None
+
+
+def test_the_overall_verdict_needs_every_measured_level_to_pass():
+    from deriva.bench.gate import overall_verdict
+
+    passing = {"verdict": "PASS", "measured": 6, "failures": []}
+    failing = {"verdict": "FAIL", "measured": 6, "failures": ["x drops 3.0 points on recall (at most 2.0)"]}
+    unmeasured = {"verdict": "FAIL", "measured": 0, "failures": ["no repository has a measure in both the baseline and the candidate"]}
+
+    assert overall_verdict({"enterprise": passing, "solution": unmeasured, "union": passing}) == ("PASS", ["enterprise", "union"])
+    assert overall_verdict({"enterprise": passing, "solution": failing, "union": passing})[0] == "FAIL"
+
+
+def test_golden_elements_and_relationships_match_through_structure_refs(tmp_path, folders):
+    """A golden element tied to a folder is found by the element derived from it, and its relationships follow."""
+    _, references = folders
+    (references / "ledger.derivable.json").write_text(
+        json.dumps({"g-ledger": {"derivable": True}, "g-reporting": {"derivable": True}, "g-target": {"derivable": False}, "g-group": {"derivable": False}}), encoding="utf-8"
+    )
+    (references / "ledger.matches.json").write_text(json.dumps({"g-reporting": {"names": [], "structure_refs": ["path:reports"]}}), encoding="utf-8")
+    run = {
+        "elements": [
+            {"identifier": "l", "type": "ApplicationComponent", "name": "Ledger", "source": "unit::ledger::core"},
+            {"identifier": "r", "type": "ApplicationComponent", "name": "Statements", "source": "unit::ledger::reports"},
+        ],
+        "relationships": [{"source": "l", "type": "Serving", "target": "r", "derived_from": "rule"}],
+    }
+
+    ledger = measure([_session(tmp_path, "s1", "ledger", [run, run])], *folders)["ledger"]
+
+    assert ledger["recall"] == 1.0 and ledger["precision"] == 1.0  # Statements is the reports folder: Reporting
+    assert (ledger["relationship_recall"], ledger["relationship_precision"]) == (1.0, 1.0)

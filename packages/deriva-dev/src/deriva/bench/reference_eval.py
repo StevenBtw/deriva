@@ -29,6 +29,7 @@ class RefElement:
     aliases: tuple[str, ...] = ()
     lineage: frozenset[str] = frozenset()
     optional: bool = False
+    levels: frozenset[str] = frozenset({"enterprise"})  # The abstraction levels it belongs to
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class RefRelationship:
     type: str
     kind: str
     optional: bool = False
+    levels: frozenset[str] = frozenset({"enterprise"})
 
 
 @dataclass(frozen=True)
@@ -64,18 +66,65 @@ def parse_reference(data: dict[str, Any]) -> Reference:
             aliases=tuple(e.get("aliases", [])),
             lineage=frozenset(e.get("lineage", [])),
             optional=bool(e.get("optional", False)),
+            levels=_levels_of(e),
         )
         for e in data["elements"]
     ]
     keys = {e.key for e in elements}
     if len(keys) != len(elements):
         raise ValueError(f"{data['repository']}: element keys must be unique")
-    relationships = [RefRelationship(r["source"], r["target"], r["type"], r["kind"], bool(r.get("optional", False))) for r in data.get("relationships", [])]
+    relationships = [RefRelationship(r["source"], r["target"], r["type"], r["kind"], bool(r.get("optional", False)), _levels_of(r)) for r in data.get("relationships", [])]
     chains = [Chain(c["name"], tuple((s[0], s[1], s[2], len(s) > 3 and s[3] == "reverse") for s in c["steps"])) for c in data.get("chains", [])]
     ends = {k for r in relationships for k in (r.source, r.target)} | {k for c in chains for s in c.steps for k in (s[0], s[2])}
     if unknown := ends - keys:
         raise ValueError(f"{data['repository']}: unknown element keys {sorted(unknown)}")
     return Reference(repository=data["repository"], elements=elements, relationships=relationships, chains=chains)
+
+
+LEVELS = ("enterprise", "solution")
+
+
+def _levels_of(item: dict[str, Any]) -> frozenset[str]:
+    """The levels a reference or model item belongs to (``levels``); without them, the enterprise level.
+
+    A cross-level item (``cross_level``, or an explicit empty ``levels``: a roll-up between levels) belongs to no
+    single level and counts in the union only.
+    """
+    if item.get("cross_level"):
+        return frozenset()
+    levels = item.get("levels")
+    return frozenset(str(v) for v in levels) if isinstance(levels, list) else frozenset({"enterprise"})
+
+
+def at_level(reference: Reference, model: dict[str, Any], level: str | None) -> tuple[Reference, dict[str, Any]]:
+    """The reference and the model at one level (``enterprise`` or ``solution``); ``None`` or ``union``: all of both."""
+    if level is None or level == "union":
+        return reference, model
+    if level not in LEVELS:
+        raise ValueError(f"level is one of {', '.join(LEVELS)}, union or None, not {level!r}")
+    keys = {e.key for e in reference.elements if level in e.levels}
+    leveled = Reference(
+        repository=reference.repository,
+        elements=[e for e in reference.elements if e.key in keys],
+        relationships=[r for r in reference.relationships if level in r.levels and r.source in keys and r.target in keys],
+        chains=[c for c in reference.chains if all(a in keys and b in keys for a, _, b, _ in c.steps)],
+    )
+    return leveled, snapshot_at_level(model, level)
+
+
+def snapshot_at_level(model: dict[str, Any], level: str | None) -> dict[str, Any]:
+    """A run model at one level: its elements tagged with the level (no tag: enterprise) and the relationships on it
+    between them; ``None`` or ``union``: the whole model."""
+    if level is None or level == "union":
+        return model
+    if level not in LEVELS:
+        raise ValueError(f"level is one of {', '.join(LEVELS)}, union or None, not {level!r}")
+    ids = {e["identifier"] for e in model.get("elements", []) if level in _levels_of(e)}
+    return {
+        **model,
+        "elements": [e for e in model.get("elements", []) if e["identifier"] in ids],
+        "relationships": [r for r in model.get("relationships", []) if level in _levels_of(r) and r["source"] in ids and r["target"] in ids],
+    }
 
 
 def _type(value: str) -> str:
@@ -131,8 +180,13 @@ def naming(reference: Reference, model: dict[str, Any]) -> dict[str, dict[str, i
     return out
 
 
-def evaluate(reference: Reference, model: dict[str, Any]) -> dict[str, Any]:
-    """Recall and precision per element type and relationship kind, splits, chains, for one model."""
+def evaluate(reference: Reference, model: dict[str, Any], *, level: str | None = None) -> dict[str, Any]:
+    """Recall and precision per element type and relationship kind, splits, chains, for one model.
+
+    ``level`` (``enterprise``, ``solution`` or ``union``) scores one abstraction level of both; ``None`` keeps
+    every element and relationship, as before levels existed.
+    """
+    reference, model = at_level(reference, model, level)
     mapping = map_elements(reference, model)
     by_key = {r.key: r for r in reference.elements}
     covered: dict[str, list[str]] = defaultdict(list)  # reference key -> model identifiers

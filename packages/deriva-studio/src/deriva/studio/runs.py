@@ -121,7 +121,7 @@ class RunManager:
         return self._current.summary() if self._current is not None else None
 
     def history(self, limit: int = 10) -> list[dict[str, Any]]:
-        """The studio's runs, newest first: the one in progress, then the summaries finished runs left in their folders."""
+        """The studio's runs, newest first: its latest run (in progress or just ended), then the summaries runs left in their folders."""
         rows: dict[str, dict[str, Any]] = {}
         for path in self._runs_dir.glob("*/run.json"):
             try:
@@ -130,8 +130,10 @@ class RunManager:
                 continue
             if isinstance(row, dict) and row.get("run_id"):
                 rows[str(row["run_id"])] = row
+        # The latest run from memory, also once it ended: its summary is written after its status changes (or not at all
+        # when the write fails), and memory is never older than the file
         current = self._current
-        if current is not None and current.status == "running":
+        if current is not None:
             rows[current.run_id] = current.summary()
         return sorted(rows.values(), key=lambda row: row.get("started_at") or 0, reverse=True)[:limit]
 

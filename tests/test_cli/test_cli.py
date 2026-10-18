@@ -856,6 +856,19 @@ class TestConfigUpdateCommand:
         assert result.exit_code == 0
         assert "Params: updated" in result.stdout
 
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_update_moves_a_derivation_step_with_sequence(self, mock_session_class, mock_config):
+        """--sequence makes a new version at another place in the phase."""
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+        mock_config.create_derivation_config_version.return_value = {"success": True, "old_version": 3, "new_version": 4}
+
+        result = runner.invoke(app, ["config", "update", "derivation", "joint_consistency", "--sequence", "8"])
+
+        assert result.exit_code == 0
+        assert mock_config.create_derivation_config_version.call_args.kwargs["sequence"] == 8
+        assert "Sequence: 8" in result.stdout
+
     def test_update_invalid_params_json(self):
         """Should reject invalid params JSON."""
         result = runner.invoke(

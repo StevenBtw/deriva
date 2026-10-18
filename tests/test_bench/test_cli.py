@@ -1358,9 +1358,14 @@ def test_gate_compares_a_candidate_with_a_baseline_and_writes_markdown_and_json(
 
     assert result.exit_code == 0, result.output
     assert "**PASS**: 1/1 measured repositories better" in result.output
+    # Per level: the reference has no levels, so it is enterprise only; the solution level has no measure and no vote
+    assert "## Enterprise level" in result.output and "## Solution level" in result.output
+    assert "**Overall: PASS** (levels that voted: enterprise, union)" in result.output
     payload = _json.loads((tmp_path / "out" / "gate.json").read_text(encoding="utf-8"))
-    assert payload["verdict"]["verdict"] == "PASS" and payload["baseline"]["shop"]["recall"] == 0.5
-    assert "| shop | reference | 50.0% | 100.0% |" in (tmp_path / "out" / "gate.md").read_text(encoding="utf-8")
+    assert payload["verdict"] == {"verdict": "PASS", "levels": ["enterprise", "union"]}
+    assert payload["levels"]["enterprise"]["baseline"]["shop"]["recall"] == 0.5
+    assert payload["levels"]["solution"]["baseline"]["shop"]["source"] is None
+    assert "| shop | reference | 50.0% -> 100.0% | 100.0% -> 100.0% |" in (tmp_path / "out" / "gate.md").read_text(encoding="utf-8")
 
     # The baseline alone: its table, no verdict
     alone = _Runner().invoke(bench_app, ["gate", "--baseline", "bench_base", "--benchmarks", str(benchmarks), "--goldens", str(goldens), "-o", str(tmp_path / "alone")])

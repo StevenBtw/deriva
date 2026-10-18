@@ -2315,6 +2315,76 @@ class TestExtractionLLMLogging:
 class TestRunModelSnapshot:
     """Each exported run also writes a JSON snapshot with source nodes and relationship provenance."""
 
+    def test_levels_and_cross_level_links_are_in_the_snapshot(self, tmp_path, monkeypatch):
+        """The abstraction levels the refine step wrote, per element and relationship (None: not tagged, enterprise)."""
+        import json
+        from pathlib import Path
+
+        from deriva.adapters.archimate.models import Relationship
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [
+            Element(name="Shop", element_type="ApplicationComponent", identifier="ac_sys", properties={"source": "module::r::r", "levels": ["enterprise"]}),
+            Element(name="Orders", element_type="ApplicationComponent", identifier="ac_orders", properties={"source": "unit::r::orders", "levels": ["solution"]}),
+        ]
+        archimate_manager.get_relationships.return_value = [
+            Relationship(
+                source="ac_sys", target="ac_orders", relationship_type="Composition", identifier="r1", properties={"derived_from": "roll_up", "levels": [], "cross_level": True}
+            ),
+        ]
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, config=BenchmarkConfig(repositories=["r"], models=["m"], export_models=True)
+        )
+        orchestrator.session_id = "s"
+
+        with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
+            xml_path = orchestrator._export_run_model("r", "m", 1, solve_report={})
+
+        snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
+        assert [e["levels"] for e in snapshot["elements"]] == [["enterprise"], ["solution"]]
+        assert (snapshot["relationships"][0]["levels"], snapshot["relationships"][0]["cross_level"]) == ([], True)
+
+    def test_closed_set_names_carry_their_candidates_and_the_recorded_choice(self, tmp_path, monkeypatch):
+        """The candidates in order next to name and structure name; name_choice as recorded wins over their number."""
+        import json
+        from pathlib import Path
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [
+            Element(
+                name="Card Management",
+                element_type="ApplicationService",
+                identifier="as_card",
+                properties={"source": "unit::r::card", "name_candidates": ["Card Processing", "Card Management"], "name_choice": True},
+            ),
+            Element(
+                name="Shop",
+                element_type="ApplicationComponent",
+                identifier="ac_shop",
+                properties={"source": "unit::r::shop", "name_candidates": ["Shop", "Shop App"], "name_choice": False},
+            ),
+            Element(
+                name="Orders", element_type="ApplicationService", identifier="as_orders", properties={"source": "unit::r::orders", "name_candidates": ["Orders", "Order Handling"]}
+            ),
+        ]
+        archimate_manager.get_relationships.return_value = []
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, config=BenchmarkConfig(repositories=["r"], models=["m"], export_models=True)
+        )
+        orchestrator.session_id = "s"
+
+        with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
+            xml_path = orchestrator._export_run_model("r", "m", 1, solve_report={})
+
+        elements = {e["identifier"]: e for e in json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))["elements"]}
+        assert (elements["as_card"]["name_candidates"], elements["as_card"]["name_choice"]) == (["Card Processing", "Card Management"], True)
+        assert (elements["ac_shop"]["name_candidates"], elements["ac_shop"]["name_choice"]) == (["Shop", "Shop App"], False)  # recorded: no call
+        assert elements["as_orders"]["name_choice"] is True  # nothing recorded: several candidates mean a choice
+
     def test_snapshot_next_to_the_xml(self, tmp_path, monkeypatch):
         import json
 
@@ -2355,6 +2425,8 @@ class TestRunModelSnapshot:
                 "level": "architect",
                 "name_choice": False,
                 "structure_name": "Orders",
+                "name_candidates": None,
+                "levels": None,
             },
             {
                 "identifier": "bo_order",
@@ -2364,10 +2436,12 @@ class TestRunModelSnapshot:
                 "level": "architect",
                 "name_choice": False,
                 "structure_name": "Order",
+                "name_candidates": None,
+                "levels": None,
             },
         ]
         assert snapshot["relationships"] == [
-            {"source": "ac_orders", "target": "bo_order", "type": "Access", "derived_from": "llm", "confidence": 0.8},
+            {"source": "ac_orders", "target": "bo_order", "type": "Access", "derived_from": "llm", "confidence": 0.8, "levels": None, "cross_level": False},
         ]
         assert snapshot["detail"] == {"elements": [], "relationships": [], "properties": {}}  # no lineage in the graph
 
@@ -2394,6 +2468,39 @@ class TestSessionMetadataSamples:
 
         metadata = json.loads(Path("workspace/benchmarks/s/session_metadata.json").read_text(encoding="utf-8"))
         assert metadata["llm_samples"] == {"DocConcepts": 1, "TypeA.naming": 1}
+
+    def test_the_code_commit_and_dirty_flag_at_the_start_are_recorded(self, tmp_path, monkeypatch):
+        """The commit the session started on, with a dirty flag: the code may change while a long session runs."""
+        import json
+        from pathlib import Path
+
+        from deriva.bench import benchmarking as bench_module
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+        orchestrator = BenchmarkOrchestrator(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), config=BenchmarkConfig(repositories=["r"], models=["m"]))
+        orchestrator.session_id = "s"
+        monkeypatch.setattr(bench_module.export_bundle, "code_commit", lambda: {"commit": "abc123", "dirty": True})
+
+        orchestrator._capture_code()
+        monkeypatch.setattr(bench_module.export_bundle, "code_commit", lambda: {"commit": "later", "dirty": False})
+        orchestrator._export_ocel()
+
+        metadata = json.loads(Path("workspace/benchmarks/s/session_metadata.json").read_text(encoding="utf-8"))
+        assert metadata["code"] == {"commit": "abc123", "dirty": True}
+
+    def test_a_session_without_a_captured_commit_records_none(self, tmp_path, monkeypatch):
+        import json
+        from pathlib import Path
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+        orchestrator = BenchmarkOrchestrator(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=MagicMock(), config=BenchmarkConfig(repositories=["r"], models=["m"]))
+        orchestrator.session_id = "s"
+
+        orchestrator._export_ocel()
+
+        assert json.loads(Path("workspace/benchmarks/s/session_metadata.json").read_text(encoding="utf-8"))["code"] == {"commit": None, "dirty": None}
 
     def test_the_generation_settings_sent_per_model_are_recorded(self, tmp_path, monkeypatch):
         """For a settings table: what each model was sent (temperature, top_p, seed, reasoning, thinking)."""
