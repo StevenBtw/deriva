@@ -38,10 +38,13 @@ Benchmarking lives in deriva.bench (deriva-dev).
 
 from __future__ import annotations
 
+from deriva.adapters.database import ConfigDatabaseBusy
+
 from . import config, config_models, derivation, extraction, pipeline
 from .session import PipelineSession
 
 __all__ = [
+    "ConfigDatabaseBusy",
     "PipelineSession",
     "config",
     "config_models",
