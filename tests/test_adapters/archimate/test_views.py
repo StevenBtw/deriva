@@ -65,6 +65,22 @@ def test_each_level_has_its_viewpoints_with_the_elements_and_relationships_of_th
     assert views["Application Structure (solution)"].viewpoint == "Application Structure" and views["Business (enterprise)"].viewpoint == "Business Process Cooperation"
 
 
+def test_interface_members_are_shown_with_their_interface_in_a_detail_view():
+    """The members of an interface (endpoints, pages) were in no view; the interfaces detail view shows them with their
+    interface, and only interfaces (their components' own members are in the deployment detail view)."""
+    member = Element(name="OrderResource", element_type="ApplicationInterface", identifier="ai_detail_orders", properties={"level": "detail", "parent": "ai_shop"})
+    part = Relationship(source="ai_shop", target="ai_detail_orders", relationship_type="Composition", identifier="r5", properties={"level": "detail"})
+
+    views = _by_name(build_views([*ELEMENTS, member], [*RELATIONSHIPS, part]))
+
+    view = views["Application Interfaces (detail)"]
+    assert (view.viewpoint, view.level) == ("Application Cooperation", "detail")
+    assert _nodes(view) == {"ai_shop", "ai_detail_orders"}
+    assert {c.relationship for c in view.connections} == {"r5"}
+    # Without members the view is left out, as every detail view is
+    assert "Application Interfaces (detail)" not in _by_name(build_views(ELEMENTS, RELATIONSHIPS))
+
+
 def test_a_cross_level_link_is_in_no_view_and_detail_elements_only_in_detail_views():
     views = build_views(ELEMENTS, RELATIONSHIPS)
 
