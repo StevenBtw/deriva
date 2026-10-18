@@ -49,6 +49,19 @@ def test_without_a_build_the_root_explains_how_to_build(tmp_path):
     assert "npm run build" in response.text
 
 
+def test_the_first_exit_signal_stops_the_runs_before_uvicorn_waits_for_streams():
+    from deriva.studio.__main__ import main
+
+    with patch("deriva.studio.__main__.uvicorn") as uvicorn, patch("deriva.studio.__main__.create_app") as create_app:
+        uvicorn_exit = uvicorn.Server.return_value.handle_exit
+        main(["--no-browser"])
+
+    uvicorn.Server.return_value.handle_exit(2, None)
+
+    create_app.return_value.state.runs.shutdown.assert_called_once_with()
+    uvicorn_exit.assert_called_once_with(2, None)
+
+
 def test_main_serves_on_localhost_by_default_and_opens_the_browser():
     from deriva.studio.__main__ import main
 

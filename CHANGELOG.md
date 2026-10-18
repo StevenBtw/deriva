@@ -8,6 +8,16 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
+## v0.8.4 - (Unreleased)
+
+### Fixes
+
+- **Joint selection outside a source checkout**: `joint_consistency` wrote its report (`report_path`) relative to the current folder and failed where `workspace/output` did not exist, so an installed tool applied no merges, redirects or drops. A relative report path is now under the Deriva home folder, its folder is created, and a report that cannot be written is logged without stopping the selection
+- **Unknown `--repo` names**: `run`, `status`, `export`, `clear` and `graph tag-steps` refuse a name that is no repository in the workspace and has no graph database, list the known repositories and exit 1, instead of creating an empty graph database for the typo. `default` and the joined names of combined runs (once their database exists) stay valid
+- **Cancelling a studio run**: a cancel now also stops the running step: the session refuses every further LLM call of the run (`RunCancelled`), so a long step ends at its next call instead of running to its end, and the run ends as `cancelled`. A call already under way still finishes
+- **Stopping the studio during a run**: the first Ctrl+C or SIGTERM cancels the run and ends the open event streams. The server waited for those streams before its shutdown, and a stream lasted until its run ended, so stopping hung until the step was done
+- **Interrupted runs in the studio history**: a run whose studio process ended before the run did (a crash, a killed process) is listed as `interrupted`, with its kind, repository and times from its kept events; its live log replays and ends with a note that the studio stopped, instead of the run missing from the history
+
 ## v0.8.3 - Adding abstraction to consistency (October 18 2026)
 
 The model now has two abstraction levels, enterprise and solution, built from structure without LLM calls, and the benchmark gate judges a change per level.
@@ -1135,12 +1145,8 @@ Initial release with pipeline architecture, LLM client (OpenAI), Neo4j storage, 
 
 - **Rapid iteration**: v0.1.0 to v0.2.0 (First Purge) took only 4 days
 - **The long gap**: 4 months between v0.3.x (Apr) and v0.5.x (Aug)
-- **UI evolution**: Streamlit -> FastAPI+Jinja2 -> Gradio (planned) -> Marimo (final)
-- **Graph DB constant**: Neo4j was the only technology that survived all purges
+- **UI evolution**: Streamlit -> FastAPI+Jinja2 -> Gradio -> Marimo -> FastAPI+React (Final)
 - **Config evolution**: JSON files -> YAML templates -> DuckDB tables
-- **Python version ambition**: started targeting Python 3.8, now requires Python 3.14
-- **Solo developer**: all commits by a single author across 10 months
-- **Confidence scoring**: present from day 1, default 0.8 confidence on all elements
 - **Deriva**: new name to underscore generalizability beyond ArchiMate
 
 ---

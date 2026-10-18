@@ -41,11 +41,13 @@ from __future__ import annotations
 from deriva.adapters.database import ConfigDatabaseBusy
 
 from . import config, config_models, derivation, extraction, pipeline
-from .session import PipelineSession
+from .session import PipelineSession, RunCancelled, UnknownRepository
 
 __all__ = [
     "ConfigDatabaseBusy",
     "PipelineSession",
+    "RunCancelled",
+    "UnknownRepository",
     "config",
     "config_models",
     "extraction",

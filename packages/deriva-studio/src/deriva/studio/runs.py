@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from deriva.services import about, derivation
+from deriva.services import RunCancelled, about, derivation
 from deriva.services.llm_log import LlmCallLog, summarize_call
 from deriva.studio.provider import SessionProvider
 
@@ -80,6 +80,8 @@ class RunManager:
         self._changed = threading.Condition()
         self._runs: dict[str, RunState] = {}
         self._current: RunState | None = None
+        # Set on the studio's exit signal: event streams end once they sent what they have
+        self._closing = False
 
     def start(self, kind: str, repository: str | None = None, no_llm: bool = False) -> str:
         return self._launch(kind, repository, {"kind": kind, "repository": repository}, lambda run: self._work(run, no_llm))
@@ -150,12 +152,39 @@ class RunManager:
                 continue
             if isinstance(row, dict) and row.get("run_id"):
                 rows[str(row["run_id"])] = row | {"events_kept": self.events_kept(str(row["run_id"]))}
+        # A run whose studio process ended before it did left only its events: listed as interrupted
+        for path in self._runs_dir.glob(f"*/{EVENTS_FILE}"):
+            run_id = path.parent.name
+            if run_id in rows or run_id in self._runs or (path.parent / "run.json").exists():
+                continue
+            row = self._interrupted(run_id)
+            if row is not None:
+                rows[run_id] = row
         # The latest run from memory, also once it ended: its summary is written after its status changes (or not at all
         # when the write fails), and memory is never older than the file
         current = self._current
         if current is not None:
             rows[current.run_id] = current.summary() | {"events_kept": True}
         return sorted(rows.values(), key=lambda row: row.get("started_at") or 0, reverse=True)[:limit]
+
+    def _interrupted(self, run_id: str) -> dict[str, Any] | None:
+        """The summary of a run that never ended, from its events: kind and repository from its start, the last event
+        as its end (None without a start event)."""
+        events = self._stored_events(run_id)
+        if not events or events[0]["event"] != "started":
+            return None
+        data = events[0].get("data")
+        started: dict[str, Any] = data if isinstance(data, dict) else {}
+        return {
+            "run_id": run_id,
+            "kind": started.get("kind"),
+            "repository": started.get("repository"),
+            "status": "interrupted",
+            "events": len(events),
+            "started_at": events[0].get("ts"),
+            "finished_at": events[-1].get("ts"),
+            "events_kept": True,
+        }
 
     def cancel(self, run_id: str) -> bool:
         run = self._runs.get(run_id)
@@ -173,12 +202,27 @@ class RunManager:
         with self._changed:
             return self._changed.wait_for(lambda: run.status in TERMINAL, timeout)
 
+    def shutdown(self) -> None:
+        """The studio's exit signal: cancel the run in progress and end the event streams. uvicorn waits for open
+        streams before the app's shutdown, and a stream follows its run to the end. Takes no lock (a signal handler
+        calls it); the streams see it at their next poll."""
+        self._closing = True
+        run = self._current
+        if run is not None and run.status not in TERMINAL:
+            run.cancel_requested = True
+
     def events(self, run_id: str, after: int = 0, poll: float = 0.5) -> Iterator[dict[str, Any]]:
         """Events with seq > after, waiting for new ones until the run has ended and all were sent; a run of an earlier
         studio process replays the events its folder kept (it ended, or ended with that process)."""
         run = self._runs.get(run_id)
         if run is None:
-            yield from (e for e in self._stored_events(run_id) if e["seq"] > after)
+            stored = self._stored_events(run_id)
+            # A run whose studio process ended first has no end event: the replay ends it, or the browser would
+            # reconnect for ever (not stored, so the history still lists it as interrupted)
+            if stored and stored[-1]["event"] not in TERMINAL:
+                end = {"message": "The studio stopped before the run ended", "interrupted": True}
+                stored.append({"seq": stored[-1]["seq"] + 1, "event": "error", "data": end, "ts": stored[-1]["ts"]})
+            yield from (e for e in stored if e["seq"] > after)
             return
         sent = after
         with self._changed:
@@ -187,7 +231,7 @@ class RunManager:
             while True:
                 with self._changed:
                     pending = [e for e in run.events if e["seq"] > sent]
-                    if not pending and run.status in TERMINAL:
+                    if not pending and (run.status in TERMINAL or self._closing):
                         return
                     if not pending:
                         self._changed.wait(poll)
@@ -278,6 +322,8 @@ class RunManager:
                 if run.repository:
                     session.use_repository(run.repository)
                 log = self._open_log(session, run)
+                # A cancel also stops the running step, at its next LLM call
+                session.set_cancel_check(lambda: run.cancel_requested)
                 # What the run is about to run on, next to its call log
                 session.write_run_inputs(self._runs_dir / run.run_id, run.run_id)
                 steps = self._steps(session, run, no_llm)
@@ -303,6 +349,10 @@ class RunManager:
                     self._provider.wait_for_entry(entries, VIEW_WINDOW)
             self._close_log(log)
             self._finish(run, "finished", {})
+        except RunCancelled:
+            # The cancel stopped a step at its next LLM call and the step let it through
+            self._close_log(log)
+            self._finish(run, "cancelled", {})
         except Exception as exc:
             self._close_log(log)
             self._finish(run, "error", {"message": str(exc)})
@@ -345,6 +395,7 @@ class RunManager:
         log.close()
         with self._provider.session(wait=None) as session:
             session.detach_call_log()
+            session.set_cancel_check(None)
 
 
 class BenchmarkEvents:

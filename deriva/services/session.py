@@ -37,7 +37,7 @@ from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.models import layer_of
 from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 from deriva.adapters.database import get_connection, run_migrations
-from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, use_database
+from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, database_exists, use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
 from deriva.common.logging import RunLogger
@@ -57,6 +57,19 @@ def _plain(value: Any) -> Any:
             return {"labels": [label for label in value["_labels"] if label not in ("Graph", "Model")], **plain}
         return {"type": value.get("_type"), **plain}
     return value
+
+
+class UnknownRepository(ValueError):
+    """A repository name that is neither in the workspace nor has a graph database."""
+
+    def __init__(self, name: str, available: list[str]) -> None:
+        self.name = name
+        self.available = available
+        super().__init__(f"Unknown repository: {name} (known: {', '.join(available) or 'none'})")
+
+
+class RunCancelled(RuntimeError):
+    """The run was cancelled: the session makes no further LLM call until the cancel check is removed."""
 
 
 class PipelineSession:
@@ -97,6 +110,7 @@ class PipelineSession:
         self._repo_manager: RepoManager | None = None
         self._llm_manager: Any | None = None  # Lazy loaded
         self._call_log: Any | None = None  # LlmCallLog of the running studio run, if any
+        self._cancel_check: Callable[[], bool] | None = None  # True once the running studio run is cancelled
 
         # Test-only mocks (set by tests)
         self._mock_db: Any | None = None
@@ -139,6 +153,20 @@ class PipelineSession:
         self._repo_manager = RepoManager(workspace_dir=self._workspace_dir)
 
         self._connected = True
+
+    @staticmethod
+    def check_repository(repository: str | None) -> None:
+        """Refuse a graph database name before it opens (opening creates its file): the shared default, a repository
+        in the workspace (as ``repo list`` shows them) or a key whose database exists (a combined run) are known.
+
+        Raises:
+            UnknownRepository: with the known repository names
+        """
+        if not repository or repository == DEFAULT_DATABASE or database_exists(repository):
+            return
+        names = sorted(str(r) for r in RepoManager().list_repositories(detailed=False))
+        if repository not in names:
+            raise UnknownRepository(repository, names)
 
     def use_repository(self, repository: str) -> None:
         """Switch the graph and model managers to another repository's database."""
@@ -205,6 +233,9 @@ class PipelineSession:
             response_model: type | None = None,
         ) -> Any:
             assert self._llm_manager is not None
+            # A cancelled run stops at its next call, also inside a long step
+            if self._cancel_check is not None and self._cancel_check():
+                raise RunCancelled("run cancelled")
             try:
                 response = self._llm_manager.query(
                     prompt,
@@ -228,6 +259,10 @@ class PipelineSession:
 
     def detach_call_log(self) -> None:
         self._call_log = None
+
+    def set_cancel_check(self, check: Callable[[], bool] | None) -> None:
+        """Refuse every LLM call while ``check()`` is True (the studio's run cancel); None removes it."""
+        self._cancel_check = check
 
     def _record_call(self, prompt: str, schema: dict | None, system_prompt: str | None, response: Any, error: str | None) -> None:
         log = self._call_log

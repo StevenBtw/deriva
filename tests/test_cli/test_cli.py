@@ -266,6 +266,35 @@ class TestMain:
             assert main() == 1
         assert capsys.readouterr().err.strip() == "Error: The config database x is open in another Deriva process"
 
+    def test_main_names_an_unknown_repository_in_one_line(self, capsys):
+        from deriva.services import UnknownRepository
+
+        with patch("deriva.cli.cli.app", side_effect=UnknownRepository("typo", ["alpha"])):
+            assert main() == 1
+        assert capsys.readouterr().err.strip() == "Error: Unknown repository: typo (known: alpha)"
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["status", "--repo", "typo"],
+            ["export", "--repo", "typo"],
+            ["clear", "model", "--repo", "typo"],
+            ["run", "extraction", "--repo", "typo"],
+            ["graph", "tag-steps", "--repo", "typo"],
+        ],
+    )
+    def test_an_unknown_repository_is_refused_before_a_database_opens(self, args):
+        from deriva.services import UnknownRepository
+
+        session_class = MagicMock()
+        session_class.check_repository.side_effect = UnknownRepository("typo", [])
+        with patch("deriva.cli.cli.PipelineSession", session_class), patch("deriva.cli.commands.graph.PipelineSession", session_class):
+            result = runner.invoke(app, args)
+
+        assert isinstance(result.exception, UnknownRepository)
+        session_class.check_repository.assert_called_once_with("typo")
+        session_class.assert_not_called()
+
     def test_main_makes_stdout_line_buffered(self):
         """Progress lines must appear live, also when stdout is piped to a file."""
         with patch("deriva.cli.cli.app"), patch("deriva.cli.cli.sys.stdout") as stdout:

@@ -77,6 +77,39 @@ class TestPipelineSessionLifecycle:
         assert use_database.call_args.args[0] == "darkgreen"
         assert session.repository == "darkgreen"
 
+    def test_a_cancelled_run_makes_no_further_llm_call(self):
+        from deriva.services.session import RunCancelled
+
+        session = PipelineSession()
+        session._llm_manager = MagicMock()
+        query = session._get_llm_query_fn()
+        assert query is not None
+
+        session.set_cancel_check(lambda: True)
+        with pytest.raises(RunCancelled):
+            query("prompt")
+        session._llm_manager.query.assert_not_called()
+
+        session.set_cancel_check(None)
+        query("prompt")
+        session._llm_manager.query.assert_called_once()
+
+    def test_check_repository_refuses_a_name_without_repository_or_graph(self, tmp_path, monkeypatch):
+        from deriva.services.session import UnknownRepository
+
+        monkeypatch.setenv("GRAFEO_DB_DIR", str(tmp_path))
+        (tmp_path / "alpha_beta.grafeo").write_bytes(b"")
+        with patch("deriva.services.session.RepoManager") as repos:
+            repos.return_value.list_repositories.return_value = ["beta", "alpha"]
+            for known in (None, "default", "alpha", "alpha_beta"):
+                PipelineSession.check_repository(known)
+            with pytest.raises(UnknownRepository) as refused:
+                PipelineSession.check_repository("typo")
+
+        assert refused.value.available == ["alpha", "beta"]
+        assert str(refused.value) == "Unknown repository: typo (known: alpha, beta)"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["alpha_beta.grafeo"]
+
     def test_connect_idempotent(self):
         """Connect should be idempotent."""
         with (

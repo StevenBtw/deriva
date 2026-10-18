@@ -64,6 +64,19 @@ def test_database_key_must_be_a_plain_file_name(key, tmp_path, monkeypatch):
         database_file(key)
 
 
+def test_database_exists_only_for_a_file_and_creates_nothing(tmp_path, monkeypatch):
+    from deriva.adapters.grafeo.manager import database_exists
+
+    graphs = tmp_path / "graphs"
+    monkeypatch.setenv("GRAFEO_DB_DIR", str(graphs))
+    assert not database_exists("typo") and not graphs.exists()
+    graphs.mkdir()
+    (graphs / "alpha.grafeo").write_bytes(b"")
+    assert database_exists("alpha") and not database_exists("../alpha")
+    monkeypatch.setenv("GRAFEO_DB_DIR", "")
+    assert not database_exists("alpha")
+
+
 def test_slow_query_is_logged(caplog, monkeypatch):
     """The threshold is read when the connection is created."""
     monkeypatch.setenv("GRAFEO_SLOW_QUERY_MS", "0")

@@ -2,7 +2,7 @@
 
 Refine Step Name: "joint_consistency"
 Params: dry_run (default True), origin_tiers (the evidence tier per relationship origin; default
-DEFAULT_ORIGIN_TIERS), report_path (optional JSON).
+DEFAULT_ORIGIN_TIERS), report_path (optional JSON; a relative path is under the Deriva home folder).
 The target metamodel is taken from `archimate_manager.metamodel` at runtime.
 
 Duplicate merges come only from structural identity (the same type, source node and role); a name is no evidence.
@@ -14,11 +14,12 @@ import json
 import logging
 import time
 from collections import defaultdict
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from deriva.common.paths import resolve
+
 from .base import RefineResult, register_refine_step
-from .joint import DEFAULT_ORIGIN_TIERS, JointElement, MergeCandidate, Metamodel, Proposal, origin_tier, solve
+from .joint import DEFAULT_ORIGIN_TIERS, JointDecision, JointElement, MergeCandidate, Metamodel, Proposal, origin_tier, solve
 
 if TYPE_CHECKING:
     from deriva.adapters.archimate import ArchimateManager  # noqa: TID251 - known layer exception (see docs/architecture.md)
@@ -63,6 +64,29 @@ def _metamodel(archimate_manager: ArchimateManager) -> Metamodel:
         single_parent_types=mm.single_parent_relationship_types,
         acyclic_types=mm.acyclic_relationship_types,
     )
+
+
+def _write_report(report_path: str, decision: JointDecision) -> None:
+    """The decision as JSON; a relative path is under the Deriva home folder. A report that cannot be written is
+    logged and never stops the selection."""
+    path = resolve(report_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "status": decision.status,
+                    "kept": decision.kept,
+                    "dropped": decision.dropped,
+                    "merges": decision.merges,
+                    "redirects": decision.redirects,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        logger.warning("joint_consistency report not written to %s: %s", path, e)
 
 
 @register_refine_step("joint_consistency")
@@ -118,19 +142,7 @@ class JointConsistencyStep:
             result.report = {"status": decision.status, "seconds": round(time.perf_counter() - started, 3), **decision.stats}
 
             if params.get("report_path"):
-                Path(params["report_path"]).write_text(
-                    json.dumps(
-                        {
-                            "status": decision.status,
-                            "kept": decision.kept,
-                            "dropped": decision.dropped,
-                            "merges": decision.merges,
-                            "redirects": decision.redirects,
-                        },
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
+                _write_report(params["report_path"], decision)
 
             if not decision.ok:
                 result.success = False

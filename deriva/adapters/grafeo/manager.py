@@ -77,6 +77,14 @@ def database_file(key: str) -> str | None:
     return str(folder / f"{key}.grafeo")
 
 
+def database_exists(key: str) -> bool:
+    """Whether the key's database file exists; never creates it or its folder (False in memory or for an invalid key)."""
+    directory = GrafeoSettings().db_dir
+    if not directory or not key or key in (".", "..") or any(sep in key for sep in ("/", "\\")):
+        return False
+    return (resolve(directory) / f"{key}.grafeo").exists()
+
+
 def get_database() -> Any:
     """Get or open the active GrafeoDB instance (see ``use_database``).
 

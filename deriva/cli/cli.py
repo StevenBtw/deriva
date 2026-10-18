@@ -37,7 +37,7 @@ from deriva.cli.commands.run import (
     _print_pipeline_result,
 )
 from deriva.cli.progress import create_progress_reporter
-from deriva.services import ConfigDatabaseBusy, about, derivation
+from deriva.services import ConfigDatabaseBusy, UnknownRepository, about, derivation
 from deriva.services.session import PipelineSession
 
 # Create main app
@@ -124,6 +124,7 @@ def run_stage(
     if phase:
         typer.echo(f"Phase: {phase}")
 
+    PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session, ExitStack() as step_scope:
         typer.echo("Connected to grafeo")
 
@@ -241,6 +242,7 @@ def status(
     ] = None,
 ) -> None:
     """Show current pipeline status."""
+    PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session:
         typer.echo("\nDERIVA STATUS")
         typer.echo("=" * 60)
@@ -296,6 +298,7 @@ def export(
     typer.echo("DERIVA - Exporting ArchiMate Model")
     typer.echo(f"{'=' * 60}")
 
+    PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session:
         if verbose:
             typer.echo("Connected to grafeo")
@@ -337,6 +340,7 @@ def clear(
     typer.echo(f"DERIVA - Clearing {target.upper()}")
     typer.echo(f"{'=' * 60}")
 
+    PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session:
         if target == "graph":
             result = session.clear_graph()
@@ -371,8 +375,8 @@ def main() -> int:
         return 0
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
-    except ConfigDatabaseBusy as e:
-        # The studio or another run holds the config database: say so in one line, without a traceback
+    except (ConfigDatabaseBusy, UnknownRepository) as e:
+        # The studio or another run holds the config database, or --repo names no repository: one line, no traceback
         typer.echo(f"Error: {e}", err=True)
         return 1
 
