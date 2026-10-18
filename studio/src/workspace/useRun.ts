@@ -74,7 +74,8 @@ export function useRun(onStepComplete?: () => void) {
     (run: RunSummary) => {
       stop.current?.();
       setState({ runId: run.run_id, status: statusOf(run), events: [], error: null, repository: run.repository });
-      follow(run.run_id, statusOf(run) === "running");
+      // A run whose live log was not kept has no stream to replay (asking for one would only fail)
+      if (run.events_kept !== false) follow(run.run_id, statusOf(run) === "running");
     },
     [follow],
   );
