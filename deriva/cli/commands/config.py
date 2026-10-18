@@ -242,6 +242,9 @@ def config_update(
     if step_type not in ("extraction", "derivation"):
         typer.echo("Error: step_type must be 'extraction' or 'derivation'", err=True)
         raise typer.Exit(1)
+    if sequence is not None and step_type != "derivation":
+        typer.echo("Error: --sequence moves derivation steps only", err=True)
+        raise typer.Exit(1)
 
     # Read instruction from file if provided
     if instruction_file:
