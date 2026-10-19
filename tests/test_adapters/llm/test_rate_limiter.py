@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
+from unittest.mock import patch
 
 import pytest
 
@@ -400,7 +401,7 @@ class TestRateLimiterCircuitBreaker:
         limiter._circuit_state = CircuitState.OPEN
         limiter._circuit_opened_at = time.time()
 
-        with pytest.raises(CircuitOpenError):
+        with pytest.raises(CircuitOpenError, match="Circuit breaker is open"):
             limiter._check_circuit()
 
     def test_circuit_transitions_to_half_open(self):
@@ -492,7 +493,7 @@ class TestRateLimiterWaitWithCircuit:
         limiter._circuit_state = CircuitState.OPEN
         limiter._circuit_opened_at = time.time()
 
-        with pytest.raises(CircuitOpenError):
+        with pytest.raises(CircuitOpenError, match="Circuit breaker is open"):
             limiter.wait_if_needed()
 
 
@@ -808,13 +809,13 @@ class TestRateLimiterWaitRpmLimit:
         now = time.time()
         limiter._request_times = deque([now - 0.1, now - 0.05])  # 2 recent requests
 
-        # Next request should need to wait for oldest to expire
-        # We can't easily test the actual wait without time mocking,
-        # but we can verify the limiter tracks requests
-        limiter.wait_if_needed()
+        # The next request waits until the oldest is a minute old (the sleep is patched: this test took a minute)
+        with patch("deriva.adapters.llm.rate_limiter.time.sleep") as sleep:
+            waited = limiter.wait_if_needed()
 
-        # After call, should have 3 request times (or cleaned + new)
-        assert len(limiter._request_times) >= 1
+        assert 59.8 < waited <= 60.0
+        sleep.assert_called_once_with(waited)
+        assert len(limiter._request_times) == 3
 
 
 class TestGetStatsCleanup:

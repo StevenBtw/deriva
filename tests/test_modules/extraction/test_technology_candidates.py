@@ -263,7 +263,7 @@ class TestPromptAndLabels:
         assert issues == {"unmatched": ["unknown"], "duplicates": ["alpha-client"], "missing": ["queue"]}
 
     def test_an_unknown_category_is_an_error(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Unknown category 'framework' for item 'alpha-client'"):
             tc.parse_labels(json.dumps({"items": [{"item": "alpha-client", "category": "framework", "system": ""}]}), self.BATCH)
 
 

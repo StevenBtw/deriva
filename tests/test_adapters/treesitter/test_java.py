@@ -45,13 +45,16 @@ class TestJavaExtractorProperties:
     def test_get_extractor_returns_java_extractor(self):
         """get_extractor should return JavaExtractor for 'java'."""
         ext = get_extractor("java")
-        assert ext is not None
-        assert isinstance(ext, JavaExtractor)
+        assert type(ext) is JavaExtractor
 
     def test_get_language_returns_valid_language(self, extractor):
         """Should return a valid tree-sitter language."""
         lang = extractor.get_language()
-        assert lang is not None
+        # A grammar tree-sitter can parse with
+        import tree_sitter
+
+        root = tree_sitter.Parser(tree_sitter.Language(lang)).parse(b"class A { }").root_node
+        assert (root.has_error, root.child_count) == (False, 1)
 
 
 class TestJavaFilterConstants:
@@ -505,8 +508,7 @@ public class MyClass {
         tree = parse(parser, source)
         calls = extractor.extract_calls(tree, source.encode("utf-8"))
 
-        ctor_call = next((c for c in calls if c.callee_name == "ArrayList"), None)
-        assert ctor_call is not None
+        assert [(c.caller_name, c.caller_class, c.callee_name, c.callee_qualifier) for c in calls] == [("create", "MyClass", "ArrayList", "new")]
 
     def test_extracts_static_method_call(self, extractor, parser):
         """Should extract static method call."""
@@ -537,6 +539,8 @@ public class MyClass {
         tree = parse(parser, source)
         calls = extractor.extract_calls(tree, source.encode("utf-8"))
 
+        # The constructor is the caller
+        assert [(c.caller_name, c.caller_class, c.callee_name, c.callee_qualifier) for c in calls] == [("MyClass", "MyClass", "initialize", None)]
         init_call = next((c for c in calls if c.callee_name == "initialize"), None)
         assert init_call is not None
 

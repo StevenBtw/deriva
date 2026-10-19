@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deriva.modules.extraction.edges import EdgeType
 from deriva.services.extraction import (
     _build_llm_prompt,
     _create_node_from_data,
@@ -480,29 +481,35 @@ class TestGetExtractionConfig:
         """Should return extraction config for TypeDefinition."""
         extract_fn, schema, node_class = _get_extraction_config("TypeDefinition")
 
-        assert extract_fn is not None
-        assert schema is not None
+        assert (extract_fn.__name__, schema["name"], schema["strict"], node_class.__name__) == (
+            "extract_type_definitions",
+            "type_definitions_extraction",
+            True,
+            "TypeDefinitionNode",
+        )
 
     def test_returns_config_for_method(self):
         """Should return extraction config for Method."""
         extract_fn, schema, node_class = _get_extraction_config("Method")
 
-        assert extract_fn is not None
-        assert schema is not None
+        assert (extract_fn.__name__, schema["name"], schema["strict"], node_class.__name__) == ("extract_methods", "methods_extraction", True, "MethodNode")
 
     def test_returns_config_for_external_dependency(self):
         """Should return extraction config for ExternalDependency."""
         extract_fn, schema, node_class = _get_extraction_config("ExternalDependency")
 
-        assert extract_fn is not None
-        assert schema is not None
+        assert (extract_fn.__name__, schema["name"], schema["strict"], node_class.__name__) == (
+            "extract_external_dependencies",
+            "external_dependency_extraction",
+            True,
+            "ExternalDependencyNode",
+        )
 
     def test_returns_config_for_test(self):
         """Should return extraction config for Test."""
         extract_fn, schema, node_class = _get_extraction_config("Test")
 
-        assert extract_fn is not None
-        assert schema is not None
+        assert (extract_fn.__name__, schema["name"], schema["strict"], node_class.__name__) == ("extract_tests", "test_extraction", True, "TestNode")
 
     def test_returns_none_for_unknown_type(self):
         """Should return None for unknown node type."""
@@ -888,8 +895,12 @@ class TestRunExtractionWithRunLogger:
 
                         run_extraction(engine, graph_manager, run_logger=run_logger)
 
-            run_logger.phase_start.assert_called_once()
+            run_logger.phase_start.assert_called_once_with("extraction", "Starting extraction pipeline")
             run_logger.phase_complete.assert_called_once()
+            phase, message = run_logger.phase_complete.call_args.args
+            stats = run_logger.phase_complete.call_args.kwargs["stats"]
+            assert (phase, message) == ("extraction", "Extraction completed successfully")
+            assert (stats["repos_processed"], stats["steps_completed"], stats["steps_skipped"]) == (1, 1, 0)
 
     def test_logs_phase_error_on_failure(self):
         """Should log phase error when errors occur."""
@@ -918,7 +929,8 @@ class TestRunExtractionWithRunLogger:
 
                         run_extraction(engine, graph_manager, run_logger=run_logger)
 
-            run_logger.phase_error.assert_called_once()
+            run_logger.phase_error.assert_called_once_with("extraction", "[Extraction - UnknownType] Unknown node type: UnknownType", "Extraction completed with errors")
+            run_logger.phase_complete.assert_not_called()
 
     def test_logs_step_start_and_complete(self):
         """Should log step start and completion."""
@@ -949,8 +961,9 @@ class TestRunExtractionWithRunLogger:
 
                         run_extraction(engine, graph_manager, run_logger=run_logger)
 
-            run_logger.step_start.assert_called()
-            step_ctx.complete.assert_called()
+            run_logger.step_start.assert_called_once_with("Repository", "Extracting Repository from test_repo")
+            step_ctx.complete.assert_called_once_with()
+            step_ctx.error.assert_not_called()
 
     def test_step_stats_reach_the_run_log(self, tmp_path):
         """A step that reports stats (selection sizes, label counts) has them logged with its completion."""
@@ -1019,8 +1032,8 @@ class TestRunExtractionWithProgressReporter:
 
                         run_extraction(engine, graph_manager, progress=progress)
 
-            progress.start_phase.assert_called_once()
-            progress.complete_phase.assert_called_once()
+            progress.start_phase.assert_called_once_with("extraction", 1)
+            progress.complete_phase.assert_called_once_with("Extraction complete: 1 nodes, 0 edges")
 
     def test_logs_step_progress(self):
         """Should log step start and completion via progress."""
@@ -1049,8 +1062,8 @@ class TestRunExtractionWithProgressReporter:
 
                         run_extraction(engine, graph_manager, progress=progress)
 
-            progress.start_step.assert_called()
-            progress.complete_step.assert_called()
+            progress.start_step.assert_called_once_with("Repository")
+            progress.complete_step.assert_called_once_with("1 nodes, 0 edges")
 
 
 class TestRunExtractionVerbose:
@@ -1151,7 +1164,7 @@ class TestRunExtractionConfigVersions:
 
                         run_extraction(engine, graph_manager, config_versions=config_versions)
 
-            mock_version.assert_called_once()
+            mock_version.assert_called_once_with(engine, {"Repository": 2, "File": 3}, enabled_only=True)
 
 
 class TestLlmOnlyStepsWithoutLlm:
@@ -1395,8 +1408,12 @@ class TestRunExtractionIter:
                         with patch("deriva.services.extraction._run_extraction_step", side_effect=Exception("Test error")):
                             updates = list(run_extraction_iter(engine, graph_manager))
 
-            error_updates = [u for u in updates if u.status == "error"]
-            assert len(error_updates) >= 1
+            # The step that raised, then the run end with its error
+            assert [(u.step, u.status, u.message) for u in updates] == [
+                ("Repository", "error", "Error in Repository: Test error"),
+                ("", "complete", "0 nodes, 0 edges from 1 repo(s) (1 errors)"),
+            ]
+            assert updates[-1].stats["errors"] == ["Error in Repository: Test error"]
 
 
 class TestExtractEdges:
@@ -1499,9 +1516,8 @@ class TestExtractImports:
                 _extract_imports(mock_repo, Path(tmpdir), [], graph_manager)
 
             mock_extract.assert_called_once()
-            # Check that edge_types parameter was passed
-            call_args = mock_extract.call_args
-            assert call_args[0][4] is not None  # edge_types set
+            # The edge types it asks for: imports, and the uses that follow from them
+            assert mock_extract.call_args.args[4] == {EdgeType.IMPORTS, EdgeType.USES}
 
 
 class TestExtractCalls:
@@ -1524,6 +1540,8 @@ class TestExtractCalls:
                 _extract_calls(SimpleNamespace(params=None), mock_repo, Path(tmpdir), [], graph_manager)
 
             mock_extract.assert_called_once()
+            assert mock_extract.call_args.args[4] == {EdgeType.CALLS}
+            assert mock_extract.call_args.kwargs["call_languages"] == {}
 
 
 class TestExtractDecorators:
@@ -1546,6 +1564,7 @@ class TestExtractDecorators:
                 _extract_decorators(mock_repo, Path(tmpdir), [], graph_manager)
 
             mock_extract.assert_called_once()
+            assert mock_extract.call_args.args[4] == {EdgeType.DECORATED_BY}
 
 
 class TestExtractReferences:
@@ -1568,6 +1587,7 @@ class TestExtractReferences:
                 _extract_references(mock_repo, Path(tmpdir), [], graph_manager)
 
             mock_extract.assert_called_once()
+            assert mock_extract.call_args.args[4] == {EdgeType.REFERENCES}
 
 
 class TestExtractDirectoryClassification:
@@ -1869,7 +1889,10 @@ class TestExtractFileContentWithChunking:
         # Create content large enough to require chunking
         content = "def func():\n    pass\n" * 1000
 
+        chunks_seen: list[str] = []
+
         def mock_extract_fn(_file_path, _content, _repo_name, _llm_fn, _config):
+            chunks_seen.append(_content)
             return {
                 "success": True,
                 "data": {
@@ -1896,7 +1919,10 @@ class TestExtractFileContentWithChunking:
                     llm_query_fn=MagicMock(),
                 )
 
-        assert mock_chunk.called
+        # The whole content is chunked once, and each chunk is extracted on its own
+        mock_chunk.assert_called_once()
+        assert mock_chunk.call_args.args[0] == content
+        assert chunks_seen == ["def func(): pass", "def func2(): pass"]
 
 
 class TestExtractLLMBasedTreesitter:
@@ -1993,7 +2019,10 @@ class TestExtractLLMBasedTreesitter:
                     engine=MagicMock(),
                 )
 
-            mock_ts.assert_called()
+            mock_ts.assert_called_once()
+            path, source, repo_name = mock_ts.call_args.args
+            assert (path, repo_name) == ("main.py", "test")
+            assert source.splitlines() == ["def my_func():", "    pass"]
 
 
 class TestMethodLanguages:

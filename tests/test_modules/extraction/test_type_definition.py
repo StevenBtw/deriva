@@ -436,8 +436,9 @@ class TestExtractTypeDefinitions:
             config=config,
         )
 
-        # Should have errors from node building
-        assert len(result["errors"]) > 0
+        # The fields the answer lacked, by name; no node is built
+        assert result["errors"] == ["Missing required field: typeName", "Missing required field: description"]
+        assert result["data"]["nodes"] == []
 
     def test_records_llm_details(self):
         """Should record LLM call details."""

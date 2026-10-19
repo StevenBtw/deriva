@@ -66,7 +66,7 @@ def test_other_connect_errors_are_not_reported_as_held():
 
     provider = SessionProvider(factory=lambda: FakeSession(connect_error=ValueError("bad config")))
 
-    with pytest.raises(ValueError), provider.session():
+    with pytest.raises(ValueError, match="bad config"), provider.session():
         pass
 
 

@@ -117,7 +117,7 @@ def test_element_validation(archimate_manager):
     # Invalid element type
     invalid_element = Element("Test", "InvalidType")
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="InvalidType"):
         archimate_manager.add_element(invalid_element)
 
 

@@ -1,6 +1,7 @@
 """Tests for deriva.services.session module (PipelineSession)."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -123,7 +124,7 @@ class TestPipelineSessionLifecycle:
             session.connect()  # Should not error
 
             # Should only be called once
-            mock_db.assert_called_once()
+            mock_db.assert_called_once_with()
 
     def test_disconnect_clears_managers(self):
         """Disconnect should clear all managers."""
@@ -1160,7 +1161,7 @@ class TestPipelineSessionMiscMethods:
         """Should return workspace directory."""
         result = connected_session.workspace_dir
 
-        assert result is not None
+        assert Path(result).parts[-2:] == ("workspace", "repositories")
 
 
 class TestPipelineSessionRepositoryInfo:
@@ -1676,7 +1677,7 @@ class TestPipelineSessionLLMInfo:
             with patch.object(session, "_get_llm_query_fn") as mock_get:
                 _ = session.llm_info
 
-                mock_get.assert_called_once()
+                mock_get.assert_called_once_with()
 
 
 class TestPipelineSessionDisconnect:

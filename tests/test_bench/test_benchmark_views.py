@@ -100,7 +100,7 @@ def test_inspector_lists_occurrences_with_layer_keys_and_flip_causes(benchmarks)
 
 
 def test_an_unknown_session_is_an_error(benchmarks):
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileNotFoundError, match="Benchmark session not found: nope"):
         session_runs(benchmarks, ["s_a", "nope"], ["azure-gpt4"])
 
 

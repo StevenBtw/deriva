@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx2
@@ -229,7 +230,8 @@ class TestLLMManagerInit:
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
-        assert manager.cache is not None
+        # The cache in LLM_CACHE_DIR
+        assert (type(manager.cache).__name__, Path(manager.cache.cache_dir)) == ("CacheManager", tmp_path / "cache")
 
     def test_init_creates_pydantic_model(self, tmp_path, monkeypatch):
         """Should create PydanticAI model."""
@@ -243,7 +245,8 @@ class TestLLMManagerInit:
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
-        assert manager._pydantic_model is not None
+        # Ollama goes through the OpenAI-compatible client, for the configured model
+        assert (type(manager._pydantic_model).__name__, manager._pydantic_model.model_name) == ("OpenAIChatModel", "llama3")
 
     def test_init_sets_default_values(self, tmp_path, monkeypatch):
         """Should set default values for optional config."""
@@ -271,7 +274,8 @@ class TestLLMManagerInit:
 
         with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
-                with pytest.raises(ConfigurationError):
+                # The variable to set is named
+                with pytest.raises(ConfigurationError, match="LLM_AZURE_API_KEY"):
                     LLMManager()
 
 
@@ -357,7 +361,7 @@ class TestLLMManagerFromConfig:
 
         with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", {}, clear=True):
-                with pytest.raises(ConfigurationError):
+                with pytest.raises(ConfigurationError, match="has no API key: set LLM_TEST_KEY"):
                     LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"))
 
 
@@ -705,6 +709,9 @@ class TestQuery:
                     manager.query("Hello")
 
         manager.cache.set_response.assert_called_once()
+        cache_key, content, prompt, model, usage = manager.cache.set_response.call_args.args
+        assert (content, prompt, model, usage) == ("Response", "Hello", "llama3", None)
+        manager.cache.get.assert_called_once_with(cache_key)
 
 
 # =============================================================================
@@ -744,7 +751,7 @@ class TestUtilityMethods:
 
                 manager.clear_cache()
 
-        manager.cache.clear_all.assert_called_once()
+        manager.cache.clear_all.assert_called_once_with()
 
     def test_get_cache_stats(self, tmp_path, monkeypatch):
         """Should return cache statistics."""
@@ -1069,7 +1076,8 @@ class TestTimeoutAndRetry:
         with patch.object(manager._rate_limiter, "record_rate_limit") as record:
             self._query(manager, [ModelHTTPError(status_code=429, model_name="m"), MagicMock(output="ok")])
 
-        record.assert_called_once()
+        # Once, for the 429 (it named no Retry-After); the success after it is no rate limit
+        record.assert_called_once_with(None)
 
     def test_final_rate_limit_is_recorded_once(self, tmp_path):
         """The last failed attempt is recorded by query(), not again by the retry loop."""

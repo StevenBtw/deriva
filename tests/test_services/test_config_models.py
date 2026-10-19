@@ -27,12 +27,12 @@ class TestExtractionConfigModel:
 
     def test_requires_node_type(self):
         """Should require node_type."""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"node_type\n  Field required"):
             ExtractionConfigModel()
 
     def test_validates_temperature_range(self):
         """Should validate temperature range."""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"temperature\n  Input should be less than or equal to 2"):
             ExtractionConfigModel(node_type="Test", temperature=3.0)
 
     def test_accepts_every_method_a_step_can_be_added_with(self):
@@ -68,7 +68,7 @@ class TestDerivationConfigModel:
 
     def test_validates_phase(self):
         """Should validate phase values."""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"phase\n  Input should be 'prep', 'generate', 'refine', 'relationship' or 'baseline'"):
             DerivationConfigModel(step_name="Test", phase="invalid_phase")  # type: ignore[arg-type]
 
 
@@ -107,7 +107,7 @@ class TestConfidenceThresholds:
 
     def test_validates_range(self):
         """Should validate threshold range."""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"min_relationship\n  Input should be less than or equal to 1"):
             ConfidenceThresholds(min_relationship=1.5)
 
 
@@ -156,7 +156,7 @@ class TestBenchmarkModelConfigModel:
 
     def test_validates_provider(self):
         """Should validate provider."""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"provider\n  Input should be 'azure'"):
             BenchmarkModelConfigModel(
                 name="test",
                 provider="invalid_provider",  # type: ignore[arg-type]

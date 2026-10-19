@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -586,10 +586,10 @@ class TestSetSetting:
 
         set_setting(engine, "my_key", "new_value")
 
-        # Should have called UPDATE
-        calls = engine.execute.call_args_list
-        update_call = [c for c in calls if "UPDATE" in str(c)]
-        assert len(update_call) > 0
+        assert engine.execute.call_args_list == [
+            call("SELECT value FROM system_settings WHERE key = ?", ["my_key"]),
+            call("UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?", ["new_value", "my_key"]),
+        ]
 
     def test_inserts_new_setting(self):
         """Should insert new setting when not exists."""
@@ -598,10 +598,10 @@ class TestSetSetting:
 
         set_setting(engine, "new_key", "new_value")
 
-        # Should have called INSERT
-        calls = engine.execute.call_args_list
-        insert_call = [c for c in calls if "INSERT" in str(c)]
-        assert len(insert_call) > 0
+        assert engine.execute.call_args_list == [
+            call("SELECT value FROM system_settings WHERE key = ?", ["new_key"]),
+            call("INSERT INTO system_settings (key, value) VALUES (?, ?)", ["new_key", "new_value"]),
+        ]
 
     def test_rejects_invalid_excluded_directories_without_writing(self):
         engine = MagicMock()
@@ -1987,7 +1987,7 @@ class TestConfigHistory:
     def test_unknown_step_type_is_refused(self, engine):
         from deriva.services import config
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Unknown step type: prep"):
             config.get_config_history(engine, "prep", "Node")
 
     def test_history_carries_the_settings_a_version_can_change(self, engine):

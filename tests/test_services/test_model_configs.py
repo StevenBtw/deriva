@@ -215,7 +215,7 @@ def test_the_default_model_is_set_and_marked(env):
 def test_only_a_configured_model_can_be_the_default(env):
     from deriva.services.model_configs import set_default
 
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match="No model config named 'mistral-small'"):
         set_default(env, "mistral-small")
 
 
@@ -272,7 +272,7 @@ def test_a_name_in_another_spelling_cannot_be_the_default(env):
     """anthropic_haiku maps onto the same variables, but the model is known as anthropic-haiku only."""
     from deriva.services.model_configs import set_default
 
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match="No model config named 'anthropic_haiku'"):
         set_default(env, "anthropic_haiku")
 
 
@@ -397,7 +397,7 @@ class TestModelTest:
     def test_an_unknown_model_config_is_a_key_error(self):
         from deriva.services.model_configs import check_model
 
-        with patch("deriva.services.model_configs.load_benchmark_models", return_value={}), pytest.raises(KeyError):
+        with patch("deriva.services.model_configs.load_benchmark_models", return_value={}), pytest.raises(KeyError, match="nope"):
             check_model("nope")
 
 

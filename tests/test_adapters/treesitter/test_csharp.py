@@ -45,13 +45,16 @@ class TestCSharpExtractorProperties:
     def test_get_extractor_returns_csharp_extractor(self):
         """get_extractor should return CSharpExtractor for 'csharp'."""
         ext = get_extractor("csharp")
-        assert ext is not None
-        assert isinstance(ext, CSharpExtractor)
+        assert type(ext) is CSharpExtractor
 
     def test_get_language_returns_valid_language(self, extractor):
         """Should return a valid tree-sitter language."""
         lang = extractor.get_language()
-        assert lang is not None
+        # A grammar tree-sitter can parse with
+        import tree_sitter
+
+        root = tree_sitter.Parser(tree_sitter.Language(lang)).parse(b"class A { }").root_node
+        assert (root.has_error, root.child_count) == (False, 1)
 
 
 class TestCSharpFilterConstants:
@@ -639,6 +642,9 @@ public class MyClass {
         tree = parse(parser, source)
         calls = extractor.extract_calls(tree, source.encode("utf-8"))
 
+        # The constructor of the generic type, by its name without the type argument
+        assert [(c.caller_name, c.caller_class, c.callee_name) for c in calls] == [("Process", "MyClass", "List")]
+
         list_call = next((c for c in calls if c.callee_name == "List"), None)
         assert list_call is not None
 
@@ -866,8 +872,7 @@ public class MyClass { }
         tree = parse(parser, source)
 
         imports = extractor.extract_imports(tree, source.encode("utf-8"))
-        # May or may not extract global using depending on tree-sitter grammar
-        assert isinstance(imports, list)
+        assert [(i.module, i.names, i.is_from_import) for i in imports] == [("System", [], False)]
 
     def test_handles_nullable_type_annotation(self, extractor, parser):
         """Should handle nullable type annotations."""

@@ -1544,7 +1544,8 @@ class TestBenchmarkAnalyzer:
                 analyzer = BenchmarkAnalyzer("sess-1", engine)
                 result = analyzer.trace_element("elem1")
 
-        assert isinstance(result, list)
+        # No events, so the element has no trace
+        assert result == []
 
     def test_compute_structural_stability(self):
         """Should compute structural stability for elements with connections."""
@@ -1578,14 +1579,14 @@ class TestBenchmarkAnalyzer:
 
                 result = analyzer._compute_structural_stability(elements_by_run, relationships_by_run, 3)
 
-                # Should have entries for elements with connections
-                assert len(result) > 0
-
-                # Find elemA's stability
-                elem_a_stability = next((s for s in result if s.element_id == "elemA"), None)
-                assert elem_a_stability is not None
-                # elemA -> elemB connection appears in all 3 runs
-                assert len(elem_a_stability.connections) >= 1
+                # Per element its outbound connections: elemA serves elemB in all 3 runs, elemB's flow to elemC in 2
+                outbound = {
+                    (s.element_id, c.connected_to, c.relationship_type, c.appearances, c.total_runs)
+                    for s in result
+                    for c in s.connections
+                    if c.relationship_type.endswith("_outbound")
+                }
+                assert outbound == {("elemA", "elemB", "Serving_outbound", 3, 3), ("elemB", "elemC", "Flow_outbound", 2, 3)}
 
     def test_compute_structural_stability_empty(self):
         """Should return empty list when no relationships."""

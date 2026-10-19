@@ -51,6 +51,7 @@ class TestQuietBenchmarkProgressReporter:
     def test_inherits_from_quiet_reporter(self):
         """Should inherit from QuietProgressReporter."""
         reporter = QuietBenchmarkProgressReporter()
+        assert QuietBenchmarkProgressReporter.__bases__ == (QuietProgressReporter,)
         assert isinstance(reporter, QuietProgressReporter)
 
     def test_start_benchmark_does_nothing(self):
@@ -96,12 +97,12 @@ class TestFactoryFunctions:
     def test_create_progress_reporter_quiet_mode(self):
         """Should return QuietProgressReporter when quiet=True."""
         reporter = create_progress_reporter(quiet=True)
-        assert isinstance(reporter, QuietProgressReporter)
+        assert type(reporter) is QuietProgressReporter
 
     def test_create_benchmark_progress_reporter_quiet_mode(self):
         """Should return QuietBenchmarkProgressReporter when quiet=True."""
         reporter = create_benchmark_progress_reporter(quiet=True)
-        assert isinstance(reporter, QuietBenchmarkProgressReporter)
+        assert type(reporter) is QuietBenchmarkProgressReporter
 
     def test_create_progress_reporter_returns_reporter(self):
         """Should return a progress reporter instance."""
@@ -167,14 +168,16 @@ if RICH_AVAILABLE:
             reporter = RichProgressReporter()
             with reporter:
                 reporter.start_step("connecting", None)
-                assert reporter._step_task is not None
+                # No total: an indeterminate bar
+                assert [(t.description, t.total) for t in reporter._progress.tasks if t.id == reporter._step_task] == [("  connecting", None)]
 
         def test_start_step_zero_items(self):
             """Should handle zero items (indeterminate)."""
             reporter = RichProgressReporter()
             with reporter:
                 reporter.start_step("waiting", 0)
-                assert reporter._step_task is not None
+                # Zero items is indeterminate too, never a bar that is done before it starts
+                assert [(t.description, t.total) for t in reporter._progress.tasks if t.id == reporter._step_task] == [("  waiting", None)]
 
         def test_update_modifies_task(self):
             """Should update progress."""
@@ -387,7 +390,7 @@ if RICH_AVAILABLE:
             with reporter:
                 reporter.start_benchmark("s1", 2, ["r"], ["m"])
                 reporter.start_step("processing", 10)
-                assert reporter._step_task is not None
+                assert [(t.description, t.total) for t in reporter._progress.tasks if t.id == reporter._step_task] == [("  processing", 10)]
 
         def test_start_step_indeterminate_in_benchmark(self):
             """Should handle indeterminate step."""
@@ -395,7 +398,7 @@ if RICH_AVAILABLE:
             with reporter:
                 reporter.start_benchmark("s1", 2, ["r"], ["m"])
                 reporter.start_step("connecting", None)
-                assert reporter._step_task is not None
+                assert [(t.description, t.total) for t in reporter._progress.tasks if t.id == reporter._step_task] == [("  connecting", None)]
 
         def test_update_in_benchmark(self):
             """Should update step progress."""

@@ -227,7 +227,7 @@ class TestPipelineSessionExportBenchmark:
         assert verify_bundle(tmp_path / "out.zip") == []
 
     def test_session_ids_cannot_leave_the_benchmarks_folder(self, session, tmp_path):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Not a benchmark session id: \.\./"):
             session.export_benchmark("../outside", tmp_path / "out.zip", benchmarks_dir=tmp_path / "benchmarks")
 
 
@@ -304,7 +304,7 @@ class TestPipelineSessionBenchmarkViews:
         ]
 
     def test_session_ids_are_checked(self, session, tmp_path):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Not a benchmark session id: \.\./"):
             session.benchmark_results(["s_a", "../x"], benchmarks_dir=tmp_path)
 
 
@@ -313,5 +313,5 @@ def test_process_logs_refuse_ids_that_leave_the_benchmarks_folder(tmp_path):
 
     from deriva.bench.session import BenchmarkSession
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Not a benchmark session id: \.\./"):
         BenchmarkSession(MagicMock()).export_process_logs(["s1", "../outside"], tmp_path / "out", benchmarks_dir=tmp_path)

@@ -419,7 +419,8 @@ class TestValidationError:
 
     def test_validation_error_is_importable(self):
         """Should be able to import ValidationError."""
-        assert ValidationError is not None
+        # The project's own validation error, so a handler for Deriva errors catches it
+        assert ValidationError.__mro__[1].__name__ == "BaseError"
 
     def test_validation_error_is_exception(self):
         """ValidationError should be an exception."""

@@ -70,7 +70,7 @@ class TestDictToHashable:
     def test_returns_tuple(self):
         """Should return a tuple."""
         result = dict_to_hashable({"a": 1})
-        assert isinstance(result, tuple)
+        assert result == (("a", 1),)
 
     def test_simple_dict(self):
         """Should convert simple dict to tuple."""

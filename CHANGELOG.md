@@ -56,6 +56,7 @@ The studio now manages what a workspace keeps (repositories, graph databases, ru
 ### Dependencies
 
 - **Up to date**: every Python dependency is at its latest release (among them pydantic-ai-slim 2.57, httpx2 2.14, FastAPI 0.149, uvicorn 0.54, anywidget 0.11, pydantic 2.14, ty 0.0.89), and the studio's npm packages at their latest within their ranges. Types follow the newer `ty`: `@contextmanager` functions return `Generator`, and mixed-value rows say so
+- **Tests that check the result**: 170 tests whose only checks were weak (`is not None`, `isinstance`, a length above zero, a mock called without its arguments, `pytest.raises` without the message) now assert the exact values, calls and messages. A rate limiter test that slept a minute now checks the wait it asks for, so the Python suite runs in about half the time. Ten strict expected failures record what the code parsers get wrong today, so a fix shows up as a failing test: every JavaScript class also gives an unnamed class, an exported class is given twice, `extends`, generator functions and class expressions are not read, Python class decorators and type alias names are missing, and C# methods have no return type
 - **TypeScript 7**: the studio's type check (`npm run typecheck`, part of `npm run build`) runs on TypeScript 7, the native compiler. TypeScript 6 stays for `typescript-eslint`, which needs the TypeScript 6 API (`typescript-eslint` 8.72 supports TypeScript below 6.1)
 
 ## v0.8.3 - Adding abstraction to consistency (October 18 2026)

@@ -173,15 +173,15 @@ def test_shutdown_ends_the_event_streams_and_cancels_the_run(make_client):
     client = make_client(FakeSession(run_extraction_iter=blocking, use_repository=None))
     runs = client.app.state.runs
     run_id = client.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
-    assert in_step.wait(5)
+    assert in_step.wait(5) is True
     ended = threading.Event()
     threading.Thread(target=lambda: (list(runs.events(run_id)), ended.set()), daemon=True).start()
     wait_for(lambda: runs.get(run_id).followers == 1)
 
     runs.shutdown()
 
-    assert ended.wait(2)
-    assert runs.get(run_id).cancel_requested
+    assert ended.wait(2) is True
+    assert runs.get(run_id).cancel_requested is True
     release.set()
     wait_for(lambda: finished(client, run_id))
 

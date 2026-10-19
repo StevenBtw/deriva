@@ -169,8 +169,7 @@ class TestTypeExtraction:
         source, name = SAMPLES[language]["enum"][:2]
         types = manager.extract_types(source, language=language)
 
-        target = next((t for t in types if t.name == name), None)
-        assert target is not None
+        assert [(t.name, t.kind, t.visibility) for t in types] == [(name, "enum", "public")]
 
     @pytest.mark.parametrize("language", ["java", "csharp"])
     def test_extracts_abstract_class(self, manager, language):
@@ -178,8 +177,7 @@ class TestTypeExtraction:
         source, name = SAMPLES[language]["abstract_class"][:2]
         types = manager.extract_types(source, language=language)
 
-        target = next((t for t in types if t.name == name), None)
-        assert target is not None
+        assert [(t.name, t.kind) for t in types] == [(name, "class")]
 
     @pytest.mark.parametrize("language", ["java", "csharp"])
     def test_extracts_record(self, manager, language):
@@ -187,16 +185,14 @@ class TestTypeExtraction:
         source, name = SAMPLES[language]["record"][:2]
         types = manager.extract_types(source, language=language)
 
-        target = next((t for t in types if t.name == name), None)
-        assert target is not None
+        assert [(t.name, t.kind) for t in types] == [(name, "record")]
 
     def test_csharp_extracts_struct(self, manager):
         """Should extract C# struct."""
         source, name = SAMPLES["csharp"]["struct"][:2]
         types = manager.extract_types(source, language="csharp")
 
-        target = next((t for t in types if t.name == name), None)
-        assert target is not None
+        assert [(t.name, t.kind) for t in types] == [(name, "struct")]
 
     @pytest.mark.parametrize(
         "language,sample_key",
@@ -273,8 +269,7 @@ class TestMethodExtraction:
         source, name = SAMPLES[language]["method_private"][:2]
         methods = manager.extract_methods(source, language=language)
 
-        target = next((m for m in methods if m.name == name), None)
-        assert target is not None
+        assert [(m.name, m.class_name, m.visibility) for m in methods] == [(name, "Svc", "private")]
 
     @pytest.mark.parametrize("language", ["java", "javascript", "csharp"])
     def test_extracts_static_method(self, manager, language):
@@ -283,8 +278,7 @@ class TestMethodExtraction:
         source, name = SAMPLES[language][sample_key][:2]
         methods = manager.extract_methods(source, language=language)
 
-        target = next((m for m in methods if m.name == name), None)
-        assert target is not None
+        assert [(m.name, m.is_static, m.is_classmethod) for m in methods] == [(name, True, False)]
 
     @pytest.mark.parametrize(
         "language,sample_key",
@@ -522,8 +516,7 @@ class TestEdgeCases:
         source, name = SAMPLES[language][sample_key][:2]
         types = manager.extract_types(source, language=language)
 
-        target = next((t for t in types if t.name == name), None)
-        assert target is not None
+        assert [(t.name, t.kind) for t in types] == [(name, "class")]
 
     @pytest.mark.parametrize(
         "language,sample_key",
@@ -537,16 +530,15 @@ class TestEdgeCases:
         source, name = SAMPLES[language][sample_key][:2]
         types = manager.extract_types(source, language=language)
 
-        target = next((t for t in types if t.name == name), None)
-        assert target is not None
+        assert [(t.name, t.kind) for t in types] == [(name, "class")]
 
     def test_java_handles_inner_class(self, manager):
         """Should handle Java inner classes."""
         source, name = SAMPLES["java"]["inner_class"][:2]
         types = manager.extract_types(source, language="java")
 
-        # Should extract at least the outer class
-        assert len(types) >= 1
+        # The outer class and the one inside it
+        assert [(t.name, t.kind) for t in types] == [(name, "class"), ("Inner", "class")]
 
     def test_javascript_handles_jsx(self, manager):
         """Should handle JSX syntax."""
@@ -571,8 +563,7 @@ class TestEdgeCases:
         source, name = SAMPLES["csharp"]["partial_class"][:2]
         types = manager.extract_types(source, language="csharp")
 
-        target = next((t for t in types if t.name == name), None)
-        assert target is not None
+        assert [(t.name, t.kind) for t in types] == [(name, "class")]
 
     def test_python_handles_nested_class(self, manager):
         """Should handle nested class definitions."""
@@ -586,13 +577,14 @@ class TestEdgeCases:
         source, name = SAMPLES["python"]["unicode"][:2]
         types = manager.extract_types(source, language="python")
 
-        assert len(types) >= 1
+        assert [(t.name, t.kind) for t in types] == [(name, "class")]
 
     def test_python_handles_syntax_errors(self, manager):
         """Should handle syntax errors gracefully."""
         source = "class Incomplete {\n    def broken"
         types = manager.extract_types(source, language="python")
-        assert isinstance(types, list)
+        # The class header does not parse: nothing is extracted, and nothing is raised
+        assert types == []
 
     def test_python_handles_comments_only(self, manager):
         """Should handle file with only comments."""
@@ -633,8 +625,8 @@ class TestCallExtraction:
         source = "def caller():\n    a.first().second()"
         calls = manager.extract_calls(source, language="python")
 
-        # Should have at least the method calls
-        assert len(calls) >= 1
+        # Both calls of the chain, the outer one qualified by the inner
+        assert [(c.callee_name, c.callee_qualifier, c.is_method_call) for c in calls] == [("second", "a.first()", True), ("first", "a", True)]
 
     def test_python_extracts_calls_from_class_methods(self, manager):
         """Should extract calls from class methods."""
@@ -662,8 +654,7 @@ class TestCallExtraction:
 """
         calls = manager.extract_calls(source, language="python")
 
-        helper_call = next((c for c in calls if c.callee_name == "helper"), None)
-        assert helper_call is not None
+        assert [(c.caller_name, c.caller_class, c.callee_name) for c in calls] == [("static_method", "MyClass", "helper")]
 
     def test_python_extracts_calls_from_top_level_decorated_functions(self, manager):
         """Should extract calls from decorated top-level functions."""
@@ -682,8 +673,8 @@ def my_func():
         source = "def caller():\n    funcs[0]()"  # Subscript call
         calls = manager.extract_calls(source, language="python")
 
-        # Should not crash, may or may not extract the call
-        assert isinstance(calls, list)
+        # A call through a subscript has no name to resolve: it is left out, without an error
+        assert calls == []
 
     def test_javascript_extracts_calls(self, manager):
         """Should extract calls from JavaScript."""
@@ -693,8 +684,7 @@ def my_func():
 }"""
         calls = manager.extract_calls(source, language="javascript")
 
-        # JavaScript extractor may or may not implement call extraction
-        assert isinstance(calls, list)
+        assert [(c.caller_name, c.callee_name, c.callee_qualifier, c.is_method_call) for c in calls] == [("caller", "target", None, False), ("caller", "method", "obj", True)]
 
 
 # =============================================================================
@@ -711,9 +701,8 @@ class TestPythonSpecificExtraction:
         source = "type UserId = int"
         types = manager.extract_types(source, language="python")
 
-        # Tree-sitter may not support Python 3.12 type aliases yet
-        # Just verify no crash and proper list return
-        assert isinstance(types, list)
+        # Found as an alias; its name is a known gap (test_a_python_type_alias_is_named)
+        assert [t.kind for t in types] == ["type_alias"]
 
     def test_extracts_decorated_function_as_type(self, manager):
         """Should extract decorated top-level functions as types."""
@@ -748,9 +737,7 @@ async def async_resource():
 """
         methods = manager.extract_methods(source, language="python")
 
-        method = next((m for m in methods if m.name == "decorated_method"), None)
-        assert method is not None
-        assert len(method.decorators) > 0
+        assert [(m.name, m.class_name, m.decorators) for m in methods] == [("decorated_method", "MyClass", ['decorator_factory(arg1="value")'])]
 
     def test_extracts_dunder_methods(self, manager):
         """Should extract dunder methods."""
@@ -763,10 +750,7 @@ async def async_resource():
 """
         methods = manager.extract_methods(source, language="python")
 
-        init = next((m for m in methods if m.name == "__init__"), None)
-        str_method = next((m for m in methods if m.name == "__str__"), None)
-        assert init is not None
-        assert str_method is not None
+        assert [(m.name, m.class_name) for m in methods] == [("__init__", "MyClass"), ("__str__", "MyClass")]
 
     def test_extracts_multiple_inheritance(self, manager):
         """Should extract class with multiple bases."""
@@ -818,8 +802,7 @@ async def async_resource():
         source = "class Empty: pass"
         types = manager.extract_types(source, language="python")
 
-        empty_class = next((t for t in types if t.name == "Empty"), None)
-        assert empty_class is not None
+        assert [(t.name, t.kind) for t in types] == [("Empty", "class")]
 
     def test_handles_ellipsis_body(self, manager):
         """Should handle class/function with ellipsis body."""
@@ -828,8 +811,7 @@ async def async_resource():
 """
         methods = manager.extract_methods(source, language="python")
 
-        method = next((m for m in methods if m.name == "method"), None)
-        assert method is not None
+        assert [(m.name, m.class_name) for m in methods] == [("method", "Protocol")]
 
 
 # =============================================================================
@@ -845,8 +827,7 @@ class TestJavaScriptSpecificExtraction:
         source = "const add = (a, b) => a + b;"
         types = manager.extract_types(source, language="javascript")
 
-        func = next((t for t in types if t.name == "add"), None)
-        assert func is not None
+        assert [(t.name, t.kind, t.is_async) for t in types] == [("add", "function", False)]
 
     def test_extracts_async_arrow_function(self, manager):
         """Should extract async arrow functions."""
@@ -865,17 +846,19 @@ class TestJavaScriptSpecificExtraction:
 }"""
         methods = manager.extract_methods(source, language="javascript")
 
-        # Should extract the getter/setter methods (they may be named "name" or similar)
-        # At least some methods should be found
-        assert len(methods) >= 1
+        # Both accessors, as properties of the class; the setter takes the value
+        assert [(m.name, m.class_name, m.is_property, [p["name"] for p in m.parameters]) for m in methods] == [
+            ("name", "Person", True, []),
+            ("name", "Person", True, ["value"]),
+        ]
 
     def test_extracts_export_default_class(self, manager):
         """Should extract export default class."""
         source = "export default class Service { run() {} }"
         types = manager.extract_types(source, language="javascript")
 
-        service = next((t for t in types if t.name == "Service"), None)
-        assert service is not None
+        # The class is there (the extra types it also gives are a known gap, below)
+        assert ("Service", "class") in [(t.name, t.kind) for t in types]
 
     def test_extracts_commonjs_module(self, manager):
         """Should extract CommonJS module.exports class."""
@@ -883,8 +866,8 @@ class TestJavaScriptSpecificExtraction:
 module.exports = Helper;"""
         types = manager.extract_types(source, language="javascript")
 
-        helper = next((t for t in types if t.name == "Helper"), None)
-        assert helper is not None
+        # The class is there (the extra types it also gives are a known gap, below)
+        assert ("Helper", "class") in [(t.name, t.kind) for t in types]
 
 
 # =============================================================================
@@ -900,8 +883,8 @@ class TestJavaSpecificExtraction:
         source = "public class Container<T> { private T value; }"
         types = manager.extract_types(source, language="java")
 
-        container = next((t for t in types if t.name == "Container"), None)
-        assert container is not None
+        # The name without its type parameters
+        assert [(t.name, t.kind) for t in types] == [("Container", "class")]
 
     def test_extracts_generic_interface(self, manager):
         """Should extract generic interface."""
@@ -920,15 +903,14 @@ class TestJavaSpecificExtraction:
 }"""
         methods = manager.extract_methods(source, language="java")
 
-        method = next((m for m in methods if m.name == "getUsers"), None)
-        assert method is not None
+        assert [(m.name, m.class_name, m.return_annotation, m.decorators) for m in methods] == [("getUsers", "Api", "List<User>", ['GetMapping("/users")'])]
 
     def test_extracts_static_import(self, manager):
         """Should extract static imports."""
         source = "import static java.lang.Math.PI;"
         imports = manager.extract_imports(source, language="java")
 
-        assert len(imports) >= 1
+        assert [(i.module, i.names, i.is_from_import) for i in imports] == [("java.lang.Math", ["PI"], True)]
 
 
 # =============================================================================
@@ -944,8 +926,7 @@ class TestCSharpSpecificExtraction:
         source = "public class Repository<T> where T : class { }"
         types = manager.extract_types(source, language="csharp")
 
-        repo = next((t for t in types if t.name == "Repository"), None)
-        assert repo is not None
+        assert [(t.name, t.kind) for t in types] == [("Repository", "class")]
 
     def test_extracts_extension_method(self, manager):
         """Should extract extension methods."""
@@ -954,8 +935,7 @@ class TestCSharpSpecificExtraction:
 }"""
         methods = manager.extract_methods(source, language="csharp")
 
-        method = next((m for m in methods if m.name == "Reverse"), None)
-        assert method is not None
+        assert [(m.name, m.class_name, m.is_static, [p["name"] for p in m.parameters]) for m in methods] == [("Reverse", "StringExtensions", True, ["s"])]
 
     def test_extracts_async_method_with_task(self, manager):
         """Should extract async methods returning Task."""
@@ -964,16 +944,53 @@ class TestCSharpSpecificExtraction:
 }"""
         methods = manager.extract_methods(source, language="csharp")
 
-        method = next((m for m in methods if m.name == "GetUserAsync"), None)
-        assert method is not None
+        assert [(m.name, m.is_async, [(p["name"], p["annotation"]) for p in m.parameters]) for m in methods] == [("GetUserAsync", True, [("id", "int")])]
 
     def test_extracts_global_using(self, manager):
         """Should extract global using directives."""
         source = "global using System;\nglobal using System.Linq;"
         imports = manager.extract_imports(source, language="csharp")
 
-        # Should have some imports
-        assert len(imports) >= 1
+        assert [(i.module, i.names) for i in imports] == [("System", []), ("System.Linq", [])]
+
+
+# =============================================================================
+# KNOWN GAPS: the right result, expected to fail until the extractor is fixed
+# =============================================================================
+
+
+class TestKnownExtractionGaps:
+    """Each test states what the extractor should return; strict, so a fix turns it into a failure to remove."""
+
+    @pytest.mark.xfail(strict=True, reason="Python class decorators are not read (0 of 358 classes in a real graph have any)")
+    def test_a_decorated_python_class_keeps_its_decorator(self, manager):
+        source, name = SAMPLES["python"]["decorated_class"][:2]
+
+        assert [(t.name, t.decorators) for t in manager.extract_types(source, language="python")] == [(name, ["dataclass"])]
+
+    @pytest.mark.xfail(strict=True, reason="a Python type alias gets an empty name")
+    def test_a_python_type_alias_is_named(self, manager):
+        types = manager.extract_types("type UserId = int\ntype Callback = Callable[[int], str]", language="python")
+
+        assert [(t.name, t.kind) for t in types] == [("UserId", "type_alias"), ("Callback", "type_alias")]
+
+    @pytest.mark.xfail(strict=True, reason="export default class gives the class twice and an unnamed one")
+    def test_an_exported_default_class_is_one_type(self, manager):
+        types = manager.extract_types("export default class Service { run() {} }", language="javascript")
+
+        assert [(t.name, t.kind) for t in types] == [("Service", "class")]
+
+    @pytest.mark.xfail(strict=True, reason="module.exports = Name gives a second, unnamed class")
+    def test_a_commonjs_export_adds_no_type(self, manager):
+        types = manager.extract_types("class Helper {}\nmodule.exports = Helper;", language="javascript")
+
+        assert [(t.name, t.kind) for t in types] == [("Helper", "class")]
+
+    @pytest.mark.xfail(strict=True, reason="C# methods get no return type")
+    def test_a_csharp_method_keeps_its_return_type(self, manager):
+        methods = manager.extract_methods("public class Service {\n    public async Task<User> GetUserAsync(int id) { return null; }\n}", language="csharp")
+
+        assert [(m.name, m.return_annotation) for m in methods] == [("GetUserAsync", "Task<User>")]
 
 
 class TestSqlDdl:

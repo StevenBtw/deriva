@@ -58,5 +58,5 @@ def test_a_broken_bench_package_is_an_error_not_a_missing_feature(monkeypatch, t
 
     monkeypatch.setitem(sys.modules, "deriva.bench.router", None)
 
-    with pytest.raises(ImportError):
+    with pytest.raises(ImportError, match=r"deriva\.bench\.router"):
         create_app(provider=SessionProvider(factory=lambda: FakeSession()), static_dir=None, runs_dir=tmp_path)

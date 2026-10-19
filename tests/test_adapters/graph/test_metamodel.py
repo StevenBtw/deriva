@@ -17,8 +17,29 @@ class TestGetAllNodeClasses:
     def test_returns_dict_of_classes(self):
         """Should return dictionary of node classes."""
         classes = get_all_node_classes()
-        assert isinstance(classes, dict)
-        assert len(classes) > 0
+        assert sorted(classes) == [
+            "BuildModule",
+            "BusinessConcept",
+            "DataDomain",
+            "DataEntity",
+            "DeployableUnit",
+            "Deployment",
+            "Directory",
+            "Environment",
+            "ExternalDependency",
+            "File",
+            "Lifecycle",
+            "LifecycleEvent",
+            "Method",
+            "Module",
+            "Repository",
+            "Role",
+            "Service",
+            "Software",
+            "Technology",
+            "Test",
+            "TypeDefinition",
+        ]
 
     def test_includes_expected_node_types(self):
         """Should include common node types."""
@@ -32,7 +53,7 @@ class TestGetAllNodeClasses:
         """Should map to class types."""
         classes = get_all_node_classes()
         for node_type, cls in classes.items():
-            assert isinstance(cls, type)
+            assert isinstance(cls, type) and cls.__name__ == f"{node_type}Node"
 
 
 class TestGetNodeProperties:
