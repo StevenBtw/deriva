@@ -41,6 +41,7 @@ from deriva.common import settings
 from deriva.common.file_utils import long_path
 from deriva.common.paths import resolve
 from deriva.common.settings import RepositorySettings
+from deriva.common.urls import redact_credentials
 
 from .models import (
     CloneError,
@@ -158,8 +159,18 @@ def _git_env() -> dict[str, str]:
     return settings.child_environment(GIT_TERMINAL_PROMPT="0")
 
 
+# STATUS_DLL_INIT_FAILED: Windows could not start git or one of its helpers (as git's exit code, unsigned or signed)
+_GIT_START_FAILED = (0xC0000142, 0xC0000142 - 2**32)
+GIT_COULD_NOT_START = (
+    "Git could not start (Windows error 0xC0000142: a library it needs failed to initialize). Run git --version in a "
+    "terminal: if that fails too, repair or reinstall Git for Windows; if it works there, an antivirus or the account "
+    "Deriva runs under stops git when Deriva starts it: start Deriva from a normal terminal, or exclude the Git folder "
+    "from the antivirus"
+)
+
 # What a git error means for the user: (pattern in git's output, sentence; {1} is the pattern's first group)
 _GIT_ERRORS: list[tuple[str, str]] = [
+    (r"(?i)0xc0000142", GIT_COULD_NOT_START),
     (r"Remote branch (\S+) not found", "The repository has no branch {1}"),
     (r"repository '[^']*' not found|Repository not found", "The repository was not found: check the URL. A private repository needs git credentials on this machine"),
     (r"Could not resolve host: (\S+)", "Could not reach {1}: check the URL and the network connection"),
@@ -176,8 +187,15 @@ def explain_git_error(output: str, action: str = "clone") -> str:
     for pattern, sentence in _GIT_ERRORS:
         match = re.search(pattern, output or "")
         if match:
-            return f"{sentence.replace('{1}', match.group(1) if match.groups() else '')} (git: {last})"
-    return f"Git {action} failed (git: {last})"
+            return redact_credentials(f"{sentence.replace('{1}', match.group(1) if match.groups() else '')} (git: {last})")
+    return redact_credentials(f"Git {action} failed (git: {last})")
+
+
+def _git_failure(error: subprocess.CalledProcessError, action: str) -> str:
+    """Why a git command failed: a git that could not start by its exit code, else from what git said."""
+    if error.returncode in _GIT_START_FAILED:
+        return GIT_COULD_NOT_START
+    return explain_git_error(error.stderr or error.stdout or str(error), action)
 
 
 def _discard(folder: Path) -> None:
@@ -250,12 +268,13 @@ def _handle_remove_readonly(func, path, exc):
 
 def _force_remove_directory(path: Path, max_retries: int = 3) -> None:
     """Forcefully remove a directory, handling Windows file locks."""
+    target = long_path(path)
     for attempt in range(max_retries):
         try:
             if os.name == "nt":
-                shutil.rmtree(path, onexc=_handle_remove_readonly)
+                shutil.rmtree(target, onexc=_handle_remove_readonly)
             else:
-                shutil.rmtree(path)
+                shutil.rmtree(target)
             return
         except PermissionError as e:
             if attempt < max_retries - 1:
@@ -616,10 +635,10 @@ class RepoManager:
             raise ValidationError("Repository URL must be a non-empty string")
 
         if not _is_valid_git_url(repo_url):
-            raise ValidationError(f"Invalid Git URL format: {repo_url}")
+            raise ValidationError(f"Invalid Git URL format: {redact_credentials(repo_url)}")
 
         if check_remote and not _check_remote_exists(repo_url):
-            raise ValidationError(f"Remote repository not accessible: {repo_url}")
+            raise ValidationError(f"Remote repository not accessible: {redact_credentials(repo_url)}")
 
         return True
 
@@ -679,13 +698,13 @@ class RepoManager:
             subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", check=True, env=_git_env())
         except subprocess.CalledProcessError as e:
             _discard(staging)
-            raise CloneError(explain_git_error(e.stderr or e.stdout or str(e), "clone"))
+            raise CloneError(_git_failure(e, "clone"))
         except FileNotFoundError:
             _discard(staging)
             raise CloneError("Git is not installed or not in PATH. Please install Git to use clone functionality.")
         _move_into_place(staging, target_path)
 
-        result = _get_repository_info_from_path(target_path, repo_url)
+        result = _get_repository_info_from_path(target_path, redact_credentials(repo_url))
         self._state_manager.add_repository(result)
         return result
 
@@ -804,7 +823,7 @@ class RepoManager:
                 env=_git_env(),
             )
         except subprocess.CalledProcessError as e:
-            raise RepositoryError(explain_git_error(e.stderr or e.stdout or str(e), "pull"))
+            raise RepositoryError(_git_failure(e, "pull"))
         except FileNotFoundError:
             raise RepositoryError("Git is not installed or not in PATH. Please install Git to update repositories.")
         result = _get_repository_info_from_path(repo_path, stored.get("url") or "")
@@ -828,7 +847,7 @@ class RepoManager:
             raise RepositoryError(f"{repo_name} is registered already")
         if not (repo_path / ".git").exists():
             raise RepositoryError(f"{repo_name} has no git checkout in the workspace")
-        result = _get_repository_info_from_path(repo_path, _get_git_remote_url(repo_path) or "")
+        result = _get_repository_info_from_path(repo_path, redact_credentials(_get_git_remote_url(repo_path) or ""))
         self._state_manager.add_repository(result)
         return result
 

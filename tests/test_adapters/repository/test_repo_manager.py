@@ -910,3 +910,127 @@ class TestRegistryRepair:
 
         assert manager.list_repositories(detailed=False) == []
         assert (tmp_path / "plain" / "keep.txt").read_text(encoding="utf-8") == "mine"
+
+
+class TestGitHardening:
+    """Cleanup reaches deep files, a git that cannot start is explained, and no credentials leave a git message."""
+
+    @staticmethod
+    def _git(clone=None, pull=None):
+        """subprocess.run for git: ``clone``/``pull`` raise the given error; other git calls answer empty."""
+
+        def run(cmd, **kwargs):
+            if "clone" in cmd and clone is not None:
+                (Path(cmd[-1]) / ".git").mkdir(parents=True, exist_ok=True)
+                raise clone
+            if "clone" in cmd:
+                (Path(cmd[-1]) / ".git").mkdir(parents=True, exist_ok=True)
+            if "pull" in cmd and pull is not None:
+                raise pull
+            return MagicMock(stdout="", stderr="", returncode=0)
+
+        return run
+
+    def test_cleanup_removes_through_the_extended_form(self, tmp_path):
+        """With long paths off, Windows deletes nothing deeper than 260 characters unless the path is extended."""
+        from deriva.adapters.repository.manager import _force_remove_directory
+        from deriva.common.file_utils import long_path
+
+        folder = tmp_path / "staging"
+        folder.mkdir()
+        with patch("deriva.adapters.repository.manager.shutil.rmtree") as rmtree:
+            _force_remove_directory(folder)
+
+        rmtree.assert_called_once()
+        assert rmtree.call_args.args[0] == long_path(folder)
+
+    def test_a_staging_folder_with_files_deeper_than_260_characters_is_removed(self, tmp_path):
+        from deriva.adapters.repository.manager import _discard
+        from deriva.common.file_utils import long_path
+
+        staging = tmp_path / ".clone-deadbeef"
+        deep = staging.joinpath(*["nested-folder-name"] * 16)
+        long_path(deep).mkdir(parents=True)
+        long_path(deep / "file.txt").write_text("x", encoding="utf-8")
+        assert len(str(deep / "file.txt")) > 260
+
+        _discard(staging)
+
+        assert not long_path(staging).exists()
+
+    @pytest.mark.parametrize("code", [3221225794, -1073741502], ids=["unsigned", "signed"])
+    def test_a_git_that_cannot_start_is_explained_without_the_url(self, tmp_path, code):
+        """0xC0000142: Windows could not start git (a DLL failed to initialize); the clone leaves nothing behind."""
+        import subprocess
+
+        manager = RepoManager(workspace_dir=tmp_path)
+        failure = subprocess.CalledProcessError(code, ["git", "clone"], output="", stderr="")
+
+        with patch("deriva.adapters.repository.manager.subprocess.run", side_effect=self._git(clone=failure)), pytest.raises(CloneError) as raised:
+            manager.clone_repository("https://user:s3cret@github.com/org/private-repo.git")
+
+        message = str(raised.value)
+        assert "0xC0000142" in message
+        assert "git --version" in message and "Git for Windows" in message and "antivirus" in message
+        assert "s3cret" not in message and "github.com" not in message
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["workspace.yaml"]
+
+    def test_a_git_helper_that_cannot_start_is_explained_too(self, tmp_path):
+        """The https helper failing to start shows up in git's output, not in git's own exit code."""
+        import subprocess
+
+        manager = RepoManager(workspace_dir=tmp_path)
+        stderr = "error: git-remote-https died of signal 15\nfatal: remote helper 'https' exited with status 0xc0000142"
+        failure = subprocess.CalledProcessError(128, ["git", "clone"], output="", stderr=stderr)
+
+        with patch("deriva.adapters.repository.manager.subprocess.run", side_effect=self._git(clone=failure)), pytest.raises(CloneError) as raised:
+            manager.clone_repository("https://github.com/org/repo.git")
+
+        assert "0xC0000142" in str(raised.value) and "git --version" in str(raised.value)
+
+    def test_an_update_whose_git_cannot_start_is_explained(self, tmp_path):
+        import subprocess
+
+        manager = RepoManager(workspace_dir=tmp_path)
+        with patch("deriva.adapters.repository.manager.subprocess.run", side_effect=self._git()):
+            manager.clone_repository("https://github.com/org/repo.git")
+        failure = subprocess.CalledProcessError(3221225794, ["git", "pull"], output="", stderr="")
+
+        with patch("deriva.adapters.repository.manager.subprocess.run", side_effect=self._git(pull=failure)), pytest.raises(RepositoryError) as raised:
+            manager.update_repository("repo")
+
+        assert "0xC0000142" in str(raised.value) and "git --version" in str(raised.value)
+
+    def test_credentials_never_reach_a_git_error(self, tmp_path):
+        import subprocess
+
+        manager = RepoManager(workspace_dir=tmp_path)
+        stderr = "Cloning into 'x'...\nfatal: repository 'https://user:s3cret@github.com/org/x.git/' not found"
+        failure = subprocess.CalledProcessError(128, ["git", "clone"], output="", stderr=stderr)
+
+        with patch("deriva.adapters.repository.manager.subprocess.run", side_effect=self._git(clone=failure)), pytest.raises(CloneError) as raised:
+            manager.clone_repository("https://user:s3cret@github.com/org/x.git")
+
+        message = str(raised.value)
+        assert "s3cret" not in message and "user:" not in message
+        # The repository it was about stays readable
+        assert "https://github.com/org/x.git/" in message
+
+    def test_an_invalid_url_error_hides_its_credentials(self, tmp_path):
+        from deriva.common.exceptions import ValidationError
+
+        manager = RepoManager(workspace_dir=tmp_path)
+        with pytest.raises(ValidationError) as raised:
+            manager.validate_repository("https://ghp_token123@github.com/org/repo name")
+
+        assert "ghp_token123" not in str(raised.value)
+        assert "https://github.com/org/repo name" in str(raised.value)
+
+    def test_a_cloned_url_is_stored_without_its_credentials(self, tmp_path):
+        manager = RepoManager(workspace_dir=tmp_path)
+        with patch("deriva.adapters.repository.manager.subprocess.run", side_effect=self._git()):
+            info = manager.clone_repository("https://user:s3cret@github.com/org/repo.git")
+
+        assert info.url == "https://github.com/org/repo.git"
+        assert "s3cret" not in (tmp_path / "workspace.yaml").read_text(encoding="utf-8")
+        assert manager.list_repositories(detailed=True)[0].url == "https://github.com/org/repo.git"

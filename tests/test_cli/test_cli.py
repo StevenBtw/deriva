@@ -2315,6 +2315,19 @@ class TestRepoDeleteOptions:
         assert result.exit_code == 1
         assert "Repository has uncommitted changes: my_repo" in result.output
 
+    @patch("deriva.cli.commands.repo.PipelineSession.__enter__")
+    def test_repo_clone_never_prints_the_credentials_in_its_url(self, mock_enter):
+        mock_session = MagicMock()
+        mock_session.clone_repository.return_value = {"success": False, "error": "The git credentials were refused for this repository"}
+        mock_enter.return_value = mock_session
+
+        result = runner.invoke(app, ["repo", "clone", "https://user:s3cret@github.com/org/repo.git"])
+
+        assert "s3cret" not in result.output
+        assert "URL: https://github.com/org/repo.git" in result.output
+        # The clone still gets the URL as given: the credentials are git's to use
+        assert mock_session.clone_repository.call_args.kwargs["url"] == "https://user:s3cret@github.com/org/repo.git"
+
     @patch("deriva.cli.commands.repo.PipelineSession")
     def test_repo_register_records_a_folder(self, mock_session_class):
         mock_session = MagicMock()

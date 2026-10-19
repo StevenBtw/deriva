@@ -26,7 +26,7 @@ def repo_clone(
     typer.echo(f"\n{'=' * 60}")
     typer.echo("DERIVA - Cloning Repository")
     typer.echo(f"{'=' * 60}")
-    typer.echo(f"URL: {url}")
+    typer.echo(f"URL: {PipelineSession.shown_url(url)}")
     if name:
         typer.echo(f"Name: {name}")
     if branch:
@@ -38,7 +38,7 @@ def repo_clone(
             typer.echo("\nRepository cloned successfully!")
             typer.echo(f"  Name: {result.get('name', 'N/A')}")
             typer.echo(f"  Path: {result.get('path', 'N/A')}")
-            typer.echo(f"  URL:  {result.get('url', url)}")
+            typer.echo(f"  URL:  {PipelineSession.shown_url(result.get('url', url))}")
         else:
             typer.echo(f"\nError: {result.get('error', 'Unknown error')}", err=True)
             raise typer.Exit(1)

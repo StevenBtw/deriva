@@ -44,6 +44,7 @@ from deriva.common.logging import RunLogger
 from deriva.common.paths import home, resolve, workspace
 from deriva.common.settings import RepositorySettings
 from deriva.common.types import HasToDict, RunLoggerProtocol
+from deriva.common.urls import redact_credentials
 
 from . import config, derivation, export_bundle, export_levels, extraction, model_configs, ontology, overfit, pipeline, quality, storage, trace
 from .llm_log import record_call
@@ -154,6 +155,11 @@ class PipelineSession:
         self._repo_manager = RepoManager(workspace_dir=self._workspace_dir)
 
         self._connected = True
+
+    @staticmethod
+    def shown_url(url: str) -> str:
+        """A repository URL as printed or logged: without its user and token part (git still gets the URL as given)."""
+        return redact_credentials(url)
 
     @staticmethod
     def check_repository(repository: str | None) -> None:
