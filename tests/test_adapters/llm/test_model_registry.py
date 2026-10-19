@@ -89,3 +89,18 @@ def test_a_level_the_provider_does_not_know_is_refused():
     with pytest.raises(ValueError, match="anthropic"):
         reasoning_settings("anthropic", "minimal")
     assert reasoning_settings("anthropic", "max") and reasoning_settings("azure", "xhigh")
+
+
+def test_an_azure_v1_url_uses_the_openai_compatible_client_without_an_api_version():
+    """Azure's /openai/v1/ API takes no api_version (pydantic-ai refuses one for it); its client is the OpenAI one."""
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from deriva.adapters.llm.model_registry import get_pydantic_ai_model
+
+    v1 = get_pydantic_ai_model({"provider": "azure", "model": "gpt-5-mini", "api_url": "https://res.openai.azure.com/openai/v1/", "api_key": "k"})
+    root = get_pydantic_ai_model({"provider": "azure", "model": "gpt-5-mini", "api_url": "https://res.openai.azure.com/", "api_key": "k"})
+
+    assert isinstance(v1._provider, OpenAIProvider) and not isinstance(v1._provider, AzureProvider)
+    assert str(v1._provider.base_url).rstrip("/") == "https://res.openai.azure.com/openai/v1"
+    assert isinstance(root._provider, AzureProvider)

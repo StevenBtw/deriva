@@ -30,6 +30,18 @@ def _open_when_ready(server: Any, url: str) -> threading.Thread:
     return thread
 
 
+def _stop_runs_on_exit(server: Any, app: Any) -> None:
+    """The first Ctrl+C or SIGTERM also cancels the run and ends the event streams: uvicorn waits for open streams
+    before it shuts the app down, and a stream lasts until its run ends."""
+    handle_exit = server.handle_exit
+
+    def handle(sig: int, frame: Any) -> None:
+        app.state.runs.shutdown()
+        handle_exit(sig, frame)
+
+    server.handle_exit = handle
+
+
 def main(argv: list[str] | None = None) -> None:
     # pydantic-ai's first-run banner is noise in the studio's console output
     about.suppress_pydantic_ai_banner()
@@ -43,7 +55,9 @@ def main(argv: list[str] | None = None) -> None:
         if not args.allow_remote:
             parser.error(f"--host {args.host} makes the studio reachable from other machines, and it has no login; add --allow-remote to do so")
         print(f"Warning: the studio is reachable from other machines on {args.host}; it has no login.")
-    server = uvicorn.Server(uvicorn.Config(create_app(), host=args.host, port=args.port))
+    app = create_app()
+    server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port))
+    _stop_runs_on_exit(server, app)
     if not args.no_browser:
         browser_host = "localhost" if args.host in LOCAL_HOSTS else f"[{args.host}]" if ":" in args.host else args.host
         _open_when_ready(server, f"http://{browser_host}:{args.port}/")

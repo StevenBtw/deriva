@@ -1,5 +1,7 @@
 """Tests for ArchiMate models and metamodel."""
 
+import re
+
 import pytest
 
 from deriva.adapters.archimate.models import (
@@ -70,7 +72,8 @@ class TestRelationshipTypes:
     def test_all_relationship_types_have_description(self):
         """All relationship types should have descriptions."""
         for rel_type, rel_def in RELATIONSHIP_TYPES.items():
-            assert rel_def.description, f"{rel_type} missing description"
+            # A sentence, not a placeholder
+            assert len(rel_def.description.split()) >= 2, f"{rel_type} missing description"
 
     def test_core_relationship_types_exist(self):
         """Core ArchiMate relationship types should be defined."""
@@ -90,7 +93,7 @@ class TestArchiMateMetamodel:
     def test_can_relate_valid_composition(self, metamodel):
         """Should allow valid composition relationship."""
         can_relate, reason = metamodel.can_relate("ApplicationComponent", "Composition", "ApplicationComponent")
-        assert can_relate, f"Should allow Composition between ApplicationComponents: {reason}"
+        assert can_relate is True, f"Should allow Composition between ApplicationComponents: {reason}"
 
     def test_can_relate_invalid_source_type(self, metamodel):
         """Should reject relationship from invalid source type."""
@@ -133,7 +136,8 @@ class TestGetValidRelationshipsFrom:
     def test_returns_list_for_valid_element_type(self, metamodel):
         """Should return list of valid relationships for valid element type."""
         result = metamodel.get_valid_relationships_from("ApplicationComponent")
-        assert isinstance(result, list)
+        assert [r["relationship_type"] for r in result] == ["Composition", "Aggregation", "Assignment", "Realization", "Serving", "Access", "Flow", "Triggering"]
+        assert result[0]["allowed_targets"] == ["ApplicationComponent", "ApplicationInterface"]
 
     def test_returns_relationship_type_info(self, metamodel):
         """Should return relationship type info with required fields."""
@@ -174,9 +178,12 @@ class TestGetValidRelationshipsFrom:
     def test_data_object_can_access(self, metamodel):
         """DataObject should not typically be source of many relationships."""
         result = metamodel.get_valid_relationships_from("DataObject")
-        # DataObject is a passive element, typically used as target not source
-        # May have limited or no outgoing relationships
-        assert isinstance(result, list)
+        # A passive element: it is made of data objects and realizes business objects, it serves or accesses nothing
+        assert [(r["relationship_type"], r["allowed_targets"]) for r in result] == [
+            ("Composition", ["DataObject"]),
+            ("Aggregation", ["DataObject"]),
+            ("Realization", ["BusinessObject"]),
+        ]
 
     def test_application_service_relationships(self, metamodel):
         """ApplicationService should have behavior-appropriate relationships."""
@@ -213,7 +220,7 @@ class TestSpecRelationshipTable:
     )
     def test_accepts_direct_relationships_from_spec(self, metamodel, source, rel, target):
         can_relate, reason = metamodel.can_relate(source, rel, target)
-        assert can_relate, reason
+        assert can_relate is True, reason
 
     @pytest.mark.parametrize(
         ("source", "rel", "target"),
@@ -247,14 +254,14 @@ class TestSpecRelationshipTable:
     )
     def test_accepts_derived_relationships_from_spec(self, metamodel, source, rel, target):
         can_relate, reason = metamodel.can_relate(source, rel, target)
-        assert can_relate, reason
+        assert can_relate is True, reason
 
     def test_association_is_valid_between_any_pair(self, metamodel):
         types = metamodel.get_allowed_element_types()
         for source in types:
             for target in types:
                 can_relate, reason = metamodel.can_relate(source, "Association", target)
-                assert can_relate, reason
+                assert can_relate is True, reason
 
     def test_specialization_only_between_same_type(self, metamodel):
         assert metamodel.can_relate("Node", "Specialization", "Node")[0]
@@ -319,8 +326,9 @@ class TestElement:
     def test_element_auto_generates_identifier(self):
         """Should auto-generate identifier if not provided."""
         element = Element(name="Test", element_type="ApplicationComponent")
-        assert element.identifier is not None
-        assert len(element.identifier) > 0
+        # "id-" and a uuid: unique, and a valid XML id (it starts with a letter)
+        assert re.fullmatch(r"id-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", element.identifier)
+        assert Element(name="Test", element_type="ApplicationComponent").identifier != element.identifier
 
     def test_element_uses_provided_identifier(self):
         """Should use provided identifier."""
@@ -341,8 +349,8 @@ class TestRelationship:
     def test_relationship_auto_generates_identifier(self):
         """Should auto-generate identifier if not provided."""
         rel = Relationship(source="src", target="tgt", relationship_type="Serving")
-        assert rel.identifier is not None
-        assert len(rel.identifier) > 0
+        assert re.fullmatch(r"id-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", rel.identifier)
+        assert Relationship(source="src", target="tgt", relationship_type="Serving").identifier != rel.identifier
 
     def test_relationship_with_properties(self):
         """Should store custom properties."""

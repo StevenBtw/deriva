@@ -2,6 +2,7 @@ import { type KeyboardEvent, useEffect, useId, useState } from "react";
 
 import { runs } from "../api/client";
 import type { RunEvent } from "../api/types";
+import { downloadText } from "../components/download";
 import { LiveLog } from "./LiveLog";
 import { PromptsList } from "./LlmCalls";
 import { TracePanel } from "./TracePanel";
@@ -44,10 +45,23 @@ function isError(event: RunEvent): boolean {
   return event.event === "error" || (event.event === "progress" && event.data.status === "error");
 }
 
+// A long error list shows its start; the download has all of it
+const SAMPLE = 50;
+
+/** The run's error lines: failed steps and a failed run, then the errors that completed steps reported (a file that
+ * could not be read, say), which reach the browser only in the run's last update. A failed step's message is in that
+ * list too, so it is shown once. */
+function errorLines(events: RunEvent[]): string[] {
+  const failed = events.filter(isError).map((e) => (e.event === "progress" && e.data.step ? `${e.data.step}: ${e.data.message ?? "failed"}` : (e.data.message ?? "failed")));
+  const messages = new Set(events.filter(isError).map((e) => e.data.message));
+  const reported = events.flatMap((e) => (e.event === "progress" && !e.data.step && Array.isArray(e.data.stats?.errors) ? (e.data.stats.errors as unknown[]).map(String) : []));
+  return [...failed, ...reported.filter((line) => !messages.has(line))];
+}
+
 /** Live log, trace of the selected element, the run's prompts and its errors. */
 export function BottomPanel({ events, status, runId = null, runStatus = "idle", tab, onTab, traceElement = null }: Props) {
   const id = useId();
-  const errors = events.filter(isError);
+  const errors = errorLines(events);
   const live = events.filter((e) => e.event === "llm");
   const saved = useSavedCalls(runId, live.length);
   const calls = live.length ? live : saved;
@@ -96,11 +110,21 @@ export function BottomPanel({ events, status, runId = null, runStatus = "idle", 
         {tab === "prompts" && <PromptsList runId={runId} calls={calls} />}
         {tab === "errors" &&
           (errors.length ? (
-            errors.map((e) => (
-              <div key={e.seq} className="logline error">
-                {e.event === "progress" && e.data.step ? `${e.data.step}: ${e.data.message ?? "failed"}` : e.data.message}
-              </div>
-            ))
+            <>
+              {errors.length > SAMPLE && (
+                <div className="row-actions">
+                  <span className="muted">{`${SAMPLE} of ${errors.length} shown`}</span>
+                  <button type="button" onClick={() => downloadText(errors, `${runId ?? "run"}-errors.txt`)}>
+                    {`Download all ${errors.length}`}
+                  </button>
+                </div>
+              )}
+              {errors.slice(0, SAMPLE).map((line, i) => (
+                <div key={i} className="logline error">
+                  {line}
+                </div>
+              ))}
+            </>
           ) : (
             <div className="muted">No errors in this run.</div>
           ))}

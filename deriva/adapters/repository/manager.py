@@ -30,14 +30,18 @@ import shutil
 import stat
 import subprocess
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from deriva.common import settings
+from deriva.common.file_utils import long_path
 from deriva.common.paths import resolve
 from deriva.common.settings import RepositorySettings
+from deriva.common.urls import redact_credentials
 
 from .models import (
     CloneError,
@@ -149,6 +153,73 @@ class _StateManager:
 # =============================================================================
 
 
+def _git_env() -> dict[str, str]:
+    """Git without terminal prompts: a repository that needs credentials fails at once instead of waiting for a username
+    on the terminal that started Deriva (a credential helper still answers)."""
+    return settings.child_environment(GIT_TERMINAL_PROMPT="0")
+
+
+# STATUS_DLL_INIT_FAILED: Windows could not start git or one of its helpers (as git's exit code, unsigned or signed)
+_GIT_START_FAILED = (0xC0000142, 0xC0000142 - 2**32)
+GIT_COULD_NOT_START = (
+    "Git could not start (Windows error 0xC0000142: a library it needs failed to initialize). Run git --version in a "
+    "terminal: if that fails too, repair or reinstall Git for Windows; if it works there, an antivirus or the account "
+    "Deriva runs under stops git when Deriva starts it: start Deriva from a normal terminal, or exclude the Git folder "
+    "from the antivirus"
+)
+
+# What a git error means for the user: (pattern in git's output, sentence; {1} is the pattern's first group)
+_GIT_ERRORS: list[tuple[str, str]] = [
+    (r"(?i)0xc0000142", GIT_COULD_NOT_START),
+    (r"Remote branch (\S+) not found", "The repository has no branch {1}"),
+    (r"repository '[^']*' not found|Repository not found", "The repository was not found: check the URL. A private repository needs git credentials on this machine"),
+    (r"Could not resolve host: (\S+)", "Could not reach {1}: check the URL and the network connection"),
+    (r"Authentication failed|Invalid username or password", "The git credentials were refused for this repository"),
+    (r"Not possible to fast-forward|divergent branches", "The clone has commits of its own that the remote does not have, so it cannot be updated by fast-forward"),
+    (r"could not read Username|terminal prompts disabled", "This repository needs git credentials: set up a git credential helper or use a URL your git can open"),
+]
+
+
+def explain_git_error(output: str, action: str = "clone") -> str:
+    """A git failure as a sentence the user can act on, with git's own last line (``Git <action> failed`` when unknown)."""
+    lines = [line.strip() for line in (output or "").strip().splitlines() if line.strip()]
+    last = lines[-1] if lines else "no output"
+    for pattern, sentence in _GIT_ERRORS:
+        match = re.search(pattern, output or "")
+        if match:
+            return redact_credentials(f"{sentence.replace('{1}', match.group(1) if match.groups() else '')} (git: {last})")
+    return redact_credentials(f"Git {action} failed (git: {last})")
+
+
+def _git_failure(error: subprocess.CalledProcessError, action: str) -> str:
+    """Why a git command failed: a git that could not start by its exit code, else from what git said."""
+    if error.returncode in _GIT_START_FAILED:
+        return GIT_COULD_NOT_START
+    return explain_git_error(error.stderr or error.stdout or str(error), action)
+
+
+def _discard(folder: Path) -> None:
+    """Remove a staging folder (best effort: it holds no user files)."""
+    if folder.exists():
+        try:
+            _force_remove_directory(folder)
+        except Exception as e:
+            logger.warning("Could not remove the staging folder %s: %s", folder, e)
+
+
+def _move_into_place(staging: Path, target: Path, attempts: int = 3) -> None:
+    """Rename a finished clone to its folder; a virus scanner can hold a file for a moment on Windows."""
+    for attempt in range(attempts):
+        try:
+            os.replace(staging, target)
+            return
+        except OSError as e:
+            if attempt == attempts - 1:
+                _discard(staging)
+                raise CloneError(f"The clone worked but could not be moved to {target.name}: {e}")
+            time.sleep(0.5)
+
+
 def _is_valid_git_url(url: str) -> bool:
     """Check if URL is a valid Git repository URL."""
     patterns = [
@@ -197,12 +268,13 @@ def _handle_remove_readonly(func, path, exc):
 
 def _force_remove_directory(path: Path, max_retries: int = 3) -> None:
     """Forcefully remove a directory, handling Windows file locks."""
+    target = long_path(path)
     for attempt in range(max_retries):
         try:
             if os.name == "nt":
-                shutil.rmtree(path, onexc=_handle_remove_readonly)
+                shutil.rmtree(target, onexc=_handle_remove_readonly)
             else:
-                shutil.rmtree(path)
+                shutil.rmtree(target)
             return
         except PermissionError as e:
             if attempt < max_retries - 1:
@@ -226,7 +298,7 @@ def _get_directory_size(path: Path, exclude_git: bool = False) -> float:
     """
     total_size = 0
     try:
-        for dirpath, dirnames, filenames in os.walk(path):
+        for dirpath, dirnames, filenames in os.walk(long_path(path)):
             if exclude_git and ".git" in dirnames:
                 dirnames.remove(".git")
             for filename in filenames:
@@ -345,7 +417,7 @@ def _count_files_and_dirs(path: Path) -> tuple[int, int]:
     file_count = 0
     dir_count = 0
     try:
-        for dirpath, dirnames, filenames in os.walk(path):
+        for dirpath, dirnames, filenames in os.walk(long_path(path)):
             if ".git" in dirnames:
                 dirnames.remove(".git")
             dir_count += len(dirnames)
@@ -500,6 +572,15 @@ def _extract_file_structure(repo_path: Path) -> FileNode:
 # =============================================================================
 
 
+def _stale(repo_path: Path) -> str | None:
+    """Why a record no longer matches its folder, or None."""
+    if not repo_path.exists():
+        return "its folder is gone"
+    if not (repo_path / ".git").exists():
+        return "its folder is no git checkout"
+    return None
+
+
 def _working_tree_dirty(repo_path: Path, stored: bool) -> bool:
     """Whether the checkout has uncommitted changes now (the stored value when git cannot tell)."""
     try:
@@ -554,10 +635,10 @@ class RepoManager:
             raise ValidationError("Repository URL must be a non-empty string")
 
         if not _is_valid_git_url(repo_url):
-            raise ValidationError(f"Invalid Git URL format: {repo_url}")
+            raise ValidationError(f"Invalid Git URL format: {redact_credentials(repo_url)}")
 
         if check_remote and not _check_remote_exists(repo_url):
-            raise ValidationError(f"Remote repository not accessible: {repo_url}")
+            raise ValidationError(f"Remote repository not accessible: {redact_credentials(repo_url)}")
 
         return True
 
@@ -599,7 +680,7 @@ class RepoManager:
                 except Exception as e:
                     raise CloneError(f"Failed to remove existing directory: {e}")
             else:
-                raise CloneError(f"Directory already exists: {target_path}. Use overwrite=True to replace it.")
+                raise CloneError(f"A folder named {target_name} already exists in the workspace: give the clone another name, or delete that repository first")
 
         # Long paths: on Windows a deep home folder plus git's own file names can pass 260 characters
         # Submodules too: a repository that keeps its modules as submodules is nearly empty without them
@@ -608,16 +689,22 @@ class RepoManager:
             cmd.extend(["--branch", branch])
         if depth:
             cmd.extend(["--depth", str(depth), "--shallow-submodules"])
-        cmd.extend([repo_url, str(target_path)])
+        # Into a staging folder first: only a clone that worked becomes the repository's folder, and a failed one
+        # (a checkout that stopped half way) leaves nothing a retry would find in its way
+        staging = self.workspace_dir / f".clone-{uuid.uuid4().hex[:8]}"
+        cmd.extend([repo_url, str(staging)])
 
         try:
-            subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", check=True)
+            subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", check=True, env=_git_env())
         except subprocess.CalledProcessError as e:
-            raise CloneError(f"Git clone failed: {e.stderr or e.stdout or str(e)}")
+            _discard(staging)
+            raise CloneError(_git_failure(e, "clone"))
         except FileNotFoundError:
+            _discard(staging)
             raise CloneError("Git is not installed or not in PATH. Please install Git to use clone functionality.")
+        _move_into_place(staging, target_path)
 
-        result = _get_repository_info_from_path(target_path, repo_url)
+        result = _get_repository_info_from_path(target_path, redact_credentials(repo_url))
         self._state_manager.add_repository(result)
         return result
 
@@ -642,9 +729,10 @@ class RepoManager:
                     branch=repo.get("branch"),
                     last_commit=repo.get("last_commit"),
                     # Read now: the stored state is from the clone, and edits since must show
-                    is_dirty=_working_tree_dirty(Path(repo["path"]), repo.get("is_dirty", False)),
+                    is_dirty=False if _stale(Path(repo["path"])) else _working_tree_dirty(Path(repo["path"]), repo.get("is_dirty", False)),
                     size_mb=repo.get("size_mb", 0.0),
                     cloned_at=repo.get("cloned_at"),
+                    stale=_stale(Path(repo["path"])),
                 )
                 for repo in repos_data
             ]
@@ -674,6 +762,11 @@ class RepoManager:
             DeleteError: If deletion fails
         """
         repo_path = self._repository_path(repo_name)
+
+        # A record whose folder is gone or is no git checkout: only the record goes, never files that are no clone
+        if self._state_manager.get_repository(repo_name) is not None and _stale(repo_path):
+            self._state_manager.remove_repository(repo_name)
+            return True
 
         if not repo_path.exists():
             raise DeleteError(f"Repository not found: {repo_name}")
@@ -707,6 +800,56 @@ class RepoManager:
 
         self._state_manager.remove_repository(repo_name)
         return True
+
+    def update_repository(self, repo_name: str) -> RepositoryInfo:
+        """Pull the clone's branch, fast-forward only, and store its new state (it keeps when it was cloned).
+
+        Raises:
+            RepositoryError: unknown repository, uncommitted changes, or a pull git refuses (with git's reason)
+        """
+        repo_path = self._repository_path(repo_name)
+        stored = self._state_manager.get_repository(repo_name)
+        if stored is None or not (repo_path / ".git").exists():
+            raise RepositoryError(f"Repository not found: {repo_name}")
+        if _working_tree_dirty(repo_path, False):
+            raise RepositoryError(f"Repository has uncommitted changes: {repo_name}. Commit or discard them before updating.")
+        try:
+            subprocess.run(
+                ["git", "-C", str(repo_path), "pull", "--ff-only", "--recurse-submodules"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+                env=_git_env(),
+            )
+        except subprocess.CalledProcessError as e:
+            raise RepositoryError(_git_failure(e, "pull"))
+        except FileNotFoundError:
+            raise RepositoryError("Git is not installed or not in PATH. Please install Git to update repositories.")
+        result = _get_repository_info_from_path(repo_path, stored.get("url") or "")
+        result.cloned_at = stored.get("cloned_at")
+        self._state_manager.add_repository(result)
+        return result
+
+    def unregistered(self) -> list[str]:
+        """Git folders in the workspace without a record (a clone whose record was lost, a checkout put there by hand)."""
+        known = {repo["name"] for repo in self._state_manager.list_repositories()}
+        return sorted(p.name for p in self.workspace_dir.iterdir() if p.is_dir() and not p.name.startswith(".") and (p / ".git").exists() and p.name not in known)
+
+    def register_repository(self, repo_name: str) -> RepositoryInfo:
+        """Record a git folder that is in the workspace but not in the registry.
+
+        Raises:
+            RepositoryError: the name is registered already, or its folder is no git checkout
+        """
+        repo_path = self._repository_path(repo_name)
+        if self._state_manager.get_repository(repo_name) is not None:
+            raise RepositoryError(f"{repo_name} is registered already")
+        if not (repo_path / ".git").exists():
+            raise RepositoryError(f"{repo_name} has no git checkout in the workspace")
+        result = _get_repository_info_from_path(repo_path, redact_credentials(_get_git_remote_url(repo_path) or ""))
+        self._state_manager.add_repository(result)
+        return result
 
     def get_repository_info(self, repo_name: str) -> RepositoryInfo:
         """Get detailed information about a specific repository.

@@ -214,9 +214,9 @@ class TestExtractCalls:
         source = "func()"
         tree = parse(parser, source)
 
-        # Python extractor should return calls (tests that method exists)
+        # A call outside any function has no caller, so it is no call edge
         calls = extractor.extract_calls(tree, source.encode("utf-8"))
-        assert isinstance(calls, list)
+        assert calls == []
 
 
 class TestGetFilterConstants:
@@ -238,7 +238,8 @@ class TestGetFilterConstants:
     def test_each_language_has_filter_constants(self, lang):
         """Each language extractor should provide filter constants."""
         extractor = get_extractor(lang)
-        assert extractor is not None
-
         constants = extractor.get_filter_constants()
-        assert constants is not None
+
+        # A standard library module of each language is known as one
+        stdlib = {"python": "typing", "javascript": "fs", "java": "java.util.stream", "csharp": "System.Globalization"}[lang]
+        assert stdlib in constants.stdlib_modules

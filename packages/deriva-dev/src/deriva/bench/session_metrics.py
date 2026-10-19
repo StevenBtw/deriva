@@ -18,7 +18,7 @@ from __future__ import annotations
 import ast
 import itertools
 import json
-from collections import Counter
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -128,10 +128,11 @@ def _identity_report(views: list[dict[str, Any]], identity: str) -> dict[str, An
         return [{x for x in s if keep(x)} for s in sets]
 
     all_elements = set().union(*elements) if elements else set()
+    present = sorted({str(layer) for x in all_elements if (layer := layers.get(x)) is not None})
     report = {
         "elements": {"cons": _share(elements), "jbar": _jbar(elements), "count": len(all_elements)},
         "relationships": {"cons": _share(rels), "jbar": _jbar(rels), "count": len(set().union(*rels)) if rels else 0},
-        "layers": {layer: _share(part(elements, lambda x, layer=layer: layers.get(x) == layer)) for layer in sorted({layers.get(x) for x in all_elements} - {None})},
+        "layers": {layer: _share(part(elements, lambda x, layer=layer: layers.get(x) == layer)) for layer in present},
         "origin": {},
     }
     for name, wanted in (("llm", True), ("structural", False)):
@@ -174,13 +175,13 @@ def krippendorff_alpha(runs: list[dict[str, Any]]) -> float | None:
     for run in runs:
         for item, value in run.items():
             values.setdefault(item, []).append(repr(value))
-    coincidence: Counter = Counter()
+    coincidence: dict[tuple[str, str], float] = defaultdict(float)
     for found in values.values():
         if len(found) < 2:
             continue
         for a, b in itertools.permutations(range(len(found)), 2):
             coincidence[(found[a], found[b])] += 1 / (len(found) - 1)
-    totals: Counter = Counter()
+    totals: dict[str, float] = defaultdict(float)
     for (a, _), n in coincidence.items():
         totals[a] += n
     n = sum(totals.values())

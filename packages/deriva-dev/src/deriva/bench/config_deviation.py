@@ -198,7 +198,7 @@ class ConfigDeviationAnalyzer:
             return {"config_id": config_id, "error": "No objects found for config"}
 
         # Build per-object breakdown
-        object_details = []
+        object_details: list[dict[str, Any]] = []
         objects_by_run = {run_id: nodes_by_run.get(run_id, set()) | elements_by_run.get(run_id, set()) for run_id in all_runs}
 
         for obj_id in config_objects:

@@ -182,6 +182,8 @@ Deriva keeps everything in one home folder: `DERIVA_HOME` when it is set, the re
 
 The graph and the model share one embedded database and are kept apart by namespace labels (`Graph`, `Model`).
 
+The studio's **Runs & storage** page shows what each part of the workspace takes on disk and clears what can go: old runs, the LLM cache, exported models and graph databases whose repository is gone. A repository's own graph and model are cleared on the **Repositories** page.
+
 ### Settings
 
 `deriva.common.settings` is the only code that reads configuration from the environment. It merges the home folder's `.env` with the process environment, and the process environment wins. Settings come in typed groups by prefix: `LLM_`, `GRAFEO_`, `GRAPH_`, `ARCHIMATE_`, `DERIVA_NLP_` and `REPOSITORY_`. Only the LLM providers' own keys (such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `MISTRAL_API_KEY`) are passed on to the process environment for the provider libraries, and never over a variable that is already set.

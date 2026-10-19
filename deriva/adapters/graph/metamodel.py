@@ -13,6 +13,10 @@ from typing import Any
 from . import models
 
 __all__ = [
+    "GROUP_ORDER",
+    "NODE_GROUPS",
+    "node_description",
+    "node_group",
     "get_all_node_classes",
     "get_node_properties",
     "get_relationship_types",
@@ -36,7 +40,45 @@ def get_all_node_classes() -> dict[str, type]:
     return node_classes
 
 
-def get_node_properties(node_class: type) -> list[str]:
+# The intermediate ontology's groups (as ArchiMate has its layers): where a node type's evidence comes from
+GROUP_ORDER = ("structure", "code", "business", "deployment")
+NODE_GROUPS = {
+    "Repository": "structure",
+    "Directory": "structure",
+    "File": "structure",
+    "Module": "structure",
+    "BuildModule": "structure",
+    "TypeDefinition": "code",
+    "Method": "code",
+    "Test": "code",
+    "ExternalDependency": "code",
+    "Service": "code",
+    "BusinessConcept": "business",
+    "DataEntity": "business",
+    "DataDomain": "business",
+    "Lifecycle": "business",
+    "LifecycleEvent": "business",
+    "Role": "business",
+    "DeployableUnit": "deployment",
+    "Deployment": "deployment",
+    "Environment": "deployment",
+    "Software": "deployment",
+    "Technology": "deployment",
+}
+
+
+def node_group(node_type: str) -> str:
+    """The group of a node type (``other`` for a label the metamodel does not name)."""
+    return NODE_GROUPS.get(node_type, "other")
+
+
+def node_description(node_class: type) -> str:
+    """The first line of a node class's docstring."""
+    lines = (node_class.__doc__ or "").strip().splitlines()
+    return lines[0].strip() if lines else ""
+
+
+def get_node_properties(node_class: type[Any]) -> list[str]:
     """Get all property names for a node class.
 
     Args:

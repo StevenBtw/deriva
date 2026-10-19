@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -43,7 +43,7 @@ class SessionProvider:
         self.error: str | None = None
 
     @contextmanager
-    def session(self, wait: float | None = 2.0) -> Iterator[Any]:
+    def session(self, wait: float | None = 2.0) -> Generator[Any]:
         """Yield the connected session; wait up to ``wait`` seconds for the lock (None waits forever)."""
         acquired = self._lock.acquire() if wait is None else self._lock.acquire(timeout=wait)
         if not acquired:

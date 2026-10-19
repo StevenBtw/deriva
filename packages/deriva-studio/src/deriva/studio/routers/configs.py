@@ -88,6 +88,16 @@ def config_versions(step_type: str, name: str, session: Any = Depends(get_sessio
     return session.get_config_history(step_type, name)
 
 
+@router.post("/{step_type}/{name}/versions/{version}/restore")
+def restore_version(step_type: str, name: str, version: int, session: Any = Depends(get_session)) -> dict[str, Any]:
+    """An earlier version's texts and settings as the step's new version (the history keeps every version)."""
+    _name_key(step_type)
+    result = session.restore_config_version(step_type, name, version)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Restore failed"))
+    return result
+
+
 @router.post("/scan")
 def scan(body: ScanRequest, session: Any = Depends(get_session)) -> dict[str, Any]:
     """Overfit scan of draft texts; ``available`` is false where the local scanner is missing."""

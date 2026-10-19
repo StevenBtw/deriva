@@ -748,8 +748,8 @@ class CSharpExtractor(LanguageExtractor):
         visibility = self._get_visibility(node, source)
         parameters = self._extract_parameters(node, source)
 
-        # Get return type
-        return_type_node = self.find_child_by_field(node, "type")
+        # Get return type (the grammar's field is "returns"; older grammars called it "type")
+        return_type_node = self.find_child_by_field(node, "returns") or self.find_child_by_field(node, "type")
         return_annotation = self.get_node_text(return_type_node, source) if return_type_node else None
 
         # Check modifiers

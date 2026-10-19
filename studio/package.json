@@ -4,9 +4,9 @@
   "scripts": {
     "test": "vitest run",
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run typecheck && vite build",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node node_modules/typescript7/bin/tsc --noEmit"
   },
   "private": true,
   "type": "module",
@@ -35,6 +35,7 @@
     "jsdom": "^29.1.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.1",
+    "typescript7": "npm:typescript@^7.0.2",
     "vite": "^8.3.3",
     "vitest": "^5.0.3"
   }

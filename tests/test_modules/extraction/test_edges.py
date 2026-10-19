@@ -1137,7 +1137,7 @@ class TestResolveCaller:
             file_path="main.py",
         )
 
-        assert result is not None
+        assert result == "method::test-repo::main.py::module::func"
         # Should resolve to standalone function (class_name=None)
 
     def test_returns_none_for_unknown_caller(self):
@@ -1183,7 +1183,7 @@ class TestResolveCallee:
             file_path="main.py",
         )
 
-        assert result is not None
+        assert result == "method::test-repo::main.py::module::helper"
 
     def test_resolves_self_method(self):
         """Should resolve self.method() call."""
@@ -1287,7 +1287,8 @@ class TestResolveCallee:
             file_path="main.py",
         )
 
-        assert result is not None
+        # The module function, not the method of the same name
+        assert result == "method::test-repo::main.py::module::func"
 
     @pytest.mark.parametrize(
         ("file_path", "is_method_call", "expected_class"),

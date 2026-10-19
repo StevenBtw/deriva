@@ -69,7 +69,8 @@ class TestElementDerivationBase:
     def test_init_creates_logger(self):
         """Should create a logger on initialization."""
         derivation = ConcreteDerivation()
-        assert derivation.logger is not None
+        # Named after the derivation's own module
+        assert derivation.logger.name == ConcreteDerivation.__module__
 
     def test_get_filter_kwargs_returns_empty_dict(self):
         """Default get_filter_kwargs should return empty dict."""

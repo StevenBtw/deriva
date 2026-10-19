@@ -37,7 +37,7 @@ from deriva.cli.commands.run import (
     _print_pipeline_result,
 )
 from deriva.cli.progress import create_progress_reporter
-from deriva.services import ConfigDatabaseBusy, about, derivation
+from deriva.services import ConfigDatabaseBusy, UnknownRepository, about, derivation
 from deriva.services.session import PipelineSession
 
 # Create main app
@@ -78,7 +78,7 @@ def run_stage(
     phase: Annotated[str | None, typer.Option("--phase", help="Run specific phase")] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
     quiet: Annotated[bool, typer.Option("-q", "--quiet", help="Disable progress bar")] = False,
-    no_llm: Annotated[bool, typer.Option("--no-llm", help="Skip LLM-based steps")] = False,
+    no_llm: Annotated[bool, typer.Option("--no-llm", help="No LLM call: extraction runs its parsers, derivation only its prep phase (no elements)")] = False,
     only_step: Annotated[
         str | None,
         typer.Option(
@@ -124,6 +124,7 @@ def run_stage(
     if phase:
         typer.echo(f"Phase: {phase}")
 
+    PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session, ExitStack() as step_scope:
         typer.echo("Connected to grafeo")
 
@@ -147,7 +148,8 @@ def run_stage(
         elif llm_info:
             typer.echo(f"LLM configured: {llm_info['provider']}/{llm_info['model']}")
         else:
-            typer.echo("Warning: LLM not configured. LLM-based steps will be skipped.")
+            reason = session.llm_error
+            typer.echo(f"Warning: LLM not configured: {reason}. LLM-based steps will be skipped." if reason else "Warning: LLM not configured. LLM-based steps will be skipped.")
 
         # Create progress reporter
         progress_reporter = create_progress_reporter(quiet=quiet or verbose)
@@ -233,6 +235,74 @@ def run_stage(
 # =============================================================================
 
 
+@app.command("coverage")
+def coverage(
+    repo: Annotated[str, typer.Option("--repo", help="Repository whose checkout and graph to compare")],
+    as_json: Annotated[bool, typer.Option("--json", help="The whole report as JSON (every missing and unreadable file)")] = False,
+) -> None:
+    """What of a repository's checkout reached its graph, and whether the extraction is complete (no LLM, no writes)."""
+    with PipelineSession() as session:
+        try:
+            report = session.extraction_coverage(repo)
+        except Exception as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+    if as_json:
+        import json
+
+        typer.echo(json.dumps(report, indent=2))
+        return
+    shown = 10
+    typer.echo(f"\nCOVERAGE: {repo}")
+    typer.echo("=" * 60)
+    typer.echo(f"  Files: {report['files']} in the checkout, {report['in_graph']} in the graph")
+    typer.echo("  Complete" if report["complete"] else "  Incomplete:")
+    for reason in report["reasons"]:
+        typer.echo(f"    - {reason}")
+    for note in report["notes"]:
+        typer.echo(f"  Note: {note}")
+    typer.echo("\n  Extension        Files  In graph  Read by   Symbols  Unreadable")
+    for row in report["extensions"][:15]:
+        typer.echo(f"  {row['extension']:<16} {row['files']:>5}  {row['in_graph']:>8}  {row['reader'] or '-':<8} {row['with_symbols']:>8}  {row['unreadable']:>10}")
+    for title, items in (("Not in the graph", report["missing"]), ("Could not be read", [f"{u['path']}: {u['reason']}" for u in report["unreadable"]])):
+        if items:
+            typer.echo(f"\n  {title} ({len(items)}):")
+            for item in items[:shown]:
+                typer.echo(f"    {item}")
+            if len(items) > shown:
+                typer.echo(f"    ... and {len(items) - shown} more (--json lists them all)")
+
+
+@app.command("quality")
+def quality(
+    repo: Annotated[str, typer.Option("--repo", help="Repository whose model to judge")],
+    as_json: Annotated[bool, typer.Option("--json", help="The whole report as JSON")] = False,
+) -> None:
+    """The verdict on a repository's model from its structure: orphans, relationship types, layers, and elements
+    without a file, type or method behind them (a report; no LLM, nothing changes)."""
+    PipelineSession.check_repository(repo)
+    with PipelineSession(repository=repo) as session:
+        report = session.model_quality()
+    if as_json:
+        import json
+
+        typer.echo(json.dumps(report, indent=2))
+        return
+    typer.echo(f"\nQUALITY: {repo}")
+    typer.echo("=" * 60)
+    verdict = "Ok" if report["verdict"] == "ok" else "Weak"
+    typer.echo(f"  {verdict}: {report['elements']} elements, {report['relationships']} relationships")
+    for reason in report["reasons"]:
+        typer.echo(f"    - {reason}")
+    layers = ", ".join(f"{layer} {n}" for layer, n in report["layers"].items())
+    typer.echo(f"  Layers: {layers}")
+    typer.echo(f"  Without a relationship: {report['orphan_share']:.0%}; Composition or Aggregation: {report['structural_share']:.0%}")
+    if report["unsupported"]:
+        typer.echo("\n  No file, type or method behind their sources:")
+        for element in report["unsupported"]:
+            typer.echo(f"    {element['name']} ({element['type']}) <- {', '.join(element['sources'])}")
+
+
 @app.command("status")
 def status(
     repo: Annotated[
@@ -241,11 +311,14 @@ def status(
     ] = None,
 ) -> None:
     """Show current pipeline status."""
+    PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session:
         typer.echo("\nDERIVA STATUS")
         typer.echo("=" * 60)
         typer.echo(f"  Home: {about.home()}")
         typer.echo(f"  Version: {about.version()}")
+        # The counts below are of this graph: without --repo the shared one, not the repository run last
+        typer.echo(f"  Graph: {repo}" if repo else "  Graph: default (shared; use --repo <name> for a repository's graph)")
 
         # Count enabled steps per type
         for step_type in ["extraction", "derivation"]:
@@ -296,6 +369,7 @@ def export(
     typer.echo("DERIVA - Exporting ArchiMate Model")
     typer.echo(f"{'=' * 60}")
 
+    PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session:
         if verbose:
             typer.echo("Connected to grafeo")
@@ -337,6 +411,7 @@ def clear(
     typer.echo(f"DERIVA - Clearing {target.upper()}")
     typer.echo(f"{'=' * 60}")
 
+    PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session:
         if target == "graph":
             result = session.clear_graph()
@@ -364,15 +439,16 @@ def main() -> int:
     about.suppress_pydantic_ai_banner()
     # Line-buffer stdout so progress appears live, also when piped to a file
     # (redirected streams such as io.StringIO have no reconfigure)
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(line_buffering=True)
     try:
         app()
         return 0
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
-    except ConfigDatabaseBusy as e:
-        # The studio or another run holds the config database: say so in one line, without a traceback
+    except (ConfigDatabaseBusy, UnknownRepository) as e:
+        # The studio or another run holds the config database, or --repo names no repository: one line, no traceback
         typer.echo(f"Error: {e}", err=True)
         return 1
 

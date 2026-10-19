@@ -129,7 +129,7 @@ describe("BenchmarkWorkspace", () => {
   it("leaves a single run in progress to the run workspace", async () => {
     vi.mocked(runs.current).mockResolvedValue({ run_id: "r3", kind: "extraction", repository: "repo_a", status: "running", events: 2, started_at: 1, finished_at: null });
     render(<BenchmarkWorkspace />);
-    await screen.findByText("repo_a");
+    await screen.findAllByText("repo_a");
 
     expect(followRun).not.toHaveBeenCalled();
   });
@@ -190,7 +190,7 @@ describe("BenchmarkWorkspace", () => {
 
   it("starts a benchmark with samples locked at one and follows its progress", async () => {
     render(<BenchmarkWorkspace />);
-    await screen.findByRole("option", { name: "m" });
+    await screen.findAllByRole("option", { name: "m" });
     await userEvent.click(await screen.findByRole("button", { name: "repo_b" }));
     expect(screen.getByLabelText(/Samples per LLM call/)).toBeDisabled();
     // Plain words for users: no references to the project's internal rules
@@ -216,7 +216,7 @@ describe("BenchmarkWorkspace", () => {
 
   it("keeps the runs per repository within what the API takes (1 to 20)", async () => {
     render(<BenchmarkWorkspace />);
-    await screen.findByRole("option", { name: "m" });
+    await screen.findAllByRole("option", { name: "m" });
     await userEvent.click(await screen.findByRole("button", { name: "repo_b" }));
     const runs = screen.getByLabelText("Runs per repository");
 
@@ -230,7 +230,7 @@ describe("BenchmarkWorkspace", () => {
 
   it("shows answer stability per step and the flips with their cause", async () => {
     render(<BenchmarkWorkspace />);
-    await screen.findByText("repo_a");
+    await screen.findAllByText("repo_a");
 
     await userEvent.click(screen.getByRole("tab", { name: "Steps" }));
     // The counts behind the share are on the cell: 1 of 2 and 21 of 22 read very differently
@@ -246,7 +246,7 @@ describe("BenchmarkWorkspace", () => {
   it("says the flips could not be read instead of calling every element stable", async () => {
     vi.mocked(benchmarks.flips).mockRejectedValue(new Error("flips failed"));
     render(<BenchmarkWorkspace />);
-    await screen.findByText("repo_a");
+    await screen.findAllByText("repo_a");
 
     await userEvent.click(screen.getByRole("tab", { name: /Flips/ }));
 
@@ -258,7 +258,7 @@ describe("BenchmarkWorkspace", () => {
   it("drops the picked element and the comparison when the inspected runs change", async () => {
     vi.mocked(benchmarks.results).mockResolvedValue([GROUP, { ...GROUP, model: "m2" }]);
     render(<BenchmarkWorkspace />);
-    await screen.findByText("repo_a");
+    await screen.findAllByText("repo_a");
     await userEvent.click(screen.getByRole("button", { name: /View model/ }));
     await screen.findByText(/elements differ by source/);
     await userEvent.click(screen.getByText("Queue Server"));
@@ -278,7 +278,7 @@ describe("BenchmarkWorkspace", () => {
       { ...flip, type: "Node", model: "small" },
     ]);
     render(<BenchmarkWorkspace />);
-    await screen.findByText("repo_a");
+    await screen.findAllByText("repo_a");
 
     await userEvent.click(screen.getByRole("tab", { name: /Flips/ }));
 
@@ -290,7 +290,7 @@ describe("BenchmarkWorkspace", () => {
   it("inspects one model at a time when the sessions use several", async () => {
     vi.mocked(benchmarks.results).mockResolvedValue([GROUP, { ...GROUP, model: "m2" }]);
     render(<BenchmarkWorkspace />);
-    await screen.findByText("repo_a");
+    await screen.findAllByText("repo_a");
 
     await userEvent.click(screen.getByRole("button", { name: /View model/ }));
 
@@ -302,7 +302,7 @@ describe("BenchmarkWorkspace", () => {
 
   it("inspects the runs' models and narrows them to the differences", async () => {
     render(<BenchmarkWorkspace />);
-    await screen.findByText("repo_a");
+    await screen.findAllByText("repo_a");
 
     await userEvent.click(screen.getByRole("button", { name: /View model/ }));
 
@@ -318,7 +318,7 @@ describe("BenchmarkWorkspace", () => {
 
   it("traces a picked element per run from the session files, with its deciding calls", async () => {
     render(<BenchmarkWorkspace />);
-    await screen.findByText("repo_a");
+    await screen.findAllByText("repo_a");
     await userEvent.click(screen.getByRole("button", { name: /View model/ }));
     await screen.findByText(/elements differ by source/);
 
@@ -335,7 +335,7 @@ describe("BenchmarkWorkspace", () => {
 
   it("draws the runs' models as an ArchiMate diagram with each element's comparison status", async () => {
     render(<BenchmarkWorkspace />);
-    await screen.findByText("repo_a");
+    await screen.findAllByText("repo_a");
     await userEvent.click(screen.getByRole("button", { name: /View model/ }));
     await screen.findByText(/elements differ by source/);
 

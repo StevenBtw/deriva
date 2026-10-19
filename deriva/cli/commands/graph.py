@@ -16,6 +16,7 @@ def tag_steps(
     repo: Annotated[str, typer.Option("--repo", help="Repository whose graph database to tag")],
 ) -> None:
     """Tag the graph's nodes and edges with the extraction step that wrote them (once, for graphs written before steps tagged their output; no LLM)."""
+    PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session:
         report = session.tag_graph_steps(repo)
     for kind in ("nodes", "edges"):

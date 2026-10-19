@@ -120,3 +120,22 @@ def test_history_scan_and_dry_run_routes(make_client):
     assert session.called("dry_run_graph_query") == [(("MATCH (n:Graph:Technology) RETURN n",), {})]
     client.post("/api/configs/derivation/Node/dry-run", json={"query": "MATCH (n:Graph:Directory) RETURN n"})
     assert session.called("dry_run_graph_query")[-1] == (("MATCH (n:Graph:Directory) RETURN n",), {})
+
+
+def test_an_earlier_version_is_restored_as_a_new_one(make_client):
+    session = FakeSession(restore_config_version={"success": True, "old_version": 9, "new_version": 10, "restored": 7})
+    client = make_client(session)
+
+    response = client.post("/api/configs/derivation/Node/versions/7/restore")
+
+    assert response.json() == {"success": True, "old_version": 9, "new_version": 10, "restored": 7}
+    assert session.called("restore_config_version") == [(("derivation", "Node", 7), {})]
+
+
+def test_a_version_that_cannot_be_restored_says_why(make_client):
+    client = make_client(FakeSession(restore_config_version={"success": False, "error": "Version 9 of Node is the active one"}))
+
+    response = client.post("/api/configs/derivation/Node/versions/9/restore")
+
+    assert (response.status_code, response.json()["detail"]) == (400, "Version 9 of Node is the active one")
+    assert client.post("/api/configs/unknown/Node/versions/1/restore").status_code == 404

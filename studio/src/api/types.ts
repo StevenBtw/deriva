@@ -1,6 +1,13 @@
 /** Shapes returned by the studio API (deriva/studio/routers). */
 
-export type DbStatus = { state: "owned" | "held" | "not_connected"; held_by?: number | null; error?: string | null; busy?: boolean };
+export type DbStatus = {
+  state: "owned" | "held" | "not_connected";
+  held_by?: number | null;
+  error?: string | null;
+  busy?: boolean;
+  /** The last status poll got no answer: ``state`` is the last one known */
+  unanswered?: boolean;
+};
 
 /** `features` lists optional parts of the install; `environment` is the machine the server runs on. Both are absent on older servers. */
 export type Status = { version: string; db: DbStatus; features?: { benchmark?: boolean }; environment?: { os?: string; python?: string } };
@@ -14,6 +21,65 @@ export type Repository = {
   is_dirty?: boolean;
   size_mb?: number;
   cloned_at?: string;
+  /** Why the record no longer matches the workspace (its folder is gone, or is no git checkout) */
+  stale?: string | null;
+};
+
+/** The verdict on a model from its structure; ``unsupported`` are elements with no file, type or method behind their sources. */
+export type ModelQuality = {
+  elements: number;
+  relationships: number;
+  orphans: { id: string; name: string; type: string }[];
+  orphan_share: number;
+  structural_share: number;
+  relationship_types: Record<string, number>;
+  layers: Record<string, number>;
+  unsupported: { id: string; name: string; type: string; sources: string[] }[];
+  verdict: "ok" | "weak";
+  reasons: string[];
+};
+
+/** One extension's files: how many reached the graph, which step reads them for types and methods, how many gave some. */
+export type CoverageRow = {
+  extension: string;
+  files: number;
+  in_graph: number;
+  file_type: string | null;
+  subtype: string | null;
+  reader: "parser" | "llm" | null;
+  with_symbols: number;
+  unreadable: number;
+};
+
+/** What of a repository's checkout reached its graph; incomplete with the reasons, notes for what is worth knowing. */
+export type Coverage = {
+  files: number;
+  in_graph: number;
+  extensions: CoverageRow[];
+  missing: string[];
+  unreadable: { path: string; reason: string }[];
+  nodes: Record<string, number>;
+  complete: boolean;
+  reasons: string[];
+  notes: string[];
+};
+
+/** What a repository's graph database holds, with its last extraction and derivation run (a full run counts for both). */
+export type RepositoryData = {
+  repository: string;
+  graph: { nodes: number; edges: number };
+  model: { elements: number; relationships: number };
+  database_bytes: number;
+  last_runs: { extraction: RunSummary | null; derivation: RunSummary | null };
+};
+
+/** What the workspace keeps on disk; a graph database is a repository's, the shared one, or orphaned (its repository is gone). */
+export type StorageOverview = {
+  graphs: { key: string; bytes: number; kind: "repository" | "shared" | "orphaned"; active: boolean }[];
+  llm_cache: { bytes: number; files: number };
+  exports: { bytes: number; files: number };
+  benchmark_sessions: { bytes: number; sessions: number };
+  runs: { runs: number; bytes: number };
 };
 
 export type FileType = { extension: string; file_type: string; subtype: string };
@@ -163,7 +229,20 @@ export type Trace = {
 /** One LLM call with its prompt and answer, as kept in the run's call log. */
 export type LlmCall = LlmCallSummary & { run_id: string; ts?: number; prompt: string; system_prompt: string | null; response: string | null; cache_key?: string | null };
 
-export type BenchmarkSession = { session_id: string; description: string | null; status: string; started_at: string | null; completed_at: string | null };
+export type BenchmarkSession = {
+  session_id: string;
+  description: string | null;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  /** From its runs (the studio lists them; older answers may leave them out) */
+  repositories?: string[];
+  models?: string[];
+  runs?: number;
+  stages?: string[];
+  /** Bytes its folder takes */
+  bytes?: number;
+};
 export type BenchmarkModel = { name: string; provider: string; model: string; default?: boolean };
 export type BenchmarkRequest = {
   repositories: string[];
@@ -224,14 +303,37 @@ export type InspectorRelationship = {
 export type InspectorView = { repository: string; runs: string[]; elements: InspectorElement[]; relationships: InspectorRelationship[]; causes: Record<string, string> };
 
 /** A model config from .env; ``key`` is masked (``sk-...4f2a``) or null. */
+/** One small call with a model config: what answered and how fast, or what to fix (``detail`` is the provider's own message) */
+export type ModelTest = {
+  ok: boolean;
+  model: string;
+  provider: string;
+  model_id: string;
+  served_model?: string | null;
+  latency_ms?: number | null;
+  answer?: string;
+  error?: string;
+  detail?: string;
+};
 export type ModelConfigRow = { name: string; provider: string; model: string | null; url: string | null; key: string | null; key_env: string | null };
 /** A model config to save: null keeps a field, "" removes it (a blank key keeps the stored one). */
 export type ModelConfigInput = { provider: string; model: string; url: string | null; key: string | null; key_env: string | null };
 
 export type OntologyStep = { name: string; enabled: boolean; version: number | null; method: string | null };
-export type NodeType = { name: string; count: number; properties: string[]; sample: Record<string, unknown>; producers: OntologyStep[]; consumers: string[] };
+export type NodeType = {
+  name: string;
+  /** structure, code, business, deployment (or other for a label the metamodel does not name) */
+  group: string;
+  description: string;
+  count: number;
+  /** The sample's properties, or the metamodel's for a type the graph has no nodes of */
+  properties: string[];
+  sample: Record<string, unknown>;
+  producers: OntologyStep[];
+  consumers: string[];
+};
 export type EdgeType = { name: string; count: number; pairs: [string, string][] };
-export type IntermediateOntology = { node_types: NodeType[]; edge_types: EdgeType[]; other_steps: OntologyStep[] };
+export type IntermediateOntology = { groups: string[]; node_types: NodeType[]; edge_types: EdgeType[]; other_steps: OntologyStep[] };
 export type OutputElementType = { name: string; layer: string; count: number; step: { enabled: boolean; version: number | null } | null };
 export type RelationshipRule = { source: string; target: string; direct: string[]; derived: string[] };
 export type OutputOntology = { element_types: OutputElementType[]; relationship_types: { name: string; count: number }[]; rules: RelationshipRule[] };

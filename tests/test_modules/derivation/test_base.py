@@ -1500,6 +1500,8 @@ class TestSharedGenerateBehavior:
                 )
 
         assert isinstance(result, GenerationResult)
+        # No candidates: a success that created nothing
+        assert (result.success, result.elements_created, result.relationships_created, result.errors) == (True, 0, 0, [])
 
 
 class TestStripForRelationshipPrompt:

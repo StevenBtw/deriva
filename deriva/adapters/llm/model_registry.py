@@ -29,10 +29,21 @@ PROVIDER_REASONING_LEVELS = {
 _SAMPLING_VALUES = {"true": True, "1": True, "yes": True, "on": True, "false": False, "0": False, "no": False, "off": False}
 
 
-def parse_sampling(value: str | None) -> bool:
-    """LLM_{NAME}_SAMPLING: off for models that take no temperature (unset means on)."""
+def default_sampling(provider: str, model: str) -> bool:
+    """Whether a model takes a temperature when its config does not say. pydantic-ai's model profile knows the Anthropic
+    models that refuse sampling settings (it drops them, with a warning on every call); any other model takes one."""
+    if provider == "anthropic":
+        from pydantic_ai.profiles.anthropic import anthropic_model_profile
+
+        profile = anthropic_model_profile(model) or {}
+        return not profile.get("anthropic_disallows_sampling_settings", False)
+    return True
+
+
+def parse_sampling(value: str | None, provider: str = "", model: str = "") -> bool:
+    """LLM_{NAME}_SAMPLING: off for models that take no temperature (unset: what the model's profile says)."""
     if value is None or not value.strip():
-        return True
+        return default_sampling(provider, model)
     if value.strip().lower() not in _SAMPLING_VALUES:
         raise ValueError(f"sampling must be true or false, got {value!r}")
     return _SAMPLING_VALUES[value.strip().lower()]
@@ -126,6 +137,12 @@ def get_pydantic_ai_model(config: dict[str, Any]) -> Model | str:
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.azure import AzureProvider
 
+        # Azure's v1 API (<resource>/openai/v1/) is OpenAI's and takes no api_version: the OpenAI client goes there
+        if api_url and "/openai/v1" in api_url:
+            from pydantic_ai.providers.openai import OpenAIProvider
+
+            base_url = api_url[: api_url.index("/openai/v1") + len("/openai/v1")]
+            return OpenAIChatModel(model, provider=OpenAIProvider(base_url=base_url, api_key=api_key))
         azure_endpoint = _normalize_azure_url(api_url) if api_url else None
         azure_provider = AzureProvider(
             azure_endpoint=azure_endpoint,

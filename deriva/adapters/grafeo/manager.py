@@ -27,8 +27,10 @@ Usage:
 from __future__ import annotations
 
 import logging
+import shutil
 import time
 import weakref
+from pathlib import Path
 from typing import Any
 
 from deriva.common.paths import resolve
@@ -75,6 +77,55 @@ def database_file(key: str) -> str | None:
     folder = resolve(directory)
     folder.mkdir(parents=True, exist_ok=True)
     return str(folder / f"{key}.grafeo")
+
+
+def _stored_paths(key: str) -> tuple[Path, Path] | None:
+    """The key's database file and its write-ahead log folder, never created (None in memory or for an invalid key)."""
+    directory = GrafeoSettings().db_dir
+    if not directory or not key or key in (".", "..") or any(sep in key for sep in ("/", "\\")):
+        return None
+    folder = resolve(directory)
+    return folder / f"{key}.grafeo", folder / f"{key}.grafeo.wal"
+
+
+def database_exists(key: str) -> bool:
+    """Whether the key's database file exists; never creates it or its folder (False in memory or for an invalid key)."""
+    paths = _stored_paths(key)
+    return paths is not None and paths[0].exists()
+
+
+def list_databases() -> list[str]:
+    """The keys with a database file in GRAFEO_DB_DIR, sorted (none in memory)."""
+    directory = GrafeoSettings().db_dir
+    folder = resolve(directory) if directory else None
+    if folder is None or not folder.is_dir():
+        return []
+    return sorted(path.name.removesuffix(".grafeo") for path in folder.glob("*.grafeo") if path.is_file())
+
+
+def database_bytes(key: str) -> int:
+    """Bytes the key's database takes on disk: its file and its write-ahead log (0 when it has none)."""
+    paths = _stored_paths(key)
+    if paths is None:
+        return 0
+    database, log = paths
+    size = database.stat().st_size if database.is_file() else 0
+    return size + (sum(f.stat().st_size for f in log.rglob("*") if f.is_file()) if log.is_dir() else 0)
+
+
+def delete_database(key: str) -> bool:
+    """Delete the key's database file and log; False when it had none. The active database is never deleted (switch
+    away first): a query after the delete would create a new, empty file."""
+    if key == _db_key:
+        raise ValueError(f"The database {key!r} is open; switch to another one before deleting it")
+    paths = _stored_paths(key)
+    if paths is None or not (paths[0].exists() or paths[1].exists()):
+        return False
+    database, log = paths
+    database.unlink(missing_ok=True)
+    if log.is_dir():
+        shutil.rmtree(log)
+    return True
 
 
 def get_database() -> Any:

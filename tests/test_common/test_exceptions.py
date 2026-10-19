@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from deriva.common.exceptions import (
     APIError,
     BaseError,
@@ -47,63 +49,29 @@ class TestBaseError:
 
 
 class TestExceptionHierarchy:
-    """Tests for exception inheritance."""
+    """Each error has one direct parent, so a handler for the parent catches it (and nothing else changes it)."""
 
-    def test_configuration_error_is_base_error(self):
-        """ConfigurationError should inherit from BaseError."""
-        error = ConfigurationError("Config missing")
-        assert isinstance(error, BaseError)
-
-    def test_api_error_is_base_error(self):
-        """APIError should inherit from BaseError."""
-        error = APIError("API failed")
-        assert isinstance(error, BaseError)
-
-    def test_provider_error_is_api_error(self):
-        """ProviderError should inherit from APIError."""
-        error = ProviderError("Provider failed")
-        assert isinstance(error, APIError)
-        assert isinstance(error, BaseError)
-
-    def test_validation_error_is_base_error(self):
-        """ValidationError should inherit from BaseError."""
-        error = ValidationError("Invalid input")
-        assert isinstance(error, BaseError)
-
-    def test_cache_error_is_base_error(self):
-        """CacheError should inherit from BaseError."""
-        error = CacheError("Cache miss")
-        assert isinstance(error, BaseError)
-
-    def test_repository_error_is_base_error(self):
-        """RepositoryError should inherit from BaseError."""
-        error = RepositoryError("Repo error")
-        assert isinstance(error, BaseError)
-
-    def test_clone_error_is_repository_error(self):
-        """CloneError should inherit from RepositoryError."""
-        error = CloneError("Clone failed")
-        assert isinstance(error, RepositoryError)
-
-    def test_delete_error_is_repository_error(self):
-        """DeleteError should inherit from RepositoryError."""
-        error = DeleteError("Delete failed")
-        assert isinstance(error, RepositoryError)
-
-    def test_metadata_error_is_repository_error(self):
-        """MetadataError should inherit from RepositoryError."""
-        error = MetadataError("Metadata extraction failed")
-        assert isinstance(error, RepositoryError)
-
-    def test_llm_error_is_base_error(self):
-        """LLMError should inherit from BaseError."""
-        error = LLMError("LLM failed")
-        assert isinstance(error, BaseError)
-
-    def test_service_connection_error_is_base_error(self):
-        """ServiceConnectionError should inherit from BaseError."""
-        error = ServiceConnectionError("Connection failed")
-        assert isinstance(error, BaseError)
+    @pytest.mark.parametrize(
+        "error_class, parent",
+        [
+            (ConfigurationError, BaseError),
+            (APIError, BaseError),
+            (ProviderError, APIError),
+            (ValidationError, BaseError),
+            (CacheError, BaseError),
+            (RepositoryError, BaseError),
+            (CloneError, RepositoryError),
+            (DeleteError, RepositoryError),
+            (MetadataError, RepositoryError),
+            (LLMError, BaseError),
+            (ServiceConnectionError, BaseError),
+        ],
+    )
+    def test_each_error_has_its_parent(self, error_class, parent):
+        assert error_class.__bases__ == (parent,)
+        with pytest.raises(parent) as raised:
+            raise error_class("it failed")
+        assert (type(raised.value), raised.value.message, str(raised.value)) == (error_class, "it failed", "it failed")
 
 
 class TestExceptionContext:

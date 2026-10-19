@@ -113,6 +113,7 @@ class TestLLMResponseTypeAlias:
             content="content",
         )
         assert isinstance(response, BaseResponse)
+        assert (response.response_type.value, response.content) == ("live", "content")
 
     def test_cached_response_is_llm_response(self):
         """CachedResponse should be a valid LLMResponse."""
@@ -124,6 +125,7 @@ class TestLLMResponseTypeAlias:
             cached_at="2024-01-01T00:00:00Z",
         )
         assert isinstance(response, BaseResponse)
+        assert (response.response_type.value, response.cache_key) == ("cached", "key")
 
     def test_failed_response_is_llm_response(self):
         """FailedResponse should be a valid LLMResponse."""
@@ -134,6 +136,7 @@ class TestLLMResponseTypeAlias:
             error_type="APIError",
         )
         assert isinstance(response, BaseResponse)
+        assert (response.response_type.value, response.error, response.error_type) == ("failed", "error", "APIError")
 
 
 class TestBenchmarkModelConfig:
@@ -197,7 +200,7 @@ class TestBenchmarkModelConfig:
 
     def test_rejects_invalid_provider(self):
         """Should raise ValueError for invalid provider."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="Invalid provider: invalid_provider") as exc_info:
             BenchmarkModelConfig(
                 name="test",
                 provider="invalid_provider",

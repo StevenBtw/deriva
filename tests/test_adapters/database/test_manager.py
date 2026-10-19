@@ -20,10 +20,12 @@ class TestDbPath:
     def test_db_path_is_path(self):
         """Should be a Path object."""
         assert isinstance(DB_PATH, Path)
+        assert DB_PATH.name == "sql.db"
 
     def test_scripts_dir_is_path(self):
         """Should be a Path object."""
-        assert isinstance(SCRIPTS_DIR, Path)
+        # The schema scripts the database is made from
+        assert SCRIPTS_DIR.is_dir() and any(p.suffix == ".sql" for p in SCRIPTS_DIR.iterdir())
 
 
 class TestRunSqlFile:
@@ -64,8 +66,10 @@ class TestRunSqlFile:
 
             run_sql_file(sql_file, None)
 
-            mock_get.assert_called_once()
-            mock_conn.close.assert_called_once()
+            mock_get.assert_called_once_with()
+            # The statements without their separator, then the connection it opened is closed
+            mock_conn.execute.assert_called_once_with("SELECT 1")
+            mock_conn.close.assert_called_once_with()
 
 
 class TestExtractionParamsMigration:

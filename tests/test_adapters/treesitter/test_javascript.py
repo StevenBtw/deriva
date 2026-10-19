@@ -45,13 +45,16 @@ class TestJavaScriptExtractorProperties:
     def test_get_extractor_returns_javascript_extractor(self):
         """get_extractor should return JavaScriptExtractor for 'javascript'."""
         ext = get_extractor("javascript")
-        assert ext is not None
-        assert isinstance(ext, JavaScriptExtractor)
+        assert type(ext) is JavaScriptExtractor
 
     def test_get_language_returns_valid_language(self, extractor):
         """Should return a valid tree-sitter language."""
         lang = extractor.get_language()
-        assert lang is not None
+        # A grammar tree-sitter can parse with
+        import tree_sitter
+
+        root = tree_sitter.Parser(tree_sitter.Language(lang)).parse(b"class A { }").root_node
+        assert (root.has_error, root.child_count) == (False, 1)
 
 
 class TestJavaScriptFilterConstants:
@@ -134,10 +137,7 @@ class TestJavaScriptExtractTypes:
         tree = parse(parser, source)
         types = extractor.extract_types(tree, source.encode("utf-8"))
 
-        assert len(types) >= 1
-        named_types = [t for t in types if t.name == "MyClass"]
-        assert len(named_types) >= 1
-        assert named_types[0].kind == "class"
+        assert [(t.name, t.kind) for t in types] == [("MyClass", "class")]
 
     def test_extracts_class_with_extends(self, extractor, parser):
         """Should extract a class with extends clause."""
@@ -145,9 +145,7 @@ class TestJavaScriptExtractTypes:
         tree = parse(parser, source)
         types = extractor.extract_types(tree, source.encode("utf-8"))
 
-        assert len(types) >= 1
-        named_types = [t for t in types if t.name == "Child"]
-        assert len(named_types) >= 1
+        assert [(t.name, t.kind, t.bases) for t in types] == [("Child", "class", ["Parent"])]
 
     def test_extracts_function_declaration(self, extractor, parser):
         """Should extract a function declaration as a type."""
@@ -194,9 +192,7 @@ class TestJavaScriptExtractTypes:
         tree = parse(parser, source)
         types = extractor.extract_types(tree, source.encode("utf-8"))
 
-        assert len(types) >= 1
-        named_types = [t for t in types if t.name == "MyClass"]
-        assert len(named_types) >= 1
+        assert [(t.name, t.kind) for t in types] == [("MyClass", "class")]
 
     def test_extracts_exported_function(self, extractor, parser):
         """Should extract an exported function."""
@@ -217,11 +213,7 @@ class MyClass {
         tree = parse(parser, source)
         types = extractor.extract_types(tree, source.encode("utf-8"))
 
-        assert len(types) >= 1
-        named_types = [t for t in types if t.name == "MyClass"]
-        assert len(named_types) >= 1
-        assert named_types[0].line_start == 2
-        assert named_types[0].line_end == 4
+        assert [(t.name, t.line_start, t.line_end) for t in types] == [("MyClass", 2, 4)]
 
 
 class TestJavaScriptExtractMethods:
@@ -500,8 +492,7 @@ function create() {
         tree = parse(parser, source)
         calls = extractor.extract_calls(tree, source.encode("utf-8"))
 
-        ctor_call = next((c for c in calls if c.callee_name == "MyClass"), None)
-        assert ctor_call is not None
+        assert [(c.caller_name, c.callee_name, c.callee_qualifier, c.is_method_call) for c in calls] == [("create", "MyClass", "new", False)]
 
     def test_extracts_calls_from_class_method(self, extractor, parser):
         """Should extract calls from class method."""
@@ -567,8 +558,7 @@ class TestJavaScriptHelperMethods:
         class_node = tree.root_node.children[0]
 
         bases = extractor._get_bases(class_node, source.encode("utf-8"))
-        # Bases extraction depends on tree-sitter grammar
-        assert isinstance(bases, list)
+        assert bases == ["Parent"]
 
     def test_extract_parameters_basic(self, extractor, parser):
         """Should extract basic parameters."""
@@ -605,9 +595,8 @@ class TestJavaScriptEdgeCases:
         types = extractor.extract_types(tree, source.encode("utf-8"))
         methods = extractor.extract_methods(tree, source.encode("utf-8"))
 
-        named_types = [t for t in types if t.name == "Empty"]
-        assert len(named_types) >= 1
-        assert len(methods) == 0
+        assert [(t.name, t.kind) for t in types] == [("Empty", "class")]
+        assert methods == []
 
     def test_handles_class_expression(self, extractor, parser):
         """Should handle class expression."""
@@ -615,17 +604,17 @@ class TestJavaScriptEdgeCases:
         tree = parse(parser, source)
 
         types = extractor.extract_types(tree, source.encode("utf-8"))
-        # Class expression may or may not be extracted depending on implementation
-        assert isinstance(types, list)
+        # Named after the variable it is assigned to
+        assert [(t.name, t.kind) for t in types] == [("MyClass", "class")]
 
     def test_handles_iife(self, extractor, parser):
         """Should handle immediately invoked function expression."""
         source = "(function() { console.log('hello'); })();"
         tree = parse(parser, source)
 
-        # IIFE should not cause errors
+        # An anonymous function invoked in place is no type
         types = extractor.extract_types(tree, source.encode("utf-8"))
-        assert isinstance(types, list)
+        assert types == []
 
     def test_handles_generator_function(self, extractor, parser):
         """Should handle generator function."""
@@ -633,8 +622,7 @@ class TestJavaScriptEdgeCases:
         tree = parse(parser, source)
 
         types = extractor.extract_types(tree, source.encode("utf-8"))
-        # Generator functions may or may not be extracted as types
-        assert isinstance(types, list)
+        assert [(t.name, t.kind) for t in types] == [("generator", "function")]
 
     def test_handles_destructuring_parameter(self, extractor, parser):
         """Should handle destructuring parameter."""
@@ -654,10 +642,7 @@ class Second { }
         tree = parse(parser, source)
 
         types = extractor.extract_types(tree, source.encode("utf-8"))
-        first_types = [t for t in types if t.name == "First"]
-        second_types = [t for t in types if t.name == "Second"]
-        assert len(first_types) >= 1
-        assert len(second_types) >= 1
+        assert [(t.name, t.line_start) for t in types] == [("First", 2), ("Second", 3)]
 
     def test_handles_class_with_computed_property(self, extractor, parser):
         """Should handle class with computed property names."""
@@ -688,7 +673,7 @@ class MyClass {
         tree = parse(parser, source)
 
         types = extractor.extract_types(tree, source.encode("utf-8"))
-        assert len(types) >= 1
+        assert [(t.name, t.kind) for t in types] == [("MyClass", "class")]
 
     def test_handles_private_class_field(self, extractor, parser):
         """Should handle private class field (if tree-sitter supports)."""
@@ -698,9 +683,9 @@ class MyClass {
 }
 """
         tree = parse(parser, source)
-        # Should not crash
+        # The field is no type of its own: the class, over its lines
         types = extractor.extract_types(tree, source.encode("utf-8"))
-        assert isinstance(types, list)
+        assert [(t.name, t.line_start, t.line_end) for t in types] == [("MyClass", 2, 4)]
 
     def test_handles_static_class_field(self, extractor, parser):
         """Should handle static class field."""
@@ -711,8 +696,7 @@ class MyClass {
 """
         tree = parse(parser, source)
         types = extractor.extract_types(tree, source.encode("utf-8"))
-        named_types = [t for t in types if t.name == "MyClass"]
-        assert len(named_types) >= 1
+        assert [(t.name, t.line_start, t.line_end) for t in types] == [("MyClass", 2, 4)]
 
     def test_handles_method_with_no_parameters(self, extractor, parser):
         """Should handle method with no parameters."""
@@ -726,3 +710,39 @@ class MyClass {
 
         assert len(methods) == 1
         assert len(methods[0].parameters) == 0
+
+
+class TestJavaScriptClassesAndGenerators:
+    """One type per class (also exported, or assigned as an expression), its base, and generator functions."""
+
+    def test_a_class_is_one_type(self, extractor, parser):
+        source = "class First { }"
+        types = extractor.extract_types(parse(parser, source), source.encode("utf-8"))
+
+        assert [(t.name, t.kind) for t in types] == [("First", "class")]
+
+    def test_an_exported_class_is_one_type(self, extractor, parser):
+        source = "export class MyClass { }"
+        types = extractor.extract_types(parse(parser, source), source.encode("utf-8"))
+
+        assert [(t.name, t.kind) for t in types] == [("MyClass", "class")]
+
+    def test_a_class_keeps_the_class_it_extends(self, extractor, parser):
+        source = "class Child extends models.Parent { }"
+        types = extractor.extract_types(parse(parser, source), source.encode("utf-8"))
+
+        assert [(t.name, t.bases) for t in types] == [("Child", ["models.Parent"])]
+
+    def test_a_class_expression_is_named_after_its_variable(self, extractor, parser):
+        source = "const MyClass = class { run() { } };"
+        tree = parse(parser, source)
+
+        assert [(t.name, t.kind) for t in extractor.extract_types(tree, source.encode("utf-8"))] == [("MyClass", "class")]
+        assert [(m.name, m.class_name) for m in extractor.extract_methods(tree, source.encode("utf-8"))] == [("run", "MyClass")]
+
+    def test_a_generator_function_is_a_type_and_a_method(self, extractor, parser):
+        source = "export function* generator() { yield 1; }"
+        tree = parse(parser, source)
+
+        assert [(t.name, t.kind) for t in extractor.extract_types(tree, source.encode("utf-8"))] == [("generator", "function")]
+        assert [(m.name, m.class_name) for m in extractor.extract_methods(tree, source.encode("utf-8"))] == [("generator", None)]

@@ -43,8 +43,9 @@ from typing import Any, TypeVar, cast, overload
 
 import httpx2
 from pydantic import BaseModel
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai.exceptions import IncompleteToolCall, ModelHTTPError
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.settings import ModelSettings
 
 from deriva.common import settings
@@ -53,7 +54,7 @@ from deriva.common.paths import resolve
 from deriva.common.settings import LlmSettings
 
 from .cache import CacheManager
-from .model_registry import VALID_PROVIDERS, get_pydantic_ai_model, parse_sampling, reasoning_settings
+from .model_registry import VALID_PROVIDERS, default_sampling, get_pydantic_ai_model, parse_sampling, reasoning_settings
 from .models import (
     BenchmarkModelConfig,
     CachedResponse,
@@ -214,14 +215,31 @@ def load_benchmark_models() -> dict[str, BenchmarkModelConfig]:
                 api_url=fields["url"],
                 api_key=fields["key"],
                 api_key_env=fields["key_env"],
-                sampling=parse_sampling(fields.get("sampling")),
+                sampling=parse_sampling(fields.get("sampling"), provider.lower(), model),
                 reasoning=(fields.get("reasoning") or "").strip().lower() or None,
                 temperature=float(own) if (own := (fields.get("temperature") or "").strip()) else None,
+                context=int(size) if (size := (fields.get("context") or "").strip()) else None,
             )
         except ValueError:
             continue
 
     return configs
+
+
+def _key_variable(config: BenchmarkModelConfig) -> str:
+    """The variable a model config's key is read from: its KEY_ENV reference, or its own LLM_{NAME}_KEY."""
+    return config.api_key_env or f"LLM_{config.name.upper().replace('-', '_')}_KEY"
+
+
+def _has_cut_response(history: Any) -> bool:
+    """Whether a model response in a run's messages stopped at the output limit (finish reason ``length``)."""
+    return any(isinstance(m, ModelResponse) and m.finish_reason == "length" for m in history or [])
+
+
+def _was_cut(result: Any) -> bool:
+    """Whether a model response in the run's result stopped at the output limit."""
+    messages = getattr(result, "all_messages", None)
+    return _has_cut_response(messages() if callable(messages) else [])
 
 
 def _serialize_output(output: object) -> str:
@@ -314,6 +332,7 @@ class LLMManager:
         self.max_tokens = self.config.get("max_tokens")
         self.sampling = self.config.get("sampling", True)
         self.reasoning = self.config.get("reasoning")
+        self.context = self.config.get("context")
 
     @classmethod
     def from_config(
@@ -349,6 +368,8 @@ class LLMManager:
             "provider": config.provider,
             "api_url": config.get_api_url(),
             "api_key": config.get_api_key(),
+            "api_key_variable": _key_variable(config),
+            "label": config.name,
             "model": config.model,
             "cache_dir": cache_dir,
             "max_retries": max_retries,
@@ -357,6 +378,7 @@ class LLMManager:
             "nocache": nocache,
             "sampling": config.sampling,
             "reasoning": config.reasoning,
+            "context": config.context,
         }
 
         instance._validate_config()
@@ -389,6 +411,7 @@ class LLMManager:
         instance.max_tokens = None
         instance.sampling = config.sampling
         instance.reasoning = config.reasoning
+        instance.context = config.context
 
         return instance
 
@@ -396,6 +419,22 @@ class LLMManager:
     def provider_name(self) -> str:
         """Get the provider name."""
         return self.config.get("provider", "unknown")
+
+    def _warn_on_a_full_context(self, result: Any) -> None:
+        """A call whose last request used the model's whole context (when the config names it) lost part of its prompt
+        or answer: a local server such as Ollama cuts a prompt longer than its window without an error."""
+        if not self.context:
+            return
+        usage = getattr(getattr(result, "response", None), "usage", None)
+        used = (getattr(usage, "input_tokens", 0) or 0) + (getattr(usage, "output_tokens", 0) or 0)
+        if used >= self.context:
+            logger.warning(
+                "An LLM call used %d tokens of %s's %d-token context: part of the prompt or the answer was cut. "
+                "Raise the server's context (Ollama: OLLAMA_CONTEXT_LENGTH) and the model's context setting",
+                used,
+                self.model,
+                self.context,
+            )
 
     def _redact(self, text: str) -> str:
         """Keep the configured API key out of exception text: h11 quotes header values in its errors."""
@@ -417,11 +456,13 @@ class LLMManager:
             provider = config.provider
             api_url = config.get_api_url()
             api_key = config.get_api_key()
+            key_variable, label = _key_variable(config), config.name
             model = config.model
-            sampling, reasoning = config.sampling, config.reasoning
+            sampling, reasoning, context = config.sampling, config.reasoning, config.context
         else:
             provider = llm.provider
-            sampling, reasoning = True, None
+            reasoning, context = None, None
+            key_variable, label = f"LLM_{(provider or '').upper()}_API_KEY", provider
 
             if provider == "azure":
                 api_url = llm.azure_api_url
@@ -449,6 +490,7 @@ class LLMManager:
                 model = llm.lmstudio_model
             else:
                 raise ConfigurationError(f"Unknown LLM provider: {provider}")
+            sampling = default_sampling(provider, model)
 
         max_tokens = llm.max_tokens
 
@@ -456,6 +498,8 @@ class LLMManager:
             "provider": provider,
             "api_url": api_url,
             "api_key": api_key,
+            "api_key_variable": key_variable,
+            "label": label,
             "model": model,
             "cache_dir": llm.cache_dir,
             "cache_ttl": llm.cache_ttl,
@@ -466,6 +510,7 @@ class LLMManager:
             "nocache": llm.nocache,
             "sampling": sampling,
             "reasoning": reasoning,
+            "context": context,
             "requests_per_minute": llm.rate_limit_rpm,
             "min_request_delay": llm.rate_limit_delay,
             # Retry configuration
@@ -494,6 +539,12 @@ class LLMManager:
             required_fields = ["provider", "api_key", "model"]
 
         missing = [f for f in required_fields if not self.config.get(f)]
+        # The variable to set and the .env this install reads, never a value
+        if "api_key" in missing and self.config.get("api_key_variable"):
+            raise ConfigurationError(
+                f"The model config {self.config.get('label') or provider} has no API key: set {self.config['api_key_variable']} "
+                f"in {settings.env_file()} or in the environment (General in the studio saves a key there)"
+            )
         if missing:
             raise ConfigurationError(f"Missing required config fields: {', '.join(missing)}")
 
@@ -555,7 +606,7 @@ class LLMManager:
         max_delay = self.config.get("retry_max_delay", 60.0)
         for attempt in range(self.max_retries + 1):
             try:
-                return agent.run_sync(prompt, model_settings=settings), attempt
+                return self._run_once(agent, prompt, settings), attempt
             except Exception as e:
                 if attempt == self.max_retries or not _is_retriable(e):
                     raise
@@ -578,6 +629,19 @@ class LLMManager:
                 )
                 time.sleep(delay)
         raise AssertionError("unreachable")
+
+    @staticmethod
+    def _run_once(agent: Agent[None, Any], prompt: str, settings: ModelSettings) -> Any:
+        """One agent run. pydantic-ai asks again after an answer cut at the output limit; when those answers fail
+        too it raises "Exceeded maximum output retries", which is the cut: raised as IncompleteToolCall."""
+        with capture_run_messages() as messages:
+            try:
+                return agent.run_sync(prompt, model_settings=settings)
+            except Exception as e:
+                if not isinstance(e, IncompleteToolCall) and _has_cut_response(messages):
+                    limit = settings.get("max_tokens") or "provider default"
+                    raise IncompleteToolCall(f"Model token limit ({limit}) reached: the answer was cut, and the answers after it failed ({e})") from e
+                raise
 
     def _agent(self, output_type: Any, system_prompt: str) -> Agent[None, Any]:
         """Reusable agent for this output type and system prompt, per thread (created lazily).
@@ -755,6 +819,16 @@ class LLMManager:
                     "completion_tokens": run_usage.output_tokens,
                     "total_tokens": run_usage.input_tokens + run_usage.output_tokens,
                 }
+
+            self._warn_on_a_full_context(result)
+
+            # A structured answer cut at the output limit is asked again by pydantic-ai, and a shorter answer that
+            # validates can leave part of the question out: a failure (never cached), which a caller can split
+            if output_type is not str and _was_cut(result):
+                call["error_type"] = "IncompleteToolCall"
+                message = f"Model token limit ({effective_max_tokens or 'provider default'}) reached: the answer was cut, and the shorter answer after it may leave part of it out"
+                logger.warning("LLM answer cut at the output limit (%s)", self.model)
+                return FailedResponse(prompt=prompt, model=self.model, error=message, error_type="IncompleteToolCall")
 
             # Handle response
             output: Any = result.output

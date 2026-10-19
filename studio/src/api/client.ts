@@ -6,6 +6,7 @@ import type {
   ConfigChange,
   ConfigRow,
   ConfigVersion,
+  Coverage,
   DryRunResult,
   ElementTrace,
   FileType,
@@ -19,14 +20,18 @@ import type {
   Model,
   ModelConfigInput,
   ModelConfigRow,
+  ModelTest,
   ModelLevel,
+  ModelQuality,
   OutputOntology,
   Repository,
+  RepositoryData,
   RunKind,
   RunSummary,
   SaveResult,
   ScanResult,
   Status,
+  StorageOverview,
   StepStability,
   StepType,
   Trace,
@@ -114,8 +119,34 @@ export const status = () => api.get<Status>("/api/status");
 export const repositories = {
   list: () => api.get<Repository[]>("/api/repositories"),
   info: (name: string) => api.get<Repository>(`/api/repositories/${seg(name)}`),
-  clone: (url: string, name?: string, branch?: string) => api.post<Repository & { success: boolean }>("/api/repositories", { url, name: name || null, branch: branch || null }),
-  remove: (name: string, force = false) => api.del<{ success: boolean }>(`/api/repositories/${seg(name)}?force=${force}`),
+  /** What was cloned: its name, branch, commit and size */
+  clone: (url: string, name?: string, branch?: string) =>
+    api.post<Repository & { success: boolean }>("/api/repositories", { url, name: name || null, branch: branch || null }),
+  /** ``withData`` also deletes the repository's graph database (graph and model) */
+  remove: (name: string, force = false, withData = false) =>
+    api.del<{ success: boolean; data_deleted?: boolean }>(`/api/repositories/${seg(name)}?force=${force}&with_data=${withData}`),
+  data: (name: string) => api.get<RepositoryData>(`/api/repositories/${seg(name)}/data`),
+  /** What of the checkout reached the graph, and whether the extraction is complete */
+  coverage: (name: string) => api.get<Coverage>(`/api/repositories/${seg(name)}/coverage`),
+  clearModel: (name: string) => api.del<{ success: boolean }>(`/api/repositories/${seg(name)}/model`),
+  /** The graph and the model */
+  clearData: (name: string) => api.del<{ success: boolean }>(`/api/repositories/${seg(name)}/graph`),
+  /** Git folders in the workspace without a record */
+  unregistered: () => api.get<string[]>("/api/repositories/unregistered"),
+  /** Record such a folder: its name, branch, commit and size */
+  register: (name: string) => api.post<Repository & { success: boolean }>(`/api/repositories/${seg(name)}/register`),
+  /** git pull --ff-only; the graph changes with the next extraction */
+  update: (name: string) => api.post<{ success: boolean; repository: Repository }>(`/api/repositories/${seg(name)}/update`),
+};
+
+export const storage = {
+  overview: () => api.get<StorageOverview>("/api/storage"),
+  /** Every cached LLM answer: the next runs call the LLM again */
+  clearLlmCache: () => api.del<{ bytes: number; files: number }>("/api/storage/llm-cache"),
+  /** The exported exchange files (*.xml) in workspace/output */
+  deleteExports: () => api.del<{ bytes: number; files: number }>("/api/storage/exports"),
+  /** A graph database without a repository */
+  deleteGraph: (key: string) => api.del<{ key: string; bytes: number }>(`/api/storage/graphs/${seg(key)}`),
 };
 
 export const settings = {
@@ -136,6 +167,9 @@ export const configs = {
   save: (stepType: StepType, name: string, change: ConfigChange) => api.put<SaveResult>(`/api/configs/${stepType}/${seg(name)}`, change),
   setEnabled: (stepType: StepType, name: string, enabled: boolean) => api.put<{ name: string; enabled: boolean }>(`/api/configs/${stepType}/${seg(name)}/enabled`, { enabled }),
   versions: (stepType: StepType, name: string) => api.get<ConfigVersion[]>(`/api/configs/${stepType}/${seg(name)}/versions`),
+  /** An earlier version's texts and settings as the step's new version */
+  restore: (stepType: StepType, name: string, version: number) =>
+    api.post<{ success: boolean; old_version: number; new_version: number; restored: number }>(`/api/configs/${stepType}/${seg(name)}/versions/${version}/restore`),
   scan: (texts: Record<string, string>) => api.post<ScanResult>("/api/configs/scan", { texts }),
   dryRun: (name: string, query?: string) => api.post<DryRunResult>(`/api/configs/derivation/${seg(name)}/dry-run`, query === undefined ? {} : { query }),
 };
@@ -150,8 +184,25 @@ export const graph = {
 export const model = {
   get: (level: ModelLevel = "architect") => api.get<Model>(`/api/model?level=${level}`),
   stats: () => api.get<{ total_elements: number; total_relationships: number; by_type: Record<string, number> }>("/api/model/stats"),
+  /** The verdict on the model from its structure (a report) */
+  quality: () => api.get<ModelQuality>("/api/model/quality"),
   clear: () => api.del<{ success: boolean }>("/api/model"),
-  exportXml: (path: string) => api.post<{ success: boolean; path?: string; error?: string }>("/api/model/export", { path }),
+  /** The exchange file to save in the browser, with the name the studio gave it (repository and time) */
+  download: async (): Promise<{ blob: Blob; name: string }> => {
+    const response = await fetch("/api/model/download");
+    if (!response.ok) {
+      const text = await response.text();
+      let data: unknown = text;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        // A plain text body is the message
+      }
+      throw new ApiError(response.status, errorMessage(response, data), data);
+    }
+    const name = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? "model.xml";
+    return { blob: await response.blob(), name };
+  },
 };
 
 export const runs = {
@@ -160,13 +211,33 @@ export const runs = {
   cancel: (runId: string) => api.post<{ run_id: string }>(`/api/runs/${seg(runId)}/cancel`),
   calls: (runId: string) => api.get<LlmCallSummary[]>(`/api/runs/${seg(runId)}/calls`),
   call: (runId: string, callId: string) => api.get<LlmCall>(`/api/runs/${seg(runId)}/calls/${seg(callId)}`),
-  history: (limit = 10) => api.get<RunSummary[]>(`/api/runs/history?limit=${limit}`),
+  history: (limit = 10, filter: { offset?: number; repository?: string | null; kind?: string | null } = {}) => {
+    const query = new URLSearchParams({ limit: String(limit), offset: String(filter.offset ?? 0) });
+    if (filter.repository) query.set("repository", filter.repository);
+    if (filter.kind) query.set("kind", filter.kind);
+    return api.get<RunSummary[]>(`/api/runs/history?${query}`);
+  },
+  /** A run's folder: summary, events, call log and inputs */
+  remove: (runId: string) => api.del<{ deleted: string }>(`/api/runs/${seg(runId)}`),
+  /** Every run past the latest ``keep``, or the interrupted ones; the run in progress stays */
+  prune: (which: { keep: number } | { interrupted: true }) => api.post<{ deleted: string[] }>("/api/runs/prune", which),
 };
 
 const ids = (sessions: string[]) => sessions.map(encodeURIComponent).join(",");
 
 export const benchmarks = {
-  list: (limit = 20) => api.get<BenchmarkSession[]>(`/api/benchmarks?limit=${limit}`),
+  list: (limit = 20, filter: { offset?: number; search?: string | null; repository?: string | null; model?: string | null; status?: string | null } = {}) => {
+    const query = new URLSearchParams({ limit: String(limit), offset: String(filter.offset ?? 0) });
+    for (const key of ["search", "repository", "model", "status"] as const) {
+      const value = filter[key];
+      if (value) query.set(key, value);
+    }
+    return api.get<BenchmarkSession[]>(`/api/benchmarks?${query}`);
+  },
+  /** A finished or failed session with its runs, metrics and folder */
+  remove: (sessionId: string) => api.del<{ session_id: string; runs: number; bytes: number }>(`/api/benchmarks/${encodeURIComponent(sessionId)}`),
+  /** A session whose process stopped while it still says running */
+  markFailed: (sessionId: string) => api.post<{ session_id: string; runs_marked: number }>(`/api/benchmarks/${encodeURIComponent(sessionId)}/mark-failed`),
   models: () => api.get<BenchmarkModel[]>("/api/benchmarks/models"),
   start: (request: BenchmarkRequest) => api.post<{ run_id: string }>("/api/benchmarks", request),
   results: (sessions: string[]) => api.get<BenchmarkGroup[]>(`/api/benchmarks/results?sessions=${ids(sessions)}`),
@@ -186,6 +257,8 @@ export const modelConfigs = {
   list: () => api.get<ModelConfigRow[]>("/api/models"),
   save: (name: string, config: ModelConfigInput) => api.put<{ name: string; saved: boolean }>(`/api/models/${seg(name)}`, config),
   remove: (name: string) => api.del<null>(`/api/models/${seg(name)}`),
+  /** One small call with the config (no cache): does its key, model id and URL work */
+  test: (name: string) => api.post<ModelTest>(`/api/models/${seg(name)}/test`),
 };
 
 export const ontology = {

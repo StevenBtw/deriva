@@ -96,6 +96,38 @@ def test_model_stats_clear_and_export(make_client):
     assert session.called("export_model") == [((), {"output_path": "workspace/output/model.xml", "confined": True})]
 
 
+def test_the_model_downloads_as_a_file_named_after_its_repository(make_client, tmp_path):
+    """A download in the browser; the copy in workspace/output gets its own name, so exports no longer overwrite each other."""
+    import re
+
+    written = tmp_path / "export.xml"
+
+    def export(output_path, confined):
+        written.write_text("<model/>", encoding="utf-8")
+        return {"success": True, "output_path": str(written)}
+
+    session = FakeSession(export_model=export)
+    session.repository = "deriva"
+    client = make_client(session)
+
+    response = client.get("/api/model/download")
+
+    assert response.status_code == 200 and response.text == "<model/>"
+    assert response.headers["content-type"].startswith("application/xml")
+    assert re.fullmatch(r'attachment; filename="deriva-\d{8}-\d{6}\.xml"', response.headers["content-disposition"])
+    (args, kwargs) = session.called("export_model")[0]
+    assert re.fullmatch(r"workspace/output/deriva-\d{8}-\d{6}\.xml", kwargs["output_path"]) and kwargs["confined"] is True
+
+
+def test_a_model_that_cannot_be_exported_says_why(make_client):
+    session = FakeSession(export_model={"success": False, "error": "No ArchiMate elements found. Run derivation first."})
+    client = make_client(session)
+
+    response = client.get("/api/model/download")
+
+    assert (response.status_code, response.json()["detail"]) == (400, "No ArchiMate elements found. Run derivation first.")
+
+
 def test_a_node_type_must_be_a_label_and_the_limit_is_passed_on(make_client):
     """The node type becomes a Cypher label: anything but a plain name could end the label and add clauses."""
     session = FakeSession(get_graph_nodes=lambda node_type, limit=None: [{"id": "d0"}])
@@ -180,3 +212,12 @@ def test_the_model_per_abstraction_level_holds_that_level_only(make_client):
     assert shown("detail") == (["top", "lib", "member"], ["uses", "part"], ["Application Interfaces (detail)"])
     # The whole model of earlier studios stays available
     assert shown("architect")[0] == ["svc", "top", "lib"]
+
+
+def test_model_quality_answers_the_session_s_verdict(make_client):
+    report = {"verdict": "weak", "reasons": ["no Technology element"], "elements": 2}
+    session = FakeSession(model_quality=report)
+    client = make_client(session)
+
+    assert client.get("/api/model/quality").json() == report
+    assert session.called("model_quality") == [((), {})]

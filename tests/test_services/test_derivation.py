@@ -848,8 +848,8 @@ class TestRunDerivationWithConfigs:
                 progress=progress,
             )
 
-        progress.start_phase.assert_called_once()
-        progress.complete_phase.assert_called_once()
+        progress.start_phase.assert_called_once_with("derivation", 0)
+        progress.complete_phase.assert_called_once_with("Derivation complete: 0 elements, 0 relationships")
 
     def test_with_run_logger(self):
         """Should call run_logger methods during execution."""
@@ -866,8 +866,10 @@ class TestRunDerivationWithConfigs:
                 run_logger=run_logger,
             )
 
-        run_logger.phase_start.assert_called_once()
-        run_logger.phase_complete.assert_called_once()
+        run_logger.phase_start.assert_called_once_with("derivation", "Starting derivation pipeline")
+        run_logger.phase_complete.assert_called_once_with(
+            "derivation", "Derivation completed successfully", stats={"elements_created": 0, "relationships_created": 0, "steps_completed": 0, "steps_skipped": 0}
+        )
 
     def test_verbose_output_for_prep_phase(self, capsys):
         """Should print verbose output during prep phase."""
@@ -1039,7 +1041,8 @@ class TestRunDerivationWithConfigs:
                 phases=["generate"],
             )
 
-        run_logger.phase_error.assert_called_once()
+        run_logger.phase_error.assert_called_once_with("derivation", "Missing required config for gen_bad: input_graph_query", "Derivation completed with errors")
+        run_logger.step_start.return_value.error.assert_called_once_with("Missing required config for gen_bad: input_graph_query")
 
     def test_progress_reporter_on_step_error(self):
         """Should log error via progress reporter when step fails."""
@@ -1063,8 +1066,9 @@ class TestRunDerivationWithConfigs:
                     phases=["prep"],
                 )
 
-        progress.log.assert_called()
-        assert "error" in str(progress.log.call_args)
+        progress.log.assert_called_once_with("Test error", level="error")
+        # The step still ends, so the bar moves on to the next one
+        progress.complete_step.assert_called_once_with()
 
 
 class TestRunDerivationIter:
@@ -1354,22 +1358,67 @@ class TestCollectRelationshipRules:
         """Should return dict mapping element types to their rules."""
         rules = derivation._collect_relationship_rules()
 
-        assert isinstance(rules, dict)
+        # One entry per derived element type
+        assert set(rules) == {
+            "ApplicationComponent",
+            "ApplicationInterface",
+            "ApplicationService",
+            "BusinessActor",
+            "BusinessEvent",
+            "BusinessFunction",
+            "BusinessObject",
+            "BusinessProcess",
+            "DataObject",
+            "Device",
+            "Node",
+            "SystemSoftware",
+            "TechnologyService",
+        }
 
     def test_contains_rules_for_registered_types(self):
         """Should contain rules for element types with defined rules."""
         rules = derivation._collect_relationship_rules()
 
-        # At least some types should have rules defined
-        assert len(rules) > 0
+        # Every type has rules one way or the other (a data object is only ever reached, a node only reaches)
+        assert all(outbound or inbound for outbound, inbound in rules.values())
+        assert (len(rules["DataObject"][0]), len(rules["Node"][1])) == (0, 0)
 
     def test_rule_format_is_tuple_of_lists(self):
         """Each rule entry should be a tuple of (outbound, inbound) lists."""
         rules = derivation._collect_relationship_rules()
 
         for element_type, (outbound, inbound) in rules.items():
-            assert isinstance(outbound, list), f"{element_type} outbound should be list"
-            assert isinstance(inbound, list), f"{element_type} inbound should be list"
+            assert type(outbound) is list and type(inbound) is list, element_type
+            for rule in outbound + inbound:
+                assert rule.target_type in {
+                    "ApplicationComponent",
+                    "ApplicationInterface",
+                    "ApplicationService",
+                    "BusinessActor",
+                    "BusinessEvent",
+                    "BusinessFunction",
+                    "BusinessObject",
+                    "BusinessProcess",
+                    "DataObject",
+                    "Device",
+                    "Node",
+                    "SystemSoftware",
+                    "TechnologyService",
+                }, (element_type, rule)
+                assert rule.rel_type in {
+                    "Composition",
+                    "Aggregation",
+                    "Assignment",
+                    "Realization",
+                    "Serving",
+                    "Access",
+                    "Influence",
+                    "Triggering",
+                    "Flow",
+                    "Specialization",
+                    "Association",
+                }, (element_type, rule)
+                assert rule.description, (element_type, rule)
 
 
 class TestGetElementProps:
@@ -1583,8 +1632,11 @@ class TestRunDerivationDeferRelationships:
                         phases=["generate"],
                     )
 
-        # Should call consolidated relationship derivation
+        # Once, over every element the generate phase produced, with the metamodel's rules
         mock_rel.assert_called_once()
+        assert mock_rel.call_args.kwargs["all_elements"] == [{"identifier": "e1"}, {"identifier": "e2"}]
+        assert mock_rel.call_args.kwargs["relationship_rules"] == derivation._collect_relationship_rules()
+        assert mock_gen.call_args.kwargs["defer_relationships"] is True
 
     def test_deferred_relationships_creates_relationships(self):
         """Should create relationships from consolidated derivation."""
@@ -1804,8 +1856,10 @@ class TestRunDerivationConfigVersions:
                     config_versions=config_versions,
                 )
 
-        # Should use versioned lookup
-        mock_get_version.assert_called()
+        # Every phase is read at the given versions, none from the active configs
+        assert [c.kwargs["phase"] for c in mock_get_version.call_args_list] == ["prep", "generate", "refine", "relationship"]
+        assert all(c.args[1] == {"pagerank": 2, "ApplicationComponent": 3} for c in mock_get_version.call_args_list)
+        mock_get.assert_not_called()
         # Should NOT use regular lookup for config retrieval (only for calculation)
         # Actually, it uses versioned for both prep, gen, and refine when config_versions is provided
 
@@ -2010,8 +2064,8 @@ class TestRunDerivationWithRunLoggerErrors:
                     phases=["prep"],
                 )
 
-        # Should call step_ctx.error
-        step_ctx.error.assert_called()
+        step_ctx.error.assert_called_once_with("Test prep error")
+        run_logger.phase_error.assert_called_once_with("derivation", "[Derivation - pagerank] Test prep error", "Derivation completed with errors")
 
     def test_logs_step_complete_for_generate_success(self):
         """Should log step complete when generate succeeds."""

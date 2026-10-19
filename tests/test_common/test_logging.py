@@ -651,7 +651,9 @@ class TestRunLoggerHandler:
 
             entries = run_logger.read_logs(level=LogLevel.DETAIL)
             error_entries = [e for e in entries if e.get("status") == LogStatus.ERROR]
-            assert len(error_entries) >= 1
+            assert [(e["message"], e["error"], e["stats"]["logger"], e["stats"]["level"]) for e in error_entries] == [
+                ("Test error message", "Test error message", "test_handler_error", "ERROR")
+            ]
 
 
 class TestLoggingBridge:
@@ -665,8 +667,8 @@ class TestLoggingBridge:
 
             handler = setup_logging_bridge(run_logger)
 
-            assert handler is not None
-            assert isinstance(handler, RunLoggerHandler)
+            assert type(handler) is RunLoggerHandler
+            assert handler in logging.getLogger().handlers
 
             teardown_logging_bridge(handler)
 

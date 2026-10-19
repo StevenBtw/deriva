@@ -98,6 +98,32 @@ class TestStep:
         am.delete_relationship.assert_called_once_with("loop")
         assert result.elements_merged == 1 and result.relationships_deleted == 2 and result.relationships_created == 1
 
+    def test_a_relative_report_path_lands_in_the_home_folder(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DERIVA_HOME", str(tmp_path / "home"))
+        monkeypatch.chdir(tmp_path)
+        elements = [element("a", "Ledger", "n1", pagerank=0.9), element("b", "Ledger Core", "n1")]
+        am, gm = managers(elements, [])
+
+        result = JointConsistencyStep().run(am, gm, params={"dry_run": False, "report_path": "workspace/output/joint.json"})
+
+        assert result.success
+        am.disable_element.assert_called_once_with("b", reason="duplicate_of:a:joint:same_source_node")
+        data = json.loads((tmp_path / "home" / "workspace" / "output" / "joint.json").read_text(encoding="utf-8"))
+        assert data["merges"] == {"b": "a"}
+        assert not (tmp_path / "workspace").exists()
+
+    def test_a_report_that_cannot_be_written_still_applies_the_decision(self, tmp_path):
+        blocker = tmp_path / "file"
+        blocker.write_text("", encoding="utf-8")
+        elements = [element("a", "Ledger", "n1", pagerank=0.9), element("b", "Ledger Core", "n1")]
+        am, gm = managers(elements, [])
+
+        result = JointConsistencyStep().run(am, gm, params={"dry_run": False, "report_path": str(blocker / "joint.json")})
+
+        assert result.success and not result.errors
+        am.disable_element.assert_called_once_with("b", reason="duplicate_of:a:joint:same_source_node")
+        assert result.elements_merged == 1
+
     def test_the_tier_table_from_params_decides_a_conflict(self):
         elements = [element("a", "A", "n1"), element("b", "B", "n2")]
         rels = [

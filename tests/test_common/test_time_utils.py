@@ -45,7 +45,8 @@ class TestCalculateDurationMs:
         start = datetime.now(UTC)
         duration = calculate_duration_ms(start)
 
-        assert isinstance(duration, int)
+        # Whole milliseconds since a moment ago
+        assert type(duration) is int and 0 <= duration < 1000
 
     def test_handles_small_durations(self):
         """Should handle very small durations."""

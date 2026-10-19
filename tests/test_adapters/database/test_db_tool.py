@@ -12,7 +12,7 @@ class TestTables:
 
     def test_tables_is_dict(self):
         """Should be a dictionary of table configs."""
-        assert isinstance(TABLES, dict)
+        assert sorted(TABLES) == ["derivation_config", "derivation_patterns", "extraction_config", "file_type_registry", "system_settings"]
 
     def test_tables_have_required_keys(self):
         """Each table config should have file, pk, order_by."""

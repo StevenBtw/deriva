@@ -1110,7 +1110,7 @@ class ElementDerivationBase(ABC):
         from deriva.modules.derivation.refine.normalization import strip_repo_prefix
 
         sources = {e.properties.get("source"): e.name for e in (archimate_manager.get_elements(element_type=element_type) if element_type else []) if e.properties.get("source")}
-        rows = graph_manager.query("MATCH (d:Graph:Directory) WHERE d.id IN $ids RETURN d.id AS id, d.path AS path", {"ids": sorted(sources)}) if sources else []
+        rows = graph_manager.query("MATCH (d:Graph:Directory) WHERE d.id IN $ids RETURN d.id AS id, d.path AS path", {"ids": sorted(str(s) for s in sources)}) if sources else []
         directories = [(_relative_path(row["path"], repo_name), sources[row["id"]]) for row in rows if row.get("path") and row.get("id") in sources]
         containers: dict[str, str] = {}
         for c in candidates:

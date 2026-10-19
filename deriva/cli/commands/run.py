@@ -116,7 +116,7 @@ def run_stage(
     phase: Annotated[str | None, typer.Option("--phase", help="Run specific phase")] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Print detailed progress")] = False,
     quiet: Annotated[bool, typer.Option("-q", "--quiet", help="Disable progress bar")] = False,
-    no_llm: Annotated[bool, typer.Option("--no-llm", help="Skip LLM-based steps")] = False,
+    no_llm: Annotated[bool, typer.Option("--no-llm", help="No LLM call: extraction runs its parsers, derivation only its prep phase (no elements)")] = False,
     only_step: Annotated[
         str | None,
         typer.Option(
@@ -198,7 +198,8 @@ def run_stage(
         elif no_llm:
             typer.echo("LLM disabled (--no-llm)")
         else:
-            typer.echo("Warning: LLM not configured. LLM-based steps will be skipped.")
+            reason = session.llm_error
+            typer.echo(f"Warning: LLM not configured: {reason}. LLM-based steps will be skipped." if reason else "Warning: LLM not configured. LLM-based steps will be skipped.")
 
         # Create progress reporter
         progress_reporter = create_progress_reporter(quiet=quiet or verbose)

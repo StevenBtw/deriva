@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
-  return { ...actual, configs: { list: vi.fn(), save: vi.fn(), setEnabled: vi.fn(), versions: vi.fn(), scan: vi.fn(), dryRun: vi.fn() } };
+  return { ...actual, configs: { list: vi.fn(), save: vi.fn(), setEnabled: vi.fn(), versions: vi.fn(), scan: vi.fn(), dryRun: vi.fn(), restore: vi.fn() } };
 });
 
 vi.mock("../components/CodeEditor", () => ({
@@ -55,6 +55,36 @@ describe("ConfigPage", () => {
     expect(configs.scan).toHaveBeenCalledWith({ instruction: "Classify every directory." });
     expect(await screen.findByText(/Saved as v10/)).toBeInTheDocument();
     await waitFor(() => expect(configs.list).toHaveBeenCalledTimes(2));
+  });
+
+  it("heads each derivation phase, since step numbers start again per phase", async () => {
+    vi.mocked(configs.list).mockResolvedValue([
+      { name: "pagerank", phase: "prep", llm: false, sequence: 5, enabled: true, instruction: null, example: null, version: 3 },
+      { name: "ApplicationComponent", phase: "generate", llm: true, sequence: 1, enabled: true, instruction: "Name it.", example: "", version: 7 },
+      { name: "Node", phase: "generate", llm: true, sequence: 2, enabled: true, instruction: "Name it.", example: "", version: 2 },
+      { name: "joint_consistency", phase: "refine", llm: false, sequence: 8, enabled: true, instruction: null, example: null, version: 4 },
+    ]);
+    render(<ConfigPage stepType="derivation" title="Derivation config" />);
+
+    await screen.findByRole("cell", { name: "pagerank" });
+    const headers = screen.getAllByRole("rowheader").map((h) => h.textContent);
+    expect(headers).toEqual(["prep", "generate", "refine"]);
+  });
+
+  it("shows no prompt editors for a step without LLM calls and without texts", async () => {
+    vi.mocked(configs.list).mockResolvedValue([
+      { name: "pagerank", phase: "prep", llm: false, sequence: 5, enabled: true, instruction: null, example: null, params: '{"damping": 0.85}', version: 3 },
+      { name: "orphan_elements", phase: "refine", llm: false, sequence: 1, enabled: true, instruction: "Kept text.", example: null, version: 2 },
+    ]);
+    render(<ConfigPage stepType="derivation" title="Derivation config" />);
+
+    expect(await screen.findByLabelText("Params")).toHaveValue('{"damping": 0.85}');
+    expect(screen.queryByRole("tab", { name: "Instruction" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Example" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("cell", { name: "orphan_elements" }));
+    expect(await screen.findByRole("tab", { name: "Instruction" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Example" })).not.toBeInTheDocument();
   });
 
   it("explains the overfit scan without internal rule numbers", async () => {
@@ -207,5 +237,38 @@ describe("ConfigPage", () => {
     expect(configs.dryRun).toHaveBeenCalledWith("Node", undefined);
     expect(await screen.findByText(/3 candidates/)).toBeInTheDocument();
     expect(screen.getByText(/tech::r::queue/)).toBeInTheDocument();
+  });
+
+  it("restores an earlier version as a new one after scanning its texts", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(configs.restore).mockResolvedValue({ success: true, old_version: 9, new_version: 10, restored: 8 });
+    render(<ConfigPage stepType="extraction" title="Extraction config" />);
+    await screen.findByLabelText("Instruction");
+
+    await userEvent.click(screen.getByRole("tab", { name: "History" }));
+    await userEvent.click(await screen.findByRole("button", { name: /v8/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Use this version" }));
+
+    expect(configs.scan).toHaveBeenCalledWith({ instruction: "Classify directories.", example: "{}" });
+    expect(confirm.mock.calls[0][0]).toMatch(/v8.*new version.*stays in the history/);
+    expect(configs.restore).toHaveBeenCalledWith("extraction", "DirectoryClassification", 8);
+    expect(await screen.findByText("Restored v8 as v10")).toBeInTheDocument();
+    await waitFor(() => expect(configs.list).toHaveBeenCalledTimes(2));
+  });
+
+  it("offers no restore for the active version, and names the scan findings first", async () => {
+    vi.mocked(configs.scan).mockResolvedValue({ available: true, findings: [{ field: "instruction", finding: "names a test repository" }] });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<ConfigPage stepType="extraction" title="Extraction config" />);
+    await screen.findByLabelText("Instruction");
+    await userEvent.click(screen.getByRole("tab", { name: "History" }));
+
+    await userEvent.click(await screen.findByRole("button", { name: /v9/ }));
+    expect(screen.queryByRole("button", { name: "Use this version" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /v8/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Use this version" }));
+    expect(confirm.mock.calls[0][0]).toMatch(/1 overfit finding/);
+    expect(configs.restore).not.toHaveBeenCalled();
   });
 });

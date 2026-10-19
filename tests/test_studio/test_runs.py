@@ -7,6 +7,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+import pytest
+
 from tests.test_studio.conftest import FakeSession
 
 
@@ -110,6 +112,78 @@ def test_cancel_stops_after_the_current_step(make_client):
     run = client.app.state.runs.get(run_id)
     assert run.status == "cancelled"
     assert [e["data"].get("step") for e in run.events if e["event"] == "progress"] == ["S1", "S2"]
+
+
+def test_a_cancel_reaches_the_llm_calls_of_the_running_step(make_client):
+    """The session's LLM calls see the cancel at once (a step's next call stops it), and the check is removed when the run ends."""
+    release, in_step = threading.Event(), threading.Event()
+
+    def blocking(*args, **kwargs):
+        in_step.set()
+        release.wait(5)
+        yield Update(step="S1")
+
+    session = FakeSession(run_extraction_iter=blocking, use_repository=None)
+    client = make_client(session)
+    run_id = client.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
+    assert in_step.wait(5)
+    (check,) = session.called("set_cancel_check")[0][0]
+    assert check() is False
+
+    client.post(f"/api/runs/{run_id}/cancel")
+    assert check() is True
+    release.set()
+    wait_for(lambda: finished(client, run_id))
+
+    assert client.app.state.runs.get(run_id).status == "cancelled"
+    assert session.called("set_cancel_check")[-1] == ((None,), {})
+
+
+def test_a_step_stopped_by_the_cancel_ends_the_run_as_cancelled(make_client):
+    from deriva.services import RunCancelled
+
+    in_step, cancelled = threading.Event(), threading.Event()
+
+    def stopped(*args, **kwargs):
+        yield Update(step="S1")
+        in_step.set()
+        cancelled.wait(5)
+        raise RunCancelled("run cancelled")
+
+    client = make_client(FakeSession(run_extraction_iter=stopped, use_repository=None))
+    run_id = client.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
+    assert in_step.wait(5)
+    client.post(f"/api/runs/{run_id}/cancel")
+    cancelled.set()
+    wait_for(lambda: finished(client, run_id))
+
+    assert client.app.state.runs.get(run_id).status == "cancelled"
+
+
+def test_shutdown_ends_the_event_streams_and_cancels_the_run(make_client):
+    """uvicorn waits for open streams before the app's shutdown, and a stream lasts until its run ends: shutdown ends both."""
+    release, in_step = threading.Event(), threading.Event()
+
+    def blocking(*args, **kwargs):
+        yield Update(step="S1")
+        in_step.set()
+        release.wait(5)
+        yield Update(step="S2")
+
+    client = make_client(FakeSession(run_extraction_iter=blocking, use_repository=None))
+    runs = client.app.state.runs
+    run_id = client.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
+    assert in_step.wait(5) is True
+    ended = threading.Event()
+    threading.Thread(target=lambda: (list(runs.events(run_id)), ended.set()), daemon=True).start()
+    wait_for(lambda: runs.get(run_id).followers == 1)
+
+    runs.shutdown()
+
+    assert ended.wait(2) is True
+    assert runs.get(run_id).cancel_requested is True
+    release.set()
+    wait_for(lambda: finished(client, run_id))
 
 
 def test_failing_step_ends_the_run_with_an_error_event(make_client):
@@ -218,6 +292,56 @@ def test_finished_runs_are_kept_on_disk_newest_first(tmp_path):
     assert [(h["run_id"], h["kind"], h["repository"], h["status"]) for h in history] == [(two, "derivation", "ToolShed", "finished"), (one, "extraction", "deriva", "finished")]
     assert history[0]["finished_at"] >= history[0]["started_at"]
     assert len(manager().history(limit=1)) == 1
+
+
+def test_a_run_the_studio_stopped_on_is_listed_as_interrupted(tmp_path):
+    """A run writes its summary when it ends; one whose studio process ended first left only its events."""
+    from deriva.studio.provider import SessionProvider
+    from deriva.studio.runs import RunManager
+
+    folder = tmp_path / "crashed12345"
+    folder.mkdir()
+    events = [
+        {"seq": 1, "event": "started", "data": {"kind": "all", "repository": "deriva"}, "ts": 100.0},
+        {"seq": 2, "event": "progress", "data": {"step": "S1"}, "ts": 160.5},
+    ]
+    (folder / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events) + '{"seq": 3, "ev', encoding="utf-8")
+    (tmp_path / "no-start").mkdir()
+    (tmp_path / "no-start" / "events.jsonl").write_text(json.dumps({"seq": 1, "event": "progress", "data": {}, "ts": 1.0}) + "\n", encoding="utf-8")
+
+    history = RunManager(SessionProvider(factory=lambda: FakeSession()), runs_dir=tmp_path).history()
+
+    assert history == [
+        {
+            "run_id": "crashed12345",
+            "kind": "all",
+            "repository": "deriva",
+            "status": "interrupted",
+            "events": 2,
+            "started_at": 100.0,
+            "finished_at": 160.5,
+            "events_kept": True,
+        }
+    ]
+
+
+def test_the_replay_of_an_interrupted_run_ends_with_an_error(tmp_path):
+    """Without an end event the browser would reconnect to the replay for ever; the replay ends it (not stored)."""
+    from deriva.studio.provider import SessionProvider
+    from deriva.studio.runs import RunManager
+
+    folder = tmp_path / "crashed12345"
+    folder.mkdir()
+    started = {"seq": 1, "event": "started", "data": {"kind": "all"}, "ts": 100.0}
+    (folder / "events.jsonl").write_text(json.dumps(started) + "\n", encoding="utf-8")
+    runs = RunManager(SessionProvider(factory=lambda: FakeSession()), runs_dir=tmp_path)
+
+    replay = list(runs.events("crashed12345"))
+
+    assert [(e["seq"], e["event"]) for e in replay] == [(1, "started"), (2, "error")]
+    assert replay[1]["data"] == {"message": "The studio stopped before the run ended", "interrupted": True}
+    assert list(runs.events("crashed12345", after=2)) == []
+    assert (folder / "events.jsonl").read_text(encoding="utf-8").count("\n") == 1
 
 
 def test_a_finished_run_is_in_the_history_before_and_without_its_summary_on_disk(tmp_path, monkeypatch):
@@ -356,7 +480,7 @@ def test_a_run_without_llm_calls_has_no_calls_also_after_a_restart(make_client):
 
 def test_a_kept_live_log_replays_up_to_its_first_unreadable_line(tmp_path):
     """A studio stopped mid-write leaves a cut line, and a gap means lost events: the replay ends at the last whole event
-    in order. A log that cannot be read replays nothing."""
+    in order, then the end of an interrupted run. A log that cannot be read replays nothing."""
     from deriva.studio.provider import SessionProvider
     from deriva.studio.runs import RunManager
 
@@ -369,10 +493,10 @@ def test_a_kept_live_log_replays_up_to_its_first_unreadable_line(tmp_path):
         (tmp_path / run_id / "events.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (tmp_path / "unreadable" / "events.jsonl").mkdir(parents=True)  # a folder where the log should be
 
-    assert [e["seq"] for e in runs.events("cut")] == [1, 2]
-    assert [e["seq"] for e in runs.events("cut", after=1)] == [2]
-    assert [e["seq"] for e in runs.events("gap")] == [1]
-    assert [e["seq"] for e in runs.events("wrong")] == [1]
+    assert [(e["seq"], e["event"]) for e in runs.events("cut")] == [(1, "progress"), (2, "progress"), (3, "error")]
+    assert [e["seq"] for e in runs.events("cut", after=1)] == [2, 3]
+    assert [(e["seq"], e["event"]) for e in runs.events("gap")] == [(1, "progress"), (2, "error")]
+    assert [(e["seq"], e["event"]) for e in runs.events("wrong")] == [(1, "progress"), (2, "error")]
     assert list(runs.events("unreadable")) == []
 
 
@@ -645,3 +769,82 @@ def test_closing_the_provider_gives_up_after_its_timeout_while_the_session_is_he
     release.set()
     holder.join(5)
     assert provider.close(timeout=1.0) is True
+
+
+def _kept(runs_dir, run_id, kind, repository, started_at, status="finished"):
+    """A run of an earlier studio process: its folder with a summary, events and a call log."""
+    folder = runs_dir / run_id
+    folder.mkdir(parents=True)
+    row = {"run_id": run_id, "kind": kind, "repository": repository, "status": status, "events": 1, "started_at": started_at, "finished_at": started_at + 1}
+    (folder / "run.json").write_text(json.dumps(row), encoding="utf-8")
+    (folder / "llm.jsonl").write_text("{}\n", encoding="utf-8")
+    return folder
+
+
+def _manager(tmp_path, session=None):
+    from deriva.studio.provider import SessionProvider
+    from deriva.studio.runs import RunManager
+
+    return RunManager(SessionProvider(factory=lambda: session or FakeSession()), runs_dir=tmp_path)
+
+
+def test_history_filters_by_repository_and_kind_and_pages(tmp_path):
+    for i, (kind, repository) in enumerate([("all", "a"), ("extraction", "a"), ("derivation", "b"), ("all", "b"), ("derivation", "a")]):
+        _kept(tmp_path, f"r{i}", kind, repository, 100.0 + i)
+    runs = _manager(tmp_path)
+
+    assert [r["run_id"] for r in runs.history(limit=None, repository="a")] == ["r4", "r1", "r0"]
+    assert [r["run_id"] for r in runs.history(limit=None, kind="derivation")] == ["r4", "r2"]
+    assert [r["run_id"] for r in runs.history(limit=2, offset=2)] == ["r2", "r1"]
+
+
+def test_a_run_is_deleted_with_its_folder_but_never_while_it_runs(make_client, tmp_path):
+    from deriva.studio.runs import RunBusy
+
+    old = _kept(tmp_path / "runs", "old1", "all", "a", 100.0)
+    release, in_step = threading.Event(), threading.Event()
+
+    def blocking(*args, **kwargs):
+        in_step.set()
+        release.wait(5)
+        yield Update(step="S1")
+
+    client = make_client(FakeSession(run_extraction_iter=blocking, use_repository=None))
+    runs = client.app.state.runs
+    running = client.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
+    assert in_step.wait(5)
+
+    assert runs.delete("old1") is True and not old.exists()
+    assert runs.delete("old1") is False
+    with pytest.raises(RunBusy):
+        runs.delete(running)
+    release.set()
+    wait_for(lambda: finished(client, running))
+    assert runs.delete(running) is True
+    assert runs.get(running) is None and not (tmp_path / "runs" / running).exists()
+
+
+def test_prune_keeps_the_latest_runs_or_drops_the_interrupted_ones(tmp_path):
+    for i in range(5):
+        _kept(tmp_path, f"r{i}", "all", "a", 100.0 + i)
+    crashed = tmp_path / "crashed"
+    crashed.mkdir()
+    (crashed / "events.jsonl").write_text(json.dumps({"seq": 1, "event": "started", "data": {"kind": "all", "repository": "a"}, "ts": 50.0}) + "\n", encoding="utf-8")
+    runs = _manager(tmp_path)
+
+    assert runs.prune(interrupted=True) == ["crashed"]
+    assert runs.prune(keep=2) == ["r2", "r1", "r0"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["r3", "r4"]
+
+
+def test_run_history_routes_filter_delete_and_prune(make_client, tmp_path):
+    for i in range(3):
+        _kept(tmp_path / "runs", f"r{i}", "derivation" if i else "all", "a" if i < 2 else "b", 100.0 + i)
+    client = make_client(FakeSession())
+
+    assert [r["run_id"] for r in client.get("/api/runs/history?limit=10&repository=a").json()] == ["r1", "r0"]
+    assert [r["run_id"] for r in client.get("/api/runs/history?limit=1&offset=1").json()] == ["r1"]
+    assert client.delete("/api/runs/r2").json() == {"deleted": "r2"}
+    assert client.delete("/api/runs/r2").status_code == 404
+    assert client.post("/api/runs/prune", json={"keep": 1}).json() == {"deleted": ["r0"]}
+    assert client.post("/api/runs/prune", json={}).status_code == 400

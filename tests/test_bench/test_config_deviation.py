@@ -75,6 +75,7 @@ class TestConfigDeviationAnalyzerLoadOcel:
             analyzer = ConfigDeviationAnalyzer("session_123", engine)
 
         assert isinstance(analyzer.ocel_log, OCELLog)
+        assert (analyzer.ocel_log.events, analyzer.ocel_log.object_types) == ([], set())
 
 
 class TestConfigDeviationAnalyzerLoadRuns:
@@ -375,6 +376,7 @@ class TestConfigDeviationAnalyzerLoadOcelFiles:
         ocel = analyzer._load_ocel()
 
         assert isinstance(ocel, OCELLog)
+        assert (ocel.events, ocel.object_types) == ([], set())
 
     def test_load_ocel_from_jsonl(self, tmp_path, monkeypatch):
         """Should load from events.jsonl if ocel.json doesn't exist."""
@@ -391,6 +393,7 @@ class TestConfigDeviationAnalyzerLoadOcelFiles:
         ocel = analyzer._load_ocel()
 
         assert isinstance(ocel, OCELLog)
+        assert (ocel.events, ocel.object_types) == ([], set())
 
 
 class TestConfigDeviationAnalyzerExportDefaultPath:
@@ -436,6 +439,8 @@ class TestConvenienceFunctions:
             report = analyze_config_deviations("session_123", engine)
 
         assert isinstance(report, DeviationReport)
+        # No runs: nothing deviates
+        assert (report.session_id, report.total_runs, report.total_deviations, report.overall_consistency, report.config_deviations) == ("session_123", 0, 0, 1.0, [])
 
     def test_export_config_deviations_creates_file(self, tmp_path):
         """Should create export file."""

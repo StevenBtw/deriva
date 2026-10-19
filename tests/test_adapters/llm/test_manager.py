@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx2
@@ -229,7 +230,8 @@ class TestLLMManagerInit:
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
-        assert manager.cache is not None
+        # The cache in LLM_CACHE_DIR
+        assert (type(manager.cache).__name__, Path(manager.cache.cache_dir)) == ("CacheManager", tmp_path / "cache")
 
     def test_init_creates_pydantic_model(self, tmp_path, monkeypatch):
         """Should create PydanticAI model."""
@@ -243,7 +245,8 @@ class TestLLMManagerInit:
             with patch.dict("os.environ", env_vars, clear=True):
                 manager = LLMManager()
 
-        assert manager._pydantic_model is not None
+        # Ollama goes through the OpenAI-compatible client, for the configured model
+        assert (type(manager._pydantic_model).__name__, manager._pydantic_model.model_name) == ("OpenAIChatModel", "llama3")
 
     def test_init_sets_default_values(self, tmp_path, monkeypatch):
         """Should set default values for optional config."""
@@ -271,7 +274,8 @@ class TestLLMManagerInit:
 
         with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", env_vars, clear=True):
-                with pytest.raises(ConfigurationError):
+                # The variable to set is named
+                with pytest.raises(ConfigurationError, match="LLM_AZURE_API_KEY"):
                     LLMManager()
 
 
@@ -357,7 +361,7 @@ class TestLLMManagerFromConfig:
 
         with patch("deriva.common.settings.read_env_file", return_value={}):
             with patch.dict("os.environ", {}, clear=True):
-                with pytest.raises(ConfigurationError):
+                with pytest.raises(ConfigurationError, match="has no API key: set LLM_TEST_KEY"):
                     LLMManager.from_config(config, cache_dir=str(tmp_path / "cache"))
 
 
@@ -503,6 +507,42 @@ class TestLoadConfigFromEnv:
 
         assert manager.config["provider"] == "azure"
         assert manager.config["model"] == "gpt-4"
+
+    def test_a_missing_key_names_its_variable_and_the_env_file_read(self, tmp_path):
+        """The variable the config points to is named (never a value), with the .env this install reads."""
+        from deriva.common import settings
+
+        env_vars = {
+            "LLM_DEFAULT_MODEL": "azure-gpt4",
+            "LLM_AZURE_GPT4_PROVIDER": "azure",
+            "LLM_AZURE_GPT4_MODEL": "gpt-4",
+            "LLM_AZURE_GPT4_URL": "https://test.azure.com",
+            "LLM_AZURE_GPT4_KEY_ENV": "AZURE_OPENAI_API_KEY",
+            "LLM_CACHE_DIR": str(tmp_path / "cache"),
+        }
+
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            with patch.dict("os.environ", env_vars, clear=True):
+                with pytest.raises(ConfigurationError) as raised:
+                    LLMManager()
+
+        message = str(raised.value)
+        assert "AZURE_OPENAI_API_KEY" in message and "azure-gpt4" in message
+        assert str(settings.env_file()) in message
+
+    def test_a_config_without_key_or_reference_names_its_own_key_variable(self, tmp_path):
+        env_vars = {
+            "LLM_DEFAULT_MODEL": "azure-gpt4",
+            "LLM_AZURE_GPT4_PROVIDER": "azure",
+            "LLM_AZURE_GPT4_MODEL": "gpt-4",
+            "LLM_AZURE_GPT4_URL": "https://test.azure.com",
+            "LLM_CACHE_DIR": str(tmp_path / "cache"),
+        }
+
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            with patch.dict("os.environ", env_vars, clear=True):
+                with pytest.raises(ConfigurationError, match="LLM_AZURE_GPT4_KEY"):
+                    LLMManager()
 
     def test_raises_for_invalid_default_model_reference(self, tmp_path, monkeypatch):
         """Should raise ConfigurationError for invalid default model reference."""
@@ -669,6 +709,9 @@ class TestQuery:
                     manager.query("Hello")
 
         manager.cache.set_response.assert_called_once()
+        cache_key, content, prompt, model, usage = manager.cache.set_response.call_args.args
+        assert (content, prompt, model, usage) == ("Response", "Hello", "llama3", None)
+        manager.cache.get.assert_called_once_with(cache_key)
 
 
 # =============================================================================
@@ -708,7 +751,7 @@ class TestUtilityMethods:
 
                 manager.clear_cache()
 
-        manager.cache.clear_all.assert_called_once()
+        manager.cache.clear_all.assert_called_once_with()
 
     def test_get_cache_stats(self, tmp_path, monkeypatch):
         """Should return cache statistics."""
@@ -887,6 +930,104 @@ class TestAgentReuse:
         assert [c.kwargs["output_type"] for c in agent_class.call_args_list] == [str, Answer]
 
 
+class TestCutAnswers:
+    """An answer cut at the output limit: pydantic-ai asks again, and a shorter answer that validates can leave part
+    of the question unanswered. A structured answer with a cut response in its run is a failure, never cached."""
+
+    @staticmethod
+    def _manager(tmp_path):
+        env = {"LLM_PROVIDER": "ollama", "LLM_OLLAMA_MODEL": "llama3", "LLM_NOCACHE": "false", "LLM_CACHE_DIR": str(tmp_path / "cache")}
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            with patch.dict("os.environ", env, clear=True):
+                return LLMManager()
+
+    @staticmethod
+    def _result(output, *finish_reasons):
+        from pydantic_ai.messages import ModelResponse, TextPart
+
+        history = [ModelResponse(parts=[TextPart(content="...")], finish_reason=reason) for reason in finish_reasons]
+        return MagicMock(output=output, usage=MagicMock(return_value=None), all_messages=MagicMock(return_value=history))
+
+    def test_a_structured_answer_after_a_cut_response_is_a_failure_and_not_cached(self, tmp_path):
+        from pydantic import BaseModel
+
+        from deriva.adapters.llm.models import FailedResponse
+
+        class Answer(BaseModel):
+            items: list[str]
+
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+            agent_class.return_value.run_sync.return_value = self._result(Answer(items=["a"]), "length", "tool_call")
+            first = manager.query("classify", response_model=Answer, max_tokens=60)
+            agent_class.return_value.run_sync.return_value = self._result(Answer(items=["a", "b"]), "tool_call")
+            second = manager.query("classify", response_model=Answer, max_tokens=60)
+
+        assert isinstance(first, FailedResponse) and first.error_type == "IncompleteToolCall"
+        assert "60" in first.error
+        assert second.items == ["a", "b"] and agent_class.return_value.run_sync.call_count == 2
+
+    def test_a_run_that_failed_after_a_cut_response_is_cut_and_not_retried(self, tmp_path):
+        """pydantic-ai raises 'Exceeded maximum output retries' when the cut answer's retries fail otherwise."""
+        from contextlib import contextmanager
+
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from pydantic_ai.messages import ModelResponse, TextPart
+
+        from deriva.adapters.llm.models import FailedResponse
+
+        @contextmanager
+        def captured():
+            yield [ModelResponse(parts=[TextPart(content="...")], finish_reason="length"), ModelResponse(parts=[TextPart(content="{}")], finish_reason="stop")]
+
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class, patch("deriva.adapters.llm.manager.capture_run_messages", captured):
+            agent_class.return_value.run_sync.side_effect = UnexpectedModelBehavior("Exceeded maximum output retries (3)")
+            response = manager.query("classify", schema={"type": "object", "properties": {"items": {"type": "array"}}}, max_tokens=60)
+
+        assert isinstance(response, FailedResponse) and response.error_type == "IncompleteToolCall"
+        assert agent_class.return_value.run_sync.call_count == 1
+
+    def test_other_failed_runs_keep_their_error(self, tmp_path):
+        from contextlib import contextmanager
+
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        from deriva.adapters.llm.models import FailedResponse
+
+        @contextmanager
+        def captured():
+            yield []
+
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class, patch("deriva.adapters.llm.manager.capture_run_messages", captured):
+            agent_class.return_value.run_sync.side_effect = UnexpectedModelBehavior("Exceeded maximum output retries (3)")
+            response = manager.query("classify", schema={"type": "object", "properties": {"items": {"type": "array"}}})
+
+        assert isinstance(response, FailedResponse) and response.error_type == "UnexpectedModelBehavior"
+
+    def test_a_text_answer_is_returned_as_it_came(self, tmp_path):
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+            agent_class.return_value.run_sync.return_value = self._result("long text", "length")
+            response = manager.query("describe")
+
+        assert response.content == "long text"
+
+    def test_an_uncut_structured_answer_is_unchanged(self, tmp_path):
+        from pydantic import BaseModel
+
+        class Answer(BaseModel):
+            items: list[str]
+
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+            agent_class.return_value.run_sync.return_value = self._result(Answer(items=["a"]), "tool_call")
+            response = manager.query("classify", response_model=Answer)
+
+        assert response.items == ["a"]
+
+
 class TestTimeoutAndRetry:
     """LLM_TIMEOUT bounds every call; transient failures are retried with backoff, others fail at once."""
 
@@ -935,7 +1076,8 @@ class TestTimeoutAndRetry:
         with patch.object(manager._rate_limiter, "record_rate_limit") as record:
             self._query(manager, [ModelHTTPError(status_code=429, model_name="m"), MagicMock(output="ok")])
 
-        record.assert_called_once()
+        # Once, for the 429 (it named no Retry-After); the success after it is no rate limit
+        record.assert_called_once_with(None)
 
     def test_final_rate_limit_is_recorded_once(self, tmp_path):
         """The last failed attempt is recorded by query(), not again by the retry loop."""
@@ -1154,6 +1296,30 @@ class TestModelSettings:
         assert manager.last_call["reasoning"] is None
         assert manager.last_call["cache_key"] == CacheManager.generate_cache_key("Hello", "mistral-small-2603", None, temperature=0.0, max_tokens=100)
 
+    @staticmethod
+    def _answer(input_tokens, output_tokens):
+        from types import SimpleNamespace
+
+        usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+        return SimpleNamespace(output="ok", usage=None, response=SimpleNamespace(model_name="qwen3:8b", usage=usage))
+
+    def test_a_call_that_fills_the_model_context_is_warned(self, tmp_path, caplog):
+        """Ollama cuts a prompt longer than its context without an error: a call that used the whole window says so."""
+        with caplog.at_level("WARNING", logger="deriva.adapters.llm.manager"):
+            self._sent(self._manager(tmp_path, provider="ollama", model="qwen3:8b", context=4096), response=self._answer(3900, 150))
+            assert "context" not in caplog.text
+            self._sent(self._manager(tmp_path, provider="ollama", model="qwen3:8b", context=4096), response=self._answer(4000, 96))
+
+        assert "4096 tokens of qwen3:8b's 4096-token context" in caplog.text
+
+    def test_without_a_context_size_no_call_is_warned(self, tmp_path, caplog):
+        manager = self._manager(tmp_path, provider="ollama", model="qwen3:8b")
+
+        with caplog.at_level("WARNING", logger="deriva.adapters.llm.manager"):
+            self._sent(manager, response=self._answer(400000, 96))
+
+        assert "context" not in caplog.text
+
     def test_the_model_that_served_the_call_is_recorded(self, tmp_path):
         """A provider can serve another model under a retired name (devstral-2512 answers as mistral-medium-3-5)."""
         from types import SimpleNamespace
@@ -1181,6 +1347,45 @@ def test_benchmark_models_read_sampling_and_reasoning(monkeypatch):
 
     assert (models["haiku"].sampling, models["haiku"].reasoning) == (False, "none")
     assert (models["small"].sampling, models["small"].reasoning) == (True, None)
+
+
+def test_benchmark_models_read_the_context_size(monkeypatch):
+    from deriva.adapters.llm.manager import load_benchmark_models
+
+    env = {"LLM_QWEN_PROVIDER": "ollama", "LLM_QWEN_MODEL": "qwen3:8b", "LLM_QWEN_CONTEXT": "8192", "LLM_SMALL_PROVIDER": "mistral", "LLM_SMALL_MODEL": "m"}
+    with patch("deriva.common.settings.read_env_file", return_value=env), patch.dict("os.environ", {}, clear=True):
+        models = load_benchmark_models()
+
+    assert (models["qwen"].context, models["small"].context) == (8192, None)
+
+
+def test_unset_sampling_follows_the_model_profile(monkeypatch):
+    """pydantic-ai drops a temperature the model refuses, with a warning on every call: unset sampling is off for it."""
+    from deriva.adapters.llm.manager import load_benchmark_models
+
+    env = {
+        "LLM_NEW_PROVIDER": "anthropic",
+        "LLM_NEW_MODEL": "claude-haiku-5-5",
+        "LLM_OLD_PROVIDER": "anthropic",
+        "LLM_OLD_MODEL": "claude-haiku-4-5-20251001",
+        "LLM_KEPT_PROVIDER": "anthropic",
+        "LLM_KEPT_MODEL": "claude-haiku-5-5",
+        "LLM_KEPT_SAMPLING": "true",
+    }
+    with patch("deriva.common.settings.read_env_file", return_value=env), patch.dict("os.environ", {}, clear=True):
+        models = load_benchmark_models()
+
+    assert (models["new"].sampling, models["old"].sampling, models["kept"].sampling) == (False, True, True)
+
+
+def test_the_provider_settings_follow_the_model_profile_too(monkeypatch):
+    from deriva.adapters.llm.manager import LLMManager
+
+    env = {"LLM_PROVIDER": "anthropic", "LLM_ANTHROPIC_MODEL": "claude-haiku-5-5", "LLM_ANTHROPIC_API_KEY": "k"}
+    with patch("deriva.common.settings.read_env_file", return_value=env), patch.dict("os.environ", {}, clear=True):
+        config = LLMManager.__new__(LLMManager)._load_config_from_env()
+
+    assert config["sampling"] is False
 
 
 class TestLoadBenchmarkModelsStripping:

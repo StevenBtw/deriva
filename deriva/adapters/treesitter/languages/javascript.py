@@ -445,6 +445,10 @@ JS_GENERIC_CONTAINERS = {
 }
 
 
+# Functions declared at module level, generators included
+FUNCTION_NODES = ("function_declaration", "generator_function_declaration")
+
+
 class JavaScriptExtractor(LanguageExtractor):
     """Extractor for JavaScript/TypeScript source code using tree-sitter-javascript."""
 
@@ -474,20 +478,18 @@ class JavaScriptExtractor(LanguageExtractor):
         root = tree.root_node
 
         # Extract classes
-        for node in self.walk_tree(root, {"class_declaration", "class"}):
+        for node in self._classes(root):
             types.append(self._extract_class(node, source))
 
         # Extract top-level functions
         for node in root.children:
-            if node.type == "function_declaration":
+            if node.type in FUNCTION_NODES:
                 types.append(self._extract_function_as_type(node, source))
             elif node.type == "export_statement":
-                # Handle exported functions
+                # Exported functions (an exported class is one of the classes above)
                 for child in node.children:
-                    if child.type == "function_declaration":
+                    if child.type in FUNCTION_NODES:
                         types.append(self._extract_function_as_type(child, source))
-                    elif child.type == "class_declaration":
-                        types.append(self._extract_class(child, source))
 
         # Extract top-level arrow functions assigned to const/let/var
         for node in root.children:
@@ -507,7 +509,7 @@ class JavaScriptExtractor(LanguageExtractor):
         root = tree.root_node
 
         # Extract methods from classes
-        for class_node in self.walk_tree(root, {"class_declaration", "class"}):
+        for class_node in self._classes(root):
             class_name = self._get_class_name(class_node, source)
             body = self.find_child_by_field(class_node, "body")
             if body:
@@ -524,11 +526,11 @@ class JavaScriptExtractor(LanguageExtractor):
 
         # Extract top-level functions
         for node in root.children:
-            if node.type == "function_declaration":
+            if node.type in FUNCTION_NODES:
                 methods.append(self._extract_function(node, source))
             elif node.type == "export_statement":
                 for child in node.children:
-                    if child.type == "function_declaration":
+                    if child.type in FUNCTION_NODES:
                         methods.append(self._extract_function(child, source))
 
         # Extract top-level arrow functions
@@ -576,7 +578,7 @@ class JavaScriptExtractor(LanguageExtractor):
         root = tree.root_node
 
         # Extract calls from class methods
-        for class_node in self.walk_tree(root, {"class_declaration", "class"}):
+        for class_node in self._classes(root):
             class_name = self._get_class_name(class_node, source)
             body = self.find_child_by_field(class_node, "body")
             if body:
@@ -595,12 +597,12 @@ class JavaScriptExtractor(LanguageExtractor):
 
         # Extract calls from top-level functions
         for node in root.children:
-            if node.type == "function_declaration":
+            if node.type in FUNCTION_NODES:
                 func_name = self._get_function_name(node, source)
                 calls.extend(self._extract_calls_from_body(node, source, func_name, None))
             elif node.type == "export_statement":
                 for child in node.children:
-                    if child.type == "function_declaration":
+                    if child.type in FUNCTION_NODES:
                         func_name = self._get_function_name(child, source)
                         calls.extend(self._extract_calls_from_body(child, source, func_name, None))
 
@@ -989,9 +991,15 @@ class JavaScriptExtractor(LanguageExtractor):
     # =========================================================================
 
     def _get_class_name(self, node: tree_sitter.Node, source: bytes) -> str:
-        """Get the name of a class."""
+        """Get the name of a class; a class expression takes the name of the variable it is assigned to."""
         name_node = self.find_child_by_field(node, "name")
+        if name_node is None and node.parent is not None and node.parent.type == "variable_declarator":
+            name_node = self.find_child_by_field(node.parent, "name")
         return self.get_node_text(name_node, source) if name_node else ""
+
+    def _classes(self, root: tree_sitter.Node) -> list[tree_sitter.Node]:
+        """Class declarations and class expressions; the grammar's ``class`` keyword token has the same node type."""
+        return [node for node in self.walk_tree(root, {"class_declaration", "class"}) if node.is_named]
 
     def _get_bases(self, node: tree_sitter.Node, source: bytes) -> list[str]:
         """Get base/parent class from extends clause."""
@@ -1001,7 +1009,10 @@ class JavaScriptExtractor(LanguageExtractor):
         for child in node.children:
             if child.type == "class_heritage":
                 for subchild in child.children:
-                    if subchild.type == "extends_clause":
+                    # The JavaScript grammar puts the base right under the heritage, the TypeScript one in an extends clause
+                    if subchild.type in ("identifier", "member_expression"):
+                        bases.append(self.get_node_text(subchild, source))
+                    elif subchild.type == "extends_clause":
                         for item in subchild.children:
                             if item.type == "identifier":
                                 bases.append(self.get_node_text(item, source))

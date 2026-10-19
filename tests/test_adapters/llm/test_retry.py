@@ -267,3 +267,33 @@ class TestExtractRetryAfterNested:
         exc.body = {"error": "string error"}  # type: ignore
         result = _extract_retry_after_from_exception(exc)
         assert result is None
+
+
+class TestTlsDropsAreTransient:
+    """A TLS connection the server or a proxy cut (SSL EOF, a reset) is retried, as the provider SDKs raise it."""
+
+    def test_an_ssl_eof_behind_the_transport_error_is_transient(self):
+        import ssl
+
+        try:
+            try:
+                raise ssl.SSLEOFError(8, "EOF occurred in violation of protocol (_ssl.c:2427)")
+            except ssl.SSLEOFError as eof:
+                raise httpx2.ConnectError("EOF occurred in violation of protocol") from eof
+        except httpx2.ConnectError as connect:
+            error = api_error(connect)
+
+        assert classify_exception(error) == ("transient", None)
+
+    def test_a_bare_ssl_eof_or_reset_is_transient(self):
+        import ssl
+
+        assert classify_exception(ssl.SSLEOFError(8, "EOF occurred in violation of protocol")) == ("transient", None)
+        assert classify_exception(ConnectionResetError(10054, "An existing connection was forcibly closed")) == ("transient", None)
+
+
+def test_an_answer_cut_at_the_output_limit_is_not_retried():
+    """The same prompt is cut at the same limit again: the caller splits it instead (DirectoryClassification)."""
+    from pydantic_ai.exceptions import IncompleteToolCall
+
+    assert classify_exception(IncompleteToolCall("Model token limit (4000) exceeded while generating a tool call")) == ("permanent", None)
