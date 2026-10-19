@@ -66,7 +66,7 @@ def coverage_report(
     for path in sorted(set(checkout_files) | set(graph_files)):
         by_extension.setdefault(_extension(path), []).append(path)
 
-    rows = []
+    rows: list[dict[str, Any]] = []
     for extension, paths in by_extension.items():
         known = [graph_files[p] for p in paths if p in graph_files]
         rows.append(

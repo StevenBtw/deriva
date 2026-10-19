@@ -348,7 +348,11 @@ def detect_domains(
                 for m in re.finditer(rf"(?i)\b{re.escape(head)}\s+({nouns})\b", text):
                     found.append(_title(f"{head} {m.group(1).lower()}"))
         seen: set[str] = set()
-        d.name_candidates = [n for n in found if not (name_key(n) in seen or seen.add(name_key(n)))]
+        d.name_candidates = []
+        for n in found:
+            if name_key(n) not in seen:
+                seen.add(name_key(n))
+                d.name_candidates.append(n)
     # A name another domain's anchor or "<anchor> Data" holds is dropped, unless it is the only one left
     taken = Counter(name_key(n) for d in domains for n in {d.anchor, rules.name_template.format(name=d.anchor)})
     for d in domains:

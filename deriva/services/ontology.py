@@ -53,7 +53,7 @@ def intermediate_ontology(session: Any) -> dict[str, Any]:
     classes = get_all_node_classes()
     order = {group: i for i, group in enumerate(GROUP_ORDER)}
 
-    node_types = []
+    node_types: list[dict[str, Any]] = []
     for label in sorted(set(classes) | set(counts), key=lambda name: (order.get(node_group(name), len(order)), name)):
         rows = run(f"MATCH (n:Graph:`{label}`) RETURN n LIMIT 1", None) if counts[label] else []
         sample = {k: _short(v) for k, v in rows[0]["n"].items() if not k.startswith("_")} if rows else {}
@@ -73,10 +73,10 @@ def intermediate_ontology(session: Any) -> dict[str, Any]:
         )
 
     edge_types = []
-    for row in sorted(run("MATCH (:Graph)-[r]->(:Graph) RETURN type(r) AS type, count(r) AS count", None), key=lambda r: r["type"]):
-        pairs = run("MATCH (a:Graph)-[r]->(b:Graph) WHERE type(r) = $type RETURN DISTINCT labels(a) AS source, labels(b) AS target", {"type": row["type"]})
+    for edge in sorted(run("MATCH (:Graph)-[r]->(:Graph) RETURN type(r) AS type, count(r) AS count", None), key=lambda r: r["type"]):
+        pairs = run("MATCH (a:Graph)-[r]->(b:Graph) WHERE type(r) = $type RETURN DISTINCT labels(a) AS source, labels(b) AS target", {"type": edge["type"]})
         seen = sorted({(t[0], u[0]) for p in pairs if (t := _types(p["source"])) and (u := _types(p["target"]))})
-        edge_types.append({"name": row["type"].split(":", 1)[-1], "count": row["count"], "pairs": [list(pair) for pair in seen]})
+        edge_types.append({"name": edge["type"].split(":", 1)[-1], "count": edge["count"], "pairs": [list(pair) for pair in seen]})
 
     produced = {p["name"] for t in node_types for p in t["producers"]}
     other_steps = [_step(c, versions) for c in extraction if c["node_type"] not in produced]

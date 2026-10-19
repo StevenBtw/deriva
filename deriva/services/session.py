@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -175,7 +175,7 @@ class PipelineSession:
         use_database(repository)
 
     @contextmanager
-    def in_repository(self, repository: str) -> Iterator[None]:
+    def in_repository(self, repository: str) -> Generator[None]:
         """Work in another repository's database for a block; the session reads its own repository again afterwards."""
         previous = self.repository
         if repository != previous:
@@ -967,7 +967,7 @@ class PipelineSession:
         return config.disable_step(self._engine, step_type, name)
 
     @contextmanager
-    def only_step(self, step_type: str, name: str) -> Iterator[None]:
+    def only_step(self, step_type: str, name: str) -> Generator[None]:
         """Enable only `name` for the duration of the block, then restore the exact prior state."""
         if step_type == "extraction":
             configs, key = self.get_extraction_configs(), "node_type"

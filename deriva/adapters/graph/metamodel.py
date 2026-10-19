@@ -78,7 +78,7 @@ def node_description(node_class: type) -> str:
     return lines[0].strip() if lines else ""
 
 
-def get_node_properties(node_class: type) -> list[str]:
+def get_node_properties(node_class: type[Any]) -> list[str]:
     """Get all property names for a node class.
 
     Args:

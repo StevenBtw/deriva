@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -36,7 +36,7 @@ def create_app(provider: SessionProvider | None = None, static_dir: Path | None 
     session_provider = provider or SessionProvider()
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         yield
         # A run in progress is asked to stop; one whose step does not end in time is left to the process exit
         await asyncio.to_thread(app.state.runs.stop, SHUTDOWN_WAIT)

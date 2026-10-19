@@ -1347,7 +1347,7 @@ class BenchmarkOrchestrator:
             return response
 
         # Attach cache keys list to function for retrieval after run
-        query_fn.used_cache_keys = used_cache_keys  # type: ignore[attr-defined]
+        query_fn.used_cache_keys = used_cache_keys  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         return query_fn
 
     def _record_llm_call(self, llm: Any, step: str | None, prompt: str, schema: dict | None, system_prompt: str | None, response: Any, error: str | None) -> None:

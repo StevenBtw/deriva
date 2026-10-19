@@ -43,8 +43,9 @@ from typing import Any, TypeVar, cast, overload
 
 import httpx2
 from pydantic import BaseModel
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai.exceptions import IncompleteToolCall, ModelHTTPError
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.settings import ModelSettings
 
 from deriva.common import settings
@@ -230,13 +231,15 @@ def _key_variable(config: BenchmarkModelConfig) -> str:
     return config.api_key_env or f"LLM_{config.name.upper().replace('-', '_')}_KEY"
 
 
-def _was_cut(result: Any) -> bool:
-    """Whether a model response in the run stopped at the output limit (finish reason ``length``)."""
-    from pydantic_ai.messages import ModelResponse
+def _has_cut_response(history: Any) -> bool:
+    """Whether a model response in a run's messages stopped at the output limit (finish reason ``length``)."""
+    return any(isinstance(m, ModelResponse) and m.finish_reason == "length" for m in history or [])
 
+
+def _was_cut(result: Any) -> bool:
+    """Whether a model response in the run's result stopped at the output limit."""
     messages = getattr(result, "all_messages", None)
-    history = messages() if callable(messages) else []
-    return any(isinstance(m, ModelResponse) and m.finish_reason == "length" for m in history)
+    return _has_cut_response(messages() if callable(messages) else [])
 
 
 def _serialize_output(output: object) -> str:
@@ -603,7 +606,7 @@ class LLMManager:
         max_delay = self.config.get("retry_max_delay", 60.0)
         for attempt in range(self.max_retries + 1):
             try:
-                return agent.run_sync(prompt, model_settings=settings), attempt
+                return self._run_once(agent, prompt, settings), attempt
             except Exception as e:
                 if attempt == self.max_retries or not _is_retriable(e):
                     raise
@@ -626,6 +629,19 @@ class LLMManager:
                 )
                 time.sleep(delay)
         raise AssertionError("unreachable")
+
+    @staticmethod
+    def _run_once(agent: Agent[None, Any], prompt: str, settings: ModelSettings) -> Any:
+        """One agent run. pydantic-ai asks again after an answer cut at the output limit; when those answers fail
+        too it raises "Exceeded maximum output retries", which is the cut: raised as IncompleteToolCall."""
+        with capture_run_messages() as messages:
+            try:
+                return agent.run_sync(prompt, model_settings=settings)
+            except Exception as e:
+                if not isinstance(e, IncompleteToolCall) and _has_cut_response(messages):
+                    limit = settings.get("max_tokens") or "provider default"
+                    raise IncompleteToolCall(f"Model token limit ({limit}) reached: the answer was cut, and the answers after it failed ({e})") from e
+                raise
 
     def _agent(self, output_type: Any, system_prompt: str) -> Agent[None, Any]:
         """Reusable agent for this output type and system prompt, per thread (created lazily).

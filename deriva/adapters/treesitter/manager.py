@@ -349,7 +349,7 @@ class TreeSitterManager:
             Configured tree-sitter parser
         """
         if language not in self._parsers:
-            raw_language = extractor.get_language()
+            raw_language: object = extractor.get_language()
             # Wrap in Language object (tree-sitter 0.24+ API)
             ts_language = tree_sitter.Language(raw_language)
             parser = tree_sitter.Parser(ts_language)

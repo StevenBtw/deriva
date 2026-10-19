@@ -40,7 +40,7 @@ from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from types import ModuleType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -1181,7 +1181,7 @@ def _extract_data_domains(cfg: config.ExtractionConfig, repo: Any, repo_path: Pa
         for table in e.tables:
             node_by_name[table.casefold()] = e.key
     for c in candidates:
-        node_by_name.setdefault(str(fact_of.get(c["type_id"], {}).get("name", "")).casefold(), c["type_id"])
+        node_by_name.setdefault(str(fact_of.get(c["type_id"], {}).get("name", "")).casefold(), cast(str, c["type_id"]))
     relations: list[tuple[str, str, str]] = []
     for path in sorted(
         {norm(f["path"]) for f in facts if f["path"]}

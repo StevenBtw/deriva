@@ -439,8 +439,9 @@ def main() -> int:
     about.suppress_pydantic_ai_banner()
     # Line-buffer stdout so progress appears live, also when piped to a file
     # (redirected streams such as io.StringIO have no reconfigure)
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(line_buffering=True)
     try:
         app()
         return 0

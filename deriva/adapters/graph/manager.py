@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -280,7 +280,7 @@ class GraphManager:
             raise
 
     @contextmanager
-    def step_tags(self, step: str, version: int | None = None) -> Iterator[None]:
+    def step_tags(self, step: str, version: int | None = None) -> Generator[None]:
         """Nodes and edges written inside the block carry the extraction step (``extractStep``) and its version."""
         previous = self._step_tags
         self._step_tags = {"extractStep": step, **({"extractVersion": version} if version is not None else {})}
@@ -290,7 +290,7 @@ class GraphManager:
             self._step_tags = previous
 
     @contextmanager
-    def recording(self) -> Iterator[GraphWrites]:
+    def recording(self) -> Generator[GraphWrites]:
         """The nodes and edges written inside the block (for the run log); failed writes are left out."""
         recorder = GraphWrites()
         self._recorders.append(recorder)

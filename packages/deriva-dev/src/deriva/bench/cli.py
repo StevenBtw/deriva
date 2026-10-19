@@ -7,7 +7,7 @@ Provides commands for multi-model benchmarking.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -26,7 +26,7 @@ app = typer.Typer(name="benchmark", help="Multi-model benchmarking")
 
 
 @contextmanager
-def _benchmarks() -> Iterator[BenchmarkSession]:
+def _benchmarks() -> Generator[BenchmarkSession]:
     """A connected PipelineSession with the benchmark operations."""
     with PipelineSession() as session:
         yield BenchmarkSession(session)

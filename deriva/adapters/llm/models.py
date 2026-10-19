@@ -147,7 +147,7 @@ class BaseResponse(BaseModel):
 class LiveResponse(BaseResponse):
     """Response from a live API call."""
 
-    response_type: Literal[ResponseType.LIVE] = ResponseType.LIVE
+    response_type: Literal[ResponseType.LIVE] = ResponseType.LIVE  # ty: ignore[invalid-mutable-override]: the discriminator of a pydantic union
     content: str
     usage: dict[str, Any] | None = None
     finish_reason: str | None = None
@@ -156,7 +156,7 @@ class LiveResponse(BaseResponse):
 class CachedResponse(BaseResponse):
     """Response retrieved from cache."""
 
-    response_type: Literal[ResponseType.CACHED] = ResponseType.CACHED
+    response_type: Literal[ResponseType.CACHED] = ResponseType.CACHED  # ty: ignore[invalid-mutable-override]: the discriminator of a pydantic union
     content: str
     cache_key: str
     cached_at: str
@@ -165,7 +165,7 @@ class CachedResponse(BaseResponse):
 class FailedResponse(BaseResponse):
     """Response when API call fails."""
 
-    response_type: Literal[ResponseType.FAILED] = ResponseType.FAILED
+    response_type: Literal[ResponseType.FAILED] = ResponseType.FAILED  # ty: ignore[invalid-mutable-override]: the discriminator of a pydantic union
     error: str
     error_type: str
 

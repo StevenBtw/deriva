@@ -960,6 +960,45 @@ class TestCutAnswers:
         assert "60" in first.error
         assert second.items == ["a", "b"] and agent_class.return_value.run_sync.call_count == 2
 
+    def test_a_run_that_failed_after_a_cut_response_is_cut_and_not_retried(self, tmp_path):
+        """pydantic-ai raises 'Exceeded maximum output retries' when the cut answer's retries fail otherwise."""
+        from contextlib import contextmanager
+
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from pydantic_ai.messages import ModelResponse, TextPart
+
+        from deriva.adapters.llm.models import FailedResponse
+
+        @contextmanager
+        def captured():
+            yield [ModelResponse(parts=[TextPart(content="...")], finish_reason="length"), ModelResponse(parts=[TextPart(content="{}")], finish_reason="stop")]
+
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class, patch("deriva.adapters.llm.manager.capture_run_messages", captured):
+            agent_class.return_value.run_sync.side_effect = UnexpectedModelBehavior("Exceeded maximum output retries (3)")
+            response = manager.query("classify", schema={"type": "object", "properties": {"items": {"type": "array"}}}, max_tokens=60)
+
+        assert isinstance(response, FailedResponse) and response.error_type == "IncompleteToolCall"
+        assert agent_class.return_value.run_sync.call_count == 1
+
+    def test_other_failed_runs_keep_their_error(self, tmp_path):
+        from contextlib import contextmanager
+
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        from deriva.adapters.llm.models import FailedResponse
+
+        @contextmanager
+        def captured():
+            yield []
+
+        manager = self._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class, patch("deriva.adapters.llm.manager.capture_run_messages", captured):
+            agent_class.return_value.run_sync.side_effect = UnexpectedModelBehavior("Exceeded maximum output retries (3)")
+            response = manager.query("classify", schema={"type": "object", "properties": {"items": {"type": "array"}}})
+
+        assert isinstance(response, FailedResponse) and response.error_type == "UnexpectedModelBehavior"
+
     def test_a_text_answer_is_returned_as_it_came(self, tmp_path):
         manager = self._manager(tmp_path)
         with patch("deriva.adapters.llm.manager.Agent") as agent_class:

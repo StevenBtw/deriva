@@ -34,7 +34,7 @@ def exports_folder() -> Path:
 
 def overview(repositories: set[str], active: str) -> dict[str, Any]:
     """Sizes per area; each graph database says whether it is a repository's, the shared one or orphaned."""
-    graphs = []
+    graphs: list[dict[str, Any]] = []
     for key in list_databases():
         kind = "repository" if key in repositories else "shared" if key == DEFAULT_DATABASE else "orphaned"
         graphs.append({"key": key, "bytes": database_bytes(key), "kind": kind, "active": key == active})

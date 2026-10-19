@@ -730,7 +730,12 @@ def derive_unit_services(
 
             def usable(found: list[str]) -> list[str]:
                 seen: set[str] = set()
-                return [c for c in found if name_key(c) not in taken and not (name_key(c) in seen or seen.add(name_key(c)))][: config.max_candidates]
+                kept = []
+                for c in found:
+                    if name_key(c) not in taken and name_key(c) not in seen:
+                        seen.add(name_key(c))
+                        kept.append(c)
+                return kept[: config.max_candidates]
 
             candidates = usable(candidates)
             if not candidates:
@@ -809,7 +814,12 @@ def derive_unit_services(
                 for m in re.finditer(rf"(?i)\b{re.escape(object_name)}\s+({nouns})\b", text):
                     candidates.append(f"{object_name} {m.group(1).lower().capitalize()}")
         seen = set()
-        candidates = [c for c in candidates if not (name_key(c) in seen or seen.add(name_key(c)))] or [object_name]
+        unique = []
+        for c in candidates:
+            if name_key(c) not in seen:
+                seen.add(name_key(c))
+                unique.append(c)
+        candidates = unique or [object_name]
         # A function never takes a service's name (the same name on two types is a duplicate)
         service_names = {name_key(s["name"]) for s in services}
         candidates = [c for c in candidates if name_key(c) not in service_names] or candidates
