@@ -62,9 +62,9 @@ dependencies = [
     # LLM
     # CVE-2026-107286, CVE-2026-107287 fixed in 2.53; slim with only the providers model_registry.py
     # builds (azure, ollama, lmstudio and mistral go through the openai client), so no google, logfire or mcp stack
-    "pydantic-ai-slim[openai,anthropic]>=2.55",
+    "pydantic-ai-slim[openai,anthropic]>=2.57",
     # Utilities
-    "httpx2>=2.13",
+    "httpx2>=2.14",
     "lmdb>=1.6",
     "typer>=0.27",
     "tree-sitter-typescript==0.23.2",
