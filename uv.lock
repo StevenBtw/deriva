@@ -86,14 +86,14 @@ wheels = [
 
 [[package]]
 name = "anywidget-graph"
-version = "0.4.3"
+version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/91/911e1a799dc2df285d6eea9e4da1c07e2dc0ac7f9347d7c26ab385c89d69/anywidget_graph-0.4.3.tar.gz", hash = "sha256:61c784d600690985b36fc6b3f4765c0b63d44d75e0d7033abc73ce5bd0f5dfbf", size = 462135, upload-time = "2026-10-12T19:48:42.345Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ca/6f/818afe67db5720550fe14536033248641c3efa3a5cb72ed9c1bfa5d3e27a/anywidget_graph-0.4.4.tar.gz", hash = "sha256:61e15fc409902ff8db44a375b17ac2fc3db96ca6d6dfd074a4009e1c4b629152", size = 520944, upload-time = "2026-10-19T09:49:49.646Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/1d/146c1619d5c3d4bbb6c13720264025b8e509de5c7108cb7e675968cf5c24/anywidget_graph-0.4.3-py3-none-any.whl", hash = "sha256:36e91e79b0256b23441fe0de80483c8011b32d9f5e2c0f893ae46a4b585b2e1a", size = 110095, upload-time = "2026-10-12T19:48:41.041Z" },
+    { url = "https://files.pythonhosted.org/packages/02/93/215f907440ad3cbf9db03d850d7a17e3bd391fb42208c2e308a039b17e54/anywidget_graph-0.4.4-py3-none-any.whl", hash = "sha256:e96d06b30ad146fb323a2e1e03042ebbe997cd2e35b90800d559ecc33dd81756", size = 162510, upload-time = "2026-10-19T09:49:48.266Z" },
 ]
 
 [[package]]
@@ -486,7 +486,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "anywidget-archimate", specifier = ">=0.3.1" },
-    { name = "anywidget-graph", specifier = ">=0.4.3" },
+    { name = "anywidget-graph", specifier = ">=0.4.4" },
     { name = "deriva-cli", editable = "." },
     { name = "fastapi", specifier = ">=0.142.4" },
     { name = "uvicorn", specifier = ">=0.41.0" },

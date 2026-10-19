@@ -22,6 +22,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 - **Temperature for models that refuse one**: a model config without `SAMPLING` now follows the model, as pydantic-ai knows it: an Anthropic model that takes no temperature (Claude Haiku 5.5) gets none, instead of a warning on every call that the temperature was dropped. An explicit `SAMPLING` still wins
 - **Local context windows**: a model config takes its context size (`LLM_{NAME}_CONTEXT`, `config model set --context N`), and a call that fills it is logged as a warning: Ollama cuts a prompt longer than its window (4096 tokens unless started with `OLLAMA_CONTEXT_LENGTH`) without an error, and its OpenAI-compatible API cannot set the window per call
 - **Studio config and ontology pages**: the derivation config list heads each phase (prep, generate, refine), since step numbers start again per phase; a step without LLM calls shows no empty Instruction or Example editor and opens on its params (stored texts stay shown). The allowed-relationships matrix takes the page's full width with abbreviated row labels (the full type on hover), so it fits from 1280 pixels wide instead of running past its card
+- **Graph widget without a CDN**: the studio requires anywidget-graph 0.4.4, which bundles its graph libraries. With 0.4.3 the graphs failed with "Failed to fetch dynamically imported module" wherever esm.sh or cdn.jsdelivr.net could not be reached (offline, a network filter, a blocker)
 
 ## v0.8.3 - Adding abstraction to consistency (October 18 2026)
 

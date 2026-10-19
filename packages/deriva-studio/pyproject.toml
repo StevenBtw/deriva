@@ -12,7 +12,7 @@ dependencies = [
     "deriva-cli==0.8.3",
     "fastapi>=0.142.4",
     "uvicorn>=0.41.0",
-    "anywidget-graph>=0.4.3",
+    "anywidget-graph>=0.4.4",
     "anywidget-archimate>=0.3.1",
 ]
 
