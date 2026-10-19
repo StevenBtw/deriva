@@ -580,7 +580,9 @@ class PythonExtractor(LanguageExtractor):
         """Extract a class definition."""
         name = self._get_class_name(node, source)
         bases = self._get_bases(node, source)
-        decorators = self._get_decorators(node, source)
+        # The decorators belong to the decorated definition around the class
+        decorated = node.parent if node.parent is not None and node.parent.type == "decorated_definition" else node
+        decorators = self._get_decorators(decorated, source)
         docstring = self._get_docstring(node, source)
 
         return ExtractedType(
@@ -629,8 +631,8 @@ class PythonExtractor(LanguageExtractor):
         )
 
     def _extract_type_alias(self, node: tree_sitter.Node, source: bytes) -> ExtractedType:
-        """Extract a type alias (type X = ...)."""
-        name_node = self.find_child_by_field(node, "name")
+        """Extract a type alias (type X = ...); the grammar names its sides left and right."""
+        name_node = self.find_child_by_field(node, "left") or self.find_child_by_field(node, "name")
         name = self.get_node_text(name_node, source) if name_node else ""
 
         return ExtractedType(

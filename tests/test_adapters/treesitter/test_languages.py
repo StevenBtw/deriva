@@ -517,6 +517,8 @@ class TestEdgeCases:
         types = manager.extract_types(source, language=language)
 
         assert [(t.name, t.kind) for t in types] == [(name, "class")]
+        # The decorators, annotations or attributes are kept
+        assert types[0].decorators
 
     @pytest.mark.parametrize(
         "language,sample_key",
@@ -701,8 +703,7 @@ class TestPythonSpecificExtraction:
         source = "type UserId = int"
         types = manager.extract_types(source, language="python")
 
-        # Found as an alias; its name is a known gap (test_a_python_type_alias_is_named)
-        assert [t.kind for t in types] == ["type_alias"]
+        assert [(t.name, t.kind) for t in types] == [("UserId", "type_alias")]
 
     def test_extracts_decorated_function_as_type(self, manager):
         """Should extract decorated top-level functions as types."""
@@ -857,8 +858,7 @@ class TestJavaScriptSpecificExtraction:
         source = "export default class Service { run() {} }"
         types = manager.extract_types(source, language="javascript")
 
-        # The class is there (the extra types it also gives are a known gap, below)
-        assert ("Service", "class") in [(t.name, t.kind) for t in types]
+        assert [(t.name, t.kind) for t in types] == [("Service", "class")]
 
     def test_extracts_commonjs_module(self, manager):
         """Should extract CommonJS module.exports class."""
@@ -866,8 +866,7 @@ class TestJavaScriptSpecificExtraction:
 module.exports = Helper;"""
         types = manager.extract_types(source, language="javascript")
 
-        # The class is there (the extra types it also gives are a known gap, below)
-        assert ("Helper", "class") in [(t.name, t.kind) for t in types]
+        assert [(t.name, t.kind) for t in types] == [("Helper", "class")]
 
 
 # =============================================================================
@@ -955,38 +954,33 @@ class TestCSharpSpecificExtraction:
 
 
 # =============================================================================
-# KNOWN GAPS: the right result, expected to fail until the extractor is fixed
+# PARSER FIXES: results the parsers once got wrong
 # =============================================================================
 
 
-class TestKnownExtractionGaps:
-    """Each test states what the extractor should return; strict, so a fix turns it into a failure to remove."""
+class TestParserFixes:
+    """Decorators of a Python class, a type alias name, one type per exported JavaScript class, and C# return types."""
 
-    @pytest.mark.xfail(strict=True, reason="Python class decorators are not read (0 of 358 classes in a real graph have any)")
     def test_a_decorated_python_class_keeps_its_decorator(self, manager):
         source, name = SAMPLES["python"]["decorated_class"][:2]
 
         assert [(t.name, t.decorators) for t in manager.extract_types(source, language="python")] == [(name, ["dataclass"])]
 
-    @pytest.mark.xfail(strict=True, reason="a Python type alias gets an empty name")
     def test_a_python_type_alias_is_named(self, manager):
         types = manager.extract_types("type UserId = int\ntype Callback = Callable[[int], str]", language="python")
 
         assert [(t.name, t.kind) for t in types] == [("UserId", "type_alias"), ("Callback", "type_alias")]
 
-    @pytest.mark.xfail(strict=True, reason="export default class gives the class twice and an unnamed one")
     def test_an_exported_default_class_is_one_type(self, manager):
         types = manager.extract_types("export default class Service { run() {} }", language="javascript")
 
         assert [(t.name, t.kind) for t in types] == [("Service", "class")]
 
-    @pytest.mark.xfail(strict=True, reason="module.exports = Name gives a second, unnamed class")
     def test_a_commonjs_export_adds_no_type(self, manager):
         types = manager.extract_types("class Helper {}\nmodule.exports = Helper;", language="javascript")
 
         assert [(t.name, t.kind) for t in types] == [("Helper", "class")]
 
-    @pytest.mark.xfail(strict=True, reason="C# methods get no return type")
     def test_a_csharp_method_keeps_its_return_type(self, manager):
         methods = manager.extract_methods("public class Service {\n    public async Task<User> GetUserAsync(int id) { return null; }\n}", language="csharp")
 
