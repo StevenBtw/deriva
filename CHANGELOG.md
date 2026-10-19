@@ -8,7 +8,9 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
-## v0.8.4 - (Unreleased)
+## v0.8.4 - Studio management and field fixes (October 19 2026)
+
+The studio now manages what a workspace keeps (repositories, graph databases, runs, benchmark sessions, storage), and a test on a large repository led to fixes in cloning, long paths and cut LLM answers, and to two read-only reports: extraction coverage and model quality.
 
 ### Studio management
 
