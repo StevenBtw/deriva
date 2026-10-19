@@ -55,3 +55,22 @@ def test_model_configs_need_no_database(make_client):
     assert client.get("/api/models").json() == [{"name": "m"}]
     assert client.put("/api/models/m", json={"provider": "mistral", "model": "x"}).status_code == 200
     assert not session.connected
+
+
+def test_a_model_config_is_tested_with_one_small_call(make_client):
+    answer = {"ok": True, "model": "mistral-small4", "provider": "mistral", "model_id": "mistral-small-2603"}
+    answer |= {"served_model": "mistral-small-2603", "latency_ms": 812.4, "answer": "OK"}
+    session = FakeSession(check_model_config=answer)
+    client = make_client(session)
+
+    assert client.post("/api/models/mistral-small4/test").json() == answer
+    assert session.called("check_model_config") == [(("mistral-small4",), {})]
+
+
+def test_testing_an_unknown_model_config_is_404(make_client):
+    def unknown(name):
+        raise KeyError(name)
+
+    client = make_client(FakeSession(check_model_config=unknown))
+
+    assert client.post("/api/models/nope/test").status_code == 404

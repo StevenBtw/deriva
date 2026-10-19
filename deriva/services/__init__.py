@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from deriva.adapters.database import ConfigDatabaseBusy
 
-from . import config, config_models, derivation, extraction, pipeline
+from . import config, config_models, derivation, extraction, pipeline, storage
 from .session import PipelineSession, RunCancelled, UnknownRepository
 
 __all__ = [
@@ -53,4 +53,5 @@ __all__ = [
     "extraction",
     "derivation",
     "pipeline",
+    "storage",
 ]

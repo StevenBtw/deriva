@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from deriva.services import config
 from deriva.services.config import (
     DerivationConfig,
     ExtractionConfig,
@@ -2153,3 +2154,52 @@ class TestSequenceThroughVersions:
         assert result["updated"] == [{"step_name": "a", "sequence": 1}]
         assert result["errors"] == ["Step 'c' not found or not active"]
         assert engine.execute("SELECT max(version) FROM derivation_config WHERE step_name = 'a'").fetchone()[0] == 1
+
+
+class TestRestoreConfigVersion:
+    """Restoring an earlier version copies its texts and settings into a new version; order and the switch stay."""
+
+    @staticmethod
+    def _engine():
+        import duckdb
+
+        from deriva.adapters.database.manager import SCRIPTS_DIR
+
+        engine = duckdb.connect(":memory:")
+        engine.execute((SCRIPTS_DIR / "schema.sql").read_text(encoding="utf-8"))
+        engine.execute(
+            "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, llm, instruction, example, params,"
+            " input_graph_query, temperature, batch_size, max_candidates, is_active) VALUES "
+            "(1, 'Node', 'generate', 1, 2, TRUE, TRUE, 'Old instruction.', NULL, '{\"a\": 1}', 'MATCH (n) RETURN n', 0.0, 5, 30, FALSE),"
+            "(2, 'Node', 'generate', 2, 4, FALSE, TRUE, 'New instruction.', '{\"x\": 1}', '{\"a\": 2}', 'MATCH (m) RETURN m', NULL, 10, 40, TRUE)"
+        )
+        engine.execute(
+            "INSERT INTO extraction_config (id, node_type, version, sequence, enabled, instruction, example, params, extraction_method, is_active) VALUES "
+            "(1, 'BusinessConcept', 1, 11, TRUE, 'Classify.', 'e1', NULL, 'llm', FALSE),"
+            "(2, 'BusinessConcept', 2, 12, TRUE, 'Classify more.', 'e2', '{\"k\": 1}', 'llm', TRUE)"
+        )
+        return engine
+
+    def test_a_derivation_version_comes_back_as_a_new_version_with_its_empty_fields(self):
+        engine = self._engine()
+
+        result = config.restore_config_version(engine, "derivation", "Node", 1)
+
+        assert result == {"success": True, "old_version": 2, "new_version": 3, "restored": 1}
+        columns = "version, sequence, enabled, instruction, example, params, input_graph_query, temperature, batch_size, max_candidates"
+        row = engine.execute(f"SELECT {columns} FROM derivation_config WHERE step_name = 'Node' AND is_active").fetchall()
+        assert row == [(3, 4, False, "Old instruction.", None, '{"a": 1}', "MATCH (n) RETURN n", 0.0, 5, 30)]
+
+    def test_an_extraction_version_comes_back_too(self):
+        engine = self._engine()
+
+        assert config.restore_config_version(engine, "extraction", "BusinessConcept", 1)["new_version"] == 3
+        row = engine.execute("SELECT sequence, instruction, example, params FROM extraction_config WHERE node_type = 'BusinessConcept' AND is_active").fetchall()
+        assert row == [(12, "Classify.", "e1", None)]
+
+    def test_the_active_or_an_unknown_version_is_refused(self):
+        engine = self._engine()
+
+        assert config.restore_config_version(engine, "derivation", "Node", 2) == {"success": False, "error": "Version 2 of Node is the active one"}
+        assert config.restore_config_version(engine, "derivation", "Node", 9) == {"success": False, "error": "Node has no version 9"}
+        assert config.restore_config_version(engine, "derivation", "Nope", 1) == {"success": False, "error": "Config not found for Nope"}

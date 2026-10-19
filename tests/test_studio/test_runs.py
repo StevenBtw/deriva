@@ -7,6 +7,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+import pytest
+
 from tests.test_studio.conftest import FakeSession
 
 
@@ -767,3 +769,82 @@ def test_closing_the_provider_gives_up_after_its_timeout_while_the_session_is_he
     release.set()
     holder.join(5)
     assert provider.close(timeout=1.0) is True
+
+
+def _kept(runs_dir, run_id, kind, repository, started_at, status="finished"):
+    """A run of an earlier studio process: its folder with a summary, events and a call log."""
+    folder = runs_dir / run_id
+    folder.mkdir(parents=True)
+    row = {"run_id": run_id, "kind": kind, "repository": repository, "status": status, "events": 1, "started_at": started_at, "finished_at": started_at + 1}
+    (folder / "run.json").write_text(json.dumps(row), encoding="utf-8")
+    (folder / "llm.jsonl").write_text("{}\n", encoding="utf-8")
+    return folder
+
+
+def _manager(tmp_path, session=None):
+    from deriva.studio.provider import SessionProvider
+    from deriva.studio.runs import RunManager
+
+    return RunManager(SessionProvider(factory=lambda: session or FakeSession()), runs_dir=tmp_path)
+
+
+def test_history_filters_by_repository_and_kind_and_pages(tmp_path):
+    for i, (kind, repository) in enumerate([("all", "a"), ("extraction", "a"), ("derivation", "b"), ("all", "b"), ("derivation", "a")]):
+        _kept(tmp_path, f"r{i}", kind, repository, 100.0 + i)
+    runs = _manager(tmp_path)
+
+    assert [r["run_id"] for r in runs.history(limit=None, repository="a")] == ["r4", "r1", "r0"]
+    assert [r["run_id"] for r in runs.history(limit=None, kind="derivation")] == ["r4", "r2"]
+    assert [r["run_id"] for r in runs.history(limit=2, offset=2)] == ["r2", "r1"]
+
+
+def test_a_run_is_deleted_with_its_folder_but_never_while_it_runs(make_client, tmp_path):
+    from deriva.studio.runs import RunBusy
+
+    old = _kept(tmp_path / "runs", "old1", "all", "a", 100.0)
+    release, in_step = threading.Event(), threading.Event()
+
+    def blocking(*args, **kwargs):
+        in_step.set()
+        release.wait(5)
+        yield Update(step="S1")
+
+    client = make_client(FakeSession(run_extraction_iter=blocking, use_repository=None))
+    runs = client.app.state.runs
+    running = client.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
+    assert in_step.wait(5)
+
+    assert runs.delete("old1") is True and not old.exists()
+    assert runs.delete("old1") is False
+    with pytest.raises(RunBusy):
+        runs.delete(running)
+    release.set()
+    wait_for(lambda: finished(client, running))
+    assert runs.delete(running) is True
+    assert runs.get(running) is None and not (tmp_path / "runs" / running).exists()
+
+
+def test_prune_keeps_the_latest_runs_or_drops_the_interrupted_ones(tmp_path):
+    for i in range(5):
+        _kept(tmp_path, f"r{i}", "all", "a", 100.0 + i)
+    crashed = tmp_path / "crashed"
+    crashed.mkdir()
+    (crashed / "events.jsonl").write_text(json.dumps({"seq": 1, "event": "started", "data": {"kind": "all", "repository": "a"}, "ts": 50.0}) + "\n", encoding="utf-8")
+    runs = _manager(tmp_path)
+
+    assert runs.prune(interrupted=True) == ["crashed"]
+    assert runs.prune(keep=2) == ["r2", "r1", "r0"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["r3", "r4"]
+
+
+def test_run_history_routes_filter_delete_and_prune(make_client, tmp_path):
+    for i in range(3):
+        _kept(tmp_path / "runs", f"r{i}", "derivation" if i else "all", "a" if i < 2 else "b", 100.0 + i)
+    client = make_client(FakeSession())
+
+    assert [r["run_id"] for r in client.get("/api/runs/history?limit=10&repository=a").json()] == ["r1", "r0"]
+    assert [r["run_id"] for r in client.get("/api/runs/history?limit=1&offset=1").json()] == ["r1"]
+    assert client.delete("/api/runs/r2").json() == {"deleted": "r2"}
+    assert client.delete("/api/runs/r2").status_code == 404
+    assert client.post("/api/runs/prune", json={"keep": 1}).json() == {"deleted": ["r0"]}
+    assert client.post("/api/runs/prune", json={}).status_code == 400

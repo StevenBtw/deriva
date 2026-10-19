@@ -137,6 +137,12 @@ def get_pydantic_ai_model(config: dict[str, Any]) -> Model | str:
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.azure import AzureProvider
 
+        # Azure's v1 API (<resource>/openai/v1/) is OpenAI's and takes no api_version: the OpenAI client goes there
+        if api_url and "/openai/v1" in api_url:
+            from pydantic_ai.providers.openai import OpenAIProvider
+
+            base_url = api_url[: api_url.index("/openai/v1") + len("/openai/v1")]
+            return OpenAIChatModel(model, provider=OpenAIProvider(base_url=base_url, api_key=api_key))
         azure_endpoint = _normalize_azure_url(api_url) if api_url else None
         azure_provider = AzureProvider(
             azure_endpoint=azure_endpoint,

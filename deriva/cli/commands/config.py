@@ -396,6 +396,24 @@ def config_versions() -> None:
         typer.echo("")
 
 
+@app.command("restore")
+def config_restore(
+    step_type: Annotated[str, typer.Argument(help="Type: 'extraction' or 'derivation'")],
+    name: Annotated[str, typer.Argument(help="Step name")],
+    version: Annotated[int, typer.Argument(help="The earlier version to bring back")],
+) -> None:
+    """Make an earlier version's texts and settings the step's new version (order and the on/off switch stay)."""
+    if step_type not in ("extraction", "derivation"):
+        typer.echo(f"Error: step_type must be 'extraction' or 'derivation', got '{step_type}'", err=True)
+        raise typer.Exit(1)
+    with PipelineSession() as session:
+        result = session.restore_config_version(step_type, name, version)
+    if not result.get("success"):
+        typer.echo(f"Error: {result.get('error', 'Restore failed')}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"{name}: version {result['restored']} restored as v{result['new_version']} (was v{result['old_version']})")
+
+
 # =============================================================================
 # Read-Only Query Commands
 # =============================================================================
@@ -727,6 +745,25 @@ def model_set(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from e
     typer.echo(f"Saved model config {name}")
+
+
+@model_app.command("test")
+def model_test(
+    name: Annotated[str, typer.Argument(help="Model config name")],
+) -> None:
+    """Make one small call with a model config: does its key, model id and URL work?"""
+    try:
+        result = PipelineSession().check_model_config(name)
+    except KeyError as e:
+        typer.echo(f"Error: No model config named {name}", err=True)
+        raise typer.Exit(1) from e
+    if not result.get("ok"):
+        typer.echo(f"{name} failed: {result.get('error')}", err=True)
+        if result.get("detail"):
+            typer.echo(f"  Provider said: {str(result['detail'])[:300]}", err=True)
+        raise typer.Exit(1)
+    seconds = (result.get("latency_ms") or 0) / 1000
+    typer.echo(f"{name} works: {result.get('served_model') or result.get('model_id')} answered in {seconds:.1f} s")
 
 
 @model_app.command("default")

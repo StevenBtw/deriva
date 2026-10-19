@@ -8,7 +8,7 @@ vi.mock("../api/client", async () => {
     ...actual,
     settings: { get: vi.fn(), set: vi.fn() },
     fileTypes: { list: vi.fn(), add: vi.fn(), update: vi.fn(), remove: vi.fn() },
-    modelConfigs: { list: vi.fn(), save: vi.fn(), remove: vi.fn() },
+    modelConfigs: { list: vi.fn(), save: vi.fn(), remove: vi.fn(), test: vi.fn() },
   };
 });
 
@@ -167,5 +167,41 @@ describe("General", () => {
 
     await userEvent.click(within(screen.getByText("anthropic-haiku").closest("tr")!).getByRole("button", { name: "Delete" }));
     expect(modelConfigs.remove).toHaveBeenCalledWith("anthropic-haiku");
+  });
+
+  it("tests a model config with one small call and says how it went", async () => {
+    vi.mocked(modelConfigs.test).mockResolvedValue({
+      ok: true, model: "anthropic-haiku", provider: "anthropic", model_id: "claude-haiku", served_model: "claude-haiku-5-5", latency_ms: 812.4, answer: "OK",
+    });
+    render(<General />);
+    const row = (await screen.findByText("anthropic-haiku")).closest("tr")!;
+
+    await userEvent.click(within(row).getByRole("button", { name: "Test" }));
+
+    expect(modelConfigs.test).toHaveBeenCalledWith("anthropic-haiku");
+    expect(await screen.findByText("Works: claude-haiku-5-5 answered in 0.8 s")).toBeInTheDocument();
+  });
+
+  it("says what to fix when a model config does not work", async () => {
+    vi.mocked(modelConfigs.test).mockResolvedValue({
+      ok: false, model: "anthropic-haiku", provider: "anthropic", model_id: "claude-haiku", error: "The provider refused the API key: check the key (ModelHTTPError)", detail: "status_code: 401",
+    });
+    render(<General />);
+    const row = (await screen.findByText("anthropic-haiku")).closest("tr")!;
+
+    await userEvent.click(within(row).getByRole("button", { name: "Test" }));
+
+    const result = await screen.findByText("The provider refused the API key: check the key (ModelHTTPError)");
+    expect(result).toHaveAttribute("title", "status_code: 401");
+  });
+
+  it("asks to test a model after saving it", async () => {
+    render(<General />);
+    const row = (await screen.findByText("anthropic-haiku")).closest("tr")!;
+    await userEvent.click(within(row).getByRole("button", { name: "Edit" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Save model" }));
+
+    expect(await screen.findByText("Saved anthropic-haiku. Press Test to check its key and model id.")).toBeInTheDocument();
   });
 });

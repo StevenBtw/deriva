@@ -1374,3 +1374,59 @@ def test_gate_compares_a_candidate_with_a_baseline_and_writes_markdown_and_json(
     alone = _Runner().invoke(bench_app, ["gate", "--baseline", "bench_base", "--benchmarks", str(benchmarks), "--goldens", str(goldens), "-o", str(tmp_path / "alone")])
     assert alone.exit_code == 0, alone.output
     assert "| shop | reference | 2 | 50.0% | 100.0% |" in alone.output and "Verdict" not in alone.output
+
+
+class TestBenchmarkSessionCleanup:
+    """benchmark delete / prune: sessions go with their runs, metrics and folders; running ones stay."""
+
+    @patch("deriva.bench.cli.PipelineSession")
+    @patch("deriva.bench.cli.BenchmarkSession")
+    def test_delete_names_what_went_and_fails_for_one_it_could_not_delete(self, bench_class, _session):
+        bench = bench_class.return_value
+
+        def delete(session_id):
+            if session_id == "bench_4":
+                raise ValueError("Session bench_4 is running; mark it failed first when its process has stopped")
+            return {"session_id": session_id, "runs": 3, "bytes": 2 * 1024 * 1024}
+
+        bench.delete_benchmark.side_effect = delete
+
+        result = runner.invoke(app, ["benchmark", "delete", "bench_1", "bench_4"])
+
+        assert result.exit_code == 1
+        assert "Deleted bench_1 (3 runs, 2.0 MB)" in result.output
+        assert "Session bench_4 is running" in result.output
+
+    @patch("deriva.bench.cli.PipelineSession")
+    @patch("deriva.bench.cli.BenchmarkSession")
+    def test_prune_asks_first_unless_told_yes(self, bench_class, _session):
+        bench = bench_class.return_value
+        bench.prune_benchmarks.return_value = ["bench_1", "bench_0"]
+
+        refused = runner.invoke(app, ["benchmark", "prune", "--keep", "5"], input="n\n")
+        assert refused.exit_code == 1 and bench.prune_benchmarks.call_count == 0
+
+        result = runner.invoke(app, ["benchmark", "prune", "--keep", "5", "--yes"])
+        assert result.exit_code == 0
+        bench.prune_benchmarks.assert_called_once_with(keep=5, failed=False)
+        assert "Deleted 2 sessions: bench_1, bench_0" in result.output
+
+    @patch("deriva.bench.cli.PipelineSession")
+    @patch("deriva.bench.cli.BenchmarkSession")
+    def test_prune_needs_keep_or_failed(self, bench_class, _session):
+        result = runner.invoke(app, ["benchmark", "prune", "--yes"])
+
+        assert result.exit_code == 1
+        assert "--keep N or --failed" in result.output
+        bench_class.return_value.prune_benchmarks.assert_not_called()
+
+    @patch("deriva.bench.cli.PipelineSession")
+    @patch("deriva.bench.cli.BenchmarkSession")
+    def test_prune_failed_sessions(self, bench_class, _session):
+        bench_class.return_value.prune_benchmarks.return_value = []
+
+        result = runner.invoke(app, ["benchmark", "prune", "--failed", "--yes"])
+
+        assert result.exit_code == 0
+        bench_class.return_value.prune_benchmarks.assert_called_once_with(keep=None, failed=True)
+        assert "No sessions to delete." in result.output

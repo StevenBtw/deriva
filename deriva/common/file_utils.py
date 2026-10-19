@@ -4,6 +4,8 @@ Utility functions for the extraction pipeline.
 
 from __future__ import annotations
 
+import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,9 +13,34 @@ from typing import Any
 from .types import LLMDetails, PipelineResult
 
 __all__ = [
+    "describe_os_error",
+    "long_path",
     "read_file_with_encoding",
     "create_pipeline_result",
 ]
+
+_EXTENDED = "\\\\?\\"
+
+
+def long_path(path: Path) -> Path:
+    """The path in Windows' extended form (``\\\\?\\C:\\...``), which opens paths over 260 characters even where long
+    paths are off in the registry; a walk from such a root yields such paths. Other systems keep the path."""
+    if sys.platform != "win32" or str(path).startswith(_EXTENDED):
+        return path
+    # The extended form takes no "..", "." or forward slashes: the absolute, normalised path goes in
+    absolute = os.path.abspath(path)
+    if absolute.startswith("\\\\"):
+        return Path(_EXTENDED + "UNC\\" + absolute[2:])
+    return Path(_EXTENDED + absolute)
+
+
+def describe_os_error(error: BaseException) -> str:
+    """An error without the file name an OSError carries ("[Errno 13] Permission denied"): the message names the
+    repository-relative path itself, not the absolute one (on Windows in its extended form)."""
+    if isinstance(error, OSError) and error.strerror:
+        winerror = getattr(error, "winerror", None)
+        return f"[WinError {winerror}] {error.strerror}" if winerror else f"[Errno {error.errno}] {error.strerror}"
+    return str(error)
 
 
 def read_file_with_encoding(file_path: Path) -> str | None:
@@ -33,7 +60,7 @@ def read_file_with_encoding(file_path: Path) -> str | None:
     """
     try:
         # Read raw bytes to detect encoding
-        with open(file_path, "rb") as f:
+        with open(long_path(file_path), "rb") as f:
             raw = f.read()
 
         # Check for BOM markers and decode accordingly

@@ -204,4 +204,6 @@ The gate scores each level on its own (enterprise, solution) and both together (
 | `benchmark ocel <session_ids> -o <folder>` | Event logs of sessions for process mining (OCEL 2.0, CSV, XES) |
 | `benchmark conventions <session_ids> [-o folder] [--run N]` | Check the run snapshots against ArchiMate modelling conventions: a review page per repository and model, and a summary |
 | `benchmark mark-failed <session_id>` | End a session whose process stopped without finishing (still `running`) as failed; its files stay |
+| `benchmark delete <session_ids>` | Delete sessions with their runs, metrics and folders (a running session is refused) |
+| `benchmark prune --keep N \| --failed [-y]` | Delete every session past the latest N, or the failed ones; running sessions stay, and it asks first without `-y` |
 | `benchmark models` | List the configured models |

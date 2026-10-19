@@ -40,6 +40,7 @@ from deriva.adapters.treesitter.models import (  # noqa: TID251 - known layer ex
     ExtractedType,
     FilterConstants,
 )
+from deriva.common.file_utils import describe_os_error
 
 from .base import (
     current_timestamp,
@@ -667,7 +668,7 @@ def extract_edges_batch(
                 full_path = repo_path / file_path
                 content = full_path.read_text(encoding="utf-8", errors="replace")
             except Exception as e:
-                all_errors.append(f"Failed to read {file_path}: {e}")
+                all_errors.append(f"Failed to read {file_path}: {describe_os_error(e)}")
                 continue
 
         # Extract all edge types from this file in one pass

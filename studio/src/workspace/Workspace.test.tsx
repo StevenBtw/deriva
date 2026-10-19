@@ -23,7 +23,8 @@ vi.mock("../api/client", async () => {
     repositories: { list: vi.fn() },
     runs: { start: vi.fn(), cancel: vi.fn(), history: vi.fn(), current: vi.fn(), calls: vi.fn(), call: vi.fn() },
     graph: { view: vi.fn(), linked: vi.fn(), stats: vi.fn() },
-    model: { get: vi.fn(), exportXml: vi.fn() },
+    // The quality verdict never answers here: these tests are about the model itself
+    model: { get: vi.fn(), download: vi.fn(), quality: vi.fn(() => new Promise(() => {})) },
     session: { current: vi.fn(), useRepository: vi.fn() },
     trace: { element: vi.fn() },
   };

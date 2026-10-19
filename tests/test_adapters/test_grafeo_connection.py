@@ -77,6 +77,41 @@ def test_database_exists_only_for_a_file_and_creates_nothing(tmp_path, monkeypat
     assert not database_exists("alpha")
 
 
+def test_a_database_size_counts_its_file_and_its_log(tmp_path, monkeypatch):
+    from deriva.adapters.grafeo.manager import database_bytes
+
+    monkeypatch.setenv("GRAFEO_DB_DIR", str(tmp_path))
+    assert database_bytes("alpha") == 0
+    (tmp_path / "alpha.grafeo").write_bytes(b"x" * 10)
+    (tmp_path / "alpha.grafeo.wal").mkdir()
+    (tmp_path / "alpha.grafeo.wal" / "0001.log").write_bytes(b"y" * 5)
+    assert database_bytes("alpha") == 15
+    monkeypatch.setenv("GRAFEO_DB_DIR", "")
+    assert database_bytes("alpha") == 0
+
+
+def test_a_database_is_deleted_with_its_log_but_never_while_open(tmp_path, monkeypatch):
+    from deriva.adapters.grafeo.manager import close_database, delete_database, use_database
+
+    monkeypatch.setenv("GRAFEO_DB_DIR", str(tmp_path))
+    monkeypatch.setenv("GRAFEO_DB_PATH", "")
+    (tmp_path / "alpha.grafeo").write_bytes(b"x")
+    (tmp_path / "alpha.grafeo.wal").mkdir()
+    (tmp_path / "alpha.grafeo.wal" / "0001.log").write_bytes(b"y")
+
+    assert delete_database("alpha") is True
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+    assert delete_database("alpha") is False
+    close_database()
+    try:
+        use_database("beta")
+        with pytest.raises(ValueError, match="open"):
+            delete_database("beta")
+    finally:
+        close_database()
+        use_database("default")
+
+
 def test_slow_query_is_logged(caplog, monkeypatch):
     """The threshold is read when the connection is created."""
     monkeypatch.setenv("GRAFEO_SLOW_QUERY_MS", "0")

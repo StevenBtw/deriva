@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -309,3 +310,118 @@ def test_a_model_temperature_is_saved_listed_and_removed(env):
         set_model(env, "mistral-small4", provider="mistral", model="mistral-small-2603", temperature="cold")
     set_model(env, "mistral-small4", provider="mistral", model="mistral-small-2603", temperature="")
     assert "SMALL4_TEMPERATURE" not in env.read_text(encoding="utf-8")
+
+
+class TestModelTest:
+    """One small call with a model config says whether its key, model id and URL work, in words a user can act on."""
+
+    @staticmethod
+    def _config(**over):
+        from deriva.adapters.llm.models import BenchmarkModelConfig
+
+        return BenchmarkModelConfig(**{"name": "mistral-small4", "provider": "mistral", "model": "mistral-small-2603", "api_key": "sk-test", **over})
+
+    @staticmethod
+    def _manager(response, latency=812.4, served="mistral-small-2603"):
+        manager = MagicMock()
+        manager.query.return_value = response
+        manager.last_call = {"latency_ms": latency, "served_model": served}
+        return manager
+
+    def _run(self, response, config=None):
+        from deriva.services.model_configs import check_model
+
+        config = config or self._config()
+        manager = self._manager(response)
+        with (
+            patch("deriva.services.model_configs.load_benchmark_models", return_value={config.name: config}),
+            patch("deriva.services.model_configs.LLMManager.from_config", return_value=manager) as build,
+        ):
+            result = check_model(config.name)
+        return result, manager, build
+
+    def test_a_working_model_answers_with_its_latency_and_served_model(self):
+        from deriva.adapters.llm.models import LiveResponse
+
+        result, manager, build = self._run(LiveResponse(prompt="p", model="mistral-small-2603", content="OK"))
+
+        assert result == {
+            "ok": True,
+            "model": "mistral-small4",
+            "provider": "mistral",
+            "model_id": "mistral-small-2603",
+            "served_model": "mistral-small-2603",
+            "latency_ms": 812.4,
+            "answer": "OK",
+        }
+        assert manager.query.call_args.kwargs["use_cache"] is False
+        assert build.call_args.kwargs["max_retries"] == 0
+
+    @pytest.mark.parametrize(
+        ("error", "error_type", "expected"),
+        [
+            ("status_code: 401, model_name: m, body: Unauthorized", "ModelHTTPError", "The provider refused the API key"),
+            ("status_code: 403, body: forbidden", "ModelHTTPError", "The API key has no access to model mistral-small-2603"),
+            ("status_code: 404, body: model not found", "ModelHTTPError", "The provider does not know the model id mistral-small-2603"),
+            (
+                "status_code: 400, body: {'message': 'Invalid model: mistral-small-2603', 'type': 'invalid_model'}",
+                "ModelHTTPError",
+                "The provider does not know the model id mistral-small-2603",
+            ),
+            ("status_code: 429, body: rate limit", "ModelHTTPError", "The provider is limiting this key right now"),
+            ("Connection refused", "ConnectError", "Could not reach https://api.mistral.ai"),
+            ("timed out", "ReadTimeout", "No answer within 30 seconds"),
+        ],
+    )
+    def test_a_failing_model_says_what_to_fix(self, error, error_type, expected):
+        from deriva.adapters.llm.models import FailedResponse
+
+        result, _, _ = self._run(FailedResponse(prompt="p", model="m", error=error, error_type=error_type))
+
+        assert result["ok"] is False and result["error"].startswith(expected)
+        assert result["detail"] == error
+
+    def test_a_model_without_a_key_says_so_before_any_call(self):
+        from deriva.common.exceptions import ConfigurationError
+        from deriva.services.model_configs import check_model
+
+        config = self._config(api_key=None)
+        with (
+            patch("deriva.services.model_configs.load_benchmark_models", return_value={config.name: config}),
+            patch("deriva.services.model_configs.LLMManager.from_config", side_effect=ConfigurationError("Missing required config fields: api_key")),
+        ):
+            result = check_model(config.name)
+
+        assert result["ok"] is False and result["error"].startswith("The model config is incomplete")
+
+    def test_an_unknown_model_config_is_a_key_error(self):
+        from deriva.services.model_configs import check_model
+
+        with patch("deriva.services.model_configs.load_benchmark_models", return_value={}), pytest.raises(KeyError):
+            check_model("nope")
+
+
+def test_a_failed_probe_logs_no_warning_of_its_own(caplog):
+    """The answer already says what failed; the manager's own warning would repeat it on the console."""
+    from deriva.adapters.llm.models import BenchmarkModelConfig, FailedResponse
+    from deriva.services.model_configs import check_model
+
+    config = BenchmarkModelConfig(name="m", provider="mistral", model="x", api_key="k")
+    manager = MagicMock()
+    manager.last_call = {}
+
+    def query(*args, **kwargs):
+        import logging
+
+        logging.getLogger("deriva.adapters.llm.manager").warning("LLM query failed with permanent error")
+        return FailedResponse(prompt="p", model="x", error="status_code: 401", error_type="ModelHTTPError")
+
+    manager.query.side_effect = query
+    with (
+        patch("deriva.services.model_configs.load_benchmark_models", return_value={"m": config}),
+        patch("deriva.services.model_configs.LLMManager.from_config", return_value=manager),
+        caplog.at_level("WARNING"),
+    ):
+        assert check_model("m")["ok"] is False
+
+    assert "LLM query failed" not in caplog.text

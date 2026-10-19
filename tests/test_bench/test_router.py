@@ -55,7 +55,7 @@ def test_sessions_and_views_are_served(make_client):
     assert traced == [{"run": "s_a/1", "repo": "r", "type": "Node", "source": "tech::r::queue"}]
 
     assert client.get("/api/benchmarks?limit=5").json() == [{"session_id": "s_a", "status": "completed"}]
-    assert session.called("list_benchmarks") == [((5,), {})]
+    assert session.called("list_benchmarks") == [((5,), {"offset": 0, "search": None, "repository": None, "model": None, "status": None})]
     assert client.get("/api/benchmarks/results?sessions=s_a,s_b").json() == [{"repository": "r", "runs": ["s_a", "s_b"]}]
     assert client.get("/api/benchmarks/steps?sessions=s_a").json() == {"r": [{"step": "Node", "score": 1.0}]}
     assert client.get("/api/benchmarks/flips?sessions=s_a,s_b&repo=r").json() == [{"source": "r:2"}]
@@ -244,7 +244,52 @@ def test_the_bundle_file_name_is_fixed_and_the_download_named_after_the_session(
 
 
 def test_session_lists_take_a_positive_limit(make_client):
-    client = make_client(FakeSession(list_benchmarks=lambda limit: []))
+    client = make_client(FakeSession(list_benchmarks=lambda limit, **filters: []))
 
     assert client.get("/api/benchmarks?limit=-1").status_code == 422
     assert client.get("/api/benchmarks?limit=5").status_code == 200
+
+
+def test_sessions_are_filtered_and_paged(make_client):
+    session = FakeSession(list_benchmarks=[])
+    client = make_client(session)
+
+    client.get("/api/benchmarks?limit=20&offset=40&search=v35&repository=TeaStore&model=mistral-small4&status=completed")
+
+    assert session.called("list_benchmarks") == [((20,), {"offset": 40, "search": "v35", "repository": "TeaStore", "model": "mistral-small4", "status": "completed"})]
+
+
+def test_a_session_is_marked_failed_or_deleted(make_client):
+    session = FakeSession(mark_benchmark_failed=lambda sid: 2, delete_benchmark=lambda sid: {"session_id": sid, "runs": 3, "bytes": 99})
+    client = make_client(session)
+
+    assert client.post("/api/benchmarks/bench_1/mark-failed").json() == {"session_id": "bench_1", "runs_marked": 2}
+    assert client.delete("/api/benchmarks/bench_1").json() == {"session_id": "bench_1", "runs": 3, "bytes": 99}
+
+
+def test_a_session_that_cannot_be_deleted_says_why(make_client):
+    def refuse(sid):
+        if sid == "bench_9":
+            raise KeyError(sid)
+        raise ValueError("Session bench_4 is running; mark it failed first when its process has stopped")
+
+    client = make_client(FakeSession(delete_benchmark=refuse, mark_benchmark_failed=lambda sid: (_ for _ in ()).throw(ValueError("Session bench_1 is completed, not running"))))
+
+    assert client.delete("/api/benchmarks/bench_9").status_code == 404
+    assert client.delete("/api/benchmarks/bench_4").json()["detail"].startswith("Session bench_4 is running")
+    assert client.post("/api/benchmarks/bench_1/mark-failed").status_code == 400
+
+
+def test_session_changes_wait_for_a_run_to_end(make_client):
+    from deriva.studio.runs import RunBusy
+
+    session = FakeSession(delete_benchmark={}, mark_benchmark_failed=0)
+    client = make_client(session)
+
+    def busy(action):
+        raise RunBusy("run1")
+
+    client.app.state.runs.while_idle = busy
+    assert client.delete("/api/benchmarks/bench_1").status_code == 409
+    assert client.post("/api/benchmarks/bench_1/mark-failed").status_code == 409
+    assert session.called("delete_benchmark") == []

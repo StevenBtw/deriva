@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 
 import { fileTypes, modelConfigs, settings } from "../api/client";
-import type { FileType, ModelConfigRow } from "../api/types";
+import type { FileType, ModelConfigRow, ModelTest } from "../api/types";
 
 function message(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
@@ -236,6 +236,20 @@ function draftOf(row?: ModelConfigRow): Draft {
 }
 
 /** The model configs in .env: keys are shown masked and only ever sent, never read back. */
+/** How a model test went: what answered and how fast, or what to fix (the provider's message on hover). */
+function TestResult({ result }: { result: ModelTest | "testing" }) {
+  if (result === "testing") return <span className="note">Testing: one small call to the model…</span>;
+  if (result.ok) {
+    const seconds = ((result.latency_ms ?? 0) / 1000).toFixed(1);
+    return <span className="ok">{`Works: ${result.served_model || result.model_id} answered in ${seconds} s`}</span>;
+  }
+  return (
+    <span className="error-text" title={result.detail ?? undefined}>
+      {result.error}
+    </span>
+  );
+}
+
 function Models() {
   const [rows, setRows] = useState<ModelConfigRow[] | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -260,11 +274,23 @@ function Models() {
         // An emptied field removes the variable ("" removes, null would keep it)
         key_env: draft.keyEnv,
       });
-      setNote(`Saved ${draft.name}`);
+      setNote(`Saved ${draft.name}. Press Test to check its key and model id.`);
       setDraft(null);
       setReload((n) => n + 1);
     } catch (reason) {
       setNote(message(reason));
+    }
+  };
+
+  // One small call per press; the answer stays under the model's row
+  const [tests, setTests] = useState<Record<string, ModelTest | "testing">>({});
+  const test = async (name: string) => {
+    setTests((t) => ({ ...t, [name]: "testing" }));
+    try {
+      const result = await modelConfigs.test(name);
+      setTests((t) => ({ ...t, [name]: result }));
+    } catch (reason) {
+      setTests((t) => ({ ...t, [name]: { ok: false, model: name, provider: "", model_id: "", error: message(reason) } }));
     }
   };
 
@@ -318,21 +344,33 @@ function Models() {
           </thead>
           <tbody>
             {(rows ?? []).map((row) => (
-              <tr key={row.name}>
-                <td>{row.name}</td>
-                <td>{row.provider}</td>
-                <td className="mono">{row.model}</td>
-                <td className="mono">{row.url ?? ""}</td>
-                <td className="mono">{row.key ?? (row.key_env ? `from $${row.key_env}` : "not set")}</td>
-                <td>
-                  <button type="button" onClick={() => setDraft(draftOf(row))}>
-                    Edit
-                  </button>{" "}
-                  <button type="button" className="danger" onClick={() => void remove(row.name)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
+              <Fragment key={row.name}>
+                <tr>
+                  <td>{row.name}</td>
+                  <td>{row.provider}</td>
+                  <td className="mono">{row.model}</td>
+                  <td className="mono">{row.url ?? ""}</td>
+                  <td className="mono">{row.key ?? (row.key_env ? `from $${row.key_env}` : "not set")}</td>
+                  <td>
+                    <button type="button" disabled={tests[row.name] === "testing"} onClick={() => void test(row.name)}>
+                      Test
+                    </button>{" "}
+                    <button type="button" onClick={() => setDraft(draftOf(row))}>
+                      Edit
+                    </button>{" "}
+                    <button type="button" className="danger" onClick={() => void remove(row.name)}>
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+                {tests[row.name] && (
+                  <tr>
+                    <td colSpan={6}>
+                      <TestResult result={tests[row.name]} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>

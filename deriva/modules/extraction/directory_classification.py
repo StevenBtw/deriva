@@ -335,11 +335,14 @@ def classify_directories(
         min_votes = int(params.get("min_votes", 1))
         response = next((r for r in responses if r is not None and not getattr(r, "error", None)), None)
         if response is None:
-            first_error = next((r.error for r in responses if r is not None and getattr(r, "error", None)), "every sample failed")
+            failed = next((r for r in responses if r is not None and getattr(r, "error", None)), None)
+            first_error = failed.error if failed is not None else "every sample failed"
             return {
                 "success": False,
                 "data": {"nodes": [], "edges": []},
                 "errors": [f"LLM error: {first_error}"],
+                # The caller splits a batch whose answer was cut at the output limit (IncompleteToolCall)
+                "error_type": getattr(failed, "error_type", None),
                 "stats": {},
                 "llm_details": llm_details,
             }

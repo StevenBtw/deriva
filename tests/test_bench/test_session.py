@@ -142,8 +142,29 @@ class TestPipelineSessionBenchmarking:
 
             result = BenchmarkSession(connected_session).list_benchmarks(limit=5)
 
-            mock_list.assert_called_once_with(connected_session._engine, 5)
+            mock_list.assert_called_once_with(connected_session._engine, 5, offset=0, search=None, repository=None, model=None, status=None)
             assert len(result) == 2
+
+    def test_listed_sessions_carry_the_size_of_their_folder(self, connected_session, tmp_path):
+        (tmp_path / "bench_1").mkdir()
+        (tmp_path / "bench_1" / "events.jsonl").write_bytes(b"e" * 12)
+        with patch("deriva.bench.benchmarking.list_benchmark_sessions", return_value=[{"session_id": "bench_1"}, {"session_id": "bench_2"}]) as mock_list:
+            rows = BenchmarkSession(connected_session).list_benchmarks(limit=20, offset=20, search="v35", benchmarks_dir=tmp_path)
+
+        assert [r["bytes"] for r in rows] == [12, 0]
+        assert mock_list.call_args.kwargs == {"offset": 20, "search": "v35", "repository": None, "model": None, "status": None}
+
+    def test_deleting_and_pruning_sessions_use_the_benchmarks_folder(self, connected_session, tmp_path):
+        with (
+            patch("deriva.bench.benchmarking.delete_benchmark_session", return_value={"session_id": "bench_1", "runs": 2, "bytes": 9}) as delete,
+            patch("deriva.bench.benchmarking.prune_benchmark_sessions", return_value=["bench_0"]) as prune,
+        ):
+            session = BenchmarkSession(connected_session)
+            assert session.delete_benchmark("bench_1", benchmarks_dir=tmp_path)["runs"] == 2
+            assert session.prune_benchmarks(keep=5, benchmarks_dir=tmp_path) == ["bench_0"]
+
+        delete.assert_called_once_with(connected_session._engine, "bench_1", tmp_path)
+        prune.assert_called_once_with(connected_session._engine, tmp_path, keep=5, failed=False)
 
     def test_list_benchmarks_raises_when_not_connected(self):
         """Should raise RuntimeError when not connected."""

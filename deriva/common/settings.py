@@ -48,6 +48,12 @@ def environment() -> dict[str, str]:
     return {**read_env_file(), **os.environ}
 
 
+def child_environment(**extra: str) -> dict[str, str]:
+    """The environment for a child process such as git: the process environment (not the .env, whose keys it does not
+    need) with ``extra`` on top."""
+    return {**os.environ, **extra}
+
+
 def get(name: str, default: str | None = None) -> str | None:
     """One configuration value from the merged environment."""
     return environment().get(name, default)

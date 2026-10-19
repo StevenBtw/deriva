@@ -40,6 +40,8 @@ class RepositoryInfo:
     is_dirty: bool = False
     size_mb: float = 0.0
     cloned_at: str | None = None
+    # Why the record no longer matches the workspace (its folder is gone, or is no git checkout); None when it does
+    stale: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""

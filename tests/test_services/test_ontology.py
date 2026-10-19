@@ -92,3 +92,43 @@ def test_endpoint_pairs_are_read_distinct_and_without_a_row_limit():
 
     (query,) = [q for q in session.queries if "labels(b) AS target" in q]
     assert "RETURN DISTINCT" in query and "LIMIT" not in query
+
+
+class TaggedSession(FakeSession):
+    """A graph whose nodes carry the steps that wrote them."""
+
+    def query_graph_read_only(self, cypher, params=None):
+        if "RETURN labels(n) AS labels" in cypher:
+            return [
+                {"labels": ["Graph", "Directory"], "steps": ["Directory"]},
+                {"labels": ["Graph", "Technology"], "steps": ["Technology", "DirectoryClassification"]},
+            ]
+        return super().query_graph_read_only(cypher, params)
+
+
+def test_every_node_type_of_the_metamodel_is_listed_in_its_group():
+    from deriva.adapters.graph.metamodel import get_all_node_classes
+
+    view = intermediate_ontology(FakeSession())
+
+    types = {t["name"]: t for t in view["node_types"]}
+    assert set(get_all_node_classes()) <= set(types)
+    assert view["groups"] == ["structure", "code", "business", "deployment"]
+    assert (types["Directory"]["group"], types["TypeDefinition"]["group"], types["DataEntity"]["group"], types["Software"]["group"]) == (
+        "structure",
+        "code",
+        "business",
+        "deployment",
+    )
+    absent = types["Lifecycle"]
+    assert (absent["count"], absent["sample"]) == (0, {})
+    assert "name" in absent["properties"] and absent["description"].startswith("A business process from structure")
+
+
+def test_producers_come_from_the_steps_that_wrote_the_nodes():
+    view = intermediate_ontology(TaggedSession())
+
+    types = {t["name"]: t for t in view["node_types"]}
+    assert [p["name"] for p in types["Technology"]["producers"]] == ["DirectoryClassification", "Technology"]
+    assert [p["name"] for p in types["Directory"]["producers"]] == ["Directory"]
+    assert view["other_steps"] == []

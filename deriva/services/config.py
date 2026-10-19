@@ -1128,6 +1128,45 @@ def get_config_history(engine: Any, step_type: str, name: str) -> list[dict[str,
     return [dict(zip(columns, row, strict=True)) for row in rows]
 
 
+# What a restore copies from the earlier version: texts, queries, params and generation settings
+# (the step's place in its phase and its switch stay as they are now)
+RESTORED_COLUMNS = {
+    "extraction": ("input_sources", "instruction", "example", "extraction_method", "temperature", "max_tokens", "batch_size", "params"),
+    "derivation": ("llm", "input_graph_query", "input_model_query", "instruction", "example", "params", "max_candidates", "batch_size", "temperature", "max_tokens"),
+}
+
+
+def restore_config_version(engine: Any, step_type: str, name: str, version: int) -> dict[str, Any]:
+    """Make an earlier version's content the step's new version (a versioned update; the history keeps every version).
+
+    Its texts, queries, params and generation settings are copied as they were (empty fields too); the
+    step's sequence and enabled state stay those of the active version.
+    """
+    if step_type not in RESTORED_COLUMNS:
+        raise ValueError(f"Unknown step type: {step_type}")
+    table, key, _ = HISTORY_COLUMNS[step_type]
+    columns = RESTORED_COLUMNS[step_type]
+    current = engine.execute(f"SELECT id, version, sequence, enabled FROM {table} WHERE {key} = ? AND is_active = TRUE", [name]).fetchone()
+    if not current:
+        return {"success": False, "error": f"Config not found for {name}"}
+    current_id, current_version, sequence, enabled = current
+    if version == current_version:
+        return {"success": False, "error": f"Version {version} of {name} is the active one"}
+    earlier = engine.execute(f"SELECT {', '.join(columns)} FROM {table} WHERE {key} = ? AND version = ?", [name, version]).fetchone()
+    if not earlier:
+        return {"success": False, "error": f"{name} has no version {version}"}
+    (latest,) = engine.execute(f"SELECT MAX(version) FROM {table} WHERE {key} = ?", [name]).fetchone()
+    (next_id,) = engine.execute(f"SELECT COALESCE(MAX(id), 0) + 1 FROM {table}").fetchone()
+    new_version = int(latest) + 1
+    keep = ["phase"] if step_type == "derivation" else []
+    kept = engine.execute(f"SELECT {', '.join(keep)} FROM {table} WHERE id = ?", [current_id]).fetchone() if keep else ()
+    engine.execute(f"UPDATE {table} SET is_active = FALSE WHERE id = ?", [current_id])
+    names = ["id", key, "version", "sequence", "enabled", *keep, *columns, "is_active"]
+    values = [next_id, name, new_version, sequence, enabled, *kept, *earlier, True]
+    engine.execute(f"INSERT INTO {table} ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})", values)
+    return {"success": True, "old_version": current_version, "new_version": new_version, "restored": version}
+
+
 def get_active_config_versions(engine: Any, include_disabled: bool = False) -> dict[str, dict[str, int]]:
     """
     Get current active versions for all enabled configs.
@@ -1711,6 +1750,23 @@ def get_derivation_limit(engine: Any, key: str, default: int | None = None) -> i
         return default
 
     return _DEFAULT_LIMITS.get(key, 10)
+
+
+# The model quality verdict (a report; it changes no result) calls a model weak above these shares: elements without
+# a relationship, and relationships that are Composition or Aggregation. Models judged good stay well below both.
+QUALITY_THRESHOLDS = {"quality_max_orphan_share": 0.25, "quality_max_structural_share": 0.8}
+
+
+def get_quality_thresholds(engine: Any) -> dict[str, float]:
+    """The quality verdict's thresholds from system_settings: a share from 0 to 1, the default where unset or not one."""
+    thresholds = {}
+    for key, default in QUALITY_THRESHOLDS.items():
+        try:
+            value = float(get_setting(engine, key) or default)
+        except ValueError, TypeError:
+            value = default
+        thresholds[key] = value if 0 <= value <= 1 else default
+    return thresholds
 
 
 # Specific threshold helpers for common use cases

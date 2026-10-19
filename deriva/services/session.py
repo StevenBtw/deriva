@@ -37,7 +37,7 @@ from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.models import layer_of
 from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 from deriva.adapters.database import get_connection, run_migrations
-from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, database_exists, use_database
+from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, database_bytes, database_exists, delete_database, use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
 from deriva.common.logging import RunLogger
@@ -45,7 +45,7 @@ from deriva.common.paths import home, resolve, workspace
 from deriva.common.settings import RepositorySettings
 from deriva.common.types import HasToDict, RunLoggerProtocol
 
-from . import config, derivation, export_bundle, export_levels, extraction, model_configs, ontology, overfit, pipeline, trace
+from . import config, derivation, export_bundle, export_levels, extraction, model_configs, ontology, overfit, pipeline, quality, storage, trace
 from .llm_log import record_call
 
 
@@ -109,6 +109,7 @@ class PipelineSession:
         self._archimate_manager: ArchimateManager | None = None
         self._repo_manager: RepoManager | None = None
         self._llm_manager: Any | None = None  # Lazy loaded
+        self._llm_error: str | None = None  # Why the manager could not start, for the run that needed it
         self._call_log: Any | None = None  # LlmCallLog of the running studio run, if any
         self._cancel_check: Callable[[], bool] | None = None  # True once the running studio run is cancelled
 
@@ -173,6 +174,97 @@ class PipelineSession:
         self.repository = repository
         use_database(repository)
 
+    @contextmanager
+    def in_repository(self, repository: str) -> Iterator[None]:
+        """Work in another repository's database for a block; the session reads its own repository again afterwards."""
+        previous = self.repository
+        if repository != previous:
+            self.use_repository(repository)
+        try:
+            yield
+        finally:
+            if self.repository != previous:
+                self.use_repository(previous)
+
+    def repository_data(self, repository: str) -> dict[str, Any]:
+        """What a repository's graph database holds: graph nodes and edges, model elements and relationships, bytes on disk."""
+        self._ensure_connected()
+        assert self._graph_manager is not None
+        # Not extracted yet (or a stale record): nothing to count, and opening the database would create one
+        if repository != self.repository and not database_exists(repository):
+            return {"repository": repository, "graph": {"nodes": 0, "edges": 0}, "model": {"elements": 0, "relationships": 0}, "database_bytes": 0}
+        with self.in_repository(repository):
+            nodes = self._graph_manager.query("MATCH (n:Graph) RETURN count(n) AS c")
+            edges = self._graph_manager.query("MATCH (:Graph)-[r]->(:Graph) RETURN count(r) AS c")
+            model = self.get_archimate_stats()
+        return {
+            "repository": repository,
+            "graph": {"nodes": int(nodes[0]["c"]) if nodes else 0, "edges": int(edges[0]["c"]) if edges else 0},
+            "model": {"elements": model["total_elements"], "relationships": model["total_relationships"]},
+            "database_bytes": database_bytes(repository),
+        }
+
+    def extraction_coverage(self, repository: str) -> dict[str, Any]:
+        """What of a repository's checkout reached its graph and whether the extraction is complete (no LLM, no writes).
+
+        Raises:
+            RepositoryError: the repository is not in the workspace
+        """
+        self._ensure_connected()
+        assert self._repo_manager is not None
+        repo = self._repo_manager.get_repository_info(repository)
+        # Not extracted yet: nothing reached a graph, and opening the database would create one
+        if repository != self.repository and not database_exists(repository):
+            return extraction.extraction_coverage(self._engine, None, repo)
+        with self.in_repository(repository):
+            return extraction.extraction_coverage(self._engine, self._graph_manager, repo)
+
+    def clear_repository_model(self, repository: str) -> dict[str, Any]:
+        """Clear a repository's model (its graph stays; the next derivation builds the model again)."""
+        with self.in_repository(repository):
+            return self.clear_model()
+
+    def clear_repository_data(self, repository: str) -> dict[str, Any]:
+        """Clear a repository's graph and model (the next extraction starts from nothing)."""
+        with self.in_repository(repository):
+            model = self.clear_model()
+            graph = self.clear_graph()
+        return graph if not graph.get("success") else model
+
+    def _repository_names(self) -> set[str]:
+        self._ensure_connected()
+        assert self._repo_manager is not None
+        return {str(r) for r in self._repo_manager.list_repositories(detailed=False)}
+
+    def storage_overview(self) -> dict[str, Any]:
+        """What the workspace keeps on disk: graph databases (repository, shared, orphaned), LLM cache, exports, benchmark sessions."""
+        return storage.overview(repositories=self._repository_names(), active=self.repository)
+
+    def clear_llm_cache(self) -> dict[str, int]:
+        """Delete every cached LLM answer; the session's own cache closes first and reopens with the next call."""
+        if self._llm_manager is not None:
+            self._llm_manager.cache.close()
+            self._llm_manager = None
+        return storage.clear_llm_cache()
+
+    def delete_exports(self) -> dict[str, int]:
+        """Delete the exported exchange files in workspace/output."""
+        return storage.delete_exports()
+
+    def delete_graph(self, key: str) -> dict[str, Any]:
+        """Delete a graph database that belongs to no repository (see ``storage.delete_graph``)."""
+        return storage.delete_graph(key, repositories=self._repository_names(), active=self.repository)
+
+    def update_repository(self, name: str) -> dict[str, Any]:
+        """Pull a repository's clone (fast-forward only); its graph is not touched until the next extraction."""
+        self._ensure_connected()
+        assert self._repo_manager is not None
+        try:
+            info = self._repo_manager.update_repository(name)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        return {"success": True, "repository": info.to_dict()}
+
     def disconnect(self) -> None:
         """Disconnect all managers."""
         if not self._connected:
@@ -217,8 +309,11 @@ class PipelineSession:
                 from deriva.adapters.llm import LLMManager
 
                 self._llm_manager = LLMManager()
+                self._llm_error = None
             except Exception as e:
                 logger.warning("Failed to initialize LLM manager: %s", e)
+                # Why, for the run that needed it (the manager's errors name variables, never values)
+                self._llm_error = str(e)
                 return None
 
         if no_cache:
@@ -253,6 +348,9 @@ class PipelineSession:
 
         return query_fn
 
+    def _llm_not_configured(self) -> str:
+        return f"LLM not configured: {self._llm_error}" if self._llm_error else "LLM not configured. Derivation requires LLM."
+
     def attach_call_log(self, log: Any) -> None:
         """Record every LLM call of this session in ``log`` (an LlmCallLog) until detached."""
         self._call_log = log
@@ -282,6 +380,11 @@ class PipelineSession:
                 "model": str(self._llm_manager.model),
             }
         return None
+
+    @property
+    def llm_error(self) -> str | None:
+        """Why the LLM could not start (a missing key variable, the .env read), or None; names variables, never values."""
+        return self._llm_error
 
     def write_run_inputs(self, folder: str | Path, run_id: str) -> Path:
         """Write what a run is about to run on into ``folder/inputs.json``: the active config versions, LLM
@@ -328,6 +431,12 @@ class PipelineSession:
         self._ensure_connected()
         assert self._graph_manager is not None
         return self._graph_manager.get_nodes_by_type(node_type, limit=limit)
+
+    def model_quality(self) -> dict[str, Any]:
+        """The quality verdict on the session's model from its structure (orphans, relationship types, layers,
+        elements without an artifact behind them); no LLM, no writes."""
+        self._ensure_connected()
+        return quality.model_quality(self._engine, self._graph_manager, self._archimate_manager)
 
     def get_archimate_stats(self) -> dict[str, Any]:
         """Get ArchiMate model statistics."""
@@ -652,7 +761,7 @@ class PipelineSession:
         if llm_query_fn is None and derivation.needs_llm(phases):
             return {
                 "success": False,
-                "errors": ["LLM not configured. Derivation requires LLM."],
+                "errors": [self._llm_not_configured()],
                 "stats": {},
             }
 
@@ -699,7 +808,7 @@ class PipelineSession:
             yield ProgressUpdate(
                 phase="derivation",
                 status="error",
-                message="LLM not configured. Derivation requires LLM.",
+                message=self._llm_not_configured(),
             )
             return
 
@@ -925,17 +1034,45 @@ class PipelineSession:
         branch: str | None = None,
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        """Clone a repository."""
-        self._ensure_connected()
-        assert self._repo_manager is not None
+        """Clone a repository (no database is needed, so a session that is not connected clones too)."""
+        repos = self._repo_manager or RepoManager(workspace_dir=self._workspace_dir)
         try:
-            result = self._repo_manager.clone_repository(repo_url=url, target_name=name, branch=branch, overwrite=overwrite)
-            return {"success": True, "name": result.name, "path": str(result.path), "url": result.url}
+            result = repos.clone_repository(repo_url=url, target_name=name, branch=branch, overwrite=overwrite)
+            return {
+                "success": True,
+                "name": result.name,
+                "path": str(result.path),
+                "url": result.url,
+                "branch": result.branch,
+                "last_commit": result.last_commit,
+                "size_mb": result.size_mb,
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def delete_repository(self, name: str, force: bool = False) -> dict[str, Any]:
-        """Delete a repository."""
+    def unregistered_repositories(self) -> list[str]:
+        """Git folders in the workspace without a record (a lost record, a checkout put there by hand); no database needed."""
+        return (self._repo_manager or RepoManager(workspace_dir=self._workspace_dir)).unregistered()
+
+    def register_repository(self, name: str) -> dict[str, Any]:
+        """Record a git folder in the workspace that has no record, so it can be run (no database is needed)."""
+        repos = self._repo_manager or RepoManager(workspace_dir=self._workspace_dir)
+        try:
+            result = repos.register_repository(name)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        return {
+            "success": True,
+            "name": result.name,
+            "path": str(result.path),
+            "url": result.url,
+            "branch": result.branch,
+            "last_commit": result.last_commit,
+            "size_mb": result.size_mb,
+        }
+
+    def delete_repository(self, name: str, force: bool = False, with_data: bool = False) -> dict[str, Any]:
+        """Delete a repository's clone; ``with_data`` also deletes its graph database (graph and model)."""
         self._ensure_connected()
         assert self._repo_manager is not None
         try:
@@ -945,7 +1082,7 @@ class PipelineSession:
         # A deleted repository cannot stay the one the session reads
         if name == self.repository:
             self.use_repository(DEFAULT_DATABASE)
-        return {"success": True, "name": name}
+        return {"success": True, "name": name, "data_deleted": delete_database(name) if with_data else False}
 
     def get_repository_info(self, name: str) -> dict[str, Any] | None:
         """Get detailed repository information."""
@@ -1185,6 +1322,12 @@ class PipelineSession:
         assert self._engine is not None
         return config.get_config_history(self._engine, step_type, name)
 
+    def restore_config_version(self, step_type: str, name: str, version: int) -> dict[str, Any]:
+        """Make an earlier version's content the step's new version (see ``config.restore_config_version``)."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.restore_config_version(self._engine, step_type, name, version)
+
     def scan_prompt_texts(self, texts: dict[str, str]) -> dict[str, Any]:
         """Overfit scan of draft texts (terms of the local scanner, when there is one) before a save."""
         return overfit.scan_texts(texts)
@@ -1296,6 +1439,10 @@ class PipelineSession:
     def set_default_model(self, name: str, env_path: str | Path | None = None) -> None:
         """Make a configured model the one Deriva uses (LLM_DEFAULT_MODEL in .env)."""
         model_configs.set_default(env_path or model_configs.default_env_path(), name)
+
+    def check_model_config(self, name: str) -> dict[str, Any]:
+        """One small call with a model config: does its key, model id and URL work (see ``model_configs.check_model``)."""
+        return model_configs.check_model(name)
 
     def delete_model_config(self, name: str, env_path: str | Path | None = None) -> None:
         """Remove a model config's keys from .env."""

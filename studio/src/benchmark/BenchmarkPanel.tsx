@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
 
 import { benchmarks, repositories } from "../api/client";
-import type { BenchmarkModel, BenchmarkRequest, BenchmarkSession } from "../api/types";
+import type { BenchmarkModel, BenchmarkRequest } from "../api/types";
+import { SessionList } from "./SessionList";
 import type { BenchmarkRunState } from "./useBenchmarkRun";
 
 type Kind = "end_to_end" | "derivation";
 
 type Props = {
   run: BenchmarkRunState;
-  sessions: BenchmarkSession[];
   selected: string[];
   onToggleSession: (sessionId: string) => void;
+  /** Deleted sessions leave the selection */
+  onRemovedSessions: (sessionIds: string[]) => void;
+  /** Bumped when a benchmark ended: the session list reads again */
+  reload: number;
   onStart: (request: BenchmarkRequest) => void;
   onCancel: () => void;
   collapsed: boolean;
@@ -32,7 +36,7 @@ function request(kind: Kind, repos: string[], model: string, runCount: number, u
   };
 }
 
-export function BenchmarkPanel({ run, sessions, selected, onToggleSession, onStart, onCancel, collapsed, onToggle }: Props) {
+export function BenchmarkPanel({ run, selected, onToggleSession, onRemovedSessions, reload, onStart, onCancel, collapsed, onToggle }: Props) {
   const [repos, setRepos] = useState<string[]>([]);
   const [models, setModels] = useState<BenchmarkModel[]>([]);
   const [kind, setKind] = useState<Kind>("end_to_end");
@@ -122,25 +126,7 @@ export function BenchmarkPanel({ run, sessions, selected, onToggleSession, onSta
         )}
         {run.error && <div className="error-text">{run.error}</div>}
         {loadError && <div className="error-text">{loadError}</div>}
-        <div className="fld">
-          <label>Sessions</label>
-          <div className="runlist">
-            {sessions.length === 0 && <div className="faint">No benchmark sessions yet</div>}
-            {sessions.map((s) => (
-              <button
-                key={s.session_id}
-                type="button"
-                className={`runrow${selected.includes(s.session_id) ? " on" : ""}`}
-                aria-pressed={selected.includes(s.session_id)}
-                onClick={() => onToggleSession(s.session_id)}
-              >
-                <span>{s.session_id}</span>
-                <span className={s.status === "completed" ? "ok" : s.status === "failed" ? "bad" : "faint"}>{s.status}</span>
-              </button>
-            ))}
-          </div>
-          <div className="note">Pick several sessions to read them as one set of runs (end-to-end sessions hold one run each).</div>
-        </div>
+        <SessionList selected={selected} onToggle={onToggleSession} onRemoved={onRemovedSessions} repositories={repos} models={models.map((m) => m.name)} reload={reload} />
         {selected.length === 1 && (
           <a className="util" href={benchmarks.exportUrl(selected[0])} download>
             ⤓ Export logs

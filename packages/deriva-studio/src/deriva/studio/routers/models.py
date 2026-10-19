@@ -44,6 +44,15 @@ def save_model(name: str, body: ModelConfig, session: Any = Depends(get_env_sess
     return {"name": name, "saved": True}
 
 
+@router.post("/{name}/test")
+def test_model(name: str, session: Any = Depends(get_env_session)) -> dict[str, Any]:
+    """One small call with the model config: whether its key, model id and URL work, or what to fix."""
+    try:
+        return session.check_model_config(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"No model config named {name}") from exc
+
+
 @router.delete("/{name}", status_code=204)
 def delete_model(name: str, session: Any = Depends(get_env_session)) -> Response:
     try:

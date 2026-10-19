@@ -319,10 +319,14 @@ class TestPipelineSessionRepositoryManagement:
         mock_result.url = "https://github.com/test/repo"
         connected_session._mock_repo.clone_repository.return_value = mock_result
 
+        mock_result.branch, mock_result.last_commit, mock_result.size_mb = "main", "f112fce workshop", 0.7
+
         result = connected_session.clone_repository("https://github.com/test/repo")
 
         assert result["success"] is True
         assert result["name"] == "my-repo"
+        # What the studio tells the user it cloned
+        assert (result["branch"], result["last_commit"], result["size_mb"]) == ("main", "f112fce workshop", 0.7)
 
     def test_clone_repository_error(self, connected_session):
         """Should return error on failure."""
@@ -2185,3 +2189,225 @@ def test_deleting_the_session_repository_leaves_it_for_the_default_graph():
 
     assert session.repository == "default"
     use.assert_called_with("default")
+
+
+class TestRepositoryData:
+    """Each repository's own graph database: counts and clears without moving the session off the repository it reads."""
+
+    @pytest.fixture
+    def session(self, tmp_path, monkeypatch):
+        from deriva.adapters.grafeo.manager import close_database, use_database
+
+        monkeypatch.setenv("GRAFEO_DB_DIR", str(tmp_path))
+        monkeypatch.setenv("GRAFEO_DB_PATH", "")
+        close_database()
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.run_migrations"),
+            patch("deriva.services.session.RepoManager") as repos,
+        ):
+            repos.return_value.list_repositories.return_value = ["alpha", "beta"]
+            s = PipelineSession(repository="alpha")
+            s.connect()
+            self._fill(s, "beta")
+            yield s
+            s.disconnect()
+        close_database()
+        use_database("default")
+
+    @staticmethod
+    def _fill(session, repository):
+        from deriva.adapters.archimate.models import Element, Relationship
+        from deriva.adapters.graph.models import DirectoryNode, FileNode
+
+        with session.in_repository(repository):
+            session._graph_manager.add_node(DirectoryNode(name="src", path="src", repository_name=repository), node_id="dir::src")
+            session._graph_manager.add_node(FileNode(name="a.py", path="src/a.py", file_type="source", repository_name=repository), node_id="file::a")
+            session._graph_manager.add_edge("dir::src", "file::a", "CONTAINS")
+            session._archimate_manager.add_element(Element(name="App", element_type="ApplicationComponent", identifier="app"), validate=False)
+            session._archimate_manager.add_element(Element(name="Api", element_type="ApplicationInterface", identifier="api"), validate=False)
+            session._archimate_manager.add_relationship(Relationship(source="app", target="api", relationship_type="Composition"), validate=False)
+
+    def test_data_counts_the_named_repository_and_keeps_the_session_where_it_was(self, session):
+        data = session.repository_data("beta")
+
+        assert (data["graph"], data["model"]) == ({"nodes": 2, "edges": 1}, {"elements": 2, "relationships": 1})
+        assert data["database_bytes"] > 0
+        assert session.repository == "alpha"
+        assert session.repository_data("alpha")["graph"] == {"nodes": 0, "edges": 0}
+
+    def test_counting_a_repository_without_a_database_creates_none(self, session, tmp_path):
+        """A repository not extracted yet (or a stale record) has nothing to count; opening its database would create one."""
+        data = session.repository_data("gamma")
+
+        assert (data["graph"], data["model"], data["database_bytes"]) == ({"nodes": 0, "edges": 0}, {"elements": 0, "relationships": 0}, 0)
+        assert not (tmp_path / "gamma.grafeo").exists()
+
+    def test_coverage_reads_the_named_repository_and_keeps_the_session_where_it_was(self, session, tmp_path):
+        from types import SimpleNamespace
+
+        checkout = tmp_path / "beta-checkout"
+        (checkout / "src").mkdir(parents=True)
+        (checkout / "src" / "a.py").write_text("x = 1", encoding="utf-8")
+        session._repo_manager.get_repository_info.return_value = SimpleNamespace(name="beta", path=str(checkout))
+        with patch("deriva.services.session.extraction.extraction_coverage", return_value={"complete": True}) as coverage:
+            report = session.extraction_coverage("beta")
+
+        assert report == {"complete": True}
+        assert coverage.call_args.args[2].name == "beta"
+        assert session.repository == "alpha"
+
+    def test_coverage_of_a_repository_without_a_database_creates_none(self, session, tmp_path):
+        from types import SimpleNamespace
+
+        session._repo_manager.get_repository_info.return_value = SimpleNamespace(name="gamma", path=str(tmp_path / "gamma-checkout"))
+        with patch("deriva.services.session.extraction.extraction_coverage", return_value={"complete": False}) as coverage:
+            session.extraction_coverage("gamma")
+
+        assert coverage.call_args.args[1] is None
+        assert not (tmp_path / "gamma.grafeo").exists()
+
+    def test_clearing_the_model_keeps_the_graph(self, session):
+        session.clear_repository_model("beta")
+
+        data = session.repository_data("beta")
+        assert (data["graph"]["nodes"], data["model"]["elements"]) == (2, 0)
+        assert session.repository == "alpha"
+
+    def test_clearing_the_data_clears_graph_and_model(self, session):
+        session.clear_repository_data("beta")
+
+        data = session.repository_data("beta")
+        assert (data["graph"], data["model"]) == ({"nodes": 0, "edges": 0}, {"elements": 0, "relationships": 0})
+
+    def test_deleting_with_its_data_removes_the_database_file(self, session, tmp_path):
+        assert (tmp_path / "beta.grafeo").exists()
+
+        result = session.delete_repository("beta", with_data=True)
+
+        assert result["success"] and result["data_deleted"] is True
+        assert not (tmp_path / "beta.grafeo").exists()
+        session._repo_manager.delete_repository.assert_called_once_with("beta", force=False)
+        assert session.repository == "alpha"
+
+    def test_deleting_the_repository_the_session_reads_moves_it_to_the_shared_graph_first(self, session, tmp_path):
+        session.use_repository("beta")
+
+        result = session.delete_repository("beta", with_data=True)
+
+        assert result["data_deleted"] is True and session.repository == "default"
+        assert not (tmp_path / "beta.grafeo").exists()
+
+    def test_deleting_without_data_keeps_the_database(self, session, tmp_path):
+        session.delete_repository("beta")
+
+        assert (tmp_path / "beta.grafeo").exists()
+
+    def test_update_pulls_the_clone(self, session):
+        from types import SimpleNamespace
+
+        session._repo_manager.update_repository.return_value = SimpleNamespace(to_dict=lambda: {"name": "beta", "last_commit": "abc new"})
+
+        assert session.update_repository("beta") == {"success": True, "repository": {"name": "beta", "last_commit": "abc new"}}
+
+
+class TestStorage:
+    """The session hands the storage service its repositories and the database it reads."""
+
+    def _session(self):
+        session = PipelineSession(repository="alpha")
+        session._repo_manager = MagicMock()
+        session._repo_manager.list_repositories.return_value = ["alpha", "beta"]
+        session._connected = True
+        session._engine = MagicMock()
+        return session
+
+    def test_the_overview_and_graph_delete_know_the_repositories_and_the_open_database(self):
+        session = self._session()
+        with patch("deriva.services.session.storage") as storage:
+            session.storage_overview()
+            session.delete_graph("gone")
+
+        storage.overview.assert_called_once_with(repositories={"alpha", "beta"}, active="alpha")
+        storage.delete_graph.assert_called_once_with("gone", repositories={"alpha", "beta"}, active="alpha")
+
+    def test_clearing_the_llm_cache_closes_the_session_s_own_cache_first(self):
+        session = self._session()
+        manager = MagicMock()
+        session._llm_manager = manager
+        with patch("deriva.services.session.storage") as storage:
+            storage.clear_llm_cache.side_effect = lambda: manager.cache.close.assert_called_once() or {"bytes": 9, "files": 1}
+            assert session.clear_llm_cache() == {"bytes": 9, "files": 1}
+
+        assert session._llm_manager is None
+
+
+def test_a_model_config_check_needs_no_connection():
+    with patch("deriva.services.session.model_configs.check_model", return_value={"ok": True}) as check:
+        assert PipelineSession().check_model_config("mistral-small4") == {"ok": True}
+
+    check.assert_called_once_with("mistral-small4")
+
+
+def test_a_clone_needs_no_database_connection(tmp_path):
+    from types import SimpleNamespace
+
+    info = SimpleNamespace(name="x", path=tmp_path / "x", url="u", branch="main", last_commit="abc", size_mb=1.0)
+    with patch("deriva.services.session.RepoManager") as repos, patch("deriva.services.session.get_connection") as connect:
+        repos.return_value.clone_repository.return_value = info
+        result = PipelineSession(workspace_dir=str(tmp_path)).clone_repository("https://example.org/x.git")
+
+    assert result["success"] and result["name"] == "x"
+    connect.assert_not_called()
+
+
+def test_unregistered_folders_and_register_need_no_database_connection(tmp_path):
+    from types import SimpleNamespace
+
+    info = SimpleNamespace(name="orphan", path=tmp_path / "orphan", url="u", branch="main", last_commit="abc", size_mb=1.0)
+    with patch("deriva.services.session.RepoManager") as repos, patch("deriva.services.session.get_connection") as connect:
+        repos.return_value.unregistered.return_value = ["orphan"]
+        repos.return_value.register_repository.return_value = info
+        session = PipelineSession(workspace_dir=str(tmp_path))
+        names = session.unregistered_repositories()
+        result = session.register_repository("orphan")
+
+    assert names == ["orphan"]
+    assert result == {"success": True, "name": "orphan", "path": str(tmp_path / "orphan"), "url": "u", "branch": "main", "last_commit": "abc", "size_mb": 1.0}
+    connect.assert_not_called()
+
+
+def test_a_failed_register_answers_the_reason(tmp_path):
+    from deriva.adapters.repository import RepositoryError
+
+    with patch("deriva.services.session.RepoManager") as repos:
+        repos.return_value.register_repository.side_effect = RepositoryError("notes has no git checkout in the workspace")
+        result = PipelineSession(workspace_dir=str(tmp_path)).register_repository("notes")
+
+    assert result == {"success": False, "error": "notes has no git checkout in the workspace"}
+
+
+def test_a_derivation_without_an_llm_says_why():
+    """The manager's reason (which key variable is missing, which .env is read) reaches the run, not only the log."""
+    from deriva.adapters.llm import ConfigurationError
+
+    session = PipelineSession()
+    session._connected = True
+    session._engine = session._graph_manager = session._archimate_manager = MagicMock()
+    with patch("deriva.adapters.llm.LLMManager", side_effect=ConfigurationError("The model mini has no API key: set AZURE_OPENAI_API_KEY")):
+        result = session.run_derivation()
+        updates = list(session.run_derivation_iter())
+
+    assert result["errors"] == ["LLM not configured: The model mini has no API key: set AZURE_OPENAI_API_KEY"]
+    assert updates[-1].message == "LLM not configured: The model mini has no API key: set AZURE_OPENAI_API_KEY"
+
+
+def test_model_quality_reads_the_session_s_model_and_graph():
+    session = PipelineSession()
+    session._connected = True
+    session._engine, session._graph_manager, session._archimate_manager = MagicMock(), MagicMock(), MagicMock()
+    with patch("deriva.services.session.quality.model_quality", return_value={"verdict": "ok"}) as quality:
+        report = session.model_quality()
+
+    assert report == {"verdict": "ok"}
+    quality.assert_called_once_with(session._engine, session._graph_manager, session._archimate_manager)

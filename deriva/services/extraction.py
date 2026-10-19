@@ -78,7 +78,7 @@ from deriva.adapters.repository import RepoManager
 from deriva.adapters.treesitter import cdk
 from deriva.common.cache_utils import hash_inputs
 from deriva.common.document_reader import read_document
-from deriva.common.file_utils import read_file_with_encoding
+from deriva.common.file_utils import describe_os_error, long_path, read_file_with_encoding
 from deriva.common.naming import UNCOUNTABLE_WORDS, name_key
 from deriva.common.ocel import create_edge_id
 from deriva.modules import extraction
@@ -98,12 +98,19 @@ from deriva.modules.extraction import (
     technology_candidates,
 )
 from deriva.modules.extraction.base import deduplicate_nodes
+from deriva.modules.extraction.coverage import coverage_report
 from deriva.modules.extraction.directory_classification import (
     classify_directories,
     group_directories_by_name,
     structural_skip,
 )
 from deriva.services import config
+
+
+def repository_root(repo: Any) -> Path:
+    """The folder extraction walks and reads from, in Windows' extended form: files deeper than 260 characters open
+    there too (with long paths off they fail with WinError 3, and deeper folders are skipped). Graph paths stay relative."""
+    return long_path(Path(str(repo.path)))
 
 
 def list_repo_files(repo_path: Path, excluded_dirs: list[str]) -> list[str]:
@@ -113,6 +120,56 @@ def list_repo_files(repo_path: Path, excluded_dirs: list[str]) -> list[str]:
         for f in repo_path.rglob("*")
         if f.is_file() and not str(f).endswith(".pyc") and not extraction.is_excluded_path(rel := f.relative_to(repo_path).as_posix(), excluded_dirs)
     ]
+
+
+def _unreadable_reason(shown: Path, opened: Path) -> str:
+    """Why a file could not be read; ``shown`` is its plain path, whose length Windows limits to 260 characters."""
+    try:
+        with open(opened, "rb"):
+            reason = "it could not be decoded or read"
+    except OSError as e:
+        reason = describe_os_error(e)
+    return f"path over 260 characters: {reason}" if len(str(shown)) >= 260 else reason
+
+
+def extraction_coverage(engine: Any, graph_manager: GraphManager | None, repo: Any) -> dict[str, Any]:
+    """What of a repository's checkout reached its graph, which files the type and method steps read and which gave
+    symbols, and whether the extraction is complete (see ``modules.extraction.coverage``). Reads only; no LLM.
+    Without a graph (``None``: the repository has no graph database yet) nothing reached it."""
+    root = repository_root(repo)
+    checkout = list_repo_files(root, config.get_excluded_directories(engine))
+    prefix = f"{repo.name}/"
+
+    def relative(path: Any) -> str:
+        text = str(path or "")
+        return text[len(prefix) :] if text.startswith(prefix) else text
+
+    def query(text: str) -> list[dict[str, Any]]:
+        return graph_manager.query(text) if graph_manager is not None else []
+
+    rows = query("MATCH (f:Graph:File) RETURN f.filePath AS p, f.fileType AS t, f.subtype AS s")
+    graph_files = {relative(r["p"]): {"file_type": r.get("t") or "", "subtype": r.get("s") or ""} for r in rows}
+    symbols = {relative(r["p"]) for r in query("MATCH (n:Graph) WHERE n:TypeDefinition OR n:Method RETURN DISTINCT n.filePath AS p")}
+    counts: dict[str, int] = {}
+    for r in query("MATCH (n:Graph) RETURN labels(n) AS l, count(n) AS c"):
+        for label in r["l"]:
+            if label != "Graph":
+                counts[label] = counts.get(label, 0) + int(r["c"])
+
+    # The files the type and method steps read, as the steps choose them
+    classified = [{"path": p, **f} for p, f in graph_files.items()]
+    read_by_step: dict[str, str] = {}
+    for step in ("TypeDefinition", "Method"):
+        cfg = config.get_extraction_config(engine, step)
+        if cfg is None or not cfg.enabled or not cfg.input_sources:
+            continue
+        for f in extraction.filter_files_by_input_sources(classified, extraction.parse_input_sources(cfg.input_sources)):
+            if not _is_unreadable(f):
+                read_by_step.setdefault(f["path"], "parser" if f["subtype"].lower() in _TREESITTER_LANGUAGES else "llm")
+
+    # A read file without symbols: did it open at all?
+    unreadable = {p: _unreadable_reason(Path(str(repo.path)) / p, root / p) for p in read_by_step if p not in symbols and read_file_with_encoding(root / p) is None}
+    return coverage_report(checkout, graph_files, read_by_step, symbols, counts, unreadable)
 
 
 def compute_extraction_fingerprint(
@@ -266,7 +323,7 @@ def run_extraction(
         if verbose:
             print(f"\nProcessing repository: {repo.name}")
 
-        repo_path = Path(str(repo.path))
+        repo_path = repository_root(repo)
         stats["repos_processed"] += 1
 
         # Get all files for classification (outside excluded dependency directories)
@@ -1983,10 +2040,15 @@ def _extract_directory_classification(
     batch_size = cfg.batch_size if cfg.batch_size and cfg.batch_size > 1 else 50
     all_nodes = []
     all_edges = []
+    warnings: list[str] = []
 
-    for i in range(0, len(directories), batch_size):
-        batch = directories[i : i + batch_size]
-        logger.debug(f"Processing directory batch {i // batch_size + 1}/{(len(directories) + batch_size - 1) // batch_size}")
+    # A batch whose answer was cut at the output limit goes again as two halves, first half first, until it fits;
+    # batches that are answered are sent as they always were
+    pending = [directories[i : i + batch_size] for i in range(0, len(directories), batch_size)]
+    unfit = 0
+    while pending:
+        batch = pending.pop(0)
+        logger.debug("Processing a directory batch of %d (%d batches to go)", len(batch), len(pending))
 
         # Classify directories batch
         result = classify_directories(
@@ -1998,6 +2060,13 @@ def _extract_directory_classification(
         )
 
         if not result["success"]:
+            if result.get("error_type") == "IncompleteToolCall":
+                if len(batch) > 1:
+                    half = (len(batch) + 1) // 2
+                    pending[0:0] = [batch[:half], batch[half:]]
+                else:
+                    unfit += 1
+                continue
             errors.extend(result.get("errors", []))
             continue
 
@@ -2064,11 +2133,15 @@ def _extract_directory_classification(
         targets.setdefault(str(edge_data.get("source")), set()).add(str(edge_data.get("target")))
     decisions = {name_key(str(group["name"])): sorted({t for i in group["ids"] for t in targets.get(str(i), ())}) or None for group in directories}
 
+    # Partial: a directory whose answer alone does not fit the output limit stays unclassified
+    if unfit:
+        warnings.append(f"{unfit} of {len(directories)} directories were not classified (the answer did not fit the output limit)")
     return {
         "nodes_created": nodes_created,
         "edges_created": edges_created,
         "edge_ids": edge_ids,
         "errors": errors,
+        "warnings": warnings,
         "stats": {"decisions": decisions},
     }
 
@@ -2213,10 +2286,10 @@ def _extract_llm_based(
             else:
                 content = read_file_with_encoding(file_path)
             if content is None:
-                errors.append(f"Could not read {file_path} | repo={repo.name} | step={node_type}")
+                errors.append(f"Could not read {file_info['path']} | repo={repo.name} | step={node_type}")
                 continue
         except Exception as e:
-            errors.append(f"Could not read {file_path} | repo={repo.name} | step={node_type} | exception={type(e).__name__}: {e}")
+            errors.append(f"Could not read {file_info['path']} | repo={repo.name} | step={node_type} | exception={type(e).__name__}: {describe_os_error(e)}")
             continue
 
         # Check if this file's language is supported by tree-sitter
@@ -2394,10 +2467,10 @@ def _read_documents(repo_path: Path, files: list[dict], repo_name: str) -> tuple
         try:
             text = read_document(file_path) if file_path.suffix.lower() in (".docx", ".pdf") else read_file_with_encoding(file_path)
         except Exception as e:
-            errors.append(f"Could not read {file_path} | repo={repo_name} | step=BusinessConcept | exception={type(e).__name__}: {e}")
+            errors.append(f"Could not read {file_info['path']} | repo={repo_name} | step=BusinessConcept | exception={type(e).__name__}: {describe_os_error(e)}")
             continue
         if text is None:
-            errors.append(f"Could not read {file_path} | repo={repo_name} | step=BusinessConcept")
+            errors.append(f"Could not read {file_info['path']} | repo={repo_name} | step=BusinessConcept")
         elif text:
             documents.append({"path": file_info["path"], "text": text})
     return documents, errors
@@ -2937,7 +3010,7 @@ def run_extraction_iter(
         if verbose:
             print(f"\nProcessing repository: {repo.name}")
 
-        repo_path = Path(str(repo.path))
+        repo_path = repository_root(repo)
         stats["repos_processed"] += 1
 
         # Get all files for classification (outside excluded dependency directories)

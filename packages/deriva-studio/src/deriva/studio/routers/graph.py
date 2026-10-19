@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from deriva.studio.archimate_view import to_widget_model
 from deriva.studio.deps import get_session
+from deriva.studio.runs import RunBusy
 
 router = APIRouter(prefix="/api", tags=["graph", "model"])
 
@@ -33,14 +36,28 @@ def graph_nodes(node_type: str, limit: int = Query(200, ge=0, le=10000), session
     return session.get_graph_nodes(node_type, limit=limit)
 
 
+def _when_idle(request: Request, action: Any) -> dict[str, Any]:
+    """Clears wait for the run to end: a step would go on writing into what was cleared."""
+    try:
+        return request.app.state.runs.while_idle(action)
+    except RunBusy as exc:
+        raise HTTPException(status_code=409, detail="A run is in progress; try again when it has finished") from exc
+
+
 @router.delete("/graph")
-def clear_graph(session: Any = Depends(get_session)) -> dict[str, Any]:
-    return session.clear_graph()
+def clear_graph(request: Request, session: Any = Depends(get_session)) -> dict[str, Any]:
+    return _when_idle(request, session.clear_graph)
 
 
 @router.get("/model/stats")
 def model_stats(session: Any = Depends(get_session)) -> dict[str, Any]:
     return session.get_archimate_stats()
+
+
+@router.get("/model/quality")
+def model_quality(session: Any = Depends(get_session)) -> dict[str, Any]:
+    """The verdict on the model from its structure, with what it is based on (a report; nothing changes)."""
+    return session.model_quality()
 
 
 def _on_level(value: str | None, level: str) -> bool:
@@ -72,8 +89,23 @@ def model(level: str = Query("architect", pattern="^(architect|enterprise|soluti
 
 
 @router.delete("/model")
-def clear_model(session: Any = Depends(get_session)) -> dict[str, Any]:
-    return session.clear_model()
+def clear_model(request: Request, session: Any = Depends(get_session)) -> dict[str, Any]:
+    return _when_idle(request, session.clear_model)
+
+
+@router.get("/model/download")
+def download_model(session: Any = Depends(get_session)) -> FileResponse:
+    """The model as an exchange file for the browser to save, named after its repository and the time; the copy in
+    workspace/output keeps that name, so exports no longer overwrite each other."""
+    repository = session.repository if isinstance(getattr(session, "repository", None), str) else "model"
+    name = f"{repository}-{datetime.now():%Y%m%d-%H%M%S}.xml"
+    try:
+        result = session.export_model(output_path=f"workspace/output/{name}", confined=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Export failed"))
+    return FileResponse(result["output_path"], media_type="application/xml", filename=name)
 
 
 @router.post("/model/export")

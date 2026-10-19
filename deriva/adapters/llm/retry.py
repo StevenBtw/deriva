@@ -9,7 +9,7 @@ wrapper exceptions.
 from __future__ import annotations
 
 import httpx2
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import IncompleteToolCall, ModelHTTPError
 
 from deriva.common.exceptions import (
     CircuitOpenError,
@@ -70,6 +70,10 @@ def classify_exception(
         return ("transient", None)
 
     if isinstance(exception, CircuitOpenError):
+        return ("permanent", None)
+
+    # An answer cut at the output limit is cut again for the same prompt; the caller can split it instead
+    if isinstance(exception, IncompleteToolCall):
         return ("permanent", None)
 
     # An HTTP status error carries its own status code

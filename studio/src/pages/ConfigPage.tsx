@@ -69,10 +69,34 @@ function shown(value: unknown): string {
   return value == null || value === "" ? "not set" : String(value);
 }
 
-function History({ stepType, name, draft }: { stepType: StepType; name: string; draft: Draft }) {
+type HistoryProps = { stepType: StepType; name: string; draft: Draft; dirty: boolean; onStatus: (status: Status) => void; onRestored: () => void };
+
+function History({ stepType, name, draft, dirty, onStatus, onRestored }: HistoryProps) {
   const [versions, setVersions] = useState<ConfigVersion[] | null>(null);
   const [picked, setPicked] = useState<ConfigVersion | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
+
+  // The picked version's texts and settings as the step's new version; its texts are scanned as a save's are
+  const restore = async (version: ConfigVersion) => {
+    setRestoring(true);
+    try {
+      const texts = Object.fromEntries(
+        (["instruction", "example", "params"] as const).filter((k) => typeof version[k] === "string" && version[k] !== "").map((k) => [k, version[k] as string]),
+      );
+      const scan = Object.keys(texts).length ? await configs.scan(texts) : { available: true, findings: [] };
+      const findings = scan.findings.length ? `The overfit scan has ${scan.findings.length} overfit finding${scan.findings.length === 1 ? "" : "s"} in v${version.version}. ` : "";
+      const unsaved = dirty ? " Your unsaved changes are discarded." : "";
+      if (!window.confirm(`${findings}Make v${version.version}'s texts and settings the new version of ${name}? The current version stays in the history.${unsaved}`)) return;
+      const result = await configs.restore(stepType, name, version.version);
+      onStatus({ kind: "ok", text: `Restored v${result.restored} as v${result.new_version}` });
+      onRestored();
+    } catch (reason) {
+      onStatus({ kind: "error", text: message(reason) });
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   useEffect(() => {
     configs
@@ -110,6 +134,13 @@ function History({ stepType, name, draft }: { stepType: StepType; name: string; 
         ))}
       </div>
       {picked && <div className="note">Changes from the current text back to v{picked.version} (- current, + v{picked.version})</div>}
+      {picked && !picked.is_active && (
+        <div className="row-actions">
+          <button type="button" disabled={restoring} onClick={() => void restore(picked)}>
+            Use this version
+          </button>
+        </div>
+      )}
       {fields.map(([key, label, old]) => {
         const lines = lineDiff(draft[key], old ?? "");
         if (lines.every((l) => l.op === " ")) return null;
@@ -293,7 +324,7 @@ function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: Edito
             <DryRun name={row.name} query={changes.input_graph_query} />
           </>
         )}
-        {tab === "history" && <History stepType={stepType} name={row.name} draft={draft} />}
+        {tab === "history" && <History stepType={stepType} name={row.name} draft={draft} dirty={dirty} onStatus={onStatus} onRestored={onSaved} />}
         {findings && (
           <div className="findings" role="alert">
             <b>Overfit scan: {findings.length} finding{findings.length === 1 ? "" : "s"}</b>

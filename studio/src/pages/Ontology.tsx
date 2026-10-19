@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { configs, ontology } from "../api/client";
-import type { GraphView, IntermediateOntology, OntologyStep, OutputOntology, RelationshipRule, StepType } from "../api/types";
-import { useTheme } from "../theme/theme";
-import { GraphWidget } from "../widgets/GraphWidget";
+import type { IntermediateOntology, OntologyStep, OutputOntology, RelationshipRule, StepType } from "../api/types";
 
 function message(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
@@ -72,11 +70,13 @@ function Problems({ error, notice, onRetry, onDismiss }: { error: string | null;
   );
 }
 
-function StepSwitch({ step, onToggle }: { step: OntologyStep; onToggle: () => void }) {
+/** A step's switch with its version; its name too unless it is the type's own step (``owner``), as the output page shows it. */
+function StepSwitch({ step, onToggle, owner }: { step: OntologyStep; onToggle: () => void; owner?: string }) {
+  const version = step.version !== null ? `v${step.version}` : "";
   return (
-    <span className="stepswitch">
+    <span className="stepswitch" title={`${step.name} ${version}`.trim()}>
       <button type="button" className="toggle" role="switch" aria-checked={step.enabled} aria-label={`Enable ${step.name}`} onClick={onToggle} />
-      {step.name} {step.version !== null ? `v${step.version}` : ""}
+      {step.name === owner ? version : `${step.name} ${version}`}
     </span>
   );
 }
@@ -84,19 +84,37 @@ function StepSwitch({ step, onToggle }: { step: OntologyStep; onToggle: () => vo
 const loadIntermediate = () => ontology.intermediate();
 const loadOutput = () => ontology.output();
 
-/** The graph extraction builds: node types with the steps that produce and read them, edge types, and the schema as a graph. */
+const GROUP_TITLE: Record<string, string> = { structure: "Structure", code: "Code", business: "Business", deployment: "Deployment", other: "Other" };
+
+/** Short unique codes for the edge types (CONTAINS, CONFIGURES and CONSUMES become CONT, CONF and CONS). */
+function edgeCodes(names: string[]): Record<string, string> {
+  const codes: Record<string, string> = {};
+  for (const name of names) {
+    let length = Math.min(2, name.length);
+    while (length < name.length && names.some((other) => other !== name && other.startsWith(name.slice(0, length)))) length += 1;
+    codes[name] = name.slice(0, length);
+  }
+  return codes;
+}
+
+/** The graph extraction builds, as the output ontology shows the model: every node type per group with its count and the
+ * steps that produce it, the edge types, and the edges between types as a matrix; a type opens its properties and sample. */
 export function IntermediateOntologyPage() {
   const { data, error, notice, retry, toggle, dismiss } = useOntology<IntermediateOntology>(loadIntermediate);
   const [picked, setPicked] = useState<string | null>(null);
-  const [, , shownTheme] = useTheme();
   const problems = <Problems error={error} notice={notice} onRetry={retry} onDismiss={dismiss} />;
 
   if (!data) return <div className="page pad">{error ? problems : <span className="muted">Loading the intermediate ontology…</span>}</div>;
-  const selected = data.node_types.find((t) => t.name === picked) ?? data.node_types[0];
-  const schema: GraphView = {
-    nodes: data.node_types.map((t) => ({ id: t.name, label: t.name, count: t.count })),
-    edges: data.edge_types.flatMap((e) => e.pairs.map(([source, target]) => ({ source, target, label: e.name }))),
-  };
+  const selected = data.node_types.find((t) => t.name === picked) ?? data.node_types.find((t) => t.count > 0) ?? data.node_types[0];
+  const groups = [...data.groups, ...(data.node_types.some((t) => !data.groups.includes(t.group)) ? ["other"] : [])];
+  const codes = edgeCodes(data.edge_types.map((e) => e.name));
+  // Who links to whom: rows are source types, columns target types, a cell the codes of the edge types between them
+  const cells = new Map<string, string[]>();
+  for (const e of data.edge_types) {
+    for (const [source, target] of e.pairs) cells.set(`${source}→${target}`, [...(cells.get(`${source}→${target}`) ?? []), e.name]);
+  }
+  const sources = [...new Set(data.edge_types.flatMap((e) => e.pairs.map(([s]) => s)))].sort();
+  const targets = [...new Set(data.edge_types.flatMap((e) => e.pairs.map(([, t]) => t)))].sort();
 
   return (
     <section className="page">
@@ -105,39 +123,43 @@ export function IntermediateOntologyPage() {
         <span className="sub">The graph extraction builds; the switches turn a step on or off in its active version (as config enable/disable)</span>
       </div>
       {problems}
-      <div className="pad cols" style={{ gridTemplateColumns: "1.2fr 1fr" }}>
-        <div className="card">
-          <div className="hd">
-            <h3>Node types</h3>
+      <div className="pad cols" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))", alignItems: "start" }}>
+        {groups.map((group) => (
+          <div key={group} className="card">
+            <div className="hd">
+              <h3>{GROUP_TITLE[group] ?? group}</h3>
+            </div>
+            <table>
+              <tbody>
+                {data.node_types
+                  .filter((t) => (data.groups.includes(t.group) ? t.group : "other") === group)
+                  .map((t) => (
+                    <tr key={t.name} className={`clickable${t.name === selected?.name ? " sel" : ""}`}>
+                      <td>
+                        <button type="button" className="linkbtn" aria-pressed={t.name === selected?.name} onClick={() => setPicked(t.name)}>
+                          {t.name}
+                        </button>
+                        {/* Under the type, where a long step name has the card's width */}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", marginTop: 2 }}>
+                          {t.producers.length ? (
+                            t.producers.map((step) => <StepSwitch key={step.name} step={step} owner={t.name} onToggle={() => void toggle("extraction", step.name, !step.enabled)} />)
+                          ) : (
+                            <span className="faint">no step</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className={t.count ? "" : "faint"} style={{ textAlign: "right" }}>
+                        {t.count}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Nodes</th>
-                <th>Produced by</th>
-                <th>Read by</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.node_types.map((t) => (
-                <tr key={t.name} className={`clickable${t.name === selected?.name ? " sel" : ""}`}>
-                  <td>
-                    <button type="button" className="linkbtn" aria-pressed={t.name === selected?.name} onClick={() => setPicked(t.name)}>
-                      {t.name}
-                    </button>
-                  </td>
-                  <td>{t.count}</td>
-                  <td>
-                    {t.producers.map((p) => (
-                      <StepSwitch key={p.name} step={p} onToggle={() => void toggle("extraction", p.name, !p.enabled)} />
-                    ))}
-                  </td>
-                  <td>{t.consumers.join(", ")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        ))}
+      </div>
+      <div className="pad cols" style={{ gridTemplateColumns: "300px 1fr", alignItems: "start" }}>
+        <div className="card">
           <div className="hd">
             <h3>Edge types</h3>
           </div>
@@ -145,48 +167,87 @@ export function IntermediateOntologyPage() {
             <tbody>
               {data.edge_types.map((e) => (
                 <tr key={e.name}>
+                  <td className="mono">{codes[e.name]}</td>
                   <td>{e.name}</td>
                   <td>{e.count}</td>
-                  <td className="faint">{e.pairs.map(([s, t]) => `${s} → ${t}`).join(" · ")}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {data.edge_types.length === 0 && <div className="empty">This graph has no edges yet.</div>}
           {data.other_steps.length > 0 && (
             <div className="bd">
-              <div className="note">Steps that enrich existing nodes:</div>
-              {data.other_steps.map((s) => (
-                <StepSwitch key={s.name} step={s} onToggle={() => void toggle("extraction", s.name, !s.enabled)} />
+              <div className="note">Steps that enrich existing nodes or write edges:</div>
+              {data.other_steps.map((step) => (
+                <StepSwitch key={step.name} step={step} onToggle={() => void toggle("extraction", step.name, !step.enabled)} />
               ))}
             </div>
           )}
         </div>
-        <div>
+        {selected && (
           <div className="card">
             <div className="hd">
-              <h3>Schema</h3>
+              <h3>{selected.name}</h3>
+              <span className="note">{selected.count ? `${selected.count} nodes` : "no nodes in this graph"}</span>
             </div>
-            <GraphWidget database="graph" view={schema} dark={shownTheme === "dark"} height={320} />
+            <div className="bd kv" style={{ gridTemplateColumns: "110px 1fr" }}>
+              <span className="muted">About</span>
+              <span>{selected.description || "a label the metamodel does not name"}</span>
+              <span className="muted">Properties</span>
+              <span className="mono">{selected.properties.join(", ")}</span>
+              <span className="muted">Produced by</span>
+              <span>{selected.producers.map((step) => `${step.name} (${step.method ?? "?"})`).join(", ") || "no extraction step of its own"}</span>
+              <span className="muted">Read by</span>
+              <span>{selected.consumers.join(", ") || "no derivation step"}</span>
+            </div>
+            {selected.count > 0 && (
+              <pre className="codebox" style={{ maxHeight: 320, overflow: "auto" }}>
+                {JSON.stringify(selected.sample, null, 2)}
+              </pre>
+            )}
           </div>
-          {selected && (
-            <div className="card">
-              <div className="hd">
-                <h3>{selected.name}</h3>
-                <span className="note">{selected.count} nodes</span>
-              </div>
-              <div className="bd kv" style={{ gridTemplateColumns: "110px 1fr" }}>
-                <span className="muted">Properties</span>
-                <span className="mono">{selected.properties.join(", ")}</span>
-                <span className="muted">Produced by</span>
-                <span>{selected.producers.map((p) => `${p.name} (${p.method ?? "?"})`).join(", ") || "no extraction step of its own"}</span>
-                <span className="muted">Read by</span>
-                <span>{selected.consumers.join(", ") || "no derivation step"}</span>
-              </div>
-              <pre className="codebox">{JSON.stringify(selected.sample, null, 2)}</pre>
-            </div>
-          )}
-        </div>
+        )}
       </div>
+      {sources.length > 0 && (
+        <div className="pad">
+          <div className="card" style={{ overflow: "auto" }}>
+            <div className="hd">
+              <h3>Edges in this graph</h3>
+              <span className="note">rows are sources; a cell lists the edge types from the row's type to the column's</span>
+            </div>
+            <table className="rules">
+              <thead>
+                <tr>
+                  <th />
+                  {/* Upright names keep the columns as narrow as their codes */}
+                  {targets.map((t) => (
+                    <th key={t} title={t} style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", verticalAlign: "bottom", whiteSpace: "nowrap" }}>
+                      {t}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sources.map((source) => (
+                  <tr key={source}>
+                    <th scope="row" title={source}>
+                      {source}
+                    </th>
+                    {targets.map((target) => {
+                      const kinds = cells.get(`${source}→${target}`) ?? [];
+                      return (
+                        <td key={target} className="mono" title={kinds.length ? `${source} → ${target}: ${kinds.join(", ")}` : undefined}>
+                          {kinds.map((k) => codes[k]).join(" ")}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

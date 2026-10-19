@@ -148,7 +148,8 @@ def run_stage(
         elif llm_info:
             typer.echo(f"LLM configured: {llm_info['provider']}/{llm_info['model']}")
         else:
-            typer.echo("Warning: LLM not configured. LLM-based steps will be skipped.")
+            reason = session.llm_error
+            typer.echo(f"Warning: LLM not configured: {reason}. LLM-based steps will be skipped." if reason else "Warning: LLM not configured. LLM-based steps will be skipped.")
 
         # Create progress reporter
         progress_reporter = create_progress_reporter(quiet=quiet or verbose)
@@ -232,6 +233,74 @@ def run_stage(
 # =============================================================================
 # Status Command
 # =============================================================================
+
+
+@app.command("coverage")
+def coverage(
+    repo: Annotated[str, typer.Option("--repo", help="Repository whose checkout and graph to compare")],
+    as_json: Annotated[bool, typer.Option("--json", help="The whole report as JSON (every missing and unreadable file)")] = False,
+) -> None:
+    """What of a repository's checkout reached its graph, and whether the extraction is complete (no LLM, no writes)."""
+    with PipelineSession() as session:
+        try:
+            report = session.extraction_coverage(repo)
+        except Exception as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1) from e
+    if as_json:
+        import json
+
+        typer.echo(json.dumps(report, indent=2))
+        return
+    shown = 10
+    typer.echo(f"\nCOVERAGE: {repo}")
+    typer.echo("=" * 60)
+    typer.echo(f"  Files: {report['files']} in the checkout, {report['in_graph']} in the graph")
+    typer.echo("  Complete" if report["complete"] else "  Incomplete:")
+    for reason in report["reasons"]:
+        typer.echo(f"    - {reason}")
+    for note in report["notes"]:
+        typer.echo(f"  Note: {note}")
+    typer.echo("\n  Extension        Files  In graph  Read by   Symbols  Unreadable")
+    for row in report["extensions"][:15]:
+        typer.echo(f"  {row['extension']:<16} {row['files']:>5}  {row['in_graph']:>8}  {row['reader'] or '-':<8} {row['with_symbols']:>8}  {row['unreadable']:>10}")
+    for title, items in (("Not in the graph", report["missing"]), ("Could not be read", [f"{u['path']}: {u['reason']}" for u in report["unreadable"]])):
+        if items:
+            typer.echo(f"\n  {title} ({len(items)}):")
+            for item in items[:shown]:
+                typer.echo(f"    {item}")
+            if len(items) > shown:
+                typer.echo(f"    ... and {len(items) - shown} more (--json lists them all)")
+
+
+@app.command("quality")
+def quality(
+    repo: Annotated[str, typer.Option("--repo", help="Repository whose model to judge")],
+    as_json: Annotated[bool, typer.Option("--json", help="The whole report as JSON")] = False,
+) -> None:
+    """The verdict on a repository's model from its structure: orphans, relationship types, layers, and elements
+    without a file, type or method behind them (a report; no LLM, nothing changes)."""
+    PipelineSession.check_repository(repo)
+    with PipelineSession(repository=repo) as session:
+        report = session.model_quality()
+    if as_json:
+        import json
+
+        typer.echo(json.dumps(report, indent=2))
+        return
+    typer.echo(f"\nQUALITY: {repo}")
+    typer.echo("=" * 60)
+    verdict = "Ok" if report["verdict"] == "ok" else "Weak"
+    typer.echo(f"  {verdict}: {report['elements']} elements, {report['relationships']} relationships")
+    for reason in report["reasons"]:
+        typer.echo(f"    - {reason}")
+    layers = ", ".join(f"{layer} {n}" for layer, n in report["layers"].items())
+    typer.echo(f"  Layers: {layers}")
+    typer.echo(f"  Without a relationship: {report['orphan_share']:.0%}; Composition or Aggregation: {report['structural_share']:.0%}")
+    if report["unsupported"]:
+        typer.echo("\n  No file, type or method behind their sources:")
+        for element in report["unsupported"]:
+            typer.echo(f"    {element['name']} ({element['type']}) <- {', '.join(element['sources'])}")
 
 
 @app.command("status")

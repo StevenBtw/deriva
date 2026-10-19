@@ -10,6 +10,7 @@ are returned masked only.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -19,7 +20,11 @@ from typing import Any
 
 from dotenv import dotenv_values
 
+from deriva.adapters.llm import LLMManager
+from deriva.adapters.llm.manager import load_benchmark_models
 from deriva.adapters.llm.model_registry import VALID_PROVIDERS, parse_sampling, reasoning_settings
+from deriva.adapters.llm.models import FailedResponse
+from deriva.common.exceptions import ConfigurationError
 from deriva.common.paths import env_file
 
 FIELDS = ("PROVIDER", "MODEL", "URL", "KEY", "KEY_ENV", "SAMPLING", "REASONING", "TEMPERATURE", "CONTEXT")
@@ -235,3 +240,59 @@ def delete_model(env_path: str | Path, name: str) -> None:
     is_default = dotenv_values(path).get(DEFAULT_MODEL) == name
     kept = [line for line in lines if _key_of(line) not in variables and not (is_default and _key_of(line) == DEFAULT_MODEL)]
     _write(path, kept)
+
+
+# A connectivity check, not pipeline configuration: it is in no run, no cache and no event log
+PROBE = "Reply with the single word OK."
+PROBE_TIMEOUT = 30
+
+# What a failed call means for the user: (pattern in the error text or type, sentence)
+_MODEL_ERRORS: list[tuple[str, str]] = [
+    (r"\b401\b|unauthori[sz]ed|invalid.{0,20}(api )?key|incorrect api key|authentication", "The provider refused the API key: check the key, or the variable it comes from"),
+    (r"\b403\b|forbidden|permission", "The API key has no access to model {model}"),
+    (
+        r"\b404\b|not.found|does not exist|model_not_found|unknown model|invalid.model",
+        "The provider does not know the model id {model}: check its spelling and that it is not retired",
+    ),
+    (r"\b429\b|rate.limit|quota|too many requests", "The provider is limiting this key right now (rate limit or quota): try again later"),
+    (r"timeout|timed out", "No answer within " + str(PROBE_TIMEOUT) + " seconds: the provider or the server may be busy"),
+    (r"connect|connection|getaddrinfo|name or service not known|refused|unreachable", "Could not reach {url}: is the server running, and is the URL right?"),
+]
+
+
+def _explain(error: str, error_type: str, model: str, url: str) -> str:
+    text = f"{error_type} {error}"
+    for pattern, sentence in _MODEL_ERRORS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return sentence.format(model=model, url=url)
+    return "The call failed"
+
+
+def check_model(name: str) -> dict[str, Any]:
+    """One small call with a model config (no cache, no retries): whether its key, model id and URL work, with the
+    latency and the model that served it, or what to fix.
+
+    Raises:
+        KeyError: no model config of that name
+    """
+    config = load_benchmark_models()[name]
+    url = config.get_api_url() or config.provider
+    base = {"model": name, "provider": config.provider, "model_id": config.model}
+    try:
+        manager = LLMManager.from_config(config, nocache=True, max_retries=0, timeout=PROBE_TIMEOUT)
+    except ConfigurationError as e:
+        return {**base, "ok": False, "error": f"The model config is incomplete: {e}", "detail": str(e)}
+    # The answer says what failed: the manager's own warning would repeat it on the console
+    manager_log = logging.getLogger("deriva.adapters.llm.manager")
+    level = manager_log.level
+    manager_log.setLevel(logging.ERROR)
+    try:
+        response = manager.query(PROBE, use_cache=False)
+    finally:
+        manager_log.setLevel(level)
+    call = manager.last_call or {}
+    if isinstance(response, FailedResponse):
+        detail = response.error
+        return {**base, "ok": False, "error": f"{_explain(detail, response.error_type, config.model, url)} ({response.error_type})", "detail": detail}
+    content = str(getattr(response, "content", response))
+    return {**base, "ok": True, "served_model": call.get("served_model"), "latency_ms": call.get("latency_ms"), "answer": content.strip()[:80]}

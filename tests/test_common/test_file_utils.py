@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from deriva.common.file_utils import (
     create_pipeline_result,
@@ -246,3 +249,70 @@ class TestCreatePipelineResult:
         assert extraction["stage"] == "extraction"
         assert derivation["stage"] == "derivation"
         assert validation["stage"] == "validation"
+
+
+class TestLongPath:
+    """Windows opens a path over 260 characters only in its extended form when long paths are off in the registry."""
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="the extended form is Windows only")
+    def test_a_windows_path_gets_the_extended_form_once(self):
+        from deriva.common.file_utils import long_path
+
+        local = long_path(Path("C:/work/repo"))
+        unc = long_path(Path("//server/share/repo"))
+
+        assert str(local) == r"\\?\C:\work\repo"
+        assert str(unc) == r"\\?\UNC\server\share\repo"
+        assert long_path(local) == local
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="other systems have no such limit")
+    def test_other_systems_keep_the_path(self):
+        from deriva.common.file_utils import long_path
+
+        assert long_path(Path("/work/repo")) == Path("/work/repo")
+
+    def test_a_file_deeper_than_260_characters_is_read(self, tmp_path):
+        from deriva.common.file_utils import long_path
+
+        folder = tmp_path.joinpath(*["nested-folder-name"] * 16)
+        long_path(folder).mkdir(parents=True)
+        file = folder / "schema.xsd"
+        long_path(file).write_text("<schema/>", encoding="utf-8")
+
+        assert len(str(file)) > 260
+        assert read_file_with_encoding(file) == "<schema/>"
+
+    def test_a_walk_from_the_extended_root_lists_the_same_relative_paths(self, tmp_path):
+        from deriva.common.file_utils import long_path
+        from deriva.modules.extraction.directory import extract_directories
+        from deriva.modules.extraction.file import extract_files
+        from deriva.services.extraction import list_repo_files
+
+        (tmp_path / "src" / "pkg").mkdir(parents=True)
+        (tmp_path / "src" / "pkg" / "app.py").write_text("x = 1", encoding="utf-8")
+        (tmp_path / "README.md").write_text("# r", encoding="utf-8")
+        root = long_path(tmp_path)
+
+        def stable(data):
+            """Ids, labels and properties, without the time each was written."""
+            drop = {"extracted_at", "created_at"}
+            return {kind: [{**row, "properties": {k: v for k, v in row["properties"].items() if k not in drop}} for row in rows] for kind, rows in data.items()}
+
+        assert list_repo_files(root, []) == list_repo_files(tmp_path, [])
+        for extract in (extract_directories, extract_files):
+            plain, extended = extract(str(tmp_path), "repo", excluded_dirs=[]), extract(str(root), "repo", excluded_dirs=[])
+            assert stable(extended["data"]) == stable(plain["data"]) and plain["data"]["nodes"]
+
+
+class TestDescribeOsError:
+    """An OS error without its file name: messages name the repository-relative path themselves."""
+
+    def test_errno_and_reason_without_the_path(self):
+        from deriva.common.file_utils import describe_os_error
+
+        assert describe_os_error(PermissionError(13, "Permission denied", "C:/work/repo/a.py")) == "[Errno 13] Permission denied"
+
+    def test_an_error_without_a_code_keeps_its_text(self):
+        from deriva.common.file_utils import describe_os_error
+
+        assert describe_os_error(ValueError("bad bytes")) == "bad bytes"

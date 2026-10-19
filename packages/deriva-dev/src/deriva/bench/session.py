@@ -297,16 +297,39 @@ class BenchmarkSession:
         order = _pipeline_order(engine)
         return {repo: [s.to_dict() for s in sorted(steps, key=lambda s: order(s.step))] for repo, steps in stability.items()}
 
-    def list_benchmarks(self, limit: int = 10) -> list[dict]:
+    def list_benchmarks(
+        self,
+        limit: int = 10,
+        offset: int = 0,
+        search: str | None = None,
+        repository: str | None = None,
+        model: str | None = None,
+        status: str | None = None,
+        benchmarks_dir: str | Path | None = None,
+    ) -> list[dict]:
         """
-        List recent benchmark sessions.
+        List benchmark sessions, newest first, each with the bytes its folder takes.
 
         Args:
             limit: Maximum number of sessions to return
+            offset: Sessions to skip (a page at a time)
+            search, repository, model, status: filters (see ``benchmarking.list_benchmark_sessions``)
 
         Returns:
             List of session dictionaries
         """
         engine, _, _ = self.session.managers()
+        rows = benchmarking.list_benchmark_sessions(engine, limit, offset=offset, search=search, repository=repository, model=model, status=status)
+        folder = _folder(benchmarks_dir)
+        return [{**row, "bytes": benchmarking.folder_bytes(folder / str(row["session_id"]))} for row in rows]
 
-        return benchmarking.list_benchmark_sessions(engine, limit)
+    def delete_benchmark(self, session_id: str, benchmarks_dir: str | Path | None = None) -> dict[str, Any]:
+        """Delete a finished or failed session with its runs, metrics and folder."""
+        _check_session_id(session_id)
+        engine, _, _ = self.session.managers()
+        return benchmarking.delete_benchmark_session(engine, session_id, _folder(benchmarks_dir))
+
+    def prune_benchmarks(self, keep: int | None = None, failed: bool = False, benchmarks_dir: str | Path | None = None) -> list[str]:
+        """Delete the failed sessions, or every session past the latest ``keep``; running sessions stay."""
+        engine, _, _ = self.session.managers()
+        return benchmarking.prune_benchmark_sessions(engine, _folder(benchmarks_dir), keep=keep, failed=failed)

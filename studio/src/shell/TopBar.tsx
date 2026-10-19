@@ -23,7 +23,16 @@ type Props = {
 
 export function TopBar({ mode, onModeChange, db, version, benchmark = true, environment, status, onOpenDocs, onOpenLlm }: Props) {
   const [theme, setTheme] = useTheme();
-  const dbLabel = db.busy ? "DB busy" : db.state === "owned" ? "DB" : db.state === "held" ? `DB held (PID ${db.held_by ?? "?"})` : "DB not connected";
+  const dbLabel = db.unanswered
+    ? "Studio not answering"
+    : db.busy
+      ? "DB busy"
+      : db.state === "owned"
+        ? "DB"
+        : db.state === "held"
+          ? `DB held (PID ${db.held_by ?? "?"})`
+          : "DB not connected";
+  const dbTitle = db.unanswered ? `The studio did not answer its last status request; last known state: ${db.state}` : (db.error ?? undefined);
   /** A new bug report with what this install knows about itself pre-filled. */
   const issueUrl = newIssueUrl({
     version,
@@ -76,7 +85,7 @@ export function TopBar({ mode, onModeChange, db, version, benchmark = true, envi
           <BugIcon />
           Report issue
         </a>
-        <span className={`util db-${db.state}`} title={db.error ?? undefined}>
+        <span className={`util db-${db.state}`} title={dbTitle}>
           <span className="dot" aria-hidden="true" />
           {dbLabel}
         </span>

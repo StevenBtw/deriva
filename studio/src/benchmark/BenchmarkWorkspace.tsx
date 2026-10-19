@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { benchmarks, runs } from "../api/client";
-import type { BenchmarkGroup, BenchmarkSession, Flip, InspectorView, StepStability } from "../api/types";
+import type { BenchmarkGroup, Flip, InspectorView, StepStability } from "../api/types";
 import { useTheme } from "../theme/theme";
 import { GraphLanes } from "../workspace/GraphLanes";
 import { LiveLog } from "../workspace/LiveLog";
@@ -18,7 +18,6 @@ type Tab = "results" | "steps" | "flips" | "live";
 export function BenchmarkWorkspace() {
   const [, , shownTheme] = useTheme();
   const dark = shownTheme === "dark";
-  const [sessions, setSessions] = useState<BenchmarkSession[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [groups, setGroups] = useState<BenchmarkGroup[]>([]);
   const [steps, setSteps] = useState<Record<string, StepStability[]>>({});
@@ -68,7 +67,7 @@ export function BenchmarkWorkspace() {
     benchmarks
       .list()
       .then((list) => {
-        setSessions(list);
+        // The newest session is read first; the panel's list finds the others
         setSelected((current) => (current.length ? current : list[0] ? [list[0].session_id] : []));
       })
       .catch((reason: Error) => setError(reason.message));
@@ -126,9 +125,10 @@ export function BenchmarkWorkspace() {
     <section className="ws">
       <BenchmarkPanel
         run={state}
-        sessions={sessions}
         selected={selected}
         onToggleSession={toggleSession}
+        onRemovedSessions={(gone) => setSelected((current) => current.filter((id) => !gone.includes(id)))}
+        reload={reload}
         onStart={(request) => {
           setTab("live");
           void start(request);

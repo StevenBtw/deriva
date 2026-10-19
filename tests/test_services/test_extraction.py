@@ -1658,6 +1658,58 @@ class TestExtractDirectoryClassification:
         assert len(result["errors"]) == 1 and "skip_repository_name" in result["errors"][0]
         classify.assert_not_called()
 
+    @staticmethod
+    def _classify_up_to(limit, error_type="IncompleteToolCall"):
+        """A classifier whose answer fits the output limit for at most ``limit`` directories."""
+
+        def classify(directories, **kwargs):
+            if len(directories) > limit:
+                return {
+                    "success": False,
+                    "error_type": error_type,
+                    "errors": ["LLM error: Model token limit (4000) exceeded while generating a tool call"],
+                    "data": {"nodes": [], "edges": []},
+                }
+            return {"success": True, "data": {"nodes": [{"id": f"c::{d['name']}", "labels": [], "properties": {}} for d in directories], "edges": []}}
+
+        return classify
+
+    def _run_split(self, names, batch_size, classify):
+        from deriva.adapters.grafeo.manager import close_database
+        from deriva.adapters.graph import GraphManager
+        from deriva.adapters.graph.models import DirectoryNode
+        from deriva.services.extraction import _extract_directory_classification
+
+        close_database()
+        with GraphManager() as gm:
+            for name in names:
+                gm.add_node(DirectoryNode(name=name, path=f"r/{name}", repository_name="r"), node_id=f"dir::r::{name}")
+            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=batch_size)
+            with patch("deriva.services.extraction.classify_directories", side_effect=classify) as spy:
+                result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
+        close_database()
+        return result, [[d["name"] for d in c.kwargs["directories"]] for c in spy.call_args_list]
+
+    def test_a_batch_cut_at_the_output_limit_is_halved_until_it_fits(self):
+        """Only a batch whose answer hit the output limit is split; the others are sent as before."""
+        names = ["a", "b", "c", "d", "e", "f"]
+        result, calls = self._run_split(names, 4, self._classify_up_to(2))
+
+        assert calls == [["a", "b", "c", "d"], ["a", "b"], ["c", "d"], ["e", "f"]]
+        assert result["errors"] == [] and not result.get("warnings")
+
+    def test_other_failures_are_not_split(self):
+        result, calls = self._run_split(["a", "b", "c"], 3, self._classify_up_to(1, error_type="ModelHTTPError"))
+
+        assert calls == [["a", "b", "c"]]
+        assert len(result["errors"]) == 1
+
+    def test_directories_no_answer_fits_for_are_reported(self):
+        result, calls = self._run_split(["a", "b"], 2, self._classify_up_to(0))
+
+        assert calls == [["a", "b"], ["a"], ["b"]]
+        assert result["warnings"] == ["2 of 2 directories were not classified (the answer did not fit the output limit)"]
+
     def test_same_named_directories_reach_the_llm_as_one_entry(self):
         """Copies of a name are grouped before batching, so they are never split over prompts (real graph)."""
         from deriva.adapters.grafeo.manager import close_database
@@ -2167,6 +2219,21 @@ class TestRepositoryWalkExclusions:
         (tmp_path / ".git" / "config").write_text("x")
 
         assert list_repo_files(tmp_path, [".git", "node_modules"]) == ["src/app.py"]
+
+    def test_extraction_walks_from_the_extended_root_so_deep_files_are_read(self, tmp_path):
+        """Windows with long paths off cannot open a path over 260 characters unless the walk starts from \\\\?\\."""
+        from types import SimpleNamespace
+
+        from deriva.common.file_utils import long_path
+        from deriva.services.extraction import list_repo_files, repository_root
+
+        root = repository_root(SimpleNamespace(path=str(tmp_path)))
+        deep = tmp_path.joinpath(*["nested-folder-name"] * 16)
+        long_path(deep).mkdir(parents=True)
+        long_path(deep / "schema.xsd").write_text("<schema/>", encoding="utf-8")
+
+        assert root == long_path(tmp_path)
+        assert list_repo_files(root, []) == ["/".join(["nested-folder-name"] * 16 + ["schema.xsd"])]
 
     def test_fingerprint_changes_with_excluded_directories(self):
         from deriva.services import extraction
@@ -3318,3 +3385,74 @@ def test_services_with_one_name_get_ids_of_their_own_from_their_units():
     assert ids[1] == "deployment::r::cloud::web"
     assert ids[0] == "deployment::r::cloud::service-backend" and ids[2] == "deployment::r::cloud::service-bridge"
     assert ids[3] == "deployment::r::cloud::service-3"
+
+
+class TestExtractionCoverage:
+    """The coverage of a repository's extraction, from its checkout and its graph (no LLM, no writes)."""
+
+    @staticmethod
+    def _graph(files, symbols, labels):
+        def query(text, params=None):
+            if "Graph:File" in text:
+                return [{"p": f"repo/{p}", "t": t, "s": s} for p, (t, s) in files.items()]
+            if "TypeDefinition OR" in text:
+                return [{"p": f"repo/{p}"} for p in symbols]
+            return [{"l": ["Graph", label], "c": n} for label, n in labels.items()]
+
+        graph = MagicMock()
+        graph.query.side_effect = query
+        return graph
+
+    def test_coverage_reads_the_checkout_the_graph_and_the_type_step_inputs(self, tmp_path):
+        from types import SimpleNamespace
+
+        from deriva.services.extraction import extraction_coverage
+
+        (tmp_path / "src").mkdir()
+        for name in ("A.java", "B.java", "notes.md", "skip.kt"):
+            (tmp_path / "src" / name).write_text("x", encoding="utf-8")
+        files = {"src/A.java": ("source", "java"), "src/B.java": ("source", "java"), "src/notes.md": ("docs", "markdown")}
+        graph = self._graph(files, symbols={"src/A.java"}, labels={"File": 3, "TypeDefinition": 1})
+        step = SimpleNamespace(enabled=True, input_sources='{"files": [{"type": "source", "subtype": "java"}]}')
+        unreadable = {"src/B.java"}
+
+        with (
+            patch("deriva.services.extraction.config.get_excluded_directories", return_value=[]),
+            patch("deriva.services.extraction.config.get_extraction_config", return_value=step),
+            patch("deriva.services.extraction.read_file_with_encoding", side_effect=lambda p: None if p.name == "B.java" else "x"),
+        ):
+            report = extraction_coverage(MagicMock(), graph, SimpleNamespace(name="repo", path=str(tmp_path)))
+
+        assert report["files"] == 4 and report["in_graph"] == 3
+        assert report["missing"] == ["src/skip.kt"]
+        assert [u["path"] for u in report["unreadable"]] == sorted(unreadable)
+        java = next(r for r in report["extensions"] if r["extension"] == ".java")
+        assert (java["reader"], java["with_symbols"], java["unreadable"]) == ("parser", 1, 1)
+        assert report["nodes"] == {"File": 3, "TypeDefinition": 1}
+        assert report["complete"] is False
+
+    def test_an_unreadable_deep_path_says_it_is_over_260_characters(self, tmp_path):
+        from deriva.services.extraction import _unreadable_reason
+
+        deep = tmp_path / ("d" * 270) / "A.java"
+
+        assert _unreadable_reason(deep, deep).startswith("path over 260 characters")
+        assert not _unreadable_reason(tmp_path / "missing.java", tmp_path / "missing.java").startswith("path over")
+
+
+class TestReadErrorMessages:
+    """Read errors name the repository-relative path, not the absolute one (in its extended form on Windows)."""
+
+    def test_an_unreadable_document_is_named_by_its_repository_path(self, tmp_path):
+        from deriva.services.extraction import _read_documents
+
+        with patch("deriva.services.extraction.read_file_with_encoding", return_value=None):
+            _, errors = _read_documents(tmp_path, [{"path": "docs/a.md"}], "r")
+
+        assert errors == ["Could not read docs/a.md | repo=r | step=BusinessConcept"]
+
+    def test_the_coverage_reason_leaves_the_path_out(self, tmp_path):
+        from deriva.services.extraction import _unreadable_reason
+
+        with patch("builtins.open", side_effect=PermissionError(13, "Permission denied", r"\\?\C:\x\a.py")):
+            assert _unreadable_reason(tmp_path / "a.py", tmp_path / "a.py") == "[Errno 13] Permission denied"

@@ -21,10 +21,13 @@ from .manager import (
     DEFAULT_DATABASE,
     GrafeoConnection,
     close_database,
+    database_bytes,
     database_exists,
     database_file,
+    delete_database,
     engine_info,
     get_database,
+    list_databases,
     use_database,
 )
 
@@ -32,9 +35,12 @@ __all__ = [
     "DEFAULT_DATABASE",
     "GrafeoConnection",
     "close_database",
+    "database_bytes",
     "database_exists",
     "database_file",
+    "delete_database",
     "engine_info",
     "get_database",
+    "list_databases",
     "use_database",
 ]

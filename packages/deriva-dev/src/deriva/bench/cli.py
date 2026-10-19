@@ -328,6 +328,54 @@ def benchmark_list(
         typer.echo("")
 
 
+def _megabytes(size: int) -> str:
+    return f"{size / 1024 / 1024:.1f} MB"
+
+
+@app.command("delete")
+def benchmark_delete(
+    session_ids: Annotated[list[str], typer.Argument(help="Benchmark sessions to delete")],
+) -> None:
+    """Delete benchmark sessions with their runs, metrics and folders (a running session is refused)."""
+    failed = False
+    with _benchmarks() as session:
+        for session_id in session_ids:
+            try:
+                result = session.delete_benchmark(session_id)
+            except KeyError:
+                typer.echo(f"Error: Benchmark session not found: {session_id}", err=True)
+                failed = True
+                continue
+            except ValueError as e:
+                typer.echo(f"Error: {e}", err=True)
+                failed = True
+                continue
+            typer.echo(f"Deleted {session_id} ({result['runs']} runs, {_megabytes(result['bytes'])})")
+    if failed:
+        raise typer.Exit(1)
+
+
+@app.command("prune")
+def benchmark_prune(
+    keep: Annotated[int | None, typer.Option("--keep", min=0, help="Keep the latest N sessions, delete the older ones")] = None,
+    failed: Annotated[bool, typer.Option("--failed", help="Delete the failed sessions")] = False,
+    yes: Annotated[bool, typer.Option("-y", "--yes", help="Do not ask first")] = False,
+) -> None:
+    """Delete the failed sessions, or every session past the latest N, with their runs, metrics and folders; running sessions stay."""
+    if keep is None and not failed:
+        typer.echo("Error: say which sessions to delete: --keep N or --failed", err=True)
+        raise typer.Exit(1)
+    which = "the failed sessions" if failed else f"every session past the latest {keep}"
+    if not yes and not typer.confirm(f"Delete {which}, with their runs, metrics and folders?"):
+        raise typer.Exit(1)
+    with _benchmarks() as session:
+        deleted = session.prune_benchmarks(keep=None if failed else keep, failed=failed)
+    if not deleted:
+        typer.echo("No sessions to delete.")
+        return
+    typer.echo(f"Deleted {len(deleted)} session{'' if len(deleted) == 1 else 's'}: {', '.join(deleted)}")
+
+
 @app.command("conventions")
 def benchmark_conventions(
     session_ids: Annotated[list[str], typer.Argument(help="Benchmark sessions whose run snapshots are checked")],

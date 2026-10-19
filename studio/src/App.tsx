@@ -7,6 +7,7 @@ import { ConfigPage } from "./pages/ConfigPage";
 import { General } from "./pages/General";
 import { IntermediateOntologyPage, OutputOntologyPage } from "./pages/Ontology";
 import { Repositories } from "./pages/Repositories";
+import { Storage } from "./pages/Storage";
 import { Banner } from "./shell/Banner";
 import { Menu } from "./shell/Menu";
 import { type Mode, TopBar } from "./shell/TopBar";
@@ -23,7 +24,8 @@ function useShellStatus(intervalMs = 10000): ShellStatus {
     const poll = () => {
       fetchStatus()
         .then((s) => !cancelled && setShell((now) => ({ ...now, db: s.db, version: s.version, benchmark: s.features?.benchmark ?? true, environment: s.environment })))
-        .catch(() => !cancelled && setShell((now) => ({ ...now, db: { state: "not_connected" } })));
+        // No answer (a slow or stopped studio) says nothing about the database: keep its last known state
+        .catch(() => !cancelled && setShell((now) => ({ ...now, db: { ...now.db, unanswered: true } })));
       modelConfigs
         .list()
         .then((models) => !cancelled && setShell((now) => ({ ...now, noModel: models.length === 0 })))
@@ -71,6 +73,7 @@ export function Shell() {
             <Route path="/" element={<Workspace mode={mode} />} />
             <Route path="/repositories" element={<Repositories />} />
             <Route path="/general" element={<General benchmark={benchmark} />} />
+            <Route path="/storage" element={<Storage />} />
             <Route path="/ontology/intermediate" element={<IntermediateOntologyPage />} />
             <Route path="/config/extraction" element={<ConfigPage stepType="extraction" title="Extraction config" />} />
             <Route path="/ontology/output" element={<OutputOntologyPage />} />

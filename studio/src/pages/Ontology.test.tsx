@@ -9,30 +9,47 @@ vi.mock("../api/client", async () => {
   return { ...actual, ontology: { intermediate: vi.fn(), output: vi.fn() }, configs: { setEnabled: vi.fn() } };
 });
 
-vi.mock("../widgets/GraphWidget", () => ({
-  GraphWidget: ({ view }: { view: { nodes: unknown[]; edges: unknown[] } }) => (
-    <div data-testid="schema-graph">
-      {view.nodes.length} types · {view.edges.length} edge kinds
-    </div>
-  ),
-}));
-
 import { configs, ontology } from "../api/client";
 import { IntermediateOntologyPage, OutputOntologyPage } from "./Ontology";
 
 const INTERMEDIATE: IntermediateOntology = {
+  groups: ["structure", "code", "business", "deployment"],
   node_types: [
     {
       name: "Directory",
+      group: "structure",
+      description: "Represents a directory in the graph.",
       count: 2,
       properties: ["id", "name", "path"],
       sample: { id: "dir::r::src", name: "src", path: "src" },
       producers: [{ name: "Directory", enabled: true, version: 2, method: "structural" }],
       consumers: ["ApplicationComponent"],
     },
-    { name: "Technology", count: 1, properties: ["id", "techName"], sample: { id: "tech::r::queue", techName: "Queue" }, producers: [{ name: "Technology", enabled: true, version: 7, method: "llm" }], consumers: ["Node"] },
+    {
+      name: "Lifecycle",
+      group: "business",
+      description: "A business process from structure.",
+      count: 0,
+      properties: ["name", "states"],
+      sample: {},
+      producers: [],
+      consumers: [],
+    },
+    {
+      name: "Technology",
+      group: "deployment",
+      description: "Represents a technology infrastructure component in the graph.",
+      count: 1,
+      properties: ["id", "techName"],
+      sample: { id: "tech::r::queue", techName: "Queue" },
+      producers: [{ name: "Technology", enabled: true, version: 7, method: "llm" }],
+      consumers: ["Node"],
+    },
   ],
-  edge_types: [{ name: "CONTAINS", count: 4, pairs: [["Directory", "Technology"]] }],
+  edge_types: [
+    { name: "CONTAINS", count: 4, pairs: [["Directory", "Technology"]] },
+    { name: "CONFIGURES", count: 2, pairs: [["Directory", "Technology"]] },
+  ],
   other_steps: [{ name: "DirectoryClassification", enabled: true, version: 9, method: "llm" }],
 };
 
@@ -52,19 +69,49 @@ describe("Intermediate ontology", () => {
     vi.mocked(configs.setEnabled).mockResolvedValue({ name: "Technology", enabled: false });
   });
 
-  it("lists node types with their producing and consuming steps and draws the schema", async () => {
+  it("groups every node type, also one the graph has none of, with its count and producing step", async () => {
     render(<IntermediateOntologyPage />);
 
-    const row = (await screen.findByRole("cell", { name: "Technology" })).closest("tr")!;
-    expect(row).toHaveTextContent("1");
-    expect(row).toHaveTextContent("Node");
-    expect(screen.getByTestId("schema-graph")).toHaveTextContent("2 types · 1 edge kinds");
+    const structure = (await screen.findByRole("heading", { name: "Structure" })).closest(".card") as HTMLElement;
+    const directory = within(structure).getByRole("button", { name: "Directory" }).closest("tr")!;
+    expect(directory).toHaveTextContent("2");
+    expect(within(directory).getByRole("switch", { name: "Enable Directory" })).toBeInTheDocument();
+    const business = screen.getByRole("heading", { name: "Business" }).closest(".card") as HTMLElement;
+    const lifecycle = within(business).getByRole("button", { name: "Lifecycle" }).closest("tr")!;
+    expect(lifecycle).toHaveTextContent("0");
+    expect(lifecycle).toHaveTextContent("no step");
+    expect(screen.getByRole("heading", { name: "Code" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Deployment" })).toBeInTheDocument();
     expect(screen.getByText(/DirectoryClassification/)).toBeInTheDocument();
+  });
+
+  it("shows the edge types with their codes and the edges between types as a matrix", async () => {
+    render(<IntermediateOntologyPage />);
+
+    const edges = (await screen.findByRole("heading", { name: "Edge types" })).closest(".card") as HTMLElement;
+    expect(within(edges).getByRole("row", { name: /CONT CONTAINS 4/ })).toBeInTheDocument();
+    expect(within(edges).getByRole("row", { name: /CONF CONFIGURES 2/ })).toBeInTheDocument();
+    const matrix = screen.getByRole("heading", { name: /Edges in this graph/ }).closest(".card") as HTMLElement;
+    expect(within(matrix).getByRole("rowheader", { name: "Directory" })).toBeInTheDocument();
+    expect(within(matrix).getByRole("columnheader", { name: "Technology" })).toBeInTheDocument();
+    const cell = within(matrix).getByTitle("Directory → Technology: CONTAINS, CONFIGURES");
+    expect(cell).toHaveTextContent("CONT CONF");
+  });
+
+  it("shows a type without nodes with its description and the properties it can have", async () => {
+    render(<IntermediateOntologyPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Lifecycle" }));
+
+    const details = screen.getByRole("heading", { name: "Lifecycle" }).closest(".card") as HTMLElement;
+    expect(details).toHaveTextContent("A business process from structure.");
+    expect(details).toHaveTextContent("name, states");
+    expect(details).toHaveTextContent("no nodes in this graph");
   });
 
   it("switches the producing extraction step and shows a type's sample", async () => {
     render(<IntermediateOntologyPage />);
-    const row = (await screen.findByRole("cell", { name: "Technology" })).closest("tr")!;
+    const row = (await screen.findByRole("button", { name: "Technology" })).closest("tr")!;
 
     await userEvent.click(within(row).getByRole("switch", { name: "Enable Technology" }));
     expect(configs.setEnabled).toHaveBeenCalledWith("extraction", "Technology", false);
@@ -91,19 +138,19 @@ describe("Intermediate ontology", () => {
     expect(await screen.findByText(/graph busy/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
 
-    expect(await screen.findByRole("cell", { name: "Technology" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Technology" })).toBeInTheDocument();
     expect(screen.queryByText(/graph busy/)).not.toBeInTheDocument();
   });
 
   it("keeps the page when a switch fails and lets the message be dismissed", async () => {
     vi.mocked(configs.setEnabled).mockRejectedValueOnce(new Error("config is read only"));
     render(<IntermediateOntologyPage />);
-    const row = (await screen.findByRole("cell", { name: "Technology" })).closest("tr")!;
+    const row = (await screen.findByRole("button", { name: "Technology" })).closest("tr")!;
 
     await userEvent.click(within(row).getByRole("switch", { name: "Enable Technology" }));
 
     expect(await screen.findByText(/config is read only/)).toBeInTheDocument();
-    expect(screen.getByRole("cell", { name: "Technology" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Technology" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByText(/config is read only/)).not.toBeInTheDocument();
   });

@@ -10,6 +10,7 @@ const GROUPS: { title: string | null; entries: Entry[] }[] = [
     entries: [
       { to: "/repositories", icon: "▣", label: "Repositories" },
       { to: "/general", icon: "▤", label: "General & file types" },
+      { to: "/storage", icon: "▦", label: "Runs & storage" },
     ],
   },
   {

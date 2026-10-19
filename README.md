@@ -186,6 +186,8 @@ Ollama gives each model a 4096-token window unless you start it with a larger on
 | `ollama` | Ollama, local |
 | `lmstudio` | LM Studio, local |
 
+To check a model config, press **Test** next to it on the studio's **General** page, or run `deriva-cli config model test <name>`: it makes one small call and says whether the key, the model id and the URL work, or what to fix.
+
 Rate limits, retries and the response cache have defaults; `.env.example` lists every setting.
 
 ---
@@ -201,7 +203,7 @@ Rate limits, retries and the response cache have defaults; `.env.example` lists 
 
 ### Export to Archi
 
-Deriva writes the model in the Open Group ArchiMate exchange format. From the studio: open **View model** and press **Export XML**; it writes `workspace/output/model.xml` on the machine that runs the studio. Or from the command line:
+Deriva writes the model in the Open Group ArchiMate exchange format. From the studio: open **View model** and press **Export XML**; the browser saves it as `<repository>-<yyyymmdd-hhmmss>.xml`, and a copy under the same name stays in `workspace/output` on the machine that runs the studio. Or from the command line:
 
 ```bash
 uv run deriva-cli export -o workspace/output/model.xml --repo my-repo
@@ -213,7 +215,7 @@ In Archi, choose **File**, **Import**, **Open Exchange XML Model** and pick the 
 
 1. Open **Extraction config** or **Derivation config** in the menu.
 2. Pick a step and edit its instruction or example. Every LLM step follows the same pattern: input, instruction, example.
-3. Press **Save as new version**. Earlier versions stay in the history, and each step can be switched on or off.
+3. Press **Save as new version**. Earlier versions stay in the history (**Use this version** there brings one back as a new version), and each step can be switched on or off.
 
 Run the repository again to see the effect.
 
@@ -385,8 +387,10 @@ The studio is Deriva's local web UI (`uv run deriva`): a FastAPI backend over `P
 | Area | Purpose |
 |------|---------|
 | **Workspace** | Run the pipeline (repository, scope, structural steps only), follow it live, see the repository, the intermediate graph and the output graph linked live in one canvas (or separately), open the ArchiMate model |
-| **Repositories** | Clone, inspect and delete repositories |
+| **Repositories** | Clone, update (`git pull`), inspect and delete repositories; each repository's graph database with its counts, size and last runs, and Clear model or Clear graph and model |
 | **General & file types** | System settings (excluded directories) and the file type registry |
+| **Runs & storage** | Every run the studio kept (filter, delete, keep the latest N) and what the workspace keeps on disk: LLM cache, exported models, graph databases (one whose repository is gone can go), benchmark sessions |
+| **Intermediate / Output ontology** | Every node type and element type with its count and the step that produces it, the edge and relationship types, and the matrix of what connects to what |
 | **Extraction / Derivation config** | Step tables with versions; edit instructions and examples, save as a new version, switch steps on or off |
 
 The graphs use [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) (its query bar runs read-only Cypher against the embedded databases) and the model uses [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate). While a CLI run holds the databases, the studio says so and shows what it can.
@@ -402,12 +406,21 @@ For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` 
   - **Model namespace**: the output graph (ArchiMate elements and relationships)
 - **DuckDB** (`sql.db` in your home folder; in a source checkout `deriva/adapters/database/sql.db`): step configurations with their versions, file types, name patterns and settings; created on first use from the shipped defaults
 
-### Clearing Data
+### Managing Data
 
-**Via the API** (`DELETE /api/graph`, `DELETE /api/model`) or the CLI (`deriva-cli clear graph|model`):
+Each repository has its own graph database (`workspace/graphs/<repository>.grafeo`) with its graph and its model.
 
-- **Clear Graph**: Removes all nodes/edges from Graph namespace
-- **Clear Model**: Removes all ArchiMate elements and relationships
+- **Repositories page**: **Clear model** (the graph stays; the next derivation builds the model again), **Clear graph and model** (the next extraction starts from nothing), **Update clone**, and **Delete** with or without its graph and model
+- **Runs & storage page**: delete runs (one, the interrupted ones, or all past the latest N), clear the LLM cache (the next runs call the LLM again, and answers can differ from the cached ones), delete exported models, and delete a graph database whose repository is gone
+- **CLI**: `deriva-cli clear graph|model --repo <name>`, `deriva-cli repo update <name>`, `deriva-cli repo delete <name> --with-data`, `deriva-cli repo register [name]` (records a git folder in the workspace that has no record)
+
+These actions wait for a run to end.
+
+### Checking an Extraction
+
+The Repositories page's **Coverage** section (and `deriva-cli coverage --repo <name>`, with `--json` for every file) compares a repository's checkout with its graph: how many files reached the graph, per extension which step reads them for types and methods and how many gave some, and the files that could not be read with the reason. An extraction is **incomplete** when files did not reach the graph, could not be read, or when not one source file gave a type or method; source files no step reads (shell scripts, say) are listed as notes. The run's **Errors** tab lists the errors of every step, also the files a completed step could not read, with a download of the whole list.
+
+The model panel's **Quality** pill (and `deriva-cli quality --repo <name>`, with `--json`) judges a derived model from its structure. A model is **weak** when more than a quarter of its elements have no relationship, when nearly all relationships are Composition or Aggregation, when the Application or Technology layer is empty, or when elements have no file, type or method behind their sources (a component derived from a folder that holds no source file). The thresholds are the settings `quality_max_orphan_share` and `quality_max_structural_share` (`deriva-cli config setting set`). The verdict is a report; it changes nothing in the model.
 
 ---
 
@@ -440,6 +453,8 @@ uv run deriva-cli repo list
 uv run deriva-cli run all --repo my-repo -v
 uv run deriva-cli run extraction --repo my-repo --no-llm
 uv run deriva-cli status
+uv run deriva-cli coverage --repo my-repo
+uv run deriva-cli quality --repo my-repo
 uv run deriva-cli export -o workspace/output/model.xml --repo my-repo
 uv run deriva-cli --help
 ```
@@ -504,7 +519,14 @@ uv run deriva-cli benchmark list
 
 # Analyze a benchmark session
 uv run deriva-cli benchmark analyze bench_20260101_150724
+
+# Delete sessions, or prune: the failed ones, or all past the latest N (running sessions stay)
+uv run deriva-cli benchmark delete bench_20260101_150724
+uv run deriva-cli benchmark prune --failed
+uv run deriva-cli benchmark prune --keep 50
 ```
+
+In the studio's Benchmark mode, the session list finds sessions by text, repository, model and status; the selected sessions can be deleted, or marked failed while they still say running after their process stopped.
 
 ### Benchmark models and session files
 

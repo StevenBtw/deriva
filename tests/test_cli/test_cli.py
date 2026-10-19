@@ -425,6 +425,88 @@ class TestClearCommand:
         assert "Error" in result.output
 
 
+class TestCoverageCommand:
+    """deriva-cli coverage: what of a repository's checkout reached its graph."""
+
+    REPORT = {
+        "files": 4,
+        "in_graph": 3,
+        "extensions": [{"extension": ".java", "files": 3, "in_graph": 3, "file_type": "source", "subtype": "java", "reader": "parser", "with_symbols": 0, "unreadable": 1}],
+        "missing": ["gone.xsd"],
+        "unreadable": [{"path": "deep/A.java", "reason": "path over 260 characters: [WinError 3]"}],
+        "nodes": {"File": 3},
+        "complete": False,
+        "reasons": ["1 file is not in the graph (gone.xsd)"],
+        "notes": ["1 source file is read by no extraction step: .kt (1)"],
+    }
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_coverage_prints_the_verdict_reasons_and_extensions(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.extraction_coverage.return_value = self.REPORT
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["coverage", "--repo", "x"])
+
+        assert result.exit_code == 0
+        mock_session.extraction_coverage.assert_called_once_with("x")
+        assert "Files: 4 in the checkout, 3 in the graph" in result.stdout
+        assert "Incomplete" in result.stdout and "1 file is not in the graph (gone.xsd)" in result.stdout
+        assert "1 source file is read by no extraction step: .kt (1)" in result.stdout
+        assert ".java" in result.stdout and "deep/A.java: path over 260 characters" in result.stdout
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_coverage_as_json_has_the_full_lists(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.extraction_coverage.return_value = self.REPORT
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["coverage", "--repo", "x", "--json"])
+
+        assert json.loads(result.stdout) == self.REPORT
+
+
+class TestQualityCommand:
+    """deriva-cli quality: the verdict on a repository's model from its structure."""
+
+    REPORT = {
+        "elements": 7,
+        "relationships": 3,
+        "orphans": [{"id": "c3", "name": "C3", "type": "ApplicationComponent"}],
+        "orphan_share": 0.43,
+        "structural_share": 1.0,
+        "relationship_types": {"Composition": 3},
+        "layers": {"Business": 0, "Application": 6, "Technology": 1},
+        "unsupported": [{"id": "in", "name": "Inbound", "type": "ApplicationComponent", "sources": ["repo/In"]}],
+        "verdict": "weak",
+        "reasons": ["3 of 7 elements (43%) have no relationship (above 25%)"],
+    }
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_quality_prints_the_verdict_its_reasons_and_the_elements_without_evidence(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.model_quality.return_value = self.REPORT
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["quality", "--repo", "x"])
+
+        assert result.exit_code == 0
+        mock_session_class.assert_called_once_with(repository="x")
+        assert "Weak: 7 elements, 3 relationships" in result.stdout
+        assert "3 of 7 elements (43%) have no relationship (above 25%)" in result.stdout
+        assert "Inbound (ApplicationComponent) <- repo/In" in result.stdout
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_quality_as_json(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.model_quality.return_value = self.REPORT
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["quality", "--repo", "x", "--json"])
+
+        assert json.loads(result.stdout) == self.REPORT
+
+
 class TestStatusCommand:
     """Tests for status command."""
 
@@ -1362,6 +1444,21 @@ class TestRunCommandLLMNotConfigured:
         assert result.exit_code == 0
         assert "Warning: LLM not configured" in result.stdout
 
+    @patch("deriva.cli.cli.create_progress_reporter")
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_the_warning_says_why_the_llm_is_not_configured(self, mock_session_class, mock_progress):
+        mock_session = MagicMock()
+        mock_session.llm_info = None
+        mock_session.llm_error = "The model config mini has no API key: set AZURE_OPENAI_API_KEY"
+        mock_session.run_extraction.return_value = {"success": True, "stats": {}}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+        mock_progress.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_progress.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = runner.invoke(app, ["run", "extraction"])
+
+        assert "Warning: LLM not configured: The model config mini has no API key: set AZURE_OPENAI_API_KEY" in result.stdout
+
 
 class TestClearCommandFailure:
     """Tests for clear command failure paths."""
@@ -2180,6 +2277,77 @@ class TestRepoDeleteOptions:
         assert result.exit_code == 0
         call_kwargs = mock_session.delete_repository.call_args[1]
         assert call_kwargs["force"] is True
+        assert call_kwargs["with_data"] is False
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_delete_with_data_says_the_graph_went_too(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.delete_repository.return_value = {"success": True, "data_deleted": True}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["repo", "delete", "my_repo", "--with-data"])
+
+        assert result.exit_code == 0
+        assert mock_session.delete_repository.call_args[1]["with_data"] is True
+        assert "Its graph and model were deleted too." in result.stdout
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_repo_update_pulls_and_names_the_commit(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.update_repository.return_value = {"success": True, "repository": {"name": "my_repo", "last_commit": "abc1234 newer"}}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["repo", "update", "my_repo"])
+
+        assert result.exit_code == 0
+        mock_session.update_repository.assert_called_once_with("my_repo")
+        assert "Commit: abc1234 newer" in result.stdout
+        assert "run extraction" in result.stdout
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_repo_update_failure_exits_1_with_git_s_reason(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.update_repository.return_value = {"success": False, "error": "Repository has uncommitted changes: my_repo"}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["repo", "update", "my_repo"])
+
+        assert result.exit_code == 1
+        assert "Repository has uncommitted changes: my_repo" in result.output
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_repo_register_records_a_folder(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.register_repository.return_value = {"success": True, "name": "orphan", "branch": "main", "last_commit": "abc1234 first"}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["repo", "register", "orphan"])
+
+        assert result.exit_code == 0
+        mock_session.register_repository.assert_called_once_with("orphan")
+        assert "Repository 'orphan' registered" in result.stdout
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_repo_register_without_a_name_lists_the_unregistered_folders(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.unregistered_repositories.return_value = ["orphan"]
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["repo", "register"])
+
+        assert result.exit_code == 0
+        mock_session.register_repository.assert_not_called()
+        assert "orphan" in result.stdout
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_repo_list_marks_a_stale_record(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.get_repositories.return_value = [{"name": "gone", "stale": "its folder is gone"}]
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["repo", "list", "--detailed"])
+
+        assert "gone (stale: its folder is gone; delete removes the record only)" in result.stdout
 
     @patch("deriva.cli.commands.repo.PipelineSession")
     def test_delete_failure(self, mock_session_class):
@@ -3296,3 +3464,70 @@ class TestMainEntryPoint:
             assert main() == 0
 
         assert os.environ["PYDANTIC_AI_NO_BANNER"] == "0"
+
+
+class TestConfigRestore:
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_restore_names_the_new_version(self, mock_session_class):
+        session = mock_session_class.return_value.__enter__.return_value
+        session.restore_config_version.return_value = {"success": True, "old_version": 9, "new_version": 10, "restored": 7}
+
+        result = runner.invoke(app, ["config", "restore", "derivation", "Node", "7"])
+
+        assert result.exit_code == 0, result.output
+        session.restore_config_version.assert_called_once_with("derivation", "Node", 7)
+        assert "Node: version 7 restored as v10 (was v9)" in result.output
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_restore_failure_exits_1(self, mock_session_class):
+        session = mock_session_class.return_value.__enter__.return_value
+        session.restore_config_version.return_value = {"success": False, "error": "Node has no version 9"}
+
+        result = runner.invoke(app, ["config", "restore", "derivation", "Node", "9"])
+
+        assert result.exit_code == 1
+        assert "Node has no version 9" in result.output
+
+
+class TestConfigModelTest:
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_a_working_model_prints_its_latency(self, mock_session_class):
+        mock_session_class.return_value.check_model_config.return_value = {
+            "ok": True,
+            "model": "mistral-small4",
+            "provider": "mistral",
+            "model_id": "mistral-small-2603",
+            "served_model": "mistral-small-2603",
+            "latency_ms": 812.4,
+            "answer": "OK",
+        }
+
+        result = runner.invoke(app, ["config", "model", "test", "mistral-small4"])
+
+        assert result.exit_code == 0, result.output
+        assert "mistral-small4 works: mistral-small-2603 answered in 0.8 s" in result.output
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_a_failing_model_says_what_to_fix_and_exits_1(self, mock_session_class):
+        mock_session_class.return_value.check_model_config.return_value = {
+            "ok": False,
+            "model": "m",
+            "provider": "mistral",
+            "model_id": "x",
+            "error": "The provider refused the API key: check the key (ModelHTTPError)",
+            "detail": "401",
+        }
+
+        result = runner.invoke(app, ["config", "model", "test", "m"])
+
+        assert result.exit_code == 1
+        assert "The provider refused the API key" in result.output
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_an_unknown_model_exits_1(self, mock_session_class):
+        mock_session_class.return_value.check_model_config.side_effect = KeyError("nope")
+
+        result = runner.invoke(app, ["config", "model", "test", "nope"])
+
+        assert result.exit_code == 1
+        assert "No model config named nope" in result.output

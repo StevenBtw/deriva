@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
-  return { ...actual, configs: { list: vi.fn(), save: vi.fn(), setEnabled: vi.fn(), versions: vi.fn(), scan: vi.fn(), dryRun: vi.fn() } };
+  return { ...actual, configs: { list: vi.fn(), save: vi.fn(), setEnabled: vi.fn(), versions: vi.fn(), scan: vi.fn(), dryRun: vi.fn(), restore: vi.fn() } };
 });
 
 vi.mock("../components/CodeEditor", () => ({
@@ -237,5 +237,38 @@ describe("ConfigPage", () => {
     expect(configs.dryRun).toHaveBeenCalledWith("Node", undefined);
     expect(await screen.findByText(/3 candidates/)).toBeInTheDocument();
     expect(screen.getByText(/tech::r::queue/)).toBeInTheDocument();
+  });
+
+  it("restores an earlier version as a new one after scanning its texts", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(configs.restore).mockResolvedValue({ success: true, old_version: 9, new_version: 10, restored: 8 });
+    render(<ConfigPage stepType="extraction" title="Extraction config" />);
+    await screen.findByLabelText("Instruction");
+
+    await userEvent.click(screen.getByRole("tab", { name: "History" }));
+    await userEvent.click(await screen.findByRole("button", { name: /v8/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Use this version" }));
+
+    expect(configs.scan).toHaveBeenCalledWith({ instruction: "Classify directories.", example: "{}" });
+    expect(confirm.mock.calls[0][0]).toMatch(/v8.*new version.*stays in the history/);
+    expect(configs.restore).toHaveBeenCalledWith("extraction", "DirectoryClassification", 8);
+    expect(await screen.findByText("Restored v8 as v10")).toBeInTheDocument();
+    await waitFor(() => expect(configs.list).toHaveBeenCalledTimes(2));
+  });
+
+  it("offers no restore for the active version, and names the scan findings first", async () => {
+    vi.mocked(configs.scan).mockResolvedValue({ available: true, findings: [{ field: "instruction", finding: "names a test repository" }] });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<ConfigPage stepType="extraction" title="Extraction config" />);
+    await screen.findByLabelText("Instruction");
+    await userEvent.click(screen.getByRole("tab", { name: "History" }));
+
+    await userEvent.click(await screen.findByRole("button", { name: /v9/ }));
+    expect(screen.queryByRole("button", { name: "Use this version" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /v8/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Use this version" }));
+    expect(confirm.mock.calls[0][0]).toMatch(/1 overfit finding/);
+    expect(configs.restore).not.toHaveBeenCalled();
   });
 });

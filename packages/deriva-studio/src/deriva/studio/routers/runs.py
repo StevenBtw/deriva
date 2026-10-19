@@ -1,4 +1,4 @@
-"""Start, follow and cancel pipeline runs."""
+"""Start, follow and cancel pipeline runs; list, delete and prune the runs the studio kept."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ import json
 from collections.abc import Iterator
 from typing import Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from deriva.services.llm_log import LlmCallLog, summarize_call
 from deriva.studio.runs import RunBusy
@@ -36,10 +36,40 @@ def current_run(request: Request) -> dict[str, Any] | None:
     return request.app.state.runs.current()
 
 
+class PruneRequest(BaseModel):
+    keep: int | None = Field(default=None, ge=0)
+    interrupted: bool = False
+
+
 @router.get("/history")
-def run_history(request: Request, limit: int = 10) -> list[dict[str, Any]]:
-    """The studio's own runs, newest first (kept in each run's folder)."""
-    return request.app.state.runs.history(limit)
+def run_history(
+    request: Request,
+    limit: int = Query(10, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    repository: str | None = None,
+    kind: str | None = None,
+) -> list[dict[str, Any]]:
+    """The studio's own runs, newest first (kept in each run's folder), by repository and kind, a page at a time."""
+    return request.app.state.runs.history(limit, offset=offset, repository=repository, kind=kind)
+
+
+@router.post("/prune")
+def prune_runs(body: PruneRequest, request: Request) -> dict[str, Any]:
+    """Delete the runs past the latest ``keep``, or the interrupted ones; the run in progress stays."""
+    if body.keep is None and not body.interrupted:
+        raise HTTPException(status_code=400, detail="Say which runs to delete: keep the latest N, or the interrupted ones")
+    return {"deleted": request.app.state.runs.prune(keep=body.keep, interrupted=body.interrupted)}
+
+
+@router.delete("/{run_id}")
+def delete_run(run_id: str, request: Request) -> dict[str, Any]:
+    try:
+        deleted = request.app.state.runs.delete(run_id)
+    except RunBusy as exc:
+        raise HTTPException(status_code=409, detail="The run is in progress; cancel it first") from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
+    return {"deleted": run_id}
 
 
 @router.post("/{run_id}/cancel", status_code=202)

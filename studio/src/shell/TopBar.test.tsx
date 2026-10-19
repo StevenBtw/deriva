@@ -33,6 +33,14 @@ describe("TopBar", () => {
     expect(screen.getByText("DB busy")).toBeInTheDocument();
   });
 
+  it("says the studio did not answer instead of calling the database disconnected", () => {
+    render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned", unanswered: true }} />);
+
+    const label = screen.getByText("Studio not answering");
+    expect(label).toHaveAttribute("title", expect.stringMatching(/last known state: owned/));
+    expect(screen.queryByText("DB not connected")).not.toBeInTheDocument();
+  });
+
   it("shows the Deriva mark next to the name", () => {
     const { container } = render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned" }} />);
 

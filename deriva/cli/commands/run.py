@@ -198,7 +198,8 @@ def run_stage(
         elif no_llm:
             typer.echo("LLM disabled (--no-llm)")
         else:
-            typer.echo("Warning: LLM not configured. LLM-based steps will be skipped.")
+            reason = session.llm_error
+            typer.echo(f"Warning: LLM not configured: {reason}. LLM-based steps will be skipped." if reason else "Warning: LLM not configured. LLM-based steps will be skipped.")
 
         # Create progress reporter
         progress_reporter = create_progress_reporter(quiet=quiet or verbose)

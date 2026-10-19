@@ -1884,26 +1884,65 @@ def export_process_logs(benchmarks_dir: str | Path, session_ids: list[str], out_
     return paths
 
 
-def list_benchmark_sessions(engine: Any, limit: int = 10) -> list[dict[str, Any]]:
+def list_benchmark_sessions(
+    engine: Any,
+    limit: int = 10,
+    offset: int = 0,
+    search: str | None = None,
+    repository: str | None = None,
+    model: str | None = None,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
     """
-    List recent benchmark sessions.
+    List benchmark sessions, newest first, with the repositories, models and runs they hold.
 
     Args:
         engine: DuckDB connection
         limit: Maximum number of sessions to return
+        offset: Sessions to skip (a page at a time)
+        search: Text in the session id or description (any case)
+        repository: Only sessions with a run of this repository
+        model: Only sessions with a run of this model config
+        status: Only sessions with this status (completed, failed, running)
 
     Returns:
         List of session dictionaries
     """
+    where: list[str] = []
+    params: list[Any] = []
+    if search:
+        where.append("(s.session_id ILIKE ? OR coalesce(s.description, '') ILIKE ?)")
+        params += [f"%{search}%", f"%{search}%"]
+    if repository:
+        where.append("EXISTS (SELECT 1 FROM benchmark_runs r WHERE r.session_id = s.session_id AND r.repository = ?)")
+        params.append(repository)
+    if model:
+        where.append("EXISTS (SELECT 1 FROM benchmark_runs r WHERE r.session_id = s.session_id AND r.model_name = ?)")
+        params.append(model)
+    if status:
+        where.append("s.status = ?")
+        params.append(status)
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
     rows = engine.execute(
-        """
-        SELECT session_id, description, status, started_at, completed_at
-        FROM benchmark_sessions
-        ORDER BY started_at DESC
-        LIMIT ?
+        f"""
+        SELECT s.session_id, s.description, s.status, s.started_at, s.completed_at, s.config,
+               count(r.run_id), list(DISTINCT r.repository), list(DISTINCT r.model_name)
+        FROM benchmark_sessions s
+        LEFT JOIN benchmark_runs r ON r.session_id = s.session_id
+        {clause}
+        GROUP BY s.session_id, s.description, s.status, s.started_at, s.completed_at, s.config
+        ORDER BY s.started_at DESC, s.session_id DESC
+        LIMIT ? OFFSET ?
         """,
-        [limit],
+        [*params, limit, offset],
     ).fetchall()
+
+    def stages(config: Any) -> list[str]:
+        try:
+            found = json.loads(config) if isinstance(config, str) else (config or {})
+        except ValueError:
+            return []
+        return [str(stage) for stage in found.get("stages") or []] if isinstance(found, dict) else []
 
     return [
         {
@@ -1912,9 +1951,57 @@ def list_benchmark_sessions(engine: Any, limit: int = 10) -> list[dict[str, Any]
             "status": row[2],
             "started_at": row[3],
             "completed_at": row[4],
+            "stages": stages(row[5]),
+            "runs": int(row[6]),
+            "repositories": sorted(x for x in row[7] or [] if x is not None),
+            "models": sorted(x for x in row[8] or [] if x is not None),
         }
         for row in rows
     ]
+
+
+def folder_bytes(folder: Path) -> int:
+    """Bytes the files under a folder take (0 when it does not exist)."""
+    return sum(f.stat().st_size for f in folder.rglob("*") if f.is_file()) if folder.is_dir() else 0
+
+
+def delete_benchmark_session(engine: Any, session_id: str, benchmarks_dir: str | Path) -> dict[str, Any]:
+    """Delete a session: its rows (session, runs, metrics) and its folder (event logs, snapshots, inputs).
+
+    Raises:
+        KeyError: no such session
+        ValueError: the session is still running (mark it failed first when its process stopped)
+    """
+    info = get_benchmark_session(engine, session_id)
+    if info is None:
+        raise KeyError(session_id)
+    if info["status"] == "running":
+        raise ValueError(f"Session {session_id} is running; mark it failed first when its process has stopped")
+    (runs,) = engine.execute("SELECT count(*) FROM benchmark_runs WHERE session_id = ?", [session_id]).fetchone()
+    for table in ("benchmark_metrics", "benchmark_runs", "benchmark_sessions"):
+        engine.execute(f"DELETE FROM {table} WHERE session_id = ?", [session_id])
+    folder = Path(benchmarks_dir) / session_id
+    size = folder_bytes(folder)
+    if folder.is_dir():
+        shutil.rmtree(folder)
+    return {"session_id": session_id, "runs": int(runs), "bytes": size}
+
+
+def prune_benchmark_sessions(engine: Any, benchmarks_dir: str | Path, keep: int | None = None, failed: bool = False) -> list[str]:
+    """Delete the failed sessions, or every session past the latest ``keep``; running sessions always stay.
+
+    Returns the deleted session ids, newest first.
+    """
+    rows = engine.execute("SELECT session_id, status FROM benchmark_sessions ORDER BY started_at DESC, session_id DESC").fetchall()
+    if failed:
+        victims = [sid for sid, status in rows if status == "failed"]
+    elif keep is not None:
+        victims = [sid for sid, status in rows[max(keep, 0) :] if status != "running"]
+    else:
+        return []
+    for session_id in victims:
+        delete_benchmark_session(engine, session_id, benchmarks_dir)
+    return victims
 
 
 def get_benchmark_session(engine: Any, session_id: str) -> dict[str, Any] | None:

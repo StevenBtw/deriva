@@ -223,6 +223,22 @@ class TestClassifyDirectories:
         assert result["success"] is False
         assert "LLM error" in result["errors"][0]
 
+    def test_a_failed_call_reports_its_error_type(self):
+        """The caller can tell an answer cut at the output limit (IncompleteToolCall) from other failures."""
+        mock_response = MagicMock()
+        mock_response.error = "Model token limit (4000) exceeded while generating a tool call"
+        mock_response.error_type = "IncompleteToolCall"
+        mock_response.content = None
+
+        result = classify_directories(
+            directories=[{"name": "orders", "path": "src/orders", "id": "dir_1"}],
+            repo_name="test",
+            llm_query_fn=MagicMock(return_value=mock_response),
+            config={"instruction": "test", "example": "{}"},
+        )
+
+        assert result["success"] is False and result["error_type"] == "IncompleteToolCall"
+
     def test_classifies_business_directories(self):
         """Should create BusinessConcept nodes for business classifications."""
         mock_response = MagicMock()

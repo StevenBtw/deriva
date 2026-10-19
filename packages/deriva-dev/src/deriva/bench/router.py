@@ -53,8 +53,41 @@ def _view(read: Any) -> Any:
 
 
 @router.get("")
-def list_sessions(limit: int = Query(20, ge=1, le=500), session: Any = Depends(get_benchmarks)) -> list[dict[str, Any]]:
-    return session.list_benchmarks(limit)
+def list_sessions(
+    limit: int = Query(20, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    search: str | None = None,
+    repository: str | None = None,
+    model: str | None = None,
+    status: str | None = None,
+    session: Any = Depends(get_benchmarks),
+) -> list[dict[str, Any]]:
+    """Sessions newest first, a page at a time: by text (id or description), repository, model and status."""
+    return session.list_benchmarks(limit, offset=offset, search=search, repository=repository, model=model, status=status)
+
+
+def _when_idle(request: Request, action: Any) -> Any:
+    """Session changes wait for a run to end: a benchmark in progress writes its session."""
+    try:
+        return request.app.state.runs.while_idle(action)
+    except RunBusy as exc:
+        raise HTTPException(status_code=409, detail="A run is in progress; try again when it has finished") from exc
+
+
+@router.post("/{session_id}/mark-failed")
+def mark_session_failed(session_id: str, request: Request, session: Any = Depends(get_benchmarks)) -> dict[str, Any]:
+    """End a session whose process stopped without finishing (still running) as failed; its files stay."""
+    runs = _view(lambda: _when_idle(request, lambda: session.mark_benchmark_failed(session_id)))
+    return {"session_id": session_id, "runs_marked": runs}
+
+
+@router.delete("/{session_id}")
+def delete_session(session_id: str, request: Request, session: Any = Depends(get_benchmarks)) -> dict[str, Any]:
+    """Delete a finished or failed session with its runs, metrics and folder."""
+    try:
+        return _view(lambda: _when_idle(request, lambda: session.delete_benchmark(session_id)))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Benchmark session not found: {session_id}") from exc
 
 
 @router.get("/models")

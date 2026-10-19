@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 import threading
 import time
 import uuid
@@ -142,7 +143,7 @@ class RunManager:
     def current(self) -> dict[str, Any] | None:
         return self._current.summary() if self._current is not None else None
 
-    def history(self, limit: int = 10) -> list[dict[str, Any]]:
+    def history(self, limit: int | None = 10, offset: int = 0, repository: str | None = None, kind: str | None = None) -> list[dict[str, Any]]:
         """The studio's runs, newest first: its latest run (in progress or just ended), then the summaries runs left in their folders."""
         rows: dict[str, dict[str, Any]] = {}
         for path in self._runs_dir.glob("*/run.json"):
@@ -165,7 +166,54 @@ class RunManager:
         current = self._current
         if current is not None:
             rows[current.run_id] = current.summary() | {"events_kept": True}
-        return sorted(rows.values(), key=lambda row: row.get("started_at") or 0, reverse=True)[:limit]
+        kept = [r for r in rows.values() if (repository is None or r.get("repository") == repository) and (kind is None or r.get("kind") == kind)]
+        ordered = sorted(kept, key=lambda row: row.get("started_at") or 0, reverse=True)
+        return ordered[offset : None if limit is None else offset + limit]
+
+    def storage(self) -> dict[str, int]:
+        """How many run folders the studio kept and the bytes they take."""
+        folders = [p for p in self._runs_dir.iterdir() if p.is_dir()] if self._runs_dir.is_dir() else []
+        size = sum(f.stat().st_size for folder in folders for f in folder.rglob("*") if f.is_file())
+        return {"runs": len(folders), "bytes": size}
+
+    def delete(self, run_id: str) -> bool:
+        """Delete a run's folder (summary, events, call log, inputs); False for an unknown run. The run in progress
+        cannot be deleted (RunBusy)."""
+        folder = self._folder(run_id)
+        if folder is None:
+            return False
+        with self._lock:
+            current = self._current
+            if current is not None and current.run_id == run_id and current.status not in TERMINAL:
+                raise RunBusy(run_id)
+            known = run_id in self._runs or folder.exists()
+            self._runs.pop(run_id, None)
+            if current is not None and current.run_id == run_id:
+                self._current = None
+        if folder.exists():
+            shutil.rmtree(folder)
+        return known
+
+    def prune(self, keep: int | None = None, interrupted: bool = False) -> list[str]:
+        """Delete the runs past the latest ``keep``, or with ``interrupted`` the runs whose studio stopped first; the
+        run in progress always stays. Returns the deleted run ids, newest first."""
+        rows = self.history(limit=None)
+        if interrupted:
+            victims = [r for r in rows if r.get("status") == "interrupted"]
+        elif keep is not None:
+            victims = rows[max(keep, 0) :]
+        else:
+            return []
+        deleted = []
+        for row in victims:
+            if row.get("status") == "running":
+                continue
+            try:
+                if self.delete(str(row["run_id"])):
+                    deleted.append(str(row["run_id"]))
+            except RunBusy:
+                continue
+        return deleted
 
     def _interrupted(self, run_id: str) -> dict[str, Any] | None:
         """The summary of a run that never ended, from its events: kind and repository from its start, the last event

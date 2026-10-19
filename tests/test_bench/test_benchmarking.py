@@ -1164,19 +1164,6 @@ class TestOCELStepContext:
 class TestConvenienceFunctions:
     """Tests for list_benchmark_sessions, get_benchmark_session, get_benchmark_runs."""
 
-    def test_list_benchmark_sessions(self):
-        """Should query benchmark sessions from database."""
-        engine = MagicMock()
-        engine.execute.return_value.fetchall.return_value = [
-            ("sess-1", "Test benchmark", "completed", "2026-01-01", "2026-01-01"),
-            ("sess-2", "Another", "failed", "2026-01-02", None),
-        ]
-        result = list_benchmark_sessions(engine, limit=10)
-
-        assert len(result) == 2
-        assert result[0]["session_id"] == "sess-1"
-        assert result[1]["status"] == "failed"
-
     def test_list_benchmark_sessions_empty(self):
         """Should return empty list when no sessions."""
         engine = MagicMock()
@@ -3000,3 +2987,97 @@ class TestInterruptedSession:
 
         assert engine.execute("SELECT status FROM benchmark_sessions").fetchall() == [("running",)]
         assert "disk full" in caplog.text
+
+
+class TestSessionManagement:
+    """Find, delete and prune benchmark sessions (real schema in memory, a temp benchmarks folder)."""
+
+    @staticmethod
+    def _engine():
+        import duckdb
+
+        from deriva.adapters.database.manager import SCRIPTS_DIR
+
+        engine = duckdb.connect(":memory:")
+        engine.execute((SCRIPTS_DIR / "schema.sql").read_text(encoding="utf-8"))
+        sessions = [
+            ("bench_1", "baseline GlobalRelationships v34", "completed", "2026-10-10 10:00:00", '{"stages": ["derivation"]}'),
+            ("bench_2", "candidate naming", "failed", "2026-10-11 10:00:00", '{"stages": ["extraction", "derivation"]}'),
+            ("bench_3", "candidate GlobalRelationships v35", "completed", "2026-10-12 10:00:00", '{"stages": ["derivation"]}'),
+            ("bench_4", None, "running", "2026-10-13 10:00:00", "{}"),
+        ]
+        for sid, description, status, started, config in sessions:
+            engine.execute(
+                "INSERT INTO benchmark_sessions (session_id, description, status, started_at, config) VALUES (?, ?, ?, ?, ?)",
+                [sid, description, status, started, config],
+            )
+        runs = [("bench_1", "deriva", "mistral-small4"), ("bench_1", "TeaStore", "mistral-small4"), ("bench_2", "deriva", "haiku"), ("bench_3", "TeaStore", "mistral-small4")]
+        for i, (sid, repository, model) in enumerate(runs):
+            engine.execute(
+                "INSERT INTO benchmark_runs (run_id, session_id, repository, model_provider, model_name, iteration, status) VALUES (?, ?, ?, 'p', ?, ?, 'completed')",
+                [f"{sid}:{i}", sid, repository, model, i],
+            )
+        engine.execute("INSERT INTO benchmark_metrics (session_id, metric_type, metric_key, metric_value) VALUES ('bench_1', 'intra_model', 'k', 1.0)")
+        return engine
+
+    @staticmethod
+    def _folders(tmp_path):
+        for sid in ("bench_1", "bench_2", "bench_3", "bench_4"):
+            (tmp_path / sid).mkdir()
+            (tmp_path / sid / "events.jsonl").write_bytes(b"e" * 10)
+        return tmp_path
+
+    def test_sessions_list_with_repositories_models_runs_and_stages(self):
+        from deriva.bench.benchmarking import list_benchmark_sessions
+
+        rows = list_benchmark_sessions(self._engine(), limit=10)
+
+        assert [r["session_id"] for r in rows] == ["bench_4", "bench_3", "bench_2", "bench_1"]
+        first = rows[3]
+        assert (first["repositories"], first["models"], first["runs"], first["stages"]) == (["TeaStore", "deriva"], ["mistral-small4"], 2, ["derivation"])
+        assert first["description"] == "baseline GlobalRelationships v34" and first["status"] == "completed"
+
+    def test_sessions_are_found_by_text_repository_model_and_status_a_page_at_a_time(self):
+        from deriva.bench.benchmarking import list_benchmark_sessions
+
+        engine = self._engine()
+        ids = lambda **kw: [r["session_id"] for r in list_benchmark_sessions(engine, limit=10, **kw)]  # noqa: E731
+
+        assert ids(search="globalrelationships") == ["bench_3", "bench_1"]
+        assert ids(search="bench_2") == ["bench_2"]
+        assert ids(repository="TeaStore") == ["bench_3", "bench_1"]
+        assert ids(model="haiku") == ["bench_2"]
+        assert ids(status="failed") == ["bench_2"]
+        assert [r["session_id"] for r in list_benchmark_sessions(engine, limit=2, offset=1)] == ["bench_3", "bench_2"]
+
+    def test_a_session_is_deleted_with_its_runs_metrics_and_folder(self, tmp_path):
+        from deriva.bench.benchmarking import delete_benchmark_session
+
+        engine = self._engine()
+        folders = self._folders(tmp_path)
+
+        assert delete_benchmark_session(engine, "bench_1", folders) == {"session_id": "bench_1", "runs": 2, "bytes": 10}
+        for table in ("benchmark_sessions", "benchmark_runs", "benchmark_metrics"):
+            assert engine.execute(f"SELECT count(*) FROM {table} WHERE session_id = 'bench_1'").fetchone() == (0,)
+        assert not (folders / "bench_1").exists()
+
+    def test_a_running_or_unknown_session_is_not_deleted(self, tmp_path):
+        import pytest
+
+        from deriva.bench.benchmarking import delete_benchmark_session
+
+        engine = self._engine()
+        with pytest.raises(ValueError, match="running"):
+            delete_benchmark_session(engine, "bench_4", tmp_path)
+        with pytest.raises(KeyError):
+            delete_benchmark_session(engine, "bench_9", tmp_path)
+
+    def test_prune_keeps_the_latest_sessions_or_drops_the_failed_ones(self, tmp_path):
+        from deriva.bench.benchmarking import prune_benchmark_sessions
+
+        engine = self._engine()
+        folders = self._folders(tmp_path)
+
+        assert prune_benchmark_sessions(engine, folders, failed=True) == ["bench_2"]
+        assert prune_benchmark_sessions(engine, folders, keep=2) == ["bench_1"]
+        assert sorted(p.name for p in folders.iterdir()) == ["bench_3", "bench_4"]

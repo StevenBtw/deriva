@@ -225,6 +225,20 @@ def load_benchmark_models() -> dict[str, BenchmarkModelConfig]:
     return configs
 
 
+def _key_variable(config: BenchmarkModelConfig) -> str:
+    """The variable a model config's key is read from: its KEY_ENV reference, or its own LLM_{NAME}_KEY."""
+    return config.api_key_env or f"LLM_{config.name.upper().replace('-', '_')}_KEY"
+
+
+def _was_cut(result: Any) -> bool:
+    """Whether a model response in the run stopped at the output limit (finish reason ``length``)."""
+    from pydantic_ai.messages import ModelResponse
+
+    messages = getattr(result, "all_messages", None)
+    history = messages() if callable(messages) else []
+    return any(isinstance(m, ModelResponse) and m.finish_reason == "length" for m in history)
+
+
 def _serialize_output(output: object) -> str:
     """Serialize a pydantic model or arbitrary output to a JSON string."""
     dump = getattr(output, "model_dump_json", None)
@@ -351,6 +365,8 @@ class LLMManager:
             "provider": config.provider,
             "api_url": config.get_api_url(),
             "api_key": config.get_api_key(),
+            "api_key_variable": _key_variable(config),
+            "label": config.name,
             "model": config.model,
             "cache_dir": cache_dir,
             "max_retries": max_retries,
@@ -437,11 +453,13 @@ class LLMManager:
             provider = config.provider
             api_url = config.get_api_url()
             api_key = config.get_api_key()
+            key_variable, label = _key_variable(config), config.name
             model = config.model
             sampling, reasoning, context = config.sampling, config.reasoning, config.context
         else:
             provider = llm.provider
             reasoning, context = None, None
+            key_variable, label = f"LLM_{(provider or '').upper()}_API_KEY", provider
 
             if provider == "azure":
                 api_url = llm.azure_api_url
@@ -477,6 +495,8 @@ class LLMManager:
             "provider": provider,
             "api_url": api_url,
             "api_key": api_key,
+            "api_key_variable": key_variable,
+            "label": label,
             "model": model,
             "cache_dir": llm.cache_dir,
             "cache_ttl": llm.cache_ttl,
@@ -516,6 +536,12 @@ class LLMManager:
             required_fields = ["provider", "api_key", "model"]
 
         missing = [f for f in required_fields if not self.config.get(f)]
+        # The variable to set and the .env this install reads, never a value
+        if "api_key" in missing and self.config.get("api_key_variable"):
+            raise ConfigurationError(
+                f"The model config {self.config.get('label') or provider} has no API key: set {self.config['api_key_variable']} "
+                f"in {settings.env_file()} or in the environment (General in the studio saves a key there)"
+            )
         if missing:
             raise ConfigurationError(f"Missing required config fields: {', '.join(missing)}")
 
@@ -779,6 +805,14 @@ class LLMManager:
                 }
 
             self._warn_on_a_full_context(result)
+
+            # A structured answer cut at the output limit is asked again by pydantic-ai, and a shorter answer that
+            # validates can leave part of the question out: a failure (never cached), which a caller can split
+            if output_type is not str and _was_cut(result):
+                call["error_type"] = "IncompleteToolCall"
+                message = f"Model token limit ({effective_max_tokens or 'provider default'}) reached: the answer was cut, and the shorter answer after it may leave part of it out"
+                logger.warning("LLM answer cut at the output limit (%s)", self.model)
+                return FailedResponse(prompt=prompt, model=self.model, error=message, error_type="IncompleteToolCall")
 
             # Handle response
             output: Any = result.output
