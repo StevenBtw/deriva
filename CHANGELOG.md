@@ -51,6 +51,12 @@ The studio now manages what a workspace keeps (repositories, graph databases, ru
 - **Why the LLM is not configured**: a model config without a key stopped runs with "LLM not configured" only. The message now names the variable to set (the config's `KEY_ENV` reference or its own `LLM_{NAME}_KEY`, never a value) and the `.env` this install reads; the CLI's warning, a derivation's error and the studio's run say it
 - **Answers cut at the output limit**: a structured answer that reached the step's `max_tokens` was asked again by pydantic-ai, and a shorter answer that still validated was taken, so part of a batch could go unanswered without an error (in a check, 2 directory classifications instead of 12). Such a call now fails as cut (`IncompleteToolCall`, not cached, not retried as transient). Directory classification then splits the batch in halves until each answer fits, sends the batches that are answered as before, and reports the directories whose answer alone does not fit as not classified. Plain-text answers (documentation) are kept as they come
 - **TLS drops**: an `SSL EOF` or a connection reset is retried as a transient error (tests now pin this; the classification already did)
+- **Cut answers whose retries failed**: when pydantic-ai's retries after a cut answer failed in another way, it raised "Exceeded maximum output retries", and the batch was lost as an error. A run that holds a cut response now fails as cut (`IncompleteToolCall`) in that case too, so directory classification splits it like any other cut batch
+
+### Dependencies
+
+- **Up to date**: every Python dependency is at its latest release (among them pydantic-ai-slim 2.57, httpx2 2.14, FastAPI 0.149, uvicorn 0.54, anywidget 0.11, pydantic 2.14, ty 0.0.89), and the studio's npm packages at their latest within their ranges. Types follow the newer `ty`: `@contextmanager` functions return `Generator`, and mixed-value rows say so
+- **TypeScript 7**: the studio's type check (`npm run typecheck`, part of `npm run build`) runs on TypeScript 7, the native compiler. TypeScript 6 stays for `typescript-eslint`, which needs the TypeScript 6 API (`typescript-eslint` 8.72 supports TypeScript below 6.1)
 
 ## v0.8.3 - Adding abstraction to consistency (October 18 2026)
 
