@@ -36,6 +36,19 @@ def test_unknown_element_or_run_is_404(make_client):
     assert client.get("/api/trace/e1?run_id=nope").status_code == 404
 
 
+def test_trace_of_a_known_run_without_a_call_log_has_no_calls(make_client):
+    """A benchmark run keeps its calls in its session, not in the run's folder: the trace is the element without calls."""
+    client = make_client(FakeSession(trace_element=lambda element_id, calls: {"element_id": element_id, "calls": calls}))
+    folder = client.app.state.runs._runs_dir / "b596f6c79ca1"
+    folder.mkdir(parents=True)
+    (folder / "run.json").write_text('{"run_id": "b596f6c79ca1", "kind": "benchmark", "repository": null, "status": "finished"}', encoding="utf-8")
+
+    response = client.get("/api/trace/ac_core?run_id=b596f6c79ca1")
+
+    assert response.status_code == 200
+    assert response.json() == {"element_id": "ac_core", "calls": []}
+
+
 def test_trace_reads_the_calls_of_a_run_from_before_a_restart(make_client):
     """A run of an earlier studio process is in no memory, but its calls are in its folder (as under Prompts)."""
     first = make_client(llm_session())
