@@ -61,6 +61,46 @@ describe("GraphWidget", () => {
     expect(models[0].get("type_colors")).toEqual(typeColors);
   });
 
+  it("hands its settings to the widget at mount and again when they change", async () => {
+    const { loader, models } = capturingLoader();
+    const view = { nodes: [], edges: [] };
+    const { rerender } = render(<GraphWidget database="graph" view={view} dark={false} loader={loader} settings={{ layout: "preset", edge_arrows: true, show_query_input: false }} />);
+    await waitFor(() => expect(models).toHaveLength(1));
+    expect(models[0].get("layout")).toBe("preset");
+    expect(models[0].get("edge_arrows")).toBe(true);
+    expect(models[0].get("show_query_input")).toBe(false);
+
+    rerender(<GraphWidget database="graph" view={view} dark={false} loader={loader} settings={{ layout: "preset", edge_arrows: false, show_query_input: false }} />);
+
+    await waitFor(() => expect(models[0].get("edge_arrows")).toBe(false));
+  });
+
+  it("reports the node a viewer selects, and nothing when the selection is cleared", async () => {
+    const { loader, models } = capturingLoader();
+    const onSelect = vi.fn();
+    render(<GraphWidget database="graph" view={{ nodes: [{ id: "File" }], edges: [] }} dark={false} loader={loader} onSelect={onSelect} />);
+    await waitFor(() => expect(models).toHaveLength(1));
+
+    models[0].set("selected_node", { id: "File", label: "File" });
+    models[0].set("selected_node", null);
+
+    expect(onSelect.mock.calls).toEqual([["File"], [null]]);
+  });
+
+  it("selects the node the host picks, as a click would", async () => {
+    const { loader, models } = capturingLoader();
+    const view = { nodes: [{ id: "File" }, { id: "Method" }], edges: [] };
+    const { rerender } = render(<GraphWidget database="graph" view={view} dark={false} loader={loader} selected="File" />);
+    await waitFor(() => expect(models).toHaveLength(1));
+    expect(models[0].get("selected_nodes")).toEqual(["File"]);
+    expect(models[0].get("selected_node")).toEqual({ id: "File" });
+
+    rerender(<GraphWidget database="graph" view={view} dark={false} loader={loader} selected={null} />);
+
+    await waitFor(() => expect(models[0].get("selected_nodes")).toEqual([]));
+    expect(models[0].get("selected_node")).toBeNull();
+  });
+
   it("shows a message when the widget cannot be loaded", async () => {
     const loader = vi.fn(async () => {
       throw new Error("Failed to fetch https://esm.sh/graphology");

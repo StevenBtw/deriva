@@ -611,6 +611,41 @@ class TestSetSetting:
         engine.execute.assert_not_called()
 
 
+class TestGraphViewNodes:
+    """How many graph nodes the studio's graph views sample (the graph_view_nodes setting)."""
+
+    def test_is_300_until_set(self):
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.return_value = None
+
+        assert config.get_graph_view_nodes(engine) == 300
+        assert config.setting_default("graph_view_nodes") == "300"
+
+    def test_reads_the_stored_count_and_falls_back_on_a_broken_one(self):
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.return_value = ("800",)
+        assert config.get_graph_view_nodes(engine) == 800
+
+        engine.execute.return_value.fetchone.return_value = ("many",)
+        assert config.get_graph_view_nodes(engine) == 300
+
+    @pytest.mark.parametrize("value", ["many", "49", "5001", "12.5", ""])
+    def test_rejects_a_count_out_of_range_without_writing(self, value):
+        engine = MagicMock()
+
+        with pytest.raises(ValueError, match="graph_view_nodes"):
+            set_setting(engine, "graph_view_nodes", value)
+        engine.execute.assert_not_called()
+
+    def test_stores_a_count_in_range(self):
+        engine = MagicMock()
+        engine.execute.return_value.fetchone.return_value = None
+
+        set_setting(engine, "graph_view_nodes", " 1200 ")
+
+        assert engine.execute.call_args_list[-1] == call("INSERT INTO system_settings (key, value) VALUES (?, ?)", ["graph_view_nodes", "1200"])
+
+
 class TestEnableStep:
     """Tests for enable_step function."""
 

@@ -3,7 +3,7 @@ import { type KeyboardEvent, useMemo, useState } from "react";
 import type { InspectorView } from "../api/types";
 import { useTheme } from "../theme/theme";
 import { ArchimateWidget } from "../widgets/ArchimateWidget";
-import { diagramOf, type Filter, type Identity, type Item, itemsOf, keep, type Status, statusPair, statusRun, statusUnion } from "./inspect";
+import { causeOf, diagramOf, type Filter, type Identity, type Item, itemsOf, keep, type Status, statusPair, statusRun, statusUnion } from "./inspect";
 
 type View = { kind: "union" } | { kind: "run"; run: string } | { kind: "side" };
 type Group = "layer" | "cause";
@@ -51,12 +51,12 @@ function Box({ item, status, run, onSelect }: { item: Item; status: Status; run?
   );
 }
 
-function Layers({ rows, group, run, onSelect }: { rows: [Item, Status][]; group: Group; run?: string; onSelect?: (item: Item) => void }) {
+function Layers({ rows, group, identity, run, onSelect }: { rows: [Item, Status][]; group: Group; identity: Identity; run?: string; onSelect?: (item: Item) => void }) {
   if (!rows.length) return <div className="diffsum">Nothing to show with this filter.</div>;
   if (group === "cause") {
     const groups = new Map<string, [Item, Status][]>();
     for (const row of rows) {
-      const key = row[1].diff ? (row[0].cause ?? "other") : "Stable";
+      const key = row[1].diff ? causeOf(row[0], row[1], identity) : "Stable";
       groups.set(key, [...(groups.get(key) ?? []), row]);
     }
     const ordered = [...groups.entries()].sort((a, b) => Number(a[0] === "Stable") - Number(b[0] === "Stable"));
@@ -140,7 +140,7 @@ export function Inspector({ view, onSelect }: { view: InspectorView | null; onSe
           {(["a", "b"] as const).map((s) => (
             <div key={s}>
               <div className="colhd">{s === "a" ? a : b}</div>
-              <Layers rows={side(s)} group={group} run={s === "a" ? a : b} onSelect={onSelect} />
+              <Layers rows={side(s)} group={group} identity={identity} run={s === "a" ? a : b} onSelect={onSelect} />
             </div>
           ))}
         </div>
@@ -153,10 +153,10 @@ export function Inspector({ view, onSelect }: { view: InspectorView | null; onSe
     body = (
       <>
         <div className="diffsum">
-          {current.kind === "run" ? current.run : `All ${runs.length} runs`} · {differences} of {items.length} elements differ by {identity}
+          {current.kind === "run" ? current.run : `All ${runs.length} runs`} · {differences} of {items.length} elements differ, matched by {identity}
           {identity === "name" ? " (source flips count as the same element)" : ""}
         </div>
-        <Layers rows={rows} group={group} run={current.kind === "run" ? current.run : undefined} onSelect={onSelect} />
+        <Layers rows={rows} group={group} identity={identity} run={current.kind === "run" ? current.run : undefined} onSelect={onSelect} />
       </>
     );
   }

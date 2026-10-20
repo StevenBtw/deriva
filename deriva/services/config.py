@@ -713,7 +713,33 @@ def setting_default(key: str) -> str | None:
     """The value that applies while a setting is not set (None when nothing does)."""
     if key == "excluded_directories":
         return json.dumps(DEFAULT_EXCLUDED_DIRECTORIES)
+    if key == GRAPH_VIEW_NODES_SETTING:
+        return str(DEFAULT_GRAPH_VIEW_NODES)
     return None
+
+
+# How many graph nodes the studio's graph views sample (the model is always shown whole); more shows more of the graph
+# and draws slower. A display setting: it changes no extraction or derivation result.
+GRAPH_VIEW_NODES_SETTING = "graph_view_nodes"
+DEFAULT_GRAPH_VIEW_NODES = 300
+GRAPH_VIEW_NODES_RANGE = (50, 5000)
+
+
+def _parse_graph_view_nodes(raw: str) -> int:
+    low, high = GRAPH_VIEW_NODES_RANGE
+    text = raw.strip()
+    if not text.isdigit() or not low <= int(text) <= high:
+        raise ValueError(f"graph_view_nodes must be a whole number from {low} to {high}, not {raw!r}")
+    return int(text)
+
+
+def get_graph_view_nodes(engine: Any) -> int:
+    """The graph views' node count: the graph_view_nodes setting, or 300 while it is not set (or not a valid count)."""
+    raw = get_setting(engine, GRAPH_VIEW_NODES_SETTING)
+    try:
+        return DEFAULT_GRAPH_VIEW_NODES if raw is None else _parse_graph_view_nodes(raw)
+    except ValueError:
+        return DEFAULT_GRAPH_VIEW_NODES
 
 
 def get_excluded_directories(engine: Any) -> list[str]:
@@ -752,6 +778,8 @@ def set_setting(engine: Any, key: str, value: str) -> None:
     """Set a system setting (upsert); settings read as structured values are validated first."""
     if key == "excluded_directories":
         _parse_excluded_directories(value)
+    if key == GRAPH_VIEW_NODES_SETTING:
+        value = str(_parse_graph_view_nodes(value))
     existing = get_setting(engine, key)
     if existing is not None:
         engine.execute(

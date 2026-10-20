@@ -33,6 +33,14 @@ function variantLabel(identity: Identity): string {
   return identity === "name" ? "source" : "name";
 }
 
+/** The group of a differing item under "by cause": the flip analysis's cause, else what its status shows differs. */
+export function causeOf(item: Item, status: Status, identity: Identity): string {
+  if (item.cause) return item.cause;
+  if (status.cls === "d-changed") return `${variantLabel(identity)} differs`;
+  if (status.cls === "d-partial" || status.cls === "d-ghost") return "not in every run";
+  return "other";
+}
+
 export function statusUnion(item: Item, runs: string[], identity: Identity): Status {
   const present = runs.filter((r) => item.byRun[r]);
   if (present.length < runs.length) return { cls: "d-partial", text: `in ${present.join(", ")} (${present.length}/${runs.length})`, diff: true };

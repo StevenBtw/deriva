@@ -87,14 +87,14 @@ wheels = [
 
 [[package]]
 name = "anywidget-graph"
-version = "0.4.4"
+version = "0.4.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/6f/818afe67db5720550fe14536033248641c3efa3a5cb72ed9c1bfa5d3e27a/anywidget_graph-0.4.4.tar.gz", hash = "sha256:61e15fc409902ff8db44a375b17ac2fc3db96ca6d6dfd074a4009e1c4b629152", size = 520944, upload-time = "2026-10-19T09:49:49.646Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/42/22/8508c46b5a47007fe82da3069a5095ea99627e4a3587319812898c349641/anywidget_graph-0.4.5.tar.gz", hash = "sha256:c636e6a4a3823f15362f41d2851feeb6463d376bd74d3572c84bb2520cc80e4c", size = 524140, upload-time = "2026-10-20T05:31:33.328Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/93/215f907440ad3cbf9db03d850d7a17e3bd391fb42208c2e308a039b17e54/anywidget_graph-0.4.4-py3-none-any.whl", hash = "sha256:e96d06b30ad146fb323a2e1e03042ebbe997cd2e35b90800d559ecc33dd81756", size = 162510, upload-time = "2026-10-19T09:49:48.266Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/e6/2a4a02df60164da2c53f74d9bbeb98cd54bd50e78c8ac14785b5ef3012d7/anywidget_graph-0.4.5-py3-none-any.whl", hash = "sha256:6cbf1f10b409a9450d84c47d749c0f35f11460744d562346f000d6a6287dc3e1", size = 164487, upload-time = "2026-10-20T05:31:31.877Z" },
 ]
 
 [[package]]
@@ -470,7 +470,7 @@ wheels = [
 
 [[package]]
 name = "deriva-cli"
-version = "0.8.4"
+version = "0.8.5"
 source = { editable = "." }
 dependencies = [
     { name = "ctranslate2" },
@@ -553,7 +553,7 @@ dev = [
 
 [[package]]
 name = "deriva-dev"
-version = "0.8.4"
+version = "0.8.5"
 source = { editable = "packages/deriva-dev" }
 dependencies = [
     { name = "deriva-studio" },
@@ -564,7 +564,7 @@ requires-dist = [{ name = "deriva-studio", editable = "packages/deriva-studio" }
 
 [[package]]
 name = "deriva-studio"
-version = "0.8.4"
+version = "0.8.5"
 source = { editable = "packages/deriva-studio" }
 dependencies = [
     { name = "anywidget-archimate" },
@@ -577,7 +577,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "anywidget-archimate", specifier = ">=0.3.1" },
-    { name = "anywidget-graph", specifier = ">=0.4.4" },
+    { name = "anywidget-graph", specifier = ">=0.4.5" },
     { name = "deriva-cli", editable = "." },
     { name = "fastapi", specifier = ">=0.142.4" },
     { name = "uvicorn", specifier = ">=0.41.0" },

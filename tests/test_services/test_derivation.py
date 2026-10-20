@@ -848,8 +848,22 @@ class TestRunDerivationWithConfigs:
                 progress=progress,
             )
 
-        progress.start_phase.assert_called_once_with("derivation", 0)
-        progress.complete_phase.assert_called_once_with("Derivation complete: 0 elements, 0 relationships")
+        # No step configs, but the deferred relationship pass is a step of its own
+        progress.start_phase.assert_called_once_with("derivation", 1)
+        progress.complete_phase.assert_called_once_with("Derivation complete: 0 elements, 0 relationships in the model")
+
+    def test_progress_summary_counts_the_model(self):
+        """The closing summary reports the model's elements and relationships, also those the refine steps added."""
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [MagicMock()] * 27
+        archimate_manager.get_relationships.return_value = [MagicMock()] * 46
+        progress = MagicMock()
+
+        with patch.object(derivation.config, "get_derivation_configs", return_value=[]):
+            result = derivation.run_derivation(engine=MagicMock(), graph_manager=MagicMock(), archimate_manager=archimate_manager, progress=progress)
+
+        progress.complete_phase.assert_called_once_with("Derivation complete: 27 elements, 46 relationships in the model")
+        assert result["stats"]["relationships_created"] == 0
 
     def test_with_run_logger(self):
         """Should call run_logger methods during execution."""
@@ -1101,6 +1115,49 @@ class TestRunDerivationIter:
 
         assert len(updates) >= 1
         assert all(isinstance(u, ProgressUpdate) for u in updates)
+
+    def test_final_message_counts_the_model_not_the_step_counters(self):
+        """Refine steps add and delete relationships the step counters miss: the summary says what the model holds."""
+        graph_manager = MagicMock()
+        graph_manager.batch_update_properties.return_value = 0
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [MagicMock()] * 27
+        archimate_manager.get_relationships.return_value = [MagicMock()] * 46
+        enrich_cfg = MagicMock()
+        enrich_cfg.step_name = "pagerank"
+        enrich_cfg.params = None
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
+            with patch.object(derivation, "_graph_metrics", return_value=GraphMetrics(node_ids=[], edge_count=0)):
+                updates = list(derivation.run_derivation_iter(engine=MagicMock(), graph_manager=graph_manager, archimate_manager=archimate_manager, phases=["prep"]))
+
+        assert updates[-1].step == ""
+        assert updates[-1].message == "27 elements, 46 relationships in the model"
+        assert updates[-1].stats["stats"]["relationships_created"] == 0
+
+    def test_counts_the_relationship_pass_in_the_total(self):
+        """The deferred relationship pass is a step too: no update counts past the run's total (it showed 25/24)."""
+        graph_manager = MagicMock()
+        graph_manager.batch_update_properties.return_value = 0
+        archimate_manager = MagicMock()
+        archimate_manager.get_elements.return_value = [MagicMock(identifier="ac_core", element_type="ApplicationComponent", properties={})]
+        enrich_cfg = MagicMock()
+        enrich_cfg.step_name = "pagerank"
+        enrich_cfg.params = None
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: [enrich_cfg] if phase == "prep" else []
+            with (
+                patch.object(derivation, "_graph_metrics", return_value=GraphMetrics(node_ids=[], edge_count=0)),
+                patch.object(derivation, "derive_consolidated_relationships", return_value=[]),
+            ):
+                updates = list(derivation.run_derivation_iter(engine=MagicMock(), graph_manager=graph_manager, archimate_manager=archimate_manager, phases=["prep"]))
+
+        relationship = [u for u in updates if u.step == derivation.RELATIONSHIP_STEP]
+        assert relationship, "the relationship pass ran"
+        assert all(u.current <= u.total for u in updates)
+        assert relationship[0].current == relationship[0].total == 2
 
     def test_yields_error_when_no_configs_enabled(self):
         """Should yield error update when no configs are enabled."""

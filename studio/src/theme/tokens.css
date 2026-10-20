@@ -1210,3 +1210,214 @@ label.check {
 label.check + .note {
   margin-top: 6px;
 }
+
+/* Intermediate ontology: the schema (graph, matrix or cards) beside the selected type */
+.onto-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 12px;
+  align-items: start;
+}
+.onto-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.onto-toolbar {
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+.onto-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-right: auto;
+}
+.groupchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.groupchip.on {
+  color: var(--text);
+  border-color: var(--line);
+  background: var(--bg3);
+}
+.groupchip .dot,
+.onto-side .hd .dot {
+  margin: 0;
+}
+.groupchip:not(.on) .dot {
+  opacity: 0.35;
+}
+.onto-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.schema-graph {
+  height: max(440px, calc(100vh - 250px));
+  min-height: 0;
+}
+.schema-graph .widget-host,
+.schema-graph .widget-host > div:last-child {
+  height: 100%;
+}
+.schema-graph .empty {
+  padding: 40px;
+}
+.onto-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.onto-footer .faint {
+  margin-left: auto;
+}
+.onto-enrich {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 4px;
+}
+.onto-enrich .muted {
+  margin-right: 8px;
+}
+.onto-side {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 140px);
+  overflow: auto;
+}
+.onto-side .hd h3 {
+  font-size: 14px;
+}
+.onto-side .hd .note {
+  margin-left: auto;
+}
+.onto-close {
+  padding: 0 6px;
+  font-size: 16px;
+  line-height: 1;
+}
+.onto-kv {
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: start;
+}
+.onto-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.onto-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.onto-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.onto-section {
+  border-top: 1px solid var(--line);
+}
+.onto-section .note {
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.onto-edges td {
+  padding: 3px 6px 3px 0;
+  border: 0;
+  font-size: 12px;
+}
+.onto-edges td:first-child {
+  width: 16px;
+}
+.onto-props {
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.onto-sample {
+  margin-top: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+.onto-overview p {
+  margin: 0 0 10px;
+}
+.onto-largest {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+.onto-largest li {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+.onto-layout .linkbtn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+}
+.onto-layout .linkbtn:hover {
+  text-decoration: underline;
+}
+.onto-layout .linkbtn[aria-pressed="true"] {
+  font-weight: 600;
+}
+.onto-cards {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  align-items: start;
+}
+.onto-cardsteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 2px;
+  font-size: 12px;
+}
+.onto-matrix {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 1100px) {
+  .onto-layout,
+  .onto-matrix {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .onto-side {
+    position: static;
+    max-height: none;
+  }
+}
+/* Type names in the edge matrix read as names (the table header style sets capitals) */
+.onto-matrix table.rules th {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+  color: var(--text);
+}

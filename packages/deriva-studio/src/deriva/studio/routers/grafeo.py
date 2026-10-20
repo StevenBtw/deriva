@@ -108,24 +108,28 @@ def _graph_view(session: Any, budget: int, first_ids: list[str] | None = None, k
 
 
 @router.get("/view/linked")
-def linked_view(limit: int = 300, session: Any = Depends(get_session)) -> dict[str, Any]:
+def linked_view(limit: int | None = None, session: Any = Depends(get_session)) -> dict[str, Any]:
     """The intermediate graph and the output graph as two lanes, with each element linked to its source nodes.
 
-    The output graph (rejected elements too) and the repositories are always shown; the rest of ``limit`` samples the
-    intermediate graph, starting from the elements' sources. A model larger than the limit still gets its sources (up to
-    the limit), so its links stay.
+    The output graph (rejected elements too) and the repositories are always shown; the rest of ``limit`` (the
+    graph_view_nodes setting when not given) samples the intermediate graph, starting from the elements' sources. A
+    model larger than the limit still gets its sources (up to the limit), so its links stay.
     """
+    limit = limit if limit is not None else session.graph_view_nodes()
     model = _model_view(session, rejected=True)
     sources = sorted({source for node in model["nodes"] for source in element_sources(node)})
     return build_linked_view(model, _graph_view(session, limit - len(model["nodes"]), first_ids=sources, keep_first=limit))
 
 
 @router.get("/view/{database}")
-def view(database: str, limit: int = 300, session: Any = Depends(get_session)) -> dict[str, Any]:
-    """An overview graph for the studio's graph panes: the whole model, or a realistic sample of ``limit`` graph nodes."""
+def view(database: str, limit: int | None = None, session: Any = Depends(get_session)) -> dict[str, Any]:
+    """An overview graph for the studio's graph panes: the whole model, or a realistic sample of ``limit`` graph nodes
+    (the graph_view_nodes setting when not given)."""
     if database not in ("graph", "model"):
         raise HTTPException(status_code=404, detail=f"Unknown database: {database} (graph or model)")
-    return _model_view(session) if database == "model" else _graph_view(session, limit)
+    if database == "model":
+        return _model_view(session)
+    return _graph_view(session, limit if limit is not None else session.graph_view_nodes())
 
 
 @router.get("/databases/{database}/schema")

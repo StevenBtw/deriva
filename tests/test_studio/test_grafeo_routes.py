@@ -128,6 +128,30 @@ def test_graph_view_keeps_the_relationships_of_its_sample(make_client):
     assert touched == {node["id"] for node in view["nodes"]}
 
 
+def test_graph_view_without_a_limit_samples_as_many_nodes_as_the_setting_says(make_client):
+    nodes, edges = small_repository()
+    session = FakeSession(query_graph_read_only=graph_db(nodes, edges), graph_view_nodes=8)
+    client = make_client(session)
+
+    view = client.get("/grafeo/view/graph").json()
+
+    assert len(view["nodes"]) == 8
+    assert len(session.called("graph_view_nodes")) == 1
+
+
+def test_linked_view_without_a_limit_reads_the_setting_and_a_given_limit_wins(make_client):
+    nodes, edges = small_repository()
+    session = FakeSession(query_graph_read_only=graph_db(nodes, edges), query_model_read_only=[], graph_view_nodes=8)
+    client = make_client(session)
+
+    sampled = client.get("/grafeo/view/linked").json()
+    given = client.get("/grafeo/view/linked?limit=300").json()
+
+    assert len(sampled["nodes"]) == 8
+    assert len(given["nodes"]) == len(nodes)
+    assert len(session.called("graph_view_nodes")) == 1
+
+
 def test_a_graph_within_the_limit_is_shown_whole(make_client):
     nodes, edges = small_repository()
     client = make_client(FakeSession(query_graph_read_only=graph_db(nodes, edges)))

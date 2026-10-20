@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, configs, fileTypes, runs, trace } from "./client";
+import { ApiError, api, configs, fileTypes, graph, runs, trace } from "./client";
 
 async function failure(promise: Promise<unknown>): Promise<ApiError> {
   try {
@@ -17,6 +17,17 @@ function respond(status: number, body: unknown) {
 
 describe("api client", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it("leaves the graph views' node count to the studio setting unless one is asked for", async () => {
+    const fetchMock = vi.fn(async (_url: string) => new Response(JSON.stringify({ nodes: [], edges: [] }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await graph.view("graph");
+    await graph.linked();
+    await graph.view("graph", 40);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/grafeo/view/graph", "/grafeo/view/linked", "/grafeo/view/graph?limit=40"]);
+  });
 
   it("parses JSON responses", async () => {
     vi.stubGlobal("fetch", respond(200, { status: "ok" }));

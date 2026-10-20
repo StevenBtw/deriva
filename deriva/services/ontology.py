@@ -57,7 +57,8 @@ def intermediate_ontology(session: Any) -> dict[str, Any]:
     for label in sorted(set(classes) | set(counts), key=lambda name: (order.get(node_group(name), len(order)), name)):
         rows = run(f"MATCH (n:Graph:`{label}`) RETURN n LIMIT 1", None) if counts[label] else []
         sample = {k: _short(v) for k, v in rows[0]["n"].items() if not k.startswith("_")} if rows else {}
-        pattern = re.compile(rf":`?(Graph:)?{re.escape(label)}\b")
+        # A query reads a type by matching it (n:Graph:Label) or by testing its labels ("Label" IN labels(n))
+        pattern = re.compile(rf":`?(Graph:)?{re.escape(label)}\b|[\"']{re.escape(label)}[\"']\s+IN\s+labels\(")
         producers = sorted(writers.get(label) or ({label} if label in steps else set()))
         node_types.append(
             {
