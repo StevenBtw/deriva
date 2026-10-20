@@ -63,6 +63,23 @@ def test_node_types_carry_counts_samples_producers_and_consumers():
     assert view["other_steps"] == [{"name": "DirectoryClassification", "enabled": True, "version": 9, "method": "llm"}]
 
 
+def test_a_query_that_tests_its_labels_reads_those_types():
+    """``"Technology" IN labels(n)`` reads Technology as ``n:Graph:Technology`` does; returning labels(n) reads none."""
+
+    class LabelTests(FakeSession):
+        def get_derivation_configs(self):
+            return [
+                {"element_type": "ApplicationService", "phase": "generate", "input_graph_query": 'MATCH (n) WHERE ("Technology" IN labels(n)) RETURN labels(n) as labels'},
+                {"element_type": "Device", "phase": "generate", "input_graph_query": "MATCH (n:Graph) WHERE 'Directory' IN labels(n) RETURN n"},
+                {"element_type": "Node", "phase": "generate", "input_graph_query": 'MATCH (n:Graph) WHERE "Tech" IN labels(n) RETURN labels(n) as labels'},
+            ]
+
+    types = {t["name"]: t for t in intermediate_ontology(LabelTests())["node_types"]}
+
+    assert types["Technology"]["consumers"] == ["ApplicationService"]
+    assert types["Directory"]["consumers"] == ["Device"]
+
+
 def test_edge_types_name_their_endpoint_types():
     view = intermediate_ontology(FakeSession())
 

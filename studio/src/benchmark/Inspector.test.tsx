@@ -46,6 +46,36 @@ describe("Inspector", () => {
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: "Core" }));
   });
 
+  it("groups differences by what differs when the flip analysis names no cause", async () => {
+    const view: InspectorView = {
+      ...VIEW,
+      elements: [
+        element("s1/1", "ac_core", "Core"),
+        element("s2/1", "ac_core", "Core"),
+        element("s1/1", "ac_cli", "CLI"),
+        { ...element("s1/1", "ac_api", "Policy API"), by_source: "dir::r::api", source: "dir::r::api" },
+        { ...element("s2/1", "ac_api", "Policy Service"), by_source: "dir::r::api", source: "dir::r::api", by_name: "policy service" },
+      ],
+    };
+    render(<Inspector view={view} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "by cause" }));
+
+    expect(screen.getByText("name differs · 1")).toBeInTheDocument();
+    expect(screen.getByText("not in every run · 1")).toBeInTheDocument();
+    expect(screen.getByText("Stable · 1")).toBeInTheDocument();
+    expect(screen.queryByText(/^other/)).not.toBeInTheDocument();
+    expect(screen.getByText(/2 of 3 elements differ, matched by source/)).toBeInTheDocument();
+  });
+
+  it("keeps a cause the flip analysis found", async () => {
+    render(<Inspector view={{ ...VIEW, causes: { "dir::r::ac_cli": "candidate dropped" } }} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "by cause" }));
+
+    expect(screen.getByText("candidate dropped · 1")).toBeInTheDocument();
+  });
+
   it("falls back to all runs when a new view has not the run that was shown", async () => {
     const { rerender } = render(<Inspector view={VIEW} />);
     await userEvent.click(screen.getByRole("button", { name: "s2/1" }));

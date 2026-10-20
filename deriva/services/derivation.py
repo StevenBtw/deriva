@@ -1411,6 +1411,12 @@ def _run_prep_step(
 # =============================================================================
 
 
+def _model_totals(archimate_manager: ArchimateManager) -> str:
+    """The closing summary: what the model holds, counted as the studio's model stats count it. The step counters
+    miss what refine steps add and delete (graph relationships, duplicates), so they stay in ``stats`` only."""
+    return f"{len(archimate_manager.get_elements())} elements, {len(archimate_manager.get_relationships())} relationships in the model"
+
+
 def run_derivation(
     engine: Any,
     graph_manager: GraphManager,
@@ -1501,6 +1507,8 @@ def run_derivation(
         total_steps += len(gen_configs)
     if "refine" in phases:
         total_steps += len(refine_configs)
+    if relationship_pass:
+        total_steps += 1
 
     # Start progress tracking
     if progress:
@@ -1905,7 +1913,7 @@ def run_derivation(
 
     # Complete progress tracking
     if progress:
-        msg = f"Derivation complete: {stats['elements_created']} elements, {stats['relationships_created']} relationships"
+        msg = f"Derivation complete: {_model_totals(archimate_manager)}"
         if stats.get("elements_disabled", 0) > 0:
             msg += f", {stats['elements_disabled']} disabled"
         progress.complete_phase(msg)
@@ -1992,6 +2000,9 @@ def run_derivation_iter(
             stats=stats,
         )
         return
+    # The deferred relationship pass is a step of its own (it runs when the model has elements)
+    if defer_relationships:
+        total_steps += 1
 
     current_step = 0
 
@@ -2332,7 +2343,7 @@ def run_derivation_iter(
                 )
 
     # Yield final completion
-    final_message = f"{stats['elements_created']} elements, {stats['relationships_created']} relationships"
+    final_message = _model_totals(archimate_manager)
     if stats.get("elements_disabled", 0) > 0:
         final_message += f", {stats['elements_disabled']} disabled"
     if errors:

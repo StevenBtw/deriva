@@ -406,6 +406,64 @@ function Models() {
   );
 }
 
+const GRAPH_VIEW_NODES = "graph_view_nodes";
+
+/** How many graph nodes the Workspace and Benchmark graph views sample (the model is always shown whole). */
+function GraphViews() {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    settings
+      .get(GRAPH_VIEW_NODES)
+      .then(({ value, default: fallback }) => setDraft(value ?? fallback ?? "300"))
+      .catch((reason) => setNote(message(reason)));
+  }, []);
+
+  const save = async () => {
+    if (draft === null) return;
+    try {
+      const { value } = await settings.set(GRAPH_VIEW_NODES, draft.trim());
+      setNote(`Saved: the graph views now sample ${Number(value).toLocaleString("en")} nodes (reopen a graph to see it).`);
+    } catch (reason) {
+      setNote(message(reason));
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="hd">
+        <h3>Graph views</h3>
+      </div>
+      <div className="bd">
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <label htmlFor="graph-view-nodes">Nodes in the graph views</label>
+          <input
+            id="graph-view-nodes"
+            type="number"
+            min={50}
+            max={5000}
+            step={50}
+            value={draft ?? ""}
+            disabled={draft === null}
+            style={{ width: 100 }}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void save()}
+          />
+          <button type="button" aria-label="Save the node count" disabled={draft === null} onClick={() => void save()}>
+            Save
+          </button>
+        </div>
+        <div className="note">
+          The Workspace and Benchmark graphs show this many nodes of the graph (50 to 5,000; the model is always shown whole). More nodes show more
+          of the graph and draw slower. A display setting: it changes no run.
+        </div>
+      </div>
+      {note && <div className="bd note">{note}</div>}
+    </div>
+  );
+}
+
 const CLEAR_MODEL = "derivation_clear_model";
 
 /** Whether full derivation runs start from an empty model (the default, as benchmarks do); a switch for deriva-dev. */
@@ -461,6 +519,7 @@ export function General({ benchmark = true }: { benchmark?: boolean }) {
       <div className="pad cols" style={{ gridTemplateColumns: "1fr 1.3fr", alignItems: "start" }}>
         <div className="stack">
           <ExcludedDirectories />
+          <GraphViews />
           {benchmark && <DerivationRuns />}
           <Models />
         </div>

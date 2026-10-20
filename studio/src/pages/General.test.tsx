@@ -81,6 +81,35 @@ describe("General", () => {
     expect(toggle).not.toBeChecked();
   });
 
+  it("sets how many nodes the graph views sample, from the built-in 300", async () => {
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "[]" : null, default: key === "graph_view_nodes" ? "300" : null }));
+    render(<General />);
+    const count = await screen.findByRole("spinbutton", { name: "Nodes in the graph views" });
+    await waitFor(() => expect(count).toHaveValue(300));
+
+    await userEvent.clear(count);
+    await userEvent.type(count, "1200");
+    await userEvent.click(screen.getByRole("button", { name: "Save the node count" }));
+
+    expect(settings.set).toHaveBeenCalledWith("graph_view_nodes", "1200");
+    expect(await screen.findByText(/Saved: the graph views now sample 1,200 nodes/)).toBeInTheDocument();
+  });
+
+  it("says why a node count is refused and keeps what was typed", async () => {
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "[]" : key === "graph_view_nodes" ? "800" : null }));
+    vi.mocked(settings.set).mockRejectedValueOnce(new Error("graph_view_nodes must be a whole number from 50 to 5000, not '9000'"));
+    render(<General />);
+    const count = await screen.findByRole("spinbutton", { name: "Nodes in the graph views" });
+    await waitFor(() => expect(count).toHaveValue(800));
+
+    await userEvent.clear(count);
+    await userEvent.type(count, "9000");
+    await userEvent.click(screen.getByRole("button", { name: "Save the node count" }));
+
+    expect(await screen.findByText(/from 50 to 5000/)).toBeInTheDocument();
+    expect(count).toHaveValue(9000);
+  });
+
   it("shows the stored setting and has no switch without benchmarking", async () => {
     vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "[]" : "false" }));
     const { unmount } = render(<General benchmark />);

@@ -8,6 +8,26 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
+## v0.8.5 - Ontology graph and honest counters (October 20 2026)
+
+The intermediate ontology is a graph again, drawn with anywidget-graph 0.4.5 (arrows, loops, a selection that lights its neighbours, positions placed by the page); the graph views' size is a setting; and the run summary, the step counter, the ontology's readers and the benchmark inspector now report what is there.
+
+### Studio
+
+- **Intermediate ontology as a graph again**: the page opens on the schema graph: every node type a node, sized by its count and coloured by its group (types without nodes small and grey), the edge types between two types as one arrow from source to target, an edge type from a type to itself as a loop. The page places the types itself, the same way every time, with each group in its own part of the canvas. Selecting a type keeps its neighbours and their edges lit and names its edge types; the panel beside it shows the type's description, the steps that produce it (with their switches), the derivation steps that read it, its edges (the type at the other end opens), its properties and a sample node. Group, empty-type and edge-type filters hold in all three views: Graph, Matrix (the edge types and the edges between types) and Cards (every type per group with its steps' switches). Needs anywidget-graph 0.4.5
+- **Graph view size**: the General page sets how many graph nodes the Workspace and Benchmark graph views sample (50 to 5,000, 300 until set; the model is always shown whole). CLI: `config setting set graph_view_nodes <count>`
+
+### Fixes
+
+- **Derivation summary counts the model**: the line that closes a derivation (live log, progress) says how many elements and relationships the model holds, as the Repositories page counts them. It added up only what the generate and relationship steps created, so relationships from the refine steps were missing (40 where the model had 46); the per-step counters stay in the run's stats
+- **Ontology pages find every step that reads a type**: a candidate query that tests a node's labels (`"BusinessConcept" IN labels(n)`) now counts as reading that type, as `n:Graph:BusinessConcept` does, so ApplicationService shows as a reader of BusinessConcept and TypeDefinition
+- **Step counter of a derivation**: the deferred relationship pass counts in the run's step total, so the live log no longer counts past it (25/24)
+- **Benchmark inspector groups say what differs**: grouped by cause, an element whose name differs between runs (or that some runs lack) goes under "name differs" (or "not in every run") instead of "other" when the flip analysis gives it no cause, and the header says what the elements are matched by ("3 of 51 elements differ, matched by source")
+
+### Dependencies
+
+- **anywidget-graph 0.4.5** (deriva-studio requires `>=0.4.5`): arrows, self-loops, neighbour highlight and the `preset` layout for the ontology graph
+
 ## v0.8.4 - Studio management and field fixes (October 19 2026)
 
 The studio now manages what a workspace keeps (repositories, graph databases, runs, benchmark sessions, storage), and a test on a large repository led to fixes in cloning, long paths and cut LLM answers, and to two read-only reports: extraction coverage and model quality.

@@ -1349,6 +1349,12 @@ class PipelineSession:
         assert self._engine is not None
         return config.get_active_config_versions(self._engine, include_disabled=include_disabled)
 
+    def graph_view_nodes(self) -> int:
+        """How many graph nodes the studio's graph views sample (the graph_view_nodes setting, 300 until set)."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.get_graph_view_nodes(self._engine)
+
     def get_setting(self, key: str) -> str | None:
         """Get a system setting value (None when not set)."""
         self._ensure_connected()

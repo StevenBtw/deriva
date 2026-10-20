@@ -260,7 +260,7 @@ describe("BenchmarkWorkspace", () => {
     render(<BenchmarkWorkspace />);
     await screen.findAllByText("repo_a");
     await userEvent.click(screen.getByRole("button", { name: /View model/ }));
-    await screen.findByText(/elements differ by source/);
+    await screen.findByText(/elements differ, matched by source/);
     await userEvent.click(screen.getByText("Queue Server"));
     await screen.findByTestId("element-trace");
 
@@ -268,7 +268,7 @@ describe("BenchmarkWorkspace", () => {
     await userEvent.selectOptions(screen.getByLabelText("Model to inspect"), "m2");
 
     expect(screen.queryByTestId("element-trace")).not.toBeInTheDocument();
-    expect(screen.queryByText(/elements differ by source/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/elements differ, matched by source/)).not.toBeInTheDocument();
   });
 
   it("names the model of each flip when the sessions use several models", async () => {
@@ -306,7 +306,7 @@ describe("BenchmarkWorkspace", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /View model/ }));
 
-    expect(await screen.findByText(/1 of 2 elements differ by source/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 of 2 elements differ, matched by source/)).toBeInTheDocument();
     expect(screen.getByText("Queue Server").closest(".el")).toHaveClass("d-partial");
     await userEvent.click(screen.getByRole("button", { name: "Only differences" }));
     expect(screen.queryByText("Worker")).not.toBeInTheDocument();
@@ -320,7 +320,7 @@ describe("BenchmarkWorkspace", () => {
     render(<BenchmarkWorkspace />);
     await screen.findAllByText("repo_a");
     await userEvent.click(screen.getByRole("button", { name: /View model/ }));
-    await screen.findByText(/elements differ by source/);
+    await screen.findByText(/elements differ, matched by source/);
 
     await userEvent.click(screen.getByText("Queue Server"));
 
@@ -337,7 +337,7 @@ describe("BenchmarkWorkspace", () => {
     render(<BenchmarkWorkspace />);
     await screen.findAllByText("repo_a");
     await userEvent.click(screen.getByRole("button", { name: /View model/ }));
-    await screen.findByText(/elements differ by source/);
+    await screen.findByText(/elements differ, matched by source/);
 
     await userEvent.click(screen.getByRole("button", { name: "Diagram" }));
 

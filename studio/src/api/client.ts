@@ -176,8 +176,9 @@ export const configs = {
 
 export const graph = {
   stats: () => api.get<{ total_nodes: number; by_type: Record<string, number> }>("/api/graph/stats"),
-  view: (database: "graph" | "model", limit = 300) => api.get<GraphView>(`/grafeo/view/${database}?limit=${limit}`),
-  linked: (limit = 300) => api.get<LinkedView>(`/grafeo/view/linked?limit=${limit}`),
+  // Without a limit the studio samples as many graph nodes as its graph_view_nodes setting says (300 until set)
+  view: (database: "graph" | "model", limit?: number) => api.get<GraphView>(`/grafeo/view/${database}${limit === undefined ? "" : `?limit=${limit}`}`),
+  linked: (limit?: number) => api.get<LinkedView>(`/grafeo/view/linked${limit === undefined ? "" : `?limit=${limit}`}`),
   clear: () => api.del<{ success: boolean }>("/api/graph"),
 };
 
