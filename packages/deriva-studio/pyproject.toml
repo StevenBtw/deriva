@@ -1,6 +1,6 @@
 [project]
 name = "deriva-studio"
-version = "0.8.5"
+version = "0.8.6"
 description = "Deriva Studio: derive ArchiMate models from code repositories in your browser (includes the deriva-cli command)."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -9,10 +9,10 @@ license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "S. T. Grond", email = "steven@deriva.dev" }]
 dependencies = [
-    "deriva-cli==0.8.5",
+    "deriva-cli==0.8.6",
     "fastapi>=0.142.4",
     "uvicorn>=0.41.0",
-    "anywidget-graph>=0.4.5",
+    "anywidget-graph>=0.4.6",
     "anywidget-archimate>=0.3.1",
 ]
 

@@ -17,10 +17,11 @@ def element_trace(element_id: str, request: Request, run_id: str | None = None, 
     calls: list[dict[str, Any]] = []
     if run_id:
         runs = request.app.state.runs
-        # A run of this process, or one an earlier process left in its folder (its saved calls)
-        path = runs.log_path(run_id)
-        if path is None and runs.get(run_id) is None:
+        # A run of this process, or one an earlier process left in its folder; a run without a call log (a benchmark
+        # keeps its calls in its session) gives the element without calls
+        if not runs.known(run_id):
             raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
+        path = runs.log_path(run_id)
         calls = LlmCallLog.read(path) if path else []
         # The element is read from the repository in use: a run of another repository has no say about it
         run, current = runs.get(run_id), getattr(session, "repository", None)

@@ -8,6 +8,18 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
+## v0.8.6 - Trace and dimming fixes (October 20 2026)
+
+Two fixes found while taking the 0.8.5 screenshots: the Trace tab works with a benchmark as the shown run, and the ontology graph's dimmed types stay visible on a light canvas (anywidget-graph 0.4.6).
+
+### Fixes
+
+- **Trace after a benchmark**: with a benchmark as the run shown in the workspace, the Trace tab shows the selected element (its sources and relationships) instead of "Unknown run". A benchmark keeps its LLM calls in its session, not in the run's folder, so the trace lists none; a run the studio does not know is still refused
+
+### Dependencies
+
+- **anywidget-graph 0.4.6** (deriva-studio requires `>=0.4.6`): a selection dims the other types and edges of the ontology graph so they stay visible on a light canvas too (they all but vanished there, and barely dimmed on a dark one)
+
 ## v0.8.5 - Ontology graph and honest counters (October 20 2026)
 
 The intermediate ontology is a graph again, drawn with anywidget-graph 0.4.5 (arrows, loops, a selection that lights its neighbours, positions placed by the page); the graph views' size is a setting; and the run summary, the step counter, the ontology's readers and the benchmark inspector now report what is there.
