@@ -489,15 +489,21 @@ describe("Workspace", () => {
   });
 
   it("switches the studio to the chosen repository and reloads the graphs", async () => {
+    // The graph requests made after the studio switched to a repository (each switch reloads once it is done)
+    const loadsAfter = (repository: string) => {
+      const switched = vi.mocked(session.useRepository).mock.calls.findIndex(([name]) => name === repository);
+      const at = vi.mocked(session.useRepository).mock.invocationCallOrder[switched];
+      return switched < 0 ? 0 : vi.mocked(graph.linked).mock.invocationCallOrder.filter((order) => order > at).length;
+    };
     render(<Workspace />);
-    await waitFor(() => expect(session.useRepository).toHaveBeenCalledWith("deriva"));
-    const before = vi.mocked(graph.linked).mock.calls.length;
+    // The start switches to the remembered repository: its reload lands first, also on a slow machine
+    await waitFor(() => expect(loadsAfter("deriva")).toBeGreaterThan(0));
 
     await userEvent.selectOptions(screen.getByLabelText("Repository"), "ToolShed");
 
     await waitFor(() => expect(session.useRepository).toHaveBeenCalledWith("ToolShed"));
     // One linked request carries both graphs
-    await waitFor(() => expect(vi.mocked(graph.linked).mock.calls.length).toBe(before + 1));
+    await waitFor(() => expect(loadsAfter("ToolShed")).toBe(1));
   });
 
   it("keeps the graph that loaded when the other one fails in the separate view", async () => {
