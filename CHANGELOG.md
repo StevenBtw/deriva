@@ -8,6 +8,17 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
+## v0.8.7 - Database upgrades (October 23 2026)
+
+A major database upgrade: both of Deriva's databases move to a new major release, grafeo 0.6.0 for the graphs and DuckDB 2.0 for the configs. The models are the same, derivation is faster, and installs no longer need a pre-release.
+
+### Dependencies
+
+- **grafeo 0.6.0** (requires `>=0.6.0`, the stable release instead of the 0.6.0b1 preview): Deriva's models are identical on it, and a run is faster, most of all in derivation, whose graph queries take less than half the time (and 50 times faster than Neo4j). grafeo 0.6.0 writes a newer storage version: a workspace's graph files are updated on their first open, after which Deriva 0.8.6 or older (on grafeo 0.6.0b1) cannot open them
+- **DuckDB 2.0** (requires `>=2`) for the config database: an existing database keeps its storage format, so an earlier Deriva (on DuckDB 1.5) still opens it, and every config, version and setting reads as before
+- **The other dependencies** at their latest releases, among them anthropic 2.2, pydantic-ai 2.60, openai 3.37, FastAPI 0.162 and httpx2 2.16; Vite 8.3.5 for the studio's build
+- **No pre-release requirements**: a test reads the built wheels and fails when a runtime requirement names a pre-release, which uv does not install for a dependency (it then fell back to the empty 0.0.1 placeholder of the package)
+
 ## v0.8.6 - Trace and dimming fixes (October 20 2026)
 
 Two fixes found while taking the 0.8.5 screenshots: the Trace tab works with a benchmark as the shown run, and the ontology graph's dimmed types stay visible on a light canvas (anywidget-graph 0.4.6).
