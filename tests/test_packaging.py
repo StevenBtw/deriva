@@ -33,6 +33,21 @@ def test_every_wheel_carries_the_license_text(built_dist, package):
         assert wheel.read(licenses[0]) == (ROOT / "LICENSE").read_bytes()
 
 
+@pytest.mark.parametrize("package", ["deriva_cli", "deriva_studio", "deriva_dev"])
+def test_no_runtime_requirement_needs_a_pre_release(built_dist, package):
+    """uv takes a pre-release only for a requirement the user names: a dependency on one (grafeo>=0.6.0b1) made
+    `uv tool install deriva-studio` fall back to the empty 0.0.1 placeholder. Every Requires-Dist names a final release."""
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
+    with zipfile.ZipFile(next(built_dist.glob(f"{package}-*.whl"))) as wheel:
+        metadata = wheel.read(next(m for m in wheel.namelist() if m.endswith(".dist-info/METADATA"))).decode("utf-8")
+    requirements = [Requirement(line.split(":", 1)[1].strip()) for line in metadata.splitlines() if line.startswith("Requires-Dist:")]
+    assert requirements, "the wheel lists its requirements"
+    pre_releases = [str(r) for r in requirements for spec in r.specifier if Version(spec.version).is_prerelease]
+    assert pre_releases == []
+
+
 def _tracked(prefix: str) -> set[str]:
     """Source files of the working tree under ``prefix``: tracked or new, not ignored, still present (renames and new files count)."""
     listed = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard", prefix], cwd=ROOT, check=True, capture_output=True, text=True).stdout.split()
