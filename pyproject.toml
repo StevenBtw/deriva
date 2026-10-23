@@ -1,6 +1,6 @@
 [project]
 name = "deriva-cli"
-version = "0.8.6"
+version = "0.8.7"
 description = "Deriva is a research project aimed at enabling digital architects by automating the derivation of enterprise architecture models. Deriva uses dual knowledge graphs, heuristics and LLM's."
 # The PyPI page; README.md is the repository's own
 readme = "packages/README-deriva-cli.md"
@@ -42,8 +42,8 @@ dependencies = [
     "rich>=15",
     "lxml>=6",
     # Databases
-    "duckdb>=1.5",
-    "grafeo>=0.6.0b1",
+    "duckdb>=2",
+    "grafeo>=0.6.0",
     # Code Analysis (tree-sitter)
     "tree-sitter>=0.26",
     "tree-sitter-python>=0.23.0",
@@ -64,7 +64,7 @@ dependencies = [
     # builds (azure, ollama, lmstudio and mistral go through the openai client), so no google, logfire or mcp stack
     "pydantic-ai-slim[openai,anthropic]>=2.57",
     # Utilities
-    "httpx2>=2.14",
+    "httpx2>=2",
     "lmdb>=1.6",
     "typer>=0.27",
     "tree-sitter-typescript==0.23.2",
