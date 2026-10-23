@@ -8,7 +8,7 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
-## v0.8.7 - Database upgrades (October 23 2026)
+## v0.8.7 - Database upgrades (October 24 2026)
 
 A major database upgrade: both of Deriva's databases move to a new major release, grafeo 0.6.0 for the graphs and DuckDB 2.0 for the configs. The models are the same, derivation is faster, and installs no longer need a pre-release.
 
