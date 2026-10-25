@@ -265,3 +265,87 @@ def test_an_explicit_empty_level_set_is_no_level_at_all():
 
     assert evaluate(parse_reference(data), model, level="enterprise")["relationship_recall"] is None
     assert evaluate(parse_reference(data), model, level="union")["relationship_recall"] == 1.0
+
+
+CHAINED = {
+    "repository": "claims",
+    "elements": [
+        {"key": "clerk", "type": "BusinessActor", "name": "Clerk"},
+        {"key": "claims", "type": "ApplicationService", "name": "Claim Service"},
+        {"key": "store", "type": "SystemSoftware", "name": "Store"},
+        {"key": "host", "type": "Node", "name": "Host"},
+        {"key": "app", "type": "ApplicationComponent", "name": "Claims App"},
+    ],
+    "relationships": [
+        {"source": "claims", "target": "clerk", "type": "Serving", "kind": "serving"},
+        {"source": "store", "target": "app", "type": "Realization", "kind": "realization"},
+        {"source": "host", "target": "app", "type": "Realization", "kind": "realization"},
+    ],
+}
+CHAINED_ELEMENTS = [
+    ("ba_clerk", "BusinessActor", "Clerk", "s"),
+    ("bp_handle", "BusinessProcess", "Handle Claim", "s"),
+    ("as_claims", "ApplicationService", "Claim Service", "s"),
+    ("ss_store", "SystemSoftware", "Store", "s"),
+    ("nd_host", "Node", "Host", "s"),
+    ("ar_app", "Artifact", "Claims App Artifact", "s"),
+    ("ac_app", "ApplicationComponent", "Claims App", "s"),
+]
+
+
+def test_a_reference_relationship_is_found_through_a_valid_chain_of_direct_model_relationships():
+    """DR 4 (an actor assigned to a process the service serves) and DR 2 (system software assigned to the artifact
+    that realizes the component), through model elements the reference does not hold."""
+    model = _model(
+        CHAINED_ELEMENTS,
+        [("ba_clerk", "Assignment", "bp_handle"), ("as_claims", "Serving", "bp_handle"), ("ss_store", "Assignment", "ar_app"), ("ar_app", "Realization", "ac_app")],
+    )
+
+    result = evaluate(parse_reference(CHAINED), model)
+
+    assert (result["relationships"]["serving"]["matched"], result["relationships"]["serving"]["via_chain"]) == (1, 1)
+    assert result["relationships"]["realization"]["via_chain"] == 1  # store; the host has no chain
+    assert result["relationships"]["realization"]["missing"] == ["Host -Realization-> Claims App"]
+    assert (result["relationship_recall"], result["relationship_recall_direct"]) == (0.667, 0.0)
+    # Every model relationship lies on the chain of a found reference relationship: assessable and correct
+    totals = result["relationship_totals"]
+    assert (totals["assessable"], totals["correct"], totals["correct_via_chain"], totals["precision"]) == (4, 4, 4, 1.0)
+
+
+def test_a_derived_tier_model_relationship_is_no_chain_input_and_gets_no_chain_credit():
+    """The node is assigned to the artifact only by derivation (Figure 97 assigns system software and devices): the
+    chain through it does not count, and the derived-tier relationship it starts is judged on its own."""
+    model = _model(CHAINED_ELEMENTS, [("nd_host", "Assignment", "ar_app"), ("ar_app", "Realization", "ac_app"), ("as_claims", "Serving", "ba_clerk")])
+
+    result = evaluate(parse_reference(CHAINED), model)
+
+    assert result["relationships"]["realization"]["matched"] == 0
+    assert (result["relationships"]["serving"]["matched"], result["relationships"]["serving"]["via_chain"]) == (1, 0)  # drawn
+    totals = result["relationship_totals"]
+    assert (totals["assessable"], totals["correct"], totals["correct_via_chain"]) == (1, 1, 0)  # the artifact is unmapped
+
+
+def test_an_enterprise_relationship_is_found_through_a_direct_chain_below_the_enterprise_view():
+    """The chain runs through solution-level elements and relationships that the enterprise snapshot leaves out."""
+    model = _model(CHAINED_ELEMENTS[:3], [("ba_clerk", "Assignment", "bp_handle"), ("as_claims", "Serving", "bp_handle")])
+    for e in model["elements"]:
+        e["levels"] = ["solution"] if e["identifier"] == "bp_handle" else ["enterprise"]
+    for r in model["relationships"]:
+        r["levels"] = ["solution"]
+
+    result = evaluate(parse_reference(CHAINED), model, level="enterprise")
+
+    assert (result["relationships"]["serving"]["matched"], result["relationships"]["serving"]["via_chain"]) == (1, 1)
+    assert result["relationship_totals"]["model"] == 0  # the chain is no part of the enterprise snapshot
+
+
+def test_a_relationship_with_an_external_end_is_found_only_when_drawn():
+    """An external system is a black box (scope external): no chain through it can be seen, so none is credited."""
+    data = json.loads(json.dumps(CHAINED))
+    data["elements"][1]["properties"] = {"scope": "external"}
+    model = _model(CHAINED_ELEMENTS[:3], [("ba_clerk", "Assignment", "bp_handle"), ("as_claims", "Serving", "bp_handle")])
+
+    result = evaluate(parse_reference(data), model)
+
+    assert parse_reference(data).elements[1].external and not parse_reference(data).elements[0].external
+    assert (result["relationships"]["serving"]["matched"], result["relationship_totals"]["correct_via_chain"]) == (0, 0)
