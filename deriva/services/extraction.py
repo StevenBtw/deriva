@@ -902,10 +902,11 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
     ``manifest_runtimes`` (manifest file pattern -> runtime alias), ``environment_names`` (kind -> name), the
     file name patterns ``compose_files``, ``compose_defaults`` (the names Compose looks up, in order), ``compose_overrides``
     (the files it merges into them), ``build_scripts`` and ``marker_suffixes``, ``cloud_qualifiers``
-    (resource type -> {property, default}) and ``cdk_constructs`` ("module.Class" -> {type, environment, properties})."""
+    (resource type -> {property, default}), ``cdk_constructs`` ("module.Class" -> {type, environment, properties}) and
+    ``primary_runs_units`` (an environment that runs the repository's own units is the primary one before others)."""
     settings = json.loads(params) if params else {}
     lists, maps = ("compose_files", "compose_defaults", "compose_overrides", "build_scripts", "marker_suffixes"), ("cloud_resources", "manifest_runtimes", "environment_names")
-    unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs"}
+    unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs", "primary_runs_units"}
     qualifiers, constructs = settings.get("cloud_qualifiers", {}), settings.get("cdk_constructs", {})
     text = lambda v: isinstance(v, str) and bool(v)  # noqa: E731 - a one-line helper
     qualifiers_ok = isinstance(qualifiers, dict) and all(isinstance(q, dict) and text(q.get("property")) and isinstance(q.get("default", ""), str) for q in qualifiers.values())
@@ -923,10 +924,11 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
     maps_ok = all(isinstance(settings.get(k, {}), dict) and all(isinstance(v, str) and v for v in settings.get(k, {}).values()) for k in maps)
     markers = settings.get("markers", [])
     markers_ok = isinstance(markers, list) and all(isinstance(m, dict) and isinstance(m.get("pattern"), str) and isinstance(m.get("technology"), str) for m in markers)
-    if unknown or not lists_ok or not maps_ok or not markers_ok:
+    runs_units = settings.get("primary_runs_units", False)
+    if unknown or not lists_ok or not maps_ok or not markers_ok or not isinstance(runs_units, bool):
         raise ValueError(
             f"Deployment params: lists of strings under {list(lists)}, objects of strings under {list(maps)}, "
-            "markers as [{pattern, technology}] and technologies as [{name, kind, aliases}]"
+            "markers as [{pattern, technology}], technologies as [{name, kind, aliases}] and primary_runs_units (true or false)"
         )
     for m in markers:
         try:
@@ -950,6 +952,7 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
         markers=tuple((m["pattern"], m["technology"]) for m in markers),
         marker_suffixes=tuple(s.lower() for s in settings.get("marker_suffixes", [])),
         manifest_runtimes=tuple(settings.get("manifest_runtimes", {}).items()),
+        primary_runs_units=runs_units,
     )
     return rules, catalog
 
