@@ -1810,3 +1810,43 @@ class TestPythonSubmoduleImports:
 
         imports = [ExtractedImport(module=".", names=["services"], line=1, is_from_import=True)]
         assert _imported_paths(imports, "app/routes.py", {"app/routes.py", "app/services.py"}, set()) == {"app/services.py"}
+
+
+DOCKERFILE = """FROM python:3.11-slim AS build
+WORKDIR /app
+COPY requirements.txt /app/requirements.txt
+COPY shared /app/shared
+COPY --from=build /opt/venv /opt/venv
+COPY services/auth/app /app/app
+ENV PYTHONPATH="/app/shared:/opt/venv/lib:${PYTHONPATH}" \
+    SERVICE_PORT=8000
+ENV NODE_PATH=lib
+"""
+
+
+def test_a_folder_a_dockerfile_copies_onto_the_import_path_is_an_import_root():
+    from deriva.modules.extraction.edges import import_roots
+
+    folders = {"shared", "services", "services/auth", "services/auth/app"}
+
+    roots, unmapped = import_roots({"services/auth/Dockerfile": DOCKERFILE}, folders)
+
+    # /app/shared comes from the repository's shared/; /opt/venv only from another build stage; lib was never copied
+    assert roots == ["shared"]
+    assert unmapped == ["services/auth/Dockerfile: NODE_PATH /app/lib", "services/auth/Dockerfile: PYTHONPATH /opt/venv/lib"]
+
+
+def test_a_bare_import_resolves_against_an_import_root_only_when_nothing_else_resolves_it():
+    from deriva.modules.extraction.edges import _resolve_import
+
+    paths = {"shared/security/__init__.py", "shared/middleware/__init__.py", "services/auth/app/main.py", "security/__init__.py"}
+
+    bare = _resolve_import("middleware", "services/auth/app/main.py", paths, set(), import_roots=("shared",))
+    dotted = _resolve_import("shared.middleware", "services/auth/app/main.py", paths, set(), import_roots=("shared",))
+    existing = _resolve_import("security", "services/auth/app/main.py", paths, set(), import_roots=("shared",))
+    external = _resolve_import("requests", "services/auth/app/main.py", paths, set(), import_roots=("shared",))
+
+    assert bare == {"type": "internal", "target_path": "shared/middleware/__init__.py"}
+    assert dotted == {"type": "internal", "target_path": "shared/middleware/__init__.py"}
+    assert existing == {"type": "internal", "target_path": "security/__init__.py"}  # a repository-relative match wins
+    assert external["type"] == "external"
