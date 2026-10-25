@@ -2147,6 +2147,9 @@ class NamingConfig:
     guards: NameGuards = field(default_factory=NameGuards)  # Structural checks on the answer (unit names)
     # Closed-set naming: a source that lists nameCandidates is named by choosing one of them with this instruction
     choose_instruction: str = ""
+    # Name sources in rank order (manifest, mainframe, readme, docs, structure): set, the first free candidate by this
+    # order is the name with no call; within a source the extraction order decides
+    source_order: tuple[str, ...] = ()
 
 
 # Structural source fields that are the same in every run (no LLM-written text)

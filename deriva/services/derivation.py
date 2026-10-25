@@ -901,11 +901,15 @@ def _naming_config(params: str | None) -> NamingConfig | None:
     choose = settings.get("choose_instruction", "")
     if not isinstance(choose, str):
         raise ValueError("params.naming.choose_instruction is the instruction text of closed-set naming (a string)")
+    source_order = settings.get("source_order", [])
+    if not isinstance(source_order, list) or not all(isinstance(s, str) and s for s in source_order):
+        raise ValueError("params.naming.source_order lists name sources in rank order (strings)")
     return NamingConfig(
         instruction=settings["instruction"],
         samples=int(settings.get("samples", 1)),
         choose_instruction=choose,
         guards=NameGuards(generic_words=frozenset(w.lower() for w in words), kind_nouns=dict(nouns), reserved_labels=tuple(labels)),
+        source_order=tuple(source_order),
     )
 
 
