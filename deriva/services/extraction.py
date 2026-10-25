@@ -997,16 +997,29 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
     if env and env_id:
         others = [f"{e.kind} {e.file}" for e in layer.deployments.others]
         other_services = [
-            json.dumps({"name": s.name, "unit": s.unit, "environment": s.environment, "ports": s.ports}, sort_keys=True) for e in layer.deployments.others for s in e.services
+            json.dumps({"name": s.name, "unit": s.unit, "environment": s.environment, "ports": s.ports, "file": e.file}, sort_keys=True)
+            for e in layer.deployments.others
+            for s in e.services
         ]
         graph_manager.add_node(
-            EnvironmentNode(name=env.name, kind=env.kind, repository_name=repo.name, file=env.file, others=others, other_services=other_services), node_id=env_id
+            EnvironmentNode(
+                name=env.name,
+                kind=env.kind,
+                repository_name=repo.name,
+                file=env.file,
+                others=others,
+                other_services=other_services,
+                variant_units=layer.deployments.variant_units,
+            ),
+            node_id=env_id,
         )
         nodes += 1
         deployment_ids = _service_ids(f"deployment::{repo.name}::{env.kind}", [(s.name, s.unit) for s in env.services])
         for service, deployment_id in zip(env.services, deployment_ids, strict=True):
             graph_manager.add_node(
-                DeploymentNode(name=service.name, environment=env.kind, repository_name=repo.name, image=service.image or "", variables=service.environment, ports=service.ports),
+                DeploymentNode(
+                    name=service.name, environment=env.kind, repository_name=repo.name, image=service.image or "", variables=service.environment, ports=service.ports, file=env.file
+                ),
                 node_id=deployment_id,
             )
             graph_manager.add_edge(env_id, deployment_id, "RUNS")
@@ -1042,6 +1055,7 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
         "errors": [],
         "environment": f"{env.kind} {env.file}".strip() if env else None,
         "other_environments": [f"{e.kind} {e.file}" for e in layer.deployments.others],
+        "variant_units": list(layer.deployments.variant_units),
         "software": {"listed": listed, "fallback": len(layer.software) - listed, "unconnected": len(layer.unconnected)},
     }
 

@@ -83,6 +83,8 @@ class DeploymentResult:
     others: list[Environment] = field(default_factory=list)
     base_images: dict[str, list[str]] = field(default_factory=dict)  # unit id -> runtime image of its Dockerfile(s)
     managed: list[str] = field(default_factory=list)  # Managed service resource types of every cloud template
+    variants: list[Environment] = field(default_factory=list)  # Other files of the primary's kind in its folder
+    variant_units: list[str] = field(default_factory=list)  # Units only variants deploy, the primary not (sorted ids)
 
 
 class _TolerantLoader(yaml.SafeLoader):
@@ -381,6 +383,15 @@ def detect_deployments(
     ranked = sorted(environments, key=lambda e: (not e.services, order[e.kind], len(PurePosixPath(e.file).parts), e.file))
     if ranked:
         result.primary, result.others = ranked[0], ranked[1:]
+        # A variant is another file of the primary's kind in the primary file's folder; a unit a variant deploys and
+        # the primary does not is no part of the system (other environments install the whole system, variants included).
+        # Only when the primary deploys a unit itself: then leaving one out is a choice, not an empty or partial base file.
+        # Known limit: a variant that adds a real production service (a worker in a production file) is dropped too
+        primary = result.primary
+        result.variants = [e for e in result.others if e.kind == primary.kind and _parent(e.file) == _parent(primary.file)]
+        deployed = {s.unit for s in primary.services if s.unit}
+        if deployed:
+            result.variant_units = sorted({s.unit for e in result.variants for s in e.services if s.unit} - deployed)
     return result
 
 
