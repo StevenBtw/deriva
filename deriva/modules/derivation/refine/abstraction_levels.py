@@ -3,8 +3,9 @@
 Tags every element and relationship with the abstraction levels it belongs to (``levels``; a relationship whose
 ends share no level is ``cross_level``), adds the roll-up Compositions of the component hierarchy (system ->
 modules and units -> nested modules), and hands an interface to the module it lies in where its unit builds
-several modules (the module composes it instead of the unit). A Composition against the hierarchy (a unit composing
-the module that holds it) is removed. Before the joint selection it also draws the enterprise viewpoint: the
+several modules (the module composes it instead of the unit). The services of a unit split into feature packages
+are realized by the packages' functions (``levels.split_realizations``). A Composition against the hierarchy (a unit
+composing the module that holds it) is removed. Before the joint selection it also draws the enterprise viewpoint: the
 relationships between enterprise elements that the metamodel's valid derivation rules derive from direct
 relationships, for the patterns of a versioned table (``levels.enterprise_derivations``). Structural only: the
 hierarchy comes from the folders of the components' sources (deployable units, build modules), the levels per type
@@ -20,7 +21,17 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from deriva.common.ocel import hash_content
-from deriva.modules.derivation.levels import Component, LevelRules, assign_levels, component_parents, enterprise_derivations, interface_owners, relationship_levels, rollups
+from deriva.modules.derivation.levels import (
+    Component,
+    LevelRules,
+    assign_levels,
+    component_parents,
+    enterprise_derivations,
+    interface_owners,
+    relationship_levels,
+    rollups,
+    split_realizations,
+)
 
 from .base import RefineResult, register_refine_step
 
@@ -156,6 +167,8 @@ class AbstractionLevelsStep:
         existing = {(r.source, r.relationship_type, r.target) for r in relationships}
         added: list[tuple[str, str, str, str]] = list(rolled)
         added += [(moved[i], "Composition", i, "interface_owner") for i in sorted({r.target for r in dropped})]
+        if stage != "annotate":
+            added += [(f, "Realization", s, "split_unit") for f, s in self._split_realizations(elements, relationships, parents, component_of)]
         self._add(archimate_manager, added, existing, levels, result)
         derived = self._derivations(archimate_manager, elements, levels, [(a, b, c) for a, b, c in patterns]) if stage == "structure" and patterns else []
         chains = {(s, g, t): (chain, numbers) for s, g, t, chain, numbers in derived}
@@ -211,6 +224,21 @@ class AbstractionLevelsStep:
             )
             existing.add((source, relationship_type, target))
             result.relationships_created += 1
+
+    @staticmethod
+    def _split_realizations(elements: list[Any], relationships: list[Any], parents: dict[str, str | None], component_of: dict[str, str]) -> list[tuple[str, str]]:
+        """(function, service) for the services of a unit split into feature packages (``levels.split_realizations``)."""
+        types = {e.identifier: e.element_type for e in elements}
+        function_of = {
+            r.source: r.target
+            for r in sorted(relationships, key=lambda r: r.identifier)
+            if r.relationship_type == "Assignment" and types.get(r.source) == "ApplicationComponent" and types.get(r.target) == "ApplicationFunction"
+        }
+        realized = {r.target for r in relationships if r.relationship_type == "Realization" and types.get(r.source) == "ApplicationFunction"}
+        services = {
+            e.identifier: [component_of[s] for s in (e.properties or {}).get("sources") or [] if s in component_of] for e in elements if e.element_type == "ApplicationService"
+        }
+        return split_realizations(services, parents, function_of, realized)
 
     @staticmethod
     def _derivations(

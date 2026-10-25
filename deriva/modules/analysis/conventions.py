@@ -19,7 +19,7 @@ from typing import Any
 from deriva.common.naming import name_key
 
 LAYERS: list[tuple[str, list[str]]] = [
-    ("Business", ["BusinessActor", "BusinessProcess", "BusinessFunction", "BusinessEvent", "BusinessObject"]),
+    ("Business", ["BusinessActor", "BusinessRole", "BusinessProcess", "BusinessFunction", "BusinessEvent", "BusinessObject"]),
     ("Application", ["ApplicationComponent", "ApplicationInterface", "ApplicationService", "ApplicationFunction", "DataObject"]),
     ("Technology", ["Node", "Device", "SystemSoftware", "TechnologyService", "Artifact"]),
 ]

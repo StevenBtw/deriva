@@ -93,6 +93,7 @@ from deriva.modules.derivation.business_function import BusinessFunctionDerivati
 # Derivation class imports
 from deriva.modules.derivation.business_object import BusinessObjectDerivation
 from deriva.modules.derivation.business_process import BusinessProcessDerivation
+from deriva.modules.derivation.business_role import BusinessRoleDerivation
 from deriva.modules.derivation.component_services import ComponentServicesConfig, derive_component_services, derive_member_services, derive_unit_services
 from deriva.modules.derivation.data_object import DataObjectDerivation
 from deriva.modules.derivation.device import DeviceDerivation
@@ -155,6 +156,7 @@ DERIVATION_REGISTRY: dict[str, type[ElementDerivationBase]] = {
     "ApplicationService": ApplicationServiceDerivation,
     "ApplicationFunction": ApplicationFunctionDerivation,
     "Artifact": ArtifactDerivation,
+    "BusinessRole": BusinessRoleDerivation,
     "ApplicationInterface": ApplicationInterfaceDerivation,
     "DataObject": DataObjectDerivation,
     "TechnologyService": TechnologyServiceDerivation,

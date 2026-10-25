@@ -55,6 +55,7 @@ class EntityRules:
     technical_signals: tuple[str, ...] = ()  # The signals technical_words filter (empty: every signal)
     aggregate_scope: str = "repository"  # Where a root makes the other ORM entities parts: "repository" or its "folder"
     table_annotations: tuple[str, ...] = ()  # Annotations whose name argument names a code type's table
+    table_attributes: tuple[str, ...] = ()  # Class-level attributes whose string value names a code type's table
     join_tables: bool = False  # A table whose columns are all foreign keys (no key of its own) is no entity
 
 
@@ -67,7 +68,7 @@ class Entity:
     signal: str
     type_ids: list[str] = field(default_factory=list)
     paths: list[str] = field(default_factory=list)
-    tables: list[str] = field(default_factory=list)  # The DDL table names it merges, as written
+    tables: list[str] = field(default_factory=list)  # The tables it merges or declares (DDL names as written, declared names without schema)
 
 
 @dataclass
@@ -236,6 +237,19 @@ def _annotated_table(decorator: str, annotations: set[str]) -> str | None:
     return found.group(1) if found else None
 
 
+def _declared_table(t: dict[str, Any], annotations: set[str], attributes: tuple[str, ...]) -> str | None:
+    """The table a code type declares: its table annotation's name, else a class-level table attribute in its code
+    (``__tablename__ = "loans"``), without a schema in front; else None."""
+    for d in t.get("decorators") or []:
+        if table := _annotated_table(str(d), annotations):
+            return table.split(".")[-1]
+    if attributes and (code := str(t.get("code") or "")):
+        names = "|".join(re.escape(a) for a in attributes)
+        if found := re.search(rf"(?m)^\s*(?:{names})\s*=\s*[\"']([^\"']+)[\"']", code):
+            return found.group(1).split(".")[-1]
+    return None
+
+
 def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owners: dict[str, str], rules: EntityRules) -> EntityResult:
     """The data entities among ``types``.
 
@@ -306,6 +320,8 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
         entity.paths = sorted({*entity.paths, str(t.get("path") or "")})
         if str(t.get("category") or "") == "table":
             entity.tables = sorted({*entity.tables, str(t["name"])})
+        elif table := _declared_table(t, table_marks, rules.table_attributes):
+            entity.tables = sorted({*entity.tables, table})
         remember(t, ("entity", key))
 
     # Code types first: a table generated for one (PERSISTENCEORDER for PersistenceOrder) follows its decision

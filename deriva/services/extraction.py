@@ -760,6 +760,7 @@ _ENTITY_LISTS = (
     "technical_words",
     "name_suffixes",
     "table_annotations",
+    "table_attributes",
 )
 
 
@@ -800,7 +801,7 @@ def _entity_facts(q: Callable[..., list[dict[str, Any]]]) -> tuple[list[dict[str
     """The DataEntity step's inputs: the repository's types (with bases), importer counts per file, file -> unit name."""
     types = q(
         "MATCH (t:Graph:TypeDefinition) WHERE t.active = true AND t.repository_name = $repo_name "
-        "RETURN t.id AS id, t.typeName AS name, t.category AS category, t.decorators AS decorators, t.filePath AS path"
+        "RETURN t.id AS id, t.typeName AS name, t.category AS category, t.decorators AS decorators, t.filePath AS path, t.codeSnippet AS code"
     )
     bases: dict[str, list[str]] = {}
     for row in q("MATCH (a:Graph:TypeDefinition)-[:`Graph:INHERITS`]->(b) WHERE a.repository_name = $repo_name RETURN a.id AS a, b.typeName AS name, b.id AS id"):
@@ -813,6 +814,7 @@ def _entity_facts(q: Callable[..., list[dict[str, Any]]]) -> tuple[list[dict[str
             "decorators": list(t["decorators"] or []),
             "path": t["path"] or "",
             "bases": bases.get(t["id"], []),
+            "code": t.get("code") or "",
         }
         for t in types
         if t.get("id")

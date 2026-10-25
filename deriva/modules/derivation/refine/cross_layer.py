@@ -35,6 +35,7 @@ BUSINESS_LAYER = {
     "BusinessObject",
     "BusinessProcess",
     "BusinessActor",
+    "BusinessRole",
     "BusinessEvent",
     "BusinessFunction",
 }

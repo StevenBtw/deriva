@@ -126,6 +126,26 @@ def ancestors(identifier: str, parents: dict[str, str | None]) -> list[str]:
     return out
 
 
+def split_realizations(services: dict[str, list[str]], parents: dict[str, str | None], function_of: dict[str, str], realized: set[str]) -> list[tuple[str, str]]:
+    """(function, service) where a unit is split into feature packages: a service that no function realizes, of a
+    component whose child components have functions (``function_of``: component -> its function), is realized by
+    each of those functions. Sorted.
+
+    Args:
+        services: Service -> the components it belongs to (from its listed sources)
+        parents: Component -> its parent in the hierarchy (``component_parents``)
+        function_of: Component -> the function assigned to it
+        realized: The services some function realizes already
+    """
+    found = set()
+    for service, components in services.items():
+        if service in realized:
+            continue
+        for component in components:
+            found |= {(function_of[child], service) for child, parent in parents.items() if parent == component and child in function_of}
+    return sorted(found)
+
+
 def interface_owners(
     interfaces: dict[str, tuple[str, frozenset[str]]], builds: dict[str, list[str]], kinds: dict[str, str], own_files: dict[str, frozenset[str]]
 ) -> dict[str, str]:
