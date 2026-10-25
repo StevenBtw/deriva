@@ -388,3 +388,20 @@ def test_a_generic_name_that_holds_the_product_gets_no_second_product():
     units = _named(_container("backend-server"), documents={"r/README.md": "# Backend Server\n"})
 
     assert units["r/backend-server"].name_candidates == [("Backend Server", "structure")]
+
+
+def test_a_unit_of_a_package_listed_only_as_a_development_dependency_is_tooling():
+    files = [
+        _file("r/pyproject.toml"),
+        _file("r/shop/cli.py", "python"),
+        _file("r/bench/pyproject.toml"),
+        _file("r/bench/run.py", "python"),
+    ]
+    manifests = {
+        "r/pyproject.toml": '[project]\nname = "shop"\n[project.scripts]\nshop = "shop.cli:main"\n[dependency-groups]\ndev = ["shop-bench"]\n',
+        "r/bench/pyproject.toml": '[project]\nname = "shop-bench"\n[project.scripts]\nshop-bench = "run:main"\n',
+    }
+
+    units = _units(files, manifests=manifests)
+
+    assert {k: u.excluded for k, u in units.items()} == {"r::shop": None, "r/bench::shop-bench": "tooling"}

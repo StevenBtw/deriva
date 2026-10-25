@@ -223,3 +223,39 @@ def test_gradle_dependencies_in_map_form_count_and_a_dotted_folder_is_named_by_i
 
     assert modules["r/commons"].excluded is None  # guava is no test framework
     assert modules["r/svc/tools.acme.shop.entities"].name == "Entities"  # not "Tools Acme Shop Entities"
+
+
+def test_a_package_the_repository_lists_only_as_a_development_dependency_is_tooling():
+    files = [
+        _f("r/pyproject.toml", "toml", "build"),
+        _f("r/app/main.py", "python"),
+        _f("r/packages/bench/pyproject.toml", "toml", "build"),
+        _f("r/packages/bench/run.py", "python"),
+        _f("r/packages/web/pyproject.toml", "toml", "build"),
+        _f("r/packages/web/serve.py", "python"),
+        _f("r/ui/package.json", "json", "build"),
+        _f("r/ui/app.js", "javascript"),
+        _f("r/ui-kit/package.json", "json", "build"),
+        _f("r/ui-kit/kit.js", "javascript"),
+        _f("r/fixtures/pom.xml", "xml", "build"),
+        _f("r/fixtures/Data.java"),
+        _f("r/core/pom.xml", "xml", "build"),
+        _f("r/core/Core.java"),
+    ]
+    manifests = {
+        # A dependency group (dev) is development only; an optional extra installs with the package, so it is a runtime use
+        "r/pyproject.toml": '[project]\nname = "shop"\ndependencies = ["requests"]\n[project.optional-dependencies]\nweb = ["shop-web"]\n'
+        '[dependency-groups]\ndev = ["Shop_Bench>=1", "pytest", "shop-web"]\n',
+        "r/packages/bench/pyproject.toml": '[project]\nname = "shop-bench"\n',
+        "r/packages/web/pyproject.toml": '[project]\nname = "shop-web"\n',
+        "r/ui/package.json": '{"name": "shop-ui", "dependencies": {"react": "18"}, "devDependencies": {"shop-ui-kit": "1"}}',
+        "r/ui-kit/package.json": '{"name": "shop-ui-kit"}',
+        "r/fixtures/pom.xml": "<project><artifactId>fixtures</artifactId></project>",
+        "r/core/pom.xml": "<project><artifactId>core</artifactId><dependencies><dependency><artifactId>fixtures</artifactId><scope>test</scope></dependency>"
+        "</dependencies><dependencyManagement><dependencies><dependency><artifactId>fixtures</artifactId></dependency></dependencies></dependencyManagement></project>",
+    }
+
+    modules = _by_path(detect_modules("r", files, manifests, RULES))
+
+    assert {p: m.excluded for p, m in modules.items() if m.excluded} == {"r/packages/bench": "tooling", "r/ui-kit": "tooling", "r/fixtures": "tooling"}
+    assert modules["r/packages/web"].module and modules["r/core"].module
