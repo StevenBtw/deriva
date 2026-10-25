@@ -22,6 +22,9 @@ parm = "parm"
 cpy = "cpy"
 # Author surname (Nast et al., BIS 2026: the design baseline B1 follows)
 nast = "nast"
+# Technology names in the seed configuration (Eclipse Mosquitto broker, TestNG framework)
+mosquitto = "mosquitto"
+testng = "testng"
 
 [default.extend-identifiers]
 # Lemmatizer suffix-stripping results (intentional truncated forms)
