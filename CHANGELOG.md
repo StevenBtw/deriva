@@ -16,6 +16,11 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 - **Variant deployments**: another deployment file of the primary one's kind in the same folder is a variant (an instrumentation or demo set-up next to the default compose file); a unit that a variant deploys and the primary file does not is no application component. It applies only when the primary file deploys a unit itself, and the override file Compose merges into a default-named file (`docker-compose.override.yml`, `compose.override.yaml`) counts as part of the primary, not as a variant. The environment records these units (`variantUnits`), and each deployment its file (`file`)
 - **The primary compose file has Compose's default name**: of several compose files, one named as Compose looks them up (`compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`, in that order) is the primary environment, before a variant such as `docker-compose.dev.yml` that sorts first; without one, the shallowest file, then the first by name, as before (Deployment params `compose_defaults`)
 
+### Derivation
+
+- **No business function per data domain**: the application service step no longer adds a business function for each business domain that cooperating components access (its `business_functions` param is off); such a grouping is no business behaviour with a human actor
+- **Business processes need a human actor**: the business process and business event steps, which made a process from an entity's status lifecycle and an event from each state, are off. A lifecycle is a state machine without an actor; business processes will come from structure that names one
+
 ### Benchmark
 
 - **Behaviour matches within its layer**: when a model is compared with a reference (`benchmark reference`, `benchmark gate`), a process, function, interaction or event counts for any of these four in the same layer, so an application function covers a reference application process; services and structure types still match only their own type
