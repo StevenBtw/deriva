@@ -12,7 +12,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ### Metamodel
 
-- **Application function**: the ArchiMate metamodel Deriva derives against gains ApplicationFunction (application layer, behaviour). Its relationships follow ArchiMate 3.2 as Archi's relationship table states them; a component is assigned to it, it realizes application services and accesses data objects. The views, the convention checks and the B1 baseline's output types include it
+- **Application function**: the ArchiMate metamodel Deriva derives against gains ApplicationFunction (application layer, behaviour). Its relationships follow ArchiMate 3.2 as Archi's relationship table states them; a component is assigned to it, it realizes application services, business processes and business functions, and accesses data objects. The views, the convention checks and the B1 baseline's output types include it
 
 ### Configuration
 
