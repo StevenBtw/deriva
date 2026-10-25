@@ -649,7 +649,8 @@ def derive_unit_services(
             node = str(member.get("source") or "")
             entry = per_unit[unit].setdefault(node, {"name": member.get("name") or node, "interfaces": set(), "roles": set()})
             entry["interfaces"].add(interface["identifier"])
-            entry["roles"].add(role)
+            # A member's own role (one interface per unit merges several); else its interface's
+            entry["roles"].add(str(member.get("role") or role))
     # Endpoint types the structure marks join the members, through the unit's interfaces other than its Web UI
     for unit, found in sorted((endpoints or {}).items()):
         own = [i for i in interfaces if _source(i) == unit and str(i["properties"].get("role") or "") != "web"]

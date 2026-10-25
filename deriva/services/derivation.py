@@ -964,7 +964,11 @@ def _role_config(params: str | None) -> RoleConfig | None:
     name_priority = settings.get("name_priority", [])
     if not isinstance(name_priority, list) or not all(isinstance(label, str) and label for label in name_priority):
         raise ValueError(f"params.roles.name_priority is a list of graph labels, got {name_priority!r}")
+    one_per_unit = settings.get("one_per_unit", False)
+    if not isinstance(one_per_unit, bool) or (one_per_unit and element_per != "unit"):
+        raise ValueError(f"params.roles.one_per_unit (true or false) merges a unit's roles into one element: it needs element_per 'unit', got {one_per_unit!r}")
     return RoleConfig(
+        one_per_unit=one_per_unit,
         name_priority=tuple(name_priority),
         unit_roles=tuple((rule["property"], rule["role"]) for rule in unit_roles),
         structural=tuple((rule["property"], rule["pattern"], rule["role"]) for rule in structural),

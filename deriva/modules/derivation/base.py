@@ -2307,6 +2307,10 @@ class RoleConfig:
     # element_per "unit" only: roles a deployable unit shows itself, (unit property, role key). A unit whose
     # property lists files (such as webEntries) gets that role's element with those files as members, no call
     unit_roles: tuple[tuple[str, str], ...] = ()
+    # element_per "unit" only: one element per unit, named after its primary role, the role most of its member
+    # candidates have; a tie goes to the role that comes first in ``names`` (a fixed convention, not a tuned choice).
+    # Its roles are listed in the element's ``roles`` property
+    one_per_unit: bool = False
     # Graph labels in the order their candidates claim a structure name (two candidates with one structure name: the
     # earlier label keeps it, so a unit is never left out for a module beside it); empty: the step's ranking decides
     name_priority: tuple[str, ...] = ()
