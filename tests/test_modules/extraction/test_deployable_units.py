@@ -77,7 +77,7 @@ def test_a_spring_boot_module_with_a_dockerfile_is_one_unit_with_both_evidences(
     assert list(units) == ["r/svc"] and units["r/svc"].evidence == ["container: r/svc/Dockerfile", "spring-boot: r/svc/pom.xml"]
 
 
-def test_each_project_script_is_a_unit_with_the_files_its_entry_module_imports():
+def test_a_package_with_project_scripts_is_one_unit_with_the_files_its_entry_modules_import():
     files = [
         _file("r/pyproject.toml"),
         _file("r/pkg/__init__.py", "python"),
@@ -92,10 +92,35 @@ def test_each_project_script_is_a_unit_with_the_files_its_entry_module_imports()
 
     units = _units(files, manifests=manifests, imports=imports)
 
-    assert sorted(units) == ["r::pkg-app", "r::pkg-cli"]
-    assert units["r::pkg-cli"].members == {"r/pkg/cli/main.py", "r/pkg/core/model.py", "r/pkg/core/store.py"}
-    assert units["r::pkg-app"].members == {"r/pkg/app/main.py", "r/pkg/core/model.py", "r/pkg/core/store.py"}
-    assert units["r::pkg-cli"].name == "pkg-cli" and units["r::pkg-cli"].kind == "script"
+    # No script is named like the package: the first by name is the unit's entry; every script is an entry point
+    assert sorted(units) == ["r::pkg-app"]
+    unit = units["r::pkg-app"]
+    assert unit.members == {"r/pkg/cli/main.py", "r/pkg/app/main.py", "r/pkg/core/model.py", "r/pkg/core/store.py"}
+    assert unit.name == "pkg-app" and unit.kind == "script"
+    assert unit.evidence == ["script pkg-app = pkg.app.main:run: r/pyproject.toml", "script pkg-cli = pkg.cli.main:run: r/pyproject.toml"]
+
+
+def test_a_script_named_like_its_package_is_the_entry_and_a_script_running_another_packages_module_adds_nothing():
+    files = [
+        _file("r/pyproject.toml"),
+        _file("r/tool/cli.py", "python"),
+        _file("r/packages/web/pyproject.toml"),
+        _file("r/packages/web/src/tool/web/main.py", "python"),
+        _file("r/packages/web/src/tool/web/pages.py", "python"),
+    ]
+    manifests = {
+        "r/pyproject.toml": '[project]\nname = "tool"\n[project.scripts]\ntool = "tool.cli:main"\n',
+        # The web package re-exports the root package's command (tool.cli lives in the root package, not here)
+        "r/packages/web/pyproject.toml": '[project]\nname = "tool-web"\n[project.scripts]\nserve = "tool.web.main:main"\ntool-web = "tool.web.main:main"\ntool = "tool.cli:main"\n',
+    }
+    imports = [("r/packages/web/src/tool/web/main.py", "r/packages/web/src/tool/web/pages.py")]
+
+    units = _units(files, manifests=manifests, imports=imports)
+
+    assert sorted(units) == ["r/packages/web::tool-web", "r::tool"]
+    web = units["r/packages/web::tool-web"]
+    assert web.members == {"r/packages/web/src/tool/web/main.py", "r/packages/web/src/tool/web/pages.py"}
+    assert [e.split(" = ")[0] for e in web.evidence] == ["script serve", "script tool-web"]
 
 
 MAINFRAME = [

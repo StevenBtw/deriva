@@ -2605,8 +2605,8 @@ class TestBuildModuleStep:
 
     def test_module_names_are_unique_as_derivation_sees_them(self, graph):
         """Without the repository's name, the unit "deriva-studio" and the modules "Deriva Studio" and "Studio" are one name.
-        The module whose path says no more than its name goes first and takes its kind noun; "Studio Module" is then
-        taken, so the other takes the words of its path. A module that is one unit's folder keeps its name (no candidate)."""
+        The module that is not a unit's folder takes its kind noun ("Studio Module"). A package is one unit (its two
+        scripts are its entry points), so its module is that unit's folder and keeps its name (no candidate)."""
         files = {
             "packages/deriva-studio/pyproject.toml": ("build", "toml", '[project]\nname = "deriva-studio"\n[project.scripts]\nderiva-studio = "app:run"\nderiva = "app:main"\n'),
             "packages/deriva-studio/app.py": ("source", "python", "x = 1\n"),
@@ -2624,8 +2624,10 @@ class TestBuildModuleStep:
 
         names = {r["id"]: r["name"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.name AS name")}
         assert names["module::deriva::studio"] == "Studio Module"
-        assert names["module::deriva::packages/deriva-studio"] == "Packages Deriva Studio"
+        assert names["module::deriva::packages/deriva-studio"] == "Deriva Studio"  # one unit's folder: one element with it
         assert names["module::deriva::shop"] == "Shop"  # the shop unit's own folder: one element with the unit, no noun
+        same = {r["id"]: r["same"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.sameAs AS same")}
+        assert same["module::deriva::packages/deriva-studio"] == "unit::deriva::packages/deriva-studio::deriva-studio"
 
     def test_a_module_named_like_one_of_a_units_name_candidates_takes_its_kind_noun(self, graph):
         """The unit's name candidates hold its manifest's name: a module of that name would lose the claim to the unit."""
