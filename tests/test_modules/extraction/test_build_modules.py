@@ -4,7 +4,7 @@ dropped from the front."""
 
 from __future__ import annotations
 
-from deriva.modules.extraction.build_modules import ModuleRules, behaviour_per_file, declares_entry, detect_modules, module_id, usage_role
+from deriva.modules.extraction.build_modules import ModuleRules, behaviour_per_file, declares_entry, detect_modules, feature_areas, module_id, usage_role
 
 RULES = ModuleRules(
     manifests=("pom.xml", "package.json", "pyproject.toml", "build.gradle", "build.gradle.kts", "settings.gradle"), code_subtypes=frozenset({"java", "python", "javascript"})
@@ -334,3 +334,23 @@ def test_behaviour_counts_the_non_accessor_methods_per_code_file():
 
     assert behaviour_per_file(["a/Order.java", "a/Pricing.java"], methods) == 1.5  # Order: its constructor; Pricing: two
     assert behaviour_per_file([], methods) == 0.0
+
+
+def test_a_unit_splits_into_feature_packages_that_each_hold_a_route_and_a_data_entity():
+    base = "r/src/main/java/org/acme/clinic"
+    code = [f"{base}/Application.java", f"{base}/owner/Owner.java", f"{base}/owner/OwnerController.java", f"{base}/owner/PetValidator.java",
+            f"{base}/vet/Vet.java", f"{base}/vet/VetController.java", f"{base}/system/WelcomeController.java", f"{base}/model/Person.java"]  # fmt: skip
+    routes = {f"{base}/owner/OwnerController.java", f"{base}/vet/VetController.java", f"{base}/system/WelcomeController.java"}
+    entities = {f"{base}/owner/Owner.java", f"{base}/vet/Vet.java", f"{base}/model/Person.java"}
+
+    # system/ has a route but no entity, model/ an entity but no route: neither is a feature package
+    assert feature_areas(code, routes, entities) == [f"{base}/owner", f"{base}/vet"]
+
+
+def test_layered_packages_and_a_single_feature_are_no_split():
+    base = "r/src/main/java/org/acme/shop"
+    layered = [f"{base}/rest/OrderResource.java", f"{base}/servlet/IndexServlet.java", f"{base}/domain/Order.java"]
+    single = [f"{base}/order/Order.java", f"{base}/order/OrderController.java", f"{base}/util/Text.java"]
+
+    assert feature_areas(layered, {f"{base}/rest/OrderResource.java", f"{base}/servlet/IndexServlet.java"}, {f"{base}/domain/Order.java"}) == []
+    assert feature_areas(single, {f"{base}/order/OrderController.java"}, {f"{base}/order/Order.java"}) == []

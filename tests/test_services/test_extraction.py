@@ -2706,6 +2706,41 @@ class TestBuildModuleStep:
         includes = [r["p"] for r in graph.query("MATCH (m:Graph:BuildModule)-[:`Graph:INCLUDES`]->(f:Graph:File) RETURN f.filePath AS p")]
         assert includes == ["r/shared/lib/Lib.java"]
 
+    def test_a_units_feature_packages_become_modules_nested_in_it_and_the_unit_keeps_its_own_module(self, graph):
+        """owner/ and vet/ each hold a route-handling class and a data entity; system/ only a route; the unit's own
+        module (its folder) stays one element with the unit."""
+        from deriva.adapters.graph.models import DataEntityNode, TypeDefinitionNode
+
+        base = "src/main/java/org/acme/clinic"
+        files = {"pom.xml": ("build", "xml", "<project><artifactId>clinic</artifactId><build><plugin>spring-boot-maven-plugin</plugin></build></project>")}
+        types = {"owner/Owner": [], "owner/OwnerController": ["Controller"], "vet/Vet": [], "vet/VetController": ["Controller"], "system/WelcomeController": ["Controller"]}
+        for name in types:
+            files[f"{base}/{name}.java"] = ("source", "java", f"class {name.split('/')[-1]} {{}}\n")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            for name, decorators in types.items():
+                type_id = f"type::r::{name}"
+                graph.add_node(
+                    TypeDefinitionNode(name=name.split("/")[-1], type_category="class", file_path=f"{base}/{name}.java", repository_name="r", decorators=decorators),
+                    node_id=type_id,
+                )
+                if name in ("owner/Owner", "vet/Vet"):
+                    graph.add_node(DataEntityNode(name=name.split("/")[-1], signal="orm entity", repository_name="r"), node_id=f"entity::r::{name}")
+                    graph.add_edge(f"entity::r::{name}", type_id, "INCLUDES")
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["java"]})
+            self._step(graph, tmpdir, "BuildModule", {**self.MODULE_PARAMS, "feature_markers": ["(Controller|RestController)([(].*)?"]})
+
+        modules = {
+            r["id"]: (r["name"], r["same"], r["manifest"])
+            for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.name AS name, m.sameAs AS same, m.manifest AS manifest")
+        }
+        assert modules["module::r::r"][1] == "unit::r::r"  # the unit's own module stays merged with it
+        assert modules[f"module::r::{base}/owner"] == ("Owner", None, "")
+        assert modules[f"module::r::{base}/vet"] == ("Vet", None, "")
+        assert f"module::r::{base}/system" not in modules
+        nests = {(r["a"], r["b"]) for r in graph.query("MATCH (a:Graph:BuildModule)-[:`Graph:NESTS`]->(b:Graph:BuildModule) RETURN a.id AS a, b.id AS b")}
+        assert nests == {("module::r::r", f"module::r::{base}/owner"), ("module::r::r", f"module::r::{base}/vet")}
+
     def test_a_module_named_like_one_of_a_units_name_candidates_takes_its_kind_noun(self, graph):
         """The unit's name candidates hold its manifest's name: a module of that name would lose the claim to the unit."""
         files = {
