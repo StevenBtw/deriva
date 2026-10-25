@@ -281,3 +281,25 @@ def test_an_aggregator_stays_a_system_when_one_of_its_members_is_tooling():
     # The tooling package still counts as a listed member; only the product package is the system's member
     assert modules["r"].system and modules["r"].members == ["r/packages/web"]
     assert modules["r/packages/bench"].excluded == "tooling"
+
+
+def test_an_aggregator_whose_listed_modules_are_all_excluded_is_no_system():
+    files = [
+        _f("r/pom.xml", "xml", "build"),
+        _f("r/e2e/pom.xml", "xml", "build"),
+        _f("r/e2e/Flow.java"),
+        _f("r/fixtures/pom.xml", "xml", "build"),
+        _f("r/fixtures/Data.java"),
+    ]
+    manifests = {
+        "r/pom.xml": "<project><artifactId>shop</artifactId><modules><module>e2e</module><module>fixtures</module></modules>"
+        "<dependencies><dependency><artifactId>fixtures</artifactId><scope>test</scope></dependency></dependencies></project>",
+        "r/e2e/pom.xml": "<project><artifactId>shop-e2e</artifactId></project>",
+        "r/fixtures/pom.xml": "<project><artifactId>fixtures</artifactId></project>",
+    }
+    rules = ModuleRules(manifests=RULES.manifests, code_subtypes=RULES.code_subtypes, test_words=("e2e",))
+
+    modules = _by_path(detect_modules("r", files, manifests, rules))
+
+    assert not modules.get("r") or not modules["r"].system
+    assert (modules["r/e2e"].excluded, modules["r/fixtures"].excluded) == ("test-only", "tooling")
