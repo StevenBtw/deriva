@@ -869,10 +869,11 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
     """The Deployment step's signals (``params``): the closed list ``technologies`` ([{name, kind, aliases}]),
     ``cloud_resources`` (resource type -> container, function or managed), ``markers`` ([{pattern, technology}]),
     ``manifest_runtimes`` (manifest file pattern -> runtime alias), ``environment_names`` (kind -> name), the
-    file name patterns ``compose_files``, ``build_scripts`` and ``marker_suffixes``, ``cloud_qualifiers``
+    file name patterns ``compose_files``, ``compose_defaults`` (the names Compose looks up, in order), ``compose_overrides``
+    (the files it merges into them), ``build_scripts`` and ``marker_suffixes``, ``cloud_qualifiers``
     (resource type -> {property, default}) and ``cdk_constructs`` ("module.Class" -> {type, environment, properties})."""
     settings = json.loads(params) if params else {}
-    lists, maps = ("compose_files", "build_scripts", "marker_suffixes"), ("cloud_resources", "manifest_runtimes", "environment_names")
+    lists, maps = ("compose_files", "compose_defaults", "compose_overrides", "build_scripts", "marker_suffixes"), ("cloud_resources", "manifest_runtimes", "environment_names")
     unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs"}
     qualifiers, constructs = settings.get("cloud_qualifiers", {}), settings.get("cdk_constructs", {})
     text = lambda v: isinstance(v, str) and bool(v)  # noqa: E731 - a one-line helper
@@ -911,6 +912,8 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
         cloud_qualifiers=tuple((t, q["property"], q.get("default", "")) for t, q in sorted(qualifiers.items())),
         cdk_constructs=tuple((k, c["type"], c.get("environment", ""), tuple(sorted(c.get("properties", {}).items()))) for k, c in sorted(constructs.items())),
         compose_files=tuple(settings.get("compose_files", defaults.compose_files)),
+        compose_defaults=tuple(settings.get("compose_defaults", defaults.compose_defaults)),
+        compose_overrides=tuple(settings.get("compose_overrides", defaults.compose_overrides)),
         environment_names=tuple(sorted({**dict(defaults.environment_names), **settings.get("environment_names", {})}.items())),
         build_scripts=tuple(settings.get("build_scripts", defaults.build_scripts)),
         markers=tuple((m["pattern"], m["technology"]) for m in markers),
