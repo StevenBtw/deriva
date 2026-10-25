@@ -420,10 +420,17 @@ class ArchiMateMetamodel:
     # ArchiMate 3.2: a part is composed into at most one whole, and composition hierarchies are acyclic.
     single_parent_relationship_types: frozenset[str] = frozenset({"Composition"})
     acyclic_relationship_types: frozenset[str] = frozenset({"Composition"})
+    # Appendix B.2: the valid derivation rules as data, and the structural strength order they use (weakest first)
+    derivation_rules = VALID_DERIVATION_RULES
+    structural_strength = STRUCTURAL_STRENGTH
 
     def __init__(self):
         self.element_types = ELEMENT_TYPES
         self.relationship_types = RELATIONSHIP_TYPES
+
+    def tier(self, source_element_type: str, relationship_type: str, target_element_type: str) -> str | None:
+        """ "direct" (a metamodel figure draws it), "derived", or None if ArchiMate 3.2 does not allow it."""
+        return relationship_tier(source_element_type, relationship_type, target_element_type)
 
     def is_valid_element_type(self, element_type: str) -> bool:
         """Check if element type is valid."""
