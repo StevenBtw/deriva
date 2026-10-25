@@ -2444,6 +2444,13 @@ class TestNamingConfig:
         assert derivation._naming_config('{"naming": {"instruction": "N", "samples": 5}}') == NamingConfig(instruction="N", samples=5)
         assert derivation._naming_config('{"naming": {"instruction": "N"}}') == NamingConfig(instruction="N", samples=1)  # single call by default: no voting
 
+    def test_params_supply_the_name_source_order(self):
+        config = derivation._naming_config('{"naming": {"instruction": "N", "source_order": ["manifest", "readme", "structure"]}}')
+
+        assert config is not None and config.source_order == ("manifest", "readme", "structure")
+        with pytest.raises(ValueError, match="source_order"):
+            derivation._naming_config('{"naming": {"instruction": "N", "source_order": "manifest"}}')
+
     def test_naming_without_instruction_is_an_error(self):
         with pytest.raises(ValueError, match="naming"):
             derivation._naming_config('{"naming": {"samples": 3}}')
