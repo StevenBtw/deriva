@@ -238,8 +238,8 @@ def match_kind(element_type: str) -> str:
 # letters were read from them and cross-checked (case-insensitively, every cell)
 # against Archi's relationships.xml v3.2. ApplicationFunction (row and column, 0.8.8): letters from Archi's
 # relationships.xml; the tier by layer analogy with BusinessFunction and the service rows, uppercase only where the generic
-# metamodel shows it (assigned from a component, realizes a service, accesses a data object, triggers and flows between
-# application behaviour), else lowercase.
+# metamodel shows it (assigned from a component, realizes a service and business behaviour, accesses a data object,
+# triggers and flows between application behaviour), else lowercase.
 #
 # Uppercase letter: relationship explicit in the metamodel figures ("direct").
 # Lowercase letter: allowed only via the spec's derivation rules ("derived").
@@ -292,7 +292,7 @@ _TABLE_ROWS: dict[str, tuple[str, ...]] = {
     "ApplicationComponent": ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGRvtfO", "CgrvtfO", "irvtfO", "IrvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
     "ApplicationInterface": ("VtfO", "vtfO", "vtfO", "vtfO", "aO", "VtfO", "SCGvtfO", "IvtfO", "vtfO", "aO", "VtfO", "VtfO", "VtfO", "vtfO", "aO"),
     "ApplicationService":   ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "SCGvTFO", "VTFO", "AO", "VtfO", "VtfO", "VtfO", "vtfO", "aO"),
-    "ApplicationFunction":  ("vtfO", "rvtfO", "rvtfO", "vtfO", "aO", "vtfO", "vtfO", "RvTFO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "ApplicationFunction":  ("vtfO", "RvtfO", "RvtfO", "vtfO", "aO", "vtfO", "vtfO", "RvTFO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
     "DataObject":           ("O", "O", "O", "O", "RO", "O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O"),
     "Node":                 ("ivtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGivtfO", "CGirvtfO", "CGirvtfO", "irvtfO", "aIO"),
     "Device":               ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "SCGvtfO", "CGIrvtfO", "irvtfO", "aIO"),
