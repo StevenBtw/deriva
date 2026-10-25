@@ -9,7 +9,7 @@ Validates ArchiMate cross-layer relationships follow proper patterns:
 ArchiMate Layers:
 - Business: BusinessObject, BusinessProcess, BusinessActor, BusinessEvent, BusinessFunction
 - Application: ApplicationComponent, ApplicationService, ApplicationInterface, DataObject
-- Technology: TechnologyService, Node, Device, SystemSoftware
+- Technology: TechnologyService, Node, Device, SystemSoftware, Artifact
 
 Refine Step Name: "cross_layer"
 """
@@ -52,6 +52,7 @@ TECHNOLOGY_LAYER = {
     "Node",
     "Device",
     "SystemSoftware",
+    "Artifact",
 }
 
 # Valid cross-layer relationship types

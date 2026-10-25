@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from .models import Element, Relationship, layer_of
 
 ENTERPRISE, SOLUTION, DETAIL = "enterprise", "solution", "detail"
-DEPLOYMENT = frozenset({"ApplicationComponent", "Node", "Device", "SystemSoftware", "TechnologyService"})
+DEPLOYMENT = frozenset({"ApplicationComponent", "Node", "Device", "SystemSoftware", "TechnologyService", "Artifact"})
 # (view name, viewpoint, element types, level), in export order
 VIEWPOINTS: tuple[tuple[str, str, frozenset[str] | None, str], ...] = (
     ("Layered (enterprise)", "Layered", None, ENTERPRISE),
