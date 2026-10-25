@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import posixpath
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -37,6 +38,8 @@ class ModuleRules:
     test_words: tuple[str, ...] = ()
     # A module no unit builds is a component by who uses it (``usage_role``); None leaves that test off
     min_behaviour: float | None = None
+    # Decorator patterns of a route-handling file: a unit's feature packages (``feature_areas``) become modules; empty: off
+    feature_markers: tuple[str, ...] = ()
 
 
 @dataclass
@@ -231,6 +234,31 @@ def usage_role(users: int, behaviour: float, entry: bool, min_behaviour: float) 
     if users == 1:
         return "part of one unit"
     return None if entry else "no entry point"
+
+
+def source_root(code_files: list[str]) -> str:
+    """The deepest folder holding all the code: from the common folder down while it holds one sub-folder and no file."""
+    folders = sorted({str(PurePosixPath(p).parent) for p in code_files})
+    if not folders:
+        return ""
+    root = posixpath.commonpath(folders) if len(folders) > 1 else folders[0]
+    while True:
+        subs = {d[len(root) + 1 :].split("/")[0] for d in folders if d.startswith(root + "/")}
+        if len(subs) == 1 and root not in folders:
+            root = f"{root}/{subs.pop()}"
+            continue
+        return root
+
+
+def feature_areas(code_files: list[str], route_files: set[str], entity_files: set[str]) -> list[str]:
+    """The feature packages of a unit: the first-level sub-packages under its source root that hold both a
+    route-handling file and a data entity (package by feature). Two or more split the unit; one or none is no split."""
+    root = source_root(code_files)
+    area_of = lambda p: p[len(root) + 1 :].split("/")[0] if p.startswith(root + "/") and "/" in p[len(root) + 1 :] else None  # noqa: E731 - a one-line helper
+    routes = {a for p in code_files if p in route_files and (a := area_of(p))}
+    entities = {a for p in code_files if p in entity_files and (a := area_of(p))}
+    areas = sorted(f"{root}/{a}" for a in routes & entities)
+    return areas if len(areas) >= 2 else []
 
 
 def _listed(path: str, text: str) -> list[str]:
