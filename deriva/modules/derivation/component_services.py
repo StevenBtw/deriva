@@ -88,6 +88,12 @@ class ComponentServicesConfig:
     activity_words: tuple[str, ...] = ()
     activity_suffixes: tuple[str, ...] = ()
     choose_instruction: str = ""  # The closed-set naming instruction (config text)
+    # Interface role -> verb, in tie order (group_by "unit"). Set, a service is named by structure with no naming call:
+    # "<object> <verb>" on the most-reached domain's object, the verb from the members' majority interface role; else
+    # the first member activity; else the component's stem. A name is unique within its component only: the same
+    # "<object> <verb>" on two components is the same service, which the coarse enterprise services merge into one
+    # service realized by each holder's function; they take the same rule and table (ids stay unique from structure)
+    service_verbs: tuple[tuple[str, str], ...] = ()
     # Business functions from shared domains of cooperating components (gap 3); off when a function model supplies them
     business_functions: bool = True
 
@@ -529,6 +535,15 @@ def is_activity(name: str, config: ComponentServicesConfig) -> bool:
     return last in {w.casefold() for w in config.activity_words} or any(last.endswith(x.casefold()) and len(last) >= len(x) + 4 for x in config.activity_suffixes)
 
 
+def _group_verb(group: list[str], members: dict[str, dict[str, Any]], verbs: tuple[tuple[str, str], ...]) -> str:
+    """The verb of a group's name: of the members' interface roles the table knows, the most frequent one's verb, ties
+    by the table's order; no known role: the table's first verb."""
+    order = [role for role, _ in verbs]
+    counts = Counter(role for m in group for role in members[m]["roles"] if role in order)
+    best = max(order, key=lambda role: (counts[role], -order.index(role))) if counts else order[0]
+    return dict(verbs)[best]
+
+
 def _choose(candidates: list[str], source: dict[str, Any], element_type: str, instruction: str, llm_query_fn: Callable[..., Any], llm_kwargs: dict[str, Any]) -> str:
     """One of the candidates: the only one without a call, else the LLM's choice (an answer outside the set takes the first)."""
     if len(candidates) == 1:
@@ -741,14 +756,16 @@ def derive_unit_services(
             group_domains = sorted({d for m in group for d in reach[m]})
             group_objects, from_domain = accessed(group, group_domains)
             group_interfaces = sorted({i for m in group for i in members[m]["interfaces"]})
-            candidates: list[str] = []
+            activities: list[str] = []
             if key.startswith("family:"):
                 if (family := clean_member_name(key.removeprefix("family:"), config.kind_words, config.generic_names)) and is_activity(family, config):
-                    candidates.append(family)
+                    activities.append(family)
             for m in group:
                 # A member name names the service only as an activity (bare object nouns name data and business objects)
                 if m not in pages and (name := clean_member_name(members[m]["name"], config.kind_words, config.generic_names)) and is_activity(name, config):
-                    candidates.append(name)
+                    activities.append(name)
+            # With service_verbs one template, its verb from the members' interface role; else every service template
+            templates = (f"{{object}} {_group_verb(group, members, config.service_verbs)}",) if config.service_verbs else config.service_templates
             # Templates on every business domain the group reaches: the most reached first, then the larger domain
             weight = Counter()
             for m in group:
@@ -758,8 +775,9 @@ def derive_unit_services(
             reached_objects = sorted(
                 (d for d in weight if d in object_names), key=lambda d: (d not in business_objects, -weight[d], -len(names_of.get(d) or files_of.get(d) or ()), d)
             )
-            for domain in reached_objects:
-                candidates += [t.format(object=object_names[domain]) for t in config.service_templates]
+            on_domains = [t.format(object=object_names[domain]) for domain in reached_objects for t in templates]
+            # By structure the most-reached domain names the group before a member's activity; the LLM gets activities first
+            candidates = on_domains + activities if config.service_verbs else activities + on_domains
             taken = {name_key(components[unit]["name"])} | {name_key(e["name"]) for e in interfaces if _source(e) == unit}
 
             def usable(found: list[str]) -> list[str]:
@@ -772,10 +790,12 @@ def derive_unit_services(
                 return kept[: config.max_candidates]
 
             candidates = usable(candidates)
+            name_rule = "domain object" if candidates and candidates[0] in on_domains else "activity"
             if not candidates:
                 # Nothing names the behaviour: the templates on the component's own name without its kind words
+                name_rule = "stem"
                 stem = clean_member_name(components[unit]["name"], config.kind_words, ())
-                stem_names = ([stem] if is_activity(stem, config) and config.activity_words else [t.format(object=stem) for t in config.service_templates]) if stem else []
+                stem_names = ([stem] if is_activity(stem, config) and config.activity_words else [t.format(object=stem) for t in templates]) if stem else []
                 # The stem may equal the component's own name only through its kind word: it stays a candidate
                 candidates = [c for c in stem_names if name_key(c) != name_key(components[unit]["name"])] or [components[unit]["name"]]
             source = {
@@ -784,7 +804,8 @@ def derive_unit_services(
                 "members": [members[m]["name"] for m in group][:20],
                 "data": [e["name"] for e in data_objects if e["identifier"] in group_objects],
             }
-            name = _choose(candidates, source, ELEMENT_TYPE, instruction, llm_query_fn, llm_kwargs)
+            # Named by structure (the first candidate of the closed order), else by the LLM's closed choice
+            name = candidates[0] if config.service_verbs else _choose(candidates, source, ELEMENT_TYPE, instruction, llm_query_fn, llm_kwargs)
             identity = f"{unit}::{key if len(merged) > 1 else 'all'}"
             services.append(
                 {
@@ -808,6 +829,7 @@ def derive_unit_services(
                             if sites & {f for m in group for f in member_files(m)}
                         ),
                         "structure_name": candidates[0],
+                        **({"name_rule": name_rule} if config.service_verbs else {}),
                         "confidence": 1.0,
                         "derived_at": current_timestamp(),
                     },
@@ -823,13 +845,16 @@ def derive_unit_services(
         reads = {o for a, b in consumes or () if a == unit and b != unit for o in provided.get(b, ())}
         item["properties"]["consumed_objects"] = sorted(reads - set(item["properties"]["objects"]))
 
-    # Services are named (unique within the type) before the functions, so a function never takes a service's name
-    used: set[str] = set()
+    # Services are named (unique within the type) before the functions, so a function never takes a service's name.
+    # Named by structure (service_verbs), a name is unique within its component only: the same "<object> <verb>" on
+    # two components is the same service, which the coarse services merge (ids stay unique from structure)
+    named: set[tuple[str, str]] = set()
     for item in services:
-        if name_key(item["name"]) in used:
-            options = [c for c in item["properties"]["name_candidates"] if name_key(c) not in used]
-            item["name"] = options[0] if options else f"{item['name']} {len(used) + 1}"
-        used.add(name_key(item["name"]))
+        scope = item["properties"]["sources"][0] if config.service_verbs else ""
+        if (scope, name_key(item["name"])) in named:
+            options = [c for c in item["properties"]["name_candidates"] if (scope, name_key(c)) not in named]
+            item["name"] = options[0] if options else f"{item['name']} {len(named) + 1}"
+        named.add((scope, name_key(item["name"])))
 
     # Business functions: a business domain that services of cooperating components access
     undirected = {frozenset(pair) for pair in lines if len(set(pair)) == 2}
