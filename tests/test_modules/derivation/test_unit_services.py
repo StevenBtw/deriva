@@ -526,3 +526,68 @@ def test_a_domain_without_a_data_object_still_groups_the_members_but_gives_no_ob
     )[0]  # fmt: skip
 
     assert sorted(s["properties"]["objects"] for s in services) == [[], ["do_order"]]
+
+
+VERBS = (("rest", "Management"), ("web", "Management"), ("cli", "Management"), ("batch", "Processing"), ("messaging", "Processing"))
+
+
+def test_with_service_verbs_a_service_is_named_from_structure_without_a_call():
+    """The verb from the members' interface role (closed table), the object from the most-reached domain."""
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_verbs=VERBS)
+    elements = [
+        _component("pm", "Policy Management Backend"),
+        _interface("pm", "rest", ["PolicyHolder", "PolicyResource"]),
+        _component("jobs", "Nightly Jobs"),
+        _interface("jobs", "batch", ["PostTransactions", "PostInterest"]),
+        _data("policy", "Policy"),
+        _data("tran", "Transaction"),
+    ]
+    reach = {"PolicyHolder": ["policy"], "PolicyResource": ["policy"], "PostTransactions": ["tran"], "PostInterest": ["tran"]}
+
+    services, _, calls = _run(elements, reach, objects={"domain::policy": "Policy", "domain::tran": "Transaction"}, config=config)
+
+    by_unit = {s["properties"]["sources"][0]: s for s in services}
+    assert by_unit["unit::pm"]["name"] == "Policy Management" and by_unit["unit::jobs"]["name"] == "Transaction Processing"
+    assert {s["properties"]["name_rule"] for s in services} == {"domain object"}
+    assert calls == []
+
+
+def test_with_service_verbs_an_activity_names_a_group_that_reaches_no_domain_and_else_the_stem():
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_verbs=VERBS, activity_words=("authentication",))
+    elements = [
+        _component("auth", "Auth Service"),
+        _interface("auth", "rest", ["AuthenticationController", "TokenController"]),
+        _component("relay", "Event Relay"),
+        _interface("relay", "messaging", ["Pump", "Drain"]),
+    ]
+
+    services, _, calls = _run(elements, {"AuthenticationController": [], "TokenController": [], "Pump": [], "Drain": []}, deciding=set(), config=config)
+
+    by_unit = {s["properties"]["sources"][0]: s for s in services}
+    assert (by_unit["unit::auth"]["name"], by_unit["unit::auth"]["properties"]["name_rule"]) == ("Authentication", "activity")
+    assert (by_unit["unit::relay"]["name"], by_unit["unit::relay"]["properties"]["name_rule"]) == ("Event Relay Processing", "stem")
+    assert calls == []
+
+
+def test_with_service_verbs_two_components_may_name_the_same_service_but_one_component_names_each_group_once():
+    """The same "<object> <verb>" on two components is the same service (coarse services merge them); within one
+    component a repeat takes the group's next candidate."""
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_verbs=VERBS)
+    elements = [
+        _component("shop", "Shop"),
+        _interface("shop", "rest", ["OrderHolder", "OrderResource"]),
+        _component("cart", "Cart"),
+        _interface("cart", "rest", ["CartHolder", "CartResource"]),
+        _data("order", "Order"),
+    ]
+    reach = {"OrderHolder": ["order"], "OrderResource": ["order"], "CartHolder": ["order"], "CartResource": ["order"]}
+
+    services, _, _ = _run(elements, reach, objects={"domain::order": "Order"}, config=config)
+
+    assert sorted((s["properties"]["sources"][0], s["name"]) for s in services) == [("unit::cart", "Order Management"), ("unit::shop", "Order Management")]

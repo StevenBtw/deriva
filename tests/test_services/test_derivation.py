@@ -3251,6 +3251,13 @@ class TestGraphLinkConfig:
         with pytest.raises(ValueError, match="interface_links"):
             derivation._component_services_config(json.dumps({"component_services": {"interface_links": "Q"}}))
 
+    def test_component_services_take_service_verbs_in_tie_order(self):
+        config = derivation._component_services_config(json.dumps({"component_services": {"service_verbs": [["rest", "Management"], ["batch", "Processing"]]}}))
+
+        assert config is not None and config.service_verbs == (("rest", "Management"), ("batch", "Processing"))
+        with pytest.raises(ValueError, match="service_verbs"):
+            derivation._component_services_config(json.dumps({"component_services": {"service_verbs": {"rest": "Management"}}}))
+
     def test_structural_roles_can_keep_the_name_as_written(self):
         roles = {"names": {"component": "C"}, "element_per": "candidate", "structural": [{"property": "category", "pattern": "^program$", "role": "component"}]}
 
