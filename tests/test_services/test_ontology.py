@@ -90,7 +90,7 @@ def test_output_ontology_lists_types_per_layer_with_their_step_and_the_rules():
     view = output_ontology(FakeSession())
 
     types = {t["name"]: t for t in view["element_types"]}
-    assert len(types) == 15  # the derived types (ApplicationFunction included) and Artifact (the export's detail level, no step)
+    assert len(types) == 18  # the metamodel's types (0.8.8: BusinessRole, BusinessService, TechnologyFunction added; Artifact derived)
     assert (types["Artifact"]["layer"], types["Artifact"]["step"]) == ("Technology", None)
     assert (types["Node"]["layer"], types["Node"]["count"], types["Node"]["step"]) == ("Technology", 2, {"enabled": True, "version": 4})
     assert types["BusinessActor"]["step"] is None
