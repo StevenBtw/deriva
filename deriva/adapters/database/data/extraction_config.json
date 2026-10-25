@@ -255,9 +255,9 @@
     "params": "{\"code_subtypes\": [\"c\", \"cobol\", \"coffeescript\", \"cpp\", \"csharp\", \"golang\", \"java\", \"javascript\", \"php\", \"python\", \"ruby\", \"rust\", \"typescript\"], \"container_files\": [\"Dockerfile\", \"Dockerfile.*\", \"*.Dockerfile\"], \"readme_lines\": 8, \"web_ui\": {\"files\": [\"index.html\", \"*.jsp\", \"*.jspx\", \"*.cshtml\", \"*.erb\"], \"template_dirs\": [\"templates\", \"views\"], \"template_suffixes\": [\".html\", \".htm\", \".jinja\", \".jinja2\", \".j2\", \".ftl\", \".mustache\", \".hbs\", \".twig\"], \"excluded_dirs\": [\"node_modules\", \"build\", \"dist\", \"target\", \"test\", \"tests\", \"__tests__\"]}, \"naming\": {\"generic_words\": [\"Application\", \"App\", \"Apps\", \"CLI\", \"Command\", \"Commands\", \"Console\", \"Server\", \"Service\", \"Services\", \"Backend\", \"Frontend\", \"Front\", \"End\", \"Web\", \"UI\", \"API\", \"Client\", \"Core\", \"Main\", \"Module\", \"Component\", \"System\", \"Platform\", \"Tool\", \"Tools\", \"Worker\", \"Batch\", \"Online\", \"Program\", \"Engine\", \"Runtime\", \"Portal\", \"Extension\"], \"title_cut_words\": [\"with\", \"using\", \"for\"], \"kind_nouns\": {\"container\": \"Server\", \"*\": \"Application\"}, \"max_doc_names\": 3}}"
   },
   {
-    "id": 88,
+    "id": 99,
     "node_type": "DataEntity",
-    "version": 3,
+    "version": 4,
     "sequence": 16,
     "enabled": true,
     "input_sources": "",
@@ -267,9 +267,9 @@
     "extraction_method": "structural",
     "temperature": null,
     "max_tokens": null,
-    "created_at": "2026-10-16T05:49:18.901493",
+    "created_at": "2026-10-25T20:00:18.252164",
     "batch_size": 1,
-    "params": "{\"root_markers\": [\"RootEntity\", \"AggregateRoot\"], \"entity_annotations\": [\"Entity\", \"Table\", \"Document\"], \"orm_bases\": [\"DeclarativeBase\", \"declarative_base\", \"Model\", \"Document\", \"SQLModel\"], \"value_markers\": [\"ValueObject\", \"Embeddable\"], \"id_markers\": [\"EntityIdentifier\"], \"dto_bases\": [\"BaseModel\", \"Schema\"], \"dto_suffixes\": [\"Dto\", \"DTO\", \"Request\", \"Response\"], \"dto_dirs\": [\"dto\", \"dtos\", \"schemas\", \"api\"], \"config_markers\": [\"Configuration\"], \"config_suffixes\": [\"Config\", \"Configuration\", \"Properties\", \"Settings\"], \"technical_words\": [\"abend\", \"error\", \"log\", \"audit\", \"token\", \"session\", \"cache\", \"template\", \"setting\", \"migration\", \"lock\", \"registry\", \"database\", \"sequence\"], \"min_importers\": 3, \"record_pattern\": \"(?i).*[-_](RECORD|REC|DATA)$\", \"name_suffixes\": [\"AggregateRoot\", \"Root\", \"Entity\", \"Model\", \"Record\", \"Rec\", \"Data\", \"Table\"], \"table_mentions\": true}"
+    "params": "{\n \"root_markers\": [\n  \"RootEntity\",\n  \"AggregateRoot\"\n ],\n \"entity_annotations\": [\n  \"Entity\",\n  \"Table\",\n  \"Document\"\n ],\n \"orm_bases\": [\n  \"DeclarativeBase\",\n  \"declarative_base\",\n  \"Model\",\n  \"Document\",\n  \"SQLModel\"\n ],\n \"value_markers\": [\n  \"ValueObject\",\n  \"Embeddable\"\n ],\n \"id_markers\": [\n  \"EntityIdentifier\"\n ],\n \"dto_bases\": [\n  \"BaseModel\",\n  \"Schema\"\n ],\n \"dto_suffixes\": [\n  \"Dto\",\n  \"DTO\",\n  \"Request\",\n  \"Response\"\n ],\n \"dto_dirs\": [\n  \"dto\",\n  \"dtos\",\n  \"schemas\",\n  \"api\"\n ],\n \"config_markers\": [\n  \"Configuration\"\n ],\n \"config_suffixes\": [\n  \"Config\",\n  \"Configuration\",\n  \"Properties\",\n  \"Settings\"\n ],\n \"technical_words\": [\n  \"abend\",\n  \"error\",\n  \"log\",\n  \"audit\",\n  \"token\",\n  \"session\",\n  \"cache\",\n  \"template\",\n  \"setting\",\n  \"migration\",\n  \"lock\",\n  \"registry\",\n  \"database\",\n  \"sequence\"\n ],\n \"min_importers\": 3,\n \"record_pattern\": \"(?i).*[-_](RECORD|REC|DATA)$\",\n \"name_suffixes\": [\n  \"AggregateRoot\",\n  \"Root\",\n  \"Entity\",\n  \"Model\",\n  \"Record\",\n  \"Rec\",\n  \"Data\",\n  \"Table\"\n ],\n \"table_mentions\": true,\n \"technical_signals\": [\n  \"table\",\n  \"shared record\"\n ],\n \"aggregate_scope\": \"folder\",\n \"table_annotations\": [\n  \"Table\"\n ],\n \"join_tables\": true\n}"
   },
   {
     "id": 94,
