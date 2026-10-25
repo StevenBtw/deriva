@@ -1535,6 +1535,7 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
                 name_candidates=[name for name, _ in unit.name_candidates],
                 name_sources=[source for _, source in unit.name_candidates],
                 member_count=len(unit.members | set(unit.web_entries)),
+                excluded=unit.excluded,
             ),
             node_id=node_id,
         )

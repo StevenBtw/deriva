@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
+from deriva.modules.extraction.build_modules import development_only
+
 
 @dataclass(frozen=True)
 class UnitRules:
@@ -77,6 +79,7 @@ class Unit:
     web_entries: list[str] = field(default_factory=list)  # Files that serve pages (Web UI signals), sorted
     product: str = ""  # The product the unit belongs to (the root README title's first part)
     name_candidates: list[tuple[str, str]] = field(default_factory=list)  # (name, source): the closed set to name it from
+    excluded: str | None = None  # Why it is no application component (tooling: a package listed only as a development dependency)
 
 
 def unit_id(repository: str, unit: Unit) -> str:
@@ -499,10 +502,12 @@ def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
         units = [Unit(path=facts.repository, name=facts.repository, kind="repository", evidence=["no deployable unit found: the repository"], members=set(paths))]
     folders = sorted({u.path for u in units})
     naming = _Naming(facts, rules)
+    tooling = development_only(facts.manifests)
     for unit in units:
         unit.readme_lines = _readme_lines(unit, facts.documents, rules.readme_lines)
         unit.readme_title = _readme_title(unit, facts.documents)
         unit.web_entries = _web_entries(unit, paths, [f for f in folders if f != unit.path and _below(f, unit.path)], rules)
         unit.product = naming.product
         unit.name_candidates = naming.candidates(unit, facts.repository)
+        unit.excluded = "tooling" if unit.path in tooling else None
     return units

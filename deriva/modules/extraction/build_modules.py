@@ -47,7 +47,7 @@ class BuildModule:
     parent: str | None = None  # Path of the nearest module or system folder above it
     files: list[str] = field(default_factory=list)  # The files it holds itself, sorted
     members: list[str] = field(default_factory=list)  # For a system: the module paths it lists, sorted
-    excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only)
+    excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only, tooling)
 
 
 def module_id(repository: str, path: str) -> str:
@@ -114,6 +114,72 @@ def _manifest_name(path: str, text: str) -> str | None:
     return None
 
 
+def _package_key(name: str) -> str:
+    """A package name compared across manifests: lowercase, runs of ``-``, ``_`` and ``.`` as one ``-``."""
+    return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+
+def _requirement(spec: str) -> str:
+    """The package name of a requirement string (``shop-web[extra]>=1; python_version > "3"``)."""
+    found = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", spec)
+    return _package_key(found.group(1)) if found else ""
+
+
+def _uses(path: str, text: str) -> tuple[set[str], set[str]]:
+    """(runtime, development) package names a manifest depends on. Development: dependency groups and dev dependencies
+    (pyproject, Poetry), ``devDependencies`` (npm), Maven's test scope; everything else is a runtime use."""
+    lower = PurePosixPath(path).name.lower()
+    runtime: set[str] = set()
+    development: set[str] = set()
+    if lower == "pyproject.toml":
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            return runtime, development
+        project = data.get("project", {})
+        poetry = data.get("tool", {}).get("poetry", {})
+        runtime |= {_requirement(s) for s in project.get("dependencies", []) if isinstance(s, str)}
+        runtime |= {_requirement(s) for group in project.get("optional-dependencies", {}).values() for s in group if isinstance(s, str)}
+        runtime |= {_package_key(n) for n in poetry.get("dependencies", {})}
+        development |= {_requirement(s) for group in data.get("dependency-groups", {}).values() for s in group if isinstance(s, str)}
+        development |= {_requirement(s) for s in data.get("tool", {}).get("uv", {}).get("dev-dependencies", []) if isinstance(s, str)}
+        development |= {_package_key(n) for n in poetry.get("dev-dependencies", {})}
+        development |= {_package_key(n) for group in poetry.get("group", {}).values() for n in group.get("dependencies", {})}
+    elif lower == "package.json":
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return runtime, development
+        if isinstance(data, dict):
+            runtime |= {_package_key(n) for key in ("dependencies", "peerDependencies", "optionalDependencies") for n in data.get(key) or {}}
+            development |= {_package_key(n) for n in data.get("devDependencies") or {}}
+    elif lower == "pom.xml":
+        used = re.sub(r"<(dependencyManagement|build)>.*?</\1>", "", text, flags=re.DOTALL)
+        for block in re.findall(r"<dependency>(.*?)</dependency>", used, re.DOTALL):
+            artifact = re.search(r"<artifactId>\s*([^<]+?)\s*</artifactId>", block)
+            scope = re.search(r"<scope>\s*([^<]+?)\s*</scope>", block)
+            if artifact:
+                (development if scope and scope.group(1) == "test" else runtime).add(_package_key(artifact.group(1)))
+    return runtime - {""}, development - {""}
+
+
+def development_only(manifests: dict[str, str]) -> set[str]:
+    """The folders of the repository's packages that its manifests list only as a development dependency, never as a
+    runtime one: development tooling (a benchmark or test-support package), no part of the system."""
+    runtime: set[str] = set()
+    development: set[str] = set()
+    for path, text in manifests.items():
+        used, dev = _uses(path, text)
+        runtime |= used
+        development |= dev
+    folders: set[str] = set()
+    for path, text in manifests.items():
+        name = _manifest_name(path, text)
+        if name and _package_key(name) in development - runtime:
+            folders.add(_parent(path))
+    return folders
+
+
 def _listed(path: str, text: str) -> list[str]:
     """The member folders an aggregator manifest lists (relative patterns, as written)."""
     lower = PurePosixPath(path).name.lower()
@@ -176,8 +242,12 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
             if f.get("file_type") == "source" and f.get("subtype") in rules.code_subtypes:
                 code.add(folder)
 
+    tooling = development_only(manifests)
+
     def excluded(folder: str) -> str | None:
         manifest = candidates[folder]
+        if folder in tooling:
+            return "tooling"
         dependencies = _dependencies(manifest, manifests.get(manifest, ""))
         matches = lambda name, patterns: any(fnmatch.fnmatchcase(name, p.lower()) for p in patterns)  # noqa: E731 - a one-line helper
         if any(matches(d, rules.iac_dependencies) for d in dependencies):

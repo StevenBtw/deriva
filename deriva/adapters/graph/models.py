@@ -520,7 +520,7 @@ class BuildModuleNode:
     is_system: bool = False
     members: list[str] = field(default_factory=list)  # For a system: the module paths its manifest lists
     same_as: str | None = None  # The unit whose folder it is (one unit there, no module inside): one element with it
-    excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only)
+    excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only, tooling)
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -570,6 +570,7 @@ class DeployableUnitNode:
     name_candidates: list[str] = field(default_factory=list)  # The closed set its component is named from
     name_sources: list[str] = field(default_factory=list)  # Where each candidate comes from (readme, docs, manifest, ...)
     member_count: int = 0
+    excluded: str | None = None  # Why it is no application component (tooling)
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -593,6 +594,7 @@ class DeployableUnitNode:
             "nameCandidates": list(self.name_candidates),
             "nameSources": list(self.name_sources),
             "memberCount": self.member_count,
+            "excluded": self.excluded,
             # Unit ids carry no prefix the graph manager reads the repository from
             "repository_name": self.repository_name,
             "type": "DeployableUnit",
