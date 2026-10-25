@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import posixpath
 import re
 import tomllib
 from collections import Counter, defaultdict
@@ -59,6 +60,7 @@ class RepoFacts:
     documents: dict[str, str] = field(default_factory=dict)  # documentation path -> text
     reserved: set[str] = field(default_factory=set)  # Names no unit may take (technologies, dependencies)
     handlers: list[str] = field(default_factory=list)  # Files defining a serverless handler (``is_handler``)
+    bundler_configs: dict[str, str] = field(default_factory=dict)  # Bundler config path -> text (``bundler_outputs``)
 
 
 @dataclass
@@ -97,6 +99,48 @@ def unit_id(repository: str, unit: Unit) -> str:
 
 def _parent(path: str) -> str:
     return str(PurePosixPath(path).parent)
+
+
+BUNDLER_CONFIGS = ("vite.config.*", "webpack.config.*", "angular.json")
+
+
+def bundler_outputs(configs: dict[str, str]) -> tuple[list[tuple[str, str]], list[str]]:
+    """(front-end module folder, build output folder) per bundler config that declares its output as a literal:
+    vite ``build.outDir``, webpack ``output.path``, angular ``outputPath``, relative to the config's folder. A declared
+    but computed output (``path.resolve(...)``) is not evaluated: it is returned as unmapped. Sorted."""
+    mapped: set[tuple[str, str]] = set()
+    unmapped: set[str] = set()
+    for path, text in configs.items():
+        folder = _parent(path)
+        name = PurePosixPath(path).name.lower()
+        values: list[tuple[str, str]] = []  # (key, raw value)
+        if name == "angular.json":
+            try:
+                projects = json.loads(text).get("projects", {})
+            except ValueError:
+                continue
+            for project in projects.values() if isinstance(projects, dict) else []:
+                out = (((project or {}).get("architect") or {}).get("build") or {}).get("options", {}).get("outputPath")
+                out = out.get("base") if isinstance(out, dict) else out
+                if out is not None:
+                    values.append(("outputPath", json.dumps(out) if isinstance(out, str) else str(out)))
+        else:
+            key = "outDir" if name.startswith("vite.config.") else "path"
+            scope = re.search(r"\boutput\s*:\s*\{([^}]*)\}", text) if key == "path" else None
+            body = scope.group(1) if scope else (text if key == "outDir" else "")
+            # The value: a quoted literal, else the rest of its line (reported as written)
+            found = re.search(r"\b" + key + r"""\s*:\s*((['"`])[^'"`]*\2|[^\n]+)""", body)
+            if found:
+                values.append(("build.outDir" if key == "outDir" else "output.path", found.group(1).strip().rstrip(",} ")))
+        for key, raw in values:
+            literal = re.fullmatch(r"""(['"`])([^'"`$]+)\1""", raw)
+            if literal:
+                out = posixpath.normpath(posixpath.join(folder, literal.group(2)))
+                if not out.startswith(".."):
+                    mapped.add((folder, out))
+                    continue
+            unmapped.add(f"{path}: {key} {raw}")
+    return sorted(mapped), sorted(unmapped)
 
 
 def is_handler(parameters: str) -> bool:
@@ -551,10 +595,19 @@ def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
     folders = sorted({u.path for u in units})
     naming = _Naming(facts, rules)
     tooling = development_only(facts.manifests)
+    shipped, _ = bundler_outputs(facts.bundler_configs)
     for unit in units:
         unit.readme_lines = _readme_lines(unit, facts.documents, rules.readme_lines)
         unit.readme_title = _readme_title(unit, facts.documents)
-        unit.web_entries = _web_entries(unit, paths, [f for f in folders if f != unit.path and _below(f, unit.path)], rules)
+        # Pages inside a nested unit or a nested module (a folder with its own manifest) are not this unit's
+        nested = [f for f in sorted({*folders, *manifest_folders}) if f != unit.path and _below(f, unit.path)]
+        unit.web_entries = _web_entries(unit, paths, nested, rules)
+        # A front-end module whose build output lies in this unit's folder (the deepest such unit) is its web UI
+        for front_end, out in shipped:
+            owners = [u.path for u in units if out == u.path or _below(out, u.path)]
+            if owners and unit.path == max(owners, key=len):
+                pages = _web_entries(Unit(path=front_end, name="", kind="static"), paths, [], rules)
+                unit.web_entries = sorted({*unit.web_entries, *pages})
         unit.product = naming.product
         unit.name_candidates = naming.candidates(unit, facts.repository)
         unit.excluded = "tooling" if unit.path in tooling else None

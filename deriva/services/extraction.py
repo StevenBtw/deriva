@@ -1626,6 +1626,14 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
         job_runs=job_runs,
         program_calls=program_calls,
         documents=documents,
+        # Bundler configs: a front-end module's declared build output places its pages in the unit that ships them
+        bundler_configs={
+            f["path"]: text
+            for f in files
+            if any(fnmatch.fnmatchcase(f["name"].lower(), p) for p in deployable_units.BUNDLER_CONFIGS)
+            and "node_modules" not in f["path"].split("/")
+            and (text := _read_checkout(repo_path, repo.name, f["path"])) is not None
+        },
         # Files defining a serverless handler entry point (event, context)
         handlers=sorted(
             {
