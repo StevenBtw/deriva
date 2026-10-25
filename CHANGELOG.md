@@ -12,6 +12,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ### Metamodel
 
+- **The metamodel refuses what it does not allow**: storing a relationship checks the type pair of its stored source and target against the ArchiMate 3.2 relationship table, so a step can no longer write a relationship the metamodel does not allow
 - **Application function**: the ArchiMate metamodel Deriva derives against gains ApplicationFunction (application layer, behaviour). Its relationships follow ArchiMate 3.2 as Archi's relationship table states them; a component is assigned to it, it realizes application services, business processes and business functions, and accesses data objects. The views, the convention checks and the B1 baseline's output types include it
 
 ### Configuration
@@ -36,6 +37,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ### Derivation
 
+- **One platform node**: the technology layer has one node per deployment environment, named by its kind ("Container Platform" for Docker Compose and Kubernetes, "Mainframe", a cloud environment by its own name), instead of a node per deployed container; the deployments stay in the export's detail level as artifacts assigned to the platform node. A repository without deployment evidence has no node
 - **One data object per entity**: every persistent data entity (an aggregate root, an ORM entity, a shared record or a table) gets one data object, named after the entity, from structure and without an LLM call; it realizes the business object of the entity's data domain. It replaces the data object per data domain and its naming call. An application service accesses the entities its members reach, else every entity of a data domain they reach; the service's naming call now sees the entity names, not names an earlier LLM call wrote
 - **One application function per unit**: every application component that is a deployable unit, a library or a feature package gets one application function, its main behaviour, from structure and without an LLM call; the component is assigned to it and it realizes the component's services. Systems and units split into feature packages are enterprise applications and get none. The function is named after its component ("... Behaviour") until service and function names get a shared naming rule
 - **No business function per data domain**: the application service step no longer adds a business function for each business domain that cooperating components access (its `business_functions` param is off); such a grouping is no business behaviour with a human actor
