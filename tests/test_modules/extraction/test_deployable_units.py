@@ -491,3 +491,58 @@ def test_a_page_inside_a_template_folder_is_a_server_page_not_a_static_frontend(
 
     # No static unit, so the repository stays one unit
     assert [(u.path, u.kind) for u in units.values()] == [("r", "repository")]
+
+
+def test_a_page_inside_a_nested_module_with_its_own_manifest_is_no_web_entry_of_the_enclosing_unit():
+    files = [
+        _file("r/pyproject.toml"),
+        _file("r/tool/cli.py", "python"),
+        _file("r/tool/templates/report.html"),
+        _file("r/ui/package.json"),
+        _file("r/ui/index.html"),
+        _file("r/ui/src/main.ts", "typescript"),
+    ]
+    manifests = {"r/pyproject.toml": '[project]\nname = "tool"\n[project.scripts]\ntool = "tool.cli:main"\n', "r/ui/package.json": '{"name": "tool-ui"}'}
+
+    units = _units(files, manifests=manifests)
+
+    # The front end has a manifest of its own: its page is not the root package's; the package's own template stays
+    assert units["r::tool"].web_entries == ["r/tool/templates/report.html"]
+
+
+def test_a_bundler_output_directory_maps_a_front_end_module_to_the_unit_that_ships_it():
+    from deriva.modules.extraction.deployable_units import bundler_outputs
+
+    configs = {
+        "r/studio/vite.config.ts": 'export default defineConfig({ build: { outDir: "../server/src/app/static", emptyOutDir: true } })',
+        "r/web/webpack.config.js": "module.exports = { output: { path: path.resolve(__dirname, 'dist') } }",
+        "r/admin/angular.json": '{"projects": {"admin": {"architect": {"build": {"options": {"outputPath": "../server/src/app/admin"}}}}}}',
+        "r/plain/vite.config.ts": "export default defineConfig({ plugins: [] })",
+    }
+
+    mapped, unmapped = bundler_outputs(configs)
+
+    assert mapped == [("r/admin", "r/server/src/app/admin"), ("r/studio", "r/server/src/app/static")]
+    assert unmapped == ["r/web/webpack.config.js: output.path path.resolve(__dirname, 'dist')"]
+
+
+def test_a_front_end_module_whose_build_output_lies_in_a_units_folder_is_that_units_web_ui():
+    files = [
+        _file("r/pyproject.toml"),
+        _file("r/server/pyproject.toml"),
+        _file("r/server/src/app/main.py", "python"),
+        _file("r/studio/package.json"),
+        _file("r/studio/index.html"),
+        _file("r/studio/src/main.ts", "typescript"),
+    ]
+    manifests = {
+        "r/pyproject.toml": '[project]\nname = "core"\n[project.scripts]\ncore = "core.cli:main"\n',
+        "r/server/pyproject.toml": '[project]\nname = "server"\n[project.scripts]\nserver = "app.main:run"\n',
+        "r/studio/package.json": '{"name": "studio"}',
+    }
+    configs = {"r/studio/vite.config.ts": 'export default { build: { outDir: "../server/src/app/static" } }'}
+
+    units = _units(files, manifests=manifests, bundler_configs=configs)
+
+    assert units["r/server::server"].web_entries == ["r/studio/index.html"]
+    assert units["r::core"].web_entries == []
