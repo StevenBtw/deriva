@@ -2147,6 +2147,9 @@ class NamingConfig:
     guards: NameGuards = field(default_factory=NameGuards)  # Structural checks on the answer (unit names)
     # Closed-set naming: a source that lists nameCandidates is named by choosing one of them with this instruction
     choose_instruction: str = ""
+    # Name sources in rank order (manifest, mainframe, readme, docs, structure): set, the first free candidate by this
+    # order is the name with no call; within a source the extraction order decides
+    source_order: tuple[str, ...] = ()
 
 
 # Structural source fields that are the same in every run (no LLM-written text)
@@ -3231,12 +3234,20 @@ def derive_containment_relationships(
             if e.get("element_type") != rule.contained:
                 continue
             # Containers made from deployable units own what their units include (one owner: the smallest unit)
-            if scopes is not None and units.get(rule.container):
+            if scopes is not None and (units.get(rule.container) or source in scopes.entity_files):
                 owned = [o for o in unit_owners(units[rule.container], scopes, source, path) if o != e["identifier"]]
-                if owned and source in scopes.entity_files:
-                    # A data entity is used by every unit that holds one of its types (access, not ownership)
+                if source in scopes.entity_files:
+                    # A data entity is used by every unit that holds one of its types (access, not ownership), and by the
+                    # nearest other container (a module, a feature package) whose folder holds one of its files
+                    unit_made = {element for _, element in units[rule.container]}
+                    folders = [(p, cid) for p, cid in containers.get(rule.container, []) if cid not in unit_made and cid != e["identifier"]]
+                    for file in scopes.entity_files[source]:
+                        holding = [(p, cid) for p, cid in folders if file.startswith(p + "/")]
+                        if holding:
+                            owned.append(max(holding, key=lambda o: len(o[0]))[1])
                     relationships.extend(
-                        {"source": o, "target": e["identifier"], "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "containment"} for o in owned
+                        {"source": o, "target": e["identifier"], "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "containment"}
+                        for o in sorted(set(owned))
                     )
                     continue
                 if owned:

@@ -9,7 +9,6 @@ from deriva.services.export_levels import detail_lineage, leveled_model
 class FakeGraph:
     ROWS = {
         "DataEntity": [{"d": "domain::r::order", "e": "entity::r::order", "n": "Order"}, {"d": "domain::r::order", "e": "entity::r::line", "n": "Order Line"}],
-        "Deployment": [{"v": "environment::r::compose", "d": "deployment::r::compose::shop", "n": "shop", "u": "unit::r::shop"}],
         "program": [],
         "Lifecycle": [{"l": "lifecycle::r::order", "s": ["DRAFT", "PAID"]}],
     }
@@ -31,7 +30,6 @@ def test_the_lineage_is_read_from_the_graph():
     lineage = detail_lineage(FakeGraph())
 
     assert lineage.entities == {"domain::r::order": [("entity::r::line", "Order Line"), ("entity::r::order", "Order")]}
-    assert lineage.deployments == {"environment::r::compose": [("deployment::r::compose::shop", "shop", "unit::r::shop")]}
     assert lineage.states == {"lifecycle::r::order": ["DRAFT", "PAID"]}
 
 
@@ -53,13 +51,12 @@ def test_the_leveled_model_adds_the_detail_level_and_keeps_the_architect_level()
         "Order Lifecycle": "enterprise",
         "Order": "detail",
         "Order Line": "detail",
-        "shop": "detail",
     }
     assert model.properties["bp_order"]["states"] == "DRAFT, PAID"
-    assert {r.relationship_type for r in model.relationships} == {"Realization", "Composition", "Assignment"}
+    assert {r.relationship_type for r in model.relationships} == {"Realization", "Composition"}
     assert [e.identifier for e in model.elements[: len(ELEMENTS)]] == [e.identifier for e in ELEMENTS]
-    assert {v.name for v in model.views} >= {"Layered (enterprise)", "Implementation and Deployment (detail)"}
-    assert model.summary() == {"architect_elements": 4, "detail_elements": 3, "detail_relationships": 4}
+    assert {v.name for v in model.views} >= {"Layered (enterprise)"}
+    assert model.summary() == {"architect_elements": 4, "detail_elements": 2, "detail_relationships": 2}
 
 
 def test_the_level_property_is_the_level_set_and_relationships_get_theirs_with_stable_ids():

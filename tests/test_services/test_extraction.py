@@ -3023,9 +3023,33 @@ class TestDataEntityStep:
         assert [(r["entity"], r["path"]) for r in named] == [("Benchmark Run", "r/app/store.py")]
         assert "r/app/store.py" in unit_scopes(graph).entity_files["entity::r::benchmarkrun"]
 
+    def test_a_join_table_is_read_from_the_foreign_keys_of_its_ddl_file(self, graph, tmp_path):
+        from deriva.adapters.graph.models import TypeDefinitionNode
+
+        (tmp_path / "db").mkdir()
+        (tmp_path / "db/schema.sql").write_text(
+            "CREATE TABLE vets (id INT PRIMARY KEY, name VARCHAR(30));\n"
+            "CREATE TABLE specialties (id INT PRIMARY KEY, name VARCHAR(80));\n"
+            "CREATE TABLE vet_specialties (vet_id INT NOT NULL, specialty_id INT NOT NULL);\n"
+            "ALTER TABLE vet_specialties ADD CONSTRAINT fk_v FOREIGN KEY (vet_id) REFERENCES vets (id);\n"
+            "ALTER TABLE vet_specialties ADD CONSTRAINT fk_s FOREIGN KEY (specialty_id) REFERENCES specialties (id);\n",
+            encoding="utf-8",
+        )
+        for name in ("vets", "specialties", "vet_specialties"):
+            graph.add_node(TypeDefinitionNode(name=name, type_category="table", file_path="db/schema.sql", repository_name="r"), node_id=f"typedef::r::{name}")
+
+        result = _run_extraction_step(self._cfg({"join_tables": True}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert sorted(r["name"] for r in graph.query("MATCH (d:Graph:DataEntity) RETURN d.name AS name")) == ["Specialty", "Vet"]
+        assert result["excluded"] == [{"type": "vet_specialties", "reason": "join table"}]
+
     def test_the_signals_are_validated(self, graph):
         with pytest.raises(ValueError, match="DataEntity"):
             _run_extraction_step(self._cfg({"technical_words": "log"}), SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
+        with pytest.raises(ValueError, match="DataEntity"):
+            _run_extraction_step(self._cfg({"aggregate_scope": "unit"}), SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
+        with pytest.raises(ValueError, match="DataEntity"):
+            _run_extraction_step(self._cfg({"technical_signals": ["column"]}), SimpleNamespace(name="r"), Path("."), [], [], graph, None, MagicMock())
 
 
 class TestRerunnableSteps:
@@ -3428,8 +3452,8 @@ class TestDataDomainStep:
         graph.add_node(FileNode(name=f"{name}.java", path=path, repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}")
         graph.add_node(TypeDefinitionNode(name=name, type_category="class", file_path=path, repository_name="r", decorators=["Entity"]), node_id=f"typedef::r::{name}")
 
-    def _run(self, graph, root, params=None):
-        entity_params = json.dumps({"entity_annotations": ["Entity"]})
+    def _run(self, graph, root, params=None, entity_params=None):
+        entity_params = json.dumps(entity_params or {"entity_annotations": ["Entity"]})
         entity_cfg = SimpleNamespace(node_type="DataEntity", params=entity_params, input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
         _run_extraction_step(entity_cfg, SimpleNamespace(name="r"), root, [], [], graph, None, MagicMock())  # the entities come first
         with patch("deriva.services.extraction.config.get_extraction_config", return_value=entity_cfg):
@@ -3462,6 +3486,26 @@ class TestDataDomainStep:
 
         assert scopes.entity_files["domain::r::order"] == {"r/shop/Order.java", "r/shop/OrderLine.java"}
         assert "domain::r::order" in scopes.entities_of("typedef::r::OrderLine")
+
+    def test_the_domains_see_the_entities_of_the_data_entity_step_without_its_join_tables(self, graph, tmp_path):
+        from deriva.adapters.graph.models import FileNode, TypeDefinitionNode
+
+        (tmp_path / "db").mkdir()
+        (tmp_path / "db/schema.sql").write_text(
+            "CREATE TABLE vets (id INT PRIMARY KEY, name VARCHAR(30));\n"
+            "CREATE TABLE specialties (id INT PRIMARY KEY, name VARCHAR(80));\n"
+            "CREATE TABLE vet_specialties (vet_id INT NOT NULL REFERENCES vets (id), specialty_id INT NOT NULL REFERENCES specialties (id));\n",
+            encoding="utf-8",
+        )
+        graph.add_node(FileNode(name="schema.sql", path="db/schema.sql", repository_name="r", file_type="source", subtype="sql"), node_id="file::r::db/schema.sql")
+        for name in ("vets", "specialties", "vet_specialties"):
+            graph.add_node(TypeDefinitionNode(name=name, type_category="table", file_path="db/schema.sql", repository_name="r"), node_id=f"typedef::r::{name}")
+
+        result = self._run(graph, tmp_path, entity_params={"join_tables": True})
+
+        assert result["errors"] == []
+        members = graph.query("MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(m) RETURN m.id AS id ORDER BY id")
+        assert "entity::r::vetspecialty" not in [m["id"] for m in members]
 
     def test_the_signals_are_validated(self, graph, tmp_path):
         with pytest.raises(ValueError, match="DataDomain"):

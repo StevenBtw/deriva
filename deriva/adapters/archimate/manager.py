@@ -168,9 +168,7 @@ class ArchimateManager:
 
         # Validate relationship
         if validate:
-            is_valid, errors = self.validator.validate_relationship(relationship)
-            if not is_valid:
-                raise ValidationError(f"Relationship validation failed: {errors}")
+            self._validate_relationship(relationship)
 
         try:
             # Create Cypher query to add relationship
@@ -214,6 +212,26 @@ class ArchimateManager:
         except Exception as e:
             logger.error(f"Failed to add relationship {relationship.identifier}: {e}")
             raise
+
+    def _validate_relationship(self, relationship: Relationship) -> None:
+        """Raise ValidationError for a relationship the validator or the metamodel refuses: the metamodel decides
+        the type pair of the stored source and target (an endpoint that is not stored fails when it is created)."""
+        if self.db is None:
+            raise RuntimeError("Not connected to grafeo. Call connect() first.")
+        is_valid, errors = self.validator.validate_relationship(relationship)
+        if is_valid:
+            rows = self.db.execute_read(
+                f"MATCH (e:`{self.namespace}`) WHERE e.identifier IN [$source, $target] "
+                f"RETURN e.identifier AS identifier, [lbl IN labels(e) WHERE lbl <> '{self.namespace}'][0] AS element_type",
+                {"source": relationship.source, "target": relationship.target},
+            )
+            types = {row["identifier"]: row["element_type"] for row in rows}
+            if (source := types.get(relationship.source)) and (target := types.get(relationship.target)):
+                allowed, reason = self.metamodel.can_relate(source, relationship.relationship_type, target)
+                if not allowed:
+                    is_valid, errors = False, [reason]
+        if not is_valid:
+            raise ValidationError(f"Relationship validation failed: {errors}")
 
     def get_element(self, identifier: str) -> Element | None:
         """Get an element by identifier.
@@ -672,9 +690,7 @@ class ArchimateManager:
             documentation=old.documentation,
             properties=old.properties,
         )
-        is_valid, errors = self.validator.validate_relationship(new)
-        if not is_valid:
-            raise ValidationError(f"Relationship validation failed: {errors}")
+        self._validate_relationship(new)
         # Attributes that steps wrote directly on the edge (such as a consolidated confidence) go along
         edge = f"(:`{self.namespace}`)-[r]->(:`{self.namespace}`)"
         rows = self.query(f"MATCH {edge} WHERE r.identifier = $identifier RETURN properties(r) AS attributes", {"identifier": identifier})

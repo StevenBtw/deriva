@@ -103,3 +103,40 @@ def test_the_full_candidate_list_is_kept_in_order_next_to_the_name():
     assert single["properties"]["name_candidates"] == ["Shop Online"]
     # One candidate is taken: no call (name_choice False), but both stay listed
     assert element["properties"]["name_candidates"] == ["Shop Online", "Shop App Online"] and element["properties"]["name_choice"] is False
+
+
+def _sourced(*pairs: tuple[str, str]) -> Candidate:
+    return Candidate(
+        node_id="unit::r::shop",
+        name="shop",
+        labels=["Graph", "DeployableUnit"],
+        properties={"path": "r/shop", "unitKind": "container", "nameCandidates": [n for n, _ in pairs], "nameSources": [s for _, s in pairs]},
+    )
+
+
+def test_with_a_source_order_a_declared_name_beats_a_documented_one_without_a_call():
+    import dataclasses
+
+    naming = dataclasses.replace(NAMING, source_order=("manifest", "mainframe", "readme", "docs", "structure"))
+    candidate = _sourced(("Shop Server", "readme"), ("Online Shop", "docs"), ("Shop", "manifest"), ("Shop Core", "structure"))
+    calls: list[str] = []
+
+    element = {"name": "Shop", "properties": {}}
+    Derivation()._apply_naming(element, candidate, naming, lambda p, s, **k: calls.append(p), {}, "r", [], {})
+
+    assert element["name"] == "Shop" and calls == []
+    assert element["properties"]["name_candidates"] == ["Shop Server", "Online Shop", "Shop", "Shop Core"]  # as extracted, for review
+
+
+def test_with_a_source_order_the_first_of_a_source_wins_and_a_taken_one_is_passed_over():
+    import dataclasses
+
+    naming = dataclasses.replace(NAMING, source_order=("manifest", "readme", "structure"))
+    candidate = _sourced(("Shop Server", "readme"), ("Shop Portal", "readme"), ("Shop Core", "structure"))
+
+    first = {"name": "Shop", "properties": {}}
+    Derivation()._apply_naming(first, candidate, naming, lambda p, s, **k: None, {}, "r", [], {})
+    second = {"name": "Shop", "properties": {}}
+    Derivation()._apply_naming(second, candidate, naming, lambda p, s, **k: None, {}, "r", ["Shop Server"], {})
+
+    assert (first["name"], second["name"]) == ("Shop Server", "Shop Portal")

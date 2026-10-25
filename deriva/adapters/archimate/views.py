@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from .models import Element, Relationship, layer_of
 
 ENTERPRISE, SOLUTION, DETAIL = "enterprise", "solution", "detail"
-DEPLOYMENT = frozenset({"ApplicationComponent", "Node", "Device", "SystemSoftware", "TechnologyService"})
+DEPLOYMENT = frozenset({"ApplicationComponent", "Node", "Device", "SystemSoftware", "TechnologyService", "Artifact"})
 # (view name, viewpoint, element types, level), in export order
 VIEWPOINTS: tuple[tuple[str, str, frozenset[str] | None, str], ...] = (
     ("Layered (enterprise)", "Layered", None, ENTERPRISE),
@@ -24,7 +24,7 @@ VIEWPOINTS: tuple[tuple[str, str, frozenset[str] | None, str], ...] = (
     (
         "Business (enterprise)",
         "Business Process Cooperation",
-        frozenset({"BusinessActor", "BusinessProcess", "BusinessFunction", "BusinessEvent", "ApplicationService"}),
+        frozenset({"BusinessActor", "BusinessRole", "BusinessProcess", "BusinessFunction", "BusinessEvent", "ApplicationService"}),
         ENTERPRISE,
     ),
     ("Application Structure (solution)", "Application Structure", frozenset({"ApplicationComponent"}), SOLUTION),
@@ -38,10 +38,10 @@ VIEWPOINTS: tuple[tuple[str, str, frozenset[str] | None, str], ...] = (
 )
 
 # A view needs an element of its anchor types (the Business view: a business element, not application services alone)
-ANCHORS = {"Business (enterprise)": frozenset({"BusinessActor", "BusinessProcess", "BusinessFunction", "BusinessEvent"})}
+ANCHORS = {"Business (enterprise)": frozenset({"BusinessActor", "BusinessRole", "BusinessProcess", "BusinessFunction", "BusinessEvent"})}
 BANDS = ("Business", "Application", "Technology", "Other")
 TYPE_ORDER = (
-    "BusinessActor", "BusinessFunction", "BusinessProcess", "BusinessEvent", "BusinessObject",
+    "BusinessActor", "BusinessRole", "BusinessFunction", "BusinessProcess", "BusinessEvent", "BusinessObject",
     "ApplicationComponent", "ApplicationInterface", "ApplicationService", "ApplicationFunction", "DataObject",
     "Node", "Device", "SystemSoftware", "TechnologyService", "Artifact",
 )  # fmt: skip

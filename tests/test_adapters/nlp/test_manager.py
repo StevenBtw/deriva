@@ -39,12 +39,26 @@ def test_unknown_settings_are_refused_before_anything_loads(tmp_path):
         NlpTool(models_dir=tmp_path).extract([], {"snippet_length": 200}, [])
 
 
-def test_extract_runs_in_process_with_the_given_settings(tmp_path, monkeypatch):
+@pytest.fixture
+def spacy_models():
+    """The models directory holding the pinned spaCy pipelines, read only; without them the test is skipped instead of
+    downloading them (a test that depends on the network hides the next real failure)."""
+    from deriva.adapters.nlp.models import ensure_spacy
+
+    models_dir = NlpTool().models_dir
+    try:
+        ensure_spacy(models_dir, download=False)
+    except FileNotFoundError as missing:
+        pytest.skip(f"needs the pinned spaCy pipelines: {missing}")
+    return models_dir
+
+
+def test_extract_runs_in_process_with_the_given_settings(spacy_models, monkeypatch):
     """English needs no translation model, so this runs on the spaCy pipelines alone."""
     monkeypatch.setattr(translate, "load_translators", lambda models_dir: {})
     documents = [{"path": "a.md", "text": "The clerk approves the invoice. Customers pay every invoice on time."}]
 
-    result = NlpTool(models_dir=tmp_path).extract(documents, {"snippet_chars": 80}, ["data"])
+    result = NlpTool(models_dir=spacy_models).extract(documents, {"snippet_chars": 80}, ["data"])
 
     assert result["settings"]["snippet_chars"] == 80
     english = {(c["language"], c["term"]): c["english"] for c in result["candidates"]}

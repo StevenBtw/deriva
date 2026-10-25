@@ -20,7 +20,7 @@ Repository --> Extraction --> Graph --> Derivation --> ArchiMate model --> Expor
               generate:      ArchiMate elements, one step per type
               relationship:  one pass over all elements
               refine:        duplicates, orphans, structural checks,
-                             the component hierarchy and lifted relationships,
+                             the component hierarchy and the enterprise view,
                              the joint selection, then the level tags
               Result: the Model namespace
 
@@ -54,9 +54,11 @@ A component without a parent is top-level: on both levels when it is a unit or a
 
 ### Relationships between the levels
 
-A relationship is on the levels both its ends share; with none shared it is a cross-level link, such as the Composition from a top-level component to a component below it. A Serving, Access, Flow or Triggering relationship below the enterprise level also implies one between the nearest enterprise elements above its ends, and an Access to a data object reaches the business object it realizes. These lifted relationships are on the enterprise level only, and each lists the relationships it comes from.
+A relationship is on the levels both its ends share; with none shared it is a cross-level link, such as the Composition from a top-level component to a component below it. Every other relationship Deriva draws is a direct one, one that an ArchiMate 3.2 metamodel figure draws.
 
-The hierarchy's relationships and the lifted ones are proposals like any other: the `abstraction_hierarchy` step makes them just before the joint selection (`joint_consistency`), which decides on all relationships together. After the selection only the level tags are written; a step there that adds or removes an element or relationship is reported as an error of the run.
+The enterprise level adds the relationships of its viewpoint, a closed and versioned table of relationship patterns (`enterprise_patterns`), such as a top-level component realizing an application service. A pattern is drawn between two enterprise elements only where the valid derivation rules of ArchiMate 3.2 (Appendix B.2) derive it from a chain of direct relationships through the levels below, for example the system composing a unit whose function realizes the service. Each such relationship is on the enterprise level only and lists its chain (`derivedFrom`) and the rules applied (`derivationRules`). One relationship is drawn per pair of elements, the weaker structural type first. The same rule code scores a model against a reference, so what the enterprise level draws and what scoring accepts agree.
+
+The hierarchy's relationships and the enterprise view are proposals like any other: the `abstraction_hierarchy` step makes them just before the joint selection (`joint_consistency`), which decides on all relationships together. After the selection only the level tags are written; a step there that adds or removes an element or relationship is reported as an error of the run.
 
 ### Views per level
 
@@ -197,4 +199,4 @@ The studio's **Runs & storage** page shows what each part of the workspace takes
 5. **Graph algorithms guide derivation.** PageRank, Louvain communities and k-core levels decide which nodes are worth considering, before any LLM call.
 6. **Parsing over LLMs where possible.** Tree-sitter extracts types and methods in several languages deterministically and without LLM cost.
 7. **One embedded database.** Grafeo runs inside the process, so Deriva needs no database server, and namespaces keep the graph and the model apart.
-8. **Levels from structure.** The levels, the component hierarchy and the lifted relationships come from build manifests, folders and the graph, never from an LLM, so every level is as consistent as the structure it comes from.
+8. **Levels from structure.** The levels, the component hierarchy and the enterprise view come from build manifests, folders and the graph, never from an LLM, so every level is as consistent as the structure it comes from.

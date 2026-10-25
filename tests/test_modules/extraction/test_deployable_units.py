@@ -546,3 +546,26 @@ def test_a_front_end_module_whose_build_output_lies_in_a_units_folder_is_that_un
 
     assert units["r/server::server"].web_entries == ["r/studio/index.html"]
     assert units["r::core"].web_entries == []
+
+
+def test_name_candidates_do_not_depend_on_the_order_of_the_inputs():
+    """The closed source order takes the first candidate of a source: that order comes from the files' paths, never from
+    the order the graph returned them in."""
+    documents = {
+        "r/README.md": "# Shop\n\n- **[Risk Engine](risk-engine)** computes risk.\n",
+        "r/docs/b.md": "The [Pending Risk Checks](../risk-engine) run nightly.\n",
+        "r/docs/a.md": "The [Risk Rules](../risk-engine) apply.\n",
+        "r/risk-engine/README.md": "# Shop: Risk Engine\n",
+    }
+    manifests = {
+        "r/risk-engine/package.json": '{"name": "risk-engine", "scripts": {"start": "node ."}}',
+        "r/web/package.json": '{"name": "TeaShop UI", "scripts": {"start": "vite"}}',
+    }
+    files = [*_container("risk-engine"), _file("r/risk-engine/package.json"), *_container("web"), _file("r/web/package.json")]
+
+    forward = _named(files, documents=documents, manifests=manifests)
+    backward = _named(list(reversed(files)), documents=dict(reversed(list(documents.items()))), manifests=dict(reversed(list(manifests.items()))))
+
+    assert {k: u.name_candidates for k, u in forward.items()} == {k: u.name_candidates for k, u in backward.items()}
+    # A manifest name with capitals keeps its own casing (a lower case one takes title case: "Loan Ops" above)
+    assert ("TeaShop UI", "manifest") in forward["r/web"].name_candidates

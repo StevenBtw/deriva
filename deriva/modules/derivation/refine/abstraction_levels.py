@@ -2,11 +2,14 @@
 
 Tags every element and relationship with the abstraction levels it belongs to (``levels``; a relationship whose
 ends share no level is ``cross_level``), adds the roll-up Compositions of the component hierarchy (system ->
-modules and units -> nested modules), lets the top-level component realize, at the enterprise level, a service
-that a solution-level component realizes, and hands an interface to the module it lies in where its unit builds
-several modules (the module composes it instead of the unit). A Composition against the hierarchy (a unit composing
-the module that holds it) is removed. Structural only: the hierarchy comes from the folders of the components'
-sources (deployable units, build modules), the levels per type from the step's params. No LLM call.
+modules and units -> nested modules), and hands an interface to the module it lies in where its unit builds
+several modules (the module composes it instead of the unit). The services of a unit split into feature packages
+are realized by the packages' functions (``levels.split_realizations``). A Composition against the hierarchy (a unit
+composing the module that holds it) is removed. Before the joint selection it also draws the enterprise viewpoint: the
+relationships between enterprise elements that the metamodel's valid derivation rules derive from direct
+relationships, for the patterns of a versioned table (``levels.enterprise_derivations``). Structural only: the
+hierarchy comes from the folders of the components' sources (deployable units, build modules), the levels per type
+and the viewpoint from the step's params. No LLM call.
 
 Refine Step Name: "abstraction_levels"
 """
@@ -18,7 +21,17 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from deriva.common.ocel import hash_content
-from deriva.modules.derivation.levels import Component, LevelRules, assign_levels, component_parents, interface_owners, lifts, relationship_levels, rollups, service_lifts
+from deriva.modules.derivation.levels import (
+    Component,
+    LevelRules,
+    assign_levels,
+    component_parents,
+    enterprise_derivations,
+    interface_owners,
+    relationship_levels,
+    rollups,
+    split_realizations,
+)
 
 from .base import RefineResult, register_refine_step
 
@@ -35,21 +48,24 @@ UNITS = "MATCH (u:Graph:DeployableUnit) WHERE u.active = true RETURN u.id AS id,
 MEMBER_FILES = "MATCH (n) WHERE n.id IN $ids RETURN n.id AS id, n.filePath AS path"
 
 
+DERIVED = "derivation"  # The origin of a relationship the enterprise viewpoint derives
+
+
 def _relationship_id(source: str, relationship_type: str, target: str) -> str:
     """A stable identifier from the ends and the type (the same in every run)."""
     return f"rel-{hash_content(f'{source}|{relationship_type}|{target}')[:16]}"
 
 
 def _levels_of(origin: str | None, source: frozenset[str], target: frozenset[str]) -> tuple[frozenset[str], bool]:
-    """A relationship's levels: those both ends share; a lifted relationship exists for the enterprise level only (the
-    solution level holds the relationships it was lifted from), the one exception to the shared-levels rule."""
+    """A relationship's levels: those both ends share; a derived enterprise relationship exists for the enterprise level
+    only (the solution level holds the chain it is derived from), the one exception to the shared-levels rule."""
     shared, cross = relationship_levels(source, target)
-    return (shared & {"enterprise"}, cross) if origin == "lifted" else (shared, cross)
+    return (shared & {"enterprise"}, cross) if origin == DERIVED else (shared, cross)
 
 
 @register_refine_step("abstraction_levels")
 class AbstractionLevelsStep:
-    """Levels on elements and relationships, roll-ups and service lifts, from structure."""
+    """Levels on elements and relationships, roll-ups and the enterprise viewpoint, from structure."""
 
     STEP_NAME = "abstraction_levels"
     STAGE: str | None = None  # A stage the step always runs (None: from params, default all)
@@ -70,8 +86,13 @@ class AbstractionLevelsStep:
             params: ``types``: element type -> its levels (a type not listed is enterprise); ``roles`` (optional):
                 element type -> role -> the levels of that type's elements of that role; ``stage`` (optional):
                 ``all`` (default) the hierarchy's relationships and the level tags; ``structure`` those plus the
-                relationships lifted to the enterprise level (``levels.lifts``), for a step before the joint selection;
-                ``annotate`` the level tags only, adding or removing nothing (for a step after it)
+                enterprise viewpoint, for a step before the joint selection; ``annotate`` the level tags only, adding
+                or removing nothing (for a step after it); ``enterprise_patterns`` (optional, structure stage): the
+                enterprise viewpoint, Deriva's closed table of what the enterprise level draws, as [source type,
+                relationship type, target type] triples. A relationship between two enterprise elements is drawn
+                only for a pattern of the table, and only where the metamodel's valid derivation rules derive it
+                from a chain of direct relationships (one per pair, the weaker structural type). The user extends
+                the table; an empty or missing table draws nothing
         """
         result = RefineResult(success=True, step_name=self.STEP_NAME)
         types, roles, stage = (params or {}).get("types"), (params or {}).get("roles", {}), (params or {}).get("stage", self.STAGE or "all")
@@ -89,9 +110,16 @@ class AbstractionLevelsStep:
             result.errors.append("abstraction_levels params roles: element type -> role -> a list of enterprise and/or solution")
             return result
 
+        patterns = (params or {}).get("enterprise_patterns", [])
+        metamodel = getattr(archimate_manager, "metamodel", None)
+        is_pattern = lambda v: isinstance(v, list) and len(v) == 3 and all(isinstance(x, str) for x in v)  # noqa: E731 - a one-line helper
+        if not isinstance(patterns, list) or not all(is_pattern(v) and (metamodel is None or metamodel.tier(*v) is not None) for v in patterns):
+            result.success = False
+            result.errors.append("abstraction_levels params enterprise_patterns: a list of [source type, relationship type, target type] the metamodel allows")
+            return result
+
         rules = LevelRules(types={str(k): tuple(v) for k, v in types.items()}, roles={str(t): {str(r): tuple(v) for r, v in by.items()} for t, by in roles.items()})
         elements = archimate_manager.get_elements()
-        by_id = {e.identifier: e for e in elements}
         sources = {e.identifier: str((e.properties or {}).get("source") or "") for e in elements if e.element_type == "ApplicationComponent"}
         wanted = sorted({s for s in sources.values() if s.startswith(("unit::", "module::"))})
         rows = {str(r["id"]): r for r in (graph_manager.query(SOURCES, {"ids": wanted}) if graph_manager and wanted else [])}
@@ -139,15 +167,13 @@ class AbstractionLevelsStep:
         existing = {(r.source, r.relationship_type, r.target) for r in relationships}
         added: list[tuple[str, str, str, str]] = list(rolled)
         added += [(moved[i], "Composition", i, "interface_owner") for i in sorted({r.target for r in dropped})]
-        realizations = [
-            (r.source, r.target) for r in relationships if r.relationship_type == "Realization" and by_id.get(r.target) and by_id[r.target].element_type == "ApplicationService"
-        ]
         if stage != "annotate":
-            added += [(top, "Realization", service, "level_lift") for top, service in service_lifts(components, levels, realizations, units_at, built_by)]
+            added += [(f, "Realization", s, "split_unit") for f, s in self._split_realizations(elements, relationships, parents, component_of)]
         self._add(archimate_manager, added, existing, levels, result)
-        lifted = self._lifts(archimate_manager, elements, levels) if stage == "structure" else []
-        self._add(archimate_manager, [(s, t, g, "lifted") for s, t, g, _ in lifted], existing, levels, result, {(s, t, g): list(ids) for s, t, g, ids in lifted})
-        # Every relationship on the levels both its ends share (a lifted one on the enterprise level only)
+        derived = self._derivations(archimate_manager, elements, levels, [(a, b, c) for a, b, c in patterns]) if stage == "structure" and patterns else []
+        chains = {(s, g, t): (chain, numbers) for s, g, t, chain, numbers in derived}
+        self._add(archimate_manager, [(s, g, t, DERIVED) for s, g, t, _, _ in derived], existing, levels, result, chains)
+        # Every relationship on the levels both its ends share (a derived one on the enterprise level only)
         updates = {}
         for r in archimate_manager.get_relationships():
             shared, cross = _levels_of((r.properties or {}).get("derived_from"), levels.get(r.source, frozenset()), levels.get(r.target, frozenset()))
@@ -160,7 +186,7 @@ class AbstractionLevelsStep:
             "relationships": {"cross_level": sum(1 for u in updates.values() if u["cross_level"]), "total": len(updates)},
             "interfaces_moved": len(dropped),
             "reversed": len(reversed_),
-            "lifted": len(lifted),
+            "derived": len(derived),
         }
         return result
 
@@ -171,14 +197,16 @@ class AbstractionLevelsStep:
         existing: set[tuple[str, str, str]],
         levels: dict[str, frozenset[str]],
         result: RefineResult,
-        lifted_from: dict[tuple[str, str, str], list[str]] | None = None,
+        derived_from: dict[tuple[str, str, str], tuple[tuple[str, ...], tuple[str, ...]]] | None = None,
     ) -> None:
-        """Add each (source, type, target, origin) the model lacks, with its levels and a stable id."""
+        """Add each (source, type, target, origin) the model lacks, with its levels and a stable id; a derived one lists
+        its chain (``derivedFrom``, relationship ids) and the derivation rules applied (``derivationRules``)."""
         from deriva.adapters.archimate.models import Relationship  # noqa: TID251 - known layer exception (see docs/architecture.md)
 
         for source, relationship_type, target, origin in added:
             if (source, relationship_type, target) in existing:
                 continue
+            chain, numbers = (derived_from or {}).get((source, relationship_type, target), ((), ()))
             shared, cross = _levels_of(origin, levels.get(source, frozenset()), levels.get(target, frozenset()))
             archimate_manager.add_relationship(
                 Relationship(
@@ -190,7 +218,7 @@ class AbstractionLevelsStep:
                         "derived_from": origin,
                         "levels": sorted(shared),
                         "cross_level": cross,
-                        **({"liftedFrom": lifted_from[(source, relationship_type, target)]} if lifted_from else {}),
+                        **({"derivedFrom": list(chain), "derivationRules": list(numbers)} if (chain, numbers) != ((), ()) else {}),
                     },
                 )
             )
@@ -198,25 +226,35 @@ class AbstractionLevelsStep:
             result.relationships_created += 1
 
     @staticmethod
-    def _lifts(archimate_manager: ArchimateManager, elements: list[Any], levels: dict[str, frozenset[str]]) -> list[tuple[str, str, str, tuple[str, ...]]]:
-        """The relationships the model's solution-level relationships imply at the enterprise level (``levels.lifts``)."""
+    def _split_realizations(elements: list[Any], relationships: list[Any], parents: dict[str, str | None], component_of: dict[str, str]) -> list[tuple[str, str]]:
+        """(function, service) for the services of a unit split into feature packages (``levels.split_realizations``)."""
         types = {e.identifier: e.element_type for e in elements}
-        relationships = archimate_manager.get_relationships()
-        composer: dict[str, str] = {}
-        realizes: dict[str, str] = {}
-        for r in sorted(relationships, key=lambda r: r.identifier):
-            if r.relationship_type == "Composition":
-                composer.setdefault(r.target, r.source)
-            elif r.relationship_type == "Realization" and types.get(r.target) == "BusinessObject":
-                realizes.setdefault(r.source, r.target)
+        function_of = {
+            r.source: r.target
+            for r in sorted(relationships, key=lambda r: r.identifier)
+            if r.relationship_type == "Assignment" and types.get(r.source) == "ApplicationComponent" and types.get(r.target) == "ApplicationFunction"
+        }
+        realized = {r.target for r in relationships if r.relationship_type == "Realization" and types.get(r.source) == "ApplicationFunction"}
+        services = {
+            e.identifier: [component_of[s] for s in (e.properties or {}).get("sources") or [] if s in component_of] for e in elements if e.element_type == "ApplicationService"
+        }
+        return split_realizations(services, parents, function_of, realized)
+
+    @staticmethod
+    def _derivations(
+        archimate_manager: ArchimateManager, elements: list[Any], levels: dict[str, frozenset[str]], patterns: list[tuple[str, str, str]]
+    ) -> list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]]:
+        """The enterprise viewpoint's relationships, derived from the model's direct ones (``levels.enterprise_derivations``)
+        with the metamodel's tiers and valid derivation rules."""
         metamodel = archimate_manager.metamodel
-        return lifts(
-            [(r.identifier, r.source, r.relationship_type, r.target) for r in relationships],
+        return enterprise_derivations(
+            [(r.identifier, r.source, r.relationship_type, r.target) for r in archimate_manager.get_relationships()],
             levels,
-            composer,
-            realizes,
-            types,
-            lambda s, t, g: bool(metamodel.can_relate(s, t, g)[0]),
+            {e.identifier: e.element_type for e in elements},
+            patterns,
+            metamodel.derivation_rules,
+            metamodel.structural_strength,
+            metamodel.tier,
         )
 
     @staticmethod
@@ -253,9 +291,9 @@ class AbstractionLevelsStep:
 
 @register_refine_step("abstraction_hierarchy")
 class AbstractionHierarchyStep(AbstractionLevelsStep):
-    """The structure stage before the joint selection: the hierarchy's relationships (roll-ups, interface moves, service
-    lifts, the removal of Compositions against the hierarchy) and the relationships lifted to the enterprise level,
-    as proposals the joint selection decides on. ``abstraction_levels`` after it only tags."""
+    """The structure stage before the joint selection: the hierarchy's relationships (roll-ups, interface moves, the
+    removal of Compositions against the hierarchy) and the enterprise viewpoint, as proposals the joint selection
+    decides on. ``abstraction_levels`` after it only tags."""
 
     STEP_NAME = "abstraction_hierarchy"
     STAGE = "structure"

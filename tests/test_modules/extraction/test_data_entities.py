@@ -247,3 +247,107 @@ def test_a_generated_table_follows_a_type_with_a_name_outside_ascii():
     by_name = {e.name_candidates[0][0]: e for e in result.entities}
     assert sorted(by_name) == ["Заказ", "Клиент"]
     assert len(by_name["Заказ"].type_ids) == 2 and len(by_name["Клиент"].type_ids) == 1  # the table follows its own type
+
+
+def test_a_class_the_code_declares_persistent_is_an_entity_whatever_its_name():
+    """Technical words filter only the signals named in technical_signals (tables and records); a declared
+    persistent class (an annotation, a root marker, an ORM base) is an entity."""
+    import dataclasses
+
+    rules = dataclasses.replace(RULES, technical_signals=("table", "shared record"))
+    types = [
+        _t("NotificationLog", "r/core/Log.java", decorators=["Entity"]),
+        _t("system_settings", "r/db/schema.sql", category="table"),
+        _t("ABEND-DATA", "r/app/cpy/ABEND.cpy", category="record"),
+    ]
+
+    result = detect_entities(types, {"r/app/cpy/ABEND.cpy": 7}, {}, rules)
+
+    assert _names(result) == ["Notification Log"]
+    assert _reasons(result) == {"system_settings": "technical word: setting", "ABEND-DATA": "technical word: abend"}
+
+
+def test_with_folder_scope_an_entity_is_part_of_an_aggregate_only_next_to_a_root():
+    import dataclasses
+
+    rules = dataclasses.replace(RULES, aggregate_scope="folder")
+    types = [
+        _t("CustomerAggregateRoot", "r/domain/customer/Customer.java", decorators=["Entity"], bases=["RootEntity"]),
+        _t("CustomerProfileEntity", "r/domain/customer/Profile.java", decorators=["Entity"]),
+        _t("UserLoginEntity", "r/domain/identity/UserLogin.java", decorators=["Entity"]),
+    ]
+
+    result = detect_entities(types, {}, {}, rules)
+
+    assert _names(result) == ["Customer", "User Login"]
+    assert _reasons(result) == {"CustomerProfileEntity": "part of an aggregate"}
+
+
+def test_a_table_follows_the_code_type_whose_table_annotation_names_it():
+    import dataclasses
+
+    rules = dataclasses.replace(RULES, table_annotations=("Table",))
+    types = [
+        _t("PetType", "r/owner/PetType.java", decorators=["Entity", 'Table(name = "types")']),
+        _t("types", "r/db/h2/schema.sql", category="table"),
+        _t("types", "r/db/mysql/schema.sql", category="table"),
+    ]
+
+    (entity,) = detect_entities(types, {}, {}, rules).entities
+
+    assert entity.name_candidates == [("Pet Type", "type")] and len(entity.type_ids) == 3
+
+
+def test_a_join_table_is_no_entity():
+    import dataclasses
+
+    rules = dataclasses.replace(RULES, join_tables=True)
+    types = [
+        _t("vets", "r/db/schema.sql", category="table"),
+        {**_t("vet_specialties", "r/db/schema.sql", category="table"), "join_table": True},
+    ]
+
+    result = detect_entities(types, {}, {}, rules)
+
+    assert _names(result) == ["Vet"] and _reasons(result) == {"vet_specialties": "join table"}
+
+
+def test_join_tables_are_tables_whose_columns_are_all_foreign_keys_and_that_have_no_key_of_their_own():
+    from deriva.modules.extraction.data_entities import join_tables
+
+    ddl = """
+    CREATE TABLE vets (id INTEGER IDENTITY PRIMARY KEY, first_name VARCHAR(30));
+    CREATE TABLE specialties (id INTEGER IDENTITY PRIMARY KEY, name VARCHAR(80));
+    -- declared by ALTER TABLE
+    CREATE TABLE vet_specialties (
+      vet_id       INTEGER NOT NULL,
+      specialty_id INTEGER NOT NULL
+    );
+    ALTER TABLE vet_specialties ADD CONSTRAINT fk_vs_vets FOREIGN KEY (vet_id) REFERENCES vets (id);
+    ALTER TABLE vet_specialties ADD CONSTRAINT fk_vs_specialties FOREIGN KEY (specialty_id) REFERENCES specialties (id);
+    -- inline references and a primary key over the references only
+    CREATE TABLE IF NOT EXISTS "owner_tags" (owner_id INT REFERENCES owners(id), tag_id INT REFERENCES tags(id), PRIMARY KEY (owner_id, tag_id));
+    -- a table level foreign key next to a column of its own: an entity
+    CREATE TABLE visits (id INT PRIMARY KEY, pet_id INT, visit_date DATE, FOREIGN KEY (pet_id) REFERENCES pets(id));
+    -- one reference only and a column of its own
+    CREATE TABLE notes (pet_id INT REFERENCES pets(id), text VARCHAR(200));
+    """
+
+    assert join_tables(ddl) == {"vet_specialties", "owner_tags"}
+
+
+def test_an_orm_entity_records_the_table_it_declares_so_the_queries_of_that_table_reach_it():
+    """The table annotation's name and a class-level table attribute (without its schema) are the entity's tables;
+    a type without either keeps none."""
+    import dataclasses
+
+    rules = dataclasses.replace(RULES, table_annotations=("Table",), table_attributes=("__tablename__", "db_table"))
+    loan = {**_t("Loan", "r/svc/models.py", bases=["Base"]), "code": 'class Loan(Base):\n    __tablename__ = "loans"\n    __table_args__ = {"schema": "disbursement"}\n'}
+    owner = _t("Owner", "r/owner/Owner.java", decorators=["Entity", 'Table(name = "owners")'])
+    visit = {**_t("Visit", "r/visit/models.py", bases=["Model"]), "code": "class Visit(Model):\n    class Meta:\n        db_table = 'clinic.visits'\n"}
+    pet = _t("Pet", "r/owner/Pet.java", decorators=["Entity"])
+    base = _t("Base", "r/svc/db.py", bases=["DeclarativeBase"])
+
+    tables = {e.name_candidates[0][0]: e.tables for e in detect_entities([loan, owner, visit, pet, base], {}, {}, rules).entities}
+
+    assert tables == {"Loan": ["loans"], "Owner": ["owners"], "Visit": ["visits"], "Pet": []}

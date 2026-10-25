@@ -20,7 +20,6 @@ from deriva.common.ocel import hash_content
 from deriva.modules.derivation.detail_level import DetailLevel, DetailLineage, detail_level
 
 ENTITIES = "MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(e:Graph:DataEntity) RETURN d.id AS d, e.id AS e, e.name AS n"
-DEPLOYMENTS = "MATCH (v:Graph:Environment)-[:`Graph:RUNS`]->(d:Graph:Deployment) OPTIONAL MATCH (d)-[:`Graph:DEPLOYS`]->(u) RETURN v.id AS v, d.id AS d, d.name AS n, u.id AS u"
 PROGRAMS = "MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(t:Graph:TypeDefinition) WHERE t.category = 'program' RETURN u.id AS u, t.id AS t, t.typeName AS n"
 STATES = "MATCH (l:Graph:Lifecycle) RETURN l.id AS l, l.states AS s"
 
@@ -53,7 +52,6 @@ def detail_lineage(graph_manager: Any | None) -> DetailLineage:
         return DetailLineage()
     return DetailLineage(
         entities=_grouped(graph_manager.query(ENTITIES), "d", "e", "n"),
-        deployments=_grouped(graph_manager.query(DEPLOYMENTS), "v", "d", "n", "u"),
         programs=_grouped(graph_manager.query(PROGRAMS), "u", "t", "n"),
         states={str(r["l"]): list(r.get("s") or []) for r in graph_manager.query(STATES) if r.get("l") and r.get("s")},
     )

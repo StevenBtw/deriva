@@ -66,8 +66,8 @@
   },
   {
     "key": "excluded_directories",
-    "value": "[\".git\", \"__pycache__\", \"node_modules\", \"bower_components\", \"vendor\", \".venv\", \"venv\", \"site-packages\"]",
-    "updated_at": "2026-09-27T12:55:37.351745"
+    "value": "[\".git\", \"__pycache__\", \"node_modules\", \"bower_components\", \"vendor\", \".venv\", \"venv\", \"site-packages\", \".devcontainer\"]",
+    "updated_at": "2026-10-25T21:26:53.367949"
   },
   {
     "key": "high_pagerank_non_roots",

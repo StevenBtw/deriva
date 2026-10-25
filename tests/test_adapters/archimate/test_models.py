@@ -280,7 +280,9 @@ class TestSpecRelationshipTable:
             ("ApplicationComponent", "Serving", "BusinessActor", "derived"),
             ("BusinessActor", "Association", "Node", "direct"),
             ("ApplicationComponent", "Composition", "DataObject", None),
-            ("Node", "Assignment", "Artifact", "direct"),
+            ("Node", "Assignment", "Artifact", "derived"),  # Fig. 97: only device and system software
+            ("SystemSoftware", "Assignment", "Artifact", "direct"),
+            ("TechnologyService", "Serving", "ApplicationComponent", "derived"),  # Fig. 105: a service serves behaviour
             ("Artifact", "Realization", "ApplicationComponent", "direct"),
             ("Artifact", "Realization", "ApplicationService", "derived"),
             ("Artifact", "Composition", "ApplicationComponent", None),
@@ -299,9 +301,39 @@ class TestSpecRelationshipTable:
         valid = sum(1 for s in types for t in types for r in derivable if models.relationship_tier(s, r, t))
         non_association = [r for r in models.RELATIONSHIP_TYPES if r != "Association"]
         direct = sum(1 for s in types for t in types for r in non_association if models.relationship_tier(s, r, t) == "direct")
-        # The derived element types (ApplicationFunction since 0.8.8) plus Artifact (the export's detail level, from Archi's relationships.xml)
-        assert valid == 583
-        assert direct == 129
+        # 18 types (0.8.8: ApplicationFunction, Artifact, BusinessRole, BusinessService, TechnologyFunction); the tier
+        # from the metamodel figures
+        assert valid == 875
+        assert direct == 159
+
+    @pytest.mark.parametrize(
+        ("source", "rel", "target", "tier", "figure"),
+        [
+            ("BusinessActor", "Assignment", "BusinessRole", "direct", "Fig. 53"),
+            ("BusinessRole", "Assignment", "BusinessProcess", "direct", "Fig. 52"),
+            ("BusinessProcess", "Realization", "BusinessService", "direct", "Fig. 52"),
+            ("BusinessService", "Serving", "BusinessRole", "direct", "Fig. 52"),
+            ("ApplicationInterface", "Serving", "BusinessRole", "direct", "Fig. 104"),
+            ("ApplicationService", "Realization", "BusinessService", "direct", "Fig. 104"),
+            ("ApplicationService", "Serving", "BusinessActor", "derived", "Fig. 104: services serve business behaviour"),
+            ("ApplicationFunction", "Triggering", "ApplicationService", "derived", "Fig. 70: no line between behaviour and service"),
+            ("ApplicationComponent", "Realization", "ApplicationComponent", "direct", "Fig. 71"),
+            ("SystemSoftware", "Assignment", "TechnologyFunction", "direct", "Fig. 82"),
+            ("TechnologyFunction", "Realization", "TechnologyService", "direct", "Fig. 82"),
+            ("TechnologyService", "Serving", "TechnologyFunction", "direct", "Fig. 82"),
+            ("TechnologyService", "Access", "Artifact", "direct", "Fig. 82"),
+            ("Node", "Realization", "TechnologyService", "derived", "Fig. 82: only behaviour realizes a service"),
+            ("TechnologyFunction", "Realization", "ApplicationFunction", "direct", "Fig. 105"),
+            ("TechnologyService", "Serving", "ApplicationFunction", "direct", "Fig. 105"),
+            ("Artifact", "Realization", "SystemSoftware", "direct", "Fig. 97"),
+            ("Artifact", "Realization", "BusinessObject", "direct", "Fig. 104"),
+            ("Node", "Composition", "SystemSoftware", "direct", "Fig. 83"),
+        ],
+    )
+    def test_the_tier_follows_the_metamodel_figures(self, source, rel, target, tier, figure):
+        from deriva.adapters.archimate import models
+
+        assert models.relationship_tier(source, rel, target) == tier, figure
 
     def test_application_function_cells_hold_archis_letters_with_the_generic_metamodels_direct_tier(self):
         """The ApplicationFunction row and column (0.8.8) hold the letters of Archi's relationships.xml v3.2; the cells

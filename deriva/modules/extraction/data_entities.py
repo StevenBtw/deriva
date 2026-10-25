@@ -3,15 +3,18 @@
 A data entity is a persistent concept of the code, found by its structure:
 
 - aggregate roots: a type that inherits or carries a configured root marker. When a repository
-  marks roots, only roots are entities (the other entities are parts of an aggregate);
+  marks roots, only roots are entities (the other entities are parts of an aggregate; with
+  ``aggregate_scope`` "folder" only those in a root's folder);
 - ORM entities: a type with an entity annotation, or one that inherits a configured ORM base
   over at most two steps (``LoanApplication -> Base -> DeclarativeBase``);
 - shared mainframe records: a copybook record named as a record (``record_pattern``) that at least
   ``min_importers`` programs import (a shared work or communication area is no persistent data);
-- DDL tables: a ``CREATE TABLE`` (category ``table``).
+- DDL tables: a ``CREATE TABLE`` (category ``table``); a join table (``join_tables``: all its
+  columns foreign keys, no key of its own) is none. A table follows the code type generated as it
+  or mapped to it by a table annotation (``table_annotations``).
 
-Value objects, ids, DTOs, configuration classes and records named with a technical word are out,
-each with its reason. One concept is one entity: types with the same cleaned name, also in
+Value objects, ids, DTOs, configuration classes and types named with a technical word (of the
+``technical_signals``, else every signal) are out, each with its reason. One concept is one entity: types with the same cleaned name, also in
 different units, are merged. The name comes from the type name without the owning unit's name in
 front and without kind suffixes (``PersistenceOrder`` -> ``Order``, ``ACCOUNT-RECORD`` -> ``Account``).
 """
@@ -25,6 +28,9 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from deriva.common.naming import singularize
+
+# The signals that make a type an entity
+SIGNALS = ("aggregate root", "orm entity", "shared record", "table")
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,11 @@ class EntityRules:
     record_pattern: str = ""  # Full-match pattern of a mainframe record's name (empty: every record)
     name_suffixes: tuple[str, ...] = ()  # Kind words dropped from the end of a name
     table_mentions: bool = False  # Link a DDL table to the code files that name it (NAMED_IN)
+    technical_signals: tuple[str, ...] = ()  # The signals technical_words filter (empty: every signal)
+    aggregate_scope: str = "repository"  # Where a root makes the other ORM entities parts: "repository" or its "folder"
+    table_annotations: tuple[str, ...] = ()  # Annotations whose name argument names a code type's table
+    table_attributes: tuple[str, ...] = ()  # Class-level attributes whose string value names a code type's table
+    join_tables: bool = False  # A table whose columns are all foreign keys (no key of its own) is no entity
 
 
 @dataclass
@@ -57,7 +68,7 @@ class Entity:
     signal: str
     type_ids: list[str] = field(default_factory=list)
     paths: list[str] = field(default_factory=list)
-    tables: list[str] = field(default_factory=list)  # The DDL table names it merges, as written
+    tables: list[str] = field(default_factory=list)  # The tables it merges or declares (DDL names as written, declared names without schema)
 
 
 @dataclass
@@ -164,6 +175,81 @@ def table_mentions(tables: dict[str, list[str]], files: dict[str, str], own_file
     return found
 
 
+_DDL_NAME = r"(?:`[^`]+`|\"[^\"]+\"|\[[^\]]+\]|[\w$#@]+)(?:\s*\.\s*(?:`[^`]+`|\"[^\"]+\"|\[[^\]]+\]|[\w$#@]+))*"
+_CREATE_TABLE = re.compile(rf"(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:GLOBAL|LOCAL)\s+)?(?:TEMP(?:ORARY)?\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?P<name>{_DDL_NAME})\s*\(")
+_ALTER_KEY = re.compile(
+    rf"(?is)\bALTER\s+TABLE\s+(?:ONLY\s+)?(?:IF\s+EXISTS\s+)?(?P<name>{_DDL_NAME})\s+ADD\s+(?:CONSTRAINT\s+\S+\s+)?(?P<kind>PRIMARY|FOREIGN)\s+KEY\s*\((?P<columns>[^)]*)\)"
+)
+
+
+def _table_name(written: str) -> str:
+    """A DDL name without its schema and quotes."""
+    last = re.findall(r"`[^`]+`|\"[^\"]+\"|\[[^\]]+\]|[\w$#@]+", written)[-1]
+    return last[1:-1] if last[:1] in '`"[' else last
+
+
+def _columns(listed: str) -> set[str]:
+    return {c.strip().strip('`"[]').casefold() for c in listed.split(",") if c.strip()}
+
+
+def join_tables(ddl: str) -> set[str]:
+    """The join tables of a DDL text: tables whose columns are all foreign keys (inline ``REFERENCES``, a table level
+    ``FOREIGN KEY`` or an ``ALTER TABLE ... ADD FOREIGN KEY``) and whose primary key, if any, holds only those."""
+    text = _without_comments("schema.sql", ddl)
+    tables: dict[str, dict[str, set[str]]] = {}
+    for match in _CREATE_TABLE.finditer(text):
+        depth, end = 1, match.end()
+        while end < len(text) and depth:
+            depth += {"(": 1, ")": -1}.get(text[end], 0)
+            end += 1
+        body, parts, depth, start = text[match.end() : end - 1], [], 0, 0
+        for i, ch in enumerate(body):
+            depth += {"(": 1, ")": -1}.get(ch, 0)
+            if ch == "," and depth == 0:
+                parts.append(body[start:i])
+                start = i + 1
+        parts.append(body[start:])
+        table = tables.setdefault(_table_name(match.group("name")).casefold(), {"columns": set(), "foreign": set(), "primary": set(), "name": set()})
+        table["name"].add(_table_name(match.group("name")))
+        for part in (p.strip() for p in parts if p.strip()):
+            constraint = re.match(r"(?is)(?:CONSTRAINT\s+\S+\s+)?(PRIMARY|FOREIGN)\s+KEY\s*\(([^)]*)\)", part)
+            if constraint:
+                table["primary" if constraint.group(1).upper() == "PRIMARY" else "foreign"] |= _columns(constraint.group(2))
+            elif not re.match(r"(?i)(CONSTRAINT|UNIQUE|CHECK|INDEX|KEY|EXCLUDE)\b", part):
+                column = part.split()[0].strip('`"[]').casefold()
+                table["columns"].add(column)
+                if re.search(r"(?i)\bREFERENCES\b", part):
+                    table["foreign"].add(column)
+                if re.search(r"(?i)\bPRIMARY\s+KEY\b", part):
+                    table["primary"].add(column)
+    for match in _ALTER_KEY.finditer(text):
+        if table := tables.get(_table_name(match.group("name")).casefold()):
+            table["primary" if match.group("kind").upper() == "PRIMARY" else "foreign"] |= _columns(match.group("columns"))
+    return {name for t in tables.values() if len(t["columns"]) >= 2 and t["columns"] <= t["foreign"] and t["primary"] <= t["foreign"] for name in t["name"]}
+
+
+def _annotated_table(decorator: str, annotations: set[str]) -> str | None:
+    """The table a type's annotation names (``Table(name = "types")``, ``Table("types")``), else None."""
+    if _bare(decorator) not in annotations or "(" not in decorator:
+        return None
+    args = decorator[decorator.find("(") + 1 :]
+    found = re.search(r"\bname\s*=\s*[\"']([^\"']+)[\"']", args) or re.match(r"\s*[\"']([^\"']+)[\"']", args)
+    return found.group(1) if found else None
+
+
+def _declared_table(t: dict[str, Any], annotations: set[str], attributes: tuple[str, ...]) -> str | None:
+    """The table a code type declares: its table annotation's name, else a class-level table attribute in its code
+    (``__tablename__ = "loans"``), without a schema in front; else None."""
+    for d in t.get("decorators") or []:
+        if table := _annotated_table(str(d), annotations):
+            return table.split(".")[-1]
+    if attributes and (code := str(t.get("code") or "")):
+        names = "|".join(re.escape(a) for a in attributes)
+        if found := re.search(rf"(?m)^\s*(?:{names})\s*=\s*[\"']([^\"']+)[\"']", code):
+            return found.group(1).split(".")[-1]
+    return None
+
+
 def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owners: dict[str, str], rules: EntityRules) -> EntityResult:
     """The data entities among ``types``.
 
@@ -212,12 +298,21 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
     referenced = {_bare(b) for t in types for b in t.get("bases") or []}
     orm_names = {str(t["name"]).casefold() for t in types if t.get("bases") and ancestors(t) & orm and str(t["name"]).casefold() in referenced}
     has_roots = bool(root_names)
+    root_folders = {PurePosixPath(str(t.get("path") or "")).parent.as_posix() for t in types if marks(t) & roots}
+    table_marks, technical_signals = lower(rules.table_annotations), set(rules.technical_signals)
     result = EntityResult()
     found: dict[str, Entity] = {}
 
+    def remember(t: dict[str, Any], decision: tuple[str, str]) -> None:
+        # The table a type is generated as (its flattened name) or mapped to (its table annotation) follows it
+        decided.setdefault(_flat(str(t["name"])), decision)
+        for d in t.get("decorators") or []:
+            if table := _annotated_table(str(d), table_marks):
+                decided.setdefault(_flat(table), decision)
+
     def exclude(t: dict[str, Any], reason: str) -> None:
         result.excluded.append(Excluded(type_id=str(t["id"]), name=str(t["name"]), reason=reason))
-        decided.setdefault(_flat(str(t["name"])), ("excluded", reason))
+        remember(t, ("excluded", reason))
 
     def include(t: dict[str, Any], key: str, cleaned: str, signal: str) -> None:
         entity = found.setdefault(key, Entity(key=key, name_candidates=[(cleaned, "type")], signal=signal))
@@ -225,12 +320,17 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
         entity.paths = sorted({*entity.paths, str(t.get("path") or "")})
         if str(t.get("category") or "") == "table":
             entity.tables = sorted({*entity.tables, str(t["name"])})
-        decided.setdefault(_flat(str(t["name"])), ("entity", key))
+        elif table := _declared_table(t, table_marks, rules.table_attributes):
+            entity.tables = sorted({*entity.tables, table})
+        remember(t, ("entity", key))
 
     # Code types first: a table generated for one (PERSISTENCEORDER for PersistenceOrder) follows its decision
     decided: dict[str, tuple[str, str]] = {}
     for t in sorted(types, key=lambda t: (str(t.get("category") or "") == "table", str(t["id"]))):
         name, path, category = str(t["name"]), str(t.get("path") or ""), str(t.get("category") or "")
+        if category == "table" and rules.join_tables and t.get("join_table"):
+            exclude(t, "join table")
+            continue
         if category == "table" and (follow := decided.get(_flat(name))):
             if follow[0] == "entity":
                 include(t, follow[1], found[follow[1]].name_candidates[0][0], found[follow[1]].signal)
@@ -263,13 +363,13 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
             exclude(t, "config")
         elif not signal:
             continue
-        elif hit := next((w for w in (singularize(x).casefold() for x in _words(cleaned)) if w in technical), None):
+        elif (not technical_signals or signal in technical_signals) and (hit := next((w for w in (singularize(x).casefold() for x in _words(cleaned)) if w in technical), None)):
             exclude(t, f"technical word: {hit}")
         elif signal == "shared record" and rules.record_pattern and not re.fullmatch(rules.record_pattern, name):
             exclude(t, "not named as a record")
         elif signal == "shared record" and importers.get(path, 0) < rules.min_importers:
             exclude(t, f"used by {importers.get(path, 0)} programs (fewer than {rules.min_importers})")
-        elif signal == "orm entity" and has_roots:
+        elif signal == "orm entity" and has_roots and (rules.aggregate_scope != "folder" or PurePosixPath(path).parent.as_posix() in root_folders):
             exclude(t, "part of an aggregate")
         else:
             include(t, _compact(_words(cleaned)), cleaned, signal)

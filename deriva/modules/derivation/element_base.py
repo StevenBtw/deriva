@@ -1281,6 +1281,14 @@ class ElementDerivationBase(ABC):
         if not free:
             self.logger.warning("Every name candidate of %s is taken; the structure name stays", candidate.node_id)
             return
+        sources = [str(s) for s in candidate.properties.get("nameSources") or []]
+        if naming.source_order and len(sources) == len(choices):
+            # Declared beats documented beats folder: the first free candidate by the closed source order, within a source
+            # in extraction order (a stable sort; a source the order does not list comes last), with no call
+            rank = {source: i for i, source in enumerate(naming.source_order)}
+            source_of = dict(zip(choices, sources, strict=True))
+            free = sorted(free, key=lambda c: rank.get(source_of[c], len(rank)))
+            free = free[:1]
         name = free[0]
         if len(free) > 1:
             # The name depends on an LLM call (recorded for the origin split of the consistency report)

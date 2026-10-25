@@ -57,6 +57,8 @@ class DeploymentRules:
     marker_suffixes: tuple[str, ...] = ()
     # Manifest file pattern -> runtime alias, for a deployed unit without a container base image
     manifest_runtimes: tuple[tuple[str, str], ...] = ()
+    # An environment that runs one of the repository's own units ranks before one that runs only ready-made images
+    primary_runs_units: bool = False
 
 
 @dataclass
@@ -386,8 +388,10 @@ def detect_deployments(
     defaults = [name.lower() for name in rules.compose_defaults]
     # The deployment tool's default file name, in its lookup order, before any other name (a variant can sort first)
     default_rank = lambda e: defaults.index(PurePosixPath(e.file).name.lower()) if PurePosixPath(e.file).name.lower() in defaults else len(defaults)  # noqa: E731 - a one-line helper
-    # An environment that runs services comes before one that only holds managed services
-    ranked = sorted(environments, key=lambda e: (not e.services, order[e.kind], default_rank(e), len(PurePosixPath(e.file).parts), e.file))
+    # An environment that runs services comes before one that only holds managed services; with primary_runs_units one
+    # that runs the repository's own units comes first (a compose file that only starts databases is no platform)
+    runs_no_unit = lambda e: rules.primary_runs_units and not any(s.unit for s in e.services)  # noqa: E731 - a one-line helper
+    ranked = sorted(environments, key=lambda e: (runs_no_unit(e), not e.services, order[e.kind], default_rank(e), len(PurePosixPath(e.file).parts), e.file))
     if ranked:
         result.primary, result.others = ranked[0], ranked[1:]
         # A variant is another file of the primary's kind in the primary file's folder; a unit a variant deploys and

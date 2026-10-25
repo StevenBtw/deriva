@@ -5,8 +5,12 @@ the same name key, else whose lineage holds its source or identifier (structural
 environments); a model element maps to at most one reference element, a reference element may be covered
 by several model elements (a split: the model is finer than the reference). A relationship matches when
 its ends map to the reference ends and its type and direction agree; a model relationship with an end that
-maps to nothing cannot be judged (unassessable). A chain counts its steps that exist in the model.
-Reference elements marked ``optional`` (they depend on an open decision) stay outside recall.
+maps to nothing cannot be judged (unassessable). A reference relationship the model does not draw is still found
+when the valid derivation rules of the metamodel derive it from a chain of the model's direct relationships (the
+tier the metamodel figures draw); a relationship on such a chain is correct (and assessable, whatever its ends map
+to). A derived-tier model relationship is no chain input and gets no chain credit; a reference relationship with an
+external end (a black box) is found only when drawn. A chain counts its steps that exist in the model. Reference
+elements marked ``optional`` (they depend on an open decision) stay outside recall.
 """
 
 from __future__ import annotations
@@ -18,8 +22,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from deriva.adapters.archimate.models import match_kind, types_match
+from deriva.adapters.archimate.models import STRUCTURAL_STRENGTH, VALID_DERIVATION_RULES, match_kind, relationship_tier, types_match
 from deriva.common.naming import name_key
+from deriva.modules.derivation.derivation_rules import derive, rules_from
 
 
 @dataclass(frozen=True)
@@ -31,6 +36,7 @@ class RefElement:
     lineage: frozenset[str] = frozenset()
     optional: bool = False
     levels: frozenset[str] = frozenset({"enterprise"})  # The abstraction levels it belongs to
+    external: bool = False  # A black box (``properties.scope`` external): its relationships are found only when drawn
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,7 @@ def parse_reference(data: dict[str, Any]) -> Reference:
             lineage=frozenset(e.get("lineage", [])),
             optional=bool(e.get("optional", False)),
             levels=_levels_of(e),
+            external=(e.get("properties") or {}).get("scope") == "external",
         )
         for e in data["elements"]
     ]
@@ -193,6 +200,7 @@ def evaluate(reference: Reference, model: dict[str, Any], *, level: str | None =
     ``level`` (``enterprise``, ``solution`` or ``union``) scores one abstraction level of both; ``None`` keeps
     every element and relationship, as before levels existed.
     """
+    whole = model  # Chains may run below the scored level (an enterprise relationship derives from a solution chain)
     reference, model = at_level(reference, model, level)
     mapping = map_elements(reference, model)
     by_key = {r.key: r for r in reference.elements}
@@ -230,26 +238,36 @@ def evaluate(reference: Reference, model: dict[str, Any], *, level: str | None =
         s["extra"].sort()
 
     present = {(mapping.get(r["source"]), _type(r["type"]), mapping.get(r["target"])) for r in model.get("relationships", [])}
+    chained = derivable(whole, mapping)
+    credited: set[str] = set()  # Model relationships on the chain of a reference relationship found only through it
     relationships: dict[str, dict[str, Any]] = {}
     for ref in reference.relationships:
+        triple = (ref.source, ref.type, ref.target)
+        via_chain = triple not in present and triple in chained and not (by_key[ref.source].external or by_key[ref.target].external)
+        if via_chain:
+            credited.update(chained[triple])
         if ref.optional or by_key[ref.source].optional or by_key[ref.target].optional:
             continue
-        s = relationships.setdefault(ref.kind, {"required": 0, "matched": 0, "missing": []})
+        s = relationships.setdefault(ref.kind, {"required": 0, "matched": 0, "via_chain": 0, "missing": []})
         s["required"] += 1
-        if (ref.source, ref.type, ref.target) in present:
+        if triple in present or via_chain:
             s["matched"] += 1
+            s["via_chain"] += via_chain
         else:
             s["missing"].append(f"{by_key[ref.source].name} -{ref.type}-> {by_key[ref.target].name}")
     for s in relationships.values():
+        s["drawn"] = s["matched"] - s["via_chain"]
         s["recall"] = round(s["matched"] / s["required"], 3) if s["required"] else None
     wanted = {(r.source, r.type, r.target) for r in reference.relationships}
-    assessable = [r for r in model.get("relationships", []) if r["source"] in mapping and r["target"] in mapping]
-    correct = sum(1 for r in assessable if (mapping[r["source"]], _type(r["type"]), mapping[r["target"]]) in wanted)
+    assessable = [r for r in model.get("relationships", []) if (r["source"] in mapping and r["target"] in mapping) or _rel_id(r) in credited]
+    drawn = sum(1 for r in assessable if (mapping.get(r["source"]), _type(r["type"]), mapping.get(r["target"])) in wanted)
+    correct = sum(1 for r in assessable if (mapping.get(r["source"]), _type(r["type"]), mapping.get(r["target"])) in wanted or _rel_id(r) in credited)
     totals = {
         "model": len(model.get("relationships", [])),
         "assessable": len(assessable),
         "unassessable": len(model.get("relationships", [])) - len(assessable),
         "correct": correct,
+        "correct_via_chain": correct - drawn,
         "precision": round(correct / len(assessable), 3) if assessable else None,
     }
 
@@ -269,10 +287,33 @@ def evaluate(reference: Reference, model: dict[str, Any], *, level: str | None =
         "element_recall": round(sum(s["covered"] for s in elements.values()) / required, 3) if required else None,
         "element_precision": round(len(mapping) / len(model.get("elements", [])), 3) if model.get("elements") else None,
         "relationship_recall": _ratio(relationships, "matched", "required"),
+        "relationship_recall_direct": _ratio(relationships, "drawn", "required"),
         "naming": naming(reference, model),
         "model_size": len(model.get("elements", [])),
         "reference_size": required,
     }
+
+
+def _rel_id(r: dict[str, Any]) -> str:
+    return f"{r['source']} -{_type(r['type'])}-> {r['target']}"
+
+
+def derivable(model: dict[str, Any], mapping: dict[str, str]) -> dict[tuple[str, str, str], tuple[str, ...]]:
+    """(reference source, type, reference target) -> the model relationships (``_rel_id``) of the shortest chain that
+    derives it by the valid derivation rules from the model's direct-tier relationships (at every level), between
+    mapped ends."""
+    types = {e["identifier"]: _type(e["type"]) for e in model.get("elements", [])}
+    direct = []
+    for r in model.get("relationships", []):
+        s, k, t = r["source"], _type(r["type"]), r["target"]
+        if s in types and t in types and relationship_tier(types[s], k, types[t]) == "direct":
+            direct.append((_rel_id(r), s, k, t))
+    derived = derive(direct, types, rules_from(VALID_DERIVATION_RULES), STRUCTURAL_STRENGTH, lambda a, k, b: relationship_tier(a, k, b) is not None)
+    out: dict[tuple[str, str, str], tuple[str, ...]] = {}
+    for d in sorted(derived.values(), key=lambda d: (len(d.chain), d.chain)):
+        if d.source in mapping and d.target in mapping:
+            out.setdefault((mapping[d.source], d.relationship_type, mapping[d.target]), d.chain)
+    return out
 
 
 def _ratio(groups: dict[str, dict[str, Any]], part: str, whole: str) -> float | None:
@@ -304,7 +345,7 @@ def evaluate_session(session_dir: str | Path, references_dir: str | Path, run: i
         entry["runs"].sort(key=lambda r: r["run"])
         runs = entry["runs"]
         mean = lambda field: round(sum(r[field] or 0 for r in runs) / len(runs), 3)  # noqa: E731 - a one-line helper
-        entry["mean"] = {f: mean(f) for f in ("element_recall", "element_precision", "relationship_recall")}
+        entry["mean"] = {f: mean(f) for f in ("element_recall", "element_precision", "relationship_recall", "relationship_recall_direct")}
         entry["mean"]["relationship_precision"] = round(sum(r["relationship_totals"]["precision"] or 0 for r in runs) / len(runs), 3)
     return {"session": Path(session_dir).name, "repositories": repositories}
 
@@ -320,16 +361,17 @@ def table_lines(payload: dict[str, Any]) -> list[str]:
         mean, first = entry["mean"], entry["runs"][0]
         lines.append(
             f"== {repo} ({len(entry['runs'])} runs): elements R {_pct(mean['element_recall'])} P {_pct(mean['element_precision'])}; "
-            f"relationships R {_pct(mean['relationship_recall'])} P {_pct(mean['relationship_precision'])}; "
+            f"relationships R {_pct(mean['relationship_recall'])} (drawn {_pct(mean['relationship_recall_direct'])}) P {_pct(mean['relationship_precision'])}; "
             f"size {first['model_size']} vs reference {first['reference_size']}"
         )
         for t, s in sorted(first["elements"].items()):
             splits = f", splits {sum(s['splits'].values())} into {len(s['splits'])}" if s["splits"] else ""
             lines.append(f"   {t:<22} R {s['covered']}/{s['required']} {_pct(s['recall']):>5}   P {s['mapped']}/{s['model']} {_pct(s['precision']):>5}{splits}")
         for kind, s in sorted(first["relationships"].items()):
-            lines.append(f"   rel {kind:<18} R {s['matched']}/{s['required']} {_pct(s['recall']):>5}")
+            lines.append(f"   rel {kind:<18} R {s['matched']}/{s['required']} {_pct(s['recall']):>5}   via chain {s['via_chain']}")
         totals = first["relationship_totals"]
-        lines.append(f"   rel precision {totals['correct']}/{totals['assessable']} {_pct(totals['precision'])} ({totals['unassessable']} unassessable)")
+        on_chain = f"{totals['correct_via_chain']} on a chain, {totals['unassessable']} unassessable"
+        lines.append(f"   rel precision {totals['correct']}/{totals['assessable']} {_pct(totals['precision'])} ({on_chain})")
         if first["chains"]:
             lines.append("   chains: " + ", ".join(f"{c['name']} {c['present']}/{c['steps']}" for c in first["chains"]))
         if first.get("naming"):
@@ -353,9 +395,9 @@ def write_report(payload: dict[str, Any], out_dir: str | Path) -> dict[str, str]
             for t, s in sorted(r["elements"].items()):
                 splits = ", ".join(f"{n} ({k})" for n, k in sorted(s["splits"].items()))
                 text.append(f"| {t} | {s['covered']}/{s['required']} | {s['mapped']}/{s['model']} | {', '.join(s['missing'])} | {', '.join(s['extra'])} | {splits} |")
-            text += ["", "| Relationship kind | Recall | Missing |", "| --- | --- | --- |"]
+            text += ["", "| Relationship kind | Recall | Via chain | Missing |", "| --- | --- | --- | --- |"]
             for kind, s in sorted(r["relationships"].items()):
-                text.append(f"| {kind} | {s['matched']}/{s['required']} | {'; '.join(s['missing'])} |")
+                text.append(f"| {kind} | {s['matched']}/{s['required']} | {s['via_chain']} | {'; '.join(s['missing'])} |")
             text += ["", "| Chain | Steps present | Complete |", "| --- | --- | --- |"]
             text += [f"| {c['name']} | {c['present']}/{c['steps']} | {'yes' if c['complete'] else 'no'} |" for c in r["chains"]]
             text.append("")

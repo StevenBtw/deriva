@@ -759,34 +759,49 @@ _ENTITY_LISTS = (
     "config_suffixes",
     "technical_words",
     "name_suffixes",
+    "table_annotations",
+    "table_attributes",
 )
 
 
 def _entity_rules(params: str | None) -> data_entities.EntityRules:
-    """The DataEntity step's signals (``params``): lists of names, ``min_importers``, ``record_pattern`` and
-    ``table_mentions`` (link a table to the code files that name it)."""
+    """The DataEntity step's signals (``params``): lists of names, ``min_importers``, ``record_pattern``,
+    ``table_mentions`` (link a table to the code files that name it), ``technical_signals`` (the signals the technical
+    words filter), ``aggregate_scope`` ("repository" or "folder") and ``join_tables`` (true or false)."""
     settings = json.loads(params) if params else {}
-    unknown = set(settings) - {*_ENTITY_LISTS, "min_importers", "record_pattern", "table_mentions"}
+    switches = ("table_mentions", "join_tables")
+    unknown = set(settings) - {*_ENTITY_LISTS, "min_importers", "record_pattern", "technical_signals", "aggregate_scope", *switches}
     lists_ok = all(isinstance(settings.get(k, []), list) and all(isinstance(x, str) and x for x in settings.get(k, [])) for k in _ENTITY_LISTS)
     importers, pattern = settings.get("min_importers", 3), settings.get("record_pattern", "")
-    mentions = settings.get("table_mentions", False)
+    signals, scope = settings.get("technical_signals", []), settings.get("aggregate_scope", "repository")
     bad_numbers = not isinstance(importers, int) or isinstance(importers, bool) or importers < 0
-    if unknown or not lists_ok or bad_numbers or not isinstance(pattern, str) or not isinstance(mentions, bool):
+    bad_signals = not isinstance(signals, list) or not set(signals) <= set(data_entities.SIGNALS)
+    bad_switches = not all(isinstance(settings.get(k, False), bool) for k in switches)
+    if unknown or not lists_ok or bad_numbers or not isinstance(pattern, str) or bad_signals or scope not in ("repository", "folder") or bad_switches:
         raise ValueError(
-            f"DataEntity params: lists of names under {list(_ENTITY_LISTS)}, min_importers (a whole number), record_pattern (a pattern), table_mentions (true or false)"
+            f"DataEntity params: lists of names under {list(_ENTITY_LISTS)}, min_importers (a whole number), record_pattern (a pattern), "
+            f"technical_signals (some of {list(data_entities.SIGNALS)}), aggregate_scope (repository or folder), table_mentions and join_tables (true or false)"
         )
     try:
         re.compile(pattern)
     except re.error as exc:
         raise ValueError(f"DataEntity params: record_pattern is no valid pattern: {exc}") from exc
-    return data_entities.EntityRules(**{k: tuple(settings.get(k, [])) for k in _ENTITY_LISTS}, min_importers=importers, record_pattern=pattern, table_mentions=mentions)
+    return data_entities.EntityRules(
+        **{k: tuple(settings.get(k, [])) for k in _ENTITY_LISTS},
+        min_importers=importers,
+        record_pattern=pattern,
+        table_mentions=settings.get("table_mentions", False),
+        technical_signals=tuple(signals),
+        aggregate_scope=scope,
+        join_tables=settings.get("join_tables", False),
+    )
 
 
 def _entity_facts(q: Callable[..., list[dict[str, Any]]]) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, str]]:
     """The DataEntity step's inputs: the repository's types (with bases), importer counts per file, file -> unit name."""
     types = q(
         "MATCH (t:Graph:TypeDefinition) WHERE t.active = true AND t.repository_name = $repo_name "
-        "RETURN t.id AS id, t.typeName AS name, t.category AS category, t.decorators AS decorators, t.filePath AS path"
+        "RETURN t.id AS id, t.typeName AS name, t.category AS category, t.decorators AS decorators, t.filePath AS path, t.codeSnippet AS code"
     )
     bases: dict[str, list[str]] = {}
     for row in q("MATCH (a:Graph:TypeDefinition)-[:`Graph:INHERITS`]->(b) WHERE a.repository_name = $repo_name RETURN a.id AS a, b.typeName AS name, b.id AS id"):
@@ -799,6 +814,7 @@ def _entity_facts(q: Callable[..., list[dict[str, Any]]]) -> tuple[list[dict[str
             "decorators": list(t["decorators"] or []),
             "path": t["path"] or "",
             "bases": bases.get(t["id"], []),
+            "code": t.get("code") or "",
         }
         for t in types
         if t.get("id")
@@ -822,13 +838,30 @@ def _entity_facts(q: Callable[..., list[dict[str, Any]]]) -> tuple[list[dict[str
     return facts, dict(importers), owners
 
 
+def _detected_entities(
+    q: Callable[..., list[dict[str, Any]]], rules: data_entities.EntityRules, repo_path: Path, repo_name: str
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, str], data_entities.EntityResult]:
+    """The DataEntity step's inputs and its detection, as both the DataEntity and the DataDomain step see them: with
+    ``join_tables`` a table is a join table by the foreign keys of its DDL file (columns, constraints, ALTER TABLE)."""
+    facts, importers, owners = _entity_facts(q)
+    if rules.join_tables:
+        joins = {
+            path: {name.casefold() for name in data_entities.join_tables(text)}
+            for path in sorted({f["path"] for f in facts if f["category"] == "table"})
+            if (text := _read_checkout(repo_path, repo_name, path)) is not None
+        }
+        for f in facts:
+            if f["category"] == "table" and f["name"].casefold() in joins.get(f["path"], set()):
+                f["join_table"] = True
+    return facts, importers, owners, data_entities.detect_entities(facts, importers, owners, rules)
+
+
 def _extract_data_entities(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
     """Data entity nodes with INCLUDES edges to their types, from the types, their bases and their importers (no LLM)."""
     rules = _entity_rules(cfg.params)
     # Only this repository's nodes (a combined graph holds several)
     q = lambda query, params=None: graph_manager.query(query, {**(params or {}), "repo_name": repo.name})  # noqa: E731 - a one-line helper
-    facts, importers, owners = _entity_facts(q)
-    result = data_entities.detect_entities(facts, importers, owners, rules)
+    _, _, _, result = _detected_entities(q, rules, repo_path, repo.name)
 
     # What an earlier run wrote and this one no longer produces is swept after the step (_run_extraction_step)
     nodes = edges = 0
@@ -871,10 +904,11 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
     ``manifest_runtimes`` (manifest file pattern -> runtime alias), ``environment_names`` (kind -> name), the
     file name patterns ``compose_files``, ``compose_defaults`` (the names Compose looks up, in order), ``compose_overrides``
     (the files it merges into them), ``build_scripts`` and ``marker_suffixes``, ``cloud_qualifiers``
-    (resource type -> {property, default}) and ``cdk_constructs`` ("module.Class" -> {type, environment, properties})."""
+    (resource type -> {property, default}), ``cdk_constructs`` ("module.Class" -> {type, environment, properties}) and
+    ``primary_runs_units`` (an environment that runs the repository's own units is the primary one before others)."""
     settings = json.loads(params) if params else {}
     lists, maps = ("compose_files", "compose_defaults", "compose_overrides", "build_scripts", "marker_suffixes"), ("cloud_resources", "manifest_runtimes", "environment_names")
-    unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs"}
+    unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs", "primary_runs_units"}
     qualifiers, constructs = settings.get("cloud_qualifiers", {}), settings.get("cdk_constructs", {})
     text = lambda v: isinstance(v, str) and bool(v)  # noqa: E731 - a one-line helper
     qualifiers_ok = isinstance(qualifiers, dict) and all(isinstance(q, dict) and text(q.get("property")) and isinstance(q.get("default", ""), str) for q in qualifiers.values())
@@ -892,10 +926,11 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
     maps_ok = all(isinstance(settings.get(k, {}), dict) and all(isinstance(v, str) and v for v in settings.get(k, {}).values()) for k in maps)
     markers = settings.get("markers", [])
     markers_ok = isinstance(markers, list) and all(isinstance(m, dict) and isinstance(m.get("pattern"), str) and isinstance(m.get("technology"), str) for m in markers)
-    if unknown or not lists_ok or not maps_ok or not markers_ok:
+    runs_units = settings.get("primary_runs_units", False)
+    if unknown or not lists_ok or not maps_ok or not markers_ok or not isinstance(runs_units, bool):
         raise ValueError(
             f"Deployment params: lists of strings under {list(lists)}, objects of strings under {list(maps)}, "
-            "markers as [{pattern, technology}] and technologies as [{name, kind, aliases}]"
+            "markers as [{pattern, technology}], technologies as [{name, kind, aliases}] and primary_runs_units (true or false)"
         )
     for m in markers:
         try:
@@ -919,6 +954,7 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
         markers=tuple((m["pattern"], m["technology"]) for m in markers),
         marker_suffixes=tuple(s.lower() for s in settings.get("marker_suffixes", [])),
         manifest_runtimes=tuple(settings.get("manifest_runtimes", {}).items()),
+        primary_runs_units=runs_units,
     )
     return rules, catalog
 
@@ -1162,8 +1198,7 @@ def _extract_data_domains(cfg: config.ExtractionConfig, repo: Any, repo_path: Pa
     entity_rules = _entity_rules(entity_cfg.params if entity_cfg else None)
     q = lambda query, params=None: graph_manager.query(query, {**(params or {}), "repo_name": repo.name})  # noqa: E731 - a one-line helper
     norm = lambda p: str(p or "").replace(chr(92), "/")  # noqa: E731 - a one-line helper
-    facts, importers, owners = _entity_facts(q)
-    detected = data_entities.detect_entities(facts, importers, owners, entity_rules)
+    facts, importers, owners, detected = _detected_entities(q, entity_rules, repo_path, repo.name)
     fact_of = {f["id"]: f for f in facts}
     unit_of_file: dict[str, list[str]] = {}
     units = _units_with_members(q)
