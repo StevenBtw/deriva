@@ -77,7 +77,7 @@ def test_a_spring_boot_module_with_a_dockerfile_is_one_unit_with_both_evidences(
     assert list(units) == ["r/svc"] and units["r/svc"].evidence == ["container: r/svc/Dockerfile", "spring-boot: r/svc/pom.xml"]
 
 
-def test_each_project_script_is_a_unit_with_the_files_its_entry_module_imports():
+def test_a_package_with_project_scripts_is_one_unit_with_the_files_its_entry_modules_import():
     files = [
         _file("r/pyproject.toml"),
         _file("r/pkg/__init__.py", "python"),
@@ -92,10 +92,35 @@ def test_each_project_script_is_a_unit_with_the_files_its_entry_module_imports()
 
     units = _units(files, manifests=manifests, imports=imports)
 
-    assert sorted(units) == ["r::pkg-app", "r::pkg-cli"]
-    assert units["r::pkg-cli"].members == {"r/pkg/cli/main.py", "r/pkg/core/model.py", "r/pkg/core/store.py"}
-    assert units["r::pkg-app"].members == {"r/pkg/app/main.py", "r/pkg/core/model.py", "r/pkg/core/store.py"}
-    assert units["r::pkg-cli"].name == "pkg-cli" and units["r::pkg-cli"].kind == "script"
+    # No script is named like the package: the first by name is the unit's entry; every script is an entry point
+    assert sorted(units) == ["r::pkg-app"]
+    unit = units["r::pkg-app"]
+    assert unit.members == {"r/pkg/cli/main.py", "r/pkg/app/main.py", "r/pkg/core/model.py", "r/pkg/core/store.py"}
+    assert unit.name == "pkg-app" and unit.kind == "script"
+    assert unit.evidence == ["script pkg-app = pkg.app.main:run: r/pyproject.toml", "script pkg-cli = pkg.cli.main:run: r/pyproject.toml"]
+
+
+def test_a_script_named_like_its_package_is_the_entry_and_a_script_running_another_packages_module_adds_nothing():
+    files = [
+        _file("r/pyproject.toml"),
+        _file("r/tool/cli.py", "python"),
+        _file("r/packages/web/pyproject.toml"),
+        _file("r/packages/web/src/tool/web/main.py", "python"),
+        _file("r/packages/web/src/tool/web/pages.py", "python"),
+    ]
+    manifests = {
+        "r/pyproject.toml": '[project]\nname = "tool"\n[project.scripts]\ntool = "tool.cli:main"\n',
+        # The web package re-exports the root package's command (tool.cli lives in the root package, not here)
+        "r/packages/web/pyproject.toml": '[project]\nname = "tool-web"\n[project.scripts]\nserve = "tool.web.main:main"\ntool-web = "tool.web.main:main"\ntool = "tool.cli:main"\n',
+    }
+    imports = [("r/packages/web/src/tool/web/main.py", "r/packages/web/src/tool/web/pages.py")]
+
+    units = _units(files, manifests=manifests, imports=imports)
+
+    assert sorted(units) == ["r/packages/web::tool-web", "r::tool"]
+    web = units["r/packages/web::tool-web"]
+    assert web.members == {"r/packages/web/src/tool/web/main.py", "r/packages/web/src/tool/web/pages.py"}
+    assert [e.split(" = ")[0] for e in web.evidence] == ["script serve", "script tool-web"]
 
 
 MAINFRAME = [
@@ -388,3 +413,136 @@ def test_a_generic_name_that_holds_the_product_gets_no_second_product():
     units = _named(_container("backend-server"), documents={"r/README.md": "# Backend Server\n"})
 
     assert units["r/backend-server"].name_candidates == [("Backend Server", "structure")]
+
+
+def test_a_unit_of_a_package_listed_only_as_a_development_dependency_is_tooling():
+    files = [
+        _file("r/pyproject.toml"),
+        _file("r/shop/cli.py", "python"),
+        _file("r/bench/pyproject.toml"),
+        _file("r/bench/run.py", "python"),
+    ]
+    manifests = {
+        "r/pyproject.toml": '[project]\nname = "shop"\n[project.scripts]\nshop = "shop.cli:main"\n[dependency-groups]\ndev = ["shop-bench"]\n',
+        "r/bench/pyproject.toml": '[project]\nname = "shop-bench"\n[project.scripts]\nshop-bench = "run:main"\n',
+    }
+
+    units = _units(files, manifests=manifests)
+
+    assert {k: u.excluded for k, u in units.items()} == {"r::shop": None, "r/bench::shop-bench": "tooling"}
+
+
+def test_a_folder_whose_file_defines_a_serverless_handler_is_a_function_unit():
+    files = [
+        _file("r/lambdas/notify/index.py", "python"),
+        _file("r/lambdas/notify/templates.py", "python"),
+        _file("r/lambdas/query/lambda_function.py", "python"),
+        _file("r/backend/Dockerfile"),
+        _file("r/backend/server.py", "python"),
+        _file("r/backend/jobs/worker.py", "python"),
+    ]
+    # backend/jobs/worker.py defines a handler too, but inside the backend container's folder it is that unit's code
+    handlers = ["r/lambdas/notify/index.py", "r/lambdas/query/lambda_function.py", "r/backend/jobs/worker.py"]
+    imports = [("r/lambdas/notify/index.py", "r/lambdas/notify/templates.py")]
+
+    units = _units(files, handlers=handlers, imports=imports)
+
+    assert sorted(units) == ["r/backend", "r/lambdas/notify", "r/lambdas/query"]
+    assert units["r/lambdas/notify"].kind == "function" and units["r/lambdas/notify"].name == "notify"
+    assert units["r/lambdas/notify"].members == {"r/lambdas/notify/index.py", "r/lambdas/notify/templates.py"}
+    assert units["r/lambdas/notify"].evidence == ["handler: r/lambdas/notify/index.py"]
+
+
+def test_a_serverless_handler_is_read_from_its_parameters():
+    from deriva.modules.extraction.deployable_units import is_handler
+
+    assert is_handler("event, context")
+    assert is_handler("event: dict, context: Any")
+    assert is_handler("self, event, context")
+    assert not is_handler("request")
+    assert not is_handler("context, event")
+    assert not is_handler("event")
+
+
+def test_a_folder_with_a_page_entry_outside_every_unit_is_a_static_frontend_unit():
+    files = [
+        _file("r/frontend/index.html"),
+        _file("r/frontend/js/app.js", "javascript"),
+        _file("r/frontend/css/site.css"),
+        _file("r/backend/Dockerfile"),
+        _file("r/backend/server.py", "python"),
+        _file("r/backend/static/index.html"),
+        _file("r/lambdas/notify/index.html"),
+        _file("r/lambdas/notify/handler.py", "python"),
+    ]
+
+    units = _units(files, handlers=["r/lambdas/notify/handler.py"])
+
+    # backend/static/ and lambdas/notify/ belong to their units; frontend/ is a unit of its own
+    assert sorted(units) == ["r/backend", "r/frontend", "r/lambdas/notify"]
+    assert units["r/frontend"].kind == "static" and units["r/frontend"].members == {"r/frontend/index.html", "r/frontend/js/app.js", "r/frontend/css/site.css"}
+    assert units["r/frontend"].evidence == ["page entry: r/frontend/index.html"]
+
+
+def test_a_page_inside_a_template_folder_is_a_server_page_not_a_static_frontend():
+    files = [_file("r/webapp/app.py", "python"), _file("r/webapp/templates/index.html"), _file("r/webapp/templates/base.html")]
+
+    units = _units(files)
+
+    # No static unit, so the repository stays one unit
+    assert [(u.path, u.kind) for u in units.values()] == [("r", "repository")]
+
+
+def test_a_page_inside_a_nested_module_with_its_own_manifest_is_no_web_entry_of_the_enclosing_unit():
+    files = [
+        _file("r/pyproject.toml"),
+        _file("r/tool/cli.py", "python"),
+        _file("r/tool/templates/report.html"),
+        _file("r/ui/package.json"),
+        _file("r/ui/index.html"),
+        _file("r/ui/src/main.ts", "typescript"),
+    ]
+    manifests = {"r/pyproject.toml": '[project]\nname = "tool"\n[project.scripts]\ntool = "tool.cli:main"\n', "r/ui/package.json": '{"name": "tool-ui"}'}
+
+    units = _units(files, manifests=manifests)
+
+    # The front end has a manifest of its own: its page is not the root package's; the package's own template stays
+    assert units["r::tool"].web_entries == ["r/tool/templates/report.html"]
+
+
+def test_a_bundler_output_directory_maps_a_front_end_module_to_the_unit_that_ships_it():
+    from deriva.modules.extraction.deployable_units import bundler_outputs
+
+    configs = {
+        "r/studio/vite.config.ts": 'export default defineConfig({ build: { outDir: "../server/src/app/static", emptyOutDir: true } })',
+        "r/web/webpack.config.js": "module.exports = { output: { path: path.resolve(__dirname, 'dist') } }",
+        "r/admin/angular.json": '{"projects": {"admin": {"architect": {"build": {"options": {"outputPath": "../server/src/app/admin"}}}}}}',
+        "r/plain/vite.config.ts": "export default defineConfig({ plugins: [] })",
+    }
+
+    mapped, unmapped = bundler_outputs(configs)
+
+    assert mapped == [("r/admin", "r/server/src/app/admin"), ("r/studio", "r/server/src/app/static")]
+    assert unmapped == ["r/web/webpack.config.js: output.path path.resolve(__dirname, 'dist')"]
+
+
+def test_a_front_end_module_whose_build_output_lies_in_a_units_folder_is_that_units_web_ui():
+    files = [
+        _file("r/pyproject.toml"),
+        _file("r/server/pyproject.toml"),
+        _file("r/server/src/app/main.py", "python"),
+        _file("r/studio/package.json"),
+        _file("r/studio/index.html"),
+        _file("r/studio/src/main.ts", "typescript"),
+    ]
+    manifests = {
+        "r/pyproject.toml": '[project]\nname = "core"\n[project.scripts]\ncore = "core.cli:main"\n',
+        "r/server/pyproject.toml": '[project]\nname = "server"\n[project.scripts]\nserver = "app.main:run"\n',
+        "r/studio/package.json": '{"name": "studio"}',
+    }
+    configs = {"r/studio/vite.config.ts": 'export default { build: { outDir: "../server/src/app/static" } }'}
+
+    units = _units(files, manifests=manifests, bundler_configs=configs)
+
+    assert units["r/server::server"].web_entries == ["r/studio/index.html"]
+    assert units["r::core"].web_entries == []

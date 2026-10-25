@@ -35,7 +35,7 @@ import hashlib
 import json
 import logging
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -869,10 +869,11 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
     """The Deployment step's signals (``params``): the closed list ``technologies`` ([{name, kind, aliases}]),
     ``cloud_resources`` (resource type -> container, function or managed), ``markers`` ([{pattern, technology}]),
     ``manifest_runtimes`` (manifest file pattern -> runtime alias), ``environment_names`` (kind -> name), the
-    file name patterns ``compose_files``, ``build_scripts`` and ``marker_suffixes``, ``cloud_qualifiers``
+    file name patterns ``compose_files``, ``compose_defaults`` (the names Compose looks up, in order), ``compose_overrides``
+    (the files it merges into them), ``build_scripts`` and ``marker_suffixes``, ``cloud_qualifiers``
     (resource type -> {property, default}) and ``cdk_constructs`` ("module.Class" -> {type, environment, properties})."""
     settings = json.loads(params) if params else {}
-    lists, maps = ("compose_files", "build_scripts", "marker_suffixes"), ("cloud_resources", "manifest_runtimes", "environment_names")
+    lists, maps = ("compose_files", "compose_defaults", "compose_overrides", "build_scripts", "marker_suffixes"), ("cloud_resources", "manifest_runtimes", "environment_names")
     unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs"}
     qualifiers, constructs = settings.get("cloud_qualifiers", {}), settings.get("cdk_constructs", {})
     text = lambda v: isinstance(v, str) and bool(v)  # noqa: E731 - a one-line helper
@@ -911,6 +912,8 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
         cloud_qualifiers=tuple((t, q["property"], q.get("default", "")) for t, q in sorted(qualifiers.items())),
         cdk_constructs=tuple((k, c["type"], c.get("environment", ""), tuple(sorted(c.get("properties", {}).items()))) for k, c in sorted(constructs.items())),
         compose_files=tuple(settings.get("compose_files", defaults.compose_files)),
+        compose_defaults=tuple(settings.get("compose_defaults", defaults.compose_defaults)),
+        compose_overrides=tuple(settings.get("compose_overrides", defaults.compose_overrides)),
         environment_names=tuple(sorted({**dict(defaults.environment_names), **settings.get("environment_names", {})}.items())),
         build_scripts=tuple(settings.get("build_scripts", defaults.build_scripts)),
         markers=tuple((m["pattern"], m["technology"]) for m in markers),
@@ -997,16 +1000,29 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
     if env and env_id:
         others = [f"{e.kind} {e.file}" for e in layer.deployments.others]
         other_services = [
-            json.dumps({"name": s.name, "unit": s.unit, "environment": s.environment, "ports": s.ports}, sort_keys=True) for e in layer.deployments.others for s in e.services
+            json.dumps({"name": s.name, "unit": s.unit, "environment": s.environment, "ports": s.ports, "file": e.file}, sort_keys=True)
+            for e in layer.deployments.others
+            for s in e.services
         ]
         graph_manager.add_node(
-            EnvironmentNode(name=env.name, kind=env.kind, repository_name=repo.name, file=env.file, others=others, other_services=other_services), node_id=env_id
+            EnvironmentNode(
+                name=env.name,
+                kind=env.kind,
+                repository_name=repo.name,
+                file=env.file,
+                others=others,
+                other_services=other_services,
+                variant_units=layer.deployments.variant_units,
+            ),
+            node_id=env_id,
         )
         nodes += 1
         deployment_ids = _service_ids(f"deployment::{repo.name}::{env.kind}", [(s.name, s.unit) for s in env.services])
         for service, deployment_id in zip(env.services, deployment_ids, strict=True):
             graph_manager.add_node(
-                DeploymentNode(name=service.name, environment=env.kind, repository_name=repo.name, image=service.image or "", variables=service.environment, ports=service.ports),
+                DeploymentNode(
+                    name=service.name, environment=env.kind, repository_name=repo.name, image=service.image or "", variables=service.environment, ports=service.ports, file=env.file
+                ),
                 node_id=deployment_id,
             )
             graph_manager.add_edge(env_id, deployment_id, "RUNS")
@@ -1042,6 +1058,7 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
         "errors": [],
         "environment": f"{env.kind} {env.file}".strip() if env else None,
         "other_environments": [f"{e.kind} {e.file}" for e in layer.deployments.others],
+        "variant_units": list(layer.deployments.variant_units),
         "software": {"listed": listed, "fallback": len(layer.software) - listed, "unconnected": len(layer.unconnected)},
     }
 
@@ -1333,7 +1350,9 @@ def _module_rules(params: str | None) -> build_modules.ModuleRules:
     """The BuildModule step's rules (``params``): ``manifests`` (build manifest file names), ``code_subtypes`` (the
     file subtypes of the repository's own code), ``min_members`` (modules an aggregator lists to be a system),
     ``iac_dependencies`` and ``test_dependencies`` (dependency patterns of modules that are no components) and
-    ``test_words`` (words in a folder or manifest name that mark a test module)."""
+    ``test_words`` (words in a folder or manifest name that mark a test module); ``min_behaviour`` (non-accessor
+    methods per code file a shared library needs to be a component; without it a module no unit builds always is one);
+    ``feature_markers`` (decorator patterns of a route-handling file; a unit's feature packages become modules)."""
     settings = json.loads(params) if params else {}
     manifests, subtypes = settings.get("manifests"), settings.get("code_subtypes")
     if not isinstance(manifests, list) or not manifests or not all(isinstance(m, str) and m for m in manifests):
@@ -1343,9 +1362,12 @@ def _module_rules(params: str | None) -> build_modules.ModuleRules:
     minimum = settings.get("min_members", 2)
     if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 2:
         raise ValueError("BuildModule params: min_members is a whole number of at least 2")
-    lists = {key: settings.get(key, []) for key in ("iac_dependencies", "test_dependencies", "test_words")}
+    behaviour = settings.get("min_behaviour")
+    if behaviour is not None and (not isinstance(behaviour, int | float) or isinstance(behaviour, bool) or behaviour < 0):
+        raise ValueError("BuildModule params: min_behaviour is a number of at least 0")
+    lists = {key: settings.get(key, []) for key in ("iac_dependencies", "test_dependencies", "test_words", "feature_markers")}
     if not all(isinstance(v, list) and all(isinstance(p, str) and p for p in v) for v in lists.values()):
-        raise ValueError("BuildModule params: iac_dependencies, test_dependencies and test_words are lists of strings")
+        raise ValueError("BuildModule params: iac_dependencies, test_dependencies, test_words and feature_markers are lists of strings")
     return build_modules.ModuleRules(
         manifests=tuple(manifests),
         code_subtypes=frozenset(subtypes),
@@ -1353,6 +1375,8 @@ def _module_rules(params: str | None) -> build_modules.ModuleRules:
         iac_dependencies=tuple(lists["iac_dependencies"]),
         test_dependencies=tuple(lists["test_dependencies"]),
         test_words=tuple(lists["test_words"]),
+        min_behaviour=behaviour,
+        feature_markers=tuple(lists["feature_markers"]),
     )
 
 
@@ -1362,6 +1386,94 @@ def _kind_nouns(params: str | None) -> dict[str, str]:
     if not isinstance(nouns, dict) or not all(k in ("system", "module") and isinstance(v, str) and v for k, v in nouns.items()):
         raise ValueError("BuildModule params: kind_nouns maps system and/or module to a word")
     return dict(nouns)
+
+
+def _judge_by_usage(
+    q: Callable[..., list[dict[str, Any]]],
+    norm: Callable[[Any], str],
+    repository: str,
+    found: list[build_modules.BuildModule],
+    candidates: list[build_modules.BuildModule],
+    unit_paths: list[str],
+    files: list[dict[str, Any]],
+    manifests: dict[str, str],
+    rules: build_modules.ModuleRules,
+) -> list[build_modules.BuildModule]:
+    """Judge the modules no unit builds by who uses them (``build_modules.usage_role``) and mark the ones that are no
+    component; return the libraries without a manifest: a folder of code outside every unit and module that two or
+    more units use, with behaviour. A unit uses code it includes or that one of its members imports; behaviour comes
+    from the method nodes."""
+    members: dict[str, set[str]] = defaultdict(set)
+    for r in q("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) WHERE u.repository_name = $repo_name AND u.excluded IS NULL RETURN u.id AS u, f.filePath AS p"):
+        members[norm(r["p"])].add(str(r["u"]))
+    users_of: dict[str, set[str]] = defaultdict(set)
+    for path, units in members.items():
+        users_of[path] |= units
+    for r in q("MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(b:Graph:File) WHERE a.repository_name = $repo_name RETURN a.filePath AS a, b.filePath AS b"):
+        users_of[norm(r["b"])] |= members.get(norm(r["a"]), set())
+    methods = [(norm(r["p"]), str(r["n"] or "")) for r in q("MATCH (m:Graph:Method) WHERE m.repository_name = $repo_name RETURN m.filePath AS p, m.methodName AS n")]
+    code = {f["path"] for f in files if f.get("file_type") == "source" and f.get("subtype") in rules.code_subtypes}
+    minimum = float(rules.min_behaviour or 0)
+    for m in candidates:
+        own = [p for p in m.files if p in code]
+        users = set().union(*(users_of.get(p, set()) for p in own)) if own else set()
+        m.excluded = build_modules.usage_role(
+            len(users), build_modules.behaviour_per_file(own, methods), build_modules.declares_entry(m.manifest, manifests.get(m.manifest, "")), minimum
+        )
+    held = {p for m in found for p in m.files}
+    loose: dict[str, list[str]] = defaultdict(list)
+    for p in sorted(code - held):
+        if not any(p.startswith(u + "/") for u in unit_paths):
+            loose[p.rsplit("/", 1)[0]].append(p)
+    libraries = []
+    for folder, own in sorted(loose.items()):
+        users = set().union(*(users_of.get(p, set()) for p in own))
+        # Used by two or more units and carrying behaviour (a folder has no manifest, so no entry point)
+        if len(users) >= 2 and build_modules.usage_role(len(users), build_modules.behaviour_per_file(own, methods), False, minimum) is None:
+            in_folder = sorted(f["path"] for f in files if f["path"].rsplit("/", 1)[0] == folder)
+            libraries.append(
+                build_modules.BuildModule(path=folder, name=build_modules.display_name(PurePosixPath(folder).name, repository), manifest="", module=True, files=in_folder)
+            )
+    return libraries
+
+
+def _feature_packages(
+    q: Callable[..., list[dict[str, Any]]],
+    norm: Callable[[Any], str],
+    repository: str,
+    found: list[build_modules.BuildModule],
+    files: list[dict[str, Any]],
+    rules: build_modules.ModuleRules,
+) -> list[build_modules.BuildModule]:
+    """The feature packages of every unit (``build_modules.feature_areas``) as modules without a manifest: a
+    route-handling file is one with a type or method decorator matching ``feature_markers``, a data entity's file one
+    a DataEntity includes."""
+    code = {f["path"] for f in files if f.get("file_type") == "source" and f.get("subtype") in rules.code_subtypes}
+    members: dict[str, list[str]] = defaultdict(list)
+    for r in q("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) WHERE u.repository_name = $repo_name AND u.excluded IS NULL RETURN u.id AS u, f.filePath AS p"):
+        if norm(r["p"]) in code:
+            members[str(r["u"])].append(norm(r["p"]))
+    markers = [re.compile(m) for m in rules.feature_markers]
+    decorated = q("MATCH (t:Graph:TypeDefinition) RETURN t.filePath AS p, t.decorators AS d") + q("MATCH (m:Graph:Method) RETURN m.filePath AS p, m.decorators AS d")
+    # Only this repository's own code files count (a combined graph holds several repositories)
+    routes = {norm(r["p"]) for r in decorated if norm(r["p"]) in code and any(marker.fullmatch(str(d)) for marker in markers for d in r.get("d") or [])}
+    entities = {norm(r["p"]) for r in q("MATCH (d:Graph:DataEntity)-[:`Graph:INCLUDES`]->(t:Graph:TypeDefinition) RETURN t.filePath AS p")} & code
+    paths = sorted(f["path"] for f in files)
+    areas = []
+    for unit in sorted(members):
+        for area in build_modules.feature_areas(sorted(members[unit]), routes, entities):
+            above = [m.path for m in found if area.startswith(m.path + "/")]
+            areas.append(
+                build_modules.BuildModule(
+                    path=area,
+                    name=build_modules.display_name(PurePosixPath(area).name, repository),
+                    manifest="",
+                    module=True,
+                    parent=max(above, key=len) if above else None,
+                    files=[p for p in paths if p.startswith(area + "/")],
+                )
+            )
+    return areas
 
 
 def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
@@ -1393,13 +1505,25 @@ def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: P
         nested = any(o.path.startswith(m.path + "/") for o in found)
         return at[0] if m.excluded is None and m.module and not m.system and len(at) == 1 and not nested else None
 
+    if rules.min_behaviour is not None:
+        judged = [m for m in found if m.module and not m.system and m.excluded is None and not same_as(m)]
+        libraries = _judge_by_usage(q, norm, repo.name, found, judged, [path for _, path in units], files, manifests, rules)
+        found = sorted([*found, *libraries], key=lambda m: m.path)
+        ids.update({m.path: build_modules.module_id(repo.name, m.path) for m in libraries})
+    # Fixed before feature packages nest inside a unit's folder: the unit and its own module stay one element
+    merged = {m.path: same_as(m) for m in found}
+    if rules.feature_markers:
+        areas = _feature_packages(q, norm, repo.name, found, files, rules)
+        found = sorted([*found, *areas], key=lambda m: m.path)
+        ids.update({m.path: build_modules.module_id(repo.name, m.path) for m in areas})
+
     # A component candidate named like a unit (its name or one of its name candidates) or an earlier candidate (as written, or without the repository's name, as
     # derivation sees it) takes the first free name of: its kind noun added, the words of its path, those with the noun.
     # Candidates whose path says no more than their name go first: they have the fewest names to choose from
     keys = lambda name: {name_key(name), name_key(build_modules.display_name(name, repo.name))} - {""}  # noqa: E731 - a one-line helper
     path_words = lambda m: build_modules.display_name(m.path.removeprefix(repo.name + "/").replace("/", " "), repo.name)  # noqa: E731 - a one-line helper
     taken = set().union(*(keys(str(n or "")) for r in unit_rows for n in [r.get("name"), *(r.get("candidates") or [])]))
-    candidates = [m for m in found if m.excluded is None and not same_as(m)]
+    candidates = [m for m in found if m.excluded is None and not merged.get(m.path)]
     for m in sorted(candidates, key=lambda m: (bool(keys(path_words(m)) - keys(m.name)), m.path)):
         noun = nouns.get("system" if m.system else "module")
         if keys(m.name) & taken:
@@ -1420,7 +1544,7 @@ def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: P
             is_module=m.module,
             is_system=m.system,
             members=m.members,
-            same_as=same_as(m),
+            same_as=merged.get(m.path),
             excluded=m.excluded,
         )
         graph_manager.add_node(node, node_id=ids[m.path])
@@ -1502,6 +1626,22 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
         job_runs=job_runs,
         program_calls=program_calls,
         documents=documents,
+        # Bundler configs: a front-end module's declared build output places its pages in the unit that ships them
+        bundler_configs={
+            f["path"]: text
+            for f in files
+            if any(fnmatch.fnmatchcase(f["name"].lower(), p) for p in deployable_units.BUNDLER_CONFIGS)
+            and "node_modules" not in f["path"].split("/")
+            and (text := _read_checkout(repo_path, repo.name, f["path"])) is not None
+        },
+        # Files defining a serverless handler entry point (event, context)
+        handlers=sorted(
+            {
+                norm(r["p"])
+                for r in q("MATCH (m:Graph:Method) WHERE m.repository_name = $repo_name RETURN m.filePath AS p, m.parameters AS a")
+                if r.get("p") and deployable_units.is_handler(str(r.get("a") or ""))
+            }
+        ),
         # Names no unit may take: the technologies and dependencies the graph already names
         reserved={str(r["name"]) for r in q("MATCH (n:Graph:Technology) WHERE n.active = true AND n.repository_name = $repo_name RETURN n.techName AS name") if r.get("name")}
         | {
@@ -1535,6 +1675,7 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
                 name_candidates=[name for name, _ in unit.name_candidates],
                 name_sources=[source for _, source in unit.name_candidates],
                 member_count=len(unit.members | set(unit.web_entries)),
+                excluded=unit.excluded,
             ),
             node_id=node_id,
         )

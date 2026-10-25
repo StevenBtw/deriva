@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import posixpath
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -35,6 +36,10 @@ class ModuleRules:
     test_dependencies: tuple[str, ...] = ()
     # A module whose folder or manifest name holds one of these words (compared whole) holds tests
     test_words: tuple[str, ...] = ()
+    # A module no unit builds is a component by who uses it (``usage_role``); None leaves that test off
+    min_behaviour: float | None = None
+    # Decorator patterns of a route-handling file: a unit's feature packages (``feature_areas``) become modules; empty: off
+    feature_markers: tuple[str, ...] = ()
 
 
 @dataclass
@@ -47,7 +52,7 @@ class BuildModule:
     parent: str | None = None  # Path of the nearest module or system folder above it
     files: list[str] = field(default_factory=list)  # The files it holds itself, sorted
     members: list[str] = field(default_factory=list)  # For a system: the module paths it lists, sorted
-    excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only)
+    excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only, tooling)
 
 
 def module_id(repository: str, path: str) -> str:
@@ -114,6 +119,148 @@ def _manifest_name(path: str, text: str) -> str | None:
     return None
 
 
+def _package_key(name: str) -> str:
+    """A package name compared across manifests: lowercase, runs of ``-``, ``_`` and ``.`` as one ``-``."""
+    return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+
+def _requirement(spec: str) -> str:
+    """The package name of a requirement string (``shop-web[extra]>=1; python_version > "3"``)."""
+    found = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", spec)
+    return _package_key(found.group(1)) if found else ""
+
+
+def _uses(path: str, text: str) -> tuple[set[str], set[str]]:
+    """(runtime, development) package names a manifest depends on. Development: dependency groups and dev dependencies
+    (pyproject, Poetry), ``devDependencies`` (npm), Maven's test scope; everything else is a runtime use."""
+    lower = PurePosixPath(path).name.lower()
+    runtime: set[str] = set()
+    development: set[str] = set()
+    if lower == "pyproject.toml":
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            return runtime, development
+        project = data.get("project", {})
+        poetry = data.get("tool", {}).get("poetry", {})
+        runtime |= {_requirement(s) for s in project.get("dependencies", []) if isinstance(s, str)}
+        runtime |= {_requirement(s) for group in project.get("optional-dependencies", {}).values() for s in group if isinstance(s, str)}
+        runtime |= {_package_key(n) for n in poetry.get("dependencies", {})}
+        development |= {_requirement(s) for group in data.get("dependency-groups", {}).values() for s in group if isinstance(s, str)}
+        development |= {_requirement(s) for s in data.get("tool", {}).get("uv", {}).get("dev-dependencies", []) if isinstance(s, str)}
+        development |= {_package_key(n) for n in poetry.get("dev-dependencies", {})}
+        development |= {_package_key(n) for group in poetry.get("group", {}).values() for n in group.get("dependencies", {})}
+    elif lower == "package.json":
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return runtime, development
+        if isinstance(data, dict):
+            runtime |= {_package_key(n) for key in ("dependencies", "peerDependencies", "optionalDependencies") for n in data.get(key) or {}}
+            development |= {_package_key(n) for n in data.get("devDependencies") or {}}
+    elif lower == "pom.xml":
+        used = re.sub(r"<(dependencyManagement|build)>.*?</\1>", "", text, flags=re.DOTALL)
+        for block in re.findall(r"<dependency>(.*?)</dependency>", used, re.DOTALL):
+            artifact = re.search(r"<artifactId>\s*([^<]+?)\s*</artifactId>", block)
+            scope = re.search(r"<scope>\s*([^<]+?)\s*</scope>", block)
+            if artifact:
+                (development if scope and scope.group(1) == "test" else runtime).add(_package_key(artifact.group(1)))
+    return runtime - {""}, development - {""}
+
+
+def development_only(manifests: dict[str, str]) -> set[str]:
+    """The folders of the repository's packages that its manifests list only as a development dependency, never as a
+    runtime one: development tooling (a benchmark or test-support package), no part of the system."""
+    runtime: set[str] = set()
+    development: set[str] = set()
+    for path, text in manifests.items():
+        used, dev = _uses(path, text)
+        runtime |= used
+        development |= dev
+    folders: set[str] = set()
+    for path, text in manifests.items():
+        name = _manifest_name(path, text)
+        if name and _package_key(name) in development - runtime:
+            folders.add(_parent(path))
+    return folders
+
+
+def declares_entry(path: str, text: str) -> bool:
+    """Whether a manifest declares an entry point by its ecosystem's convention: npm ``bin``, ``main`` or a ``start``
+    script, a Maven ``mainClass``, the Spring Boot plugin or war packaging, Gradle's application, Spring Boot or war
+    plugin, or pyproject project scripts."""
+    lower = PurePosixPath(path).name.lower()
+    if lower == "package.json":
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return False
+        return isinstance(data, dict) and bool(data.get("bin") or data.get("main") or "start" in (data.get("scripts") or {}))
+    if lower == "pom.xml":
+        return bool(re.search(r"<mainClass>|spring-boot-maven-plugin|<packaging>\s*war\s*</packaging>", text))
+    if lower.startswith("build.gradle"):
+        return bool(re.search(r"""['"](application|war|org\.springframework\.boot)['"]|^\s*(application|war)\s*$""", text, re.MULTILINE))
+    if lower == "pyproject.toml":
+        try:
+            return bool(tomllib.loads(text).get("project", {}).get("scripts"))
+        except tomllib.TOMLDecodeError:
+            return False
+    return False
+
+
+def behaviour_per_file(
+    code_files: list[str], methods: list[tuple[str, str]], accessors: tuple[str, ...] = ("get", "set", "is"), plain: tuple[str, ...] = ("equals", "hashCode", "toString")
+) -> float:
+    """Non-accessor methods per code file, on average: accessors (``get``/``set``/``is`` followed by a capital or ``_``),
+    the object protocol (``equals``, ``hashCode``, ``toString``) and dunder methods carry no behaviour of their own."""
+
+    def counts(name: str) -> bool:
+        if name.startswith("__") or name in plain:
+            return False
+        return not any(name.startswith(p) and len(name) > len(p) and (name[len(p)].isupper() or name[len(p)] == "_") for p in accessors)
+
+    wanted = set(code_files)
+    total = sum(1 for path, name in methods if path in wanted and counts(name))
+    return total / len(wanted) if wanted else 0.0
+
+
+def usage_role(users: int, behaviour: float, entry: bool, min_behaviour: float) -> str | None:
+    """Why a module that no unit builds is no component (None: it is one), by how many units use its code: two or more
+    make it a shared library, a component only with behaviour (more than ``min_behaviour`` non-accessor methods per
+    code file: a library of data structures has at most its constructors); one makes it part of that unit; none make
+    it a standalone program, a component only when its manifest declares an entry point."""
+    if users >= 2:
+        return None if behaviour > min_behaviour else "data-only library"
+    if users == 1:
+        return "part of one unit"
+    return None if entry else "no entry point"
+
+
+def source_root(code_files: list[str]) -> str:
+    """The deepest folder holding all the code: from the common folder down while it holds one sub-folder and no file."""
+    folders = sorted({str(PurePosixPath(p).parent) for p in code_files})
+    if not folders:
+        return ""
+    root = posixpath.commonpath(folders) if len(folders) > 1 else folders[0]
+    while True:
+        subs = {d[len(root) + 1 :].split("/")[0] for d in folders if d.startswith(root + "/")}
+        if len(subs) == 1 and root not in folders:
+            root = f"{root}/{subs.pop()}"
+            continue
+        return root
+
+
+def feature_areas(code_files: list[str], route_files: set[str], entity_files: set[str]) -> list[str]:
+    """The feature packages of a unit: the first-level sub-packages under its source root that hold both a
+    route-handling file and a data entity (package by feature). Two or more split the unit; one or none is no split."""
+    root = source_root(code_files)
+    area_of = lambda p: p[len(root) + 1 :].split("/")[0] if p.startswith(root + "/") and "/" in p[len(root) + 1 :] else None  # noqa: E731 - a one-line helper
+    routes = {a for p in code_files if p in route_files and (a := area_of(p))}
+    entities = {a for p in code_files if p in entity_files and (a := area_of(p))}
+    areas = sorted(f"{root}/{a}" for a in routes & entities)
+    return areas if len(areas) >= 2 else []
+
+
 def _listed(path: str, text: str) -> list[str]:
     """The member folders an aggregator manifest lists (relative patterns, as written)."""
     lower = PurePosixPath(path).name.lower()
@@ -176,8 +323,12 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
             if f.get("file_type") == "source" and f.get("subtype") in rules.code_subtypes:
                 code.add(folder)
 
+    tooling = development_only(manifests)
+
     def excluded(folder: str) -> str | None:
         manifest = candidates[folder]
+        if folder in tooling:
+            return "tooling"
         dependencies = _dependencies(manifest, manifests.get(manifest, ""))
         matches = lambda name, patterns: any(fnmatch.fnmatchcase(name, p.lower()) for p in patterns)  # noqa: E731 - a one-line helper
         if any(matches(d, rules.iac_dependencies) for d in dependencies):
@@ -196,9 +347,10 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
         listed: set[str] = set()
         for pattern in _listed(manifest, manifests.get(manifest, "")):
             target = str(PurePosixPath(folder, pattern.strip("/")))
-            listed |= {m for m in modules if fnmatch.fnmatchcase(m, target)}
-        if len(listed) >= rules.min_members:
-            systems[folder] = sorted(listed)
+            listed |= {m for m in set(code) if fnmatch.fnmatchcase(m, target)}
+        # Excluded modules count as listed (the aggregation is a fact of the build); its members are the other ones
+        if len(listed) >= rules.min_members and listed & modules:
+            systems[folder] = sorted(listed & modules)
 
     out = []
     raws: dict[str, str] = {}

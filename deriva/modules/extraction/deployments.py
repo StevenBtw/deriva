@@ -44,6 +44,10 @@ class DeploymentRules:
     # CDK construct ("module.Class") -> (CloudFormation type, environment name or "", fixed properties): read statically
     cdk_constructs: tuple[tuple[str, str, str, tuple[tuple[str, str], ...]], ...] = ()
     compose_files: tuple[str, ...] = ("docker-compose*.yml", "docker-compose*.yaml", "compose*.yml", "compose*.yaml")
+    # The file names Compose itself looks up, in its order: the primary compose file is one of these when there is one
+    compose_defaults: tuple[str, ...] = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+    # The override files Compose merges into a default-named file by default: part of the primary, no variant
+    compose_overrides: tuple[str, ...] = ("compose.override.yaml", "compose.override.yml", "docker-compose.override.yaml", "docker-compose.override.yml")
     environment_names: tuple[tuple[str, str], ...] = (("compose", "Docker Compose"), ("kubernetes", "Kubernetes"), ("cloud", "AWS ECS"), ("mainframe", "Mainframe"))
     # Files whose image build commands name a project's own images (scripts relative to their folder, YAML to the root)
     build_scripts: tuple[str, ...] = ("*.sh", "*.bash", "makefile", "*.mk", "*.yml", "*.yaml")
@@ -83,6 +87,8 @@ class DeploymentResult:
     others: list[Environment] = field(default_factory=list)
     base_images: dict[str, list[str]] = field(default_factory=dict)  # unit id -> runtime image of its Dockerfile(s)
     managed: list[str] = field(default_factory=list)  # Managed service resource types of every cloud template
+    variants: list[Environment] = field(default_factory=list)  # Other files of the primary's kind in its folder
+    variant_units: list[str] = field(default_factory=list)  # Units only variants deploy, the primary not (sorted ids)
 
 
 class _TolerantLoader(yaml.SafeLoader):
@@ -377,10 +383,26 @@ def detect_deployments(
     if cloud:
         environments.append(cloud)
     order = {"cloud": 0, "compose": 1, "kubernetes": 2}
+    defaults = [name.lower() for name in rules.compose_defaults]
+    # The deployment tool's default file name, in its lookup order, before any other name (a variant can sort first)
+    default_rank = lambda e: defaults.index(PurePosixPath(e.file).name.lower()) if PurePosixPath(e.file).name.lower() in defaults else len(defaults)  # noqa: E731 - a one-line helper
     # An environment that runs services comes before one that only holds managed services
-    ranked = sorted(environments, key=lambda e: (not e.services, order[e.kind], len(PurePosixPath(e.file).parts), e.file))
+    ranked = sorted(environments, key=lambda e: (not e.services, order[e.kind], default_rank(e), len(PurePosixPath(e.file).parts), e.file))
     if ranked:
         result.primary, result.others = ranked[0], ranked[1:]
+        # A variant is another file of the primary's kind in the primary file's folder; a unit a variant deploys and
+        # the primary does not is no part of the system (other environments install the whole system, variants included).
+        # Only when the primary deploys a unit itself: then leaving one out is a choice, not an empty or partial base file.
+        # Known limit: a variant that adds a real production service (a worker in a production file) is dropped too
+        # A file the tool merges into a default-named primary by default (Compose's override file) is part of the primary
+        primary = result.primary
+        siblings = [e for e in result.others if e.kind == primary.kind and _parent(e.file) == _parent(primary.file)]
+        overrides = {n.lower() for n in rules.compose_overrides} if default_rank(primary) < len(defaults) else set()
+        merged = [e for e in siblings if PurePosixPath(e.file).name.lower() in overrides]
+        result.variants = [e for e in siblings if e not in merged]
+        deployed = {s.unit for e in [primary, *merged] for s in e.services if s.unit}
+        if deployed:
+            result.variant_units = sorted({s.unit for e in result.variants for s in e.services if s.unit} - deployed)
     return result
 
 

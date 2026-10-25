@@ -2605,8 +2605,8 @@ class TestBuildModuleStep:
 
     def test_module_names_are_unique_as_derivation_sees_them(self, graph):
         """Without the repository's name, the unit "deriva-studio" and the modules "Deriva Studio" and "Studio" are one name.
-        The module whose path says no more than its name goes first and takes its kind noun; "Studio Module" is then
-        taken, so the other takes the words of its path. A module that is one unit's folder keeps its name (no candidate)."""
+        The module that is not a unit's folder takes its kind noun ("Studio Module"). A package is one unit (its two
+        scripts are its entry points), so its module is that unit's folder and keeps its name (no candidate)."""
         files = {
             "packages/deriva-studio/pyproject.toml": ("build", "toml", '[project]\nname = "deriva-studio"\n[project.scripts]\nderiva-studio = "app:run"\nderiva = "app:main"\n'),
             "packages/deriva-studio/app.py": ("source", "python", "x = 1\n"),
@@ -2624,8 +2624,122 @@ class TestBuildModuleStep:
 
         names = {r["id"]: r["name"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.name AS name")}
         assert names["module::deriva::studio"] == "Studio Module"
-        assert names["module::deriva::packages/deriva-studio"] == "Packages Deriva Studio"
+        assert names["module::deriva::packages/deriva-studio"] == "Deriva Studio"  # one unit's folder: one element with it
         assert names["module::deriva::shop"] == "Shop"  # the shop unit's own folder: one element with the unit, no noun
+        same = {r["id"]: r["same"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.sameAs AS same")}
+        assert same["module::deriva::packages/deriva-studio"] == "unit::deriva::packages/deriva-studio::deriva-studio"
+
+    def test_a_module_no_unit_builds_is_a_component_by_who_uses_it(self, graph):
+        """Two units import lib (behaviour) and data (accessors only); one imports only (part of it); nobody imports
+        tool (a mainClass) or probe (no entry). With min_behaviour set, lib and tool stay components."""
+        from deriva.adapters.graph.models import MethodNode
+
+        files = {
+            "a/Dockerfile": ("config", None, "FROM base\n"),
+            "a/A.java": ("source", "java", "class A {}\n"),
+            "b/Dockerfile": ("config", None, "FROM base\n"),
+            "b/B.java": ("source", "java", "class B {}\n"),
+        }
+        for name, pom in (("lib", ""), ("data", ""), ("only", ""), ("tool", "<build><mainClass>t.Main</mainClass></build>"), ("probe", "")):
+            files[f"{name}/pom.xml"] = ("build", "xml", f"<project><artifactId>{name}</artifactId>{pom}</project>")
+            files[f"{name}/{name.title()}.java"] = ("source", "java", f"class {name.title()} {{}}\n")
+        fid = lambda path: f"file::r::{path.replace('/', '_')}"  # noqa: E731 - a one-line helper
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            for source, target in (
+                ("a/A.java", "lib/Lib.java"),
+                ("b/B.java", "lib/Lib.java"),
+                ("a/A.java", "data/Data.java"),
+                ("b/B.java", "data/Data.java"),
+                ("a/A.java", "only/Only.java"),
+            ):
+                graph.add_edge(fid(source), fid(target), "IMPORTS")
+            for path, names in (
+                ("lib/Lib.java", ["route", "balance"]),
+                ("data/Data.java", ["getId", "setId"]),
+                ("tool/Tool.java", ["main"]),
+                ("probe/Probe.java", ["before", "after"]),
+            ):
+                for name in names:
+                    graph.add_node(
+                        MethodNode(name=name, return_type="void", visibility="public", file_path=path, type_name="X", repository_name="r"), node_id=f"method::r::{path}::{name}"
+                    )
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["java"]})
+            self._step(graph, tmpdir, "BuildModule", {**self.MODULE_PARAMS, "min_behaviour": 1})
+
+        excluded = {r["id"].split("::")[-1]: r["x"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.excluded AS x")}
+        assert excluded == {"lib": None, "data": "data-only library", "only": "part of one unit", "tool": None, "probe": "no entry point"}
+
+    def test_a_folder_of_code_outside_every_unit_that_two_units_use_with_behaviour_is_a_library(self, graph):
+        """shared/lib: two units import it, it has behaviour; shared/data: accessors only; shared/one: one unit imports it."""
+        from deriva.adapters.graph.models import MethodNode
+
+        files = {
+            "a/Dockerfile": ("config", None, "FROM base\n"),
+            "a/A.java": ("source", "java", "class A {}\n"),
+            "b/Dockerfile": ("config", None, "FROM base\n"),
+            "b/B.java": ("source", "java", "class B {}\n"),
+            "shared/lib/Lib.java": ("source", "java", "class Lib {}\n"),
+            "shared/data/Data.java": ("source", "java", "class Data {}\n"),
+            "shared/one/One.java": ("source", "java", "class One {}\n"),
+        }
+        fid = lambda path: f"file::r::{path.replace('/', '_')}"  # noqa: E731 - a one-line helper
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            for source in ("a/A.java", "b/B.java"):
+                graph.add_edge(fid(source), fid("shared/lib/Lib.java"), "IMPORTS")
+                graph.add_edge(fid(source), fid("shared/data/Data.java"), "IMPORTS")
+            graph.add_edge(fid("a/A.java"), fid("shared/one/One.java"), "IMPORTS")
+            for path, names in (("shared/lib/Lib.java", ["route", "balance"]), ("shared/data/Data.java", ["getId", "setId"]), ("shared/one/One.java", ["run", "stop"])):
+                for name in names:
+                    graph.add_node(
+                        MethodNode(name=name, return_type="void", visibility="public", file_path=path, type_name="X", repository_name="r"), node_id=f"method::r::{path}::{name}"
+                    )
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["java"]})
+            self._step(graph, tmpdir, "BuildModule", {**self.MODULE_PARAMS, "min_behaviour": 1})
+
+        modules = {
+            r["id"]: (r["name"], r["manifest"], r["x"])
+            for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.name AS name, m.manifest AS manifest, m.excluded AS x")
+        }
+        assert modules == {"module::r::shared/lib": ("Lib", "", None)}
+        includes = [r["p"] for r in graph.query("MATCH (m:Graph:BuildModule)-[:`Graph:INCLUDES`]->(f:Graph:File) RETURN f.filePath AS p")]
+        assert includes == ["r/shared/lib/Lib.java"]
+
+    def test_a_units_feature_packages_become_modules_nested_in_it_and_the_unit_keeps_its_own_module(self, graph):
+        """owner/ and vet/ each hold a route-handling class and a data entity; system/ only a route; the unit's own
+        module (its folder) stays one element with the unit."""
+        from deriva.adapters.graph.models import DataEntityNode, TypeDefinitionNode
+
+        base = "src/main/java/org/acme/clinic"
+        files = {"pom.xml": ("build", "xml", "<project><artifactId>clinic</artifactId><build><plugin>spring-boot-maven-plugin</plugin></build></project>")}
+        types = {"owner/Owner": [], "owner/OwnerController": ["Controller"], "vet/Vet": [], "vet/VetController": ["Controller"], "system/WelcomeController": ["Controller"]}
+        for name in types:
+            files[f"{base}/{name}.java"] = ("source", "java", f"class {name.split('/')[-1]} {{}}\n")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            for name, decorators in types.items():
+                type_id = f"type::r::{name}"
+                graph.add_node(
+                    TypeDefinitionNode(name=name.split("/")[-1], type_category="class", file_path=f"{base}/{name}.java", repository_name="r", decorators=decorators),
+                    node_id=type_id,
+                )
+                if name in ("owner/Owner", "vet/Vet"):
+                    graph.add_node(DataEntityNode(name=name.split("/")[-1], signal="orm entity", repository_name="r"), node_id=f"entity::r::{name}")
+                    graph.add_edge(f"entity::r::{name}", type_id, "INCLUDES")
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["java"]})
+            self._step(graph, tmpdir, "BuildModule", {**self.MODULE_PARAMS, "feature_markers": ["(Controller|RestController)([(].*)?"]})
+
+        modules = {
+            r["id"]: (r["name"], r["same"], r["manifest"])
+            for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.name AS name, m.sameAs AS same, m.manifest AS manifest")
+        }
+        assert modules["module::r::r"][1] == "unit::r::r"  # the unit's own module stays merged with it
+        assert modules[f"module::r::{base}/owner"] == ("Owner", None, "")
+        assert modules[f"module::r::{base}/vet"] == ("Vet", None, "")
+        assert f"module::r::{base}/system" not in modules
+        nests = {(r["a"], r["b"]) for r in graph.query("MATCH (a:Graph:BuildModule)-[:`Graph:NESTS`]->(b:Graph:BuildModule) RETURN a.id AS a, b.id AS b")}
+        assert nests == {("module::r::r", f"module::r::{base}/owner"), ("module::r::r", f"module::r::{base}/vet")}
 
     def test_a_module_named_like_one_of_a_units_name_candidates_takes_its_kind_noun(self, graph):
         """The unit's name candidates hold its manifest's name: a module of that name would lose the claim to the unit."""
@@ -2684,6 +2798,21 @@ class TestDeployableUnitStep:
             batch_size=1,
         )
         return _run_extraction_step(cfg, SimpleNamespace(name=repo), Path(tmpdir), [], [], graph, None, MagicMock())
+
+    def test_a_folder_whose_file_defines_a_serverless_handler_becomes_a_function_unit(self, graph):
+        from deriva.adapters.graph.models import MethodNode
+
+        graph.add_node(
+            MethodNode(
+                name="lambda_handler", return_type="", visibility="public", file_path="lambdas/notify/index.py", type_name="", repository_name="r", parameters="event, context"
+            ),
+            node_id="method::r::lambdas/notify/index.py::lambda_handler",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, {"lambdas/notify/index.py": ("source", "python", "def lambda_handler(event, context):\n    return 1\n")})
+
+        units = graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.unitKind AS kind, u.evidence AS evidence")
+        assert [(u["id"], u["kind"]) for u in units] == [("unit::r::lambdas/notify", "function")]
 
     def test_each_repository_of_a_combined_graph_keeps_its_own_units(self, graph):
         """A combined graph runs the step once per repository: a pass reads and replaces only its repository's units."""
@@ -3156,7 +3285,7 @@ class TestDeploymentStep:
         assert [r["s"] for r in hosted] == ["Amazon RDS for PostgreSQL"]
         # The other environments' services stay on the environment, for Cooperation (names, ports, variables)
         (other,) = graph.query("MATCH (e:Graph:Environment) RETURN e.otherServices AS s")[0]["s"]
-        assert json.loads(other) == {"name": "shop", "unit": "unit::r::shop", "environment": {}, "ports": []}
+        assert json.loads(other) == {"name": "shop", "unit": "unit::r::shop", "environment": {}, "ports": [], "file": "r/docker-compose.yml"}
 
     def test_a_run_with_another_environment_sweeps_the_old_one(self, graph, tmp_path):
         self._repo(graph, tmp_path, {"docker-compose.yml": "services:\n  shop:\n    build: ./shop\n", "shop/a.cbl": "EXEC CICS RETURN"})

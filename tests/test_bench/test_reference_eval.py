@@ -57,6 +57,35 @@ def test_elements_match_on_name_alias_or_lineage_and_splits_are_counted():
     assert result["optional"] == {"total": 1, "covered": 0, "names": ["Messaging"]}  # outside recall, reported
 
 
+def test_internal_behaviour_matches_across_its_types_within_a_layer_by_name_and_lineage():
+    """A derived function covers a reference process of its layer (user, 2026-10-19), never one of another layer."""
+    reference = parse_reference(
+        {
+            "repository": "shop",
+            "elements": [
+                {"key": "order", "type": "BusinessProcess", "name": "Order Goods"},
+                {"key": "post", "type": "ApplicationProcess", "name": "Post Transactions", "lineage": ["file::shop::batch/post.cbl"]},
+                {"key": "pay", "type": "BusinessProcess", "name": "Pay Bill"},
+            ],
+            "relationships": [],
+            "chains": [],
+        }
+    )
+    model = _model(
+        [
+            ("bf_order", "BusinessFunction", "Order Goods", "concept::shop::order"),  # by name
+            ("af_post", "ApplicationFunction", "Posting", "file::shop::batch/post.cbl"),  # by lineage
+            ("af_pay", "ApplicationFunction", "Pay Bill", "file::shop::pay.cbl"),  # another layer
+        ]
+    )
+
+    result = evaluate(reference, model)
+
+    assert result["elements"]["BusinessProcess"]["covered"] == 1
+    assert result["elements"]["BusinessProcess"]["missing"] == ["Pay Bill"]
+    assert result["elements"]["ApplicationProcess"]["covered"] == 1
+
+
 def test_relationships_match_on_mapped_ends_type_and_direction_and_chains_step_by_step():
     elements = [
         ("ac_core", "ApplicationComponent", "Customer Core", "unit::shop::core"),

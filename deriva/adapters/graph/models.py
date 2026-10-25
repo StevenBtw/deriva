@@ -520,7 +520,7 @@ class BuildModuleNode:
     is_system: bool = False
     members: list[str] = field(default_factory=list)  # For a system: the module paths its manifest lists
     same_as: str | None = None  # The unit whose folder it is (one unit there, no module inside): one element with it
-    excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only)
+    excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only, tooling)
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -570,6 +570,7 @@ class DeployableUnitNode:
     name_candidates: list[str] = field(default_factory=list)  # The closed set its component is named from
     name_sources: list[str] = field(default_factory=list)  # Where each candidate comes from (readme, docs, manifest, ...)
     member_count: int = 0
+    excluded: str | None = None  # Why it is no application component (tooling)
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -593,6 +594,7 @@ class DeployableUnitNode:
             "nameCandidates": list(self.name_candidates),
             "nameSources": list(self.name_sources),
             "memberCount": self.member_count,
+            "excluded": self.excluded,
             # Unit ids carry no prefix the graph manager reads the repository from
             "repository_name": self.repository_name,
             "type": "DeployableUnit",
@@ -752,6 +754,8 @@ class EnvironmentNode:
     others: list[str] = field(default_factory=list)  # The other environments, "kind file" (reported, not modelled)
     # The other environments' services as JSON ({name, unit, environment, ports}): configuration refers to them (Cooperation)
     other_services: list[str] = field(default_factory=list)
+    # Units only variants deploy (other files of its kind in its file's folder), not the primary: no part of the system
+    variant_units: list[str] = field(default_factory=list)
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -765,6 +769,7 @@ class EnvironmentNode:
             "file": self.file,
             "others": list(self.others),
             "otherServices": list(self.other_services),
+            "variantUnits": list(self.variant_units),
             "repository_name": self.repository_name,
             "type": "Environment",
         }
@@ -780,6 +785,7 @@ class DeploymentNode:
     image: str = ""
     variables: dict[str, str] = field(default_factory=dict)  # The service's environment variables, secret values redacted (deployments._redacted)
     ports: list[int] = field(default_factory=list)
+    file: str = ""  # The deployment file (or folder) that declares it
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -793,6 +799,7 @@ class DeploymentNode:
             "image": self.image,
             "variables": dict(self.variables),
             "ports": list(self.ports),
+            "file": self.file,
             "repository_name": self.repository_name,
             "type": "Deployment",
         }

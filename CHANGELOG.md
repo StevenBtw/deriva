@@ -8,6 +8,36 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
+## v0.8.8 - (Unreleased)
+
+### Configuration
+
+- **The shipped configuration matches the measured pipeline**: the default step configurations a new install starts from are brought up to date with the active ones, including the build module extraction step, the abstraction refine steps and the current node, relationship, consistency and deployment settings, which the shipped files had not carried since 0.8.2
+
+### Extraction
+
+- **Development tooling is no component**: a package of the repository that its manifests list only as a development dependency (a pyproject dependency group or dev dependencies, npm `devDependencies`, Maven's test scope), never as a runtime one, is tooling: its build module and its deployable units are marked `excluded = tooling` and give no application component, interface or service. An aggregator still counts an excluded module toward being a parent system, so leaving one out keeps the hierarchy above it
+- **A build module is a component by who uses it**: a module that no unit builds is a shared library when two or more units use its code, and a component only when it carries behaviour (more than one method per code file besides accessors; a library of data structures does not); a module one unit uses is part of that unit; a module no unit uses is a component only when its manifest declares an entry point (BuildModule params `min_behaviour`)
+- **A web UI belongs to the unit that ships it**: a page inside a nested module (a folder with its own manifest) is no web entry of the unit whose folder encloses it; a front-end module whose bundler output directory (vite `build.outDir`, webpack `output.path`, angular `outputPath`, read as written) lies inside a unit's folder gives that unit its web UI
+- **Serverless functions are units**: a folder whose file defines a function with the serverless handler parameters `(event, context)` is a deployable unit of kind `function`, unless another unit's folder holds it; a unit inside a module that is infrastructure as code, test-only or tooling gives no component
+- **Static frontends are units**: a folder with an `index.html` that no unit's folder holds is a deployable unit of kind `static` (the outermost such folder); a page inside a template folder is a server page, and a static unit inside a module that is itself a component gives no component of its own
+- **Feature packages split a unit**: when two or more first-level packages under a unit's source root each hold both a route-handling class and a data entity (package by feature), each becomes a component of its own, composed by the unit; layered packages (controllers, services, repositories) are no split (BuildModule params `feature_markers`)
+- **Import roots from Dockerfiles**: a repository folder that a Dockerfile copies into the image and puts on the import path (`PYTHONPATH`, `NODE_PATH`, `CLASSPATH`) is an import root, so a bare import that nothing else resolves (`from security import ...`) resolves against it. Only `WORKDIR`, `COPY`/`ADD` (not from another build stage) and `ENV` are read; existing resolutions never change, and paths that cannot be mapped are reported in the step's statistics
+- **Shared code without a manifest is a library**: a folder of code outside every unit and module that two or more units use, and that carries behaviour, becomes a build module of its own (no manifest), so it gives an application component; it serves each unit whose files import it (a new relationship rule for units without a build module of their own)
+- **One unit per package**: a package manifest with several project scripts gives one deployable unit, its scripts the unit's entry points (named after the script that carries the package's name, else the first), instead of one unit per script; a script that runs another package's code adds nothing to the package that re-exports it
+- **Variant deployments**: another deployment file of the primary one's kind in the same folder is a variant (an instrumentation or demo set-up next to the default compose file); a unit that a variant deploys and the primary file does not is no application component. It applies only when the primary file deploys a unit itself, and the override file Compose merges into a default-named file (`docker-compose.override.yml`, `compose.override.yaml`) counts as part of the primary, not as a variant. The environment records these units (`variantUnits`), and each deployment its file (`file`)
+- **The primary compose file has Compose's default name**: of several compose files, one named as Compose looks them up (`compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`, in that order) is the primary environment, before a variant such as `docker-compose.dev.yml` that sorts first; without one, the shallowest file, then the first by name, as before (Deployment params `compose_defaults`)
+
+### Derivation
+
+- **No business function per data domain**: the application service step no longer adds a business function for each business domain that cooperating components access (its `business_functions` param is off); such a grouping is no business behaviour with a human actor
+- **Business processes need a human actor**: the business process and business event steps, which made a process from an entity's status lifecycle and an event from each state, are off. A lifecycle is a state machine without an actor; business processes will come from structure that names one
+
+### Benchmark
+
+- **Behaviour matches within its layer**: when a model is compared with a reference (`benchmark reference`, `benchmark gate`), a process, function, interaction or event counts for any of these four in the same layer, so an application function covers a reference application process; services and structure types still match only their own type
+- **The B1 baseline skips excluded files**: the one-shot baseline (`benchmark run --baseline b1`) now leaves out every file the file-type registry excludes (model files, backups, documents that describe a reference model), its directory tree included, as extraction does. Before, the tree could name such files
+
 ## v0.8.7 - Database upgrades (October 24 2026)
 
 A major database upgrade: both of Deriva's databases move to a new major release, grafeo 0.6.0 for the graphs and DuckDB 2.0 for the configs. The models are the same, derivation is faster, and installs no longer need a pre-release.

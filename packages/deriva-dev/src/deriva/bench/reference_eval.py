@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from deriva.adapters.archimate.models import match_kind, types_match
 from deriva.common.naming import name_key
 
 
@@ -133,21 +134,25 @@ def _type(value: str) -> str:
     return str(value).removeprefix("Model:")
 
 
+_kind = match_kind
+
+
 def map_elements(reference: Reference, model: dict[str, Any]) -> dict[str, str]:
-    """Model element identifier -> reference element key: an exact name first, then an alias, then lineage."""
+    """Model element identifier -> reference element key: an exact name first, then an alias, then lineage. Types match as
+    ``types_match`` says: a function covers a process of its layer."""
     names: dict[tuple[str, str], str] = {}
     aliases: dict[tuple[str, str], str] = {}
     for ref in reference.elements:
         for t in ref.types:
-            names.setdefault((t, name_key(ref.name)), ref.key)
+            names.setdefault((_kind(t), name_key(ref.name)), ref.key)
             for alias in ref.aliases:
-                aliases.setdefault((t, name_key(alias)), ref.key)
+                aliases.setdefault((_kind(t), name_key(alias)), ref.key)
     mapping: dict[str, str] = {}
     for e in model.get("elements", []):
         t, key = _type(e["type"]), name_key(str(e.get("name") or ""))
-        found = names.get((t, key)) or aliases.get((t, key))
+        found = names.get((_kind(t), key)) or aliases.get((_kind(t), key))
         if found is None:
-            found = next((r.key for r in reference.elements if t in r.types and ({str(e.get("source") or ""), e["identifier"]} & r.lineage)), None)
+            found = next((r.key for r in reference.elements if any(types_match(t, rt) for rt in r.types) and ({str(e.get("source") or ""), e["identifier"]} & r.lineage)), None)
         if found is not None:
             mapping[e["identifier"]] = found
     return mapping

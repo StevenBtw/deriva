@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import posixpath
 import re
 import tomllib
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
+
+from deriva.modules.extraction.build_modules import development_only
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,8 @@ class RepoFacts:
     program_calls: list[tuple[str, str]] = field(default_factory=list)  # (caller program id, called program id)
     documents: dict[str, str] = field(default_factory=dict)  # documentation path -> text
     reserved: set[str] = field(default_factory=set)  # Names no unit may take (technologies, dependencies)
+    handlers: list[str] = field(default_factory=list)  # Files defining a serverless handler (``is_handler``)
+    bundler_configs: dict[str, str] = field(default_factory=dict)  # Bundler config path -> text (``bundler_outputs``)
 
 
 @dataclass
@@ -77,6 +82,7 @@ class Unit:
     web_entries: list[str] = field(default_factory=list)  # Files that serve pages (Web UI signals), sorted
     product: str = ""  # The product the unit belongs to (the root README title's first part)
     name_candidates: list[tuple[str, str]] = field(default_factory=list)  # (name, source): the closed set to name it from
+    excluded: str | None = None  # Why it is no application component (tooling: a package listed only as a development dependency)
 
 
 def unit_id(repository: str, unit: Unit) -> str:
@@ -93,6 +99,56 @@ def unit_id(repository: str, unit: Unit) -> str:
 
 def _parent(path: str) -> str:
     return str(PurePosixPath(path).parent)
+
+
+BUNDLER_CONFIGS = ("vite.config.*", "webpack.config.*", "angular.json")
+
+
+def bundler_outputs(configs: dict[str, str]) -> tuple[list[tuple[str, str]], list[str]]:
+    """(front-end module folder, build output folder) per bundler config that declares its output as a literal:
+    vite ``build.outDir``, webpack ``output.path``, angular ``outputPath``, relative to the config's folder. A declared
+    but computed output (``path.resolve(...)``) is not evaluated: it is returned as unmapped. Sorted."""
+    mapped: set[tuple[str, str]] = set()
+    unmapped: set[str] = set()
+    for path, text in configs.items():
+        folder = _parent(path)
+        name = PurePosixPath(path).name.lower()
+        values: list[tuple[str, str]] = []  # (key, raw value)
+        if name == "angular.json":
+            try:
+                projects = json.loads(text).get("projects", {})
+            except ValueError:
+                continue
+            for project in projects.values() if isinstance(projects, dict) else []:
+                out = (((project or {}).get("architect") or {}).get("build") or {}).get("options", {}).get("outputPath")
+                out = out.get("base") if isinstance(out, dict) else out
+                if out is not None:
+                    values.append(("outputPath", json.dumps(out) if isinstance(out, str) else str(out)))
+        else:
+            key = "outDir" if name.startswith("vite.config.") else "path"
+            scope = re.search(r"\boutput\s*:\s*\{([^}]*)\}", text) if key == "path" else None
+            body = scope.group(1) if scope else (text if key == "outDir" else "")
+            # The value: a quoted literal, else the rest of its line (reported as written)
+            found = re.search(r"\b" + key + r"""\s*:\s*((['"`])[^'"`]*\2|[^\n]+)""", body)
+            if found:
+                values.append(("build.outDir" if key == "outDir" else "output.path", found.group(1).strip().rstrip(",} ")))
+        for key, raw in values:
+            literal = re.fullmatch(r"""(['"`])([^'"`$]+)\1""", raw)
+            if literal:
+                out = posixpath.normpath(posixpath.join(folder, literal.group(2)))
+                if not out.startswith(".."):
+                    mapped.add((folder, out))
+                    continue
+            unmapped.add(f"{path}: {key} {raw}")
+    return sorted(mapped), sorted(unmapped)
+
+
+def is_handler(parameters: str) -> bool:
+    """Whether a function's parameters are the serverless platform's handler entry point: ``(event, context)``, after
+    ``self`` or ``cls``, with or without annotations and defaults."""
+    names = [re.split(r"[:=\s]", p.strip(), maxsplit=1)[0] for p in str(parameters or "").split(",") if p.strip()]
+    names = names[1:] if names and names[0] in ("self", "cls") else names
+    return names[:2] == ["event", "context"]
 
 
 def _below(path: str, folder: str) -> bool:
@@ -466,21 +522,38 @@ def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
             if any(_below(c, folder) for c in code):
                 unit = folder_units.setdefault(folder, Unit(path=folder, name=PurePosixPath(folder).name, kind="container"))
                 unit.evidence.append(f"container: {f['path']}")
+    manifest_folders = sorted({_parent(p) for p in facts.manifests})
     for path, text in sorted(facts.manifests.items()):
         folder = _parent(path)
         entries, title, description = _manifest_entries(path, text)
+        # A package is one unit: its project scripts are its entry points. A script that runs another package's
+        # module adds nothing here; the entry is the script named like the package, else the first by name
+        scripts: list[tuple[str, str, set[str]]] = []
         for kind, entry, target, evidence in entries:
             if kind == "script":
                 module = _script_module(folder, target, paths)
-                members = _closure(module, imports) if module else {p for p in paths if _below(p, folder)}
-                script_units.append(
-                    Unit(path=folder, name=entry, kind="script", evidence=[evidence], entry=entry, members=members, manifest_name=title, manifest_description=description)
-                )
+                if module is None and any(_script_module(other, target, paths) for other in manifest_folders if other != folder):
+                    continue
+                scripts.append((entry, evidence, _closure(module, imports) if module else {p for p in paths if _below(p, folder)}))
                 continue
             if not any(_below(c, folder) for c in code):
                 continue
             unit = folder_units.setdefault(folder, Unit(path=folder, name=PurePosixPath(folder).name, kind=kind))
             unit.evidence.append(evidence)
+        if scripts:
+            entry = next((e for e, _, _ in scripts if title and e == title), scripts[0][0])
+            script_units.append(
+                Unit(
+                    path=folder,
+                    name=entry,
+                    kind="script",
+                    evidence=[evidence for _, evidence, _ in scripts],
+                    entry=entry,
+                    members=set().union(*(members for _, _, members in scripts)),
+                    manifest_name=title,
+                    manifest_description=description,
+                )
+            )
         if folder in folder_units:
             folder_units[folder].manifest_name = folder_units[folder].manifest_name or title
             folder_units[folder].manifest_description = folder_units[folder].manifest_description or description
@@ -493,16 +566,49 @@ def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
         del folder_units[folder]
     for unit in folder_units.values():
         unit.members = {p for p in paths if _below(p, unit.path)}
+    # A folder whose file defines a serverless handler is a function unit, unless another unit's folder holds it
+    taken = sorted({*folder_units, *(u.path for u in script_units)})
+    function_units: dict[str, Unit] = {}
+    for handler in sorted(set(facts.handlers)):
+        folder = _parent(handler)
+        if any(folder == t or _below(folder, t) for t in taken):
+            continue
+        unit = function_units.setdefault(folder, Unit(path=folder, name=PurePosixPath(folder).name, kind="function"))
+        unit.evidence.append(f"handler: {handler}")
+        unit.members |= _closure(handler, imports) | {c for c in code if _parent(c) == folder}
+    # A folder with a page entry (index.html) that no unit's folder holds is a static frontend; the outermost one wins
+    held = [*taken, *function_units]
+    # (a page inside a template folder is a server page, rendered by the application, not a frontend of its own)
+    pages = (p for p in paths if PurePosixPath(p).name.lower() == "index.html" and not set(PurePosixPath(p).parts[:-1]) & set(rules.web_template_dirs))
+    for page in sorted(pages, key=lambda p: (p.count("/"), p)):
+        folder = _parent(page)
+        if any(folder == h or _below(folder, h) for h in held):
+            continue
+        function_units[folder] = Unit(
+            path=folder, name=PurePosixPath(folder).name, kind="static", evidence=[f"page entry: {page}"], members={p for p in paths if _below(p, folder)}
+        )
+        held.append(folder)
 
-    units = sorted([*folder_units.values(), *script_units, *_mainframe_units(facts, imports)], key=lambda u: (u.path, u.entry or "", u.kind))
+    units = sorted([*folder_units.values(), *script_units, *function_units.values(), *_mainframe_units(facts, imports)], key=lambda u: (u.path, u.entry or "", u.kind))
     if not units:
         units = [Unit(path=facts.repository, name=facts.repository, kind="repository", evidence=["no deployable unit found: the repository"], members=set(paths))]
     folders = sorted({u.path for u in units})
     naming = _Naming(facts, rules)
+    tooling = development_only(facts.manifests)
+    shipped, _ = bundler_outputs(facts.bundler_configs)
     for unit in units:
         unit.readme_lines = _readme_lines(unit, facts.documents, rules.readme_lines)
         unit.readme_title = _readme_title(unit, facts.documents)
-        unit.web_entries = _web_entries(unit, paths, [f for f in folders if f != unit.path and _below(f, unit.path)], rules)
+        # Pages inside a nested unit or a nested module (a folder with its own manifest) are not this unit's
+        nested = [f for f in sorted({*folders, *manifest_folders}) if f != unit.path and _below(f, unit.path)]
+        unit.web_entries = _web_entries(unit, paths, nested, rules)
+        # A front-end module whose build output lies in this unit's folder (the deepest such unit) is its web UI
+        for front_end, out in shipped:
+            owners = [u.path for u in units if out == u.path or _below(out, u.path)]
+            if owners and unit.path == max(owners, key=len):
+                pages = _web_entries(Unit(path=front_end, name="", kind="static"), paths, [], rules)
+                unit.web_entries = sorted({*unit.web_entries, *pages})
         unit.product = naming.product
         unit.name_candidates = naming.candidates(unit, facts.repository)
+        unit.excluded = "tooling" if unit.path in tooling else None
     return units

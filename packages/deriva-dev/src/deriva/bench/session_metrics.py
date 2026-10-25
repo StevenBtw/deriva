@@ -22,7 +22,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from deriva.adapters.archimate.models import ELEMENT_TYPES, layer_of
+from deriva.adapters.archimate.models import ELEMENT_TYPES, layer_of, match_kind, types_match
 from deriva.common.json_utils import extract_json_from_response
 from deriva.common.naming import name_key
 from deriva.common.ocel import hash_content
@@ -333,21 +333,22 @@ def _structural_match(element: dict[str, Any], refs: list[str]) -> bool:
 def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases: dict[str, Any] | None = None) -> dict[str, set[str]]:
     """Derived element id -> the golden elements it is matched to.
 
-    First by name, as always: the element matcher (same type, the same or a similar name) and the names the user
+    First by name, as always: the element matcher (a matching type, ``types_match``: a function covers a process of its
+    layer; the same or a similar name) and the names the user
     accepted. Then a golden element still unmatched takes, through its structural refs, the first derived element of
     its type (by id) that no golden element has yet, so one derived element matches one golden element there.
     """
     aliases = aliases or {}
     mapping: dict[str, set[str]] = {}
     for m in match_elements(derived, reference):
-        if m.match_type in NAME_MATCHES and m.derived_type == m.reference_type and m.reference_id:
+        if m.match_type in NAME_MATCHES and types_match(m.derived_type, m.reference_type or "") and m.reference_id:
             mapping.setdefault(m.derived_id, set()).add(m.reference_id)
     by_key: dict[tuple[str, str], list[str]] = {}
     for d in derived:
-        by_key.setdefault((str(d.get("type")), name_key(str(d.get("name") or ""))), []).append(str(d["id"]))
+        by_key.setdefault((match_kind(str(d.get("type"))), name_key(str(d.get("name") or ""))), []).append(str(d["id"]))
     for r in reference:
         for alias in accepted(aliases.get(r.identifier))[0]:
-            for derived_id in by_key.get((r.element_type, name_key(alias)), []):
+            for derived_id in by_key.get((match_kind(r.element_type), name_key(alias)), []):
                 mapping.setdefault(derived_id, set()).add(r.identifier)
     found = set().union(*mapping.values()) if mapping else set()
     for r in sorted(reference, key=lambda r: r.identifier):
@@ -355,7 +356,7 @@ def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases:
         if r.identifier in found or not refs:
             continue
         for d in sorted(derived, key=lambda d: str(d["id"])):
-            if str(d["id"]) not in mapping and str(d.get("type")) == r.element_type and _structural_match(d, refs):
+            if str(d["id"]) not in mapping and types_match(str(d.get("type")), r.element_type) and _structural_match(d, refs):
                 mapping[str(d["id"])] = {r.identifier}
                 found.add(r.identifier)
                 break
@@ -376,12 +377,14 @@ def golden_comparison(
     derived types. Precision counts each found reference element once, as the model-quality report does.
     """
     aliases, derivable = aliases or {}, derivable or {}
-    by_name = {m.reference_id for m in match_elements(derived, reference) if m.match_type in NAME_MATCHES and m.derived_type == m.reference_type}
+    by_name = {m.reference_id for m in match_elements(derived, reference) if m.match_type in NAME_MATCHES and types_match(m.derived_type, m.reference_type or "")}
     by_type: dict[str, set[str]] = {}
     for d in derived:
-        by_type.setdefault(str(d.get("type")), set()).add(name_key(str(d.get("name") or "")))
+        by_type.setdefault(match_kind(str(d.get("type"))), set()).add(name_key(str(d.get("name") or "")))
     manual = {
-        r.identifier for r in reference if r.identifier not in by_name and any(name_key(a) in by_type.get(r.element_type, set()) for a in accepted(aliases.get(r.identifier))[0])
+        r.identifier
+        for r in reference
+        if r.identifier not in by_name and any(name_key(a) in by_type.get(match_kind(r.element_type), set()) for a in accepted(aliases.get(r.identifier))[0])
     }
     mapped = golden_mapping(derived, reference, aliases)
     found = set().union(*mapped.values()) if mapped else set()

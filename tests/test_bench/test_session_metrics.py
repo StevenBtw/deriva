@@ -218,6 +218,24 @@ class TestGolden:
         assert (alone["recall"], alone["structure_matches"]) == (round(1 / 3, 3), 1)
         assert pm.golden_mapping([{**derived[0], "name": "Something Else"}], reference, aliases=aliases) == {"x": {"g2"}}
 
+    def test_internal_behaviour_matches_across_its_types_within_a_layer(self):
+        """A function found for a reference process counts (user, 2026-10-19); across layers and for services it does not."""
+        from deriva.modules.analysis.types import ReferenceElement
+
+        reference = [
+            ReferenceElement(identifier="g1", name="Order Goods", element_type="BusinessProcess", layer="Business"),
+            ReferenceElement(identifier="g2", name="Post Transactions", element_type="ApplicationProcess", layer="Application"),
+            ReferenceElement(identifier="g3", name="Catalogue", element_type="ApplicationService", layer="Application"),
+        ]
+        derived = [
+            {"id": "a", "name": "Order Goods", "type": "BusinessFunction"},
+            {"id": "b", "name": "Post Transactions", "type": "ApplicationFunction"},
+            {"id": "c", "name": "Catalogue", "type": "ApplicationFunction"},  # a function is no service
+        ]
+
+        assert pm.golden_mapping(derived, reference) == {"a": {"g1"}, "b": {"g2"}}
+        assert pm.golden_comparison(derived, reference)["recall"] == round(2 / 3, 3)
+
     def test_without_manual_files_the_name_match_alone(self):
         derived = [{"id": "a", "name": "Order Service", "type": "ApplicationComponent"}]
 

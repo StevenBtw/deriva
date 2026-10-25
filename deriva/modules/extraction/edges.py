@@ -26,7 +26,9 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import re
+import shlex
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -459,6 +461,7 @@ def extract_edges_from_file(
     call_languages: dict[str, frozenset[str]] | None = None,
     scope_of: Callable[[str], str] | None = None,
     java_files: dict[str, list[str]] | None = None,
+    import_roots: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """
     Extract edges from a single source file using a single AST parse.
@@ -531,6 +534,7 @@ def extract_edges_from_file(
                 edge_types=edge_types,
                 filter_constants=filter_constants,
                 java_files=java_files,
+                import_roots=import_roots,
             )
             edges.extend(import_edges)
             nodes.extend(import_nodes)
@@ -545,7 +549,7 @@ def extract_edges_from_file(
                 repo_name=repo_name,
                 filter_constants=filter_constants,
                 global_method_lookup=global_method_lookup,
-                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants, java_files),
+                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants, java_files, import_roots),
                 call_languages=call_languages,
                 scope_of=scope_of,
             )
@@ -646,6 +650,17 @@ def extract_edges_batch(
     # Build set of all file paths for internal import resolution
     all_file_paths = {f["path"] for f in files}
     java_files = _java_file_index(all_file_paths)
+    # Import roots: folders a Dockerfile copies onto the image's import path (bare imports resolve against them)
+    dockerfiles: dict[str, str] = {}
+    for path in sorted(all_file_paths):
+        name = PurePosixPath(path).name.lower()
+        if name == "dockerfile" or name.startswith("dockerfile.") or name.endswith(".dockerfile"):
+            try:
+                dockerfiles[path] = (Path(repo_path) / path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+    folders = {str(parent) for path in all_file_paths for parent in PurePosixPath(path).parents if str(parent) != "."}
+    roots, unmapped_roots = import_roots(dockerfiles, folders)
 
     # Filter to only source files that Tree-sitter can parse
     source_files = [f for f in files if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES]
@@ -685,6 +700,7 @@ def extract_edges_batch(
             call_languages=call_languages,
             scope_of=scope_of,
             java_files=java_files,
+            import_roots=tuple(roots),
         )
 
         all_edges.extend(result["data"]["edges"])
@@ -721,6 +737,8 @@ def extract_edges_batch(
             "calls": calls_stats,
             "decorators": decorators_stats,
             "references": references_stats,
+            "import_roots": roots,
+            "unmapped_import_paths": unmapped_roots,
         },
     }
 
@@ -739,6 +757,7 @@ def _extract_import_edges(
     edge_types: set[EdgeType],
     filter_constants: FilterConstants | None = None,
     java_files: dict[str, list[str]] | None = None,
+    import_roots: tuple[str, ...] = (),
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     """Extract IMPORTS and USES edges from import statements.
 
@@ -785,6 +804,7 @@ def _extract_import_edges(
             names=imp.names,
             java_files=java_files,
             is_from_import=imp.is_from_import,
+            import_roots=import_roots,
         )
 
         if resolved["type"] == "internal" and EdgeType.IMPORTS in edge_types:
@@ -859,6 +879,7 @@ def _imported_paths(
     external_packages: set[str],
     filter_constants: FilterConstants | None = None,
     java_files: dict[str, list[str]] | None = None,
+    import_roots: tuple[str, ...] = (),
 ) -> set[str]:
     """The repository files a file imports (its internal imports, resolved as the IMPORTS edges are)."""
     stdlib_modules = filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
@@ -879,6 +900,7 @@ def _imported_paths(
             names=imp.names,
             java_files=java_files,
             is_from_import=imp.is_from_import,
+            import_roots=import_roots,
         )
         if resolved["type"] == "internal":
             paths.add(resolved["target_path"])
@@ -929,10 +951,12 @@ def _resolve_import(
     names: list[str] | None = None,
     java_files: dict[str, list[str]] | None = None,
     is_from_import: bool = False,
+    import_roots: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Resolve an import to determine if it's internal or external.
 
-    For Java, ``is_from_import`` marks a static import (as the Java parser records it).
+    For Java, ``is_from_import`` marks a static import (as the Java parser records it). ``import_roots``: repository
+    folders a deployment puts on the import path; an absolute import nothing else resolves is tried against them.
     """
     # Use provided stdlib or fall back to Python stdlib
     stdlib = stdlib_modules if stdlib_modules else PYTHON_STDLIB
@@ -964,8 +988,13 @@ def _resolve_import(
     if top_level in stdlib:
         return {"type": "stdlib", "module": top_level}
 
-    # Try to resolve as internal module
+    # Try to resolve as internal module, then against the import roots (a bare import a deployment's path resolves)
     target_path = _resolve_absolute_import(module, all_file_paths)
+    for root in import_roots if not target_path else ():
+        found = _resolve_absolute_import(module, {p[len(root) + 1 :] for p in all_file_paths if p.startswith(root + "/")})
+        if found:
+            target_path = f"{root}/{found}"
+            break
     if target_path:
         return {"type": "internal", "target_path": target_path}
 
@@ -1114,6 +1143,65 @@ def _resolve_relative_import(
             return candidate
 
     return None
+
+
+IMPORT_PATH_VARIABLES = ("PYTHONPATH", "NODE_PATH", "CLASSPATH")
+
+
+def _dockerfile_instructions(text: str) -> list[tuple[str, str]]:
+    """(instruction, arguments) per Dockerfile instruction, continuation lines joined, comments dropped."""
+    joined = re.sub(r"\\\s*\n", " ", text)
+    out = []
+    for line in joined.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and " " in line:
+            word, rest = line.split(None, 1)
+            out.append((word.upper(), rest.strip()))
+    return out
+
+
+def import_roots(dockerfiles: dict[str, str], folders: set[str]) -> tuple[list[str], list[str]]:
+    """The import roots: a repository folder that a Dockerfile copies into the image and puts on an import path
+    (``PYTHONPATH``, ``NODE_PATH``, ``CLASSPATH``). Only ``WORKDIR``, ``COPY``/``ADD`` (not ``--from`` another stage) and
+    ``ENV`` are read, and no variable is expanded beyond dropping the path's ``${VAR}`` self-reference. A copy's source
+    is taken relative to the repository root, else to the Dockerfile's folder. Returns (roots, unmapped entries)."""
+    roots: set[str] = set()
+    unmapped: set[str] = set()
+    for path, text in sorted(dockerfiles.items()):
+        here = str(PurePosixPath(path).parent)
+        workdir = "/"
+        copies: list[tuple[str, str]] = []  # (destination in the image, repository folder)
+        entries: list[tuple[str, str]] = []  # (variable, absolute path in the image)
+        for word, rest in _dockerfile_instructions(text):
+            if word == "WORKDIR":
+                workdir = str(PurePosixPath(workdir, rest.strip('"')))
+            elif word in ("COPY", "ADD"):
+                parts = [p for p in shlex.split(rest) if p] if not rest.startswith("[") else json.loads(rest)
+                if any(p.startswith("--from") for p in parts):
+                    continue
+                parts = [p for p in parts if not p.startswith("--")]
+                if len(parts) < 2:
+                    continue
+                dest = str(PurePosixPath(workdir, parts[-1]))
+                for source in parts[:-1]:
+                    source = source.strip("./") or "."
+                    folder = source if source in folders else (str(PurePosixPath(here, source)) if str(PurePosixPath(here, source)) in folders else None)
+                    if folder:
+                        copies.append((dest if len(parts) == 2 else str(PurePosixPath(dest, PurePosixPath(source).name)), folder))
+            elif word == "ENV":
+                pairs = re.findall(r'(\w+)=("[^"]*"|\S+)', rest) or ([tuple(rest.split(None, 1))] if len(rest.split(None, 1)) == 2 else [])
+                for name, value in pairs:
+                    if name in IMPORT_PATH_VARIABLES:
+                        for entry in value.strip('"').split(":"):
+                            if entry and "$" not in entry:
+                                entries.append((name, str(PurePosixPath(workdir, entry))))
+        for name, entry in entries:
+            mapped = next((folder + entry[len(dest) :] for dest, folder in copies if entry == dest or entry.startswith(dest.rstrip("/") + "/")), None)
+            if mapped and mapped.rstrip("/") in folders:
+                roots.add(mapped.rstrip("/"))
+            else:
+                unmapped.add(f"{path}: {name} {entry}")
+    return sorted(roots), sorted(unmapped)
 
 
 def _resolve_absolute_import(

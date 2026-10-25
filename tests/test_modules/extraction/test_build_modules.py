@@ -4,7 +4,7 @@ dropped from the front."""
 
 from __future__ import annotations
 
-from deriva.modules.extraction.build_modules import ModuleRules, detect_modules, module_id
+from deriva.modules.extraction.build_modules import ModuleRules, behaviour_per_file, declares_entry, detect_modules, feature_areas, module_id, usage_role
 
 RULES = ModuleRules(
     manifests=("pom.xml", "package.json", "pyproject.toml", "build.gradle", "build.gradle.kts", "settings.gradle"), code_subtypes=frozenset({"java", "python", "javascript"})
@@ -223,3 +223,134 @@ def test_gradle_dependencies_in_map_form_count_and_a_dotted_folder_is_named_by_i
 
     assert modules["r/commons"].excluded is None  # guava is no test framework
     assert modules["r/svc/tools.acme.shop.entities"].name == "Entities"  # not "Tools Acme Shop Entities"
+
+
+def test_a_package_the_repository_lists_only_as_a_development_dependency_is_tooling():
+    files = [
+        _f("r/pyproject.toml", "toml", "build"),
+        _f("r/app/main.py", "python"),
+        _f("r/packages/bench/pyproject.toml", "toml", "build"),
+        _f("r/packages/bench/run.py", "python"),
+        _f("r/packages/web/pyproject.toml", "toml", "build"),
+        _f("r/packages/web/serve.py", "python"),
+        _f("r/ui/package.json", "json", "build"),
+        _f("r/ui/app.js", "javascript"),
+        _f("r/ui-kit/package.json", "json", "build"),
+        _f("r/ui-kit/kit.js", "javascript"),
+        _f("r/fixtures/pom.xml", "xml", "build"),
+        _f("r/fixtures/Data.java"),
+        _f("r/core/pom.xml", "xml", "build"),
+        _f("r/core/Core.java"),
+    ]
+    manifests = {
+        # A dependency group (dev) is development only; an optional extra installs with the package, so it is a runtime use
+        "r/pyproject.toml": '[project]\nname = "shop"\ndependencies = ["requests"]\n[project.optional-dependencies]\nweb = ["shop-web"]\n'
+        '[dependency-groups]\ndev = ["Shop_Bench>=1", "pytest", "shop-web"]\n',
+        "r/packages/bench/pyproject.toml": '[project]\nname = "shop-bench"\n',
+        "r/packages/web/pyproject.toml": '[project]\nname = "shop-web"\n',
+        "r/ui/package.json": '{"name": "shop-ui", "dependencies": {"react": "18"}, "devDependencies": {"shop-ui-kit": "1"}}',
+        "r/ui-kit/package.json": '{"name": "shop-ui-kit"}',
+        "r/fixtures/pom.xml": "<project><artifactId>fixtures</artifactId></project>",
+        "r/core/pom.xml": "<project><artifactId>core</artifactId><dependencies><dependency><artifactId>fixtures</artifactId><scope>test</scope></dependency>"
+        "</dependencies><dependencyManagement><dependencies><dependency><artifactId>fixtures</artifactId></dependency></dependencies></dependencyManagement></project>",
+    }
+
+    modules = _by_path(detect_modules("r", files, manifests, RULES))
+
+    assert {p: m.excluded for p, m in modules.items() if m.excluded} == {"r/packages/bench": "tooling", "r/ui-kit": "tooling", "r/fixtures": "tooling"}
+    assert modules["r/packages/web"].module and modules["r/core"].module
+
+
+def test_an_aggregator_stays_a_system_when_one_of_its_members_is_tooling():
+    files = [
+        _f("r/pyproject.toml", "toml", "build"),
+        _f("r/app/main.py", "python"),
+        _f("r/packages/bench/pyproject.toml", "toml", "build"),
+        _f("r/packages/bench/run.py", "python"),
+        _f("r/packages/web/pyproject.toml", "toml", "build"),
+        _f("r/packages/web/serve.py", "python"),
+    ]
+    manifests = {
+        "r/pyproject.toml": '[project]\nname = "shop"\n[tool.uv.workspace]\nmembers = ["packages/*"]\n[dependency-groups]\ndev = ["shop-bench"]\n',
+        "r/packages/bench/pyproject.toml": '[project]\nname = "shop-bench"\n',
+        "r/packages/web/pyproject.toml": '[project]\nname = "shop-web"\n',
+    }
+
+    modules = _by_path(detect_modules("r", files, manifests, RULES))
+
+    # The tooling package still counts as a listed member; only the product package is the system's member
+    assert modules["r"].system and modules["r"].members == ["r/packages/web"]
+    assert modules["r/packages/bench"].excluded == "tooling"
+
+
+def test_an_aggregator_whose_listed_modules_are_all_excluded_is_no_system():
+    files = [
+        _f("r/pom.xml", "xml", "build"),
+        _f("r/e2e/pom.xml", "xml", "build"),
+        _f("r/e2e/Flow.java"),
+        _f("r/fixtures/pom.xml", "xml", "build"),
+        _f("r/fixtures/Data.java"),
+    ]
+    manifests = {
+        "r/pom.xml": "<project><artifactId>shop</artifactId><modules><module>e2e</module><module>fixtures</module></modules>"
+        "<dependencies><dependency><artifactId>fixtures</artifactId><scope>test</scope></dependency></dependencies></project>",
+        "r/e2e/pom.xml": "<project><artifactId>shop-e2e</artifactId></project>",
+        "r/fixtures/pom.xml": "<project><artifactId>fixtures</artifactId></project>",
+    }
+    rules = ModuleRules(manifests=RULES.manifests, code_subtypes=RULES.code_subtypes, test_words=("e2e",))
+
+    modules = _by_path(detect_modules("r", files, manifests, rules))
+
+    assert not modules.get("r") or not modules["r"].system
+    assert (modules["r/e2e"].excluded, modules["r/fixtures"].excluded) == ("test-only", "tooling")
+
+
+def test_a_module_no_unit_builds_is_a_component_by_who_uses_it():
+    # Two or more units: a shared library, a component only with behaviour (more than one non-accessor method per file)
+    assert usage_role(users=3, behaviour=3.2, entry=False, min_behaviour=1) is None
+    assert usage_role(users=5, behaviour=0.9, entry=False, min_behaviour=1) == "data-only library"
+    # One unit: part of that unit
+    assert usage_role(users=1, behaviour=9.0, entry=True, min_behaviour=1) == "part of one unit"
+    # No unit: a standalone program, a component only with a declared entry point
+    assert usage_role(users=0, behaviour=0.5, entry=True, min_behaviour=1) is None
+    assert usage_role(users=0, behaviour=4.0, entry=False, min_behaviour=1) == "no entry point"
+
+
+def test_a_manifest_declares_an_entry_point_by_its_ecosystems_convention():
+    assert declares_entry("r/c/package.json", '{"name": "client", "main": "index.js"}')
+    assert declares_entry("r/c/package.json", '{"name": "tool", "bin": {"tool": "cli.js"}}')
+    assert declares_entry("r/c/package.json", '{"name": "web", "scripts": {"start": "node server.js"}}')
+    assert not declares_entry("r/c/package.json", '{"name": "lib", "scripts": {"test": "jest"}}')
+    assert declares_entry("r/c/pom.xml", "<project><build><plugins><plugin><configuration><mainClass>a.Main</mainClass></configuration></plugin></plugins></build></project>")
+    assert declares_entry("r/c/pom.xml", "<project><packaging>war</packaging></project>")
+    assert not declares_entry("r/c/pom.xml", "<project><artifactId>entities</artifactId></project>")
+    assert declares_entry("r/c/pyproject.toml", '[project]\nname = "t"\n[project.scripts]\nt = "t:main"\n')
+    assert not declares_entry("r/c/pyproject.toml", '[project]\nname = "t"\n')
+
+
+def test_behaviour_counts_the_non_accessor_methods_per_code_file():
+    methods = [("a/Order.java", "getId"), ("a/Order.java", "setId"), ("a/Order.java", "isPaid"), ("a/Order.java", "Order"), ("a/Order.java", "toString"),
+               ("a/Pricing.java", "price"), ("a/Pricing.java", "discount"), ("a/Pricing.java", "__init__")]  # fmt: skip
+
+    assert behaviour_per_file(["a/Order.java", "a/Pricing.java"], methods) == 1.5  # Order: its constructor; Pricing: two
+    assert behaviour_per_file([], methods) == 0.0
+
+
+def test_a_unit_splits_into_feature_packages_that_each_hold_a_route_and_a_data_entity():
+    base = "r/src/main/java/org/acme/clinic"
+    code = [f"{base}/Application.java", f"{base}/owner/Owner.java", f"{base}/owner/OwnerController.java", f"{base}/owner/PetValidator.java",
+            f"{base}/vet/Vet.java", f"{base}/vet/VetController.java", f"{base}/system/WelcomeController.java", f"{base}/model/Person.java"]  # fmt: skip
+    routes = {f"{base}/owner/OwnerController.java", f"{base}/vet/VetController.java", f"{base}/system/WelcomeController.java"}
+    entities = {f"{base}/owner/Owner.java", f"{base}/vet/Vet.java", f"{base}/model/Person.java"}
+
+    # system/ has a route but no entity, model/ an entity but no route: neither is a feature package
+    assert feature_areas(code, routes, entities) == [f"{base}/owner", f"{base}/vet"]
+
+
+def test_layered_packages_and_a_single_feature_are_no_split():
+    base = "r/src/main/java/org/acme/shop"
+    layered = [f"{base}/rest/OrderResource.java", f"{base}/servlet/IndexServlet.java", f"{base}/domain/Order.java"]
+    single = [f"{base}/order/Order.java", f"{base}/order/OrderController.java", f"{base}/util/Text.java"]
+
+    assert feature_areas(layered, {f"{base}/rest/OrderResource.java", f"{base}/servlet/IndexServlet.java"}, {f"{base}/domain/Order.java"}) == []
+    assert feature_areas(single, {f"{base}/order/OrderController.java"}, {f"{base}/order/Order.java"}) == []

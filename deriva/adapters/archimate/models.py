@@ -201,6 +201,27 @@ def layer_of(element_type: str) -> str:
     return "Other"
 
 
+# Internal behaviour per layer: the same behaviour is often modelled as any of these (a function or a process)
+INTERNAL_BEHAVIOUR: dict[str, str] = {f"{layer}{kind}": layer for layer in ("Business", "Application", "Technology") for kind in ("Process", "Function", "Interaction", "Event")}
+
+
+def types_match(derived: str, reference: str) -> bool:
+    """Whether a derived element's type counts as a reference element's type when a model is compared with a reference:
+    the same type, or both internal behaviour (process, function, interaction, event) of one layer (user, 2026-10-19).
+    Services and structure types stay strict."""
+    if derived == reference:
+        return True
+    layer = INTERNAL_BEHAVIOUR.get(derived)
+    return layer is not None and layer == INTERNAL_BEHAVIOUR.get(reference)
+
+
+def match_kind(element_type: str) -> str:
+    """The key an element type is matched under: internal behaviour as its layer's behaviour, else the type itself (two
+    types match exactly when their keys are equal, as ``types_match`` says)."""
+    layer = INTERNAL_BEHAVIOUR.get(element_type)
+    return f"{layer} behaviour" if layer else element_type
+
+
 # =============================================================================
 # ArchiMate 3.2 Relationship Table
 # =============================================================================
