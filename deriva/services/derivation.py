@@ -386,6 +386,11 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
     (``a``: the component's, ``b``: the interface's or object's) that give a component its
     interfaces and objects where the graph links them. ``group_by: "members"`` groups the
     interfaces' members instead; ``ubiquity``, ``member_min_names`` and ``max_groups`` apply only there.
+    ``service_verbs`` ([interface role, verb] pairs, in tie order) names the ``group_by: "unit"`` services by structure,
+    with no naming call: "<object> <verb>" on the most-reached domain, the verb from the members' majority interface
+    role, else a member's activity, else the component's stem. A name is unique within its component only: the same
+    name on two components is the same service, which the coarse enterprise services merge into one service realized
+    by each holder's function; they take the same rule and table. Ids stay unique from structure.
     """
     settings = json.loads(params).get("component_services") if params else None
     if settings is None:
@@ -433,6 +438,9 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
         raise ValueError("params.component_services.choose_instruction (the closed-set naming instruction) is needed for group_by 'unit'")
     if not all(isinstance(n, int) and not isinstance(n, bool) and n >= minimum for n, minimum in ((member_min_names, 1), (max_groups, 0))):
         raise ValueError("params.component_services: member_min_names is a whole number of at least 1, max_groups of at least 0")
+    verbs = settings.get("service_verbs", [])
+    if not isinstance(verbs, list) or not all(isinstance(v, list) and len(v) == 2 and all(isinstance(x, str) and x for x in v) for v in verbs):
+        raise ValueError("params.component_services.service_verbs is a list of [interface role, verb] pairs, in tie order")
     business_functions = settings.get("business_functions", defaults.business_functions)
     if not isinstance(business_functions, bool):
         raise ValueError(f"params.component_services.business_functions must be true or false, got {business_functions!r}")
@@ -453,6 +461,7 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
         interface_links=tuple(settings.get("interface_links", [])),
         object_links=tuple(settings.get("object_links", [])),
         business_functions=business_functions,
+        service_verbs=tuple((role, verb) for role, verb in verbs),
     )
 
 
