@@ -1386,16 +1386,21 @@ def _kind_nouns(params: str | None) -> dict[str, str]:
     return dict(nouns)
 
 
-def _exclude_by_usage(
+def _judge_by_usage(
     q: Callable[..., list[dict[str, Any]]],
     norm: Callable[[Any], str],
-    modules: list[build_modules.BuildModule],
+    repository: str,
+    found: list[build_modules.BuildModule],
+    candidates: list[build_modules.BuildModule],
+    unit_paths: list[str],
     files: list[dict[str, Any]],
     manifests: dict[str, str],
     rules: build_modules.ModuleRules,
-) -> None:
-    """Mark the modules no unit builds that are no component (``build_modules.usage_role``): the units that use a module
-    include one of its code files or have a member that imports one; its behaviour comes from the method nodes."""
+) -> list[build_modules.BuildModule]:
+    """Judge the modules no unit builds by who uses them (``build_modules.usage_role``) and mark the ones that are no
+    component; return the libraries without a manifest: a folder of code outside every unit and module that two or
+    more units use, with behaviour. A unit uses code it includes or that one of its members imports; behaviour comes
+    from the method nodes."""
     members: dict[str, set[str]] = defaultdict(set)
     for r in q("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) WHERE u.repository_name = $repo_name AND u.excluded IS NULL RETURN u.id AS u, f.filePath AS p"):
         members[norm(r["p"])].add(str(r["u"]))
@@ -1406,12 +1411,28 @@ def _exclude_by_usage(
         users_of[norm(r["b"])] |= members.get(norm(r["a"]), set())
     methods = [(norm(r["p"]), str(r["n"] or "")) for r in q("MATCH (m:Graph:Method) WHERE m.repository_name = $repo_name RETURN m.filePath AS p, m.methodName AS n")]
     code = {f["path"] for f in files if f.get("file_type") == "source" and f.get("subtype") in rules.code_subtypes}
-    for m in modules:
+    minimum = float(rules.min_behaviour or 0)
+    for m in candidates:
         own = [p for p in m.files if p in code]
         users = set().union(*(users_of.get(p, set()) for p in own)) if own else set()
         m.excluded = build_modules.usage_role(
-            len(users), build_modules.behaviour_per_file(own, methods), build_modules.declares_entry(m.manifest, manifests.get(m.manifest, "")), float(rules.min_behaviour or 0)
+            len(users), build_modules.behaviour_per_file(own, methods), build_modules.declares_entry(m.manifest, manifests.get(m.manifest, "")), minimum
         )
+    held = {p for m in found for p in m.files}
+    loose: dict[str, list[str]] = defaultdict(list)
+    for p in sorted(code - held):
+        if not any(p.startswith(u + "/") for u in unit_paths):
+            loose[p.rsplit("/", 1)[0]].append(p)
+    libraries = []
+    for folder, own in sorted(loose.items()):
+        users = set().union(*(users_of.get(p, set()) for p in own))
+        # Used by two or more units and carrying behaviour (a folder has no manifest, so no entry point)
+        if len(users) >= 2 and build_modules.usage_role(len(users), build_modules.behaviour_per_file(own, methods), False, minimum) is None:
+            in_folder = sorted(f["path"] for f in files if f["path"].rsplit("/", 1)[0] == folder)
+            libraries.append(
+                build_modules.BuildModule(path=folder, name=build_modules.display_name(PurePosixPath(folder).name, repository), manifest="", module=True, files=in_folder)
+            )
+    return libraries
 
 
 def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
@@ -1444,7 +1465,10 @@ def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: P
         return at[0] if m.excluded is None and m.module and not m.system and len(at) == 1 and not nested else None
 
     if rules.min_behaviour is not None:
-        _exclude_by_usage(q, norm, [m for m in found if m.module and not m.system and m.excluded is None and not same_as(m)], files, manifests, rules)
+        judged = [m for m in found if m.module and not m.system and m.excluded is None and not same_as(m)]
+        libraries = _judge_by_usage(q, norm, repo.name, found, judged, [path for _, path in units], files, manifests, rules)
+        found = sorted([*found, *libraries], key=lambda m: m.path)
+        ids.update({m.path: build_modules.module_id(repo.name, m.path) for m in libraries})
 
     # A component candidate named like a unit (its name or one of its name candidates) or an earlier candidate (as written, or without the repository's name, as
     # derivation sees it) takes the first free name of: its kind noun added, the words of its path, those with the noun.
