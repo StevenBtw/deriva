@@ -470,3 +470,31 @@ def test_the_override_file_compose_merges_by_default_is_part_of_the_primary_not_
 
     assert result.primary.file == "r/docker-compose.yml"
     assert [e.file for e in result.variants] == ["r/docker-compose_metrics.yml"] and result.variant_units == ["unit::r::probe"]
+
+
+def test_an_environment_that_runs_the_systems_own_units_is_primary_before_one_that_runs_only_vendor_images():
+    """With primary_runs_units, a compose file that only starts databases does not hide the Kubernetes Deployment of
+    the application; without it, compose ranks first as before."""
+    import dataclasses
+
+    files = {
+        "r/docker-compose.yml": "services:\n  mysql:\n    image: mysql:9\n  postgres:\n    image: postgres:18\n",
+        "r/k8s/shop.yml": "kind: Deployment\nmetadata:\n  name: shop\nspec:\n  template:\n    spec:\n      containers:\n        - image: acme/shop\n",
+    }
+
+    before = detect_deployments("r", files, UNITS, RULES).primary
+    after = detect_deployments("r", files, UNITS, dataclasses.replace(RULES, primary_runs_units=True)).primary
+
+    assert before.kind == "compose"
+    assert (after.kind, [(s.name, s.unit) for s in after.services]) == ("kubernetes", [("shop", "unit::r::shop")])
+
+
+def test_with_primary_runs_units_a_compose_file_that_runs_units_stays_primary():
+    import dataclasses
+
+    files = {
+        "r/docker-compose.yml": COMPOSE,
+        "r/k8s/shop.yaml": "kind: Deployment\nmetadata:\n  name: shop\nspec:\n  template:\n    spec:\n      containers:\n        - image: acme/shop\n",
+    }
+
+    assert detect_deployments("r", files, UNITS, dataclasses.replace(RULES, primary_runs_units=True)).primary.file == "r/docker-compose.yml"
