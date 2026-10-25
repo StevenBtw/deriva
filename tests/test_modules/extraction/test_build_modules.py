@@ -259,3 +259,25 @@ def test_a_package_the_repository_lists_only_as_a_development_dependency_is_tool
 
     assert {p: m.excluded for p, m in modules.items() if m.excluded} == {"r/packages/bench": "tooling", "r/ui-kit": "tooling", "r/fixtures": "tooling"}
     assert modules["r/packages/web"].module and modules["r/core"].module
+
+
+def test_an_aggregator_stays_a_system_when_one_of_its_members_is_tooling():
+    files = [
+        _f("r/pyproject.toml", "toml", "build"),
+        _f("r/app/main.py", "python"),
+        _f("r/packages/bench/pyproject.toml", "toml", "build"),
+        _f("r/packages/bench/run.py", "python"),
+        _f("r/packages/web/pyproject.toml", "toml", "build"),
+        _f("r/packages/web/serve.py", "python"),
+    ]
+    manifests = {
+        "r/pyproject.toml": '[project]\nname = "shop"\n[tool.uv.workspace]\nmembers = ["packages/*"]\n[dependency-groups]\ndev = ["shop-bench"]\n',
+        "r/packages/bench/pyproject.toml": '[project]\nname = "shop-bench"\n',
+        "r/packages/web/pyproject.toml": '[project]\nname = "shop-web"\n',
+    }
+
+    modules = _by_path(detect_modules("r", files, manifests, RULES))
+
+    # The tooling package still counts as a listed member; only the product package is the system's member
+    assert modules["r"].system and modules["r"].members == ["r/packages/web"]
+    assert modules["r/packages/bench"].excluded == "tooling"
