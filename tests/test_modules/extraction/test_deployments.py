@@ -415,3 +415,31 @@ def test_secret_values_are_not_kept_but_hosts_are():
         "CLIENT_SECRET": "${CLIENT_SECRET}",  # a reference, no value
         "MODE": "prod",
     }
+
+
+def test_a_unit_only_a_variant_of_the_primary_file_deploys_is_variant_only():
+    """A variant is another deployment file of the primary's kind in the primary file's folder. A unit that only
+    variants deploy is no part of the system; one in another folder or of another kind (k8s) stays."""
+    units = [*UNITS, {"id": "unit::r::probe", "path": "r/probe", "name": "probe"}, {"id": "unit::r::admin", "path": "r/admin", "name": "admin"}]
+    files = {
+        "r/docker-compose.yml": COMPOSE,
+        "r/docker-compose_metrics.yml": "services:\n  shop:\n    build: ./shop\n  probe:\n    build: ./probe\n",
+        "r/dev/docker-compose.yml": "services:\n  admin:\n    build: ../admin\n",
+        "r/k8s/probe.yaml": "kind: Deployment\nmetadata:\n  name: probe\nspec:\n  template:\n    spec:\n      containers:\n        - image: acme/probe\n",
+    }
+
+    result = detect_deployments("r", files, units, RULES)
+
+    assert result.primary.file == "r/docker-compose.yml"
+    assert [e.file for e in result.variants] == ["r/docker-compose_metrics.yml"]
+    assert result.variant_units == ["unit::r::probe"]
+
+
+def test_no_unit_is_variant_only_when_the_primary_file_deploys_no_unit():
+    """A primary file that deploys no unit of its own (an empty or partial base file) says nothing about its variants."""
+    units = [{"id": "unit::r::probe", "path": "r/probe", "name": "probe"}]
+    files = {"r/docker-compose.yml": "services:\n  db:\n    image: postgres:15\n", "r/docker-compose_metrics.yml": "services:\n  probe:\n    build: ./probe\n"}
+
+    result = detect_deployments("r", files, units, RULES)
+
+    assert [e.file for e in result.variants] == ["r/docker-compose_metrics.yml"] and result.variant_units == []

@@ -3156,7 +3156,7 @@ class TestDeploymentStep:
         assert [r["s"] for r in hosted] == ["Amazon RDS for PostgreSQL"]
         # The other environments' services stay on the environment, for Cooperation (names, ports, variables)
         (other,) = graph.query("MATCH (e:Graph:Environment) RETURN e.otherServices AS s")[0]["s"]
-        assert json.loads(other) == {"name": "shop", "unit": "unit::r::shop", "environment": {}, "ports": []}
+        assert json.loads(other) == {"name": "shop", "unit": "unit::r::shop", "environment": {}, "ports": [], "file": "r/docker-compose.yml"}
 
     def test_a_run_with_another_environment_sweeps_the_old_one(self, graph, tmp_path):
         self._repo(graph, tmp_path, {"docker-compose.yml": "services:\n  shop:\n    build: ./shop\n", "shop/a.cbl": "EXEC CICS RETURN"})
