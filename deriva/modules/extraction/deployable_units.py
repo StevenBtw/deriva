@@ -469,21 +469,38 @@ def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
             if any(_below(c, folder) for c in code):
                 unit = folder_units.setdefault(folder, Unit(path=folder, name=PurePosixPath(folder).name, kind="container"))
                 unit.evidence.append(f"container: {f['path']}")
+    manifest_folders = sorted({_parent(p) for p in facts.manifests})
     for path, text in sorted(facts.manifests.items()):
         folder = _parent(path)
         entries, title, description = _manifest_entries(path, text)
+        # A package is one unit: its project scripts are its entry points. A script that runs another package's
+        # module adds nothing here; the entry is the script named like the package, else the first by name
+        scripts: list[tuple[str, str, set[str]]] = []
         for kind, entry, target, evidence in entries:
             if kind == "script":
                 module = _script_module(folder, target, paths)
-                members = _closure(module, imports) if module else {p for p in paths if _below(p, folder)}
-                script_units.append(
-                    Unit(path=folder, name=entry, kind="script", evidence=[evidence], entry=entry, members=members, manifest_name=title, manifest_description=description)
-                )
+                if module is None and any(_script_module(other, target, paths) for other in manifest_folders if other != folder):
+                    continue
+                scripts.append((entry, evidence, _closure(module, imports) if module else {p for p in paths if _below(p, folder)}))
                 continue
             if not any(_below(c, folder) for c in code):
                 continue
             unit = folder_units.setdefault(folder, Unit(path=folder, name=PurePosixPath(folder).name, kind=kind))
             unit.evidence.append(evidence)
+        if scripts:
+            entry = next((e for e, _, _ in scripts if title and e == title), scripts[0][0])
+            script_units.append(
+                Unit(
+                    path=folder,
+                    name=entry,
+                    kind="script",
+                    evidence=[evidence for _, evidence, _ in scripts],
+                    entry=entry,
+                    members=set().union(*(members for _, _, members in scripts)),
+                    manifest_name=title,
+                    manifest_description=description,
+                )
+            )
         if folder in folder_units:
             folder_units[folder].manifest_name = folder_units[folder].manifest_name or title
             folder_units[folder].manifest_description = folder_units[folder].manifest_description or description
