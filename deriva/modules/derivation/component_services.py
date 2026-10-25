@@ -565,6 +565,7 @@ def derive_unit_services(
     lifecycle_sites: dict[str, set[str]] | None = None,
     consumes: set[tuple[str, str]] | None = None,
     lifecycle_state_sites: dict[str, dict[str, set[str]]] | None = None,
+    domain_entities: dict[str, list[str]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Application services per component and business functions across components (``group_by`` "unit").
 
@@ -601,12 +602,21 @@ def derive_unit_services(
             component consumes (``consumed_objects``), the data it reads through their APIs
         lifecycle_state_sites: Lifecycle id -> state -> the files that set it; a service lists the states its
             members' reach sets (``states``: "<lifecycle id>::<state>")
+        domain_entities: Domain id -> its entity ids, when the data objects are made from entities: members still
+            reach (and group by) domains, a service accesses the entities of a reached domain its members reach,
+            else all of them (``objects_from_domain``). None: the data objects are made from domains
     """
     llm_kwargs = llm_kwargs or {}
     components = {_source(e): e for e in elements if e.get("element_type") == config.component_type}
     interfaces = sorted((e for e in elements if e.get("element_type") == config.interface_type and (e.get("properties") or {}).get("members")), key=lambda e: e["identifier"])
     data_objects = [e for e in elements if e.get("element_type") == "DataObject"]
-    object_of = {_source(e): e["identifier"] for e in data_objects}
+    made_from = {_source(e): e for e in data_objects}
+    # Domain -> the sources of its data objects: the domain itself, or its entities
+    if domain_entities is None:
+        entities_of = {d: [d] for d in sorted(made_from)}
+    else:
+        entities_of = {d: [x for x in [d, *sorted(domain_entities[d])] if x in made_from] for d in sorted(domain_entities)}
+    object_of = {d: sorted(made_from[x]["identifier"] for x in sources) for d, sources in entities_of.items()}
     files_of = {d: set(scopes.entity_files.get(d, ())) for d in object_of}
     nodes_of = {d: set(scopes.entity_nodes.get(d, ())) for d in object_of}
     imported: dict[str, set[str]] = defaultdict(set)
@@ -641,6 +651,28 @@ def derive_unit_services(
             hits[domain] = len(files & files_of[domain]) + len((nodes | targets) & nodes_of[domain]) + len(used & names_of[domain])
         return Counter({d: n for d, n in hits.items() if n})
 
+    def reaches_entity(member: str, entity: str) -> bool:
+        nodes = {member} | linked.get(member, set())
+        files = member_files(member)
+        targets = {t for n in nodes for t in record_links.get(n, ())}
+        used = {key for f in files for key in (type_names or {}).get(f, ())}
+        in_scope = files & scopes.entity_files.get(entity, frozenset()) or (nodes | targets) & scopes.entity_nodes.get(entity, frozenset())
+        return bool(in_scope or name_key(made_from[entity]["name"]) in used)
+
+    def accessed(group: list[str], group_domains: list[str]) -> tuple[list[str], list[str]]:
+        """The data objects a group accesses, per reached domain: the entities its members reach, else all of the
+        domain's (those domains are returned as well)."""
+        found: set[str] = set()
+        fallback: list[str] = []
+        for d in group_domains:
+            sources = entities_of.get(d, [])
+            entities = [x for x in sources if x != d]
+            own = [x for x in entities if any(reaches_entity(m, x) for m in group)]
+            if entities and not own:
+                fallback.append(d)
+            found |= {made_from[x]["identifier"] for x in (own or sources)}
+        return sorted(found), fallback
+
     # Members per component (through the interfaces made from the component's unit)
     per_unit: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     for interface in interfaces:
@@ -649,7 +681,8 @@ def derive_unit_services(
             node = str(member.get("source") or "")
             entry = per_unit[unit].setdefault(node, {"name": member.get("name") or node, "interfaces": set(), "roles": set()})
             entry["interfaces"].add(interface["identifier"])
-            entry["roles"].add(role)
+            # A member's own role (one interface per unit merges several); else its interface's
+            entry["roles"].add(str(member.get("role") or role))
     # Endpoint types the structure marks join the members, through the unit's interfaces other than its Web UI
     for unit, found in sorted((endpoints or {}).items()):
         own = [i for i in interfaces if _source(i) == unit and str(i["properties"].get("role") or "") != "web"]
@@ -706,6 +739,7 @@ def derive_unit_services(
         for key, group in sorted(merged.items()):
             group = sorted(set(group))
             group_domains = sorted({d for m in group for d in reach[m]})
+            group_objects, from_domain = accessed(group, group_domains)
             group_interfaces = sorted({i for m in group for i in members[m]["interfaces"]})
             candidates: list[str] = []
             if key.startswith("family:"):
@@ -748,7 +782,7 @@ def derive_unit_services(
                 "component": components[unit]["name"],
                 "interfaces": [e["name"] for e in interfaces if e["identifier"] in group_interfaces],
                 "members": [members[m]["name"] for m in group][:20],
-                "data": [e["name"] for e in data_objects if _source(e) in group_domains],
+                "data": [e["name"] for e in data_objects if e["identifier"] in group_objects],
             }
             name = _choose(candidates, source, ELEMENT_TYPE, instruction, llm_query_fn, llm_kwargs)
             identity = f"{unit}::{key if len(merged) > 1 else 'all'}"
@@ -762,7 +796,8 @@ def derive_unit_services(
                         "source": identity,
                         "sources": [unit],
                         "interfaces": group_interfaces,
-                        "objects": sorted(object_of[d] for d in group_domains),
+                        "objects": group_objects,
+                        "objects_from_domain": from_domain,
                         "members": sorted(({"name": members[m]["name"], "source": m} for m in group), key=lambda x: (x["name"], x["source"])),
                         "name_candidates": candidates,
                         "processes": sorted(life for life, sites in (lifecycle_sites or {}).items() if sites & {f for m in group for f in member_files(m)}),
@@ -801,13 +836,13 @@ def derive_unit_services(
     functions: list[dict[str, Any]] = []
     nouns = "|".join(re.escape(n) for n in config.function_nouns)
     for domain, object_name in sorted(business_objects.items()) if config.business_functions else ():
-        if domain not in object_of:
+        if not object_of.get(domain):
             continue
-        users = sorted({s["properties"]["sources"][0] for s in services if object_of[domain] in s["properties"]["objects"]})
+        users = sorted({s["properties"]["sources"][0] for s in services if set(object_of[domain]) & set(s["properties"]["objects"])})
         connected = sorted({u for u in users for v in users if u != v and frozenset((u, v)) in undirected})
         if len(connected) < 2:
             continue
-        served_by = sorted(s["identifier"] for s in services if s["properties"]["sources"][0] in connected and object_of[domain] in s["properties"]["objects"])
+        served_by = sorted(s["identifier"] for s in services if s["properties"]["sources"][0] in connected and set(object_of[domain]) & set(s["properties"]["objects"]))
         candidates = [t.format(object=object_name) for t in config.function_templates]
         if nouns:
             for text in documents.values():

@@ -442,3 +442,87 @@ def test_a_service_lists_the_lifecycle_states_its_members_set():
     )  # fmt: skip
 
     assert services[0]["properties"]["states"] == ["lifecycle::app::SUBMITTED"]  # DISBURSED is set elsewhere
+
+
+def test_a_merged_interface_reads_each_members_own_role_so_a_front_end_with_an_endpoint_offers_a_service():
+    """One interface per unit: named Web UI after its pages, its one REST endpoint keeps role rest, so the unit
+    is no pure front end."""
+    web = _interface("web", "web", ["index.html", "app.js", "LoginResource"])
+    for member in web["properties"]["members"]:
+        member["role"] = "rest" if member["name"] == "LoginResource" else "web"
+    elements = [_component("web", "Shop Frontend"), web, _component("api", "Shop API"), _interface("api", "rest", ["OrderResource"])]
+
+    services, _, _ = _run(elements, {"OrderResource": [], "LoginResource": []}, lines={("unit::web", "unit::api")}, deciding=set())
+
+    assert sorted(s["properties"]["sources"][0] for s in services) == ["unit::api", "unit::web"]
+
+
+def _entity(key: str, name: str) -> dict[str, Any]:
+    return {"identifier": f"do_{key}", "name": name, "element_type": "DataObject", "properties": {"source": f"entity::{key}"}}
+
+
+def _run_entities(elements, member_files, entity_files, domain_entities, *, prompts=None):
+    """Data objects made from entities: member -> its file; entity or domain id -> the files that hold it."""
+    scopes = UnitScopes(files={}, nodes={}, entity_files={k: frozenset(v) for k, v in entity_files.items()}, entity_nodes={})
+
+    def query(prompt, schema, **kwargs):
+        (prompts if prompts is not None else []).append(prompt)
+        return {"content": json.dumps({"name": schema["schema"]["properties"]["name"]["enum"][0]})}
+
+    services, _ = derive_unit_services(
+        elements, {f"n::{m}": f for m, f in member_files.items()}, [], CONFIG, "Choose.", query,
+        scopes=scopes, deciding=set(domain_entities), business_objects={}, bases={}, lines=set(), documents={},
+        domain_entities=domain_entities,
+    )  # fmt: skip
+    return {s["properties"]["sources"][0]: s for s in services}
+
+
+def test_a_service_accesses_the_entities_its_members_reach_else_every_entity_of_the_domain_it_reaches():
+    elements = [
+        _component("loan", "Loan Service"),
+        _interface("loan", "rest", ["ApplicationRoutes", "ProductRoutes"]),
+        _component("disb", "Disbursement Service"),
+        _interface("disb", "rest", ["AgreementRoutes", "LedgerRoutes"]),
+        _component("stats", "Statistics Service"),
+        _interface("stats", "rest", ["SummaryRoutes", "TotalsRoutes"]),
+        _entity("application", "Loan Application"),
+        _entity("product", "Loan Product"),
+        _entity("agreement", "Loan Agreement"),
+    ]
+    member_files = {m: f"{m}.py" for m in ("ApplicationRoutes", "ProductRoutes", "AgreementRoutes", "LedgerRoutes", "SummaryRoutes", "TotalsRoutes")}
+    entity_files = {
+        "entity::application": {"ApplicationRoutes.py"},
+        "entity::product": {"ProductRoutes.py"},
+        "entity::agreement": {"AgreementRoutes.py"},
+        # The domain is used where its entities are and where the types it holds itself are
+        "domain::loan": set(member_files.values()),
+    }
+
+    by_unit = _run_entities(elements, member_files, entity_files, {"domain::loan": ["entity::application", "entity::product", "entity::agreement"]})
+
+    assert by_unit["unit::loan"]["properties"]["objects"] == ["do_application", "do_product"]
+    assert by_unit["unit::disb"]["properties"]["objects"] == ["do_agreement"]  # LedgerRoutes reaches only the domain
+    # No member reaches an entity of its own: every entity of the domain, and the fallback is recorded
+    assert by_unit["unit::stats"]["properties"]["objects"] == ["do_agreement", "do_application", "do_product"]
+    assert by_unit["unit::stats"]["properties"]["objects_from_domain"] == ["domain::loan"]
+    assert by_unit["unit::loan"]["properties"]["objects_from_domain"] == []
+
+
+def test_a_domain_without_a_data_object_still_groups_the_members_but_gives_no_object():
+    elements = [
+        _component("audit", "Audit Service"),
+        _interface("audit", "rest", ["LogRoutes", "LogReader", "OrderRoutes", "OrderReader"]),
+        _entity("order", "Order"),
+    ]
+    member_files = {m: f"{m}.py" for m in ("LogRoutes", "LogReader", "OrderRoutes", "OrderReader")}
+    entity_files = {"domain::log": {"LogRoutes.py", "LogReader.py"}, "entity::order": {"OrderRoutes.py", "OrderReader.py"}, "domain::order": {"OrderRoutes.py", "OrderReader.py"}}
+
+    services = derive_unit_services(
+        elements, {f"n::{m}": f for m, f in member_files.items()}, [], CONFIG, "Choose.",
+        lambda p, s, **k: {"content": json.dumps({"name": s["schema"]["properties"]["name"]["enum"][0]})},
+        scopes=UnitScopes(files={}, nodes={}, entity_files={k: frozenset(v) for k, v in entity_files.items()}, entity_nodes={}),
+        deciding={"domain::log", "domain::order"}, business_objects={}, bases={}, lines=set(), documents={},
+        domain_entities={"domain::log": [], "domain::order": ["entity::order"]},
+    )[0]  # fmt: skip
+
+    assert sorted(s["properties"]["objects"] for s in services) == [[], ["do_order"]]

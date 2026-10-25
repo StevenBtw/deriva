@@ -299,9 +299,28 @@ class TestSpecRelationshipTable:
         valid = sum(1 for s in types for t in types for r in derivable if models.relationship_tier(s, r, t))
         non_association = [r for r in models.RELATIONSHIP_TYPES if r != "Association"]
         direct = sum(1 for s in types for t in types for r in non_association if models.relationship_tier(s, r, t) == "direct")
-        # 13 derived element types plus Artifact (the export's detail level, from Archi's relationships.xml)
-        assert valid == 500
-        assert direct == 113
+        # The derived element types (ApplicationFunction since 0.8.8) plus Artifact (the export's detail level, from Archi's relationships.xml)
+        assert valid == 583
+        assert direct == 129
+
+    def test_application_function_cells_hold_archis_letters_with_the_generic_metamodels_direct_tier(self):
+        """The ApplicationFunction row and column (0.8.8) hold the letters of Archi's relationships.xml v3.2; the cells
+        the generic metamodel shows are direct: a component is assigned to it, it realizes a service and business
+        behaviour and accesses data."""
+        from deriva.adapters.archimate import models
+
+        assert models.relationship_tier("ApplicationComponent", "Assignment", "ApplicationFunction") == "direct"
+        assert models.relationship_tier("ApplicationFunction", "Realization", "ApplicationService") == "direct"
+        assert models.relationship_tier("ApplicationFunction", "Access", "DataObject") == "direct"
+        assert models.relationship_tier("ApplicationService", "Serving", "ApplicationFunction") == "direct"
+        # Application behaviour realizes business behaviour (the automation case of business/application alignment)
+        assert models.relationship_tier("ApplicationFunction", "Realization", "BusinessProcess") == "direct"
+        assert models.relationship_tier("ApplicationFunction", "Realization", "BusinessFunction") == "direct"
+        assert models.relationship_tier("ApplicationFunction", "Serving", "BusinessProcess") == "derived"
+        assert models.relationship_tier("ApplicationFunction", "Assignment", "ApplicationComponent") is None
+        # Archi's letters for the row (i: none) and column, as transcribed
+        assert models.RELATIONSHIP_TABLE[("ApplicationFunction", "ApplicationFunction")].lower() == "scgvtfo"
+        assert models.RELATIONSHIP_TABLE[("ApplicationComponent", "ApplicationFunction")].lower() == "irvtfo"
 
     def test_valid_relationships_from_excludes_non_derivable_types(self, metamodel):
         rel_types = {r["relationship_type"] for r in metamodel.get_valid_relationships_from("BusinessActor")}

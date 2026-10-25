@@ -56,3 +56,15 @@ def test_the_consolidated_pass_adds_them():
     relationships = derive_consolidated_relationships(all_elements=ELEMENTS, relationship_rules={}, llm_query_fn=None, listed_members=RULES)
 
     assert ("ac_billing", "Realization", "as_billing") in _triples(relationships)
+
+
+def test_a_single_valued_list_property_lists_one_member():
+    """A holder may list its own source (a function lists the component made from the same node)."""
+    rule = ListedMembersRule(holder="ApplicationFunction", list_property="source", member="ApplicationComponent", relationship="Assignment", by="source", from_holder=False)
+    elements = [
+        _el("af_auth", "ApplicationFunction", "unit::r::auth"),
+        _el("ac_auth", "ApplicationComponent", "unit::r::auth"),
+        _el("ac_shop", "ApplicationComponent", "unit::r::shop"),
+    ]
+
+    assert _triples(derive_listed_member_relationships(elements, [rule])) == {("ac_auth", "Assignment", "af_auth")}

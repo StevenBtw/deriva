@@ -334,6 +334,14 @@ class TestRoleNameTemplate:
 
         assert elements[admin.node_id]["name"] == "Shop Admin Panel HTTP API"
 
+    def test_a_container_made_from_the_candidate_itself_names_it(self):
+        """A candidate that is a unit or module: the component made from that very node is its container."""
+        unit = Candidate(node_id="unit::r::auth", name="auth", labels=["Graph", "File"], properties={"path": "auth"})  # the classified label
+
+        elements, _ = self._generate([unit], {unit.node_id: "http"}, [("unit::r::auth", "auth", "Auth Service"), ("dir::r::shop", "shop", "Shop")])
+
+        assert elements[unit.node_id]["name"].startswith("Auth Service")
+
     def test_without_a_container_the_top_level_module_names_it(self):
         tool = self._file("Cli.java", "gadget-tools/src/Cli.java")
 

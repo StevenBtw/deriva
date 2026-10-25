@@ -45,6 +45,8 @@ def test_a_missing_model_file_is_an_error():
 
 class _Graph:
     def query(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        if "DataEntity" in cypher:
+            return [{"d": "domain::r::bid", "e": "entity::r::bid"}]
         if "DataDomain" in cypher:
             return [{"id": "domain::r::bid", "bo": "Bid"}, {"id": "domain::r::cache", "bo": None}]
         if "DeployableUnit" in cypher:
@@ -91,10 +93,28 @@ def test_only_services_that_touch_a_business_domain_are_classified_and_their_fun
     assert stored["Take bids"].properties["services"] == ["as_engine"] and stored["Take bids"].properties["processes"] == ["lifecycle::r::bid"]
 
 
+def test_a_data_object_made_from_an_entity_touches_its_business_domain():
+    elements = [
+        {"identifier": "do_bid", "name": "Bid", "element_type": "DataObject", "properties": {"source": "entity::r::bid"}},
+        {"identifier": "as_engine", "name": "Bid Processing", "element_type": "ApplicationService", "properties": {"sources": ["unit::r::engine"], "objects": ["do_bid"]}},
+    ]
+
+    def query(prompt: str, schema: dict[str, Any], **kwargs: Any) -> Any:
+        keys = list(schema["schema"]["properties"]["choices"]["properties"])
+        return SimpleNamespace(content=json.dumps({"choices": dict.fromkeys(keys, "F100" if "level 1" in prompt else "F110")}))
+
+    config = derivation.FunctionModelConfig(name="fixture", path=str(FIXTURE))
+    result = derivation._function_model_step(config, "Classify.", _Graph(), _Store(), query, elements)  # type: ignore[arg-type]
+
+    assert result["function_decisions"] == {"as_engine": ("F100", "F110")}
+
+
 class _RichGraph:
     """The queries of the richer evidence: units with documentation lines, types, methods with decorators."""
 
     def query(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        if "DataEntity" in cypher:
+            return [{"d": "domain::r::bid", "e": "entity::r::bid"}]
         if "DataDomain" in cypher:
             return [{"id": "domain::r::bid", "bo": "Bid"}]
         if "DeployableUnit" in cypher:

@@ -927,6 +927,30 @@ class ElementDerivationBase(ABC):
                 if all(c.node_id != node_id for c in groups[(unit, key)]):
                     groups[(unit, key)].append(Candidate(node_id=node_id, name=path.rsplit("/", 1)[-1], labels=["Graph", "File"], properties={"filePath": path}))
 
+            # roles.one_per_unit: a unit's roles merge into one group under its primary role (the most members; a tie
+            # goes to the role first in roles.names, a fixed convention)
+            roles_of_unit: dict[str, list[str]] = {}
+            # The role each member was classified into (a merged interface keeps it per member)
+            role_of_member: dict[tuple[str, str], str] = {}
+            for (unit, key), group in groups.items():
+                for c in group:
+                    role_of_member.setdefault((unit, c.node_id), key)
+            if roles.one_per_unit:
+                order = list(roles.names)
+                per_unit: dict[str, dict[str, list[Candidate]]] = defaultdict(dict)
+                for (unit, key), group in groups.items():
+                    if group:
+                        per_unit[unit][key] = group
+                groups = defaultdict(list)
+                for unit, by_role in per_unit.items():
+                    primary = min(by_role, key=lambda k: (-len(by_role[k]), order.index(k)))
+                    merged: dict[str, Candidate] = {}
+                    for key in sorted(by_role, key=order.index):
+                        for c in by_role[key]:
+                            merged.setdefault(c.node_id, c)
+                    groups[(unit, primary)] = list(merged.values())
+                    roles_of_unit[unit] = sorted(by_role, key=order.index)
+
             def unit_name(container: str, key: str) -> str:
                 # The channel words merge into the container's words where they overlap; the name never equals the container's
                 if roles.name_template.strip() == "{container} {role}":
@@ -1010,8 +1034,10 @@ class ElementDerivationBase(ABC):
                 # Grounded in the unit; the endpoints, screens or jobs it bundles are a property, not elements
                 properties["source"] = unit_of_element[identifier]
                 properties["sources"] = [c.node_id for c in group]
-                properties["members"] = [{"name": c.name, "source": c.node_id} for c in group]
+                properties["members"] = [{"name": c.name, "source": c.node_id, "role": role_of_member.get((unit_of_element[identifier], c.node_id), key)} for c in group]
                 properties["structure_name"] = structure_of_element[identifier]
+                if roles.one_per_unit:
+                    properties["roles"] = roles_of_unit.get(unit_of_element[identifier], [key])
             element_data: dict[str, Any] = {
                 "identifier": identifier,
                 "name": name,
@@ -1114,6 +1140,10 @@ class ElementDerivationBase(ABC):
         directories = [(_relative_path(row["path"], repo_name), sources[row["id"]]) for row in rows if row.get("path") and row.get("id") in sources]
         containers: dict[str, str] = {}
         for c in candidates:
+            # A candidate that is itself a component's source (a unit or module): that component holds it
+            if c.node_id in sources:
+                containers[c.node_id] = sources[c.node_id]
+                continue
             path = _relative_path(c.properties.get("filePath") or c.properties.get("path") or "", repo_name)
             holders = [(len(directory), name) for directory, name in directories if path == directory or path.startswith(directory + "/")]
             if holders:

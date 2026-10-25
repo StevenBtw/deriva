@@ -42,6 +42,7 @@ BUSINESS_LAYER = {
 APPLICATION_LAYER = {
     "ApplicationComponent",
     "ApplicationService",
+    "ApplicationFunction",
     "ApplicationInterface",
     "DataObject",
 }

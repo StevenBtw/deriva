@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 from deriva.adapters.graph import GraphManager
 from deriva.modules.derivation import prep
 from deriva.modules.derivation.application_component import ApplicationComponentDerivation
+from deriva.modules.derivation.application_function import ApplicationFunctionDerivation
 from deriva.modules.derivation.application_interface import ApplicationInterfaceDerivation
 from deriva.modules.derivation.application_service import ApplicationServiceDerivation
 from deriva.modules.derivation.base import (
@@ -151,6 +152,7 @@ DERIVATION_REGISTRY: dict[str, type[ElementDerivationBase]] = {
     "BusinessFunction": BusinessFunctionDerivation,
     "ApplicationComponent": ApplicationComponentDerivation,
     "ApplicationService": ApplicationServiceDerivation,
+    "ApplicationFunction": ApplicationFunctionDerivation,
     "ApplicationInterface": ApplicationInterfaceDerivation,
     "DataObject": DataObjectDerivation,
     "TechnologyService": TechnologyServiceDerivation,
@@ -531,6 +533,11 @@ def _component_services_step(
                     endpoints[unit].append((node, type_name))
                     nodes.add(node)
         lifecycle_rows = graph_manager.query("MATCH (l:Graph:Lifecycle) WHERE l.active = true RETURN l.id AS id, l.sites AS sites, l.stateSites AS stateSites")
+        # A data object made from an entity is accessed through its domain
+        domain_entities: dict[str, list[str]] = {str(r["id"]): [] for r in domains}
+        for row in graph_manager.query("MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(e:Graph:DataEntity) WHERE d.active = true RETURN d.id AS d, e.id AS e"):
+            if str(row["d"]) in domain_entities:
+                domain_entities[str(row["d"])].append(str(row["e"]))
         services, functions = derive_unit_services(
             elements,
             element_source_paths(graph_manager, [{"properties": {"source": n}} for n in sorted(nodes)]),
@@ -553,6 +560,7 @@ def _component_services_step(
             consumes=consumes,
             lifecycle_sites={str(r["id"]): {norm(p) for p in r.get("sites") or []} for r in lifecycle_rows},
             lifecycle_state_sites={str(r["id"]): _state_sites(r.get("stateSites") or [], norm) for r in lifecycle_rows},
+            domain_entities=domain_entities,
         )
         return _stored_services(services + functions, archimate_manager)
     if config.group_by == "members":
@@ -738,6 +746,9 @@ def _function_model_step(
     rules = config.evidence
     model = parse_function_model(_function_model_file(config.path).read_text(encoding="utf-8"), config.name, config.exclude, max_level=config.levels)
     business = {str(r["id"]) for r in graph_manager.query("MATCH (d:Graph:DataDomain) WHERE d.active = true RETURN d.id AS id, d.businessObject AS bo") if r.get("bo")}
+    # A data object made from an entity of a business domain touches that domain
+    members = graph_manager.query("MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(e:Graph:DataEntity) WHERE d.active = true RETURN d.id AS d, e.id AS e")
+    business |= {str(r["e"]) for r in members if str(r["d"]) in business}
     data_objects = {e["identifier"]: e for e in elements if e.get("element_type") == "DataObject"}
     roles = {e["identifier"]: str((e.get("properties") or {}).get("role") or "") for e in elements if e.get("element_type") == "ApplicationInterface"}
     unit_rows = graph_manager.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.name AS name, u.path AS path")
@@ -964,7 +975,11 @@ def _role_config(params: str | None) -> RoleConfig | None:
     name_priority = settings.get("name_priority", [])
     if not isinstance(name_priority, list) or not all(isinstance(label, str) and label for label in name_priority):
         raise ValueError(f"params.roles.name_priority is a list of graph labels, got {name_priority!r}")
+    one_per_unit = settings.get("one_per_unit", False)
+    if not isinstance(one_per_unit, bool) or (one_per_unit and element_per != "unit"):
+        raise ValueError(f"params.roles.one_per_unit (true or false) merges a unit's roles into one element: it needs element_per 'unit', got {one_per_unit!r}")
     return RoleConfig(
+        one_per_unit=one_per_unit,
         name_priority=tuple(name_priority),
         unit_roles=tuple((rule["property"], rule["role"]) for rule in unit_roles),
         structural=tuple((rule["property"], rule["pattern"], rule["role"]) for rule in structural),

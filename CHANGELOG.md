@@ -10,6 +10,10 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ## v0.8.8 - (Unreleased)
 
+### Metamodel
+
+- **Application function**: the ArchiMate metamodel Deriva derives against gains ApplicationFunction (application layer, behaviour). Its relationships follow ArchiMate 3.2 as Archi's relationship table states them; a component is assigned to it, it realizes application services, business processes and business functions, and accesses data objects. The views, the convention checks and the B1 baseline's output types include it
+
 ### Configuration
 
 - **The shipped configuration matches the measured pipeline**: the default step configurations a new install starts from are brought up to date with the active ones, including the build module extraction step, the abstraction refine steps and the current node, relationship, consistency and deployment settings, which the shipped files had not carried since 0.8.2
@@ -18,6 +22,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 - **Development tooling is no component**: a package of the repository that its manifests list only as a development dependency (a pyproject dependency group or dev dependencies, npm `devDependencies`, Maven's test scope), never as a runtime one, is tooling: its build module and its deployable units are marked `excluded = tooling` and give no application component, interface or service. An aggregator still counts an excluded module toward being a parent system, so leaving one out keeps the hierarchy above it
 - **A build module is a component by who uses it**: a module that no unit builds is a shared library when two or more units use its code, and a component only when it carries behaviour (more than one method per code file besides accessors; a library of data structures does not); a module one unit uses is part of that unit; a module no unit uses is a component only when its manifest declares an entry point (BuildModule params `min_behaviour`)
+- **One interface per unit**: a unit offers one application interface instead of one per channel, named after the channel most of its endpoints, pages and screens use (a tie goes to the channel listed first); its other channels are listed on the interface, and each member keeps its own channel, so a front end with one API endpoint still offers its service (ApplicationInterface params `roles.one_per_unit`)
 - **A web UI belongs to the unit that ships it**: a page inside a nested module (a folder with its own manifest) is no web entry of the unit whose folder encloses it; a front-end module whose bundler output directory (vite `build.outDir`, webpack `output.path`, angular `outputPath`, read as written) lies inside a unit's folder gives that unit its web UI
 - **Serverless functions are units**: a folder whose file defines a function with the serverless handler parameters `(event, context)` is a deployable unit of kind `function`, unless another unit's folder holds it; a unit inside a module that is infrastructure as code, test-only or tooling gives no component
 - **Static frontends are units**: a folder with an `index.html` that no unit's folder holds is a deployable unit of kind `static` (the outermost such folder); a page inside a template folder is a server page, and a static unit inside a module that is itself a component gives no component of its own
@@ -30,6 +35,8 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ### Derivation
 
+- **One data object per entity**: every persistent data entity (an aggregate root, an ORM entity, a shared record or a table) gets one data object, named after the entity, from structure and without an LLM call; it realizes the business object of the entity's data domain. It replaces the data object per data domain and its naming call. An application service accesses the entities its members reach, else every entity of a data domain they reach; the service's naming call now sees the entity names, not names an earlier LLM call wrote
+- **One application function per unit**: every application component that is a deployable unit, a library or a feature package gets one application function, its main behaviour, from structure and without an LLM call; the component is assigned to it and it realizes the component's services. Systems and units split into feature packages are enterprise applications and get none. The function is named after its component ("... Behaviour") until service and function names get a shared naming rule
 - **No business function per data domain**: the application service step no longer adds a business function for each business domain that cooperating components access (its `business_functions` param is off); such a grouping is no business behaviour with a human actor
 - **Business processes need a human actor**: the business process and business event steps, which made a process from an entity's status lifecycle and an event from each state, are off. A lifecycle is a state machine without an actor; business processes will come from structure that names one
 
