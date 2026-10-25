@@ -443,3 +443,30 @@ def test_no_unit_is_variant_only_when_the_primary_file_deploys_no_unit():
     result = detect_deployments("r", files, units, RULES)
 
     assert [e.file for e in result.variants] == ["r/docker-compose_metrics.yml"] and result.variant_units == []
+
+
+def test_the_compose_file_with_the_tools_default_name_is_primary_over_a_variant_that_sorts_first():
+    """Compose looks up compose.yaml, compose.yml, docker-compose.yaml, docker-compose.yml, in that order; a
+    variant (docker-compose.dev.yml) sorts before docker-compose.yml but never becomes the primary file."""
+    units = [*UNITS, {"id": "unit::r::probe", "path": "r/probe", "name": "probe"}]
+    files = {"r/docker-compose.yml": COMPOSE, "r/docker-compose.dev.yml": "services:\n  shop:\n    build: ./shop\n  probe:\n    build: ./probe\n"}
+
+    result = detect_deployments("r", files, units, RULES)
+
+    assert result.primary.file == "r/docker-compose.yml" and result.variant_units == ["unit::r::probe"]
+    both = detect_deployments("r", {**files, "r/compose.yaml": COMPOSE}, units, RULES)
+    assert both.primary.file == "r/compose.yaml"
+
+
+def test_the_override_file_compose_merges_by_default_is_part_of_the_primary_not_a_variant():
+    units = [*UNITS, {"id": "unit::r::worker", "path": "r/worker", "name": "worker"}, {"id": "unit::r::probe", "path": "r/probe", "name": "probe"}]
+    files = {
+        "r/docker-compose.yml": COMPOSE,
+        "r/docker-compose.override.yml": "services:\n  worker:\n    build: ./worker\n",
+        "r/docker-compose_metrics.yml": "services:\n  probe:\n    build: ./probe\n",
+    }
+
+    result = detect_deployments("r", files, units, RULES)
+
+    assert result.primary.file == "r/docker-compose.yml"
+    assert [e.file for e in result.variants] == ["r/docker-compose_metrics.yml"] and result.variant_units == ["unit::r::probe"]
