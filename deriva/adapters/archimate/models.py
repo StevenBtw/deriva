@@ -103,6 +103,18 @@ ELEMENT_TYPES: dict[str, ElementType] = {
         aspect="Structure",
         description="An organizational entity that is capable of performing behavior",
     ),
+    "BusinessRole": ElementType(
+        name="BusinessRole",
+        layer="Business",
+        aspect="Structure",
+        description="The responsibility for performing specific behavior, to which an actor can be assigned",
+    ),
+    "BusinessService": ElementType(
+        name="BusinessService",
+        layer="Business",
+        aspect="Behavior",
+        description="An explicitly defined behavior that a business role, business actor, or business collaboration exposes to its environment",
+    ),
     # Technology Layer
     "Node": ElementType(
         name="Node",
@@ -122,13 +134,19 @@ ELEMENT_TYPES: dict[str, ElementType] = {
         aspect="Structure",
         description="Software that provides or contributes to an environment for storing, executing, and using software or data",
     ),
+    "TechnologyFunction": ElementType(
+        name="TechnologyFunction",
+        layer="Technology",
+        aspect="Behavior",
+        description="A collection of technology behavior that can be performed by a technology internal active structure element",
+    ),
     "TechnologyService": ElementType(
         name="TechnologyService",
         layer="Technology",
         aspect="Behavior",
         description="An explicitly defined exposed technology behavior",
     ),
-    # A detail-level element (the export's detail level): the deployed image or package of a component
+    # The deployed image, package or bundle of a component (one per component with a function; 0.8.8)
     "Artifact": ElementType(
         name="Artifact",
         layer="Technology",
@@ -147,6 +165,7 @@ STRUCTURE_ELEMENTS: set[str] = {
     "ApplicationComponent",
     "ApplicationInterface",
     "BusinessActor",
+    "BusinessRole",
     "Node",
     "Device",
     "SystemSoftware",
@@ -159,6 +178,8 @@ BEHAVIOR_ELEMENTS: set[str] = {
     "BusinessProcess",
     "BusinessFunction",
     "BusinessEvent",
+    "BusinessService",
+    "TechnologyFunction",
     "TechnologyService",
 }
 
@@ -183,6 +204,8 @@ APPLICATION_LAYER: set[str] = {
 
 BUSINESS_LAYER: set[str] = {
     "BusinessActor",
+    "BusinessRole",
+    "BusinessService",
     "BusinessProcess",
     "BusinessFunction",
     "BusinessEvent",
@@ -193,6 +216,7 @@ TECHNOLOGY_LAYER: set[str] = {
     "Node",
     "Device",
     "SystemSoftware",
+    "TechnologyFunction",
     "TechnologyService",
     "Artifact",
 }
@@ -233,13 +257,15 @@ def match_kind(element_type: str) -> str:
 # =============================================================================
 # ArchiMate 3.2 Relationship Table
 # =============================================================================
-# Source: ArchiMate 3.2 Specification, Appendix B.5 "Relationship Tables", restricted
-# to the element types Deriva derives plus Artifact (the export's detail level). The spec publishes the tables as images;
-# letters were read from them and cross-checked (case-insensitively, every cell)
-# against Archi's relationships.xml v3.2. ApplicationFunction (row and column, 0.8.8): letters from Archi's
-# relationships.xml; the tier by layer analogy with BusinessFunction and the service rows, uppercase only where the generic
-# metamodel shows it (assigned from a component, realizes a service and business behaviour, accesses a data object,
-# triggers and flows between application behaviour), else lowercase.
+# Source: ArchiMate 3.2 Specification (C226), restricted to the element types Deriva derives plus Artifact. Letters:
+# Archi's relationships.xml v3.2 (Influence left out), which matches the spec's Appendix B.5 tables in every cell. Tier,
+# from the metamodel figures (0.8.8; B.4, p. 140: the restrictions apply to derived relationships only, not to those the
+# metamodel diagrams define): uppercase where a figure draws the relationship, else lowercase. The figures: within a
+# layer Fig. 52 p. 58 (business), Fig. 70 p. 73 (application), Fig. 82 p. 83 (technology), with Fig. 53 p. 59 (actor
+# assigned to role), Fig. 71 p. 74 (component realizes component), Fig. 83 p. 84 (node, device, system software) and
+# Fig. 97 p. 93 (artifact); across layers Fig. 104 p. 101 and Fig. 105 p. 102; the note under every layer figure for
+# same-type composition, aggregation and specialization. Triggering and flow only where a figure draws both line ends
+# unambiguously. Association is allowed between any two elements (uppercase everywhere).
 #
 # Uppercase letter: relationship explicit in the metamodel figures ("direct").
 # Lowercase letter: allowed only via the spec's derivation rules ("derived").
@@ -262,9 +288,11 @@ _LETTER_BY_RELATIONSHIP = {name: letter for letter, name in RELATIONSHIP_LETTERS
 
 _TABLE_COLUMNS = (
     "BusinessActor",
+    "BusinessRole",
     "BusinessProcess",
     "BusinessFunction",
     "BusinessEvent",
+    "BusinessService",
     "BusinessObject",
     "ApplicationComponent",
     "ApplicationInterface",
@@ -274,35 +302,55 @@ _TABLE_COLUMNS = (
     "Node",
     "Device",
     "SystemSoftware",
+    "TechnologyFunction",
     "TechnologyService",
     "Artifact",
 )
 
-# Artifact (row and column) from Archi's relationships.xml; uppercase where the spec's metamodel figures show the
-# relationship: Node, Device and SystemSoftware are assigned to an artifact, an artifact realizes an application
-# component, a data object or system software; artifacts compose, aggregate and specialize artifacts.
-# Row = source, columns in _TABLE_COLUMNS order = target.
 # fmt: off
 _TABLE_ROWS: dict[str, tuple[str, ...]] = {
-    "BusinessActor":        ("SCGvtfO", "IvtfO", "IvtfO", "IvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessProcess":      ("vtfO", "SCGvTFO", "CGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessFunction":     ("vtfO", "CGvTFO", "SCGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessEvent":        ("vtfO", "vTFO", "vTFO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessObject":       ("O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O"),
-    "ApplicationComponent": ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGRvtfO", "CgrvtfO", "irvtfO", "IrvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "ApplicationInterface": ("VtfO", "vtfO", "vtfO", "vtfO", "aO", "VtfO", "SCGvtfO", "IvtfO", "vtfO", "aO", "VtfO", "VtfO", "VtfO", "vtfO", "aO"),
-    "ApplicationService":   ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "SCGvTFO", "VTFO", "AO", "VtfO", "VtfO", "VtfO", "vtfO", "aO"),
-    "ApplicationFunction":  ("vtfO", "RvtfO", "RvtfO", "vtfO", "aO", "vtfO", "vtfO", "RvTFO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "DataObject":           ("O", "O", "O", "O", "RO", "O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O"),
-    "Node":                 ("ivtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGivtfO", "CGirvtfO", "CGirvtfO", "irvtfO", "aIO"),
-    "Device":               ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "SCGvtfO", "CGIrvtfO", "irvtfO", "aIO"),
-    "SystemSoftware":       ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "vtfO", "SCGIrvtfO", "irvtfO", "aIO"),
-    "TechnologyService":    ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "RvtfO", "VtfO", "aO", "VtfO", "VtfO", "VtfO", "SCGvTFO", "aO"),
-    "Artifact":             ("O", "rO", "rO", "rO", "rO", "RO", "rO", "rO", "rO", "RO", "O", "O", "RO", "rO", "SCGrO"),
+    "BusinessActor":        ("SCGvtfO", "IvtfO", "IvtfO", "IvtfO", "IvtfO", "irvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessRole":         ("vtfO", "SCGvtfO", "IvtfO", "IvtfO", "IvtfO", "irvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessProcess":      ("vtfO", "vtfO", "SCGvTFO", "CGvTFO", "vTFO", "RvtfO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessFunction":     ("vtfO", "vtfO", "CGvTFO", "SCGvTFO", "vTFO", "RvtfO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessEvent":        ("vtfO", "vtfO", "vTFO", "vTFO", "SCGvTFO", "vtfO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessService":      ("VtfO", "VtfO", "VtfO", "VtfO", "vtfO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "VtfO", "aO", "vtfO", "vtfO", "vtfO", "VtfO", "vtfO", "aO"),
+    "BusinessObject":       ("O", "O", "O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O"),
+    "ApplicationComponent": ("vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGRvtfO", "CgrvtfO", "irvtfO", "IrvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),  # noqa: E501
+    "ApplicationInterface": ("VtfO", "VtfO", "vtfO", "vtfO", "vtfO", "rvtfO", "aO", "VtfO", "SCGvtfO", "IvtfO", "vtfO", "aO", "VtfO", "VtfO", "VtfO", "vtfO", "vtfO", "aO"),
+    "ApplicationService":   ("vtfO", "vtfO", "VtfO", "VtfO", "vtfO", "RvtfO", "aO", "VtfO", "vtfO", "SCGvTFO", "VtfO", "AO", "vtfO", "vtfO", "vtfO", "VtfO", "vtfO", "aO"),
+    "ApplicationFunction":  ("vtfO", "vtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "vtfO", "vtfO", "RvtfO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "DataObject":           ("O", "O", "O", "O", "O", "O", "RO", "O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O", "O"),
+    "Node":                 ("ivtfO", "ivtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGivtfO", "CGirvtfO", "CGirvtfO", "IrvtfO", "irvtfO", "iaO"),  # noqa: E501
+    "Device":               ("vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "SCGvtfO", "CGIrvtfO", "IrvtfO", "irvtfO", "IaO"),  # noqa: E501
+    "SystemSoftware":       ("vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "vtfO", "SCGIrvtfO", "IrvtfO", "irvtfO", "IaO"),  # noqa: E501
+    "TechnologyFunction":   ("vtfO", "vtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "vtfO", "vtfO", "rvtfO", "RvtfO", "aO", "vtfO", "vtfO", "vtfO", "SCGvTFO", "RvtfO", "AO"),
+    "TechnologyService":    ("vtfO", "vtfO", "VtfO", "VtfO", "vtfO", "RvtfO", "aO", "vtfO", "vtfO", "RvtfO", "VtfO", "aO", "VtfO", "VtfO", "VtfO", "VtfO", "SCGvTFO", "AO"),
+    "Artifact":             ("O", "O", "rO", "rO", "rO", "rO", "RO", "RO", "rO", "rO", "rO", "RO", "O", "O", "RO", "rO", "rO", "SCGrO"),
 }
 # fmt: on
 
 RELATIONSHIP_TABLE: dict[tuple[str, str], str] = {(source, target): cell for source, row in _TABLE_ROWS.items() for target, cell in zip(_TABLE_COLUMNS, row, strict=True)}
+
+# The valid derivation rules of ArchiMate 3.2, Appendix B.2 (spec pp. 127-131; the potential rules of B.3 are left out),
+# as plain data for the derivation engine: (number, first relationship types, second types, join, derived type).
+# Joins: "chain" p(a,b) q(b,c) -> r(a,c); "back" p(a,b) q(c,b) -> r(c,a). Derived type: "weakest" (by
+# STRUCTURAL_STRENGTH), "first" (p's type) or "second" (q's type). The restrictions of B.4 (p. 139) hold through the
+# relationship table, which is built from the figures and these rules: a derived triple the table does not allow is none.
+STRUCTURAL_RELATIONSHIPS = ("Composition", "Aggregation", "Assignment", "Realization")  # Section 5.1
+DEPENDENCY_RELATIONSHIPS = ("Serving", "Access", "Influence", "Association")  # Section 5.2
+DYNAMIC_RELATIONSHIPS = ("Triggering", "Flow")  # Section 5.3
+STRUCTURAL_STRENGTH = ("Realization", "Assignment", "Aggregation", "Composition")  # B.2.2, weakest first
+VALID_DERIVATION_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...], str, str], ...] = (
+    ("DR 1", ("Specialization",), ("Specialization",), "chain", "first"),  # p. 127: transitivity of specialization
+    ("DR 2", STRUCTURAL_RELATIONSHIPS, STRUCTURAL_RELATIONSHIPS, "chain", "weakest"),  # p. 128
+    ("DR 3", STRUCTURAL_RELATIONSHIPS, DEPENDENCY_RELATIONSHIPS, "chain", "second"),  # p. 129: in line
+    ("DR 4", STRUCTURAL_RELATIONSHIPS, DEPENDENCY_RELATIONSHIPS, "back", "second"),  # p. 129: opposing
+    ("DR 5", STRUCTURAL_RELATIONSHIPS, DYNAMIC_RELATIONSHIPS, "chain", "second"),  # p. 130
+    ("DR 6", STRUCTURAL_RELATIONSHIPS, ("Flow",), "back", "second"),  # p. 130
+    ("DR 7", ("Triggering",), STRUCTURAL_RELATIONSHIPS, "chain", "first"),  # p. 130
+    ("DR 8", ("Triggering",), ("Triggering",), "chain", "first"),  # p. 131: transitivity of triggering
+)
 
 # Relationship types Deriva may propose. Association, Specialization and Influence
 # are valid ArchiMate but deliberately not derived.
