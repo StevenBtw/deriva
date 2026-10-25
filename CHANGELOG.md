@@ -10,6 +10,10 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ## v0.8.8 - (Unreleased)
 
+### Configuration
+
+- **The shipped configuration matches the measured pipeline**: the default step configurations a new install starts from are brought up to date with the active ones, including the build module extraction step, the abstraction refine steps and the current node, relationship, consistency and deployment settings, which the shipped files had not carried since 0.8.2
+
 ### Extraction
 
 - **Development tooling is no component**: a package of the repository that its manifests list only as a development dependency (a pyproject dependency group or dev dependencies, npm `devDependencies`, Maven's test scope), never as a runtime one, is tooling: its build module and its deployable units are marked `excluded = tooling` and give no application component, interface or service. An aggregator still counts an excluded module toward being a parent system, so leaving one out keeps the hierarchy above it
