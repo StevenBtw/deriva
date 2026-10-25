@@ -129,7 +129,7 @@ def test_a_unit_with_web_entries_gets_a_web_ui_from_structure_without_an_llm_cal
 
     by_name = {e["name"]: e["properties"] for e in result.created_elements}
     assert sorted(by_name) == ["Shop Backend REST API", "Shop Backend Web UI"]
-    assert by_name["Shop Backend Web UI"]["members"] == [{"name": "home.html", "source": "file::r::r_shop_templates_home.html"}]
+    assert by_name["Shop Backend Web UI"]["members"] == [{"name": "home.html", "source": "file::r::r_shop_templates_home.html", "role": "web"}]
     assert len(prompts) == 1 and "home.html" not in prompts[0]  # only the endpoint file was asked
 
 
@@ -161,3 +161,38 @@ def test_a_file_two_units_include_is_documented_with_each_units_component(monkey
 
     documentation = {e["name"]: e["documentation"] for e in result.created_elements}
     assert documentation == {"Admin Backend REST API": "REST API of Admin Backend: orders.py.", "Shop Backend REST API": "REST API of Shop Backend: orders.py."}
+
+
+def test_one_interface_per_unit_is_named_after_the_role_with_the_most_members_and_lists_the_others():
+    """roles.one_per_unit: the unit's channels merge into one interface; the role most members have names it."""
+    orders, users = _file("r/shop/orders.py"), _file("r/shop/users.py")
+    roles = replace(ROLES, unit_roles=(("webEntries", "web"),), one_per_unit=True)
+    pages = {"unit::r::shop": ["r/shop/templates/home.html"]}
+
+    result, _ = _generate([orders, users], {orders.node_id: "rest", users.node_id: "rest"}, roles=roles, web_entries=pages)
+
+    (interface,) = result.created_elements
+    assert interface["name"] == "Shop Backend REST API" and interface["identifier"].endswith("_shop__rest")
+    assert interface["properties"]["role"] == "rest" and interface["properties"]["roles"] == ["rest", "web"]
+    assert [m["name"] for m in interface["properties"]["members"]] == ["orders.py", "home.html", "users.py"]  # in node id order
+
+
+def test_a_tie_between_roles_goes_to_the_first_role_in_the_configured_order():
+    orders = _file("r/shop/orders.py")
+    roles = replace(ROLES, unit_roles=(("webEntries", "web"),), one_per_unit=True)
+
+    result, _ = _generate([orders], {orders.node_id: "rest"}, roles=roles, web_entries={"unit::r::shop": ["r/shop/templates/home.html"]})
+
+    (interface,) = result.created_elements
+    assert interface["properties"]["role"] == "rest"  # one member each: rest comes before web in names
+
+
+def test_each_member_of_a_merged_interface_keeps_its_own_role():
+    """The channel a member was classified into stays on the member, so later steps read the member's role."""
+    orders = _file("r/shop/orders.py")
+    roles = replace(ROLES, unit_roles=(("webEntries", "web"),), one_per_unit=True)
+
+    result, _ = _generate([orders], {orders.node_id: "rest"}, roles=roles, web_entries={"unit::r::shop": ["r/shop/templates/home.html"]})
+
+    (interface,) = result.created_elements
+    assert {m["name"]: m["role"] for m in interface["properties"]["members"]} == {"orders.py": "rest", "home.html": "web"}

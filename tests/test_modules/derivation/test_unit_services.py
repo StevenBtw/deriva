@@ -442,3 +442,16 @@ def test_a_service_lists_the_lifecycle_states_its_members_set():
     )  # fmt: skip
 
     assert services[0]["properties"]["states"] == ["lifecycle::app::SUBMITTED"]  # DISBURSED is set elsewhere
+
+
+def test_a_merged_interface_reads_each_members_own_role_so_a_front_end_with_an_endpoint_offers_a_service():
+    """One interface per unit: named Web UI after its pages, its one REST endpoint keeps role rest, so the unit
+    is no pure front end."""
+    web = _interface("web", "web", ["index.html", "app.js", "LoginResource"])
+    for member in web["properties"]["members"]:
+        member["role"] = "rest" if member["name"] == "LoginResource" else "web"
+    elements = [_component("web", "Shop Frontend"), web, _component("api", "Shop API"), _interface("api", "rest", ["OrderResource"])]
+
+    services, _, _ = _run(elements, {"OrderResource": [], "LoginResource": []}, lines={("unit::web", "unit::api")}, deciding=set())
+
+    assert sorted(s["properties"]["sources"][0] for s in services) == ["unit::api", "unit::web"]
