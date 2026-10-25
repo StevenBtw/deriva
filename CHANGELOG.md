@@ -37,6 +37,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ### Derivation
 
+- **Every component candidate by structure**: a build module without a manifest (shared code, a feature package) is a component by its structural role, like units and manifest modules, so no LLM call decides whether it exists
 - **Declared names first**: a component's name is the first of its structural name candidates by a closed source order (`naming.source_order`: manifest, mainframe definition, README, documentation, folder), without an LLM call; within a source the extraction order decides
 - **Service names from structure**: an application service is named `<object> <verb>` without an LLM call: the object is the data domain its members reach most (else a member's own activity, else the component's name), the verb comes from the members' interface kind through a closed table (`service_verbs`: batch and messaging "Processing", REST, RPC, web and command line "Management"). A name is unique within its component; the same name on two components stands for one service. The same names come out in every run
 - **One platform node**: the technology layer has one node per deployment environment, named by its kind ("Container Platform" for Docker Compose and Kubernetes, "Mainframe", a cloud environment by its own name), instead of a node per deployed container; the deployments stay in the export's detail level as artifacts assigned to the platform node. A repository without deployment evidence has no node
