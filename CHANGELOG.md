@@ -10,6 +10,10 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ## v0.8.8 - (Unreleased)
 
+### Extraction
+
+- **Development tooling is no component**: a package of the repository that its manifests list only as a development dependency (a pyproject dependency group or dev dependencies, npm `devDependencies`, Maven's test scope), never as a runtime one, is tooling: its build module and its deployable units are marked `excluded = tooling` and give no application component, interface or service. An aggregator still counts an excluded module toward being a parent system, so leaving one out keeps the hierarchy above it
+
 ### Benchmark
 
 - **Behaviour matches within its layer**: when a model is compared with a reference (`benchmark reference`, `benchmark gate`), a process, function, interaction or event counts for any of these four in the same layer, so an application function covers a reference application process; services and structure types still match only their own type
