@@ -9,11 +9,10 @@ from deriva.modules.derivation.levels import (
     ancestors,
     assign_levels,
     component_parents,
+    enterprise_derivations,
     interface_owners,
-    lifts,
     relationship_levels,
     rollups,
-    service_lifts,
 )
 
 RULES = LevelRules(
@@ -101,15 +100,6 @@ def test_a_relationship_is_on_the_levels_both_ends_share_else_across_levels():
     assert relationship_levels(solution, enterprise) == (frozenset(), True)
 
 
-def test_a_service_a_solution_unit_realizes_is_also_realized_by_its_top_level_component():
-    components = [_c("sys", "system", "r"), _c("orders", "unit", "r/orders"), _c("solo", "unit", "s")]
-    levels = {"sys": frozenset({"enterprise"}), "orders": frozenset({"solution"}), "solo": frozenset({"enterprise", "solution"})}
-    realizations = [("orders", "svc-orders"), ("solo", "svc-solo")]
-
-    # solo is on the enterprise level itself; orders is not: its system realizes the service there
-    assert service_lifts(components, levels, realizations) == [("sys", "svc-orders")]
-
-
 def test_an_interface_moves_to_the_one_built_module_that_holds_all_its_member_files():
     # The unit builds the root system and a frontend module: the web interface lies in the frontend, the commands in the root
     builds = {"unit": ["sys", "web"], "solo": ["solo-module"]}
@@ -156,36 +146,44 @@ def test_a_role_can_place_an_element_type_on_its_own_levels():
     assert assign_levels(elements, [], rules) == {"env": frozenset({"enterprise"}), "svc": frozenset({"solution"}), "x": frozenset({"enterprise"})}
 
 
-def test_solution_relationships_lift_to_the_enterprise_elements_above_their_ends():
-    """An interface serving a unit lifts to its top-level component serving the other's; Access to a domain lifts onto the
-    business object it realizes; a pair inside one enterprise element, or one already related, gets no lift."""
-    levels = {
-        "sysA": frozenset({"enterprise"}),
-        "unitA": frozenset({"solution"}),
-        "apiA": frozenset({"solution"}),
-        "sysB": frozenset({"enterprise"}),
-        "unitB": frozenset({"solution"}),
-        "libB": frozenset({"solution"}),
-        "dom": frozenset({"solution"}),
-        "bo": frozenset({"enterprise"}),
-        "sysC": frozenset({"enterprise"}),
-        "unitC": frozenset({"solution"}),
-    }
-    composer = {"unitA": "sysA", "apiA": "unitA", "unitB": "sysB", "libB": "sysB", "unitC": "sysC"}
+def _derive(relationships, levels, types, patterns):
+    from deriva.adapters.archimate.models import STRUCTURAL_STRENGTH, VALID_DERIVATION_RULES, relationship_tier
+
+    return enterprise_derivations(relationships, levels, types, patterns, VALID_DERIVATION_RULES, STRUCTURAL_STRENGTH, relationship_tier)
+
+
+EA, SA = frozenset({"enterprise"}), frozenset({"solution"})
+AC_REALIZES_AS = ("ApplicationComponent", "Realization", "ApplicationService")
+AC_ASSIGNED_AS = ("ApplicationComponent", "Assignment", "ApplicationService")
+
+
+def test_the_enterprise_viewpoint_draws_what_a_direct_chain_below_it_derives_one_per_pair_the_weaker():
+    """The system composes a unit whose function realizes the service (DR 2): the system realizes it. Through the unit's
+    interface the system is also assigned to it; of the two, the weaker structural type is drawn."""
+    types = {"sys": "ApplicationComponent", "unit": "ApplicationComponent", "fn": "ApplicationFunction", "api": "ApplicationInterface", "svc": "ApplicationService"}
+    levels = {"sys": EA, "svc": EA, "unit": SA, "fn": SA, "api": SA}
     relationships = [
-        ("r1", "apiA", "Serving", "unitB"),
-        ("r2", "unitB", "Access", "dom"),
-        ("r3", "libB", "Serving", "unitB"),  # inside sysB: nothing at the enterprise level
-        ("r4", "unitC", "Serving", "unitA"),  # sysC and sysA are related already
-        ("r5", "sysC", "Flow", "sysA"),
-        ("r6", "unitA", "Serving", "unitB"),  # the same lift as r1
-        ("r7", "unitA", "Composition", "apiA"),  # not a lifted type
+        ("r1", "sys", "Composition", "unit"),
+        ("r2", "unit", "Assignment", "fn"),
+        ("r3", "fn", "Realization", "svc"),
+        ("r4", "unit", "Composition", "api"),
+        ("r5", "api", "Assignment", "svc"),
     ]
-    types = {
-        i: t for i, t in [("sysA", "C"), ("unitA", "C"), ("apiA", "I"), ("sysB", "C"), ("unitB", "C"), ("libB", "C"), ("dom", "D"), ("bo", "B"), ("sysC", "C"), ("unitC", "C")]
-    }
 
-    lifted = lifts(relationships, levels, composer, {"dom": "bo"}, types, lambda s, r, t: True)
+    derived = _derive(relationships, levels, types, [AC_REALIZES_AS, AC_ASSIGNED_AS])
 
-    assert lifted == [("sysA", "Serving", "sysB", ("r1", "r6")), ("sysB", "Access", "bo", ("r2",))]
-    assert lifts(relationships, levels, composer, {"dom": "bo"}, types, lambda s, r, t: r != "Access") == [("sysA", "Serving", "sysB", ("r1", "r6"))]
+    assert derived == [("sys", "Realization", "svc", ("r1", "r2", "r3"), ("DR 2", "DR 2"))]
+    assert _derive(relationships, levels, types, []) == []  # the viewpoint draws only its patterns
+
+
+def test_no_derivation_from_a_derived_tier_relationship_an_invalid_rule_or_a_related_pair():
+    types = {"sys": "ApplicationComponent", "unit": "ApplicationComponent", "svc": "ApplicationService", "do": "DataObject", "bo": "BusinessObject", "other": "ApplicationService"}
+    levels = {"sys": EA, "svc": EA, "bo": EA, "other": EA, "unit": SA, "do": SA}
+    relationships = [
+        ("r1", "sys", "Composition", "unit"),
+        ("r2", "unit", "Realization", "svc"),  # derived tier: no chain input
+        ("r3", "other", "Access", "do"),
+        ("r4", "do", "Realization", "bo"),  # access then realization: no valid derivation
+    ]
+
+    assert _derive(relationships, levels, types, [AC_REALIZES_AS, ("ApplicationService", "Access", "BusinessObject")]) == []

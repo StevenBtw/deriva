@@ -1,5 +1,6 @@
 """The abstraction_levels refine step: levels on every element and relationship, roll-up Compositions between the
-components of the hierarchy, and services realized at the enterprise level by the top-level component."""
+components of the hierarchy, and the enterprise viewpoint (relationships between enterprise elements derived from
+direct chains, for the patterns of the viewpoint table)."""
 
 from __future__ import annotations
 
@@ -11,7 +12,8 @@ from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.models import Element, Relationship
 from deriva.modules.derivation.refine import run_refine_step
 
-PARAMS = {"types": {"ApplicationInterface": ["solution"], "ApplicationService": ["enterprise"]}}
+PARAMS = {"types": {"ApplicationInterface": ["solution"], "ApplicationService": ["enterprise"], "ApplicationFunction": ["solution"]}}
+SERVING = {"enterprise_patterns": [["ApplicationComponent", "Serving", "ApplicationComponent"]]}
 
 
 @pytest.fixture
@@ -32,7 +34,7 @@ def _graph(rows):
     return graph
 
 
-def test_levels_roll_ups_and_service_lifts_are_written(am):
+def test_levels_and_roll_ups_are_written(am):
     for identifier, element_type, source in (
         ("ac_sys", "ApplicationComponent", "module::r::r"),
         ("ac_orders", "ApplicationComponent", "unit::r::orders"),
@@ -51,14 +53,13 @@ def test_levels_roll_ups_and_service_lifts_are_written(am):
 
     result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params=PARAMS)
 
-    assert result.success and result.relationships_created == 2
+    assert result.success and result.relationships_created == 1  # the roll-up; the default stage draws no viewpoint
     levels = {e.identifier: e.properties.get("levels") for e in am.get_elements()}
     assert levels == {"ac_sys": ["enterprise"], "ac_orders": ["solution"], "ai_orders": ["solution"], "as_orders": ["enterprise"]}
     relationships = {(r.source, r.relationship_type, r.target): r.properties for r in am.get_relationships()}
     # The roll-up joins the enterprise system and the solution unit: a cross-level link
     assert relationships[("ac_sys", "Composition", "ac_orders")] | {} == {"derived_from": "roll_up", "levels": [], "cross_level": True}
-    # The system realizes the unit's service at the enterprise level; the unit's own realization is kept, across levels
-    assert relationships[("ac_sys", "Realization", "as_orders")]["levels"] == ["enterprise"]
+    assert ("ac_sys", "Realization", "as_orders") not in relationships
     assert (relationships[("ac_orders", "Realization", "as_orders")]["levels"], relationships[("ac_orders", "Realization", "as_orders")]["cross_level"]) == ([], True)
     assert relationships[("ac_orders", "Composition", "ai_orders")]["levels"] == ["solution"]
 
@@ -231,27 +232,72 @@ def _two_systems(am):
     )
 
 
-def test_the_structure_stage_lifts_a_solution_relationship_to_the_enterprise_level(am):
+def _derived(am):
+    return [r for r in am.get_relationships() if (r.properties or {}).get("derived_from") == "derivation"]
+
+
+def test_the_structure_stage_draws_the_viewpoint_from_a_direct_chain_through_the_solution_level(am):
+    """The first system's unit has an interface that serves the second system's unit: through the roll-ups the first
+    system serves the second (DR 3 and DR 4), drawn only because the viewpoint table has the pattern."""
     graph = _two_systems(am)
 
-    result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, "stage": "structure"})
+    result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, **SERVING, "stage": "structure"})
 
-    lifted = [r for r in am.get_relationships() if (r.properties or {}).get("derived_from") == "lifted"]
-    assert [(r.source, r.relationship_type, r.target, r.properties["liftedFrom"], r.properties["levels"]) for r in lifted] == [
-        ("ac_a", "Serving", "ac_b", ["rel-s"], ["enterprise"])
-    ]
-    assert result.report["lifted"] == 1
+    ids = {(r.source, r.relationship_type, r.target): r.identifier for r in am.get_relationships()}
+    chain = [ids[("ac_a", "Composition", "ac_ua")], "rel-c", "rel-s", ids[("ac_b", "Composition", "ac_ub")]]
+    derived = [(r.source, r.relationship_type, r.target, r.properties["levels"]) for r in _derived(am)]
+    assert derived == [("ac_a", "Serving", "ac_b", ["enterprise"])]
+    assert sorted(_derived(am)[0].properties["derivedFrom"]) == sorted(chain) and "DR 4" in _derived(am)[0].properties["derivationRules"]
+    assert result.report["derived"] == 1
 
-
-def test_the_default_stage_lifts_nothing_and_the_annotate_stage_only_tags(am):
+    am.clear_model()
     graph = _two_systems(am)
-    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params=PARAMS)
-    assert not [r for r in am.get_relationships() if (r.properties or {}).get("derived_from") == "lifted"]
+    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, "stage": "structure"})
+    assert _derived(am) == []  # no pattern, no relationship
+
+
+def test_a_system_realizes_the_service_its_units_function_realizes(am):
+    """AC -Composition-> unit -Assignment-> function -Realization-> service (DR 2): the realization is drawn at the
+    enterprise level; the unit's own derived-tier realization is no chain input."""
+    for identifier, element_type, source in (
+        ("ac_sys", "ApplicationComponent", "module::r::r"),
+        ("ac_orders", "ApplicationComponent", "unit::r::orders"),
+        ("af_orders", "ApplicationFunction", "unit::r::orders"),
+        ("as_orders", "ApplicationService", "unit::r::orders"),
+    ):
+        am.add_element(Element(name=identifier, element_type=element_type, identifier=identifier, properties={"source": source}))
+    am.add_relationship(Relationship(source="ac_orders", target="af_orders", relationship_type="Assignment", identifier="rel-a"))
+    am.add_relationship(Relationship(source="af_orders", target="as_orders", relationship_type="Realization", identifier="rel-r"))
+    graph = _graph(
+        [
+            {"id": "module::r::r", "path": "r", "labels": ["Graph", "BuildModule"], "system": True},
+            {"id": "unit::r::orders", "path": "r/orders", "labels": ["Graph", "DeployableUnit"], "system": None},
+        ]
+    )
+    patterns = {"enterprise_patterns": [["ApplicationComponent", "Realization", "ApplicationService"]]}
+
+    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, **patterns, "stage": "structure"})
+
+    assert [(r.source, r.relationship_type, r.target, r.properties["derivationRules"]) for r in _derived(am)] == [("ac_sys", "Realization", "as_orders", ["DR 2", "DR 2"])]
+
+
+def test_a_pattern_the_metamodel_does_not_allow_is_refused(am):
+    params = {**PARAMS, "stage": "structure", "enterprise_patterns": [["BusinessObject", "Serving", "Node"]]}
+
+    result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=MagicMock(), params=params)
+
+    assert not result.success and "enterprise_patterns" in result.errors[0]
+
+
+def test_the_default_stage_draws_no_viewpoint_and_the_annotate_stage_only_tags(am):
+    graph = _two_systems(am)
+    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, **SERVING})
+    assert _derived(am) == []
 
     am.clear_model()
     graph = _two_systems(am)
     before = sorted((r.source, r.relationship_type, r.target) for r in am.get_relationships())
-    result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, "stage": "annotate"})
+    result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, **SERVING, "stage": "annotate"})
 
     assert sorted((r.source, r.relationship_type, r.target) for r in am.get_relationships()) == before
     assert result.relationships_created == 0 and {e.identifier: e.properties.get("levels") for e in am.get_elements()}["ac_ua"] == ["solution"]
@@ -263,8 +309,8 @@ def test_an_unknown_stage_is_refused():
     assert not result.success and "stage" in result.errors[0]
 
 
-def test_a_lift_between_two_top_level_units_is_enterprise_only_also_after_annotate(am):
-    """Both units are on both levels; the lift exists for the enterprise level (the solution level has the original)."""
+def test_a_derived_relationship_between_two_top_level_units_is_enterprise_only_also_after_annotate(am):
+    """Both units are on both levels; the derived one exists for the enterprise level (the solution level has the chain)."""
     for identifier, element_type, source in (
         ("ac_a", "ApplicationComponent", "unit::r::a"),
         ("ai_a", "ApplicationInterface", "unit::r::a"),
@@ -280,20 +326,19 @@ def test_a_lift_between_two_top_level_units_is_enterprise_only_also_after_annota
         ]
     )
 
-    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, "stage": "structure"})
+    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, **SERVING, "stage": "structure"})
     run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, "stage": "annotate"})
 
-    lifted = [r for r in am.get_relationships() if (r.properties or {}).get("derived_from") == "lifted"]
-    assert [(r.source, r.target, r.properties["levels"], r.properties["cross_level"]) for r in lifted] == [("ac_a", "ac_b", ["enterprise"], False)]
+    assert [(r.source, r.target, r.properties["levels"], r.properties["cross_level"]) for r in _derived(am)] == [("ac_a", "ac_b", ["enterprise"], False)]
 
 
 def test_abstraction_hierarchy_is_the_structure_stage_under_its_own_name(am):
-    """The step before the joint selection: the hierarchy's relationships and the lifts; its report has its own key."""
+    """The step before the joint selection: the hierarchy's relationships and the viewpoint; its report has its own key."""
     graph = _two_systems(am)
 
-    result = run_refine_step("abstraction_hierarchy", archimate_manager=am, graph_manager=graph, params=PARAMS)
+    result = run_refine_step("abstraction_hierarchy", archimate_manager=am, graph_manager=graph, params={**PARAMS, **SERVING})
 
-    assert result.success and result.step_name == "abstraction_hierarchy" and result.report["stage"] == "structure" and result.report["lifted"] == 1
+    assert result.success and result.step_name == "abstraction_hierarchy" and result.report["stage"] == "structure" and result.report["derived"] == 1
 
 
 def test_abstraction_hierarchy_refuses_another_stage():
