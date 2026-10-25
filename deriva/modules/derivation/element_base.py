@@ -1140,6 +1140,10 @@ class ElementDerivationBase(ABC):
         directories = [(_relative_path(row["path"], repo_name), sources[row["id"]]) for row in rows if row.get("path") and row.get("id") in sources]
         containers: dict[str, str] = {}
         for c in candidates:
+            # A candidate that is itself a component's source (a unit or module): that component holds it
+            if c.node_id in sources:
+                containers[c.node_id] = sources[c.node_id]
+                continue
             path = _relative_path(c.properties.get("filePath") or c.properties.get("path") or "", repo_name)
             holders = [(len(directory), name) for directory, name in directories if path == directory or path.startswith(directory + "/")]
             if holders:

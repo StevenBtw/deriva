@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 from deriva.adapters.graph import GraphManager
 from deriva.modules.derivation import prep
 from deriva.modules.derivation.application_component import ApplicationComponentDerivation
+from deriva.modules.derivation.application_function import ApplicationFunctionDerivation
 from deriva.modules.derivation.application_interface import ApplicationInterfaceDerivation
 from deriva.modules.derivation.application_service import ApplicationServiceDerivation
 from deriva.modules.derivation.base import (
@@ -151,6 +152,7 @@ DERIVATION_REGISTRY: dict[str, type[ElementDerivationBase]] = {
     "BusinessFunction": BusinessFunctionDerivation,
     "ApplicationComponent": ApplicationComponentDerivation,
     "ApplicationService": ApplicationServiceDerivation,
+    "ApplicationFunction": ApplicationFunctionDerivation,
     "ApplicationInterface": ApplicationInterfaceDerivation,
     "DataObject": DataObjectDerivation,
     "TechnologyService": TechnologyServiceDerivation,

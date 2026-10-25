@@ -3409,6 +3409,8 @@ def derive_listed_member_relationships(elements: list[dict[str, Any]], rules: li
                     members[str(key)].append(e["identifier"])
         for holder in sorted((e for e in elements if e.get("element_type") == rule.holder), key=lambda e: e.get("identifier", "")):
             listed = (holder.get("properties") or {}).get(rule.list_property) or []
+            # A single-valued property (such as the holder's own source) lists one member
+            listed = [listed] if isinstance(listed, str) else listed
             for member in sorted({m for key in listed for m in members.get(str(key), []) if m != holder["identifier"]}):
                 source, target = (holder["identifier"], member) if rule.from_holder else (member, holder["identifier"])
                 relationships.append({"source": source, "target": target, "relationship_type": rule.relationship, "confidence": 1.0, "derived_from": "listed_members"})
