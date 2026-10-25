@@ -345,3 +345,31 @@ def test_abstraction_hierarchy_refuses_another_stage():
     result = run_refine_step("abstraction_hierarchy", archimate_manager=MagicMock(), graph_manager=MagicMock(), params={**PARAMS, "stage": "annotate"})
 
     assert not result.success and "stage" in result.errors[0]
+
+
+def test_the_feature_packages_functions_realize_their_split_units_service(am):
+    """The unit is split into two feature packages, each with a function; the unit's service, which no function
+    realizes, is realized by both (Figure 70: function realizes service)."""
+    for identifier, element_type, source, sources in (
+        ("ac_app", "ApplicationComponent", "unit::r::app", None),
+        ("ac_owner", "ApplicationComponent", "module::r::app/src/owner", None),
+        ("ac_vet", "ApplicationComponent", "module::r::app/src/vet", None),
+        ("af_owner", "ApplicationFunction", "module::r::app/src/owner", None),
+        ("af_vet", "ApplicationFunction", "module::r::app/src/vet", None),
+        ("as_app", "ApplicationService", "unit::r::app::all", ["unit::r::app"]),
+    ):
+        am.add_element(Element(name=identifier, element_type=element_type, identifier=identifier, properties={"source": source, "sources": sources}))
+    am.add_relationship(Relationship(source="ac_owner", target="af_owner", relationship_type="Assignment", identifier="rel-o"))
+    am.add_relationship(Relationship(source="ac_vet", target="af_vet", relationship_type="Assignment", identifier="rel-v"))
+    graph = _graph(
+        [
+            {"id": "unit::r::app", "path": "r/app", "labels": ["Graph", "DeployableUnit"], "system": None},
+            {"id": "module::r::app/src/owner", "path": "r/app/src/owner", "labels": ["Graph", "BuildModule"], "system": False},
+            {"id": "module::r::app/src/vet", "path": "r/app/src/vet", "labels": ["Graph", "BuildModule"], "system": False},
+        ]
+    )
+
+    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params={**PARAMS, "stage": "structure"})
+
+    split = sorted((r.source, r.target) for r in am.get_relationships() if (r.properties or {}).get("derived_from") == "split_unit")
+    assert split == [("af_owner", "as_app"), ("af_vet", "as_app")]

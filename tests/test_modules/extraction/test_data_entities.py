@@ -334,3 +334,20 @@ def test_join_tables_are_tables_whose_columns_are_all_foreign_keys_and_that_have
     """
 
     assert join_tables(ddl) == {"vet_specialties", "owner_tags"}
+
+
+def test_an_orm_entity_records_the_table_it_declares_so_the_queries_of_that_table_reach_it():
+    """The table annotation's name and a class-level table attribute (without its schema) are the entity's tables;
+    a type without either keeps none."""
+    import dataclasses
+
+    rules = dataclasses.replace(RULES, table_annotations=("Table",), table_attributes=("__tablename__", "db_table"))
+    loan = {**_t("Loan", "r/svc/models.py", bases=["Base"]), "code": 'class Loan(Base):\n    __tablename__ = "loans"\n    __table_args__ = {"schema": "disbursement"}\n'}
+    owner = _t("Owner", "r/owner/Owner.java", decorators=["Entity", 'Table(name = "owners")'])
+    visit = {**_t("Visit", "r/visit/models.py", bases=["Model"]), "code": "class Visit(Model):\n    class Meta:\n        db_table = 'clinic.visits'\n"}
+    pet = _t("Pet", "r/owner/Pet.java", decorators=["Entity"])
+    base = _t("Base", "r/svc/db.py", bases=["DeclarativeBase"])
+
+    tables = {e.name_candidates[0][0]: e.tables for e in detect_entities([loan, owner, visit, pet, base], {}, {}, rules).entities}
+
+    assert tables == {"Loan": ["loans"], "Owner": ["owners"], "Visit": ["visits"], "Pet": []}

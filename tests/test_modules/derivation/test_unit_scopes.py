@@ -186,3 +186,37 @@ def test_a_graph_link_to_one_of_an_entities_types_reaches_the_entities_element()
     result = derive_graph_link_relationships([*COMPONENTS, order], [rule], {"Q": [("typedef::r::BAT1", "typedef::r::REC")]}, scopes=ENTITY_SCOPES)
 
     assert _triples(result) == {("ac_batch", "Access", "do_order")}
+
+
+def test_a_function_accesses_the_entities_its_own_files_declare_also_from_a_module_folder():
+    """Unit functions reach the entity through their units (as components do); a module's or feature package's function
+    through its folder: the one that holds one of the entity's files, not another module's."""
+    functions = [
+        _el("af_cli", "ApplicationFunction", "unit::r::r::cli"),
+        _el("af_batch", "ApplicationFunction", "unit::r::batch"),
+        _el("af_core", "ApplicationFunction", "module::r::pkg/core"),
+        _el("af_other", "ApplicationFunction", "module::r::other"),
+    ]
+    order = _el("do_order", "DataObject", "entity::r::order", "Order")
+    paths = {**PATHS, "module::r::pkg/core": "r/pkg/core", "module::r::other": "r/other"}
+
+    result = derive_containment_relationships(
+        [*functions, order], paths, [ContainmentRule(container="ApplicationFunction", contained="DataObject", relationship="Access")], scopes=ENTITY_SCOPES
+    )
+
+    assert _triples(result) == {("af_cli", "Access", "do_order"), ("af_batch", "Access", "do_order"), ("af_core", "Access", "do_order")}
+
+
+def test_a_feature_package_function_accesses_its_entity_when_no_unit_has_a_function():
+    """A unit split into feature packages has no function of its own: the packages' functions still reach their entities."""
+    functions = [_el("af_core", "ApplicationFunction", "module::r::pkg/core")]
+    order = _el("do_order", "DataObject", "entity::r::order", "Order")
+
+    result = derive_containment_relationships(
+        [*functions, order],
+        {**PATHS, "module::r::pkg/core": "r/pkg/core"},
+        [ContainmentRule(container="ApplicationFunction", contained="DataObject", relationship="Access")],
+        scopes=ENTITY_SCOPES,
+    )
+
+    assert _triples(result) == {("af_core", "Access", "do_order")}

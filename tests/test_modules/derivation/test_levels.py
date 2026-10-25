@@ -13,6 +13,7 @@ from deriva.modules.derivation.levels import (
     interface_owners,
     relationship_levels,
     rollups,
+    split_realizations,
 )
 
 RULES = LevelRules(
@@ -187,3 +188,13 @@ def test_no_derivation_from_a_derived_tier_relationship_an_invalid_rule_or_a_rel
     ]
 
     assert _derive(relationships, levels, types, [AC_REALIZES_AS, ("ApplicationService", "Access", "BusinessObject")]) == []
+
+
+def test_a_split_units_services_are_realized_by_its_feature_packages_functions():
+    """The unit has no function of its own (its feature packages have): each package's function realizes the unit's
+    service; a service a function already realizes, or a unit without parts, gets none."""
+    parents = {"owner": "unit", "vet": "unit", "unit": None, "solo": None}
+    function_of = {"owner": "af_owner", "vet": "af_vet", "solo": "af_solo"}
+    services = {"as_unit": ["unit"], "as_solo": ["solo"], "as_done": ["unit"]}
+
+    assert split_realizations(services, parents, function_of, realized={"as_done"}) == [("af_owner", "as_unit"), ("af_vet", "as_unit")]
