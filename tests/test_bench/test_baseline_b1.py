@@ -40,6 +40,26 @@ def test_the_material_is_deterministic_and_within_budget(tmp_path):
     assert "src/" in text and "## Directory tree" in text
 
 
+def test_files_the_registry_excludes_are_no_material_not_even_in_the_tree(tmp_path):
+    root = _repo(tmp_path)
+    for path in ("design/model.archimate", "design/notes/Model.docx", "src/orders/Legacy.java"):
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text("reference " * 10, encoding="utf-8")
+    registry = [
+        {"extension": ".archimate", "file_type": "exclude", "subtype": "output"},
+        {"extension": "path:**/notes/Model.docx", "file_type": "exclude", "subtype": "reference-model"},
+        {"extension": "path:**/Legacy.java", "file_type": "exclude", "subtype": ""},
+        {"extension": ".java", "file_type": "source", "subtype": "java"},
+    ]
+    params = b1.B1Params(budget_chars=5000, readme_chars=100, tree_depth=4, tree_entries=50, per_file_chars=300)
+
+    text, manifest = b1.repository_material(root, params, registry)
+
+    assert "model.archimate" not in text and "Model.docx" not in text and "Legacy.java" not in text
+    assert "design/" not in text  # a folder holding only excluded files is not listed either
+    assert manifest["sources"][0] == "src/orders/OrderService.java" and manifest["excluded"] == 3
+
+
 def test_validation_names_every_problem():
     model = {
         "elements": [
