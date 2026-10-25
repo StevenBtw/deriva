@@ -4,8 +4,8 @@ The architect level is the derived model. Its members, kept as lineage, become d
 
 - a data domain (DataObject) composes its entities (DataObject);
 - a channel interface (ApplicationInterface) composes its endpoint members (ApplicationInterface);
-- the environment (Node) is assigned to an artifact per deployed container, which realizes the component of the
-  unit it deploys; where the deployment is a service node of its own, that node is assigned to the artifact;
+- deployments are no detail elements: a deployment that deploys a unit is that unit's architect-level artifact, and
+  one without a unit (a vendor image) is its system software, which the platform node composes;
 - a mainframe unit (ApplicationComponent) composes its programs (ApplicationComponent);
 - a lifecycle's states stay a property of its process (the hand-off states are already events).
 
@@ -25,7 +25,6 @@ class DetailLineage:
     """The members the graph holds per architect source node."""
 
     entities: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # domain id -> (entity id, name)
-    deployments: dict[str, list[tuple[str, str, str | None]]] = field(default_factory=dict)  # environment id -> (deployment id, name, unit id)
     programs: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # unit id -> (program id, name)
     states: dict[str, list[str]] = field(default_factory=dict)  # lifecycle id -> states in order
 
@@ -45,8 +44,6 @@ def detail_level(elements: list[dict[str, Any]], lineage: DetailLineage) -> Deta
     """The detail elements, their relationships to the architect elements, and the architect elements' extra properties."""
     out = DetailLevel()
     seen: set[str] = set()
-    component_of = {str((e.get("properties") or {}).get("source")): e["identifier"] for e in elements if e.get("element_type") == "ApplicationComponent"}
-    service_node = {str((e.get("properties") or {}).get("source")): e["identifier"] for e in elements if e.get("element_type") == "Node"}
 
     def member(element_type: str, identity: str, name: str, parent: str, source: str) -> str:
         identifier = element_identifier(element_type, f"detail::{identity}")
@@ -68,13 +65,6 @@ def detail_level(elements: list[dict[str, Any]], lineage: DetailLineage) -> Deta
                 if node:
                     child = member("ApplicationInterface", f"{parent}::{node}", str(m.get("name") or node), parent, node)
                     out.relationships.append(_relationship("Composition", parent, child))
-        elif kind == "Node":
-            for deployment, name, unit in lineage.deployments.get(source, []):
-                holder = service_node.get(deployment, parent)
-                artifact = member("Artifact", deployment, name, holder, deployment)
-                out.relationships.append(_relationship("Assignment", holder, artifact))
-                if unit and unit in component_of:
-                    out.relationships.append(_relationship("Realization", artifact, component_of[unit]))
         elif kind == "ApplicationComponent":
             for program, name in lineage.programs.get(source, []):
                 out.relationships.append(_relationship("Composition", parent, member("ApplicationComponent", program, name, parent, program)))

@@ -58,6 +58,7 @@ from deriva.modules.derivation.application_component import ApplicationComponent
 from deriva.modules.derivation.application_function import ApplicationFunctionDerivation
 from deriva.modules.derivation.application_interface import ApplicationInterfaceDerivation
 from deriva.modules.derivation.application_service import ApplicationServiceDerivation
+from deriva.modules.derivation.artifact import ArtifactDerivation
 from deriva.modules.derivation.base import (
     ConfigurationRule,
     ContainmentRule,
@@ -153,6 +154,7 @@ DERIVATION_REGISTRY: dict[str, type[ElementDerivationBase]] = {
     "ApplicationComponent": ApplicationComponentDerivation,
     "ApplicationService": ApplicationServiceDerivation,
     "ApplicationFunction": ApplicationFunctionDerivation,
+    "Artifact": ArtifactDerivation,
     "ApplicationInterface": ApplicationInterfaceDerivation,
     "DataObject": DataObjectDerivation,
     "TechnologyService": TechnologyServiceDerivation,
