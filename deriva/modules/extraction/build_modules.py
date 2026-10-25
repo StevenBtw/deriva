@@ -35,6 +35,8 @@ class ModuleRules:
     test_dependencies: tuple[str, ...] = ()
     # A module whose folder or manifest name holds one of these words (compared whole) holds tests
     test_words: tuple[str, ...] = ()
+    # A module no unit builds is a component by who uses it (``usage_role``); None leaves that test off
+    min_behaviour: float | None = None
 
 
 @dataclass
@@ -178,6 +180,57 @@ def development_only(manifests: dict[str, str]) -> set[str]:
         if name and _package_key(name) in development - runtime:
             folders.add(_parent(path))
     return folders
+
+
+def declares_entry(path: str, text: str) -> bool:
+    """Whether a manifest declares an entry point by its ecosystem's convention: npm ``bin``, ``main`` or a ``start``
+    script, a Maven ``mainClass``, the Spring Boot plugin or war packaging, Gradle's application, Spring Boot or war
+    plugin, or pyproject project scripts."""
+    lower = PurePosixPath(path).name.lower()
+    if lower == "package.json":
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return False
+        return isinstance(data, dict) and bool(data.get("bin") or data.get("main") or "start" in (data.get("scripts") or {}))
+    if lower == "pom.xml":
+        return bool(re.search(r"<mainClass>|spring-boot-maven-plugin|<packaging>\s*war\s*</packaging>", text))
+    if lower.startswith("build.gradle"):
+        return bool(re.search(r"""['"](application|war|org\.springframework\.boot)['"]|^\s*(application|war)\s*$""", text, re.MULTILINE))
+    if lower == "pyproject.toml":
+        try:
+            return bool(tomllib.loads(text).get("project", {}).get("scripts"))
+        except tomllib.TOMLDecodeError:
+            return False
+    return False
+
+
+def behaviour_per_file(
+    code_files: list[str], methods: list[tuple[str, str]], accessors: tuple[str, ...] = ("get", "set", "is"), plain: tuple[str, ...] = ("equals", "hashCode", "toString")
+) -> float:
+    """Non-accessor methods per code file, on average: accessors (``get``/``set``/``is`` followed by a capital or ``_``),
+    the object protocol (``equals``, ``hashCode``, ``toString``) and dunder methods carry no behaviour of their own."""
+
+    def counts(name: str) -> bool:
+        if name.startswith("__") or name in plain:
+            return False
+        return not any(name.startswith(p) and len(name) > len(p) and (name[len(p)].isupper() or name[len(p)] == "_") for p in accessors)
+
+    wanted = set(code_files)
+    total = sum(1 for path, name in methods if path in wanted and counts(name))
+    return total / len(wanted) if wanted else 0.0
+
+
+def usage_role(users: int, behaviour: float, entry: bool, min_behaviour: float) -> str | None:
+    """Why a module that no unit builds is no component (None: it is one), by how many units use its code: two or more
+    make it a shared library, a component only with behaviour (more than ``min_behaviour`` non-accessor methods per
+    code file: a library of data structures has at most its constructors); one makes it part of that unit; none make
+    it a standalone program, a component only when its manifest declares an entry point."""
+    if users >= 2:
+        return None if behaviour > min_behaviour else "data-only library"
+    if users == 1:
+        return "part of one unit"
+    return None if entry else "no entry point"
 
 
 def _listed(path: str, text: str) -> list[str]:

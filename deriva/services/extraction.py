@@ -35,7 +35,7 @@ import hashlib
 import json
 import logging
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -1350,7 +1350,8 @@ def _module_rules(params: str | None) -> build_modules.ModuleRules:
     """The BuildModule step's rules (``params``): ``manifests`` (build manifest file names), ``code_subtypes`` (the
     file subtypes of the repository's own code), ``min_members`` (modules an aggregator lists to be a system),
     ``iac_dependencies`` and ``test_dependencies`` (dependency patterns of modules that are no components) and
-    ``test_words`` (words in a folder or manifest name that mark a test module)."""
+    ``test_words`` (words in a folder or manifest name that mark a test module); ``min_behaviour`` (non-accessor
+    methods per code file a shared library needs to be a component; without it a module no unit builds always is one)."""
     settings = json.loads(params) if params else {}
     manifests, subtypes = settings.get("manifests"), settings.get("code_subtypes")
     if not isinstance(manifests, list) or not manifests or not all(isinstance(m, str) and m for m in manifests):
@@ -1360,6 +1361,9 @@ def _module_rules(params: str | None) -> build_modules.ModuleRules:
     minimum = settings.get("min_members", 2)
     if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 2:
         raise ValueError("BuildModule params: min_members is a whole number of at least 2")
+    behaviour = settings.get("min_behaviour")
+    if behaviour is not None and (not isinstance(behaviour, int | float) or isinstance(behaviour, bool) or behaviour < 0):
+        raise ValueError("BuildModule params: min_behaviour is a number of at least 0")
     lists = {key: settings.get(key, []) for key in ("iac_dependencies", "test_dependencies", "test_words")}
     if not all(isinstance(v, list) and all(isinstance(p, str) and p for p in v) for v in lists.values()):
         raise ValueError("BuildModule params: iac_dependencies, test_dependencies and test_words are lists of strings")
@@ -1370,6 +1374,7 @@ def _module_rules(params: str | None) -> build_modules.ModuleRules:
         iac_dependencies=tuple(lists["iac_dependencies"]),
         test_dependencies=tuple(lists["test_dependencies"]),
         test_words=tuple(lists["test_words"]),
+        min_behaviour=behaviour,
     )
 
 
@@ -1379,6 +1384,34 @@ def _kind_nouns(params: str | None) -> dict[str, str]:
     if not isinstance(nouns, dict) or not all(k in ("system", "module") and isinstance(v, str) and v for k, v in nouns.items()):
         raise ValueError("BuildModule params: kind_nouns maps system and/or module to a word")
     return dict(nouns)
+
+
+def _exclude_by_usage(
+    q: Callable[..., list[dict[str, Any]]],
+    norm: Callable[[Any], str],
+    modules: list[build_modules.BuildModule],
+    files: list[dict[str, Any]],
+    manifests: dict[str, str],
+    rules: build_modules.ModuleRules,
+) -> None:
+    """Mark the modules no unit builds that are no component (``build_modules.usage_role``): the units that use a module
+    include one of its code files or have a member that imports one; its behaviour comes from the method nodes."""
+    members: dict[str, set[str]] = defaultdict(set)
+    for r in q("MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) WHERE u.repository_name = $repo_name AND u.excluded IS NULL RETURN u.id AS u, f.filePath AS p"):
+        members[norm(r["p"])].add(str(r["u"]))
+    users_of: dict[str, set[str]] = defaultdict(set)
+    for path, units in members.items():
+        users_of[path] |= units
+    for r in q("MATCH (a:Graph:File)-[:`Graph:IMPORTS`]->(b:Graph:File) WHERE a.repository_name = $repo_name RETURN a.filePath AS a, b.filePath AS b"):
+        users_of[norm(r["b"])] |= members.get(norm(r["a"]), set())
+    methods = [(norm(r["p"]), str(r["n"] or "")) for r in q("MATCH (m:Graph:Method) WHERE m.repository_name = $repo_name RETURN m.filePath AS p, m.methodName AS n")]
+    code = {f["path"] for f in files if f.get("file_type") == "source" and f.get("subtype") in rules.code_subtypes}
+    for m in modules:
+        own = [p for p in m.files if p in code]
+        users = set().union(*(users_of.get(p, set()) for p in own)) if own else set()
+        m.excluded = build_modules.usage_role(
+            len(users), build_modules.behaviour_per_file(own, methods), build_modules.declares_entry(m.manifest, manifests.get(m.manifest, "")), float(rules.min_behaviour or 0)
+        )
 
 
 def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
@@ -1409,6 +1442,9 @@ def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: P
         at = [uid for uid, path in units if path == m.path]
         nested = any(o.path.startswith(m.path + "/") for o in found)
         return at[0] if m.excluded is None and m.module and not m.system and len(at) == 1 and not nested else None
+
+    if rules.min_behaviour is not None:
+        _exclude_by_usage(q, norm, [m for m in found if m.module and not m.system and m.excluded is None and not same_as(m)], files, manifests, rules)
 
     # A component candidate named like a unit (its name or one of its name candidates) or an earlier candidate (as written, or without the repository's name, as
     # derivation sees it) takes the first free name of: its kind noun added, the words of its path, those with the noun.

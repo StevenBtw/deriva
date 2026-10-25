@@ -340,9 +340,9 @@
     "params": "{\n \"status_words\": [\"status\", \"state\", \"stage\", \"phase\"],\n \"min_states\": 3,\n \"value_pattern\": \"[A-Z][A-Z0-9_]+\",\n \"flow_words\": [\"flow\", \"lifecycle\", \"workflow\", \"process\"],\n \"heading_noise\": [\"flow\", \"workflow\", \"overview\", \"steps\"],\n \"unit_noise\": [\"service\", \"server\", \"backend\", \"frontend\", \"app\", \"api\"],\n \"name_templates\": [\"{object} Lifecycle\"],\n \"markers\": [\n  \"require_role\\\\(([^)]*)\\\\)\",\n  \"has(?:Any)?Role\\\\(([^)]*)\\\\)\",\n  \"@RolesAllowed\\\\(([^)]*)\\\\)\",\n  \"@Secured\\\\(([^)]*)\\\\)\",\n  \"@PreAuthorize\\\\(([^)]*)\\\\)\"\n ],\n \"generic_roles\": [\"admin\", \"administrator\", \"user\", \"system\", \"guest\", \"anonymous\", \"superuser\"],\n \"generic_actors\": [\"user\", \"client\", \"server\", \"system\", \"admin\", \"administrator\", \"developer\", \"machine\"]\n}\n"
   },
   {
-    "id": 96,
+    "id": 97,
     "node_type": "BuildModule",
-    "version": 2,
+    "version": 3,
     "sequence": 21,
     "enabled": true,
     "input_sources": "",
@@ -352,8 +352,8 @@
     "extraction_method": "structural",
     "temperature": null,
     "max_tokens": null,
-    "created_at": "2026-10-17T17:04:51.591329",
+    "created_at": "2026-10-25T16:45:54.017218",
     "batch_size": 1,
-    "params": "{\n \"manifests\": [\n  \"pom.xml\",\n  \"package.json\",\n  \"pyproject.toml\",\n  \"build.gradle\",\n  \"build.gradle.kts\",\n  \"settings.gradle\",\n  \"settings.gradle.kts\"\n ],\n \"code_subtypes\": [\n  \"c\",\n  \"cobol\",\n  \"coffeescript\",\n  \"cpp\",\n  \"csharp\",\n  \"golang\",\n  \"java\",\n  \"javascript\",\n  \"php\",\n  \"python\",\n  \"ruby\",\n  \"rust\",\n  \"typescript\"\n ],\n \"min_members\": 2,\n \"iac_dependencies\": [\n  \"aws-cdk-lib\",\n  \"aws-cdk\",\n  \"@aws-cdk/*\",\n  \"cdktf\",\n  \"@cdktf/*\",\n  \"pulumi\",\n  \"@pulumi/*\",\n  \"serverless\",\n  \"@serverless/*\"\n ],\n \"test_dependencies\": [\n  \"cypress\",\n  \"jest\",\n  \"mocha\",\n  \"chai\",\n  \"jasmine*\",\n  \"karma*\",\n  \"@playwright/test\",\n  \"playwright\",\n  \"puppeteer\",\n  \"selenium*\",\n  \"webdriverio\",\n  \"@wdio/*\",\n  \"cucumber*\",\n  \"@cucumber/*\",\n  \"junit*\",\n  \"testng\",\n  \"mockito*\",\n  \"hamcrest*\",\n  \"assertj*\",\n  \"pytest*\",\n  \"hypothesis\",\n  \"testcontainers*\",\n  \"rest-assured\",\n  \"jmeter*\",\n  \"gatling*\",\n  \"locust\"\n ],\n \"test_words\": [\n  \"test\",\n  \"tests\",\n  \"testing\",\n  \"e2e\"\n ],\n \"kind_nouns\": {\n  \"system\": \"System\",\n  \"module\": \"Module\"\n }\n}"
+    "params": "{\n \"manifests\": [\n  \"pom.xml\",\n  \"package.json\",\n  \"pyproject.toml\",\n  \"build.gradle\",\n  \"build.gradle.kts\",\n  \"settings.gradle\",\n  \"settings.gradle.kts\"\n ],\n \"code_subtypes\": [\n  \"c\",\n  \"cobol\",\n  \"coffeescript\",\n  \"cpp\",\n  \"csharp\",\n  \"golang\",\n  \"java\",\n  \"javascript\",\n  \"php\",\n  \"python\",\n  \"ruby\",\n  \"rust\",\n  \"typescript\"\n ],\n \"min_members\": 2,\n \"iac_dependencies\": [\n  \"aws-cdk-lib\",\n  \"aws-cdk\",\n  \"@aws-cdk/*\",\n  \"cdktf\",\n  \"@cdktf/*\",\n  \"pulumi\",\n  \"@pulumi/*\",\n  \"serverless\",\n  \"@serverless/*\"\n ],\n \"test_dependencies\": [\n  \"cypress\",\n  \"jest\",\n  \"mocha\",\n  \"chai\",\n  \"jasmine*\",\n  \"karma*\",\n  \"@playwright/test\",\n  \"playwright\",\n  \"puppeteer\",\n  \"selenium*\",\n  \"webdriverio\",\n  \"@wdio/*\",\n  \"cucumber*\",\n  \"@cucumber/*\",\n  \"junit*\",\n  \"testng\",\n  \"mockito*\",\n  \"hamcrest*\",\n  \"assertj*\",\n  \"pytest*\",\n  \"hypothesis\",\n  \"testcontainers*\",\n  \"rest-assured\",\n  \"jmeter*\",\n  \"gatling*\",\n  \"locust\"\n ],\n \"test_words\": [\n  \"test\",\n  \"tests\",\n  \"testing\",\n  \"e2e\"\n ],\n \"kind_nouns\": {\n  \"system\": \"System\",\n  \"module\": \"Module\"\n },\n \"min_behaviour\": 1\n}"
   }
 ]
