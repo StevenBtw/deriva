@@ -266,9 +266,10 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
         listed: set[str] = set()
         for pattern in _listed(manifest, manifests.get(manifest, "")):
             target = str(PurePosixPath(folder, pattern.strip("/")))
-            listed |= {m for m in modules if fnmatch.fnmatchcase(m, target)}
-        if len(listed) >= rules.min_members:
-            systems[folder] = sorted(listed)
+            listed |= {m for m in set(code) if fnmatch.fnmatchcase(m, target)}
+        # Excluded modules count as listed (the aggregation is a fact of the build); its members are the other ones
+        if len(listed) >= rules.min_members and listed & modules:
+            systems[folder] = sorted(listed & modules)
 
     out = []
     raws: dict[str, str] = {}
