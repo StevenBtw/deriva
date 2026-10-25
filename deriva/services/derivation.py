@@ -533,6 +533,11 @@ def _component_services_step(
                     endpoints[unit].append((node, type_name))
                     nodes.add(node)
         lifecycle_rows = graph_manager.query("MATCH (l:Graph:Lifecycle) WHERE l.active = true RETURN l.id AS id, l.sites AS sites, l.stateSites AS stateSites")
+        # A data object made from an entity is accessed through its domain
+        domain_entities: dict[str, list[str]] = {str(r["id"]): [] for r in domains}
+        for row in graph_manager.query("MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(e:Graph:DataEntity) WHERE d.active = true RETURN d.id AS d, e.id AS e"):
+            if str(row["d"]) in domain_entities:
+                domain_entities[str(row["d"])].append(str(row["e"]))
         services, functions = derive_unit_services(
             elements,
             element_source_paths(graph_manager, [{"properties": {"source": n}} for n in sorted(nodes)]),
@@ -555,6 +560,7 @@ def _component_services_step(
             consumes=consumes,
             lifecycle_sites={str(r["id"]): {norm(p) for p in r.get("sites") or []} for r in lifecycle_rows},
             lifecycle_state_sites={str(r["id"]): _state_sites(r.get("stateSites") or [], norm) for r in lifecycle_rows},
+            domain_entities=domain_entities,
         )
         return _stored_services(services + functions, archimate_manager)
     if config.group_by == "members":
@@ -740,6 +746,9 @@ def _function_model_step(
     rules = config.evidence
     model = parse_function_model(_function_model_file(config.path).read_text(encoding="utf-8"), config.name, config.exclude, max_level=config.levels)
     business = {str(r["id"]) for r in graph_manager.query("MATCH (d:Graph:DataDomain) WHERE d.active = true RETURN d.id AS id, d.businessObject AS bo") if r.get("bo")}
+    # A data object made from an entity of a business domain touches that domain
+    members = graph_manager.query("MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(e:Graph:DataEntity) WHERE d.active = true RETURN d.id AS d, e.id AS e")
+    business |= {str(r["e"]) for r in members if str(r["d"]) in business}
     data_objects = {e["identifier"]: e for e in elements if e.get("element_type") == "DataObject"}
     roles = {e["identifier"]: str((e.get("properties") or {}).get("role") or "") for e in elements if e.get("element_type") == "ApplicationInterface"}
     unit_rows = graph_manager.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.name AS name, u.path AS path")
