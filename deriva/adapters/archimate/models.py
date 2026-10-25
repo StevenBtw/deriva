@@ -60,6 +60,12 @@ ELEMENT_TYPES: dict[str, ElementType] = {
         aspect="Behavior",
         description="An explicitly defined exposed application behavior",
     ),
+    "ApplicationFunction": ElementType(
+        name="ApplicationFunction",
+        layer="Application",
+        aspect="Behavior",
+        description="Automated behavior that can be performed by an application component",
+    ),
     "DataObject": ElementType(
         name="DataObject",
         layer="Application",
@@ -149,6 +155,7 @@ STRUCTURE_ELEMENTS: set[str] = {
 # Behavior elements (processes, services, functions)
 BEHAVIOR_ELEMENTS: set[str] = {
     "ApplicationService",
+    "ApplicationFunction",
     "BusinessProcess",
     "BusinessFunction",
     "BusinessEvent",
@@ -170,6 +177,7 @@ APPLICATION_LAYER: set[str] = {
     "ApplicationComponent",
     "ApplicationInterface",
     "ApplicationService",
+    "ApplicationFunction",
     "DataObject",
 }
 
@@ -226,9 +234,12 @@ def match_kind(element_type: str) -> str:
 # ArchiMate 3.2 Relationship Table
 # =============================================================================
 # Source: ArchiMate 3.2 Specification, Appendix B.5 "Relationship Tables", restricted
-# to the 13 element types Deriva derives plus Artifact (the export's detail level). The spec publishes the tables as images;
-# letters were read from them and cross-checked (case-insensitively, all 169 cells)
-# against Archi's relationships.xml v3.2.
+# to the element types Deriva derives plus Artifact (the export's detail level). The spec publishes the tables as images;
+# letters were read from them and cross-checked (case-insensitively, every cell)
+# against Archi's relationships.xml v3.2. ApplicationFunction (row and column, 0.8.8): letters from Archi's
+# relationships.xml; the tier by layer analogy with BusinessFunction and the service rows, uppercase only where the generic
+# metamodel shows it (assigned from a component, realizes a service, accesses a data object, triggers and flows between
+# application behaviour), else lowercase.
 #
 # Uppercase letter: relationship explicit in the metamodel figures ("direct").
 # Lowercase letter: allowed only via the spec's derivation rules ("derived").
@@ -258,6 +269,7 @@ _TABLE_COLUMNS = (
     "ApplicationComponent",
     "ApplicationInterface",
     "ApplicationService",
+    "ApplicationFunction",
     "DataObject",
     "Node",
     "Device",
@@ -272,20 +284,21 @@ _TABLE_COLUMNS = (
 # Row = source, columns in _TABLE_COLUMNS order = target.
 # fmt: off
 _TABLE_ROWS: dict[str, tuple[str, ...]] = {
-    "BusinessActor":        ("SCGvtfO", "IvtfO", "IvtfO", "IvtfO", "aO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessProcess":      ("vtfO", "SCGvTFO", "CGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessFunction":     ("vtfO", "CGvTFO", "SCGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessEvent":        ("vtfO", "vTFO", "vTFO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessObject":       ("O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O", "O", "O", "O", "O"),
-    "ApplicationComponent": ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGRvtfO", "CgrvtfO", "irvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "ApplicationInterface": ("VtfO", "vtfO", "vtfO", "vtfO", "aO", "VtfO", "SCGvtfO", "IvtfO", "aO", "VtfO", "VtfO", "VtfO", "vtfO", "aO"),
-    "ApplicationService":   ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "SCGvTFO", "AO", "VtfO", "VtfO", "VtfO", "vtfO", "aO"),
-    "DataObject":           ("O", "O", "O", "O", "RO", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O"),
-    "Node":                 ("ivtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGivtfO", "CGirvtfO", "CGirvtfO", "irvtfO", "aIO"),
-    "Device":               ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "SCGvtfO", "CGIrvtfO", "irvtfO", "aIO"),
-    "SystemSoftware":       ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "vtfO", "SCGIrvtfO", "irvtfO", "aIO"),
-    "TechnologyService":    ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "RvtfO", "aO", "VtfO", "VtfO", "VtfO", "SCGvTFO", "aO"),
-    "Artifact":             ("O", "rO", "rO", "rO", "rO", "RO", "rO", "rO", "RO", "O", "O", "RO", "rO", "SCGrO"),
+    "BusinessActor":        ("SCGvtfO", "IvtfO", "IvtfO", "IvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessProcess":      ("vtfO", "SCGvTFO", "CGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessFunction":     ("vtfO", "CGvTFO", "SCGvTFO", "vTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessEvent":        ("vtfO", "vTFO", "vTFO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "BusinessObject":       ("O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O"),
+    "ApplicationComponent": ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGRvtfO", "CgrvtfO", "irvtfO", "IrvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "ApplicationInterface": ("VtfO", "vtfO", "vtfO", "vtfO", "aO", "VtfO", "SCGvtfO", "IvtfO", "vtfO", "aO", "VtfO", "VtfO", "VtfO", "vtfO", "aO"),
+    "ApplicationService":   ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "SCGvTFO", "VTFO", "AO", "VtfO", "VtfO", "VtfO", "vtfO", "aO"),
+    "ApplicationFunction":  ("vtfO", "rvtfO", "rvtfO", "vtfO", "aO", "vtfO", "vtfO", "RvTFO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
+    "DataObject":           ("O", "O", "O", "O", "RO", "O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O"),
+    "Node":                 ("ivtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGivtfO", "CGirvtfO", "CGirvtfO", "irvtfO", "aIO"),
+    "Device":               ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "SCGvtfO", "CGIrvtfO", "irvtfO", "aIO"),
+    "SystemSoftware":       ("vtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "vtfO", "SCGIrvtfO", "irvtfO", "aIO"),
+    "TechnologyService":    ("VtfO", "VtfO", "VtfO", "vtfO", "aO", "VtfO", "vtfO", "RvtfO", "VtfO", "aO", "VtfO", "VtfO", "VtfO", "SCGvTFO", "aO"),
+    "Artifact":             ("O", "rO", "rO", "rO", "rO", "RO", "rO", "rO", "rO", "RO", "O", "O", "RO", "rO", "SCGrO"),
 }
 # fmt: on
 

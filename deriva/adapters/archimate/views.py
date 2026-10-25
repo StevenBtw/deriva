@@ -28,7 +28,7 @@ VIEWPOINTS: tuple[tuple[str, str, frozenset[str] | None, str], ...] = (
         ENTERPRISE,
     ),
     ("Application Structure (solution)", "Application Structure", frozenset({"ApplicationComponent"}), SOLUTION),
-    ("Application Cooperation (solution)", "Application Cooperation", frozenset({"ApplicationComponent", "ApplicationInterface"}), SOLUTION),
+    ("Application Cooperation (solution)", "Application Cooperation", frozenset({"ApplicationComponent", "ApplicationInterface", "ApplicationFunction"}), SOLUTION),
     ("Information Structure (solution)", "Information Structure", frozenset({"DataObject"}), SOLUTION),
     ("Implementation and Deployment (solution)", "Implementation and Deployment", DEPLOYMENT, SOLUTION),
     ("Information Structure (detail)", "Information Structure", frozenset({"DataObject"}), DETAIL),
@@ -42,7 +42,7 @@ ANCHORS = {"Business (enterprise)": frozenset({"BusinessActor", "BusinessProcess
 BANDS = ("Business", "Application", "Technology", "Other")
 TYPE_ORDER = (
     "BusinessActor", "BusinessFunction", "BusinessProcess", "BusinessEvent", "BusinessObject",
-    "ApplicationComponent", "ApplicationInterface", "ApplicationService", "DataObject",
+    "ApplicationComponent", "ApplicationInterface", "ApplicationService", "ApplicationFunction", "DataObject",
     "Node", "Device", "SystemSoftware", "TechnologyService", "Artifact",
 )  # fmt: skip
 COLUMNS, WIDTH, HEIGHT, GAP, BAND_GAP, MARGIN = 6, 160, 60, 20, 60, 20

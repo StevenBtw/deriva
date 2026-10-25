@@ -255,7 +255,7 @@ class DerivedRelationshipResponse(BaseModel):
 
 B1ElementType = Literal[
     "BusinessActor", "BusinessProcess", "BusinessFunction", "BusinessEvent", "BusinessObject",
-    "ApplicationComponent", "ApplicationInterface", "ApplicationService", "DataObject",
+    "ApplicationComponent", "ApplicationInterface", "ApplicationService", "ApplicationFunction", "DataObject",
     "Node", "Device", "SystemSoftware", "TechnologyService",
 ]  # fmt: skip
 B1RelationshipType = Literal[
