@@ -1626,6 +1626,14 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
         job_runs=job_runs,
         program_calls=program_calls,
         documents=documents,
+        # Files defining a serverless handler entry point (event, context)
+        handlers=sorted(
+            {
+                norm(r["p"])
+                for r in q("MATCH (m:Graph:Method) WHERE m.repository_name = $repo_name RETURN m.filePath AS p, m.parameters AS a")
+                if r.get("p") and deployable_units.is_handler(str(r.get("a") or ""))
+            }
+        ),
         # Names no unit may take: the technologies and dependencies the graph already names
         reserved={str(r["name"]) for r in q("MATCH (n:Graph:Technology) WHERE n.active = true AND n.repository_name = $repo_name RETURN n.techName AS name") if r.get("name")}
         | {
