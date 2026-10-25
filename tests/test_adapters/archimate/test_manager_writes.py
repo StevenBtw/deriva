@@ -149,3 +149,16 @@ def test_element_and_relationship_properties_are_merged_in_place(am):
     assert shop.properties == {"source": "unit::r::shop", "levels": ["enterprise", "solution"]}
     (relationship,) = am.get_relationships()
     assert relationship.properties == {"derived_from": "rule", "levels": [], "cross_level": True}
+
+
+def test_a_relationship_the_metamodel_does_not_allow_is_refused(am):
+    from deriva.adapters.archimate.validation import ValidationError
+
+    am.add_element(Element(name="Order", element_type="DataObject", identifier="do_order"))
+    am.add_element(Element(name="Shop", element_type="ApplicationComponent", identifier="ac_shop"))
+
+    with pytest.raises(ValidationError, match="not allowed by ArchiMate"):
+        am.add_relationship(Relationship(source="do_order", target="ac_shop", relationship_type="Serving"))
+    am.add_relationship(Relationship(source="ac_shop", target="do_order", relationship_type="Access"))
+
+    assert [(r.source, r.target) for r in am.get_relationships()] == [("ac_shop", "do_order")]
