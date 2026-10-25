@@ -13,6 +13,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 ### Benchmark
 
 - **Behaviour matches within its layer**: when a model is compared with a reference (`benchmark reference`, `benchmark gate`), a process, function, interaction or event counts for any of these four in the same layer, so an application function covers a reference application process; services and structure types still match only their own type
+- **The B1 baseline skips excluded files**: the one-shot baseline (`benchmark run --baseline b1`) now leaves out every file the file-type registry excludes (model files, backups, documents that describe a reference model), its directory tree included, as extraction does. Before, the tree could name such files
 
 ## v0.8.7 - Database upgrades (October 24 2026)
 
