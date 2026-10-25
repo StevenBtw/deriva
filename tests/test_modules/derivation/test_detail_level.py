@@ -19,7 +19,6 @@ ELEMENTS = [
 ]
 LINEAGE = DetailLineage(
     entities={"domain::r::order": [("entity::r::order", "Order"), ("entity::r::orderline", "Order Line")]},
-    deployments={"environment::r::compose": [("deployment::r::compose::shop", "shop", "unit::r::shop"), ("deployment::r::compose::db", "db", None)]},
     programs={"unit::r::batch": [("typedef::r::POSTTRAN", "POSTTRAN")]},
     states={"lifecycle::r::order": ["DRAFT", "PLACED", "PAID"]},
 )
@@ -37,8 +36,6 @@ def test_members_become_nested_elements_of_their_architect_element():
     assert kinds == [
         ("ApplicationComponent", "POSTTRAN"),
         ("ApplicationInterface", "OrderResource"),
-        ("Artifact", "db"),
-        ("Artifact", "shop"),
         ("DataObject", "Order"),
         ("DataObject", "Order Line"),
     ]
@@ -46,9 +43,6 @@ def test_members_become_nested_elements_of_their_architect_element():
         ("Order Data", "Composition", "Order"),
         ("Order Data", "Composition", "Order Line"),
         ("Shop REST API", "Composition", "OrderResource"),
-        ("Docker Compose", "Assignment", "shop"),
-        ("Docker Compose", "Assignment", "db"),
-        ("shop", "Realization", "Shop"),  # the artifact realizes the component of the unit it deploys
         ("Batch", "Composition", "POSTTRAN"),
     }
     assert all(e["properties"]["level"] == "detail" for e in detail.elements)
@@ -63,14 +57,10 @@ def test_identities_are_structural_and_lifecycle_states_are_a_property():
     assert first.properties["ac_shop"] == {}  # architect elements carry their level only (set by the exporter)
 
 
-def test_a_deployments_artifact_is_assigned_to_its_service_node_where_there_is_one():
-    """A service node made from the deployment takes the artifact; a deployment without one stays with the environment."""
-    elements = [*ELEMENTS, _el("n_shop", "Node", "shop", source="deployment::r::compose::shop", role="service")]
-    detail = detail_level(elements, LINEAGE)
-    names = {e["identifier"]: e["name"] for e in elements + detail.elements}
-    triples = {(r["source"], r["relationship_type"], names[r["target"]]) for r in detail.relationships}
+def test_a_deployment_is_no_detail_artifact():
+    """A deployment that deploys a unit is that unit's architect-level artifact; one without a unit (a vendor image) is
+    its system software, which the node composes: the detail level adds no artifact and nothing to the node."""
+    detail = detail_level(ELEMENTS, LINEAGE)
 
-    assert ("n_shop", "Assignment", "shop") in triples and ("node_env", "Assignment", "shop") not in triples
-    assert ("node_env", "Assignment", "db") in triples
-    # The artifact keeps its identity: one artifact per deployment, whichever node holds it
-    assert sorted(e["identifier"] for e in detail.elements) == sorted(e["identifier"] for e in detail_level(ELEMENTS, LINEAGE).elements)
+    assert not any(e["element_type"] == "Artifact" for e in detail.elements)
+    assert not any("node_env" in (r["source"], r["target"]) for r in detail.relationships)
