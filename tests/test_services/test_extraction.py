@@ -2799,6 +2799,21 @@ class TestDeployableUnitStep:
         )
         return _run_extraction_step(cfg, SimpleNamespace(name=repo), Path(tmpdir), [], [], graph, None, MagicMock())
 
+    def test_a_folder_whose_file_defines_a_serverless_handler_becomes_a_function_unit(self, graph):
+        from deriva.adapters.graph.models import MethodNode
+
+        graph.add_node(
+            MethodNode(
+                name="lambda_handler", return_type="", visibility="public", file_path="lambdas/notify/index.py", type_name="", repository_name="r", parameters="event, context"
+            ),
+            node_id="method::r::lambdas/notify/index.py::lambda_handler",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._run(graph, tmpdir, {"lambdas/notify/index.py": ("source", "python", "def lambda_handler(event, context):\n    return 1\n")})
+
+        units = graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.id AS id, u.unitKind AS kind, u.evidence AS evidence")
+        assert [(u["id"], u["kind"]) for u in units] == [("unit::r::lambdas/notify", "function")]
+
     def test_each_repository_of_a_combined_graph_keeps_its_own_units(self, graph):
         """A combined graph runs the step once per repository: a pass reads and replaces only its repository's units."""
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:

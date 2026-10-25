@@ -430,3 +430,64 @@ def test_a_unit_of_a_package_listed_only_as_a_development_dependency_is_tooling(
     units = _units(files, manifests=manifests)
 
     assert {k: u.excluded for k, u in units.items()} == {"r::shop": None, "r/bench::shop-bench": "tooling"}
+
+
+def test_a_folder_whose_file_defines_a_serverless_handler_is_a_function_unit():
+    files = [
+        _file("r/lambdas/notify/index.py", "python"),
+        _file("r/lambdas/notify/templates.py", "python"),
+        _file("r/lambdas/query/lambda_function.py", "python"),
+        _file("r/backend/Dockerfile"),
+        _file("r/backend/server.py", "python"),
+        _file("r/backend/jobs/worker.py", "python"),
+    ]
+    # backend/jobs/worker.py defines a handler too, but inside the backend container's folder it is that unit's code
+    handlers = ["r/lambdas/notify/index.py", "r/lambdas/query/lambda_function.py", "r/backend/jobs/worker.py"]
+    imports = [("r/lambdas/notify/index.py", "r/lambdas/notify/templates.py")]
+
+    units = _units(files, handlers=handlers, imports=imports)
+
+    assert sorted(units) == ["r/backend", "r/lambdas/notify", "r/lambdas/query"]
+    assert units["r/lambdas/notify"].kind == "function" and units["r/lambdas/notify"].name == "notify"
+    assert units["r/lambdas/notify"].members == {"r/lambdas/notify/index.py", "r/lambdas/notify/templates.py"}
+    assert units["r/lambdas/notify"].evidence == ["handler: r/lambdas/notify/index.py"]
+
+
+def test_a_serverless_handler_is_read_from_its_parameters():
+    from deriva.modules.extraction.deployable_units import is_handler
+
+    assert is_handler("event, context")
+    assert is_handler("event: dict, context: Any")
+    assert is_handler("self, event, context")
+    assert not is_handler("request")
+    assert not is_handler("context, event")
+    assert not is_handler("event")
+
+
+def test_a_folder_with_a_page_entry_outside_every_unit_is_a_static_frontend_unit():
+    files = [
+        _file("r/frontend/index.html"),
+        _file("r/frontend/js/app.js", "javascript"),
+        _file("r/frontend/css/site.css"),
+        _file("r/backend/Dockerfile"),
+        _file("r/backend/server.py", "python"),
+        _file("r/backend/static/index.html"),
+        _file("r/lambdas/notify/index.html"),
+        _file("r/lambdas/notify/handler.py", "python"),
+    ]
+
+    units = _units(files, handlers=["r/lambdas/notify/handler.py"])
+
+    # backend/static/ and lambdas/notify/ belong to their units; frontend/ is a unit of its own
+    assert sorted(units) == ["r/backend", "r/frontend", "r/lambdas/notify"]
+    assert units["r/frontend"].kind == "static" and units["r/frontend"].members == {"r/frontend/index.html", "r/frontend/js/app.js", "r/frontend/css/site.css"}
+    assert units["r/frontend"].evidence == ["page entry: r/frontend/index.html"]
+
+
+def test_a_page_inside_a_template_folder_is_a_server_page_not_a_static_frontend():
+    files = [_file("r/webapp/app.py", "python"), _file("r/webapp/templates/index.html"), _file("r/webapp/templates/base.html")]
+
+    units = _units(files)
+
+    # No static unit, so the repository stays one unit
+    assert [(u.path, u.kind) for u in units.values()] == [("r", "repository")]
