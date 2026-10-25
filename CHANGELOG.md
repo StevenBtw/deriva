@@ -53,6 +53,7 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ### Benchmark
 
+- **Relationships are scored through their chains**: when a model is compared with a reference (`benchmark reference`, `benchmark gate`), a reference relationship the model does not draw still counts as found when the valid derivation rules of ArchiMate 3.2 (Appendix B.2) derive it from a chain of the model's direct relationships, also a chain below the scored level; the relationships on that chain count as correct. A relationship the model itself draws in the derived tier is no part of a chain, a relationship with an external system (a black box) counts only when drawn, and the report shows how much of the recall was drawn and how much came through a chain
 - **Behaviour matches within its layer**: when a model is compared with a reference (`benchmark reference`, `benchmark gate`), a process, function, interaction or event counts for any of these four in the same layer, so an application function covers a reference application process; services and structure types still match only their own type
 - **The B1 baseline skips excluded files**: the one-shot baseline (`benchmark run --baseline b1`) now leaves out every file the file-type registry excludes (model files, backups, documents that describe a reference model), its directory tree included, as extraction does. Before, the tree could name such files
 
