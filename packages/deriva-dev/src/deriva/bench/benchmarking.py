@@ -569,11 +569,12 @@ class BenchmarkOrchestrator:
             raise RuntimeError(f"No {baseline_b1.CONFIG_STEP} config row with an instruction (deriva-cli config add derivation {baseline_b1.CONFIG_STEP} --phase baseline)")
         params = baseline_b1.B1Params.from_params(json.loads(row.params) if row.params else {}, config_service.get_excluded_directories(self.engine))
         paths = {str(getattr(r, "name", "")): Path(str(getattr(r, "path", ""))) for r in RepoManager().list_repositories(detailed=True) if hasattr(r, "path")}
+        registry = [{"extension": ft.extension, "file_type": ft.file_type, "subtype": ft.subtype} for ft in config_service.get_file_types(self.engine)]
         report: dict[str, Any] = {}
         for repo in repositories:
             if repo not in paths:
                 raise RuntimeError(f"Repository not cloned: {repo}")
-            material, manifest = baseline_b1.repository_material(paths[repo], params)
+            material, manifest = baseline_b1.repository_material(paths[repo], params, registry)
             if verbose:
                 print(f"  B1 {repo}: {manifest['chars']} characters ({len(manifest['manifests'])} manifests, {len(manifest['sources'])} sources)")
             step = run_logger.step_start(baseline_b1.CONFIG_STEP)

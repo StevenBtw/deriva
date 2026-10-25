@@ -25,6 +25,7 @@ from deriva.adapters.archimate.models import Element, Relationship, validate_rel
 from deriva.common.json_utils import extract_json_from_response
 from deriva.common.naming import name_key
 from deriva.modules.derivation.base import element_identifier
+from deriva.modules.extraction.classification import classify_files
 
 SCHEMA: dict[str, Any] = {"name": "archimate_model_generation"}
 CONFIG_STEP = "BaselineB1"  # the config row with the instruction and params (phase baseline)
@@ -89,11 +90,20 @@ def _read(root: Path, rel: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "\n[... truncated]"
 
 
-def repository_material(root: Path, params: B1Params) -> tuple[str, dict[str, Any]]:
-    """The input text (README, tree, manifests, sources by size) within the budget, and what it holds."""
+def repository_material(root: Path, params: B1Params, registry: list[dict[str, str]] | None = None) -> tuple[str, dict[str, Any]]:
+    """The input text (README, tree, manifests, sources by size) within the budget, and what it holds.
+
+    Files the file-type registry excludes (reference models, model files, backups) are left out everywhere, the
+    directory tree included, as the pipeline leaves them out of extraction.
+    """
     files = _files(root, params)
+    excluded: set[str] = set()
+    if registry:
+        classified = classify_files([rel for rel, _ in files], registry)["classified"]
+        excluded = {c["path"] for c in classified if c["file_type"] == "exclude"}
+        files = [(rel, size) for rel, size in files if rel not in excluded]
     parts: list[str] = []
-    manifest: dict[str, Any] = {"readme": None, "manifests": [], "sources": [], "tree_entries": 0}
+    manifest: dict[str, Any] = {"readme": None, "manifests": [], "sources": [], "tree_entries": 0, "excluded": len(excluded)}
     used = 0
 
     def add(text: str) -> bool:
