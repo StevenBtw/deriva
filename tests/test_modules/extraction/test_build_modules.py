@@ -4,7 +4,7 @@ dropped from the front."""
 
 from __future__ import annotations
 
-from deriva.modules.extraction.build_modules import ModuleRules, detect_modules, module_id
+from deriva.modules.extraction.build_modules import ModuleRules, behaviour_per_file, declares_entry, detect_modules, module_id, usage_role
 
 RULES = ModuleRules(
     manifests=("pom.xml", "package.json", "pyproject.toml", "build.gradle", "build.gradle.kts", "settings.gradle"), code_subtypes=frozenset({"java", "python", "javascript"})
@@ -303,3 +303,34 @@ def test_an_aggregator_whose_listed_modules_are_all_excluded_is_no_system():
 
     assert not modules.get("r") or not modules["r"].system
     assert (modules["r/e2e"].excluded, modules["r/fixtures"].excluded) == ("test-only", "tooling")
+
+
+def test_a_module_no_unit_builds_is_a_component_by_who_uses_it():
+    # Two or more units: a shared library, a component only with behaviour (more than one non-accessor method per file)
+    assert usage_role(users=3, behaviour=3.2, entry=False, min_behaviour=1) is None
+    assert usage_role(users=5, behaviour=0.9, entry=False, min_behaviour=1) == "data-only library"
+    # One unit: part of that unit
+    assert usage_role(users=1, behaviour=9.0, entry=True, min_behaviour=1) == "part of one unit"
+    # No unit: a standalone program, a component only with a declared entry point
+    assert usage_role(users=0, behaviour=0.5, entry=True, min_behaviour=1) is None
+    assert usage_role(users=0, behaviour=4.0, entry=False, min_behaviour=1) == "no entry point"
+
+
+def test_a_manifest_declares_an_entry_point_by_its_ecosystems_convention():
+    assert declares_entry("r/c/package.json", '{"name": "client", "main": "index.js"}')
+    assert declares_entry("r/c/package.json", '{"name": "tool", "bin": {"tool": "cli.js"}}')
+    assert declares_entry("r/c/package.json", '{"name": "web", "scripts": {"start": "node server.js"}}')
+    assert not declares_entry("r/c/package.json", '{"name": "lib", "scripts": {"test": "jest"}}')
+    assert declares_entry("r/c/pom.xml", "<project><build><plugins><plugin><configuration><mainClass>a.Main</mainClass></configuration></plugin></plugins></build></project>")
+    assert declares_entry("r/c/pom.xml", "<project><packaging>war</packaging></project>")
+    assert not declares_entry("r/c/pom.xml", "<project><artifactId>entities</artifactId></project>")
+    assert declares_entry("r/c/pyproject.toml", '[project]\nname = "t"\n[project.scripts]\nt = "t:main"\n')
+    assert not declares_entry("r/c/pyproject.toml", '[project]\nname = "t"\n')
+
+
+def test_behaviour_counts_the_non_accessor_methods_per_code_file():
+    methods = [("a/Order.java", "getId"), ("a/Order.java", "setId"), ("a/Order.java", "isPaid"), ("a/Order.java", "Order"), ("a/Order.java", "toString"),
+               ("a/Pricing.java", "price"), ("a/Pricing.java", "discount"), ("a/Pricing.java", "__init__")]  # fmt: skip
+
+    assert behaviour_per_file(["a/Order.java", "a/Pricing.java"], methods) == 1.5  # Order: its constructor; Pricing: two
+    assert behaviour_per_file([], methods) == 0.0

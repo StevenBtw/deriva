@@ -2629,6 +2629,47 @@ class TestBuildModuleStep:
         same = {r["id"]: r["same"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.sameAs AS same")}
         assert same["module::deriva::packages/deriva-studio"] == "unit::deriva::packages/deriva-studio::deriva-studio"
 
+    def test_a_module_no_unit_builds_is_a_component_by_who_uses_it(self, graph):
+        """Two units import lib (behaviour) and data (accessors only); one imports only (part of it); nobody imports
+        tool (a mainClass) or probe (no entry). With min_behaviour set, lib and tool stay components."""
+        from deriva.adapters.graph.models import MethodNode
+
+        files = {
+            "a/Dockerfile": ("config", None, "FROM base\n"),
+            "a/A.java": ("source", "java", "class A {}\n"),
+            "b/Dockerfile": ("config", None, "FROM base\n"),
+            "b/B.java": ("source", "java", "class B {}\n"),
+        }
+        for name, pom in (("lib", ""), ("data", ""), ("only", ""), ("tool", "<build><mainClass>t.Main</mainClass></build>"), ("probe", "")):
+            files[f"{name}/pom.xml"] = ("build", "xml", f"<project><artifactId>{name}</artifactId>{pom}</project>")
+            files[f"{name}/{name.title()}.java"] = ("source", "java", f"class {name.title()} {{}}\n")
+        fid = lambda path: f"file::r::{path.replace('/', '_')}"  # noqa: E731 - a one-line helper
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            for source, target in (
+                ("a/A.java", "lib/Lib.java"),
+                ("b/B.java", "lib/Lib.java"),
+                ("a/A.java", "data/Data.java"),
+                ("b/B.java", "data/Data.java"),
+                ("a/A.java", "only/Only.java"),
+            ):
+                graph.add_edge(fid(source), fid(target), "IMPORTS")
+            for path, names in (
+                ("lib/Lib.java", ["route", "balance"]),
+                ("data/Data.java", ["getId", "setId"]),
+                ("tool/Tool.java", ["main"]),
+                ("probe/Probe.java", ["before", "after"]),
+            ):
+                for name in names:
+                    graph.add_node(
+                        MethodNode(name=name, return_type="void", visibility="public", file_path=path, type_name="X", repository_name="r"), node_id=f"method::r::{path}::{name}"
+                    )
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["java"]})
+            self._step(graph, tmpdir, "BuildModule", {**self.MODULE_PARAMS, "min_behaviour": 1})
+
+        excluded = {r["id"].split("::")[-1]: r["x"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.excluded AS x")}
+        assert excluded == {"lib": None, "data": "data-only library", "only": "part of one unit", "tool": None, "probe": "no entry point"}
+
     def test_a_module_named_like_one_of_a_units_name_candidates_takes_its_kind_noun(self, graph):
         """The unit's name candidates hold its manifest's name: a module of that name would lose the claim to the unit."""
         files = {
