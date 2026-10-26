@@ -52,7 +52,7 @@ class TestNameKey:
     @pytest.mark.parametrize(
         "spellings",
         [
-            ["Claims Handling", "ClaimsHandling", "claims_handling", "claims-handling", "CLAIMS HANDLING"],
+            ["Cases Handling", "CasesHandling", "cases_handling", "cases-handling", "CASES HANDLING"],
             ["HTTPServer", "HTTP Server", "http_server"],
             ["Realtime Streaming", "RealTimeStreaming", "Real Time Streaming"],
             ["Data Sources", "DataSource", "data source"],
@@ -111,7 +111,7 @@ class TestNameKey:
 
     def test_a_name_in_capitals_is_singularized_word_by_word(self):
         # Several words in capitals are a constant or shouting, not acronyms
-        assert name_key("CLAIMS HANDLING") == name_key("Claims Handling")
+        assert name_key("CASES HANDLING") == name_key("Cases Handling")
         assert name_key("MY_SERVICES") == name_key("MyServices")
 
 

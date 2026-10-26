@@ -49,14 +49,14 @@ def test_a_manifest_folder_without_code_of_its_own_is_no_module_and_nested_modul
         _f("r/docs/package.json", "json", "build"),
         _f("r/docs/readme.md", "markdown", "docs"),
     ]
-    manifests = {"r/app/package.json": '{"name": "app"}', "r/app/plugins/audit/package.json": '{"name": "r-audit-hook"}', "r/docs/package.json": '{"name": "docs"}'}
+    manifests = {"r/app/package.json": '{"name": "app"}', "r/app/plugins/audit/package.json": '{"name": "r-alert-hook"}', "r/docs/package.json": '{"name": "docs"}'}
 
     modules = _by_path(detect_modules("r", files, manifests, RULES))
 
     assert set(modules) == {"r/app", "r/app/plugins/audit"}  # docs has no code of its own
     assert modules["r/app/plugins/audit"].parent == "r/app" and modules["r/app"].parent is None
     assert modules["r/app"].files == ["r/app/index.js", "r/app/package.json"]  # the nested module's files are its own
-    assert modules["r/app/plugins/audit"].name == "Audit Hook"  # the repository name "r" dropped from the front
+    assert modules["r/app/plugins/audit"].name == "Alert Hook"  # the repository name "r" dropped from the front
 
 
 def test_workspaces_and_includes_name_their_members_by_folder_or_glob():
@@ -134,6 +134,38 @@ def test_the_root_takes_the_repository_name_and_colliding_names_their_paths():
     assert modules["ShopApp"].name == "Shop App"
     # Both are "Web": the full manifest names tell them apart
     assert (modules["ShopApp/web"].name, modules["ShopApp/packages/web"].name) == ("Web", "Shop App Web")
+
+
+def test_a_nested_aggregator_takes_its_folder_name():
+    """An aggregator below the root is named after its folder, as the root after the repository (its artifactId often
+    carries the packaging, "shop-orders-pom" or "shop-orders-parent")."""
+    files = [
+        _f("r/pom.xml", "xml", "build"),
+        _f("r/orders/pom.xml", "xml", "build"),
+        _f("r/orders/src/Orders.java"),
+        _f("r/orders/api/pom.xml", "xml", "build"),
+        _f("r/orders/api/src/Api.java"),
+        _f("r/orders/core/pom.xml", "xml", "build"),
+        _f("r/orders/core/src/Core.java"),
+        _f("r/billing/pom.xml", "xml", "build"),
+        _f("r/billing/src/Bill.java"),
+    ]
+    aggregator = "<project><artifactId>{0}</artifactId><packaging>pom</packaging><modules><module>{1}</module><module>{2}</module></modules></project>"
+    manifests = {
+        "r/pom.xml": aggregator.format("shop-parent", "orders", "billing"),
+        "r/orders/pom.xml": aggregator.format("shop-orders-pom", "api", "core"),
+        "r/orders/api/pom.xml": "<project><artifactId>shop-orders-api</artifactId></project>",
+        "r/orders/core/pom.xml": "<project><artifactId>shop-orders-core</artifactId></project>",
+        "r/billing/pom.xml": "<project><artifactId>shop-billing-service</artifactId></project>",
+    }
+
+    modules = _by_path(detect_modules("r", files, manifests, RULES))
+
+    # Also an aggregator with code of its own
+    assert modules["r/orders"].system and modules["r/orders"].module
+    assert modules["r/orders"].name == "Orders"
+    # Modules keep their manifest names
+    assert (modules["r/orders/api"].name, modules["r/billing"].name) == ("Shop Orders Api", "Shop Billing Service")
 
 
 QUALITY = ModuleRules(

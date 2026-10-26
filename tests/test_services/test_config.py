@@ -1981,6 +1981,23 @@ class TestLlmSamplesPerStep:
 
         assert config.llm_samples_per_step(object()) == {"DocConcepts": 3, "DirClasses": 1, "TypeA.naming": 1}
 
+    def test_role_classification_and_documentation_steps_are_listed(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from deriva.services import config
+
+        derivation = [
+            SimpleNamespace(step_name="Iface", params='{"roles": {"labels": ["File"], "instruction": "i", "names": {"web": "Web UI"}}}'),
+            SimpleNamespace(step_name="Data", params='{"roles": {"names": {"entity": "{name}"}, "structural": {"entity": {}}}}'),
+            SimpleNamespace(step_name="Grouping", params='{"application_grouping": {"kind_words": []}}'),
+            SimpleNamespace(step_name="Actors", params='{"documentation_actors": {"kind_words": []}}'),
+        ]
+        monkeypatch.setattr(config, "get_extraction_configs", lambda engine, enabled_only=False: [])
+        monkeypatch.setattr(config, "get_derivation_configs", lambda engine, enabled_only=False, phase=None, llm_only=None: derivation)
+
+        # A structural-only role set makes no call, so it is not listed
+        assert config.llm_samples_per_step(object()) == {"Iface.roles": 1, "Grouping": 1, "Actors": 1}
+
 
 class TestConfigHistory:
     """Every version of a step, newest first, from the real schema."""
@@ -2238,3 +2255,55 @@ class TestRestoreConfigVersion:
         assert config.restore_config_version(engine, "derivation", "Node", 2) == {"success": False, "error": "Version 2 of Node is the active one"}
         assert config.restore_config_version(engine, "derivation", "Node", 9) == {"success": False, "error": "Node has no version 9"}
         assert config.restore_config_version(engine, "derivation", "Nope", 1) == {"success": False, "error": "Config not found for Nope"}
+
+
+class TestLlmFlagVersion:
+    """Whether a step calls the LLM is part of its row: a new version can set it, and keeps it otherwise."""
+
+    def test_a_new_version_sets_or_keeps_the_flag(self):
+        from pathlib import Path
+
+        import duckdb
+
+        from deriva.services.config import create_derivation_config_version
+
+        con = duckdb.connect()
+        con.execute((Path(__file__).resolve().parents[2] / "deriva/adapters/database/scripts/schema.sql").read_text(encoding="utf-8"))
+        con.execute(
+            "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, llm, input_graph_query, is_active) "
+            "VALUES (1, 'Grouping', 'generate', 1, 1, TRUE, FALSE, 'MATCH (n) RETURN n', TRUE)"
+        )
+
+        assert create_derivation_config_version(con, "Grouping", llm=True)["success"]
+        assert con.execute("SELECT version, llm FROM derivation_config WHERE is_active").fetchall() == [(2, True)]
+        assert create_derivation_config_version(con, "Grouping", sequence=2)["success"]
+        assert con.execute("SELECT version, llm FROM derivation_config WHERE is_active").fetchall() == [(3, True)]
+        con.close()
+
+
+class TestResetVersions:
+    """The release reset: every active config row becomes version 1 and the history rows go (it stays in older releases)."""
+
+    @pytest.fixture
+    def engine(self):
+        import duckdb
+
+        con = duckdb.connect()
+        con.execute("CREATE TABLE derivation_config (id INTEGER, step_name VARCHAR, version INTEGER, params VARCHAR, is_active BOOLEAN)")
+        con.execute("INSERT INTO derivation_config VALUES (1, 'Node', 1, 'a', FALSE), (2, 'Node', 2, 'b', TRUE), (3, 'Artifact', 1, 'c', TRUE)")
+        con.execute("CREATE TABLE extraction_config (id INTEGER, node_type VARCHAR, version INTEGER, params VARCHAR, is_active BOOLEAN)")
+        con.execute("INSERT INTO extraction_config VALUES (1, 'File', 4, 'x', TRUE), (2, 'File', 3, 'w', FALSE)")
+        con.execute("CREATE TABLE derivation_patterns (id INTEGER, step_name VARCHAR, patterns VARCHAR, is_active BOOLEAN)")
+        con.execute("INSERT INTO derivation_patterns VALUES (1, 'Node', '[]', FALSE), (2, 'Node', '[\"a\"]', TRUE)")
+        yield con
+        con.close()
+
+    def test_the_active_rows_stay_as_version_1_and_the_history_goes(self, engine):
+        from deriva.services.config import reset_versions
+
+        result = reset_versions(engine)
+
+        assert result == {"derivation_config": 1, "extraction_config": 1, "derivation_patterns": 1}  # history rows removed
+        assert engine.execute("SELECT step_name, version, params FROM derivation_config ORDER BY step_name").fetchall() == [("Artifact", 1, "c"), ("Node", 1, "b")]
+        assert engine.execute("SELECT version, params FROM extraction_config").fetchall() == [(1, "x")]
+        assert engine.execute("SELECT patterns FROM derivation_patterns").fetchall() == [('["a"]',)]

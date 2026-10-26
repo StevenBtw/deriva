@@ -40,6 +40,23 @@ def test_the_material_is_deterministic_and_within_budget(tmp_path):
     assert "src/" in text and "## Directory tree" in text
 
 
+def test_many_manifests_do_not_crowd_out_the_source_files(tmp_path):
+    """Manifests and source files are taken in turn, so a repository with many build files still shows its code."""
+    root = tmp_path / "r"
+    for i in range(12):
+        (root / f"m{i:02}").mkdir(parents=True)
+        (root / f"m{i:02}" / "pom.xml").write_text("<project>" + "x" * 200 + "</project>", encoding="utf-8")
+        (root / f"m{i:02}" / f"Code{i:02}.java").write_text("class C {}\n" * (20 + i), encoding="utf-8")
+    params = b1.B1Params(budget_chars=3000, readme_chars=100, tree_depth=1, tree_entries=5, per_file_chars=250)
+
+    _, manifest = b1.repository_material(root, params)
+
+    assert manifest["sources"] and manifest["manifests"]
+    assert abs(len(manifest["sources"]) - len(manifest["manifests"])) <= 1
+    # Manifests in path order, sources largest first
+    assert manifest["manifests"][0] == "m00/pom.xml" and manifest["sources"][0] == "m11/Code11.java"
+
+
 def test_files_the_registry_excludes_are_no_material_not_even_in_the_tree(tmp_path):
     root = _repo(tmp_path)
     for path in ("design/model.archimate", "design/notes/Model.docx", "src/orders/Legacy.java"):

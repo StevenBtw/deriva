@@ -254,9 +254,9 @@ def test_sessions_are_filtered_and_paged(make_client):
     session = FakeSession(list_benchmarks=[])
     client = make_client(session)
 
-    client.get("/api/benchmarks?limit=20&offset=40&search=v35&repository=TeaStore&model=mistral-small4&status=completed")
+    client.get("/api/benchmarks?limit=20&offset=40&search=v35&repository=ShopApp&model=mistral-small4&status=completed")
 
-    assert session.called("list_benchmarks") == [((20,), {"offset": 40, "search": "v35", "repository": "TeaStore", "model": "mistral-small4", "status": "completed"})]
+    assert session.called("list_benchmarks") == [((20,), {"offset": 40, "search": "v35", "repository": "ShopApp", "model": "mistral-small4", "status": "completed"})]
 
 
 def test_a_session_is_marked_failed_or_deleted(make_client):

@@ -68,6 +68,22 @@ def test_manifest_entry_points_make_units_and_plain_libraries_do_not():
     assert units["r/api"].kind == "war" and units["r/job"].kind == "application"
 
 
+def test_a_pom_names_its_unit_by_the_projects_own_name_and_never_by_a_placeholder_or_a_nested_name():
+    files = [_file("r/a/pom.xml"), _file("r/a/src/A.java", "java"), _file("r/b/pom.xml"), _file("r/b/src/B.java", "java")]
+    manifests = {
+        "r/a/pom.xml": "<project><artifactId>a</artifactId><name>shop: ${project.groupId}|${project.artifactId}</name><packaging>war</packaging></project>",
+        "r/b/pom.xml": (
+            "<project><artifactId>b</artifactId><packaging>war</packaging><description>The orders</description>"
+            "<licenses><license><name>Some License</name></license></licenses></project>"
+        ),
+    }
+
+    units = _units(files, manifests=manifests)
+
+    assert units["r/a"].manifest_name is None and units["r/b"].manifest_name is None
+    assert units["r/b"].manifest_description == "The orders"
+
+
 def test_a_spring_boot_module_with_a_dockerfile_is_one_unit_with_both_evidences():
     files = [_file("r/svc/Dockerfile"), _file("r/svc/pom.xml"), _file("r/svc/src/Svc.java", "java")]
     manifests = {"r/svc/pom.xml": "<project><build><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></build></project>"}
@@ -332,14 +348,17 @@ def test_a_generic_folder_name_takes_no_table_cells():
 
 
 def test_the_manifest_name_loses_only_the_whole_product_prefix():
-    documents = {"r/README.md": "# Loan Desk\n"}
-    manifests = {"r/web/package.json": '{"name": "loan-desk-frontend", "scripts": {"start": "vite"}}', "r/ops/package.json": '{"name": "loan-ops", "scripts": {"start": "node ."}}'}
+    documents = {"r/README.md": "# Lease Desk\n"}
+    manifests = {
+        "r/web/package.json": '{"name": "lease-desk-frontend", "scripts": {"start": "vite"}}',
+        "r/ops/package.json": '{"name": "lease-ops", "scripts": {"start": "node ."}}',
+    }
     files = [*_container("web"), _file("r/web/package.json"), *_container("ops"), _file("r/ops/package.json")]
 
     units = _named(files, documents=documents, manifests=manifests)
 
-    assert [n for n, s in units["r/web"].name_candidates if s == "manifest"] == ["Loan Desk Frontend"]  # generic: the product in front
-    assert [n for n, s in units["r/ops"].name_candidates if s == "manifest"] == ["Loan Ops"]
+    assert [n for n, s in units["r/web"].name_candidates if s == "manifest"] == ["Lease Desk Frontend"]  # generic: the product in front
+    assert [n for n, s in units["r/ops"].name_candidates if s == "manifest"] == ["Lease Ops"]
 
 
 def test_a_taken_name_is_dropped_and_when_all_are_taken_the_kind_noun_is_added():
@@ -484,6 +503,27 @@ def test_a_folder_with_a_page_entry_outside_every_unit_is_a_static_frontend_unit
     assert units["r/frontend"].evidence == ["page entry: r/frontend/index.html"]
 
 
+def test_a_static_frontend_inside_a_module_is_named_by_the_module_that_ships_it():
+    files = [
+        _file("r/gui/build.gradle"),
+        _file("r/gui/src/main/resources/public/index.html"),
+        _file("r/gui/src/main/resources/public/js/app.js", "javascript"),
+        _file("r/modeler/package.json"),
+        _file("r/modeler/src/index.html"),
+        _file("r/modeler/src/app.js", "javascript"),
+        _file("r/site/index.html"),
+    ]
+    manifests = {"r/gui/build.gradle": "plugins {\n  id 'java'\n}\n", "r/modeler/package.json": '{"name": "shop-modeler"}'}
+
+    units = _units(files, manifests=manifests)
+
+    assert sorted(units) == ["r/gui/src/main/resources/public", "r/modeler/src", "r/site"]
+    assert units["r/gui/src/main/resources/public"].name_candidates == [("Gui", "structure")]
+    assert units["r/modeler/src"].name_candidates == [("Shop Modeler", "manifest"), ("Modeler", "structure")]
+    # Without a module around it, the folder names it
+    assert units["r/site"].name_candidates == [("Site", "structure")]
+
+
 def test_a_page_inside_a_template_folder_is_a_server_page_not_a_static_frontend():
     files = [_file("r/webapp/app.py", "python"), _file("r/webapp/templates/index.html"), _file("r/webapp/templates/base.html")]
 
@@ -567,5 +607,5 @@ def test_name_candidates_do_not_depend_on_the_order_of_the_inputs():
     backward = _named(list(reversed(files)), documents=dict(reversed(list(documents.items()))), manifests=dict(reversed(list(manifests.items()))))
 
     assert {k: u.name_candidates for k, u in forward.items()} == {k: u.name_candidates for k, u in backward.items()}
-    # A manifest name with capitals keeps its own casing (a lower case one takes title case: "Loan Ops" above)
+    # A manifest name with capitals keeps its own casing (a lower case one takes title case: "Lease Ops" above)
     assert ("TeaShop UI", "manifest") in forward["r/web"].name_candidates

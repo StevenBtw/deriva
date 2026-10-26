@@ -277,6 +277,8 @@ class TestBenchmarkAnalyzeCommand:
             "merge_candidates": 1,
             "rows": {"H1": 2, "H5": 1},
             "cycle_cuts": 1,
+            "variables": 5,
+            "constraints": 4,
             "kept": 3,
             "dropped": 1,
             "merges": 0,
@@ -293,6 +295,8 @@ class TestBenchmarkAnalyzeCommand:
         assert result.exit_code == 0
         assert "MILP SAFETY NET" in result.stdout
         assert "H1 2, H5 1" in result.stdout and "optimal" in result.stdout and "0.012" in result.stdout
+        line = next(line for line in result.stdout.splitlines() if line.startswith("repo1") and "optimal" in line)
+        assert line.split()[:5] == ["repo1", "gpt4", "2", "optimal", "4"] and " 5 " in line and " 4 " in line
 
 
 class TestBenchmarkDeviationsCommand:

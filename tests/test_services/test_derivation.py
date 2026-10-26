@@ -1429,8 +1429,7 @@ class TestCollectRelationshipRules:
             "Device",
             "Node",
             "SystemSoftware",
-            "TechnologyService",
-        }
+        }  # Artifact, BusinessRole, TechnologyFunction and TechnologyService relate through structure only
 
     def test_contains_rules_for_registered_types(self):
         """Should contain rules for element types with defined rules."""

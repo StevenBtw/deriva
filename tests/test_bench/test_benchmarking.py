@@ -2058,6 +2058,28 @@ class TestLLMQueryEvent:
         kinds = [e.attributes["call_kind"] for e in orchestrator.ocel_log.events if e.activity == "LLMQuery"]
         assert kinds == ["element_naming", None]
 
+    def test_the_same_prompt_asked_again_in_a_run_counts_as_a_reask(self):
+        """A second call for one decision (a re-ask after an unusable answer) is counted per step; a new run starts anew."""
+        from deriva.bench.benchmarking import BenchmarkConfig
+
+        orchestrator = BenchmarkOrchestrator(
+            engine=MagicMock(),
+            graph_manager=MagicMock(),
+            archimate_manager=MagicMock(),
+            config=BenchmarkConfig(repositories=["r"], models=["m"]),
+        )
+        llm = MagicMock()
+        llm.query.return_value = MagicMock(content="{}", usage=None)
+        run = orchestrator._create_logging_query_fn(llm, llm, MagicMock(current_config="Roles"))
+        for key in ("k1", "k1", "k2"):
+            llm.last_call = {"cache_key": key}
+            run("prompt")
+        next_run = orchestrator._create_logging_query_fn(llm, llm, MagicMock(current_config="Roles"))
+        llm.last_call = {"cache_key": "k1"}
+        next_run("prompt")
+
+        assert orchestrator._llm_reasks == {"Roles": 1}
+
     def test_event_hashes_the_decision_apart_from_the_free_text(self):
         """Answer stability compares decisions; a reworded description is the same decision."""
         from deriva.bench.benchmarking import BenchmarkConfig
@@ -2464,11 +2486,13 @@ class TestSessionMetadataSamples:
         )
         orchestrator.session_id = "s"
         orchestrator._llm_samples = {"DocConcepts": 1, "TypeA.naming": 1}
+        orchestrator._llm_reasks.update({"Roles": 2})
 
         orchestrator._export_ocel()
 
         metadata = json.loads(Path("workspace/benchmarks/s/session_metadata.json").read_text(encoding="utf-8"))
         assert metadata["llm_samples"] == {"DocConcepts": 1, "TypeA.naming": 1}
+        assert metadata["llm_reasks"] == {"Roles": 2}
 
     def test_the_code_commit_and_dirty_flag_at_the_start_are_recorded(self, tmp_path, monkeypatch):
         """The commit the session started on, with a dirty flag: the code may change while a long session runs."""
@@ -3012,7 +3036,7 @@ class TestSessionManagement:
                 "INSERT INTO benchmark_sessions (session_id, description, status, started_at, config) VALUES (?, ?, ?, ?, ?)",
                 [sid, description, status, started, config],
             )
-        runs = [("bench_1", "deriva", "mistral-small4"), ("bench_1", "TeaStore", "mistral-small4"), ("bench_2", "deriva", "haiku"), ("bench_3", "TeaStore", "mistral-small4")]
+        runs = [("bench_1", "deriva", "mistral-small4"), ("bench_1", "ShopApp", "mistral-small4"), ("bench_2", "deriva", "haiku"), ("bench_3", "ShopApp", "mistral-small4")]
         for i, (sid, repository, model) in enumerate(runs):
             engine.execute(
                 "INSERT INTO benchmark_runs (run_id, session_id, repository, model_provider, model_name, iteration, status) VALUES (?, ?, ?, 'p', ?, ?, 'completed')",
@@ -3035,7 +3059,7 @@ class TestSessionManagement:
 
         assert [r["session_id"] for r in rows] == ["bench_4", "bench_3", "bench_2", "bench_1"]
         first = rows[3]
-        assert (first["repositories"], first["models"], first["runs"], first["stages"]) == (["TeaStore", "deriva"], ["mistral-small4"], 2, ["derivation"])
+        assert (first["repositories"], first["models"], first["runs"], first["stages"]) == (["ShopApp", "deriva"], ["mistral-small4"], 2, ["derivation"])
         assert first["description"] == "baseline GlobalRelationships v34" and first["status"] == "completed"
 
     def test_sessions_are_found_by_text_repository_model_and_status_a_page_at_a_time(self):
@@ -3046,7 +3070,7 @@ class TestSessionManagement:
 
         assert ids(search="globalrelationships") == ["bench_3", "bench_1"]
         assert ids(search="bench_2") == ["bench_2"]
-        assert ids(repository="TeaStore") == ["bench_3", "bench_1"]
+        assert ids(repository="ShopApp") == ["bench_3", "bench_1"]
         assert ids(model="haiku") == ["bench_2"]
         assert ids(status="failed") == ["bench_2"]
         assert [r["session_id"] for r in list_benchmark_sessions(engine, limit=2, offset=1)] == ["bench_3", "bench_2"]

@@ -156,10 +156,10 @@ class TestGraphLinksOnAChannel:
 class TestExclusiveGraphLinks:
     """An exclusive rule lets only the graph relate its two types by its relationship type, in either direction."""
 
-    LIFE = _el("bp_loan", "BusinessProcess", "lifecycle::r::loan", "Loan Lifecycle")
-    SENT = _el("be_sent", "BusinessEvent", "event::r::loan::SENT", "Loan Sent")
-    DONE = _el("be_done", "BusinessEvent", "event::r::loan::DONE", "Loan Done")
-    LINKS = {"Q1": [("lifecycle::r::loan", "event::r::loan::SENT")], "Q2": [("event::r::loan::SENT", "event::r::loan::DONE")]}
+    LIFE = _el("bp_lease", "BusinessProcess", "lifecycle::r::lease", "Lease Lifecycle")
+    SENT = _el("be_sent", "BusinessEvent", "event::r::lease::SENT", "Lease Sent")
+    DONE = _el("be_done", "BusinessEvent", "event::r::lease::DONE", "Lease Done")
+    LINKS = {"Q1": [("lifecycle::r::lease", "event::r::lease::SENT")], "Q2": [("event::r::lease::SENT", "event::r::lease::DONE")]}
     METAMODEL = {
         "BusinessEvent": (
             [RelationshipRule(target_type="BusinessProcess", rel_type="Triggering")],
@@ -186,7 +186,7 @@ class TestExclusiveGraphLinks:
         )
 
     def test_without_exclusive_other_tiers_add_more_of_the_type(self):
-        assert _triples(self._derive(False)) > {("bp_loan", "Triggering", "be_sent"), ("be_sent", "Triggering", "be_done")}
+        assert _triples(self._derive(False)) > {("bp_lease", "Triggering", "be_sent"), ("be_sent", "Triggering", "be_done")}
 
     def test_with_exclusive_only_the_graph_links_remain(self):
-        assert _triples(self._derive(True)) == {("bp_loan", "Triggering", "be_sent"), ("be_sent", "Triggering", "be_done")}
+        assert _triples(self._derive(True)) == {("bp_lease", "Triggering", "be_sent"), ("be_sent", "Triggering", "be_done")}

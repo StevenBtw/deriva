@@ -68,20 +68,20 @@ def test_a_service_catalog_constant_names_the_unit_it_stands_for():
 
 
 def test_a_gateway_route_that_a_unit_calls_names_the_provider():
-    units = [_unit("frontend"), _unit("auth", "r/services/auth-service"), _unit("loan", "r/services/loan-service")]
+    units = [_unit("frontend"), _unit("auth", "r/services/auth-service"), _unit("lease", "r/services/lease-service")]
     files = {
         "r/infrastructure/nginx/nginx.conf": (
-            "upstream auth_service { server auth-service:8000; }\nupstream loan_service { server loan-service:8000; }\n"
+            "upstream auth_service { server auth-service:8000; }\nupstream lease_service { server lease-service:8000; }\n"
             "server { location /api/v1/auth/ { proxy_pass http://auth_service/api/v1/auth/; }\n"
-            "location /api/v1/loans { proxy_pass http://loan_service/api/v1/loans; }\n"
+            "location /api/v1/leases { proxy_pass http://lease_service/api/v1/leases; }\n"
             "location / { proxy_pass http://frontend; } }"  # a catch-all route is no route to a unit
         ),
         "r/frontend/src/App.tsx": "const API_BASE = '/api/v1';\nconst login = () => api('/auth/login', {});",
-        "r/services/loan-service/config.py": "API_PREFIX = '/api/v1'\nNAME = 'loan'",  # names the base, calls no route
+        "r/services/lease-service/config.py": "API_PREFIX = '/api/v1'\nNAME = 'lease'",  # names the base, calls no route
     }
     services = [
         {"name": "auth-service", "unit": "unit::r::auth", "environment": {}, "ports": []},
-        {"name": "loan-service", "unit": "unit::r::loan", "environment": {}, "ports": []},
+        {"name": "lease-service", "unit": "unit::r::lease", "environment": {}, "ports": []},
         {"name": "frontend", "unit": "unit::r::frontend", "environment": {}, "ports": []},
     ]
 

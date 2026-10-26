@@ -989,10 +989,10 @@ class TestIsolatedNamingStep:
         return result.created_elements, prompts
 
     def test_majority_of_naming_answers_is_the_name(self):
-        candidate = Candidate(node_id="n1", name="crud", labels=["Directory"], properties={"path": "r/crud"})
-        created, prompts = self._created([candidate], ["CRUD Service", "Crud Operations", "CRUD Service"])
+        candidate = Candidate(node_id="n1", name="rest", labels=["Directory"], properties={"path": "r/rest"})
+        created, prompts = self._created([candidate], ["REST Service", "Rest Operations", "REST Service"])
 
-        assert [e["name"] for e in created] == ["CRUD Service"]
+        assert [e["name"] for e in created] == ["REST Service"]
         naming_prompts = [p for p in prompts if "NAMING RULES" in p]
         assert len(naming_prompts) == 3 and len(set(naming_prompts)) == 1
         assert created[0]["identifier"] == "te_n1"  # identity still from structure
@@ -1000,14 +1000,14 @@ class TestIsolatedNamingStep:
     def test_word_casing_comes_from_a_cased_source_name(self):
         """The source's spelling decides a word's casing, so answers that differ only in casing give one name; a
         lowercase source (a directory) carries no casing and the answer's stays."""
-        typed = Candidate(node_id="n1", name="CrudTypeImpl", labels=["TypeDefinition"], properties={})
-        directory = Candidate(node_id="n2", name="crud", labels=["Directory"], properties={})
+        typed = Candidate(node_id="n1", name="RestTypeImpl", labels=["TypeDefinition"], properties={})
+        directory = Candidate(node_id="n2", name="rest", labels=["Directory"], properties={})
 
-        created, _ = self._created([typed], ["CRUD Type"] * 3)
-        created_dir, _ = self._created([directory], ["CRUD Service"] * 3)
+        created, _ = self._created([typed], ["REST Type"] * 3)
+        created_dir, _ = self._created([directory], ["REST Service"] * 3)
 
-        assert [e["name"] for e in created] == ["Crud Type"]
-        assert [e["name"] for e in created_dir] == ["CRUD Service"]
+        assert [e["name"] for e in created] == ["Rest Type"]
+        assert [e["name"] for e in created_dir] == ["REST Service"]
 
     def test_repository_words_are_removed_from_an_answer(self):
         candidate = Candidate(node_id="n1", name="registry", labels=["Directory"], properties={})
@@ -1017,9 +1017,9 @@ class TestIsolatedNamingStep:
         assert [e["name"] for e in created] == ["Registry"]
 
     def test_no_usable_answer_falls_back_to_the_structure_name(self):
-        created, _ = self._created([Candidate(node_id="n1", name="crud", labels=["Directory"], properties={})], ["", "", ""])
+        created, _ = self._created([Candidate(node_id="n1", name="rest", labels=["Directory"], properties={})], ["", "", ""])
 
-        assert [e["name"] for e in created] == ["Crud"]
+        assert [e["name"] for e in created] == ["Rest"]
 
     def test_name_taken_by_a_sibling_falls_back_to_the_structure_name(self):
         candidates = [
@@ -1032,9 +1032,9 @@ class TestIsolatedNamingStep:
         assert "Shared" in names and len(names) == 2 and names - {"Shared"} <= {"Alpha", "Beta"}
 
     def test_batch_mode_names_the_same_way(self):
-        created, _ = self._created([Candidate(node_id="n1", name="crud", labels=["Directory"], properties={})], ["CRUD Service"] * 3, per_candidate=False)
+        created, _ = self._created([Candidate(node_id="n1", name="rest", labels=["Directory"], properties={})], ["REST Service"] * 3, per_candidate=False)
 
-        assert [e["name"] for e in created] == ["CRUD Service"]
+        assert [e["name"] for e in created] == ["REST Service"]
 
 
 @pytest.mark.parametrize("per_candidate", [True, False])

@@ -90,8 +90,8 @@ def test_a_lookup_joins_the_one_anchor_that_uses_it_and_unrelated_entities_of_a_
         _entity("role", "Role", "auth"),
         _entity("payment", "Payment", "repayment"),
         _entity("penalty", "Penalty", "repayment"),
-        _entity("loan", "Loan", "disbursement"),
-        _entity("loanapplication", "Loan Application", "origination"),  # a naming root across units
+        _entity("lease", "Lease", "disbursement"),
+        _entity("leaseapplication", "Lease Application", "origination"),  # a naming root across units
     ]
     candidates = [_candidate("t::RefreshToken", "Refresh Token", "technical word: token", "auth")]
     relations = [("role", "parent", "user"), ("user", "refers", "role"), ("user", "parent", "t::RefreshToken")]
@@ -101,9 +101,9 @@ def test_a_lookup_joins_the_one_anchor_that_uses_it_and_unrelated_entities_of_a_
     assert _domains(result) == {
         "User": ["t::RefreshToken", "t::role", "t::user"],
         "Payment": ["t::payment", "t::penalty"],  # the repayment unit's unrelated entities
-        "Loan": ["t::loan", "t::loanapplication"],
+        "Lease": ["t::lease", "t::leaseapplication"],
     }
-    assert {d.anchor: d.kind for d in result.domains} == {"User": "ownership", "Payment": "context", "Loan": "naming"}
+    assert {d.anchor: d.kind for d in result.domains} == {"User": "ownership", "Payment": "context", "Lease": "naming"}
 
 
 def test_a_technical_entity_forms_a_domain_only_as_a_root_or_the_only_entity_of_its_unit():
@@ -168,15 +168,15 @@ def test_only_parts_value_objects_and_technical_types_are_candidates():
 
 
 def test_a_root_never_joins_a_part_and_unreached_copies_of_a_part_follow_the_claimed_copy():
-    entities = [_entity("quote-request", "Insurance Quote Request", "self-service", ["t::RootA", "t::RootB"], "aggregate root")]
+    entities = [_entity("quote-request", "Inventory Quote Request", "self-service", ["t::RootA", "t::RootB"], "aggregate root")]
     candidates = [
-        _candidate("t::QuoteA", "Insurance Quote", "part of an aggregate", "self-service"),
-        _candidate("t::QuoteB", "Insurance Quote", "part of an aggregate", "policy"),  # the other backend's copy, no reference
+        _candidate("t::QuoteA", "Inventory Quote", "part of an aggregate", "self-service"),
+        _candidate("t::QuoteB", "Inventory Quote", "part of an aggregate", "policy"),  # the other backend's copy, no reference
     ]
 
     result = detect_domains(entities, candidates, [("t::RootA", "t::QuoteA")], [], RULES)
 
-    assert _domains(result) == {"Insurance Quote Request": ["t::QuoteA", "t::QuoteB", "t::RootA", "t::RootB"]}
+    assert _domains(result) == {"Inventory Quote Request": ["t::QuoteA", "t::QuoteB", "t::RootA", "t::RootB"]}
 
 
 def test_a_domain_of_ddl_tables_only_gets_no_business_object():

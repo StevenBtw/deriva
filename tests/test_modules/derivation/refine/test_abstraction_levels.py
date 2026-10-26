@@ -373,3 +373,21 @@ def test_the_feature_packages_functions_realize_their_split_units_service(am):
 
     split = sorted((r.source, r.target) for r in am.get_relationships() if (r.properties or {}).get("derived_from") == "split_unit")
     assert split == [("af_owner", "as_app"), ("af_vet", "as_app")]
+
+
+def test_an_application_composes_the_components_it_lists_which_move_to_the_solution_level(am):
+    for identifier, source, sources in (
+        ("ac_front", "unit::r::front", None),
+        ("ac_back", "unit::r::back", None),
+        ("ac_other", "unit::r::other", None),
+        ("ac_app", "application::r::shop", ["unit::r::front", "unit::r::back"]),
+    ):
+        am.add_element(Element(name=identifier, element_type="ApplicationComponent", identifier=identifier, properties={"source": source, "sources": sources}))
+    graph = _graph([{"id": f"unit::r::{n}", "path": f"r/{n}", "labels": ["Graph", "DeployableUnit"], "system": None} for n in ("front", "back", "other")])
+
+    run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params=PARAMS)
+
+    levels = {e.identifier: e.properties.get("levels") for e in am.get_elements()}
+    assert levels == {"ac_front": ["solution"], "ac_back": ["solution"], "ac_other": ["enterprise", "solution"], "ac_app": ["enterprise"]}
+    compositions = sorted((r.source, r.target) for r in am.get_relationships() if r.relationship_type == "Composition")
+    assert compositions == [("ac_app", "ac_back"), ("ac_app", "ac_front")]

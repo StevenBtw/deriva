@@ -78,15 +78,15 @@ def _groups(services):
 def test_a_component_offers_one_service_per_domain_its_members_reach_when_each_holds_enough_members():
     elements = [
         _component("pm", "Policy Management"),
-        _interface("pm", "rest", ["PolicyHolder", "PolicyRepository", "QuoteResource", "QuoteConsumer"]),
+        _interface("pm", "rest", ["Passholder", "PolicyRepository", "QuoteResource", "QuoteConsumer"]),
         _data("policy", "Policy Data"),
         _data("quote", "Quote Data"),
     ]
-    reach = {"PolicyHolder": ["policy"], "PolicyRepository": ["policy"], "QuoteResource": ["quote"], "QuoteConsumer": ["quote"]}
+    reach = {"Passholder": ["policy"], "PolicyRepository": ["policy"], "QuoteResource": ["quote"], "QuoteConsumer": ["quote"]}
 
     services, _, _ = _run(elements, reach)
 
-    assert _groups(services) == [["PolicyHolder", "PolicyRepository"], ["QuoteConsumer", "QuoteResource"]]
+    assert _groups(services) == [["Passholder", "PolicyRepository"], ["QuoteConsumer", "QuoteResource"]]
     by_objects = {tuple(s["properties"]["objects"]): s for s in services}
     assert set(by_objects) == {("do_policy",), ("do_quote",)}
     assert all(s["properties"]["sources"] == ["unit::pm"] and s["properties"]["interfaces"] == ["ai_pm__rest"] for s in services)
@@ -96,14 +96,14 @@ def test_a_component_offers_one_service_per_domain_its_members_reach_when_each_h
 def test_one_service_when_only_one_group_holds_enough_members():
     elements = [
         _component("pm", "Policy Management"),
-        _interface("pm", "rest", ["PolicyHolder", "PolicyRepository", "QuoteResource"]),
+        _interface("pm", "rest", ["Passholder", "PolicyRepository", "QuoteResource"]),
         _data("policy", "Policy Data"),
         _data("quote", "Quote Data"),
     ]
 
-    services, _, _ = _run(elements, {"PolicyHolder": ["policy"], "PolicyRepository": ["policy"], "QuoteResource": ["quote"]})
+    services, _, _ = _run(elements, {"Passholder": ["policy"], "PolicyRepository": ["policy"], "QuoteResource": ["quote"]})
 
-    assert _groups(services) == [["PolicyHolder", "PolicyRepository", "QuoteResource"]]
+    assert _groups(services) == [["Passholder", "PolicyRepository", "QuoteResource"]]
 
 
 def test_members_of_one_family_are_one_service_and_pages_join_it():
@@ -133,11 +133,11 @@ def test_a_pure_frontend_offers_no_service_of_its_own():
 
 
 def test_names_are_a_closed_set_and_one_candidate_needs_no_call():
-    elements = [_component("loan", "Loan Service"), _interface("loan", "rest", ["routes.py"]), _data("loan", "Loan Data")]
+    elements = [_component("lease", "Lease Service"), _interface("lease", "rest", ["routes.py"]), _data("lease", "Lease Data")]
 
-    services, _, calls = _run(elements, {"routes.py": ["loan"]}, objects={"domain::loan": "Loan"})
+    services, _, calls = _run(elements, {"routes.py": ["lease"]}, objects={"domain::lease": "Lease"})
 
-    assert [s["name"] for s in services] == ["Loan Management"]  # the route file is a generic name; the template on the object remains
+    assert [s["name"] for s in services] == ["Lease Management"]  # the route file is a generic name; the template on the object remains
     assert calls == []
 
     elements = [_component("pm", "Policy Management"), _interface("pm", "rest", ["PolicyInformationHolder", "PolicyAdministrationController"]), _data("policy", "Policy Data")]
@@ -171,8 +171,8 @@ def test_a_business_function_is_a_shared_business_domain_of_cooperating_componen
         "CoreCustomerHolder": ["customer"],
         "CoreCustomerResource": ["customer"],
     }
-    objects = {"domain::quote": "Insurance Quote", "domain::customer": "Customer"}
-    docs = {"README.md": "Insurance quote handling spans both backends."}
+    objects = {"domain::quote": "Inventory Quote", "domain::customer": "Customer"}
+    docs = {"README.md": "Inventory quote handling spans both backends."}
 
     services, functions, _ = _run(elements, reach, objects=objects, lines={("unit::ss", "unit::pm")}, documents=docs)
 
@@ -180,13 +180,13 @@ def test_a_business_function_is_a_shared_business_domain_of_cooperating_componen
     assert function["element_type"] == "BusinessFunction" and function["properties"]["source"] == "domain::quote"
     quote_services = sorted(s["identifier"] for s in services if s["properties"]["objects"] == ["do_quote"])
     assert sorted(function["properties"]["services"]) == quote_services and len(quote_services) == 2
-    assert function["properties"]["name_candidates"] == ["Insurance Quote Management", "Insurance Quote Handling"]
+    assert function["properties"]["name_candidates"] == ["Inventory Quote Management", "Inventory Quote Handling"]
 
 
 def test_a_service_lists_the_data_objects_of_the_providers_its_component_consumes():
     elements = [
         _component("pm", "Policy Management"),
-        _interface("pm", "rest", ["PolicyHolder", "PolicyResource"]),
+        _interface("pm", "rest", ["Passholder", "PolicyResource"]),
         _component("core", "Customer Core"),
         _interface("core", "rest", ["CustomerHolder", "CustomerResource"]),
         _component("risk", "Risk"),
@@ -196,7 +196,7 @@ def test_a_service_lists_the_data_objects_of_the_providers_its_component_consume
         _data("risk", "Risk Data"),
     ]
     reach = {
-        "PolicyHolder": ["policy"],
+        "Passholder": ["policy"],
         "PolicyResource": ["policy"],
         "CustomerHolder": ["customer"],
         "CustomerResource": ["customer"],
@@ -224,7 +224,7 @@ def test_without_business_functions_only_the_services_are_derived():
     reach = {"QuoteRequestResource": ["quote"], "QuoteRequestHolder": ["quote"], "QuoteProcessingResource": ["quote"], "QuoteConsumer": ["quote"]}
     off = dataclasses.replace(CONFIG, business_functions=False)
 
-    services, functions, _ = _run(elements, reach, objects={"domain::quote": "Insurance Quote"}, lines={("unit::ss", "unit::pm")}, config=off)
+    services, functions, _ = _run(elements, reach, objects={"domain::quote": "Inventory Quote"}, lines={("unit::ss", "unit::pm")}, config=off)
 
     assert len(services) == 2 and functions == []  # a function model supplies the functions instead
 
@@ -256,9 +256,9 @@ def _run2(elements, imports, *, files_of=None, type_names=None, domain_names=Non
 
 def test_a_member_reaches_a_domain_over_two_import_hops_or_by_the_name_of_an_entity_it_uses():
     elements = [
-        _component("loan", "Loan Service"),
-        _interface("loan", "rest", ["routes"]),
-        _data("loan", "Loan Data"),
+        _component("lease", "Lease Service"),
+        _interface("lease", "rest", ["routes"]),
+        _data("lease", "Lease Data"),
         _component("shop", "Shop"),
         _interface("shop", "rest", ["CategoryEndpoint"]),
         _data("category", "Category Data"),
@@ -268,17 +268,17 @@ def test_a_member_reaches_a_domain_over_two_import_hops_or_by_the_name_of_an_ent
     services, _ = _run2(
         elements,
         imports,
-        files_of={"domain::loan": {"models.java"}},
+        files_of={"domain::lease": {"models.java"}},
         type_names={"entities/Category.java": {"category"}},
         domain_names={"domain::category": {"category", "product"}},
-        objects={"domain::loan": "Loan", "domain::category": "Category"},
+        objects={"domain::lease": "Lease", "domain::category": "Category"},
     )
 
-    assert sorted(tuple(s["properties"]["objects"]) for s in services) == [("do_category",), ("do_loan",)]
+    assert sorted(tuple(s["properties"]["objects"]) for s in services) == [("do_category",), ("do_lease",)]
 
 
 def test_endpoint_types_join_the_members_and_a_group_without_a_domain_joins_the_largest():
-    elements = [_component("pm", "Policy Backend"), _interface("pm", "rest", ["PolicyHolder"]), _data("policy", "Policy Data"), _data("quote", "Quote Data")]
+    elements = [_component("pm", "Policy Backend"), _interface("pm", "rest", ["Passholder"]), _data("policy", "Policy Data"), _data("quote", "Quote Data")]
     endpoints = {
         "unit::pm": [
             ("n::QuoteResource", "QuoteResource"),
@@ -288,7 +288,7 @@ def test_endpoint_types_join_the_members_and_a_group_without_a_domain_joins_the_
             ("n::StatusResource", "StatusResource"),
         ]
     }
-    files_of = {"domain::policy": {"PolicyHolder.java", "PolicyRepository.java"}, "domain::quote": {"QuoteResource.java", "QuoteConsumer.java"}}
+    files_of = {"domain::policy": {"Passholder.java", "PolicyRepository.java"}, "domain::quote": {"QuoteResource.java", "QuoteConsumer.java"}}
 
     services, _ = _run2(elements, [], files_of=files_of, endpoints=endpoints)
 
@@ -308,26 +308,26 @@ def test_a_code_identifier_is_no_name_candidate():
 
 def test_templates_cover_every_business_domain_reached_by_weight_and_the_component_stem_is_the_fallback():
     elements = [
-        _component("loan", "Loan Service"),
-        _interface("loan", "rest", ["routes"]),
-        _data("loan", "Loan Data"),
+        _component("lease", "Lease Service"),
+        _interface("lease", "rest", ["routes"]),
+        _data("lease", "Lease Data"),
         _data("eligibility", "Eligibility Result Data"),
         _component("audit", "Audit Service"),
         _interface("audit", "rest", ["app/routes.py"]),
     ]
-    files_of = {"domain::loan": {"routes.java", "models.java"}, "domain::eligibility": {"models.java"}}
-    domain_names = {"domain::loan": {"loan", "loanapplication", "loanproduct"}, "domain::eligibility": {"eligibilityresult"}}
+    files_of = {"domain::lease": {"routes.java", "models.java"}, "domain::eligibility": {"models.java"}}
+    domain_names = {"domain::lease": {"lease", "leaseapplication", "leaseproduct"}, "domain::eligibility": {"eligibilityresult"}}
 
     services, _ = _run2(
         elements,
         [("routes.java", "models.java")],
         files_of=files_of,
         domain_names=domain_names,
-        objects={"domain::loan": "Loan", "domain::eligibility": "Eligibility Result"},
+        objects={"domain::lease": "Lease", "domain::eligibility": "Eligibility Result"},
     )
 
     by_component = {s["properties"]["sources"][0]: s["properties"]["name_candidates"] for s in services}
-    assert by_component["unit::loan"] == ["Loan Management", "Eligibility Result Management"]  # the domain reached most comes first
+    assert by_component["unit::lease"] == ["Lease Management", "Eligibility Result Management"]  # the domain reached most comes first
     assert by_component["unit::audit"] == ["Audit Management"]  # no name from the members: the template on the component's stem
 
 
@@ -357,19 +357,19 @@ def test_behaviour_names_are_activities_never_bare_object_names():
     config = dataclasses.replace(CONFIG, service_templates=("{object} Management", "{object} Processing"), **ACTIVITY)
     elements = [
         _component("pm", "Policy Backend"),
-        _interface("pm", "rest", ["InsuranceQuoteRequestCoordinator", "RiskComputationService", "UserLoginController", "CustomerMessageController"]),
-        _data("quote", "Insurance Quote Request Data"),
+        _interface("pm", "rest", ["InventoryQuoteRequestCoordinator", "RiskComputationService", "UserLoginController", "CustomerMessageController"]),
+        _data("quote", "Inventory Quote Request Data"),
     ]
-    node_paths = {f"n::{m}": f"{m}.java" for m in ("InsuranceQuoteRequestCoordinator", "RiskComputationService", "UserLoginController", "CustomerMessageController")}
+    node_paths = {f"n::{m}": f"{m}.java" for m in ("InventoryQuoteRequestCoordinator", "RiskComputationService", "UserLoginController", "CustomerMessageController")}
     scopes = UnitScopes(files={}, nodes={}, entity_files={"domain::quote": frozenset(node_paths.values())}, entity_nodes={})
     services, _ = derive_unit_services(
         elements, node_paths, [], config, "Choose.", lambda p, s, **k: {"content": json.dumps({"name": s["schema"]["properties"]["name"]["enum"][0]})},
-        scopes=scopes, deciding={"domain::quote"}, business_objects={"domain::quote": "Insurance Quote Request"}, bases={}, lines=set(), documents={},
+        scopes=scopes, deciding={"domain::quote"}, business_objects={"domain::quote": "Inventory Quote Request"}, bases={}, lines=set(), documents={},
     )  # fmt: skip
 
     candidates = services[0]["properties"]["name_candidates"]
-    # Object nouns (Insurance Quote Request, Customer Message) are no candidates; activities are
-    assert candidates == ["Risk Computation", "User Login", "Insurance Quote Request Management", "Insurance Quote Request Processing"]
+    # Object nouns (Inventory Quote Request, Customer Message) are no candidates; activities are
+    assert candidates == ["Risk Computation", "User Login", "Inventory Quote Request Management", "Inventory Quote Request Processing"]
 
 
 def test_services_are_named_before_functions_so_a_function_never_repeats_a_service():
@@ -418,12 +418,12 @@ def test_an_exception_domain_names_its_service_and_a_stem_that_is_an_activity_st
 
 
 def test_a_service_serves_the_lifecycles_whose_states_its_members_set():
-    elements = [_component("loan", "Loan Service"), _interface("loan", "rest", ["routes"]), _data("loan", "Loan Data")]
-    scopes = UnitScopes(files={}, nodes={}, entity_files={"domain::loan": frozenset({"models.java"})}, entity_nodes={})
+    elements = [_component("lease", "Lease Service"), _interface("lease", "rest", ["routes"]), _data("lease", "Lease Data")]
+    scopes = UnitScopes(files={}, nodes={}, entity_files={"domain::lease": frozenset({"models.java"})}, entity_nodes={})
     services, _ = derive_unit_services(
         elements, {"n::routes": "routes.java"}, [("routes.java", "services.java"), ("services.java", "models.java")], CONFIG, "Choose.",
         lambda p, s, **k: {"content": json.dumps({"name": s["schema"]["properties"]["name"]["enum"][0]})},
-        scopes=scopes, deciding={"domain::loan"}, business_objects={"domain::loan": "Loan"}, bases={}, lines=set(), documents={},
+        scopes=scopes, deciding={"domain::lease"}, business_objects={"domain::lease": "Lease"}, bases={}, lines=set(), documents={},
         lifecycle_sites={"lifecycle::app": {"services.java"}, "lifecycle::other": {"elsewhere.java"}},
     )  # fmt: skip
 
@@ -431,12 +431,12 @@ def test_a_service_serves_the_lifecycles_whose_states_its_members_set():
 
 
 def test_a_service_lists_the_lifecycle_states_its_members_set():
-    elements = [_component("loan", "Loan Service"), _interface("loan", "rest", ["routes"]), _data("loan", "Loan Data")]
-    scopes = UnitScopes(files={}, nodes={}, entity_files={"domain::loan": frozenset({"models.java"})}, entity_nodes={})
+    elements = [_component("lease", "Lease Service"), _interface("lease", "rest", ["routes"]), _data("lease", "Lease Data")]
+    scopes = UnitScopes(files={}, nodes={}, entity_files={"domain::lease": frozenset({"models.java"})}, entity_nodes={})
     services, _ = derive_unit_services(
         elements, {"n::routes": "routes.java"}, [("routes.java", "services.java"), ("services.java", "models.java")], CONFIG, "Choose.",
         lambda p, s, **k: {"content": json.dumps({"name": s["schema"]["properties"]["name"]["enum"][0]})},
-        scopes=scopes, deciding={"domain::loan"}, business_objects={"domain::loan": "Loan"}, bases={}, lines=set(), documents={},
+        scopes=scopes, deciding={"domain::lease"}, business_objects={"domain::lease": "Lease"}, bases={}, lines=set(), documents={},
         lifecycle_sites={"lifecycle::app": {"services.java", "other.java"}},
         lifecycle_state_sites={"lifecycle::app": {"SUBMITTED": {"services.java"}, "DISBURSED": {"other.java"}}},
     )  # fmt: skip
@@ -479,15 +479,15 @@ def _run_entities(elements, member_files, entity_files, domain_entities, *, prom
 
 def test_a_service_accesses_the_entities_its_members_reach_else_every_entity_of_the_domain_it_reaches():
     elements = [
-        _component("loan", "Loan Service"),
-        _interface("loan", "rest", ["ApplicationRoutes", "ProductRoutes"]),
+        _component("lease", "Lease Service"),
+        _interface("lease", "rest", ["ApplicationRoutes", "ProductRoutes"]),
         _component("disb", "Disbursement Service"),
         _interface("disb", "rest", ["AgreementRoutes", "LedgerRoutes"]),
         _component("stats", "Statistics Service"),
         _interface("stats", "rest", ["SummaryRoutes", "TotalsRoutes"]),
-        _entity("application", "Loan Application"),
-        _entity("product", "Loan Product"),
-        _entity("agreement", "Loan Agreement"),
+        _entity("application", "Lease Application"),
+        _entity("product", "Lease Product"),
+        _entity("agreement", "Lease Agreement"),
     ]
     member_files = {m: f"{m}.py" for m in ("ApplicationRoutes", "ProductRoutes", "AgreementRoutes", "LedgerRoutes", "SummaryRoutes", "TotalsRoutes")}
     entity_files = {
@@ -495,17 +495,17 @@ def test_a_service_accesses_the_entities_its_members_reach_else_every_entity_of_
         "entity::product": {"ProductRoutes.py"},
         "entity::agreement": {"AgreementRoutes.py"},
         # The domain is used where its entities are and where the types it holds itself are
-        "domain::loan": set(member_files.values()),
+        "domain::lease": set(member_files.values()),
     }
 
-    by_unit = _run_entities(elements, member_files, entity_files, {"domain::loan": ["entity::application", "entity::product", "entity::agreement"]})
+    by_unit = _run_entities(elements, member_files, entity_files, {"domain::lease": ["entity::application", "entity::product", "entity::agreement"]})
 
-    assert by_unit["unit::loan"]["properties"]["objects"] == ["do_application", "do_product"]
+    assert by_unit["unit::lease"]["properties"]["objects"] == ["do_application", "do_product"]
     assert by_unit["unit::disb"]["properties"]["objects"] == ["do_agreement"]  # LedgerRoutes reaches only the domain
     # No member reaches an entity of its own: every entity of the domain, and the fallback is recorded
     assert by_unit["unit::stats"]["properties"]["objects"] == ["do_agreement", "do_application", "do_product"]
-    assert by_unit["unit::stats"]["properties"]["objects_from_domain"] == ["domain::loan"]
-    assert by_unit["unit::loan"]["properties"]["objects_from_domain"] == []
+    assert by_unit["unit::stats"]["properties"]["objects_from_domain"] == ["domain::lease"]
+    assert by_unit["unit::lease"]["properties"]["objects_from_domain"] == []
 
 
 def test_a_domain_without_a_data_object_still_groups_the_members_but_gives_no_object():
@@ -538,13 +538,13 @@ def test_with_service_verbs_a_service_is_named_from_structure_without_a_call():
     config = dataclasses.replace(CONFIG, service_verbs=VERBS)
     elements = [
         _component("pm", "Policy Management Backend"),
-        _interface("pm", "rest", ["PolicyHolder", "PolicyResource"]),
+        _interface("pm", "rest", ["Passholder", "PolicyResource"]),
         _component("jobs", "Nightly Jobs"),
         _interface("jobs", "batch", ["PostTransactions", "PostInterest"]),
         _data("policy", "Policy"),
         _data("tran", "Transaction"),
     ]
-    reach = {"PolicyHolder": ["policy"], "PolicyResource": ["policy"], "PostTransactions": ["tran"], "PostInterest": ["tran"]}
+    reach = {"Passholder": ["policy"], "PolicyResource": ["policy"], "PostTransactions": ["tran"], "PostInterest": ["tran"]}
 
     services, _, calls = _run(elements, reach, objects={"domain::policy": "Policy", "domain::tran": "Transaction"}, config=config)
 
@@ -573,9 +573,9 @@ def test_with_service_verbs_an_activity_names_a_group_that_reaches_no_domain_and
     assert calls == []
 
 
-def test_with_service_verbs_two_components_may_name_the_same_service_but_one_component_names_each_group_once():
-    """The same "<object> <verb>" on two components is the same service (coarse services merge them); within one
-    component a repeat takes the group's next candidate."""
+def test_with_service_verbs_a_name_two_components_repeat_is_qualified_by_each_components_stem():
+    """The same "<object> <verb>" on two components names two services: each copy takes its component's stem in front
+    (without the component's kind words); a name no other component repeats stays as it is."""
     import dataclasses
 
     config = dataclasses.replace(CONFIG, service_verbs=VERBS)
@@ -590,4 +590,5 @@ def test_with_service_verbs_two_components_may_name_the_same_service_but_one_com
 
     services, _, _ = _run(elements, reach, objects={"domain::order": "Order"}, config=config)
 
-    assert sorted((s["properties"]["sources"][0], s["name"]) for s in services) == [("unit::cart", "Order Management"), ("unit::shop", "Order Management")]
+    assert sorted((s["properties"]["sources"][0], s["name"]) for s in services) == [("unit::cart", "Cart Order Management"), ("unit::shop", "Shop Order Management")]
+    assert all(s["properties"]["structure_name"] == "Order Management" for s in services)  # the unqualified name stays recorded

@@ -11,22 +11,22 @@ RULES = RoleRules(
     generic_actors=("user", "client", "server"),
 )
 UNITS = [
-    {"id": "unit::loan", "path": "r/loan", "web": False},
+    {"id": "unit::lease", "path": "r/lease", "web": False},
     {"id": "unit::uw", "path": "r/uw", "web": False},
     {"id": "unit::web", "path": "r/web", "web": True},
 ]
-LIFECYCLES = {"life::app": ["unit::loan", "unit::uw"], "life::kyc": ["unit::customer"]}  # lifecycle -> units that reach its states
+LIFECYCLES = {"life::app": ["unit::lease", "unit::uw"], "life::kyc": ["unit::customer"]}  # lifecycle -> units that reach its states
 
 
 def test_roles_in_authorization_checks_are_named_and_assigned_to_the_lifecycles_of_their_unit():
     files = {
-        "r/loan/routes.py": '@router.post("/x", dependencies=[Depends(require_role("ADMIN", "LOAN_OFFICER"))])\ndef x(): ...',
-        "r/uw/routes.py": 'require_role("ADMIN", "UNDERWRITER")\nrequire_role(*STAFF)',
+        "r/lease/routes.py": '@router.post("/x", dependencies=[Depends(require_role("ADMIN", "LEASE_OFFICER"))])\ndef x(): ...',
+        "r/uw/routes.py": 'require_role("ADMIN", "UPKEEPER")\nrequire_role(*STAFF)',
     }
 
     result = detect_roles(files, [], UNITS, LIFECYCLES, [], RULES)
 
-    assert [(r.name, r.kind, r.lifecycles) for r in result] == [("Loan Officer", "role", ["life::app"]), ("Underwriter", "role", ["life::app"])]
+    assert [(r.name, r.kind, r.lifecycles) for r in result] == [("Lease Officer", "role", ["life::app"]), ("Upkeeper", "role", ["life::app"])]
 
 
 def test_a_person_the_readme_of_a_web_ui_component_names_is_an_actor_of_the_lifecycles_it_uses():
@@ -35,7 +35,7 @@ def test_a_person_the_readme_of_a_web_ui_component_names_is_an_actor_of_the_life
         {"id": "c::employee", "name": "Employee", "files": ["r/README.md"]},  # no Web UI component's README
         {"id": "c::user", "name": "User", "files": ["r/web/README.md"]},  # a generic word
     ]
-    consumes = [("unit::web", "unit::loan")]
+    consumes = [("unit::web", "unit::lease")]
 
     result = detect_roles({}, concepts, UNITS, LIFECYCLES, consumes, RULES)
 

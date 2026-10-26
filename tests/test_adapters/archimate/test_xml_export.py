@@ -59,6 +59,21 @@ class TestArchiMateXMLExporter:
         assert 'identifier="rel-1"' in result
         assert "ServingRelationship" in result
 
+    def test_the_schema_location_names_the_diagram_and_dublin_core_schemas(self, exporter, sample_element):
+        """As the exchange format's own examples do: the diagram schema (views included) and Dublin Core for the metadata."""
+        from lxml import etree
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "model.xml"
+            exporter.export([sample_element], [], str(path))
+            root = etree.parse(str(path)).getroot()
+        pairs = root.get("{http://www.w3.org/2001/XMLSchema-instance}schemaLocation").split()
+
+        assert dict(zip(pairs[::2], pairs[1::2], strict=True)) == {
+            "http://www.opengroup.org/xsd/archimate/3.0/": "http://www.opengroup.org/xsd/archimate/3.1/archimate3_Diagram.xsd",
+            "http://purl.org/dc/elements/1.1/": "http://www.opengroup.org/xsd/archimate/3.1/dc.xsd",
+        }
+
     def test_export_to_string_with_empty_inputs(self, exporter):
         """Should handle empty elements and relationships."""
         result = exporter.export_to_string([], [])

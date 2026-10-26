@@ -97,6 +97,25 @@ class TestTwoLevel:
         names = rows["ApplicationService name choice"]
         assert names["decisions"] == {"stable": 0, "items": 1}
 
+    def test_an_across_llm_row_pools_every_models_runs(self, tmp_path):
+        """Each model agrees with itself; across the models the same prompt is answered and the item decided otherwise."""
+
+        def call(key, label):
+            return [{"step": "BusinessConcept", "schema": "business_concept_classification", "cache_key": key, "prompt": "p", "response": f'{{"labels": {{"x": "{label}"}}}}'}]
+
+        def session(name, model, label):
+            runs = [_run(SHOP, decisions={"BusinessConcept": {"x": label}}) for _ in range(2)]
+            return _session(tmp_path, name, model, runs, {1: call(f"k_{model}", label), 2: call(f"k_{model}", label)})
+
+        rows = pm.two_level_rows([session("s1", "m1", "entity"), session("s2", "m2", "process")])
+
+        concept = {r["model"]: r for r in rows if r["decision"] == "BusinessConcept"}
+        assert list(concept) == ["m1", "m2", "all LLMs"]
+        assert concept["m1"]["answers"] == {"identical": 1, "prompts": 1} and concept["m1"]["decisions"] == {"stable": 1, "items": 1}
+        # Across the LLMs: the prompt (not the per-model cache key) is the same, its answers differ; x flips
+        assert concept["all LLMs"]["answers"] == {"identical": 0, "prompts": 1}
+        assert concept["all LLMs"]["decisions"] == {"stable": 0, "items": 1}
+
 
 def test_krippendorff_alpha_nominal():
     assert pm.krippendorff_alpha([{"a": 1, "b": 2}, {"a": 1, "b": 2}]) == 1.0
@@ -179,17 +198,17 @@ class TestGolden:
         from deriva.modules.analysis.types import ReferenceElement
 
         reference = [
-            ReferenceElement(identifier="g1", name="Audit Hook", element_type="ApplicationComponent", layer="Application"),
+            ReferenceElement(identifier="g1", name="Alert Hook", element_type="ApplicationComponent", layer="Application"),
             ReferenceElement(identifier="g2", name="Ledger", element_type="ApplicationComponent", layer="Application"),
             ReferenceElement(identifier="g3", name="Publisher", element_type="ApplicationComponent", layer="Application"),
         ]
         derived = [
-            {"id": "x", "name": "Hook Module", "type": "ApplicationComponent", "source": "module::r::libs/audit-hook"},
+            {"id": "x", "name": "Hook Module", "type": "ApplicationComponent", "source": "module::r::libs/alert-hook"},
             {"id": "y", "name": "Accounts", "type": "ApplicationComponent", "source": "unit::r::services/ledger"},
             {"id": "z", "name": "Notifier", "type": "ApplicationComponent", "source": "unit::r::libs/publish/notify"},
         ]
         aliases = {
-            "g1": {"names": [], "structure_refs": ["path:./libs/audit-hook/"]},  # the folder itself
+            "g1": {"names": [], "structure_refs": ["path:./libs/alert-hook/"]},  # the folder itself
             "g2": {"structure_refs": ["unit::r::services/ledger"]},  # a structural id
             "g3": {"structure_refs": ["path:libs/publish"]},  # a parent folder of z: no match
         }
