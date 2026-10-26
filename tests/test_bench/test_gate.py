@@ -100,6 +100,23 @@ def test_a_golden_repository_is_measured_on_its_derivable_subset(tmp_path, folde
     assert (ledger["relationship_recall"], ledger["relationship_precision"]) == (1.0, pytest.approx(0.333, abs=0.001))
 
 
+def test_final_derivable_labels_set_the_scope_while_the_accepted_names_are_still_a_template(tmp_path, folders):
+    """The scope comes from the derivable file once it is final; the accepted names (matches) can follow later: only
+    names and structure match until then, and the row says the matches are provisional, not the scope."""
+    _, references = folders
+    (references / "ledger.derivable.json").write_text(
+        json.dumps({"g-ledger": {"derivable": True}, "g-reporting": {"derivable": True}, "g-target": {"derivable": False}, "g-group": {"derivable": False}}), encoding="utf-8"
+    )
+    (references / "ledger.matches.template.json").write_text(json.dumps({"_help": "x", "_elements": {}, "g-reporting": []}), encoding="utf-8")
+    run = _snapshot([("l", "ApplicationComponent", "Ledger"), ("r", "ApplicationComponent", "Report Generation")], [("l", "Serving", "r")])
+
+    ledger = measure([_session(tmp_path, "s1", "ledger", [run, run])], *folders)["ledger"]
+
+    assert (ledger["source"], ledger["provisional"], ledger["matches_provisional"]) == ("golden", False, True)
+    # Over the 2 derivable elements (not the derived types' 3): Ledger by name; Reporting needs an accepted name
+    assert ledger["recall"] == 0.5
+
+
 def test_without_the_users_files_a_golden_repository_falls_back_to_the_templates_and_is_provisional(tmp_path, folders):
     _, references = folders
     (references / "ledger.derivable.template.json").write_text(json.dumps({"_help": "x", "g-ledger": {"derivable": None}}), encoding="utf-8")

@@ -105,7 +105,20 @@ def _get_layer(element_type: str) -> str:
     return ""
 
 
-def _normalize_type(type_str: str) -> str:
+# ArchiMate 2 names and their ArchiMate 3 types (the 3.0 migration; Archi files from ArchiMate 2 keep the old names)
+ARCHIMATE_2_TYPES = {
+    "InfrastructureService": "TechnologyService",
+    "InfrastructureInterface": "TechnologyInterface",
+    "InfrastructureFunction": "TechnologyFunction",
+    "CommunicationPath": "Path",
+    "Network": "CommunicationNetwork",
+    "UsedBy": "Serving",
+    "Realisation": "Realization",
+    "Specialisation": "Specialization",
+}
+
+
+def _normalize_type(type_str: str, archimate3: bool = False) -> str:
     """
     Normalize element type from XML attribute.
 
@@ -113,6 +126,7 @@ def _normalize_type(type_str: str) -> str:
     - "archimate:ApplicationComponent" -> "ApplicationComponent"
     - "ApplicationComponent" -> "ApplicationComponent"
     - "archimate:CompositionRelationship" -> "Composition"
+    - with ``archimate3``, ArchiMate 2 names as their ArchiMate 3 type: "archimate:UsedByRelationship" -> "Serving"
     """
     # Remove archimate: prefix
     if ":" in type_str:
@@ -122,11 +136,12 @@ def _normalize_type(type_str: str) -> str:
     if type_str.endswith("Relationship"):
         type_str = type_str[: -len("Relationship")]
 
-    return type_str
+    return ARCHIMATE_2_TYPES.get(type_str, type_str) if archimate3 else type_str
 
 
 def parse_archi_xml(
     xml_path: str | Path,
+    archimate3: bool = False,
 ) -> tuple[list[ReferenceElement], list[ReferenceRelationship]]:
     """
     Parse an Archi-format .archimate XML file.
@@ -140,6 +155,8 @@ def parse_archi_xml(
 
     Args:
         xml_path: Path to the .archimate file
+        archimate3: Read ArchiMate 2 names as their ArchiMate 3 types (``ARCHIMATE_2_TYPES``); else as the file
+            writes them
 
     Returns:
         Tuple of (elements, relationships)
@@ -159,7 +176,7 @@ def parse_archi_xml(
     def _get_xsi_type(elem: ET.Element) -> str:
         """Extract xsi:type attribute."""
         xsi_type = elem.get("{http://www.w3.org/2001/XMLSchema-instance}type", "")
-        return _normalize_type(xsi_type)
+        return _normalize_type(xsi_type, archimate3)
 
     def _process_folder(folder: ET.Element, layer: str = "") -> None:
         """Recursively process folder and its contents."""
@@ -231,7 +248,7 @@ def parse_archi_xml(
                         identifier=rel_id,
                         source=source,
                         target=target,
-                        relationship_type=_normalize_type(xsi_type),
+                        relationship_type=_normalize_type(xsi_type, archimate3),
                         name=name,
                     )
                 )
@@ -289,7 +306,7 @@ def parse_archi_xml(
                 identifier=rel_id,
                 source=source,
                 target=target,
-                relationship_type=_normalize_type(xsi_type),
+                relationship_type=_normalize_type(xsi_type, archimate3),
                 name=rel.get("name"),
             )
         )

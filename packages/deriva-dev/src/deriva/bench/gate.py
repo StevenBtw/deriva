@@ -7,9 +7,10 @@ Per repository (read-only, from the sessions' run snapshots):
 - **A golden model** (``<reference>/<repository>.archimate``): recall on the derivable subset the user labelled
   (``<repository>.derivable.json``) with the user's accepted names (``<repository>.matches.json``), and precision.
   A golden relationship is found when a derived relationship of its type and direction joins the derived elements
-  matched to its two ends; it is in the subset when both ends are. Without the user's files the ``.template.json``
-  versions are read and the result is provisional: the subset is then the elements of the derived types and the
-  relationships between two of them.
+  matched to its two ends; it is in the subset when both ends are. Without the user's derivable file its
+  ``.template.json`` is read and the result is provisional: the subset is then the elements of the derived types and
+  the relationships between two of them. Without the user's matches file only names and structure match, and the row
+  says so (``matches_provisional``). The file is read with ArchiMate 2 names as their ArchiMate 3 types.
 - **Consistency by id**: the share of elements and of relationships in every run (``session_metrics``).
 
 A repository without either reference keeps its consistency and is left out of the count. The verdict: the change is
@@ -57,7 +58,7 @@ def _user_file(folder: Path, repository: str, kind: str) -> tuple[dict[str, Any]
 
 
 def _golden_model(path: Path) -> tuple[list[Any], list[Any]]:
-    elements, relationships = parse_archi_xml(path)
+    elements, relationships = parse_archi_xml(path, archimate3=True)
     return (elements, relationships) if elements else parse_exchange_format_xml(path)
 
 
@@ -105,7 +106,9 @@ def _golden_row(path: Path, reference_dir: Path, repo: str, snapshots: list[dict
     reference, golden_rels = _golden_model(path)
     aliases, alias_template = _user_file(reference_dir, repo, "matches")
     derivable, derivable_template = _user_file(reference_dir, repo, "derivable")
-    provisional = alias_template or derivable_template
+    # The scope is provisional without the user's derivable labels; the accepted names (matches) can follow later, until
+    # then only names and structure match and the row says so
+    provisional = derivable_template
     if provisional:
         scope = {r.identifier for r in reference if r.element_type in session_metrics.DERIVED_TYPES}
     else:
@@ -122,6 +125,7 @@ def _golden_row(path: Path, reference_dir: Path, repo: str, snapshots: list[dict
     return {
         "source": "golden",
         "provisional": provisional,
+        "matches_provisional": alias_template,
         "recall": _mean([r[recall_key] for r in elements]),
         "precision": _mean([r["precision"] for r in elements]),
         "relationship_recall": _mean([r["recall"] for r in relationships]),
@@ -156,7 +160,15 @@ def measure(sessions: list[Path], goldens_dir: Path, reference_dir: Path, model:
             raise ValueError(f"{repo} has runs of several models ({', '.join(sorted(by_model))}): name one with --model")
         else:
             ((chosen, snapshots),) = by_model.items()
-        row: dict[str, Any] = {"repository": repo, "model": chosen, "runs": len(snapshots), "source": None, "provisional": False, "note": None} | dict.fromkeys(MEASURES)
+        row: dict[str, Any] = {
+            "repository": repo,
+            "model": chosen,
+            "runs": len(snapshots),
+            "source": None,
+            "provisional": False,
+            "matches_provisional": False,
+            "note": None,
+        } | dict.fromkeys(MEASURES)
         golden = Path(reference_dir) / f"{repo}.archimate"
         single = level not in (None, "union")
         has_level = not single or (repo in references and any(level in e.levels for e in references[repo].elements))
@@ -254,7 +266,9 @@ def _pct(value: float | None) -> str:
 def _source(row: dict[str, Any] | None) -> str:
     if not row or row["source"] is None:
         return (row or {}).get("note") or "no reference"
-    return f"{row['source']} (provisional)" if row["provisional"] else row["source"]
+    if row["provisional"]:
+        return f"{row['source']} (provisional)"
+    return f"{row['source']} (matches provisional)" if row.get("matches_provisional") else row["source"]
 
 
 def table_markdown(measures: dict[str, dict[str, Any]], title: str) -> list[str]:
