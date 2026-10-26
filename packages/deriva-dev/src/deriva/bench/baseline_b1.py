@@ -7,8 +7,8 @@ times with the error list; after that the invalid relationships (and duplicate e
 is our own composition, not taken from a published design. k = 1: no sampling, no voting.
 
 The input is raw repository material within a fixed character budget, the same for every model, selected without
-Deriva's graph: the README, the directory tree, manifest, build and deployment files, and a deterministic sample of
-source files (the largest first, tests left out). The prompt text lives in the ``BaselineB1`` config row (phase
+Deriva's graph: the README, the directory tree, then manifest, build and deployment files (in path order) and source
+files (the largest first, tests left out) in turn, so both kinds are represented. The prompt text lives in the ``BaselineB1`` config row (phase
 ``baseline``, never run by the pipeline); this module holds only structure.
 """
 
@@ -126,17 +126,20 @@ def repository_material(root: Path, params: B1Params, registry: list[dict[str, s
     shown = tree[: params.tree_entries]
     if add("## Directory tree\n" + "\n".join(shown) + ("\n[...]" if len(tree) > len(shown) else "") + "\n\n"):
         manifest["tree_entries"] = len(shown)
-    for rel, _ in files:
-        if any(fnmatch.fnmatchcase(PurePosixPath(rel).name.lower(), p) for p in params.manifest_patterns) and add(f"## File {rel}\n{_read(root, rel, params.per_file_chars)}\n\n"):
-            manifest["manifests"].append(rel)
-    sources = sorted(
-        ((rel, size) for rel, size in files if rel.lower().endswith(params.source_extensions) and not _is_test(rel, params)),
-        key=lambda item: (-item[1], item[0]),
-    )
-    for rel, _ in sources:
-        if not add(f"## Source {rel}\n{_read(root, rel, params.per_file_chars)}\n\n"):
-            break
-        manifest["sources"].append(rel)
+    manifests = [rel for rel, _ in files if any(fnmatch.fnmatchcase(PurePosixPath(rel).name.lower(), p) for p in params.manifest_patterns)]
+    sources = [
+        rel
+        for rel, _ in sorted(
+            ((rel, size) for rel, size in files if rel.lower().endswith(params.source_extensions) and not _is_test(rel, params)),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+    # Manifests (in path order) and sources (largest first) in turn, so many build files cannot crowd out the code;
+    # a file that no longer fits is skipped
+    for k in range(max(len(manifests), len(sources))):
+        for kind, rel, heading in (("manifests", manifests[k] if k < len(manifests) else None, "File"), ("sources", sources[k] if k < len(sources) else None, "Source")):
+            if rel is not None and add(f"## {heading} {rel}\n{_read(root, rel, params.per_file_chars)}\n\n"):
+                manifest[kind].append(rel)
     manifest["chars"] = used
     return "".join(parts), manifest
 

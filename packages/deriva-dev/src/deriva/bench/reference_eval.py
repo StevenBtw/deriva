@@ -2,8 +2,9 @@
 
 Deterministic, no LLM. A model element maps to the reference element of its type whose name or alias has
 the same name key, else whose lineage holds its source or identifier (structural ids: units, entities,
-environments); a model element maps to at most one reference element, a reference element may be covered
-by several model elements (a split: the model is finer than the reference). A relationship matches when
+environments), else, one to one, whose lineage holds the node its source is derived from ("unit::r::u::all");
+a model element maps to at most one reference element, a reference element may be covered by several model
+elements by name or lineage (a split: the model is finer than the reference). A relationship matches when
 its ends map to the reference ends and its type and direction agree; a model relationship with an end that
 maps to nothing cannot be judged (unassessable). A reference relationship the model does not draw is still found
 when the valid derivation rules of the metamodel derive it from a chain of the model's direct relationships (the
@@ -145,8 +146,8 @@ _kind = match_kind
 
 
 def map_elements(reference: Reference, model: dict[str, Any]) -> dict[str, str]:
-    """Model element identifier -> reference element key: an exact name first, then an alias, then lineage. Types match as
-    ``types_match`` says: a function covers a process of its layer."""
+    """Model element identifier -> reference element key: an exact name first, then an alias, then lineage, then (one to
+    one) derivation from a lineage node. Types match as ``types_match`` says: a function covers a process of its layer."""
     names: dict[tuple[str, str], str] = {}
     aliases: dict[tuple[str, str], str] = {}
     for ref in reference.elements:
@@ -162,6 +163,21 @@ def map_elements(reference: Reference, model: dict[str, Any]) -> dict[str, str]:
             found = next((r.key for r in reference.elements if any(types_match(t, rt) for rt in r.types) and ({str(e.get("source") or ""), e["identifier"]} & r.lineage)), None)
         if found is not None:
             mapping[e["identifier"]] = found
+    # An element derived from a lineage node (its source extends the id: "unit::r::u1::all" from unit::r::u1) maps to
+    # that reference element only when nothing maps to it yet, and one to one: the first by identifier, the rest stay
+    # extras (several services of one unit, or several units' services against one reference service)
+    taken = set(mapping.values())
+    for e in sorted(model.get("elements", []), key=lambda e: e["identifier"]):
+        if e["identifier"] in mapping:
+            continue
+        t, source = _type(e["type"]), str(e.get("source") or "")
+        found = next(
+            (r.key for r in reference.elements if r.key not in taken and any(types_match(t, rt) for rt in r.types) and any(source.startswith(f"{n}::") for n in r.lineage)),
+            None,
+        )
+        if found is not None:
+            mapping[e["identifier"]] = found
+            taken.add(found)
     return mapping
 
 
