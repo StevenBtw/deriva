@@ -172,7 +172,7 @@ class BenchmarkAnalyzer:
 
         try:
             # Try Archi format first (most common for reference models)
-            elements, relationships = parse_archi_xml(path)
+            elements, relationships = parse_archi_xml(path, archimate3=True)
             if not elements:
                 # Fall back to Exchange format
                 elements, relationships = parse_exchange_format_xml(path)

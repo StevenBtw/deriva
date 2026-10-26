@@ -8,11 +8,14 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
-## v0.8.9 - (Unreleased)
+## v0.8.9 - Reference scoring fixes (October 26 2026)
+
+Two fixes to how reference models are scored, found while preparing the final benchmark: a reference written in ArchiMate 2 names is read with its ArchiMate 3 types, and the derivable labels set the scope as soon as they are final. The pipeline is unchanged from 0.8.8.
 
 ### Benchmark
 
-- **Reference models in ArchiMate 2 names are scored**: an Archi file written in ArchiMate 2 names is read with the ArchiMate 3 types (InfrastructureService, InfrastructureInterface and InfrastructureFunction as TechnologyService, TechnologyInterface and TechnologyFunction, CommunicationPath as Path, Network as CommunicationNetwork, and the relationships UsedBy, Realisation and Specialisation as Serving, Realization and Specialization), so its technology services count in the scope and its relationships can match
+- **Reference models in ArchiMate 2 names are scored**: an Archi file written in ArchiMate 2 names is read with the ArchiMate 3 types (InfrastructureService, InfrastructureInterface and InfrastructureFunction as TechnologyService, TechnologyInterface and TechnologyFunction, CommunicationPath as Path, Network as CommunicationNetwork, and the relationships UsedBy, Realisation and Specialisation as Serving, Realization and Specialization), so its technology services count in the scope and its relationships can match. The scoring reads them so (`parse_archi_xml(path, archimate3=True)`); without the flag the parser reports the types as the file writes them
+- **Final derivable labels set the golden scope**: the gate scores a golden model on the elements the user labelled derivable as soon as that file is final, also while the accepted names (matches) are still a template; the row then says the matches are provisional (`matches_provisional`) instead of falling back to every element of a derived type
 
 ## v0.8.8 - ArchiMate metamodel conformance pass (October 26 2026)
 

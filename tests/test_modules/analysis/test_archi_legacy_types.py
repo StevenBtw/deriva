@@ -1,6 +1,7 @@
-"""Reading an Archi file written in ArchiMate 2 names: the types are read as ArchiMate 3 names them, so a reference
-model in the older notation is scored like any other (Infrastructure* became Technology*, UsedBy became Serving, and
-the British spellings Realisation and Specialisation became Realization and Specialization)."""
+"""Reading an Archi file written in ArchiMate 2 names: as the file says by default, and with ``archimate3=True`` (the
+scorer's choice) as ArchiMate 3 names the types, so a reference model in the older notation is scored like any other
+(Infrastructure* became Technology*, UsedBy became Serving, and the British spellings Realisation and Specialisation
+became Realization and Specialization)."""
 
 from __future__ import annotations
 
@@ -29,13 +30,23 @@ ARCHIMATE_2 = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def test_archimate_2_names_are_read_as_archimate_3_types(tmp_path):
+def test_archimate_2_names_are_read_as_archimate_3_types_when_asked(tmp_path):
     path = tmp_path / "shop.archimate"
     path.write_text(ARCHIMATE_2, encoding="utf-8")
 
-    elements, relationships = parse_archi_xml(path)
+    elements, relationships = parse_archi_xml(path, archimate3=True)
 
     types = {e.identifier: e.element_type for e in elements}
     assert (types["ts"], types["ti"], types["tf"]) == ("TechnologyService", "TechnologyInterface", "TechnologyFunction")
     assert (types["nw"], types["cp"], types["nd"], types["ac"]) == ("CommunicationNetwork", "Path", "Node", "ApplicationComponent")
     assert {r.identifier: r.relationship_type for r in relationships} == {"r1": "Serving", "r2": "Realization", "r3": "Specialization", "r4": "Composition"}
+
+
+def test_by_default_the_types_are_read_as_the_file_writes_them(tmp_path):
+    path = tmp_path / "shop.archimate"
+    path.write_text(ARCHIMATE_2, encoding="utf-8")
+
+    elements, relationships = parse_archi_xml(path)
+
+    assert {e.identifier: e.element_type for e in elements}["ts"] == "InfrastructureService"
+    assert {r.identifier: r.relationship_type for r in relationships}["r1"] == "UsedBy"

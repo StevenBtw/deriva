@@ -2495,7 +2495,7 @@ def _reference_elements(path: str | None) -> list[Any]:
     """Elements of a reference model (Archi format first, then the exchange format); none when missing."""
     if not path or not Path(path).exists():
         return []
-    elements, _ = parse_archi_xml(path)
+    elements, _ = parse_archi_xml(path, archimate3=True)
     return elements or parse_exchange_format_xml(path)[0]
 
 
