@@ -8,6 +8,12 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
+## v0.8.9 - (Unreleased)
+
+### Benchmark
+
+- **Reference models in ArchiMate 2 names are scored**: an Archi file written in ArchiMate 2 names is read with the ArchiMate 3 types (InfrastructureService, InfrastructureInterface and InfrastructureFunction as TechnologyService, TechnologyInterface and TechnologyFunction, CommunicationPath as Path, Network as CommunicationNetwork, and the relationships UsedBy, Realisation and Specialisation as Serving, Realization and Specialization), so its technology services count in the scope and its relationships can match
+
 ## v0.8.8 - ArchiMate metamodel conformance pass (October 26 2026)
 
 The model follows the ArchiMate 3.2 metamodel figures: only relationships a figure draws are direct, the enterprise level is a viewpoint derived through the valid derivation rules, and the application and technology layers gain functions, artifacts and technology services from structure. Most naming calls are gone; the LLM calls that remain are closed choices, asked once. Every step ships at version 1.

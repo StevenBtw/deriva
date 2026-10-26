@@ -105,6 +105,19 @@ def _get_layer(element_type: str) -> str:
     return ""
 
 
+# ArchiMate 2 names and their ArchiMate 3 types (the 3.0 migration; Archi files from ArchiMate 2 keep the old names)
+ARCHIMATE_2_TYPES = {
+    "InfrastructureService": "TechnologyService",
+    "InfrastructureInterface": "TechnologyInterface",
+    "InfrastructureFunction": "TechnologyFunction",
+    "CommunicationPath": "Path",
+    "Network": "CommunicationNetwork",
+    "UsedBy": "Serving",
+    "Realisation": "Realization",
+    "Specialisation": "Specialization",
+}
+
+
 def _normalize_type(type_str: str) -> str:
     """
     Normalize element type from XML attribute.
@@ -113,6 +126,7 @@ def _normalize_type(type_str: str) -> str:
     - "archimate:ApplicationComponent" -> "ApplicationComponent"
     - "ApplicationComponent" -> "ApplicationComponent"
     - "archimate:CompositionRelationship" -> "Composition"
+    - ArchiMate 2 names as their ArchiMate 3 type: "archimate:UsedByRelationship" -> "Serving"
     """
     # Remove archimate: prefix
     if ":" in type_str:
@@ -122,7 +136,7 @@ def _normalize_type(type_str: str) -> str:
     if type_str.endswith("Relationship"):
         type_str = type_str[: -len("Relationship")]
 
-    return type_str
+    return ARCHIMATE_2_TYPES.get(type_str, type_str)
 
 
 def parse_archi_xml(
