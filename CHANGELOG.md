@@ -8,6 +8,14 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
+## v0.8.10 - Reproducible benchmark input (October 26 2026)
+
+The shipped configuration now carries every input exclusion the final benchmark used, so a fresh install from this release reads the same files as the benchmark did. The pipeline code is unchanged from 0.8.9.
+
+### Configuration
+
+- **Reference-model documents are excluded on a fresh install**: the shipped file types exclude the documents that describe a benchmark's reference model (two design documents and the readme of a folder that holds a model), as the benchmark's own configuration did; each rule matches its document both where extraction and where the B1 baseline looks for it. Every step still ships at version 1
+
 ## v0.8.9 - Reference scoring fixes (October 26 2026)
 
 Two fixes to how reference models are scored, found while preparing the final benchmark: a reference written in ArchiMate 2 names is read with its ArchiMate 3 types, and the derivable labels set the scope as soon as they are final. The pipeline is unchanged from 0.8.8.

@@ -1,6 +1,6 @@
 [project]
 name = "deriva-cli"
-version = "0.8.9"
+version = "0.8.10"
 description = "Deriva is a research project aimed at enabling digital architects by automating the derivation of enterprise architecture models. Deriva uses dual knowledge graphs, heuristics and LLM's."
 # The PyPI page; README.md is the repository's own
 readme = "packages/README-deriva-cli.md"
