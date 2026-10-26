@@ -380,13 +380,13 @@
     "created_at": "2026-10-25T23:09:39.548596"
   },
   {
-    "id": 796,
+    "id": 798,
     "step_name": "ApplicationGrouping",
     "phase": "generate",
     "version": 1,
     "sequence": 19,
     "enabled": true,
-    "llm": false,
+    "llm": true,
     "input_graph_query": null,
     "input_model_query": null,
     "instruction": "You group the top-level components of one software repository into the applications its documentation describes.\n\nRead the repository documentation shown, then give each component exactly one candidate from the closed list:\n- a part of the repository's title, when the documentation describes the repository, or that part of it, as one application or one system that these components together make up (for example a set of services and the user interface that together are one application);\n- a component's own name, when the documentation presents the component as an application of its own (several separate applications or digital services offered side by side), or as a supporting tool.\n\nRules:\n- Base the decision on what the documentation says about the repository as a whole: one application or system made of parts, or several applications.\n- Components that share a name apart from their kind (a backend and its frontend) belong to the same application.\n- Use only the information shown (documentation, names, folders, README titles). Do not invent candidates.\n- The same input always gives the same answer.\n",
@@ -397,16 +397,16 @@
     "batch_size": 10,
     "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-10-26T00:49:11.667610"
+    "created_at": "2026-10-26T09:45:14.117527"
   },
   {
-    "id": 797,
+    "id": 799,
     "step_name": "DocumentationActors",
     "phase": "generate",
     "version": 1,
     "sequence": 20,
     "enabled": true,
-    "llm": false,
+    "llm": true,
     "input_graph_query": null,
     "input_model_query": null,
     "instruction": "You decide which business actors each application of one software repository serves, from its documentation.\n\nFor every application you get a closed list of candidate actors: words the documentation uses for people or organisations, each mentioned in a documentation section together with that application. Choose the candidates that are business actors the application serves: a person, role or organisation outside the software that uses it or is served by it.\n\nRules:\n- Choose none (an empty list) when no candidate fits.\n- Leave out generic words that name no business actor of this application (a user of any software, a developer, an operator of the infrastructure, a participant in a workshop or demo, a team that runs the deployment).\n- Choose only from the application's own candidates, exactly as written. Do not invent actors.\n- The same input always gives the same answer.\n",
@@ -417,7 +417,7 @@
     "batch_size": 10,
     "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-10-26T00:49:13.055074"
+    "created_at": "2026-10-26T09:45:15.634811"
   },
   {
     "id": 224,
