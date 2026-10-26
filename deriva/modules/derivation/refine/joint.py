@@ -154,6 +154,8 @@ def _reported(
         "proposals": len(proposals),
         "valid": len(valid),
         "merge_candidates": len(merges),
+        "variables": len(valid) + len(merges),
+        "constraints": len(rows),
         "prefilter": prefilter,
         "rows": dict(Counter(row.name for row in rows if row.name != "H3")),
         "cycle_cuts": sum(1 for row in rows if row.name == "H3"),

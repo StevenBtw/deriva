@@ -98,11 +98,6 @@ class ApplicationComponentDerivation(HybridDerivation):
 
     INBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
-            target_type="TechnologyService",
-            rel_type="Serving",
-            description="Technology services serve application components",
-        ),
-        RelationshipRule(
             target_type="Node",
             rel_type="Serving",
             description="Nodes serve application components",

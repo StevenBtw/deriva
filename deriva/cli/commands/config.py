@@ -237,6 +237,10 @@ def config_update(
         int | None,
         typer.Option("--sequence", min=0, help="New place in its phase (derivation only)"),
     ] = None,
+    llm: Annotated[
+        bool | None,
+        typer.Option("--llm/--no-llm", help="Whether the step calls the LLM (derivation only; shown by config list)"),
+    ] = None,
 ) -> None:
     """Update a configuration with versioning."""
     if step_type not in ("extraction", "derivation"):
@@ -244,6 +248,9 @@ def config_update(
         raise typer.Exit(1)
     if sequence is not None and step_type != "derivation":
         typer.echo("Error: --sequence moves derivation steps only", err=True)
+        raise typer.Exit(1)
+    if llm is not None and step_type != "derivation":
+        typer.echo("Error: --llm/--no-llm sets derivation steps only", err=True)
         raise typer.Exit(1)
 
     # Read instruction from file if provided
@@ -294,6 +301,7 @@ def config_update(
                 max_candidates=max_candidates,
                 temperature=temperature,
                 sequence=sequence,
+                llm=llm,
             )
         elif step_type == "extraction":
             result = config.create_extraction_config_version(
@@ -317,6 +325,8 @@ def config_update(
                 typer.echo("  Params: updated")
             if sequence is not None:
                 typer.echo(f"  Sequence: {sequence}")
+            if llm is not None:
+                typer.echo(f"  LLM: {llm}")
         else:
             typer.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
             raise typer.Exit(1)
@@ -394,6 +404,22 @@ def config_versions() -> None:
                     typer.echo(f"  {name:<30} v{version}")
 
         typer.echo("")
+
+
+@app.command("reset-versions")
+def config_reset_versions(
+    yes: Annotated[bool, typer.Option("--yes", help="Confirm: the version history is removed")] = False,
+) -> None:
+    """Make every active config row version 1 and remove the version history (a release reset; the history stays in
+    the older releases)."""
+    if not yes:
+        typer.echo("This removes the version history of every step (the active rows become version 1). Run again with --yes.", err=True)
+        raise typer.Exit(1)
+    with PipelineSession() as session:
+        removed = config.reset_versions(session._engine)
+    typer.echo("\nVersion history removed; every active row is version 1:")
+    for table, count in removed.items():
+        typer.echo(f"  {table:<22} {count} history rows removed")
 
 
 @app.command("restore")

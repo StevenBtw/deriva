@@ -137,7 +137,7 @@ def _merge_channel(container: str, channel: str) -> str:
     """A unit interface's name: the component's name and the channel words, merged on their longest overlap.
 
     The longest leading run of channel words that, compared without spaces and case, equals a trailing run
-    of the component's words is not repeated ("CardDemo Batch" + "Batch Jobs" -> "CardDemo Batch Jobs";
+    of the component's words is not repeated ("Shop Batch" + "Batch Jobs" -> "Shop Batch Jobs";
     "WebUI" meets "Web UI"). When no channel word is left, "Interface" goes at the end, so the name never
     equals the component's.
     """

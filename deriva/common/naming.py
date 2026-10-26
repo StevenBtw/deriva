@@ -2,7 +2,7 @@
 
 Pure and shared by every layer. LLM-written and structural names are compared
 and turned into identities through ``name_key``, so spelling variants of the
-same name ("Claims Handling", "ClaimsHandling", "claims_handling") never become
+same name ("Order Handling", "OrderHandling", "order_handling") never become
 separate graph nodes.
 """
 

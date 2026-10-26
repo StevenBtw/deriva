@@ -29,7 +29,11 @@ class ArchiMateXMLExporter:
 
     NSMAP = {None: ARCHIMATE_NS, "xsi": XSI_NS, "dc": DC_NS}
 
-    SCHEMA_LOCATION = "http://www.opengroup.org/xsd/archimate/3.0/ http://www.opengroup.org/xsd/archimate/3.1/archimate3_Model.xsd"
+    # As the exchange format's own examples: the diagram schema (the export carries views) and Dublin Core (the metadata)
+    SCHEMA_LOCATION = (
+        "http://www.opengroup.org/xsd/archimate/3.0/ http://www.opengroup.org/xsd/archimate/3.1/archimate3_Diagram.xsd "
+        "http://purl.org/dc/elements/1.1/ http://www.opengroup.org/xsd/archimate/3.1/dc.xsd"
+    )
 
     def __init__(self, pretty_print: bool = True, encoding: str = "UTF-8"):
         """

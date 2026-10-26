@@ -55,11 +55,6 @@ class SystemSoftwareDerivation(HybridDerivation):
 
     OUTBOUND_RULES: list[RelationshipRule] = [
         RelationshipRule(
-            target_type="TechnologyService",
-            rel_type="Realization",
-            description="System software realizes technology services",
-        ),
-        RelationshipRule(
             target_type="DataObject",
             rel_type="Access",
             description="System software accesses data objects",

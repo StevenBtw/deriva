@@ -22,7 +22,6 @@ LLM role:
 
 Relationships:
 - OUTBOUND: ApplicationService -> BusinessObject (Flow) - services transfer data
-- INBOUND: TechnologyService -> ApplicationService (Serving) - tech serves app services
 
 ArchiMate Layer: Application Layer
 ArchiMate Type: ApplicationService
@@ -93,11 +92,6 @@ class ApplicationServiceDerivation(HybridDerivation):
     ]
 
     INBOUND_RULES = [
-        RelationshipRule(
-            target_type="TechnologyService",
-            rel_type="Serving",
-            description="Technology services serve application services",
-        ),
         RelationshipRule(
             target_type="ApplicationComponent",
             rel_type="Realization",

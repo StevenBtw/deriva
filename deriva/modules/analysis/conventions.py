@@ -21,7 +21,7 @@ from deriva.common.naming import name_key
 LAYERS: list[tuple[str, list[str]]] = [
     ("Business", ["BusinessActor", "BusinessRole", "BusinessProcess", "BusinessFunction", "BusinessEvent", "BusinessObject"]),
     ("Application", ["ApplicationComponent", "ApplicationInterface", "ApplicationService", "ApplicationFunction", "DataObject"]),
-    ("Technology", ["Node", "Device", "SystemSoftware", "TechnologyService", "Artifact"]),
+    ("Technology", ["Node", "Device", "SystemSoftware", "TechnologyFunction", "TechnologyService", "Artifact"]),
 ]
 BEHAVIOUR = ("BusinessProcess", "BusinessFunction", "BusinessEvent")
 STATUS_ORDER = {"fail": 3, "warn": 2, "info": 1, "pass": 0}

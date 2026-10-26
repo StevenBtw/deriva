@@ -826,9 +826,9 @@ def extract_file_path_from_source(source_id: str | None) -> str | None:
     Extract the file path from a source node ID.
 
     Source IDs have formats like:
-    - method_flask_invoice_generator_models.py_Positions_delete
-    - file_flask_invoice_generator_.flaskenv
-    - typedef_flask_invoice_generator_forms.py_InvoiceForm
+    - method_shop_app_models.py_Positions_delete
+    - file_shop_app_.env
+    - typedef_shop_app_forms.py_OrderForm
 
     Returns:
         The file name (e.g., "models.py", ".flaskenv") or None

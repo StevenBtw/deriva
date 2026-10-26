@@ -361,7 +361,9 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
         raw = _manifest_name(manifest, manifests.get(manifest, "")) or _folder_name(folder)
         # A folder that says more than the manifest's name (risk-management-client for "client") names it
         folder_words, raw_words = {w.casefold() for w in _words(_folder_name(folder))}, {w.casefold() for w in _words(raw.rsplit("/", 1)[-1])}
-        if raw_words and raw_words < folder_words:
+        # An aggregator (a system) is named by its folder, as the root by the repository: its artifactId often carries
+        # the packaging (orders-pom, orders-parent)
+        if (raw_words and raw_words < folder_words) or folder in systems:
             raw = _folder_name(folder)
         raws[folder] = raw
         out.append(

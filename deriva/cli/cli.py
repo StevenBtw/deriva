@@ -14,7 +14,7 @@ Usage:
     deriva config enable extraction BusinessConcept
     deriva run extraction
     deriva run derivation --phase generate
-    deriva run all --repo flask_invoice_generator
+    deriva run all --repo my-repo
     deriva clear graph
     deriva clear model
     deriva status

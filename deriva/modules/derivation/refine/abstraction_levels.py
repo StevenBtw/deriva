@@ -51,6 +51,41 @@ MEMBER_FILES = "MATCH (n) WHERE n.id IN $ids RETURN n.id AS id, n.filePath AS pa
 DERIVED = "derivation"  # The origin of a relationship the enterprise viewpoint derives
 
 
+APPLICATION_PREFIX = "application::"  # The source of an application that groups components (ApplicationGrouping)
+
+
+def component_hierarchy(elements: list[Any], graph_manager: GraphManager | None) -> tuple[list[Component], dict[str, str], Counter[str], dict[str, list[str]]]:
+    """The component hierarchy's inputs from structure: the components (units, modules, systems by their source's
+    folder; applications by the components they list), each component's source, the units per folder and the units
+    that build each module."""
+    sources = {e.identifier: str((e.properties or {}).get("source") or "") for e in elements if e.element_type == "ApplicationComponent"}
+    wanted = sorted({s for s in sources.values() if s.startswith(("unit::", "module::"))})
+    rows = {str(r["id"]): r for r in (graph_manager.query(SOURCES, {"ids": wanted}) if graph_manager and wanted else [])}
+    components = []
+    for identifier, source in sorted(sources.items()):
+        row = rows.get(source)
+        if not row or not row.get("path"):
+            continue
+        kind = "unit" if "DeployableUnit" in (row.get("labels") or []) else ("system" if row.get("system") else "module")
+        components.append(Component(identifier=identifier, kind=kind, folder=str(row["path"]).replace(chr(92), "/")))
+    component_of_source = {source: identifier for identifier, source in sources.items()}
+    for e in sorted((e for e in elements if sources.get(e.identifier, "").startswith(APPLICATION_PREFIX)), key=lambda e: e.identifier):
+        members = tuple(component_of_source[m] for m in (e.properties or {}).get("sources") or [] if m in component_of_source)
+        components.append(Component(identifier=e.identifier, kind="application", folder="", members=members))
+
+    # The units per folder from structure: a unit that became no element still counts
+    unit_rows = graph_manager.query(UNITS) if graph_manager and components else []
+    units_at = Counter(str(r["path"]).replace(chr(92), "/") for r in unit_rows if "DeployableUnit" in (r.get("labels") or []) and r.get("path"))
+    # The units that build each module (graph BUILDS): a unit composes the modules it builds
+    unit_sources = sorted(sources[c.identifier] for c in components if c.kind == "unit")
+    built_by: dict[str, list[str]] = {}
+    for row in graph_manager.query(BUILT, {"ids": unit_sources}) if graph_manager and unit_sources else []:
+        unit, module = component_of_source.get(str(row.get("unit") or "")), component_of_source.get(str(row.get("module") or ""))
+        if unit and module:
+            built_by.setdefault(module, []).append(unit)
+    return components, sources, units_at, built_by
+
+
 def _relationship_id(source: str, relationship_type: str, target: str) -> str:
     """A stable identifier from the ends and the type (the same in every run)."""
     return f"rel-{hash_content(f'{source}|{relationship_type}|{target}')[:16]}"
@@ -120,28 +155,7 @@ class AbstractionLevelsStep:
 
         rules = LevelRules(types={str(k): tuple(v) for k, v in types.items()}, roles={str(t): {str(r): tuple(v) for r, v in by.items()} for t, by in roles.items()})
         elements = archimate_manager.get_elements()
-        sources = {e.identifier: str((e.properties or {}).get("source") or "") for e in elements if e.element_type == "ApplicationComponent"}
-        wanted = sorted({s for s in sources.values() if s.startswith(("unit::", "module::"))})
-        rows = {str(r["id"]): r for r in (graph_manager.query(SOURCES, {"ids": wanted}) if graph_manager and wanted else [])}
-        components = []
-        for identifier, source in sorted(sources.items()):
-            row = rows.get(source)
-            if not row or not row.get("path"):
-                continue
-            kind = "unit" if "DeployableUnit" in (row.get("labels") or []) else ("system" if row.get("system") else "module")
-            components.append(Component(identifier=identifier, kind=kind, folder=str(row["path"]).replace(chr(92), "/")))
-
-        # The units per folder from structure: a unit that became no element still counts
-        unit_rows = graph_manager.query(UNITS) if graph_manager and components else []
-        units_at = Counter(str(r["path"]).replace(chr(92), "/") for r in unit_rows if "DeployableUnit" in (r.get("labels") or []) and r.get("path"))
-        # The units that build each module (graph BUILDS): a unit composes the modules it builds
-        component_of_source = {source: identifier for identifier, source in sources.items()}
-        unit_sources = sorted(sources[c.identifier] for c in components if c.kind == "unit")
-        built_by: dict[str, list[str]] = {}
-        for row in graph_manager.query(BUILT, {"ids": unit_sources}) if graph_manager and unit_sources else []:
-            unit, module = component_of_source.get(str(row.get("unit") or "")), component_of_source.get(str(row.get("module") or ""))
-            if unit and module:
-                built_by.setdefault(module, []).append(unit)
+        components, sources, units_at, built_by = component_hierarchy(elements, graph_manager)
         levels = assign_levels(
             [{"identifier": e.identifier, "type": e.element_type, "role": str((e.properties or {}).get("role") or "")} for e in elements], components, rules, units_at, built_by
         )

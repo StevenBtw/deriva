@@ -122,8 +122,8 @@ def generate_file_node_id(repo_name: str, file_path: str) -> str:
     Examples:
         >>> generate_file_node_id("my_repo", "src/app.py")
         'file::my_repo::src_app.py'
-        >>> generate_file_node_id("flask_invoice_generator", "templates/base.html")
-        'file::flask_invoice_generator::templates_base.html'
+        >>> generate_file_node_id("shop_app", "templates/base.html")
+        'file::shop_app::templates_base.html'
     """
     # Strip chunk suffix if present
     original_path = strip_chunk_suffix(file_path)

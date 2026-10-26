@@ -6,7 +6,7 @@ A data entity is a persistent concept of the code, found by its structure:
   marks roots, only roots are entities (the other entities are parts of an aggregate; with
   ``aggregate_scope`` "folder" only those in a root's folder);
 - ORM entities: a type with an entity annotation, or one that inherits a configured ORM base
-  over at most two steps (``LoanApplication -> Base -> DeclarativeBase``);
+  over at most two steps (``OrderRequest -> Base -> DeclarativeBase``);
 - shared mainframe records: a copybook record named as a record (``record_pattern``) that at least
   ``min_importers`` programs import (a shared work or communication area is no persistent data);
 - DDL tables: a ``CREATE TABLE`` (category ``table``); a join table (``join_tables``: all its
@@ -239,7 +239,7 @@ def _annotated_table(decorator: str, annotations: set[str]) -> str | None:
 
 def _declared_table(t: dict[str, Any], annotations: set[str], attributes: tuple[str, ...]) -> str | None:
     """The table a code type declares: its table annotation's name, else a class-level table attribute in its code
-    (``__tablename__ = "loans"``), without a schema in front; else None."""
+    (``__tablename__ = "orders"``), without a schema in front; else None."""
     for d in t.get("decorators") or []:
         if table := _annotated_table(str(d), annotations):
             return table.split(".")[-1]
