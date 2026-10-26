@@ -8,7 +8,7 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
 
-## v0.8.8 - (Unreleased)
+## v0.8.8 - ArchiMate metamodel conformance pass (October 26 2026)
 
 ### Metamodel
 
@@ -19,6 +19,8 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 
 ### Configuration
 
+- **Every step starts at version 1**: `config reset-versions --yes` makes each active config row version 1 and removes the version history (it stays in the older releases); 0.8.8 ships its configuration at version 1
+- **Whether a step calls the LLM is settable**: `config update derivation <step> --llm/--no-llm` makes a new version with the flag set (it is shown by `config list`); the application grouping and documentation actors steps are marked as LLM steps
 - **The shipped configuration matches the measured pipeline**: the default step configurations a new install starts from are brought up to date with the active ones, including the build module extraction step, the abstraction refine steps and the current node, relationship, consistency and deployment settings, which the shipped files had not carried since 0.8.2
 
 ### Extraction
@@ -39,9 +41,19 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 - **One unit per package**: a package manifest with several project scripts gives one deployable unit, its scripts the unit's entry points (named after the script that carries the package's name, else the first), instead of one unit per script; a script that runs another package's code adds nothing to the package that re-exports it
 - **Variant deployments**: another deployment file of the primary one's kind in the same folder is a variant (an instrumentation or demo set-up next to the default compose file); a unit that a variant deploys and the primary file does not is no application component. It applies only when the primary file deploys a unit itself, and the override file Compose merges into a default-named file (`docker-compose.override.yml`, `compose.override.yaml`) counts as part of the primary, not as a variant. The environment records these units (`variantUnits`), and each deployment its file (`file`)
 - **The primary compose file has Compose's default name**: of several compose files, one named as Compose looks them up (`compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`, in that order) is the primary environment, before a variant such as `docker-compose.dev.yml` that sorts first; without one, the shallowest file, then the first by name, as before (Deployment params `compose_defaults`)
+- **A pom names its unit by its own name**: a Maven unit takes the project's own `<name>` and `<description>` (a direct child of the project), no longer the first one in the file, which could be a license's or a developer's; a value that holds an unresolved property (`${project.artifactId}`) names nothing, so the unit falls back to its module or folder name
+- **An aggregator is named by its folder**: every parent system, not only the repository's root, takes its folder's name, since its artifactId often carries the packaging (`orders-pom`, `orders-parent`)
+- **A static frontend is named by the module that ships it**: a static unit inside a folder with its own manifest (the repository's root aside) takes that module's folder and manifest name, instead of a layout folder such as `src/` or `public/`
+- **An implementation class names its entity without `Impl`**: `Impl` joins the kind words dropped from the end of a data entity's name (DataEntity params `name_suffixes`), so a persistent `OrderImpl` is the entity "Order"
 
 ### Derivation
 
+- **One answer per closed choice**: asking the closed choices (interface roles, application grouping, documentation actors) three times and keeping the majority was tested on the development set; it made no choice more stable than one call at three times the tokens, so every closed choice is asked once
+- **Business actors from the documentation**: the business concepts the extraction classifies as actors are candidates for an application where one documentation section mentions both; one LLM call per repository chooses, per application, which of its candidates are business actors it serves (none is allowed), and the application's interfaces serve them. An actor or role of the same name the model holds already is the same element (`DocumentationActors`)
+- **Applications from the documentation**: where structure cannot decide (no system component, two or more top-level components), one LLM call per repository assigns each top-level component one candidate of a closed set: the name in the root README's title, or the component's own name without kind words. The call sees the README's introduction; an answer outside the set keeps the component's own name. A candidate two or more components choose is an enterprise application that composes them, and they move to the solution level (`ApplicationGrouping`)
+- **Repeated service names are qualified**: when two components name a service the same `<object> <verb>`, each copy takes its component's name (without kind words) in front, such as "Auth Order Management" and "Recommender Order Management"; a name no other component repeats stays as it is
+- **Edge technology services sit at the solution level**: a technology service for content delivery, load balancing or an API gateway belongs to the solution level, not the enterprise view (abstraction level roles)
+- **The technology layer follows the metamodel**: the platform node and each service in its environment that a closed kind table names (a database, a cache, object storage, serverless functions, ...) get one technology function and one technology service, named by that table (a container platform "Container Hosting", a database "Relational Database"), and the service serves the application function of each unit it serves or runs; a runtime is assigned to the artifacts of the units it runs, and the platform composes it; service software that is only a unit's dependency is embedded, realized by the unit's artifact. This replaces the node and system software serving components directly and the node assigned to artifacts; technology functions and services come from structure, without an LLM call, and the technology catalog gives managed cloud services their finer kind
 - **Business roles**: a role the code names as such (a role node of kind role, such as a role constant) is a business role, from structure and without an LLM call; a person or organisation (kind actor) stays a business actor. No actor is assigned to a role unless the graph links them
 - **No relationships from names in code**: a component no longer serves a business actor, process or function, or accesses a business object, because its code names it (`named_in_code` is empty); every relationship now rests on structure
 - **Libraries are aggregated by their users**: a component whose code imports a library aggregates it, instead of the library serving it; one unit using another unit's code (graph `CONSUMES` over code) is served by that unit's interface, messaging between units flows between their functions, and an import between two deployable units is shared code, no longer drawn as one serving the other
@@ -57,11 +69,21 @@ Version 0.8.x makes the pipeline transparent and editable in a local web UI and 
 - **No business function per data domain**: the application service step no longer adds a business function for each business domain that cooperating components access (its `business_functions` param is off); such a grouping is no business behaviour with a human actor
 - **Business processes need a human actor**: the business process and business event steps, which made a process from an entity's status lifecycle and an event from each state, are off. A lifecycle is a state machine without an actor; business processes will come from structure that names one
 
+### Export
+
+- **The exchange file names its schemas as the standard's examples do**: `xsi:schemaLocation` points at the diagram schema (the export carries views) and at the Dublin Core schema for the metadata, so a validating tool finds both
+
 ### Benchmark
 
+- **Elements derived from a reference's lineage map one to one**: when a model is compared with a reference, an element whose source is derived from a node the reference lists as lineage (a unit's service, `unit::<unit>::all`, from the unit) maps to that reference element when nothing else does; of several such elements only the first counts, the others stay extras
 - **Relationships are scored through their chains**: when a model is compared with a reference (`benchmark reference`, `benchmark gate`), a reference relationship the model does not draw still counts as found when the valid derivation rules of ArchiMate 3.2 (Appendix B.2) derive it from a chain of the model's direct relationships, also a chain below the scored level; the relationships on that chain count as correct. A relationship the model itself draws in the derived tier is no part of a chain, a relationship with an external system (a black box) counts only when drawn, and the report shows how much of the recall was drawn and how much came through a chain
 - **Behaviour matches within its layer**: when a model is compared with a reference (`benchmark reference`, `benchmark gate`), a process, function, interaction or event counts for any of these four in the same layer, so an application function covers a reference application process; services and structure types still match only their own type
 - **The B1 baseline skips excluded files**: the one-shot baseline (`benchmark run --baseline b1`) now leaves out every file the file-type registry excludes (model files, backups, documents that describe a reference model), its directory tree included, as extraction does. Before, the tree could name such files
+- **The B1 baseline shows code next to build files**: its material takes manifest, build and deployment files and source files in turn within the character budget, so a repository with many build files no longer fills the budget before any source file
+- **Samples for every LLM decision**: each session records the samples of the role classification (`<Type>.roles`) and of the documentation steps (application grouping, documentation actors) next to the extraction and naming calls; all ask once
+- **Re-asks are counted**: a session records, per step, how often a prompt already asked in the same run was asked again (`llm_reasks` in the session metadata, next to `llm_samples`), such as a role classification re-asked after an answer that was no valid JSON; answer stability compares all answers a prompt got in a run, so a re-asked decision counts as stable only when every run answered it the same way
+- **The joint selection reports its size**: the MILP report gives the number of 0/1 variables and constraints (cycle cuts included) per run, and `benchmark analyze` lists it per model
+- **Answer and decision stability across LLMs**: with several models, `benchmark analyze` adds an "all LLMs" row per decision type over every model's runs, where a prompt is compared by its text
 
 ## v0.8.7 - Database upgrades (October 24 2026)
 
@@ -194,7 +216,7 @@ The model now has two abstraction levels, enterprise and solution, built from st
 - **Data entities lost in 0.8.2 when every service declares its own ORM base**: a repository whose services each declare `class Base(DeclarativeBase)` got no data entities, and so no data domains, lifecycles, business events or the elements built on them. A base class is now resolved through its nearest definition (the one sharing the most leading folders)
 - **Images that name their service in the tag**: a deployment whose image carries the service in its tag or last name segment now deploys the unit of that name or folder, matched exactly
 - **Two services of one name**: cloud services that share a name are no longer merged into one deployment
-- **Names from documentation lists**: a bold term, table cell or link label used as a component name loses the separator before its description ("**Process Engine:** runs processes" named the component "Process Engine:")
+- **Names from documentation lists**: a bold term, table cell or link label used as a component name loses the separator before its description ("**Order Desk:** takes orders" named the component "Order Desk:")
 - **Studio run history**: a run that has just ended is listed at once, and a run of an earlier studio process replays its live log from its folder (`events.jsonl`) instead of failing (404); a run without LLM calls lists no calls instead of failing
 - **Benchmark form starts on the default model**: the studio's benchmark form selects `LLM_DEFAULT_MODEL` instead of the first configured model
 - **Repositories in a moved workspace**: extraction reads `REPOSITORY_WORKSPACE_DIR` like `repo list` does; with another folder, extraction found no repositories
