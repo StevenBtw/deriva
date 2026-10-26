@@ -375,6 +375,8 @@ class TestSolveReport:
         assert stats["rows"]["H1"] == 1 and stats["cycle_cuts"] == 1
         assert stats["parts"] == 1 and stats["constrained_parts"] == 1
         assert (stats["kept"], stats["dropped"], stats["merges"], stats["redirects"]) == (2, 3, 0, 0)
+        # The model's size: a 0/1 variable per valid proposal and merge candidate, every constraint row and cut
+        assert stats["variables"] == 4 and stats["constraints"] == sum(stats["rows"].values()) + stats["cycle_cuts"]
 
     def test_an_unconstrained_model_reports_no_rows(self):
         decision = run([el("a"), el("b")], [rel("ab", "a", "b", tier=1)], [])

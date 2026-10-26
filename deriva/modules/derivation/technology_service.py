@@ -1,37 +1,17 @@
 """
 TechnologyService Derivation.
 
-A TechnologyService represents an externally visible unit of functionality,
-offered by a technology node (e.g., database, message queue, external API).
+A TechnologyService is the externally visible behaviour a technology realizer offers (ArchiMate 3.2, Figure 82): the
+platform node's container hosting, a database's data storage, a managed service's capability. Every realizer (the
+environment and its service software) gets one, realized by its technology function, and it serves the application
+functions of the units it serves or runs.
 
-Graph signals:
-- External dependency nodes (imported packages/libraries)
-- Nodes with labels like ExternalDependency, Database, API
-- High out-degree from application code (many things depend on it)
-- Configuration files referencing external services
-
-Filtering strategy:
-- Start with ExternalDependency and similar labeled nodes
-- Filter to high-importance dependencies (PageRank)
-- Exclude standard library and utility packages
-- Focus on infrastructure services (databases, queues, APIs)
-
-LLM role:
-- Classify which dependencies are technology services vs utilities
-- Generate meaningful service names
-- Write documentation describing the service's role
-
-Relationships:
-- OUTBOUND: TechnologyService -> DataObject (Access) - access databases/files
-- OUTBOUND: TechnologyService -> ApplicationService (Serving) - serve app services
-- INBOUND: Device -> TechnologyService (Realization) - devices realize tech services
+Structure only, no LLM: the step's query selects the realizers, and a closed table names the service by the
+realizer's kind (``roles.names``: a database "Relational Database", a container platform "Container Hosting"); a
+kind the table does not list gets no service. Its relationships come from structure (relationship config).
 
 ArchiMate Layer: Technology Layer
 ArchiMate Type: TechnologyService
-
-Typical Sources:
-    - ExternalDependency nodes (databases, message queues, APIs)
-    - Technology nodes from LLM extraction
 """
 
 from __future__ import annotations
@@ -57,26 +37,9 @@ class TechnologyServiceDerivation(HybridDerivation):
     USE_COMMUNITY_ROOTS = False  # External deps don't have communities
     PATTERN_MATCH_DEFAULT = True  # Accept candidates by default (query filters by techCategory)
 
-    OUTBOUND_RULES = [
-        RelationshipRule(
-            target_type="DataObject",
-            rel_type="Access",
-            description="Technology services access data objects (databases, files)",
-        ),
-        RelationshipRule(
-            target_type="ApplicationService",
-            rel_type="Serving",
-            description="Technology services serve application services",
-        ),
-    ]
-
-    INBOUND_RULES = [
-        RelationshipRule(
-            target_type="Device",
-            rel_type="Realization",
-            description="Devices realize technology services",
-        ),
-    ]
+    # Its relationships come from structure only (relationship config): no rule-based or LLM tier
+    OUTBOUND_RULES: list[RelationshipRule] = []
+    INBOUND_RULES: list[RelationshipRule] = []
 
     # Uses HybridDerivation.filter_candidates() which handles:
     # - Pattern matching (include/exclude from config)

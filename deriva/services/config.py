@@ -60,16 +60,25 @@ def llm_samples_per_step(engine: Any) -> dict[str, int]:
 
     Recorded with every benchmark session so any voting is visible next to the
     consistency it produces. Extraction LLM steps use ``params.samples``, element
-    naming uses ``params.naming.samples`` (reported as ``<Type>.naming``).
+    naming uses ``params.naming.samples`` (reported as ``<Type>.naming``); the role
+    classification (``params.roles`` with labels) is reported as ``<Type>.roles`` and
+    the documentation steps (``params.application_grouping``, ``params.documentation_actors``)
+    under their step name, each asked once.
     """
     samples: dict[str, int] = {}
     for cfg in get_extraction_configs(engine, enabled_only=True):
         if cfg.extraction_method == "llm":
             samples[cfg.node_type] = int((json.loads(cfg.params) if cfg.params else {}).get("samples", 1))
     for cfg in get_derivation_configs(engine, enabled_only=True, phase="generate"):
-        naming = (json.loads(cfg.params) if cfg.params else {}).get("naming")
+        params = json.loads(cfg.params) if cfg.params else {}
+        naming = params.get("naming")
         if naming:
             samples[f"{cfg.step_name}.naming"] = int(naming.get("samples", 1))
+        roles = params.get("roles")
+        if isinstance(roles, dict) and roles.get("labels") and roles.get("instruction"):
+            samples[f"{cfg.step_name}.roles"] = 1
+        if any(isinstance(params.get(key), dict) for key in ("application_grouping", "documentation_actors")):
+            samples[cfg.step_name] = 1
     return samples
 
 
@@ -549,6 +558,19 @@ def update_derivation_config(
 # =============================================================================
 
 
+def reset_versions(engine: Any) -> dict[str, int]:
+    """The release reset: every active config row becomes version 1 and the inactive history rows are removed (the
+    history stays in the older releases). Returns the removed rows per table."""
+    removed: dict[str, int] = {}
+    for table, versioned in (("derivation_config", True), ("extraction_config", True), ("derivation_patterns", False)):
+        before = engine.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+        engine.execute(f"DELETE FROM {table} WHERE NOT is_active")
+        if versioned:
+            engine.execute(f"UPDATE {table} SET version = 1")
+        removed[table] = before - engine.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+    return removed
+
+
 def add_derivation_step(
     engine: Any,
     step_name: str,
@@ -904,6 +926,7 @@ def create_derivation_config_version(
     batch_size: int | None = None,
     max_candidates: int | None = None,
     sequence: int | None = None,
+    llm: bool | None = None,
 ) -> dict[str, Any]:
     """
     Create a new version of a derivation config (versioned update).
@@ -922,6 +945,7 @@ def create_derivation_config_version(
         temperature: LLM temperature override (or None to keep current)
         max_tokens: LLM max_tokens override (or None to keep current)
         sequence: New place in the phase (or None to keep current)
+        llm: Whether the step calls the LLM (or None to keep current; informational, shown by config list)
 
     Returns:
         Dict with success, new_version, old_version
@@ -949,7 +973,7 @@ def create_derivation_config_version(
         phase,
         cur_sequence,
         cur_enabled,
-        llm,
+        cur_llm,
         cur_graph_query,
         cur_model_query,
         cur_instruction,
@@ -974,6 +998,7 @@ def create_derivation_config_version(
     new_batch_size = batch_size if batch_size is not None else cur_batch_size
     new_max_candidates = max_candidates if max_candidates is not None else cur_max_candidates
     sequence_new = sequence if sequence is not None else cur_sequence
+    new_llm = llm if llm is not None else cur_llm
 
     # Deactivate old config
     engine.execute(
@@ -1001,7 +1026,7 @@ def create_derivation_config_version(
             new_version,
             sequence_new,
             new_enabled,
-            llm,
+            new_llm,
             new_graph_query,
             new_model_query,
             new_instruction,

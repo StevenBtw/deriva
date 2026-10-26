@@ -56,6 +56,16 @@ from deriva.adapters.graph import GraphManager
 from deriva.modules.derivation import prep
 from deriva.modules.derivation.application_component import ApplicationComponentDerivation
 from deriva.modules.derivation.application_function import ApplicationFunctionDerivation
+from deriva.modules.derivation.application_grouping import (
+    applications,
+    build_grouping_prompt,
+    grouping_candidates,
+    grouping_schema,
+    introduction,
+    own_name,
+    parse_grouping,
+    title_parts,
+)
 from deriva.modules.derivation.application_interface import ApplicationInterfaceDerivation
 from deriva.modules.derivation.application_service import ApplicationServiceDerivation
 from deriva.modules.derivation.artifact import ArtifactDerivation
@@ -79,7 +89,9 @@ from deriva.modules.derivation.base import (
     UnitFilter,
     code_names_with_paths,
     derive_consolidated_relationships,
+    element_identifier,
     element_source_paths,
+    extract_response_content,
     file_imports,
     get_enrichments_from_graph,
     graph_link_pairs,
@@ -97,6 +109,7 @@ from deriva.modules.derivation.business_role import BusinessRoleDerivation
 from deriva.modules.derivation.component_services import ComponentServicesConfig, derive_component_services, derive_member_services, derive_unit_services
 from deriva.modules.derivation.data_object import DataObjectDerivation
 from deriva.modules.derivation.device import DeviceDerivation
+from deriva.modules.derivation.documentation_actors import actor_schema, build_actor_prompt, parse_actors, verified_candidates
 from deriva.modules.derivation.element_base import ElementDerivationBase
 from deriva.modules.derivation.function_model import (
     EvidenceRules,
@@ -110,9 +123,12 @@ from deriva.modules.derivation.function_model import (
     parse_function_model,
     shown_operations,
 )
+from deriva.modules.derivation.levels import component_parents
 from deriva.modules.derivation.node import NodeDerivation
 from deriva.modules.derivation.refine import run_refine_step
+from deriva.modules.derivation.refine.abstraction_levels import APPLICATION_PREFIX, component_hierarchy
 from deriva.modules.derivation.system_software import SystemSoftwareDerivation
+from deriva.modules.derivation.technology_function import TechnologyFunctionDerivation
 from deriva.modules.derivation.technology_service import TechnologyServiceDerivation
 from deriva.services import config
 
@@ -157,6 +173,7 @@ DERIVATION_REGISTRY: dict[str, type[ElementDerivationBase]] = {
     "ApplicationFunction": ApplicationFunctionDerivation,
     "Artifact": ArtifactDerivation,
     "BusinessRole": BusinessRoleDerivation,
+    "TechnologyFunction": TechnologyFunctionDerivation,
     "ApplicationInterface": ApplicationInterfaceDerivation,
     "DataObject": DataObjectDerivation,
     "TechnologyService": TechnologyServiceDerivation,
@@ -392,9 +409,9 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
     interfaces' members instead; ``ubiquity``, ``member_min_names`` and ``max_groups`` apply only there.
     ``service_verbs`` ([interface role, verb] pairs, in tie order) names the ``group_by: "unit"`` services by structure,
     with no naming call: "<object> <verb>" on the most-reached domain, the verb from the members' majority interface
-    role, else a member's activity, else the component's stem. A name is unique within its component only: the same
-    name on two components is the same service, which the coarse enterprise services merge into one service realized
-    by each holder's function; they take the same rule and table. Ids stay unique from structure.
+    role, else a member's activity, else the component's stem. A name is first unique within its component; a name
+    two components repeat names two services, each qualified by its component's stem in front ("Shop Order
+    Management"), while a name no other component repeats stays as it is. Ids stay unique from structure.
     """
     settings = json.loads(params).get("component_services") if params else None
     if settings is None:
@@ -815,6 +832,157 @@ def _function_model_step(
     result = _stored_services(function_elements(decisions, model, processes), archimate_manager)
     result["function_decisions"] = decisions
     return result
+
+
+def _application_grouping_config(params: str | None) -> dict[str, Any] | None:
+    """The application grouping step's settings (``params.application_grouping``), else None (not this step)."""
+    settings = json.loads(params).get("application_grouping") if isinstance(params, str) and params else None
+    if settings is None:
+        return None
+    intro = settings.get("intro_chars", 0) if isinstance(settings, dict) else None
+    title = settings.get("title", "all") if isinstance(settings, dict) else None
+    if (
+        not isinstance(settings, dict)
+        or not all(isinstance(w, str) for w in settings.get("kind_words", []))
+        or not isinstance(intro, int)
+        or intro < 0
+        or title not in ("all", "first", "marked")
+    ):
+        raise ValueError(
+            "params.application_grouping is an object with kind_words (words dropped from a component's name), intro_chars (the root README's"
+            " introduction shown, in characters) and title (all, first or marked: the title's parts offered, only its first, or all with the first marked)"
+        )
+    return settings
+
+
+def _application_grouping_step(
+    settings: dict[str, Any], instruction: str, graph_manager: GraphManager, archimate_manager: ArchimateManager, llm_query_fn: Callable[..., Any]
+) -> dict[str, Any]:
+    """Group the top-level components into the applications the documentation names: structure decides where it can (a
+    system component is the anchor, a single top-level component its own application), else one closed LLM choice per
+    repository; the result has the shape of ``generate_element``'s, with the choice per component (``grouping_decisions``)."""
+    stored = archimate_manager.get_elements()
+    by_id = {e.identifier: e for e in stored}
+    components, sources, units_at, built_by = component_hierarchy(stored, graph_manager)
+    parents = component_parents(components, units_at, built_by)
+    top = sorted((c for c in components if parents[c.identifier] is None and c.kind in ("unit", "module")), key=lambda c: c.identifier)
+    empty = _stored_services([], archimate_manager) | {"grouping_decisions": {}}
+    if any(c.kind in ("system", "application") for c in components) or len(top) < 2:
+        return empty
+    repo = sources[top[0].identifier].split("::")[1]
+    documents = _documentation_files(graph_manager)
+    kind_words = tuple(settings.get("kind_words", []))
+    own = {c.identifier: own_name(by_id[c.identifier].name, kind_words) for c in top}
+    parts = title_parts(documents, repo)
+    titles = grouping_candidates(parts[:1] if settings.get("title") == "first" else parts, [])
+    candidates = grouping_candidates(titles, [own[c.identifier] for c in top])
+    shown = [{"key": c.identifier, "name": by_id[c.identifier].name, "folder": c.folder, "title": " - ".join(title_parts(documents, c.folder))} for c in top]
+    intro = introduction(documents, repo, int(settings.get("intro_chars", 0)))
+    prompt = build_grouping_prompt(instruction, shown, candidates, intro, len(titles), mark_name=settings.get("title") == "marked")
+    content, error = extract_response_content(llm_query_fn(prompt, grouping_schema([c.identifier for c in top], candidates)))
+    assignment = parse_grouping("" if error else content, own, candidates)
+    created = []
+    for name, keys in applications(assignment):
+        identity = f"{APPLICATION_PREFIX}{repo}::{name_key(name)}"
+        created.append(
+            {
+                "identifier": element_identifier("ApplicationComponent", identity),
+                "name": name,
+                "element_type": "ApplicationComponent",
+                "documentation": "",
+                "properties": {"source": identity, "sources": sorted(sources[k] for k in keys), "candidates": candidates, "structure_name": name},
+            }
+        )
+    return _stored_services(created, archimate_manager) | {"grouping_decisions": assignment}
+
+
+def _documentation_actors_config(params: str | None) -> dict[str, Any] | None:
+    """The documentation actors step's settings (``params.documentation_actors``), else None (not this step)."""
+    settings = json.loads(params).get("documentation_actors") if isinstance(params, str) and params else None
+    if settings is None:
+        return None
+    intro = settings.get("intro_chars", 0) if isinstance(settings, dict) else None
+    if not isinstance(settings, dict) or not isinstance(intro, int) or intro < 0 or not all(isinstance(w, str) for w in settings.get("kind_words", [])):
+        raise ValueError("params.documentation_actors is an object with kind_words and intro_chars (the root README's introduction shown, in characters)")
+    return settings
+
+
+def _documentation_actors_step(
+    settings: dict[str, Any], instruction: str, graph_manager: GraphManager, archimate_manager: ArchimateManager, llm_query_fn: Callable[..., Any]
+) -> dict[str, Any]:
+    """The business actors each application serves, from documentation: the application scope of the grouping step
+    (every top-level component, an application among them), the actor concepts a documentation section mentions
+    together with the application as closed candidates, one closed multi-choice per repository. An actor or role of
+    the same name the model already holds is the same element; the application's interfaces serve the actor
+    (relationship config, by its listed units). The result has the shape of ``generate_element``'s, with the choices
+    (``actor_decisions``)."""
+    stored = archimate_manager.get_elements()
+    by_id = {e.identifier: e for e in stored}
+    components, sources, units_at, built_by = component_hierarchy(stored, graph_manager)
+    parents = component_parents(components, units_at, built_by)
+    folders = {c.identifier: c.folder for c in components}
+    empty = _stored_services([], archimate_manager) | {"actor_decisions": {}}
+    top = sorted(c.identifier for c in components if parents[c.identifier] is None)
+    if not top:
+        return empty
+    kind_words = tuple(settings.get("kind_words", []))
+
+    def descendants(root: str) -> list[str]:
+        out, frontier = [root], [root]
+        while frontier:
+            frontier = [c for c, p in parents.items() if p in frontier and c not in out]
+            out += frontier
+        return out
+
+    units: dict[str, list[str]] = {app: [m for m in descendants(app) if sources.get(m, "").startswith("unit::")] for app in top}
+    words: dict[str, set[str]] = {}
+    for app in top:
+        names = {own_name(by_id[m].name, kind_words) for m in descendants(app)}
+        tails = {folders[m].rsplit("/", 1)[-1] for m in descendants(app) if folders.get(m)}
+        words[app] = names | tails | {t.replace("-", " ") for t in tails}
+    concepts = {
+        str(r["id"]): str(r["name"])
+        for r in graph_manager.query("MATCH (c:Graph:BusinessConcept) WHERE c.active = true AND 'actor' IN c.conceptTypes RETURN c.id AS id, c.conceptName AS name")
+        if r.get("id") and r.get("name")
+    }
+    documents = _documentation_files(graph_manager)
+    verified = verified_candidates(documents, words, concepts)
+    if not verified:
+        return empty
+    candidates = {app: sorted({concepts[c] for c in ids}) for app, ids in verified.items()}
+    shown = [{"key": app, "name": by_id[app].name, "units": sorted(folders[u] for u in units[app] if folders.get(u))} for app in sorted(candidates)]
+    repo = next((s.split("::")[1] for s in sources.values() if s.count("::") >= 2), "")
+    prompt = build_actor_prompt(instruction, shown, candidates, introduction(documents, repo, int(settings.get("intro_chars", 0))))
+    content, error = extract_response_content(llm_query_fn(prompt, actor_schema(candidates)))
+    chosen = parse_actors("" if error else content, candidates)
+
+    # One element per concept: an actor or role of the same name the model holds already is that element
+    existing = {name_key(e.name): e for e in stored if e.element_type in ("BusinessActor", "BusinessRole")}
+    concept_of = {name_key(name): cid for cid, name in concepts.items()}
+    served: dict[str, set[str]] = {}
+    for app, names in chosen.items():
+        for name in names:
+            served.setdefault(name_key(name), set()).update(sources[u] for u in units[app])
+    created = []
+    updates: dict[str, dict[str, Any]] = {}
+    for key, unit_sources in sorted(served.items()):
+        if key in existing:
+            element = existing[key]
+            updates[element.identifier] = {"sources": sorted(set((element.properties or {}).get("sources") or []) | unit_sources)}
+            continue
+        cid = concept_of[key]
+        created.append(
+            {
+                "identifier": element_identifier("BusinessActor", cid),
+                "name": concepts[cid],
+                "element_type": "BusinessActor",
+                "documentation": "",
+                "properties": {"source": cid, "sources": sorted(unit_sources), "structure_name": concepts[cid]},
+            }
+        )
+    if updates:
+        archimate_manager.update_element_properties(updates)
+    return _stored_services(created, archimate_manager) | {"actor_decisions": chosen}
 
 
 def _state_sites(rows: list[str], norm: Callable[[str], str]) -> dict[str, set[str]]:
@@ -1632,13 +1800,15 @@ def run_derivation(
             # Validate required config parameters (a function model step reads no candidates: only its instruction)
             try:
                 function_model = _function_model_config(cfg.params)
+                grouping = _application_grouping_config(cfg.params)
+                actors = _documentation_actors_config(cfg.params)
             except ValueError as exc:
-                function_model, missing_params = None, [str(exc)]
+                function_model, grouping, actors, missing_params = None, None, None, [str(exc)]
             else:
                 missing_params = []
             if not cfg.instruction:
                 missing_params.append("instruction")
-            if function_model is None:
+            if function_model is None and grouping is None and actors is None:
                 if not cfg.input_graph_query:
                     missing_params.append("input_graph_query")
                 if not cfg.example:
@@ -1661,6 +1831,10 @@ def run_derivation(
                 component_services = _component_services_config(cfg.params) if cfg.element_type == "ApplicationService" else None
                 if function_model is not None:
                     step_result = _function_model_step(function_model, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
+                elif grouping is not None:
+                    step_result = _application_grouping_step(grouping, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn)
+                elif actors is not None:
+                    step_result = _documentation_actors_step(actors, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn)
                 elif component_services is not None:
                     step_result = _component_services_step(component_services, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
                 else:
@@ -2090,13 +2264,15 @@ def run_derivation_iter(
             # Validate required config parameters (a function model step reads no candidates: only its instruction)
             try:
                 function_model = _function_model_config(cfg.params)
+                grouping = _application_grouping_config(cfg.params)
+                actors = _documentation_actors_config(cfg.params)
             except ValueError as exc:
-                function_model, missing_params = None, [str(exc)]
+                function_model, grouping, actors, missing_params = None, None, None, [str(exc)]
             else:
                 missing_params = []
             if not cfg.instruction:
                 missing_params.append("instruction")
-            if function_model is None:
+            if function_model is None and grouping is None and actors is None:
                 if not cfg.input_graph_query:
                     missing_params.append("input_graph_query")
                 if not cfg.example:
@@ -2126,6 +2302,10 @@ def run_derivation_iter(
                 component_services = _component_services_config(cfg.params) if cfg.element_type == "ApplicationService" else None
                 if function_model is not None:
                     step_result = _function_model_step(function_model, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
+                elif grouping is not None:
+                    step_result = _application_grouping_step(grouping, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn)
+                elif actors is not None:
+                    step_result = _documentation_actors_step(actors, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn)
                 elif component_services is not None:
                     step_result = _component_services_step(component_services, cfg.instruction, graph_manager, archimate_manager, step_llm_query_fn, all_created_elements)
                 else:

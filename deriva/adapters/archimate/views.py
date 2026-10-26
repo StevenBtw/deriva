@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from .models import Element, Relationship, layer_of
 
 ENTERPRISE, SOLUTION, DETAIL = "enterprise", "solution", "detail"
-DEPLOYMENT = frozenset({"ApplicationComponent", "Node", "Device", "SystemSoftware", "TechnologyService", "Artifact"})
+DEPLOYMENT = frozenset({"ApplicationComponent", "Node", "Device", "SystemSoftware", "TechnologyFunction", "TechnologyService", "Artifact"})
 # (view name, viewpoint, element types, level), in export order
 VIEWPOINTS: tuple[tuple[str, str, frozenset[str] | None, str], ...] = (
     ("Layered (enterprise)", "Layered", None, ENTERPRISE),
@@ -43,7 +43,7 @@ BANDS = ("Business", "Application", "Technology", "Other")
 TYPE_ORDER = (
     "BusinessActor", "BusinessRole", "BusinessFunction", "BusinessProcess", "BusinessEvent", "BusinessObject",
     "ApplicationComponent", "ApplicationInterface", "ApplicationService", "ApplicationFunction", "DataObject",
-    "Node", "Device", "SystemSoftware", "TechnologyService", "Artifact",
+    "Node", "Device", "SystemSoftware", "TechnologyFunction", "TechnologyService", "Artifact",
 )  # fmt: skip
 COLUMNS, WIDTH, HEIGHT, GAP, BAND_GAP, MARGIN = 6, 160, 60, 20, 60, 20
 

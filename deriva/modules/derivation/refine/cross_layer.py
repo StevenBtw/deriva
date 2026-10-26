@@ -50,6 +50,7 @@ APPLICATION_LAYER = {
 
 TECHNOLOGY_LAYER = {
     "TechnologyService",
+    "TechnologyFunction",
     "Node",
     "Device",
     "SystemSoftware",

@@ -23,20 +23,20 @@ def am():
 
 
 def test_element_is_created_and_readable(am):
-    am.add_element(Element(name="Claims", element_type="ApplicationComponent", identifier="ac_claims", properties={"source": "dir::x"}))
+    am.add_element(Element(name="Cases", element_type="ApplicationComponent", identifier="ac_cases", properties={"source": "dir::x"}))
 
     (element,) = am.get_elements()
-    assert (element.identifier, element.name, element.element_type, element.enabled) == ("ac_claims", "Claims", "ApplicationComponent", True)
+    assert (element.identifier, element.name, element.element_type, element.enabled) == ("ac_cases", "Cases", "ApplicationComponent", True)
     assert element.properties == {"source": "dir::x"}
-    assert am.query("MATCH (e:Model {identifier: 'ac_claims'}) RETURN e.source_identifier AS s") == [{"s": "dir::x"}]
+    assert am.query("MATCH (e:Model {identifier: 'ac_cases'}) RETURN e.source_identifier AS s") == [{"s": "dir::x"}]
 
 
 def test_adding_the_same_element_twice_updates_it(am):
-    am.add_element(Element(name="Claims", element_type="ApplicationComponent", identifier="ac_claims"))
-    am.add_element(Element(name="Claims Handling", element_type="ApplicationComponent", identifier="ac_claims", documentation="d"))
+    am.add_element(Element(name="Cases", element_type="ApplicationComponent", identifier="ac_cases"))
+    am.add_element(Element(name="Cases Handling", element_type="ApplicationComponent", identifier="ac_cases", documentation="d"))
 
     (element,) = am.get_elements()
-    assert (element.name, element.documentation) == ("Claims Handling", "d")
+    assert (element.name, element.documentation) == ("Cases Handling", "d")
 
 
 def test_element_writes_use_the_index_not_merge(am):
@@ -45,21 +45,21 @@ def test_element_writes_use_the_index_not_merge(am):
         patch.object(am.db, "execute", wraps=am.db.execute) as execute,
         patch.object(am.db, "merge_node", wraps=am.db.merge_node) as merge_node,
     ):
-        am.add_element(Element(name="Claims", element_type="ApplicationComponent", identifier="ac_claims"))
+        am.add_element(Element(name="Cases", element_type="ApplicationComponent", identifier="ac_cases"))
 
     merge_node.assert_called_once()
     assert not [c for c in execute.call_args_list if "MERGE" in c.args[0]]
 
 
 def test_disabled_element_can_be_enabled_again(am):
-    am.add_element(Element(name="Claims", element_type="ApplicationComponent", identifier="ac_claims"))
-    am.disable_element("ac_claims", reason="duplicate_of:ac_other")
+    am.add_element(Element(name="Cases", element_type="ApplicationComponent", identifier="ac_cases"))
+    am.disable_element("ac_cases", reason="duplicate_of:ac_other")
 
-    assert am.enable_element("ac_claims") is True
+    assert am.enable_element("ac_cases") is True
 
     (element,) = am.get_elements(enabled_only=True)
-    assert element.identifier == "ac_claims"
-    assert am.query("MATCH (e:Model {identifier: 'ac_claims'}) RETURN e.disabled_reason AS r") == [{"r": None}]
+    assert element.identifier == "ac_cases"
+    assert am.query("MATCH (e:Model {identifier: 'ac_cases'}) RETURN e.disabled_reason AS r") == [{"r": None}]
 
 
 def test_disabled_elements_are_read_with_their_reason(am):

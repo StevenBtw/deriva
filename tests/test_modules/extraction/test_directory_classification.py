@@ -542,9 +542,9 @@ class TestDirectoryClassificationVoting:
         from deriva.modules.extraction.directory_classification import vote_directory_classifications
 
         samples = [
-            [{"directoryName": "claims_handling", "classification": "business", "conceptType": "process", "confidence": 0.9, "description": "a"}],
-            [{"directoryName": "claims_handling", "classification": "business", "conceptType": "process", "confidence": 0.8, "description": "b"}],
-            [{"directoryName": "claims_handling", "classification": "skip", "conceptType": "", "confidence": 0.9, "description": "c"}],
+            [{"directoryName": "cases_handling", "classification": "business", "conceptType": "process", "confidence": 0.9, "description": "a"}],
+            [{"directoryName": "cases_handling", "classification": "business", "conceptType": "process", "confidence": 0.8, "description": "b"}],
+            [{"directoryName": "cases_handling", "classification": "skip", "conceptType": "", "confidence": 0.9, "description": "c"}],
         ]
 
         (winner,) = vote_directory_classifications(samples, min_votes=2)
@@ -635,10 +635,10 @@ class TestDirectoryClassificationVoting:
     def test_names_come_from_the_directory(self):
         from deriva.modules.extraction.directory_classification import build_business_concept_node, build_technology_node
 
-        concept = build_business_concept_node({"directoryName": "claims_handling", "conceptType": "process"}, "dir::r::claims_handling", "r", 0.9)
+        concept = build_business_concept_node({"directoryName": "cases_handling", "conceptType": "process"}, "dir::r::cases_handling", "r", 0.9)
         tech = build_technology_node({"directoryName": "kafka", "conceptType": "infrastructure"}, "dir::r::kafka", "r", 0.9)
 
-        assert (concept["properties"]["conceptName"], concept["id"]) == ("ClaimsHandling", "concept::r::claimhandling")
+        assert (concept["properties"]["conceptName"], concept["id"]) == ("CasesHandling", "concept::r::casehandling")
         assert tech["properties"]["technologyName"] == "Kafka"
 
     def test_module_schema_matches_the_enforced_model(self):
@@ -659,18 +659,18 @@ class TestIdentityFromNameKey:
         from deriva.modules.extraction import concept_candidates, directory_classification
 
         term = {
-            "term": "Claims Handling",
+            "term": "Cases Handling",
             "language": "en",
             "kind": "noun",
-            "english": "claims handling",
+            "english": "cases handling",
             "count": 1,
             "occurrences": [{"path": "doc.md", "segment": 0, "start": 0, "snippet": "s"}],
         }
         (candidate,) = concept_candidates.merge_candidates([term], "r")
         (document,), _ = concept_candidates.concept_nodes_and_edges([(candidate, "business_process")], "r", 0.9)
-        directory = directory_classification.build_business_concept_node({"directoryName": "claims_handling", "conceptType": "process"}, "dir::r::claims_handling", "r", 0.9)
+        directory = directory_classification.build_business_concept_node({"directoryName": "cases_handling", "conceptType": "process"}, "dir::r::cases_handling", "r", 0.9)
 
-        assert document["node_id"] == directory["id"] == "concept::r::claimhandling"
+        assert document["node_id"] == directory["id"] == "concept::r::casehandling"
 
     def test_technology_spellings_share_an_id(self):
         from deriva.modules.extraction import directory_classification, technology_candidates

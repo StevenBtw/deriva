@@ -1028,6 +1028,44 @@ class TestCutAnswers:
         assert response.items == ["a"]
 
 
+class TestUnusableAnswers:
+    """An answer to a call that asked for a schema but holds no JSON cannot be used: it is not cached, and one already
+    in the cache counts as a miss, so a re-ask goes to the model instead of replaying the same answer."""
+
+    SCHEMA = {"name": "custom_classification", "schema": {}}
+
+    def test_an_answer_without_json_is_not_cached_and_the_re_ask_reaches_the_model(self, tmp_path):
+        manager = TestCutAnswers._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+            for output in ('```json\n{"id": "file": "a"}\n```', '{"items": []}'):
+                agent_class.return_value.run_sync.return_value = MagicMock(output=output, usage=None)
+                answer = manager.query("classify", schema=self.SCHEMA)
+            cached = manager.query("classify", schema=self.SCHEMA)
+
+        assert answer.content == '{"items": []}' and agent_class.return_value.run_sync.call_count == 2
+        assert cached.content == '{"items": []}' and manager.last_call["cache_hit"] is True
+
+    def test_an_unusable_answer_in_the_cache_is_a_miss(self, tmp_path):
+        manager = TestCutAnswers._manager(tmp_path)
+        manager.cache.get = MagicMock(  # type: ignore[method-assign]
+            return_value={"prompt": "p", "model": "m", "content": "No documentation was given.", "cache_key": "k", "cached_at": "t"}
+        )
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+            agent_class.return_value.run_sync.return_value = MagicMock(output='{"actors": {}}', usage=None)
+            answer = manager.query("choose", schema=self.SCHEMA)
+
+        assert answer.content == '{"actors": {}}' and manager.last_call["cache_hit"] is False
+
+    def test_a_call_without_a_schema_caches_text_as_before(self, tmp_path):
+        manager = TestCutAnswers._manager(tmp_path)
+        with patch("deriva.adapters.llm.manager.Agent") as agent_class:
+            agent_class.return_value.run_sync.return_value = MagicMock(output="Plain text", usage=None)
+            manager.query("describe")
+            again = manager.query("describe")
+
+        assert again.content == "Plain text" and agent_class.return_value.run_sync.call_count == 1
+
+
 class TestTimeoutAndRetry:
     """LLM_TIMEOUT bounds every call; transient failures are retried with backoff, others fail at once."""
 

@@ -2902,7 +2902,7 @@ class TestDeployableUnitStep:
 
         graph.add_node(TechnologyNode(name="Shop Admin", tech_category="service", repository_name="r"), node_id="tech::r::shopadmin")
         files = {
-            "README.md": ("docs", None, "# Shop - Tea Store\n\n| Part | Runtime |\n|---|---|\n| Order Desk | Java |\n"),
+            "README.md": ("docs", None, "# Shop - Order Store\n\n| Part | Runtime |\n|---|---|\n| Order Desk | Java |\n"),
             "desk/Dockerfile": ("config", None, "FROM base\n"),
             "desk/Desk.java": ("source", "java", "class Desk {}\n"),
             "shop-admin/Dockerfile": ("config", None, "FROM base\n"),
@@ -3534,33 +3534,33 @@ class TestBusinessLayerStep:
         from deriva.adapters.graph.models import DataDomainNode, DataEntityNode, DeployableUnitNode, FileNode, TypeDefinitionNode
 
         files = {
-            "loan/models.py": 'class LoanApplication(Base):\n    status = Column(String(20), default="DRAFT")\n',
-            "loan/routes.py": 'require_role("ADMIN", "LOAN_OFFICER")\ndef submit(app):\n    app.status = "SUBMITTED"\n',
-            "uw/routes.py": 'require_role("UNDERWRITER")\ndef approve(app):\n    app.status = "APPROVED"\n',
+            "lease/models.py": 'class LeaseApplication(Base):\n    status = Column(String(20), default="DRAFT")\n',
+            "lease/routes.py": 'require_role("ADMIN", "LEASE_OFFICER")\ndef submit(app):\n    app.status = "SUBMITTED"\n',
+            "uw/routes.py": 'require_role("UPKEEPER")\ndef approve(app):\n    app.status = "APPROVED"\n',
         }
         for path, text in files.items():
             (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
             (tmp_path / path).write_text(text, encoding="utf-8")
             graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="source", subtype="python"), node_id=f"file::r::{path}")
-        for unit in ("loan", "uw"):
+        for unit in ("lease", "uw"):
             graph.add_node(DeployableUnitNode(name=f"{unit}-service", path=f"r/{unit}", unit_kind="container", repository_name="r"), node_id=f"unit::r::{unit}")
-        graph.add_node(TypeDefinitionNode(name="LoanApplication", type_category="class", file_path="loan/models.py", repository_name="r"), node_id="typedef::r::LoanApplication")
-        graph.add_node(DataEntityNode(name="Loan Application", signal="orm entity", repository_name="r"), node_id="entity::r::loanapplication")
-        graph.add_edge("entity::r::loanapplication", "typedef::r::LoanApplication", "INCLUDES")
-        graph.add_node(DataDomainNode(name="Loan Application", kind="single", repository_name="r", business_object="Loan Application"), node_id="domain::r::loanapplication")
-        graph.add_edge("domain::r::loanapplication", "entity::r::loanapplication", "INCLUDES")
+        graph.add_node(TypeDefinitionNode(name="LeaseApplication", type_category="class", file_path="lease/models.py", repository_name="r"), node_id="typedef::r::LeaseApplication")
+        graph.add_node(DataEntityNode(name="Lease Application", signal="orm entity", repository_name="r"), node_id="entity::r::leaseapplication")
+        graph.add_edge("entity::r::leaseapplication", "typedef::r::LeaseApplication", "INCLUDES")
+        graph.add_node(DataDomainNode(name="Lease Application", kind="single", repository_name="r", business_object="Lease Application"), node_id="domain::r::leaseapplication")
+        graph.add_edge("domain::r::leaseapplication", "entity::r::leaseapplication", "INCLUDES")
 
         result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
 
         assert result["errors"] == [] and result["lifecycles"] == 1 and result["roles"] == 2
         (life,) = graph.query("MATCH (l:Graph:Lifecycle) RETURN l.id AS id, l.name AS name, l.states AS states, l.events AS events, l.stateSites AS sites")
-        assert "SUBMITTED>r/loan/routes.py" in list(life["sites"]) and "APPROVED>r/uw/routes.py" in list(life["sites"])
-        assert (life["name"], list(life["states"]), list(life["events"])) == ("Loan Application Lifecycle", ["DRAFT", "SUBMITTED", "APPROVED"], ["SUBMITTED", "APPROVED"])
+        assert "SUBMITTED>r/lease/routes.py" in list(life["sites"]) and "APPROVED>r/uw/routes.py" in list(life["sites"])
+        assert (life["name"], list(life["states"]), list(life["events"])) == ("Lease Application Lifecycle", ["DRAFT", "SUBMITTED", "APPROVED"], ["SUBMITTED", "APPROVED"])
         chain = graph.query("MATCH (a)-[:`Graph:TRIGGERS`]->(b:Graph:LifecycleEvent) RETURN a.id AS a, b.name AS b ORDER BY b")
-        assert [r["b"] for r in chain] == ["Loan Application Approved", "Loan Application Submitted"]
+        assert [r["b"] for r in chain] == ["Lease Application Approved", "Lease Application Submitted"]
         assert {r["a"] for r in chain} == {life["id"]}  # no transition in code links the two: both hang off the lifecycle
         roles = graph.query("MATCH (r:Graph:Role)-[:`Graph:ASSIGNED`]->(l:Graph:Lifecycle) RETURN r.name AS r ORDER BY r")
-        assert [r["r"] for r in roles] == ["Loan Officer", "Underwriter"]
+        assert [r["r"] for r in roles] == ["Lease Officer", "Upkeeper"]
 
     def test_the_signals_are_validated(self, graph, tmp_path):
         with pytest.raises(ValueError, match="BusinessLayer"):

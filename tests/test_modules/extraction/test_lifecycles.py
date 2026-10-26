@@ -33,37 +33,37 @@ def test_an_enum_status_member_of_a_domain_is_its_lifecycle_in_declaration_order
 
 def test_orm_status_values_come_from_the_default_the_allowed_values_and_the_assignments():
     files = {
-        "r/loan/app/models.py": 'class LoanApplication(Base):\n    __tablename__ = "loan_applications"\n    status = Column(String(30), default="DRAFT")\n',
-        "r/loan/app/routes.py": (
+        "r/lease/app/models.py": 'class LeaseApplication(Base):\n    __tablename__ = "lease_applications"\n    status = Column(String(30), default="DRAFT")\n',
+        "r/lease/app/routes.py": (
             'def submit(app):\n    app.status = "SUBMITTED"\n\ndef update(app, new):\n    valid = {"SUBMITTED", "UNDER_REVIEW", "APPROVED", "DISBURSED"}\n    app.status = new\n'
         ),
-        "r/uw/app/services.py": "def approve(db):\n    db.execute(text(\"UPDATE loans.loan_applications SET status = 'APPROVED' WHERE id = :i\"))\n",
+        "r/uw/app/services.py": "def approve(db):\n    db.execute(text(\"UPDATE leases.lease_applications SET status = 'APPROVED' WHERE id = :i\"))\n",
     }
-    members = [{"domain": "domain::loan", "object": "Loan", "name": "LoanApplication", "path": "r/loan/app/models.py"}]
+    members = [{"domain": "domain::lease", "object": "Lease", "name": "LeaseApplication", "path": "r/lease/app/models.py"}]
 
-    [life] = detect_lifecycles(files, members, _units("loan", "uw"), RULES, docs={})
+    [life] = detect_lifecycles(files, members, _units("lease", "uw"), RULES, docs={})
 
     assert (life.attribute, life.states) == ("status", ["DRAFT", "SUBMITTED", "UNDER_REVIEW", "APPROVED", "DISBURSED"])
     assert life.units_of_state["APPROVED"] == ["unit::uw"]  # the specific assignment (SQL) decides over the generic setter
     assert life.events == ["SUBMITTED", "APPROVED", "DISBURSED"]  # the start (out of the default), then each change of unit
-    assert life.name_candidates == ["Loan Lifecycle", "Loan Application Lifecycle"]  # the object, then the entity
+    assert life.name_candidates == ["Lease Lifecycle", "Lease Application Lifecycle"]  # the object, then the entity
 
 
 def test_a_documented_flow_anchors_states_to_units_and_names_the_process():
     files = {
-        "r/loan/app/models.py": 'class LoanApplication(Base):\n    status = Column(String(30), default="DRAFT")\n',
-        "r/loan/app/routes.py": 'def update(app, new):\n    valid = ["SUBMITTED", "APPROVED", "DISBURSED"]\n    app.status = new\n',
+        "r/lease/app/models.py": 'class LeaseApplication(Base):\n    status = Column(String(30), default="DRAFT")\n',
+        "r/lease/app/routes.py": 'def update(app, new):\n    valid = ["SUBMITTED", "APPROVED", "DISBURSED"]\n    app.status = new\n',
     }
     docs = {
         "r/README.md": (
-            "### Loan processing flow\n\n1. **Apply** for a loan: the application shows status `SUBMITTED`.\n"
-            "2. **Approve in underwriting**: the status moves to `APPROVED`.\n3. **Process disbursement**: the status moves to `DISBURSED`.\n"
+            "### Lease processing flow\n\n1. **Apply** for a lease: the application shows status `SUBMITTED`.\n"
+            "2. **Approve in upkeep**: the status moves to `APPROVED`.\n3. **Process disbursement**: the status moves to `DISBURSED`.\n"
         )
     }
-    members = [{"domain": "domain::loan", "object": "Loan", "name": "LoanApplication", "path": "r/loan/app/models.py"}]
+    members = [{"domain": "domain::lease", "object": "Lease", "name": "LeaseApplication", "path": "r/lease/app/models.py"}]
     units = [
-        {"id": "unit::loan", "path": "r/loan", "name": "loan-service"},
-        {"id": "unit::uw", "path": "r/uw", "name": "underwriting-service"},
+        {"id": "unit::lease", "path": "r/lease", "name": "lease-service"},
+        {"id": "unit::uw", "path": "r/uw", "name": "upkeep-service"},
         {"id": "unit::disb", "path": "r/disb", "name": "disbursement-service"},
     ]
 
@@ -71,8 +71,8 @@ def test_a_documented_flow_anchors_states_to_units_and_names_the_process():
 
     assert life.units_of_state["APPROVED"] == ["unit::uw"] and life.units_of_state["DISBURSED"] == ["unit::disb"]
     assert life.events == ["SUBMITTED", "APPROVED", "DISBURSED"]
-    assert life.name_candidates == ["Loan Lifecycle", "Loan Application Lifecycle", "Loan Processing"]  # templates, then the flow's heading
-    assert life.flow == "r/README.md#Loan processing flow"
+    assert life.name_candidates == ["Lease Lifecycle", "Lease Application Lifecycle", "Lease Processing"]  # templates, then the flow's heading
+    assert life.flow == "r/README.md#Lease processing flow"
 
 
 def test_a_vocabulary_of_fewer_states_or_without_a_business_domain_is_no_lifecycle():
@@ -97,18 +97,18 @@ def test_states_set_only_by_assignments_join_in_the_order_of_their_first_file():
 
 def test_a_variable_that_names_two_entities_belongs_to_the_one_in_its_own_unit():
     files = {
-        "r/uw/models.py": 'class UnderwritingCase(Base):\n    status = Column(String(30), default="PENDING")\n',
+        "r/uw/models.py": 'class UpkeepCase(Base):\n    status = Column(String(30), default="PENDING")\n',
         "r/coll/models.py": 'class CollectionsCase(Base):\n    status = Column(String(20), default="ACTIVE")\n',
         "r/uw/services.py": 'def decide(case):\n    case.status = "APPROVED"\n    case.status = "REJECTED"\n',
     }
     members = [
-        {"domain": "domain::uw", "object": "Underwriting", "name": "UnderwritingCase", "path": "r/uw/models.py"},
+        {"domain": "domain::uw", "object": "Upkeep", "name": "UpkeepCase", "path": "r/uw/models.py"},
         {"domain": "domain::coll", "object": "Collections", "name": "CollectionsCase", "path": "r/coll/models.py"},
     ]
 
     [life] = detect_lifecycles(files, members, _units("uw", "coll"), RULES, docs={})
 
-    assert (life.entity, life.states) == ("Underwriting Case", ["PENDING", "APPROVED", "REJECTED"])
+    assert (life.entity, life.states) == ("Upkeep Case", ["PENDING", "APPROVED", "REJECTED"])
 
 
 def test_an_enum_transition_table_chains_events_only_along_its_transitions():
@@ -175,20 +175,20 @@ def test_an_update_with_a_state_condition_and_a_table_of_next_states_are_transit
 
 def test_consecutive_steps_of_a_documented_flow_are_transitions_and_an_unproven_alternative_hangs_off_the_lifecycle():
     files = {
-        "r/loan/app/models.py": 'class LoanApplication(Base):\n    status = Column(String(30), default="DRAFT")\n',
-        "r/loan/app/routes.py": 'def update(app, new):\n    valid = ["SUBMITTED", "APPROVED", "DISBURSED"]\n    app.status = new\n',
-        "r/loan/app/rejects.py": 'def reject(app):\n    app.status = "REJECTED"\n',
+        "r/lease/app/models.py": 'class LeaseApplication(Base):\n    status = Column(String(30), default="DRAFT")\n',
+        "r/lease/app/routes.py": 'def update(app, new):\n    valid = ["SUBMITTED", "APPROVED", "DISBURSED"]\n    app.status = new\n',
+        "r/lease/app/rejects.py": 'def reject(app):\n    app.status = "REJECTED"\n',
     }
     docs = {
         "r/README.md": (
-            "### Loan processing flow\n\n1. **Apply** for a loan: the application shows status `SUBMITTED`.\n"
-            "2. **Approve in underwriting**: the status moves to `APPROVED`.\n3. **Process disbursement**: the status moves to `DISBURSED`.\n"
+            "### Lease processing flow\n\n1. **Apply** for a lease: the application shows status `SUBMITTED`.\n"
+            "2. **Approve in upkeep**: the status moves to `APPROVED`.\n3. **Process disbursement**: the status moves to `DISBURSED`.\n"
         )
     }
-    members = [{"domain": "domain::loan", "object": "Loan", "name": "LoanApplication", "path": "r/loan/app/models.py"}]
+    members = [{"domain": "domain::lease", "object": "Lease", "name": "LeaseApplication", "path": "r/lease/app/models.py"}]
     units = [
-        {"id": "unit::loan", "path": "r/loan", "name": "loan-service"},
-        {"id": "unit::uw", "path": "r/uw", "name": "underwriting-service"},
+        {"id": "unit::lease", "path": "r/lease", "name": "lease-service"},
+        {"id": "unit::uw", "path": "r/uw", "name": "upkeep-service"},
         {"id": "unit::disb", "path": "r/disb", "name": "disbursement-service"},
     ]
 

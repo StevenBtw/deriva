@@ -41,6 +41,7 @@ import json
 import logging
 import shutil
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -507,6 +508,8 @@ class BenchmarkOrchestrator:
         self._call_logs: dict[str, LlmCallLog] = {}
         # LLM answers per decision per step, recorded in the session metadata
         self._llm_samples: dict[str, int] = {}
+        # The same prompt asked again within a run (a re-ask after an unusable answer), per step: rule 7 makes it visible
+        self._llm_reasks: Counter[str] = Counter()
         # The code commit and dirty flag when the session started, recorded in the session metadata
         self._code: dict[str, Any] = {"commit": None, "dirty": None}
         self._current_model: str | None = None
@@ -1278,6 +1281,7 @@ class BenchmarkOrchestrator:
         """
         nocache_configs = self.config.nocache_configs
         used_cache_keys: list[str] = []  # Track cache keys for later copying
+        asked: set[str] = set()  # The prompts this run asked (one query function per run)
 
         def query_fn(
             prompt: str,
@@ -1317,6 +1321,9 @@ class BenchmarkOrchestrator:
             cache_key = call.get("cache_key")
             if cache_key:
                 used_cache_keys.append(cache_key)
+                if cache_key in asked:
+                    self._llm_reasks[current_config or ""] += 1
+                asked.add(cache_key)
             content = getattr(response, "content", "")
 
             current_run_id = self._current_run_id or ""
@@ -1734,6 +1741,8 @@ class BenchmarkOrchestrator:
             "object_types": list(self.ocel_log.object_types),
             # Above 1 means majority voting: consistency is then not single-call behaviour
             "llm_samples": self._llm_samples,
+            # Second and later calls with a prompt already asked in the same run, per step
+            "llm_reasks": dict(sorted(self._llm_reasks.items())),
             # What each model was sent, for the settings table (top_p and seed are never sent: provider defaults)
             "generation_settings": {name: generation_settings(config) for name, config in sorted(getattr(self, "_model_configs", {}).items()) if name in self.config.models},
         }

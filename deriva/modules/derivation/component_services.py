@@ -90,9 +90,9 @@ class ComponentServicesConfig:
     choose_instruction: str = ""  # The closed-set naming instruction (config text)
     # Interface role -> verb, in tie order (group_by "unit"). Set, a service is named by structure with no naming call:
     # "<object> <verb>" on the most-reached domain's object, the verb from the members' majority interface role; else
-    # the first member activity; else the component's stem. A name is unique within its component only: the same
-    # "<object> <verb>" on two components is the same service, which the coarse enterprise services merge into one
-    # service realized by each holder's function; they take the same rule and table (ids stay unique from structure)
+    # the first member activity; else the component's stem. A name is first unique within its component; the same
+    # "<object> <verb>" on two components names two services, each qualified by its component's stem in front
+    # (ids stay unique from structure)
     service_verbs: tuple[tuple[str, str], ...] = ()
     # Business functions from shared domains of cooperating components (gap 3); off when a function model supplies them
     business_functions: bool = True
@@ -846,8 +846,8 @@ def derive_unit_services(
         item["properties"]["consumed_objects"] = sorted(reads - set(item["properties"]["objects"]))
 
     # Services are named (unique within the type) before the functions, so a function never takes a service's name.
-    # Named by structure (service_verbs), a name is unique within its component only: the same "<object> <verb>" on
-    # two components is the same service, which the coarse services merge (ids stay unique from structure)
+    # Named by structure (service_verbs), a name is first unique within its component; the same "<object> <verb>" on
+    # two components then names two services, each copy with its component's stem in front ("Shop Order Management")
     named: set[tuple[str, str]] = set()
     for item in services:
         scope = item["properties"]["sources"][0] if config.service_verbs else ""
@@ -855,6 +855,12 @@ def derive_unit_services(
             options = [c for c in item["properties"]["name_candidates"] if (scope, name_key(c)) not in named]
             item["name"] = options[0] if options else f"{item['name']} {len(named) + 1}"
         named.add((scope, name_key(item["name"])))
+    if config.service_verbs:
+        repeats = Counter(name_key(item["name"]) for item in services)
+        for item in services:
+            stem = clean_member_name(components[item["properties"]["sources"][0]]["name"], config.kind_words, ()) or ""
+            if repeats[name_key(item["name"])] > 1 and stem and not name_key(item["name"]).startswith(name_key(stem)):
+                item["name"] = f"{stem} {item['name']}"
 
     # Business functions: a business domain that services of cooperating components access
     undirected = {frozenset(pair) for pair in lines if len(set(pair)) == 2}

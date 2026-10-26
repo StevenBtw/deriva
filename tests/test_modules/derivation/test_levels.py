@@ -198,3 +198,22 @@ def test_a_split_units_services_are_realized_by_its_feature_packages_functions()
     services = {"as_unit": ["unit"], "as_solo": ["solo"], "as_done": ["unit"]}
 
     assert split_realizations(services, parents, function_of, realized={"as_done"}) == [("af_owner", "as_unit"), ("af_vet", "as_unit")]
+
+
+def test_an_application_is_the_parent_of_the_top_level_components_it_lists_and_enterprise_only():
+    """Two top-level units grouped into one application move under it (solution level); a unit the folders already
+    place under another component keeps its parent; a unit the application does not list stays top-level."""
+    components = [
+        _c("sys", "system", "r/a"),
+        _c("inner", "unit", "r/a/inner"),
+        _c("front", "unit", "r/front"),
+        _c("back", "unit", "r/back"),
+        _c("other", "unit", "r/other"),
+        Component(identifier="app", kind="application", folder="", members=("front", "back", "inner")),
+    ]
+
+    parents = component_parents(components)
+    levels = assign_levels([{"identifier": c.identifier, "type": "ApplicationComponent"} for c in components], components, RULES)
+
+    assert (parents["front"], parents["back"], parents["inner"], parents["other"], parents["app"]) == ("app", "app", "sys", None, None)
+    assert (levels["app"], levels["front"], levels["other"]) == (frozenset({"enterprise"}), frozenset({"solution"}), frozenset({"enterprise", "solution"}))

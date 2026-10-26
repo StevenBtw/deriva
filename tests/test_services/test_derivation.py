@@ -1429,8 +1429,7 @@ class TestCollectRelationshipRules:
             "Device",
             "Node",
             "SystemSoftware",
-            "TechnologyService",
-        }
+        }  # Artifact, BusinessRole, TechnologyFunction and TechnologyService relate through structure only
 
     def test_contains_rules_for_registered_types(self):
         """Should contain rules for element types with defined rules."""
@@ -3297,6 +3296,30 @@ class TestUnitConfigs:
             derivation._component_services_config(json.dumps({"component_services": {"group_by": "packages"}}))
         with pytest.raises(ValueError, match="max_groups"):
             derivation._component_services_config(json.dumps({"component_services": {"max_groups": -1}}))
+
+    def test_unit_services_get_the_entities_of_each_data_domain(self):
+        """A data object made from an entity is accessed through its domain: the step hands each active domain's
+        entities to the derivation, and an inclusion of a domain it does not know is ignored."""
+        config = derivation._component_services_config(json.dumps({"component_services": {"group_by": "unit", "choose_instruction": "Choose."}}))
+        assert config is not None
+        graph = MagicMock()
+        graph.query.side_effect = lambda query, params=None: (
+            [{"id": "domain::r::orders", "name": "Orders", "bo": None, "exception": None}]
+            if query.startswith("MATCH (d:Graph:DataDomain) WHERE")
+            else [{"d": "domain::r::orders", "e": "entity::r::order"}, {"d": "domain::r::gone", "e": "entity::r::x"}]
+            if "->(e:Graph:DataEntity)" in query
+            else []
+        )
+        with (
+            patch("deriva.services.derivation._documentation_files", return_value={}),
+            patch("deriva.services.derivation.derive_unit_services", return_value=([], [])) as unit_services,
+            patch("deriva.services.derivation.element_source_paths", return_value={}),
+            patch("deriva.services.derivation.file_imports", return_value=[]),
+            patch("deriva.services.derivation.unit_scopes"),
+        ):
+            derivation._component_services_step(config, "NAME", graph, MagicMock(), MagicMock(), [])
+
+        assert unit_services.call_args.kwargs["domain_entities"] == {"domain::r::orders": ["entity::r::order"]}
 
     def test_services_by_members_read_no_documentation_files(self):
         """The member services' prompts carry no documentation, so the checkout's documents are not read."""

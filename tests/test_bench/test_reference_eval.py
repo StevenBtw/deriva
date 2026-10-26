@@ -268,28 +268,28 @@ def test_an_explicit_empty_level_set_is_no_level_at_all():
 
 
 CHAINED = {
-    "repository": "claims",
+    "repository": "cases",
     "elements": [
         {"key": "clerk", "type": "BusinessActor", "name": "Clerk"},
-        {"key": "claims", "type": "ApplicationService", "name": "Claim Service"},
+        {"key": "cases", "type": "ApplicationService", "name": "Case Service"},
         {"key": "store", "type": "SystemSoftware", "name": "Store"},
         {"key": "host", "type": "Node", "name": "Host"},
-        {"key": "app", "type": "ApplicationComponent", "name": "Claims App"},
+        {"key": "app", "type": "ApplicationComponent", "name": "Cases App"},
     ],
     "relationships": [
-        {"source": "claims", "target": "clerk", "type": "Serving", "kind": "serving"},
+        {"source": "cases", "target": "clerk", "type": "Serving", "kind": "serving"},
         {"source": "store", "target": "app", "type": "Realization", "kind": "realization"},
         {"source": "host", "target": "app", "type": "Realization", "kind": "realization"},
     ],
 }
 CHAINED_ELEMENTS = [
     ("ba_clerk", "BusinessActor", "Clerk", "s"),
-    ("bp_handle", "BusinessProcess", "Handle Claim", "s"),
-    ("as_claims", "ApplicationService", "Claim Service", "s"),
+    ("bp_handle", "BusinessProcess", "Handle Case", "s"),
+    ("as_cases", "ApplicationService", "Case Service", "s"),
     ("ss_store", "SystemSoftware", "Store", "s"),
     ("nd_host", "Node", "Host", "s"),
-    ("ar_app", "Artifact", "Claims App Artifact", "s"),
-    ("ac_app", "ApplicationComponent", "Claims App", "s"),
+    ("ar_app", "Artifact", "Cases App Artifact", "s"),
+    ("ac_app", "ApplicationComponent", "Cases App", "s"),
 ]
 
 
@@ -298,14 +298,14 @@ def test_a_reference_relationship_is_found_through_a_valid_chain_of_direct_model
     that realizes the component), through model elements the reference does not hold."""
     model = _model(
         CHAINED_ELEMENTS,
-        [("ba_clerk", "Assignment", "bp_handle"), ("as_claims", "Serving", "bp_handle"), ("ss_store", "Assignment", "ar_app"), ("ar_app", "Realization", "ac_app")],
+        [("ba_clerk", "Assignment", "bp_handle"), ("as_cases", "Serving", "bp_handle"), ("ss_store", "Assignment", "ar_app"), ("ar_app", "Realization", "ac_app")],
     )
 
     result = evaluate(parse_reference(CHAINED), model)
 
     assert (result["relationships"]["serving"]["matched"], result["relationships"]["serving"]["via_chain"]) == (1, 1)
     assert result["relationships"]["realization"]["via_chain"] == 1  # store; the host has no chain
-    assert result["relationships"]["realization"]["missing"] == ["Host -Realization-> Claims App"]
+    assert result["relationships"]["realization"]["missing"] == ["Host -Realization-> Cases App"]
     assert (result["relationship_recall"], result["relationship_recall_direct"]) == (0.667, 0.0)
     # Every model relationship lies on the chain of a found reference relationship: assessable and correct
     totals = result["relationship_totals"]
@@ -315,7 +315,7 @@ def test_a_reference_relationship_is_found_through_a_valid_chain_of_direct_model
 def test_a_derived_tier_model_relationship_is_no_chain_input_and_gets_no_chain_credit():
     """The node is assigned to the artifact only by derivation (Figure 97 assigns system software and devices): the
     chain through it does not count, and the derived-tier relationship it starts is judged on its own."""
-    model = _model(CHAINED_ELEMENTS, [("nd_host", "Assignment", "ar_app"), ("ar_app", "Realization", "ac_app"), ("as_claims", "Serving", "ba_clerk")])
+    model = _model(CHAINED_ELEMENTS, [("nd_host", "Assignment", "ar_app"), ("ar_app", "Realization", "ac_app"), ("as_cases", "Serving", "ba_clerk")])
 
     result = evaluate(parse_reference(CHAINED), model)
 
@@ -327,7 +327,7 @@ def test_a_derived_tier_model_relationship_is_no_chain_input_and_gets_no_chain_c
 
 def test_an_enterprise_relationship_is_found_through_a_direct_chain_below_the_enterprise_view():
     """The chain runs through solution-level elements and relationships that the enterprise snapshot leaves out."""
-    model = _model(CHAINED_ELEMENTS[:3], [("ba_clerk", "Assignment", "bp_handle"), ("as_claims", "Serving", "bp_handle")])
+    model = _model(CHAINED_ELEMENTS[:3], [("ba_clerk", "Assignment", "bp_handle"), ("as_cases", "Serving", "bp_handle")])
     for e in model["elements"]:
         e["levels"] = ["solution"] if e["identifier"] == "bp_handle" else ["enterprise"]
     for r in model["relationships"]:
@@ -343,9 +343,41 @@ def test_a_relationship_with_an_external_end_is_found_only_when_drawn():
     """An external system is a black box (scope external): no chain through it can be seen, so none is credited."""
     data = json.loads(json.dumps(CHAINED))
     data["elements"][1]["properties"] = {"scope": "external"}
-    model = _model(CHAINED_ELEMENTS[:3], [("ba_clerk", "Assignment", "bp_handle"), ("as_claims", "Serving", "bp_handle")])
+    model = _model(CHAINED_ELEMENTS[:3], [("ba_clerk", "Assignment", "bp_handle"), ("as_cases", "Serving", "bp_handle")])
 
     result = evaluate(parse_reference(data), model)
 
     assert parse_reference(data).elements[1].external and not parse_reference(data).elements[0].external
     assert (result["relationships"]["serving"]["matched"], result["relationship_totals"]["correct_via_chain"]) == (0, 0)
+
+
+def test_an_element_derived_from_a_lineage_node_maps_one_to_one():
+    """A model source that extends a lineage id ("unit::u1::all" is derived from unit::u1) maps to that reference
+    element when nothing else maps to it; of several such elements only one maps (the first by identifier), the
+    others stay extras, so precision is not inflated."""
+    from deriva.bench.reference_eval import map_elements
+
+    data = {
+        "repository": "r",
+        "elements": [
+            {"key": "orig", "type": "ApplicationService", "name": "Lease Origination", "lineage": ["unit::r::u1", "unit::r::u2"]},
+            {"key": "coll", "type": "ApplicationService", "name": "Collections", "lineage": ["unit::r::u4"]},
+            {"key": "named", "type": "ApplicationService", "name": "Payment Handling", "lineage": ["unit::r::u5"]},
+        ],
+    }
+    model = _model(
+        [
+            ("as_u1", "ApplicationService", "Lease Management", "unit::r::u1::all"),
+            ("as_u2", "ApplicationService", "Customer Management", "unit::r::u2::all"),
+            ("as_u4", "ApplicationService", "Case Management", "unit::r::u4::domain::r::case"),
+            ("as_u5", "ApplicationService", "Payment Handling", "unit::r::u5::all"),
+            ("as_u5b", "ApplicationService", "Fee Management", "unit::r::u5::domain::r::fee"),
+            ("as_u9", "ApplicationService", "Other Management", "unit::r::u9::all"),
+        ]
+    )
+
+    mapping = map_elements(parse_reference(data), model)
+
+    assert mapping == {"as_u1": "orig", "as_u4": "coll", "as_u5": "named"}  # u2 and u5b: their reference element is taken
+    result = evaluate(parse_reference(data), model)
+    assert (result["element_recall"], result["element_precision"]) == (1.0, 0.5)

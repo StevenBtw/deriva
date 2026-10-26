@@ -683,8 +683,8 @@ def benchmark_analyze(
         if solves:
             typer.echo("MILP SAFETY NET (joint_consistency per run)")
             header = (
-                f"{'Repository':<24} {'Run':>3} {'Status':<9} {'Props':>5} {'Merge c.':>8} {'Rows (H1-H6)':<22} "
-                f"{'Cuts':>4} {'Kept':>5} {'Drop':>4} {'Merge':>5} {'Redir':>5} {'Sec':>6}"
+                f"{'Repository':<24} {'Model':<18} {'Run':>3} {'Status':<9} {'Props':>5} {'Merge c.':>8} {'Vars':>5} {'Cons':>5} "
+                f"{'Rows (H1-H6)':<22} {'Cuts':>4} {'Kept':>5} {'Drop':>4} {'Merge':>5} {'Redir':>5} {'Sec':>6}"
             )
             typer.echo("-" * len(header))
             typer.echo(header)
@@ -693,8 +693,8 @@ def benchmark_analyze(
                 s = q["solve"]
                 rows = ", ".join(f"{k} {v}" for k, v in sorted((s.get("rows") or {}).items())) or "-"
                 typer.echo(
-                    f"{q['repository'][:24]:<24} {q['run']:>3} {str(s.get('status'))[:9]:<9} {s.get('proposals', 0):>5} "
-                    f"{s.get('merge_candidates', 0):>8} {rows[:22]:<22} "
+                    f"{q['repository'][:24]:<24} {str(q.get('model') or '-')[:18]:<18} {q['run']:>3} {str(s.get('status'))[:9]:<9} {s.get('proposals', 0):>5} "
+                    f"{s.get('merge_candidates', 0):>8} {s.get('variables', '-'):>5} {s.get('constraints', '-'):>5} {rows[:22]:<22} "
                     f"{s.get('cycle_cuts', 0):>4} {s.get('kept', 0):>5} {s.get('dropped', 0):>4} {s.get('merges', 0):>5} {s.get('redirects', 0):>5} {s.get('seconds', 0):>6.3f}"
                 )
             typer.echo("")

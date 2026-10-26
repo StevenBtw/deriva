@@ -17,6 +17,7 @@ import json
 import posixpath
 import re
 import tomllib
+import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
@@ -155,6 +156,20 @@ def _below(path: str, folder: str) -> bool:
     return path.startswith(folder + "/")
 
 
+def _pom_own(text: str, tag: str) -> str | None:
+    """The project's own value of a pom tag (a direct child of the project: a license's or developer's name is not); a
+    value with an unresolved property (``${project.artifactId}``) names nothing."""
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return None
+    for child in root:
+        if isinstance(child.tag, str) and child.tag.rsplit("}", 1)[-1] == tag:
+            value = " ".join((child.text or "").split())
+            return value if value and "${" not in value else None
+    return None
+
+
 def _manifest_entries(path: str, text: str) -> tuple[list[tuple[str, str, str, str]], str | None, str | None]:
     """(kind, entry or "", target or "", evidence) per entry point the manifest declares, and its name and description."""
     name = PurePosixPath(path).name.lower()
@@ -176,10 +191,7 @@ def _manifest_entries(path: str, text: str) -> tuple[list[tuple[str, str, str, s
             entries.append(("war", "", "", f"war: {path}"))
         elif "spring-boot-maven-plugin" in text:
             entries.append(("spring-boot", "", "", f"spring-boot: {path}"))
-        found = re.search(r"<name>\s*([^<]+?)\s*</name>", text)
-        title = found.group(1) if found else None
-        found = re.search(r"<description>\s*([^<]+?)\s*</description>", text)
-        description = found.group(1) if found else None
+        title, description = _pom_own(text, "name"), _pom_own(text, "description")
     elif name in ("build.gradle", "build.gradle.kts"):
         plugins = set(re.findall(r"""(?:id\s*\(?\s*['"]|apply\s+plugin\s*:\s*['"])([\w.\-]+)['"]""", text)) | set(re.findall(r"^\s*(application|war)\s*$", text, re.MULTILINE))
         for plugin, kind in (("war", "war"), ("org.springframework.boot", "spring-boot"), ("application", "application")):
@@ -467,7 +479,7 @@ class _Naming:
         """The unit's name candidates (name, source) in order: README title, documentation, manifest, structure;
         mainframe core units first by the product. Taken names are dropped, generic ones get the product in front."""
         raw: list[tuple[str, str]] = []
-        folder_name = PurePosixPath(unit.path).name if unit.path != repository else repository
+        folder_name = unit.name if unit.kind == "static" else PurePosixPath(unit.path).name if unit.path != repository else repository
         if unit.kind in ("online", "batch"):
             others = [p for p in self.title_parts[1:] if _key(p) != _key(self.product)]
             raw += [(self.doc_cased(f"{part} {unit.kind.title()}"), "mainframe") for part in [self.product, *others]]
@@ -584,8 +596,17 @@ def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
         folder = _parent(page)
         if any(folder == h or _below(folder, h) for h in held):
             continue
+        # A frontend inside a module (a folder with its own manifest, the repository's root aside) is the module's: it
+        # is named by that module's folder and manifest name, not by a layout folder such as src/ or public/
+        ships = max((m for m in manifest_folders if m != facts.repository and (folder == m or _below(folder, m))), key=len, default=None)
+        title = next((t for path, text in sorted(facts.manifests.items()) if ships and _parent(path) == ships and (t := _manifest_entries(path, text)[1])), None)
         function_units[folder] = Unit(
-            path=folder, name=PurePosixPath(folder).name, kind="static", evidence=[f"page entry: {page}"], members={p for p in paths if _below(p, folder)}
+            path=folder,
+            name=PurePosixPath(ships or folder).name,
+            kind="static",
+            evidence=[f"page entry: {page}"],
+            members={p for p in paths if _below(p, folder)},
+            manifest_name=title,
         )
         held.append(folder)
 

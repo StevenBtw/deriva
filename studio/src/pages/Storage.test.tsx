@@ -21,7 +21,7 @@ const run = (run_id: string, kind: RunSummary["kind"], repository: string, statu
   finished_at: started_at + 60,
 });
 
-const PAGE = Array.from({ length: 20 }, (_, i) => run(`r${i}`, i % 2 ? "derivation" : "all", i % 3 ? "deriva" : "TeaStore", i === 4 ? "interrupted" : "finished", 1_792_300_000 - i * 100));
+const PAGE = Array.from({ length: 20 }, (_, i) => run(`r${i}`, i % 2 ? "derivation" : "all", i % 3 ? "deriva" : "ShopApp", i === 4 ? "interrupted" : "finished", 1_792_300_000 - i * 100));
 
 const OVERVIEW = {
   graphs: [

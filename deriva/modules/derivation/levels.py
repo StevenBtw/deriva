@@ -43,8 +43,9 @@ class LevelRules:
 @dataclass(frozen=True)
 class Component:
     identifier: str  # The element's identifier
-    kind: str  # system, module or unit
-    folder: str  # The source's folder (repository folder first)
+    kind: str  # system, module, unit or application
+    folder: str  # The source's folder (repository folder first; an application has none)
+    members: tuple[str, ...] = ()  # An application's components (the documentation's grouping): their parent if top-level
 
 
 def _ranks(components: list[Component], units_at: dict[str, int] | None = None) -> dict[str, float]:
@@ -76,6 +77,11 @@ def component_parents(components: list[Component], units_at: dict[str, int] | No
             unit = builders[0]
             if (c.folder == folders[unit] or c.folder.startswith(folders[unit] + "/")) and parents.get(unit) != c.identifier:
                 parents[c.identifier] = unit
+    # An application groups the components it lists: it is the parent of each one the folders leave top-level
+    for app in (c for c in components if c.kind == "application"):
+        for member in app.members:
+            if member in parents and parents[member] is None and member != app.identifier:
+                parents[member] = app.identifier
     return parents
 
 
@@ -92,7 +98,7 @@ def assign_levels(
             if parents[identifier] is not None:
                 levels[identifier] = frozenset({SOLUTION})
             else:
-                levels[identifier] = frozenset({ENTERPRISE}) if kinds[identifier] == "system" else BOTH
+                levels[identifier] = frozenset({ENTERPRISE}) if kinds[identifier] in ("system", "application") else BOTH
         else:
             by_role = rules.roles.get(element_type, {}).get(str(e.get("role") or ""))
             levels[identifier] = frozenset(by_role if by_role is not None else rules.types.get(element_type, (ENTERPRISE,)))

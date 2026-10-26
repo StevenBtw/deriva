@@ -18,16 +18,16 @@ class TestStripArchimateSuffix:
         assert strip_archimate_suffix("Mongo Component") == "Mongo"
 
     def test_strips_service(self):
-        assert strip_archimate_suffix("Metadata Service") == "Metadata"
+        assert strip_archimate_suffix("Schema Service") == "Schema"
 
     def test_strips_interface(self):
         assert strip_archimate_suffix("Entity Metadata Interface") == "Entity Metadata"
 
     def test_strips_api(self):
-        assert strip_archimate_suffix("Data REST API") == "Data REST"
+        assert strip_archimate_suffix("Docs REST API") == "Docs REST"
 
     def test_strips_controller(self):
-        assert strip_archimate_suffix("Mongo Controller") == "Mongo"
+        assert strip_archimate_suffix("Store Controller") == "Store"
 
     def test_case_insensitive(self):
         assert strip_archimate_suffix("Mongo COMPONENT") == "Mongo"
@@ -78,7 +78,7 @@ class TestStripRepoPrefix:
 
 class TestToTitleCase:
     def test_basic(self):
-        assert to_title_case("mongo controller") == "Mongo Controller"
+        assert to_title_case("store controller") == "Store Controller"
 
     def test_rest_and_Rest_converge(self):
         assert to_title_case("REST") == to_title_case("Rest") == "Rest"
@@ -89,7 +89,7 @@ class TestToTitleCase:
 
 class TestNormalizeForDedup:
     def test_strips_suffix(self):
-        assert normalize_for_dedup("Mongo Controller", RepoContext()) == "Mongo"
+        assert normalize_for_dedup("Store Controller", RepoContext()) == "Store"
 
     def test_strips_repo_prefix(self):
         ctx = RepoContext(repo_name="darkgreen")
@@ -111,7 +111,7 @@ class TestNormalizeForDedup:
         assert normalize_for_dedup("", RepoContext()) == ""
 
     def test_whitespace_collapsed(self):
-        assert normalize_for_dedup("  Mongo   Controller  ", RepoContext()) == "Mongo"
+        assert normalize_for_dedup("  Store   Controller  ", RepoContext()) == "Store"
 
 
 class TestDesignInvariant:

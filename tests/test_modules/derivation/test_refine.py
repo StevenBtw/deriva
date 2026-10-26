@@ -886,18 +886,18 @@ class TestUnanchoredLayers:
     def test_code_support_needs_more_names_for_a_single_word(self):
         from deriva.modules.derivation.refine.cross_layer import code_supported
 
-        names = {"order": "Order", "policy": "Insurance Policy", "actor": "Actor", "ledger": "Ledger"}
-        code = ["OrderService", "orders", "OrderController", "InsurancePolicyEntity", "ActorSystem", "Ordering", "LedgerView", "LedgerView"]
+        names = {"order": "Order", "policy": "Inventory Policy", "actor": "Actor", "ledger": "Ledger"}
+        code = ["OrderService", "orders", "OrderController", "InventoryPolicyEntity", "ActorSystem", "Ordering", "LedgerView", "LedgerView"]
 
-        # Order: three names (Ordering is another word); Insurance Policy: one name, two words;
+        # Order: three names (Ordering is another word); Inventory Policy: one name, two words;
         # Actor: one name only; Ledger: the same name twice counts once
         assert code_supported(names, code, multi_word_names=1, single_word_names=3) == {"order", "policy"}
 
     def test_without_a_single_word_count_only_names_of_several_words_count(self):
         from deriva.modules.derivation.refine.cross_layer import code_supported
 
-        names = {"order": "Order", "policy": "Insurance Policy"}
-        code = ["OrderService", "orders", "OrderController", "InsurancePolicyEntity"]
+        names = {"order": "Order", "policy": "Inventory Policy"}
+        code = ["OrderService", "orders", "OrderController", "InventoryPolicyEntity"]
 
         assert code_supported(names, code, multi_word_names=1, single_word_names=None) == {"policy"}
 

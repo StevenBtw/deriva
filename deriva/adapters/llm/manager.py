@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
 import logging
 import random
 import threading
@@ -50,6 +51,7 @@ from pydantic_ai.settings import ModelSettings
 
 from deriva.common import settings
 from deriva.common.exceptions import CircuitOpenError
+from deriva.common.json_utils import extract_json_from_response
 from deriva.common.paths import resolve
 from deriva.common.settings import LlmSettings
 
@@ -248,6 +250,18 @@ def _serialize_output(output: object) -> str:
     if callable(dump):
         return dump()
     return str(output)
+
+
+def _usable(content: str, schema: dict[str, Any] | None) -> bool:
+    """Whether an answer can be used: a call that asked for a schema needs JSON in it (whole, fenced or within prose).
+    An unusable answer is never cached, and one in the cache counts as a miss, so a re-ask reaches the model."""
+    if not schema:
+        return True
+    try:
+        json.loads(extract_json_from_response(content))
+    except ValueError:
+        return False
+    return True
 
 
 def _cache_path(cache_dir: str | None) -> Path:
@@ -756,7 +770,7 @@ class LLMManager:
                                 return validated
                             except Exception:
                                 pass  # Cache miss, continue to API call
-                        else:
+                        elif _usable(content, schema):
                             call["cache_hit"] = True
                             return CachedResponse(
                                 prompt=cached["prompt"],
@@ -860,7 +874,7 @@ class LLMManager:
             else:
                 # Unstructured string output
                 content = str(result.output) if result.output else ""
-                if write_cache:
+                if write_cache and _usable(content, schema):
                     _try_cache_write(content)
                 return LiveResponse(
                     prompt=prompt,

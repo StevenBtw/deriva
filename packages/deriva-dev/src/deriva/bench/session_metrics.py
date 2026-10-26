@@ -19,6 +19,7 @@ import ast
 import itertools
 import json
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -193,54 +194,70 @@ def krippendorff_alpha(runs: list[dict[str, Any]]) -> float | None:
 
 
 def two_level_rows(sessions: list[Path]) -> list[dict[str, Any]]:
-    """Per repository, model and decision type: answer stability, decision stability and alpha over the runs."""
+    """Per repository, model and decision type: answer stability, decision stability and alpha over the runs; with
+    several models, also over all their runs (``ALL_MODELS``), where a prompt is the same prompt text, not the per-model
+    cache key."""
     rows = []
+    pooled: dict[str, dict[str, list[tuple[str, dict[str, Any], list[dict[str, Any]]]]]] = {}
     for session in sessions:
         calls = _calls(session)
         runs: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
         for repo, model, number, snapshot in run_snapshots(session):
             runs.setdefault((repo, model), []).append((number, snapshot))
         for (repo, model), numbered in sorted(runs.items()):
-            if len(numbered) < 2:
-                continue
-            answers: dict[str, dict[tuple[str, str], list[str | None]]] = {}
-            for number, _ in numbered:
-                for c in calls.get((repo, model, number), []):
-                    content = c.get("response")
-                    answer = hash_content(decision_content(content)) if content and not c.get("error") else None
-                    answers.setdefault(str(number), {}).setdefault((_decision_type(c), str(c.get("cache_key"))), []).append(answer)
-            for number, _ in numbered:
-                answers.setdefault(str(number), {})
-            answered = {a.step: a for a in compute_answer_stability(answers)}
-            decided: dict[str, list[dict[str, Any]]] = {}
-            for _, snapshot in numbered:
-                per_type: dict[str, dict[str, Any]] = {}
-                for step, items in (snapshot.get("extraction_decisions") or {}).items():
-                    per_type[step] = dict(items or {})
-                for e in snapshot.get("elements", []):
-                    if e.get("name_choice"):
-                        per_type.setdefault(f"{e['type']} name choice", {})[str(e.get("source") or e["identifier"])] = e.get("name")
-                for c in snapshot.get("candidates", []):
-                    if c.get("stage") in ("created", "llm_rejected"):
-                        per_type.setdefault(f"{c['type']} classification", {})[str(c.get("source"))] = c["stage"]
-                for kind, items in per_type.items():
-                    decided.setdefault(kind, []).append(items)
-            kinds = sorted(set(answered) | {k for k in decided if not k.endswith(" classification") or k in answered})
-            for kind in kinds:
-                per_run = decided.get(kind, [])
-                complete = per_run if len(per_run) == len(numbered) else per_run + [{}] * (len(numbered) - len(per_run))
-                stable = decision_stability(complete) if per_run else None
-                a = answered.get(kind)
-                rows.append(
-                    {
-                        "repository": repo,
-                        "model": model,
-                        "decision": kind,
-                        "answers": {"identical": a.identical if a else 0, "prompts": a.prompts if a else 0},
-                        "decisions": {"stable": stable.stable, "items": stable.items} if stable else {"stable": 0, "items": 0},
-                        "alpha": krippendorff_alpha(complete) if per_run else None,
-                    }
-                )
+            group = [(str(number), snapshot, calls.get((repo, model, number), [])) for number, snapshot in numbered]
+            rows += _two_level(repo, model, group, lambda c: str(c.get("cache_key")))
+            pooled.setdefault(repo, {}).setdefault(model, []).extend((f"{session.name}:{model}:{label}", s, c) for label, s, c in group)
+    for repo, by_model in sorted(pooled.items()):
+        if len(by_model) > 1:
+            group = [run for model in sorted(by_model) for run in by_model[model]]
+            rows += _two_level(repo, ALL_MODELS, group, lambda c: hash_content(f"{c.get('schema')}\n{c.get('prompt')}"))
+    return rows
+
+
+def _two_level(repo: str, model: str, group: list[tuple[str, dict[str, Any], list[dict[str, Any]]]], prompt_key: Callable[[dict[str, Any]], str]) -> list[dict[str, Any]]:
+    """The two-level rows of one group of runs ((label, snapshot, calls) each); none with fewer than two runs."""
+    rows: list[dict[str, Any]] = []
+    if len(group) < 2:
+        return rows
+    answers: dict[str, dict[tuple[str, str], list[str | None]]] = {}
+    for label, _, run_calls in group:
+        for c in run_calls:
+            content = c.get("response")
+            answer = hash_content(decision_content(content)) if content and not c.get("error") else None
+            answers.setdefault(label, {}).setdefault((_decision_type(c), prompt_key(c)), []).append(answer)
+    for label, _, _ in group:
+        answers.setdefault(label, {})
+    answered = {a.step: a for a in compute_answer_stability(answers)}
+    decided: dict[str, list[dict[str, Any]]] = {}
+    for _, snapshot, _ in group:
+        per_type: dict[str, dict[str, Any]] = {}
+        for step, items in (snapshot.get("extraction_decisions") or {}).items():
+            per_type[step] = dict(items or {})
+        for e in snapshot.get("elements", []):
+            if e.get("name_choice"):
+                per_type.setdefault(f"{e['type']} name choice", {})[str(e.get("source") or e["identifier"])] = e.get("name")
+        for c in snapshot.get("candidates", []):
+            if c.get("stage") in ("created", "llm_rejected"):
+                per_type.setdefault(f"{c['type']} classification", {})[str(c.get("source"))] = c["stage"]
+        for kind, items in per_type.items():
+            decided.setdefault(kind, []).append(items)
+    kinds = sorted(set(answered) | {k for k in decided if not k.endswith(" classification") or k in answered})
+    for kind in kinds:
+        per_run = decided.get(kind, [])
+        complete = per_run if len(per_run) == len(group) else per_run + [{}] * (len(group) - len(per_run))
+        stable = decision_stability(complete) if per_run else None
+        a = answered.get(kind)
+        rows.append(
+            {
+                "repository": repo,
+                "model": model,
+                "decision": kind,
+                "answers": {"identical": a.identical if a else 0, "prompts": a.prompts if a else 0},
+                "decisions": {"stable": stable.stable, "items": stable.items} if stable else {"stable": 0, "items": 0},
+                "alpha": krippendorff_alpha(complete) if per_run else None,
+            }
+        )
     return rows
 
 

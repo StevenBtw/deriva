@@ -1989,14 +1989,14 @@ class TestExtractFilePathFromSource:
         """Should extract .py file names."""
         from deriva.modules.derivation.base import extract_file_path_from_source
 
-        result = extract_file_path_from_source("method_flask_invoice_generator_models.py_Positions_delete")
+        result = extract_file_path_from_source("method_shop_app_models.py_Positions_delete")
         assert result == "models.py"
 
     def test_extracts_dotfile(self):
         """Should extract dotfiles like .flaskenv."""
         from deriva.modules.derivation.base import extract_file_path_from_source
 
-        result = extract_file_path_from_source("file_flask_invoice_generator_.flaskenv")
+        result = extract_file_path_from_source("file_shop_app_.flaskenv")
         assert result == ".flaskenv"
 
     def test_handles_none(self):
@@ -2207,7 +2207,7 @@ class TestDeriveDeterministicRelationships:
         service = {"identifier": "as_cards", "name": "Card Management", "properties": {"structure_name": "LISTPGM", "source": "typedef::r::a"}}
         interface = {
             "identifier": "ai_online",
-            "name": "Credit Card Web UI",
+            "name": "Gift Card Web UI",
             "element_type": "ApplicationInterface",
             "properties": {"structure_name": "Ledger Online Web UI", "source": "unit::r::online"},
         }
@@ -2292,9 +2292,9 @@ class TestNamesFromStructure:
     @pytest.mark.parametrize(
         ("source_name", "is_file", "expected"),
         [
-            ("big_data_kafka", False, "Big Data Kafka"),
-            ("ClaimsManagement", False, "Claims Management"),
-            ("consume_likes", False, "Consume Likes"),
+            ("batch_data_kafka", False, "Batch Data Kafka"),
+            ("CasesManagement", False, "Cases Management"),
+            ("consume_votes", False, "Consume Votes"),
             ("getUserById", False, "Get User By Id"),
             ("HTTPServer", False, "HTTP Server"),
             ("data_unit_schema.avsc", True, "Data Unit Schema"),
@@ -2329,12 +2329,12 @@ class TestNamesFromStructure:
         assert structure_element_name(source_id, source_name, repo_name) == expected
 
     def test_build_element_ignores_the_llm_name(self):
-        derived = {"identifier": "whatever_llm", "name": "Some LLM Name", "source": "dir::repo::big_data_kafka", "confidence": 0.9, "documentation": "d"}
+        derived = {"identifier": "whatever_llm", "name": "Some LLM Name", "source": "dir::repo::batch_data_kafka", "confidence": 0.9, "documentation": "d"}
 
-        result = build_element(derived, "ApplicationComponent", source_names={"dir::repo::big_data_kafka": "big_data_kafka"})
+        result = build_element(derived, "ApplicationComponent", source_names={"dir::repo::batch_data_kafka": "batch_data_kafka"})
 
         data = result["data"]
-        assert (data["name"], data["identifier"]) == ("Big Data Kafka", "ac_big_data_kafka")
+        assert (data["name"], data["identifier"]) == ("Batch Data Kafka", "ac_batch_data_kafka")
         assert data["properties"]["llm_name"] == "Some LLM Name"
         assert data["documentation"] == "d"
 
@@ -2389,18 +2389,18 @@ class TestIsolatedNaming:
     def test_prompt_depends_only_on_source_type_and_instruction(self):
         from deriva.modules.derivation.base import build_naming_prompt
 
-        source = {"kind": "Directory", "name": "crud", "path": "repo/crud"}
+        source = {"kind": "Directory", "name": "rest", "path": "repo/rest"}
         a = build_naming_prompt(source, "ApplicationComponent", "NAMING RULES")
         b = build_naming_prompt(dict(reversed(list(source.items()))), "ApplicationComponent", "NAMING RULES")
 
         assert a == b
-        assert "NAMING RULES" in a and "ApplicationComponent" in a and '"crud"' in a
+        assert "NAMING RULES" in a and "ApplicationComponent" in a and '"rest"' in a
 
     @pytest.mark.parametrize(
         ("samples", "expected"),
         [
-            (["CRUD Service", "CRUD Service", "Crud Operations"], "CRUD Service"),
-            (["Crud Service", "CRUD service", "Crud Operations"], "CRUD service"),
+            (["REST Service", "REST Service", "Rest Operations"], "REST Service"),
+            (["Rest Service", "REST service", "Rest Operations"], "REST service"),
             (["B Name", "A Name", "C Name"], "A Name"),
             (["", None, "Only"], "Only"),
             (["", None], None),

@@ -51,17 +51,17 @@ def test_when_a_repository_marks_aggregate_roots_only_the_roots_are_entities():
 def test_orm_entities_are_found_by_annotation_and_by_inheritance_over_two_steps():
     types = [
         _t("PersistenceOrder", "r/persistence/Order.java", decorators=["Entity"]),
-        _t("Base", "r/loans/database.py", bases=["DeclarativeBase"]),
-        _t("LoanApplication", "r/loans/models.py", bases=["Base"]),
-        _t("LoanCreate", "r/loans/schemas.py", bases=["BaseModel"]),
-        _t("Helper", "r/loans/util.py"),
+        _t("Base", "r/leases/database.py", bases=["DeclarativeBase"]),
+        _t("LeaseApplication", "r/leases/models.py", bases=["Base"]),
+        _t("LeaseCreate", "r/leases/schemas.py", bases=["BaseModel"]),
+        _t("Helper", "r/leases/util.py"),
     ]
 
     result = detect_entities(types, {}, {"r/persistence/Order.java": "persistence"}, RULES)
 
     # The owning unit's name is no part of the entity's name; the ORM base itself is no entity
-    assert _names(result) == ["Loan Application", "Order"]
-    assert _reasons(result)["LoanCreate"] == "dto"
+    assert _names(result) == ["Lease Application", "Order"]
+    assert _reasons(result)["LeaseCreate"] == "dto"
 
 
 def test_dtos_configs_and_technical_records_are_out_with_their_reason():
@@ -113,25 +113,25 @@ def test_ddl_tables_are_entities_named_in_the_singular():
 
 def test_one_concept_in_several_units_is_one_entity_with_all_its_types():
     types = [
-        _t("InsuranceQuoteRequestAggregateRoot", "r/self-service/Iqr.java", decorators=["Entity"], bases=["RootEntity"]),
-        _t("InsuranceQuoteRequestAggregateRoot", "r/policy/Iqr.java", decorators=["Entity"], bases=["RootEntity"]),
+        _t("InventoryQuoteRequestAggregateRoot", "r/self-service/Iqr.java", decorators=["Entity"], bases=["RootEntity"]),
+        _t("InventoryQuoteRequestAggregateRoot", "r/policy/Iqr.java", decorators=["Entity"], bases=["RootEntity"]),
     ]
 
     (entity,) = detect_entities(types, {}, {}, RULES).entities
 
-    assert entity.name_candidates == [("Insurance Quote Request", "type")]
+    assert entity.name_candidates == [("Inventory Quote Request", "type")]
     assert entity.type_ids == sorted(t["id"] for t in types) and entity.signal == "aggregate root"
-    assert entity.key == "insurancequoterequest"
+    assert entity.key == "inventoryquoterequest"
 
 
 def test_a_shared_working_storage_area_is_no_record_entity():
     """Only records named as records (the pattern) count; a shared work area or communication area is no persistent data."""
-    types = [_t("ACCOUNT-RECORD", "r/app/cpy/ACCT.cpy", category="record"), _t("CARDDEMO-COMMAREA", "r/app/cpy/COMMAREA.cpy", category="record")]
+    types = [_t("ACCOUNT-RECORD", "r/app/cpy/ACCT.cpy", category="record"), _t("SHOP-COMMAREA", "r/app/cpy/COMMAREA.cpy", category="record")]
     importers = {"r/app/cpy/ACCT.cpy": 14, "r/app/cpy/COMMAREA.cpy": 30}
 
     result = detect_entities(types, importers, {}, RULES)
 
-    assert _names(result) == ["Account"] and _reasons(result) == {"CARDDEMO-COMMAREA": "not named as a record"}
+    assert _names(result) == ["Account"] and _reasons(result) == {"SHOP-COMMAREA": "not named as a record"}
 
 
 def test_a_table_generated_for_a_code_entity_is_that_entity():
@@ -221,8 +221,8 @@ def test_ancestry_does_not_follow_an_ambiguous_base_name():
 def test_a_base_defined_in_every_service_is_resolved_through_the_nearest_definition():
     """Each service declares its own Base(DeclarativeBase); unresolved references to Base are placeholders, no definitions."""
     types = [
-        _t("Base", "r/services/loans/app/database.py", bases=["DeclarativeBase"]),
-        _t("LoanApplication", "r/services/loans/app/models.py", bases=["Base"]),
+        _t("Base", "r/services/leases/app/database.py", bases=["DeclarativeBase"]),
+        _t("LeaseApplication", "r/services/leases/app/models.py", bases=["Base"]),
         _t("Base", "r/services/payments/app/database.py", bases=["DeclarativeBase"]),
         _t("Payment", "r/services/payments/app/models.py", bases=["Base"]),
         _t("Base", "r/external", category="external_reference"),
@@ -231,7 +231,7 @@ def test_a_base_defined_in_every_service_is_resolved_through_the_nearest_definit
 
     result = detect_entities(types, {}, {}, RULES)
 
-    assert _names(result) == ["Loan Application", "Payment", "Widget"]
+    assert _names(result) == ["Lease Application", "Payment", "Widget"]
 
 
 def test_a_generated_table_follows_a_type_with_a_name_outside_ascii():
@@ -342,12 +342,12 @@ def test_an_orm_entity_records_the_table_it_declares_so_the_queries_of_that_tabl
     import dataclasses
 
     rules = dataclasses.replace(RULES, table_annotations=("Table",), table_attributes=("__tablename__", "db_table"))
-    loan = {**_t("Loan", "r/svc/models.py", bases=["Base"]), "code": 'class Loan(Base):\n    __tablename__ = "loans"\n    __table_args__ = {"schema": "disbursement"}\n'}
+    lease = {**_t("Lease", "r/svc/models.py", bases=["Base"]), "code": 'class Lease(Base):\n    __tablename__ = "leases"\n    __table_args__ = {"schema": "disbursement"}\n'}
     owner = _t("Owner", "r/owner/Owner.java", decorators=["Entity", 'Table(name = "owners")'])
     visit = {**_t("Visit", "r/visit/models.py", bases=["Model"]), "code": "class Visit(Model):\n    class Meta:\n        db_table = 'clinic.visits'\n"}
     pet = _t("Pet", "r/owner/Pet.java", decorators=["Entity"])
     base = _t("Base", "r/svc/db.py", bases=["DeclarativeBase"])
 
-    tables = {e.name_candidates[0][0]: e.tables for e in detect_entities([loan, owner, visit, pet, base], {}, {}, rules).entities}
+    tables = {e.name_candidates[0][0]: e.tables for e in detect_entities([lease, owner, visit, pet, base], {}, {}, rules).entities}
 
-    assert tables == {"Loan": ["loans"], "Owner": ["owners"], "Visit": ["visits"], "Pet": []}
+    assert tables == {"Lease": ["leases"], "Owner": ["owners"], "Visit": ["visits"], "Pet": []}

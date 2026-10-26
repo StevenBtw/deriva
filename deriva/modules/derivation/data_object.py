@@ -21,7 +21,6 @@ LLM role:
 - Write documentation describing the data purpose
 
 Relationships:
-- INBOUND: TechnologyService -> DataObject (Access) - tech accesses data
 - INBOUND: ApplicationService -> DataObject (Access) - app services access data
 - INBOUND: BusinessProcess -> DataObject (Access) - processes access data
 
@@ -58,11 +57,6 @@ class DataObjectDerivation(HybridDerivation):
     OUTBOUND_RULES = []
 
     INBOUND_RULES = [
-        RelationshipRule(
-            target_type="TechnologyService",
-            rel_type="Access",
-            description="Technology services access data objects",
-        ),
         RelationshipRule(
             target_type="ApplicationService",
             rel_type="Access",

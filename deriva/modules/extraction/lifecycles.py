@@ -65,7 +65,7 @@ def _words(name: str) -> list[str]:
 
 
 def display(name: str) -> str:
-    """A type name in words: ``LoanApplication`` -> ``Loan Application``; ``UNDER_REVIEW`` -> ``Under Review``."""
+    """A type name in words: ``OrderRequest`` -> ``Order Request``; ``UNDER_REVIEW`` -> ``Under Review``."""
     if re.fullmatch(r"[A-Z0-9_]+", name):
         return " ".join(w.capitalize() for w in name.split("_") if w)
     return " ".join(w if w.isupper() and len(w) > 1 else w.capitalize() for w in _words(name))
@@ -225,7 +225,7 @@ def detect_lifecycles(files: dict[str, str], members: list[dict[str, Any]], unit
 
     def entity_of(var: str, attr: str, path: str) -> str | None:
         """The lifecycle a ``var.attr`` assignment belongs to: the one entity with that attribute whose name has a word
-        the variable starts (``app`` -> LoanApplication, ``case`` -> UnderwritingCase); a variable naming no entity
+        the variable starts (``req`` -> OrderRequest, ``case`` -> SupportCase); a variable naming no entity
         sets no lifecycle."""
         options = attributes.get(attr, [])
         named = [(cls, k) for cls, k in options if len(var) >= 3 and any(w.casefold().startswith(var.casefold()) for w in _words(cls))]
