@@ -116,6 +116,22 @@ class TestTwoLevel:
         assert concept["all LLMs"]["answers"] == {"identical": 0, "prompts": 1}
         assert concept["all LLMs"]["decisions"] == {"stable": 0, "items": 1}
 
+    def test_a_classification_is_decided_per_candidate_and_one_run_has_no_rows(self, tmp_path):
+        """A role classification's decision per candidate is its stage (created or rejected); a single run has nothing
+        to compare."""
+        calls = {n: [{"step": "ApplicationInterface", "schema": "role_classification", "cache_key": "k", "response": '{"items": []}'}] for n in (1, 2)}
+        candidates = [
+            [{"type": "ApplicationInterface", "source": "file::r::a", "stage": "created"}],
+            [{"type": "ApplicationInterface", "source": "file::r::a", "stage": "llm_rejected"}],
+        ]
+        session = _session(tmp_path, "s1", "m", [_run(SHOP, candidates=c) for c in candidates], calls)
+        single = _session(tmp_path, "s2", "m", [_run(SHOP)], {1: calls[1]})
+
+        (row,) = [r for r in pm.two_level_rows([session]) if r["decision"] == "ApplicationInterface classification"]
+
+        assert row["answers"] == {"identical": 1, "prompts": 1} and row["decisions"] == {"stable": 0, "items": 1}
+        assert pm.two_level_rows([single]) == []
+
 
 def test_krippendorff_alpha_nominal():
     assert pm.krippendorff_alpha([{"a": 1, "b": 2}, {"a": 1, "b": 2}]) == 1.0

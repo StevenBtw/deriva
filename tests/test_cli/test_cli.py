@@ -1034,6 +1034,31 @@ class TestConfigUpdateCommand:
 
     @patch("deriva.cli.commands.config.config")
     @patch("deriva.cli.commands.config.PipelineSession")
+    def test_update_refuses_the_llm_flag_for_an_extraction_step(self, mock_session_class, mock_config):
+        """--llm/--no-llm sets derivation steps only: for an extraction step it is refused, not silently dropped."""
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+
+        result = runner.invoke(app, ["config", "update", "extraction", "BusinessConcept", "--no-llm"])
+
+        assert result.exit_code == 1 and "--llm/--no-llm" in result.output
+        mock_config.create_extraction_config_version.assert_not_called()
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_reset_versions_needs_yes_and_reports_the_removed_rows(self, mock_session_class, mock_config):
+        """The release reset removes history, so it runs only with --yes, and says what it removed per table."""
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+        mock_config.reset_versions.return_value = {"derivation_config": 2, "extraction_config": 0}
+
+        refused = runner.invoke(app, ["config", "reset-versions"])
+        done = runner.invoke(app, ["config", "reset-versions", "--yes"])
+
+        assert refused.exit_code == 1 and "--yes" in refused.output
+        assert done.exit_code == 0 and "derivation_config      2 history rows removed" in done.stdout
+        mock_config.reset_versions.assert_called_once()
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
     def test_update_refuses_sequence_for_an_extraction_step(self, mock_session_class, mock_config):
         """--sequence moves derivation steps only: for an extraction step it is refused, not silently dropped."""
         mock_session_class.return_value.__enter__.return_value = MagicMock()

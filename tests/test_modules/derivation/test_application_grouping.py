@@ -81,6 +81,10 @@ def test_the_root_readmes_introduction_is_the_text_under_its_title_without_marku
 
     assert introduction({"r/README.md": text}, "r", 200) == "A shop made of two parts. More text here."
     assert introduction({"r/README.md": text}, "r", 10) == "A shop mad"
+    # Fenced code is left out; without a root README there is no introduction
+    fenced = "# Shop\n\n```bash\nmake run\n```\nThe shop.\n"
+    assert introduction({"r/README.md": fenced}, "r", 200) == "The shop."
+    assert introduction({"r/docs/README.md": text}, "r", 200) == ""
     assert "## Repository documentation" in build_grouping_prompt("Group.", [], ["A"], documentation="A shop.")
     prompt = build_grouping_prompt("Group.", [], ["Shop System", "Front"], whole=1)
     assert prompt.index('- "Shop System"') < prompt.index("naming one component") < prompt.index('- "Front"')
@@ -94,6 +98,7 @@ def test_a_components_own_name_drops_its_kind_words_and_keeps_its_punctuation():
     assert own_name("Customer Self-Service Backend", kinds) == "Customer Self-Service"
     assert own_name("Risk Management Server", kinds) == "Risk Management"
     assert own_name("Backend", kinds) == "Backend"  # nothing left: the name stays
+    assert own_name("Server Shop Frontend", kinds) == "Shop"  # leading kind words go too
 
 
 def test_the_title_name_is_marked_when_the_title_has_more_parts():

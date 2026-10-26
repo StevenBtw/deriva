@@ -84,6 +84,12 @@ def test_a_pom_names_its_unit_by_the_projects_own_name_and_never_by_a_placeholde
     assert units["r/b"].manifest_description == "The orders"
 
 
+def test_an_unreadable_pom_gives_no_name():
+    from deriva.modules.extraction.deployable_units import _pom_own
+
+    assert _pom_own("<project><name>broken", "name") is None
+
+
 def test_a_spring_boot_module_with_a_dockerfile_is_one_unit_with_both_evidences():
     files = [_file("r/svc/Dockerfile"), _file("r/svc/pom.xml"), _file("r/svc/src/Svc.java", "java")]
     manifests = {"r/svc/pom.xml": "<project><build><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></build></project>"}
@@ -558,6 +564,7 @@ def test_a_bundler_output_directory_maps_a_front_end_module_to_the_unit_that_shi
         "r/web/webpack.config.js": "module.exports = { output: { path: path.resolve(__dirname, 'dist') } }",
         "r/admin/angular.json": '{"projects": {"admin": {"architect": {"build": {"options": {"outputPath": "../server/src/app/admin"}}}}}}',
         "r/plain/vite.config.ts": "export default defineConfig({ plugins: [] })",
+        "r/broken/angular.json": "{ not json",  # an unreadable config maps nothing
     }
 
     mapped, unmapped = bundler_outputs(configs)
