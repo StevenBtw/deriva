@@ -364,6 +364,9 @@ uv run deriva-cli config update derivation ApplicationComponent \
 
 # View all versions
 uv run deriva-cli config versions
+
+# Start a release from version 1 (removes the version history; keep a backup)
+uv run deriva-cli config reset-versions --yes
 ```
 
 **Do NOT use JSON import/export for config updates.** The `db_tool import` command is only for backup restoration or migration - it overwrites version history. See [docs/benchmarks.md](docs/benchmarks.md) for the optimization workflow.
@@ -508,7 +511,7 @@ uv run deriva-cli benchmark models
 
 # Run a benchmark with specific models
 uv run deriva-cli benchmark run \
-  --repos flask_invoice_generator \
+  --repos my-repo \
   --models openai-gptx,ollama-devstral \
   -n 3 \
   -d "Comparing gptx with devstral" \
