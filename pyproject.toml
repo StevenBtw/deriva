@@ -1,6 +1,6 @@
 [project]
 name = "deriva-cli"
-version = "0.8.7"
+version = "0.8.8"
 description = "Deriva is a research project aimed at enabling digital architects by automating the derivation of enterprise architecture models. Deriva uses dual knowledge graphs, heuristics and LLM's."
 # The PyPI page; README.md is the repository's own
 readme = "packages/README-deriva-cli.md"
@@ -55,7 +55,7 @@ dependencies = [
     "python-docx>=1.2",
     # NLP (business concept candidate terms; pinned, the versions decide the output; the spaCy pipelines download on first use)
     "spacy==3.8.16",
-    "ctranslate2==4.8.3",
+    "ctranslate2==4.8.4",
     "sentencepiece==0.2.2",
     # Graph Algorithms
     "solvor>=0.6.3",
