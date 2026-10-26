@@ -17,7 +17,7 @@ const session = (session_id: string, status: string, extra: Partial<BenchmarkSes
   status,
   started_at: "2026-10-18T18:23:33",
   completed_at: null,
-  repositories: ["deriva", "TeaStore"],
+  repositories: ["deriva", "ShopApp"],
   models: ["mistral-small4"],
   runs: 6,
   stages: ["derivation"],
@@ -38,7 +38,7 @@ describe("SessionList", () => {
     selected: [] as string[],
     onToggle: vi.fn(),
     onRemoved: vi.fn(),
-    repositories: ["deriva", "TeaStore"],
+    repositories: ["deriva", "ShopApp"],
     models: ["mistral-small4", "haiku"],
     reload: 0,
     ...over,
@@ -60,15 +60,15 @@ describe("SessionList", () => {
     await screen.findByRole("button", { name: /bench_20/ });
 
     await user.type(screen.getByLabelText("Search sessions"), "v35");
-    await user.selectOptions(screen.getByLabelText("Session repository"), "TeaStore");
+    await user.selectOptions(screen.getByLabelText("Session repository"), "ShopApp");
     await user.selectOptions(screen.getByLabelText("Session model"), "haiku");
     await user.selectOptions(screen.getByLabelText("Session status"), "failed");
-    await waitFor(() => expect(benchmarks.list).toHaveBeenLastCalledWith(20, { offset: 0, search: "v35", repository: "TeaStore", model: "haiku", status: "failed" }));
+    await waitFor(() => expect(benchmarks.list).toHaveBeenLastCalledWith(20, { offset: 0, search: "v35", repository: "ShopApp", model: "haiku", status: "failed" }));
 
     vi.mocked(benchmarks.list).mockResolvedValueOnce([session("bench_0", "failed")]);
     await user.click(screen.getByRole("button", { name: "Show more" }));
     expect(await screen.findByRole("button", { name: /bench_0/ })).toBeInTheDocument();
-    expect(benchmarks.list).toHaveBeenLastCalledWith(20, { offset: 20, search: "v35", repository: "TeaStore", model: "haiku", status: "failed" });
+    expect(benchmarks.list).toHaveBeenLastCalledWith(20, { offset: 20, search: "v35", repository: "ShopApp", model: "haiku", status: "failed" });
   });
 
   it("deletes the selected sessions after naming how much goes", async () => {

@@ -1020,6 +1020,20 @@ class TestConfigUpdateCommand:
 
     @patch("deriva.cli.commands.config.config")
     @patch("deriva.cli.commands.config.PipelineSession")
+    def test_update_sets_whether_a_derivation_step_calls_the_llm(self, mock_session_class, mock_config):
+        """--llm/--no-llm makes a new version with the flag set; without either the flag is kept."""
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+        mock_config.create_derivation_config_version.return_value = {"success": True, "old_version": 1, "new_version": 2}
+
+        result = runner.invoke(app, ["config", "update", "derivation", "ApplicationGrouping", "--llm"])
+        kept = runner.invoke(app, ["config", "update", "derivation", "ApplicationGrouping", "--sequence", "3"])
+
+        assert result.exit_code == 0 and "LLM: True" in result.stdout
+        calls = mock_config.create_derivation_config_version.call_args_list
+        assert calls[0].kwargs["llm"] is True and kept.exit_code == 0 and calls[1].kwargs["llm"] is None
+
+    @patch("deriva.cli.commands.config.config")
+    @patch("deriva.cli.commands.config.PipelineSession")
     def test_update_refuses_sequence_for_an_extraction_step(self, mock_session_class, mock_config):
         """--sequence moves derivation steps only: for an extraction step it is refused, not silently dropped."""
         mock_session_class.return_value.__enter__.return_value = MagicMock()
