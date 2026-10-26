@@ -45,6 +45,10 @@ The model follows the ArchiMate 3.2 metamodel figures: only relationships a figu
 - **B1 baseline**: leaves out the files the file-type registry excludes, and takes build and source files in turn within its character budget
 - **Session reports**: samples and re-asks per LLM step (`llm_samples`, `llm_reasks`; a re-asked decision counts as stable only when every run answered it alike), the joint selection's variables and constraints per run and model, and an "all LLMs" row for answer and decision stability
 
+### Fixes
+
+- **A re-ask reaches the model**: an answer that holds no JSON where a schema was asked for is no longer cached, and one already in the cache counts as a miss, so a step that asks again gets a new answer instead of the same unusable one
+
 ### Configuration
 
 - **Every step starts at version 1**: `config reset-versions --yes` makes each active row version 1 and removes the history (it stays in the older releases); the shipped defaults match the active configuration again, and `config update derivation <step> --llm/--no-llm` sets whether a step calls the LLM
