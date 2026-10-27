@@ -4,6 +4,27 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 ---
 
+# v0.9.x - Hardening (October 2026 - )
+
+Version 0.9.x makes Deriva safe to run on untrusted repositories, fixes the bugs found since 0.8.10, and improves the default configuration for more kinds of repositories.
+
+## v0.9.0 - (Unreleased)
+
+Some changes in this release can change derived models compared with 0.8.10; each says so. Use 0.8.10 for its exact output.
+
+### Security
+
+- **Links stay inside the repository**: a symlink or (on Windows) a junction in a cloned repository is skipped by every repository walk and file read, so a link to a file outside the clone (the home `.env` with provider keys, SSH keys) is never read, stored or sent to an LLM; clones check symlinks out as plain files
+- **Git on untrusted repositories**: clones, pulls and remote checks allow only the https, http, ssh and git protocols, also for submodules, so a submodule URL cannot read a local repository or run a command; git gets the process environment without provider variables or API keys; a clone or pull stops after `DERIVA_GIT_TIMEOUT` seconds (default 1800) and releases the run lock; after a clone with submodules, a git older than the July 2025 submodule fixes is reported. Submodules are still cloned by default (`repo clone --no-submodules`, or `submodules: false` in the studio API, skips them); a local `file://` URL is cloned from the command line only
+
+### Derivation
+
+- **Joint selection keeps one relationship per pair under two merges**: two merges that join both ends of two relationships no longer leave both relationships on one pair; neither merge alone did. Without merge candidates (every run so far) the model is unchanged
+
+### Development
+
+- **ty checks the whole repository**: CI and the pre-commit hook run `ty check .`, tests included
+
 # v0.8.x - Deriva Studio (October 2026 - )
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
