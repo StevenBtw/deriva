@@ -50,8 +50,9 @@ def environment() -> dict[str, str]:
 
 def child_environment(**extra: str) -> dict[str, str]:
     """The environment for a child process such as git: the process environment (not the .env, whose keys it does not
-    need) with ``extra`` on top."""
-    return {**os.environ, **extra}
+    need) without the provider variables and API keys, with ``extra`` on top."""
+    kept = {k: v for k, v in os.environ.items() if k not in PROVIDER_VARIABLES and not k.upper().endswith("_API_KEY")}
+    return {**kept, **extra}
 
 
 def get(name: str, default: str | None = None) -> str | None:

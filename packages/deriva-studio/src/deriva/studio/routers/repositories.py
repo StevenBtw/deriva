@@ -18,6 +18,7 @@ class CloneRequest(BaseModel):
     url: str
     name: str | None = None
     branch: str | None = None
+    submodules: bool = True
 
 
 @router.get("")
@@ -49,7 +50,7 @@ def repository_info(name: str, session: Any = Depends(get_session)) -> dict[str,
 def clone_repository(body: CloneRequest, request: Request) -> dict[str, Any]:
     """A clone needs no database and can take minutes: it holds no session (reads go on), only the lock that starts runs."""
     session = request.app.state.provider.detached()
-    return _idle(request, lambda: session.clone_repository(url=body.url, name=body.name, branch=body.branch), "Clone failed")
+    return _idle(request, lambda: session.clone_repository(url=body.url, name=body.name, branch=body.branch, submodules=body.submodules), "Clone failed")
 
 
 def _idle(request: Request, action: Callable[[], dict[str, Any]], failed: str) -> dict[str, Any]:

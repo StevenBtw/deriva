@@ -1039,11 +1039,14 @@ class PipelineSession:
         name: str | None = None,
         branch: str | None = None,
         overwrite: bool = False,
+        submodules: bool = True,
+        allow_local: bool = False,
     ) -> dict[str, Any]:
-        """Clone a repository (no database is needed, so a session that is not connected clones too)."""
+        """Clone a repository (no database is needed, so a session that is not connected clones too); ``allow_local``
+        accepts a ``file://`` URL, which only the command line passes."""
         repos = self._repo_manager or RepoManager(workspace_dir=self._workspace_dir)
         try:
-            result = repos.clone_repository(repo_url=url, target_name=name, branch=branch, overwrite=overwrite)
+            result = repos.clone_repository(repo_url=url, target_name=name, branch=branch, overwrite=overwrite, submodules=submodules, allow_local=allow_local)
             return {
                 "success": True,
                 "name": result.name,
