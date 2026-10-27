@@ -56,7 +56,7 @@ uv tool install --python 3.14 deriva-studio
 deriva
 ```
 
-`deriva` starts the studio and opens it in your browser at http://127.0.0.1:8765. It listens on this machine only; `--port` picks another port, `--no-browser` leaves the browser closed, and the API documentation is at `/docs`.
+`deriva` starts the studio and opens it in your browser at http://127.0.0.1:8765. It listens on this machine only; `--port` picks another port, `--no-browser` leaves the browser closed, and the API documentation is at `/docs`. Each start prints a launch link with a fresh token: the studio answers only a browser that opened that link (or a script that sends the token as an `X-Deriva-Token` header), so another website open in your browser cannot use it.
 
 To try Deriva without installing it:
 
@@ -398,7 +398,7 @@ The studio is Deriva's local web UI (`uv run deriva`): a FastAPI backend over `P
 
 The graphs use [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) (its query bar runs read-only Cypher against the embedded databases) and the model uses [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate). While a CLI run holds the databases, the studio says so and shows what it can.
 
-For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` (Vite forwards the API to port 8765, or to `DERIVA_STUDIO_API` for a studio on another port); `npm test`, `npm run lint` and `npm run typecheck` check it.
+For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` (Vite forwards the API to port 8765, or to `DERIVA_STUDIO_API` for a studio on another port), then open the printed launch link with the dev server's address (`http://localhost:5173/api/auth?token=...`); `npm test`, `npm run lint` and `npm run typecheck` check it.
 
 ---
 
