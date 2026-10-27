@@ -16,6 +16,7 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 
 - **Links stay inside the repository**: a symlink or (on Windows) a junction in a cloned repository is skipped by every repository walk and file read, so a link to a file outside the clone (the home `.env` with provider keys, SSH keys) is never read, stored or sent to an LLM; clones check symlinks out as plain files
 - **Git on untrusted repositories**: clones, pulls and remote checks allow only the https, http, ssh and git protocols, also for submodules, so a submodule URL cannot read a local repository or run a command; git gets the process environment without provider variables or API keys; a clone or pull stops after `DERIVA_GIT_TIMEOUT` seconds (default 1800) and releases the run lock; after a clone with submodules, a git older than the July 2025 submodule fixes is reported. Submodules are still cloned by default (`repo clone --no-submodules`, or `submodules: false` in the studio API, skips them); a local `file://` URL is cloned from the command line only
+- **The studio answers only its own launch**: each start of `deriva` prints a launch link with a fresh token, which sets an HttpOnly, SameSite=Strict cookie; every server path (`/api`, `/grafeo`, `/widgets`, `/docs`) needs it (scripts send `X-Deriva-Token`), a studio bound to this machine answers only to its local host names (no DNS rebinding), and a request that changes state from another site is refused. A browser without the cookie sees a page that asks for the launch link
 
 ### Derivation
 
