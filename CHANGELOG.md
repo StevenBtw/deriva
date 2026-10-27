@@ -26,6 +26,8 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 - **Answer stability with `--bench-hash`**: per-model answer stability in `benchmark analyze` and in the two-level tables keys a prompt by everything the call sent except its benchmark run, so a session run with `--bench-hash` no longer reports 0 of 0 prompts; sessions without it give the same numbers as before
 - **Studio run consistency by source**: relationships are keyed by the type and source of both ends, so relationships to a component and to its function (which share a graph node) no longer collapse into one; the studio's numbers now equal `benchmark analyze`'s, and are lower where such pairs flip between runs
 - **A missing checkout leaves the graph alone**: a repository whose folder is gone (moved or deleted) or lists no file runs no extraction step and fails with a message that names the folder; before, the later steps swept their earlier output and the graph kept only what the first steps rebuilt
+- **Local clones are named after their folder**: `repo clone file:///.../name/.git` clones into `name` (the name was empty), and a working tree's URL without `.git` is accepted
+- **The run summary counts honestly**: the extraction count reads "Nodes written" (a step can rewrite a node another step wrote), followed by the graph's distinct nodes as `deriva-cli status` counts them
 - **One warning per missing model**: a model that cannot be loaded is reported once per reason, not once before and again inside a run
 
 ### Configuration
