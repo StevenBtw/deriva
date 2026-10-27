@@ -73,6 +73,10 @@ class RunCancelled(RuntimeError):
     """The run was cancelled: the session makes no further LLM call until the cancel check is removed."""
 
 
+class LLMBudgetExceeded(RuntimeError):
+    """The run made its max_llm_calls_per_run LLM calls: every further call of the run is refused."""
+
+
 class PipelineSession:
     """Unified session for CLI and studio pipeline operations.
 
@@ -317,13 +321,18 @@ class PipelineSession:
                 self._llm_manager = LLMManager()
                 self._llm_error = None
             except Exception as e:
-                logger.warning("Failed to initialize LLM manager: %s", e)
+                # Once per reason: the CLI asks before a run and again in it
+                if str(e) != self._llm_error:
+                    logger.warning("Failed to initialize LLM manager: %s", e)
                 # Why, for the run that needed it (the manager's errors name variables, never values)
                 self._llm_error = str(e)
                 return None
 
         if no_cache:
             self._llm_manager.nocache = True
+        # Per run: each run asks for its own query function
+        budget = config.get_llm_call_budget(self._engine) if self._engine is not None else config.LIMIT_DEFAULTS[config.LLM_CALL_BUDGET_SETTING]
+        calls = 0
 
         def query_fn(
             prompt: str,
@@ -337,6 +346,10 @@ class PipelineSession:
             # A cancelled run stops at its next call, also inside a long step
             if self._cancel_check is not None and self._cancel_check():
                 raise RunCancelled("run cancelled")
+            nonlocal calls
+            if calls >= budget:
+                raise LLMBudgetExceeded(f"The run made its {budget} LLM calls (max_llm_calls_per_run): no further call; raise the setting for a larger repository")
+            calls += 1
             try:
                 response = self._llm_manager.query(
                     prompt,

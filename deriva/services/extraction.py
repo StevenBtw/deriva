@@ -122,6 +122,28 @@ def list_repo_files(repo_path: Path, excluded_dirs: list[str]) -> list[str]:
     ]
 
 
+def _skip_reason(file_path: Path, repo_path: Path, max_bytes: int) -> str | None:
+    """Why a repository file is not read, or None: a link out of the checkout, or a file over the size limit."""
+    if not is_inside(file_path, repo_path):
+        return "a link out of the repository"
+    try:
+        size = file_path.stat().st_size
+    except OSError:
+        return None  # the read reports it
+    return f"larger than {max_bytes} bytes (max_read_bytes)" if size > max_bytes else None
+
+
+def missing_checkout(repo: Any, repo_path: Path, file_paths: list[str]) -> str | None:
+    """Why a repository cannot be extracted, or None: a step that runs sweeps its earlier output, so a checkout that
+    is gone (moved, deleted) or lists no file must run none, or the graph keeps only what the first steps rebuild."""
+    if file_paths:
+        return None
+    shown = Path(str(repo.path))
+    if not repo_path.is_dir():
+        return f"Repository folder not found: {shown} | repo={repo.name} (clone it again, or remove the repository)"
+    return f"The repository has no files to extract (all excluded, or an empty checkout): {shown} | repo={repo.name}"
+
+
 def _unreadable_reason(shown: Path, opened: Path) -> str:
     """Why a file could not be read; ``shown`` is its plain path, whose length Windows limits to 260 characters."""
     try:
@@ -328,6 +350,10 @@ def run_extraction(
 
         # Get all files for classification (outside excluded dependency directories)
         file_paths = list_repo_files(repo_path, config.get_excluded_directories(engine))
+        missing = missing_checkout(repo, repo_path, file_paths)
+        if missing:
+            errors.append(missing)
+            continue
 
         # Classify files (always needed - prerequisite for parse phase)
         classification_result = classification.classify_files(file_paths, registry_list)
@@ -665,6 +691,7 @@ def _run_step_writes(
             classified_files=classified_files,
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
+            max_bytes=config.get_max_read_bytes(engine),
         )
     elif node_type == "BusinessConcept":
         if llm_query_fn is None:
@@ -676,6 +703,7 @@ def _run_step_writes(
             classified_files=classified_files,
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
+            max_bytes=config.get_max_read_bytes(engine),
         )
     elif node_type in ["TypeDefinition", "Method", "ExternalDependency", "Test"]:
         # Without an LLM the parsers still run (tree-sitter, manifest files); only Test is LLM-only
@@ -1374,7 +1402,7 @@ def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 
     relative = path[len(repo_name) + 1 :] if path.startswith(repo_name + "/") else path
     file = repo_path / relative
     try:
-        if file.is_file() and file.stat().st_size <= max_bytes:
+        if file.is_file() and is_inside(file, repo_path) and file.stat().st_size <= max_bytes:
             return file.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
@@ -2386,6 +2414,7 @@ def _extract_llm_based(
 
     Without an LLM (``llm_query_fn`` None) the parsers still run; files that only the LLM can read are skipped and counted.
     """
+    max_bytes = config.get_max_read_bytes(engine)
     nodes_created = 0
     edges_created = 0
     errors = []
@@ -2456,8 +2485,9 @@ def _extract_llm_based(
         file_path = repo_path / file_info["path"]
 
         try:
-            if not is_inside(file_path, repo_path):
-                errors.append(f"Skipped {file_info['path']}: a link out of the repository | repo={repo.name} | step={node_type}")
+            skip = _skip_reason(file_path, repo_path, max_bytes)
+            if skip:
+                errors.append(f"Skipped {file_info['path']}: {skip} | repo={repo.name} | step={node_type}")
                 continue
             # Route document files to specialized reader
             if file_path.suffix.lower() in (".docx", ".pdf"):
@@ -2638,13 +2668,16 @@ def _code_names(graph_manager: GraphManager, repo_name: str) -> list[str]:
     return sorted({row["name"] for row in types + directories if row.get("name")})
 
 
-def _read_documents(repo_path: Path, files: list[dict], repo_name: str) -> tuple[list[dict[str, str]], list[str]]:
+def _read_documents(
+    repo_path: Path, files: list[dict], repo_name: str, max_bytes: int = config.LIMIT_DEFAULTS[config.MAX_READ_BYTES_SETTING]
+) -> tuple[list[dict[str, str]], list[str]]:
     """The text of every file in path order; empty files are left out, unreadable ones reported."""
     documents, errors = [], []
     for file_info in sorted(files, key=lambda f: f["path"]):
         file_path = repo_path / file_info["path"]
-        if not is_inside(file_path, repo_path):
-            errors.append(f"Skipped {file_info['path']}: a link out of the repository | repo={repo_name} | step=BusinessConcept")
+        skip = _skip_reason(file_path, repo_path, max_bytes)
+        if skip:
+            errors.append(f"Skipped {file_info['path']}: {skip} | repo={repo_name} | step=BusinessConcept")
             continue
         try:
             text = read_document(file_path) if file_path.suffix.lower() in (".docx", ".pdf") else read_file_with_encoding(file_path)
@@ -2712,6 +2745,7 @@ def _extract_business_concepts(
     classified_files: list[dict],
     graph_manager: GraphManager,
     llm_query_fn: Callable,
+    max_bytes: int = config.LIMIT_DEFAULTS[config.MAX_READ_BYTES_SETTING],
 ) -> dict[str, Any]:
     """BusinessConcept step: structure decides the candidates, the LLM classifies them.
 
@@ -2738,7 +2772,7 @@ def _extract_business_concepts(
         return {"nodes_created": 0, "edges_created": 0, "errors": ["No input sources for BusinessConcept"]}
 
     files = [f for f in extraction.filter_files_by_input_sources(classified_files, input_sources) if not _is_unreadable(f)]
-    documents, errors = _read_documents(repo_path, files, repo.name)
+    documents, errors = _read_documents(repo_path, files, repo.name, max_bytes)
     if not documents:
         return {"nodes_created": 0, "edges_created": 0, "errors": errors, "warnings": [f"No documents for BusinessConcept in {repo.name}"]}
     # The system's own description for the classifier: the opening of the README at the repository root
@@ -2821,6 +2855,7 @@ def _extract_technologies(
     classified_files: list[dict],
     graph_manager: GraphManager,
     llm_query_fn: Callable,
+    max_bytes: int = config.LIMIT_DEFAULTS[config.MAX_READ_BYTES_SETTING],
 ) -> dict[str, Any]:
     """Technology step: structure decides the candidates, the LLM classifies them.
 
@@ -2840,7 +2875,11 @@ def _extract_technologies(
     files: list[dict[str, Any]] = []
     errors: list[str] = []
     for file_info in extraction.filter_files_by_input_sources(classified_files, input_sources):
-        if _is_unreadable(file_info) or not is_inside(repo_path / file_info["path"], repo_path):
+        if _is_unreadable(file_info):
+            continue
+        skip = _skip_reason(repo_path / file_info["path"], repo_path, max_bytes)
+        if skip:
+            errors.append(f"Skipped {file_info['path']}: {skip} | repo={repo.name} | step=Technology")
             continue
         content = read_file_with_encoding(repo_path / file_info["path"])
         if content is None:
@@ -3197,6 +3236,10 @@ def run_extraction_iter(
 
         # Get all files for classification (outside excluded dependency directories)
         file_paths = list_repo_files(repo_path, config.get_excluded_directories(engine))
+        missing = missing_checkout(repo, repo_path, file_paths)
+        if missing:
+            errors.append(missing)
+            continue
 
         # Classify files
         classification_result = classification.classify_files(file_paths, registry_list)

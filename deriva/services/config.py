@@ -737,7 +737,41 @@ def setting_default(key: str) -> str | None:
         return json.dumps(DEFAULT_EXCLUDED_DIRECTORIES)
     if key == GRAPH_VIEW_NODES_SETTING:
         return str(DEFAULT_GRAPH_VIEW_NODES)
+    if key in LIMIT_DEFAULTS:
+        return str(LIMIT_DEFAULTS[key])
     return None
+
+
+# Limits for untrusted repositories: a file larger than max_read_bytes is not read (a huge file would fill memory and,
+# chunked, take thousands of LLM calls), and a run makes at most max_llm_calls_per_run LLM calls, then stops calling
+MAX_READ_BYTES_SETTING = "max_read_bytes"
+LLM_CALL_BUDGET_SETTING = "max_llm_calls_per_run"
+LIMIT_DEFAULTS = {MAX_READ_BYTES_SETTING: 50_000_000, LLM_CALL_BUDGET_SETTING: 2000}
+
+
+def _parse_limit(key: str, raw: str) -> int:
+    text = raw.strip()
+    if not text.isdigit() or int(text) < 1:
+        raise ValueError(f"{key} must be a positive whole number, not {raw!r}")
+    return int(text)
+
+
+def _get_limit(engine: Any, key: str) -> int:
+    raw = get_setting(engine, key) if engine is not None else None
+    try:
+        return LIMIT_DEFAULTS[key] if raw is None else _parse_limit(key, str(raw))
+    except ValueError:
+        return LIMIT_DEFAULTS[key]
+
+
+def get_max_read_bytes(engine: Any) -> int:
+    """The largest file extraction reads (bytes): the max_read_bytes setting, or 50 MB."""
+    return _get_limit(engine, MAX_READ_BYTES_SETTING)
+
+
+def get_llm_call_budget(engine: Any) -> int:
+    """The LLM calls one run may make: the max_llm_calls_per_run setting, or 2000."""
+    return _get_limit(engine, LLM_CALL_BUDGET_SETTING)
 
 
 # How many graph nodes the studio's graph views sample (the model is always shown whole); more shows more of the graph
@@ -802,6 +836,8 @@ def set_setting(engine: Any, key: str, value: str) -> None:
         _parse_excluded_directories(value)
     if key == GRAPH_VIEW_NODES_SETTING:
         value = str(_parse_graph_view_nodes(value))
+    if key in LIMIT_DEFAULTS:
+        value = str(_parse_limit(key, value))
     existing = get_setting(engine, key)
     if existing is not None:
         engine.execute(
