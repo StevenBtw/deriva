@@ -47,6 +47,8 @@ from deriva.modules.analysis.types import (
 )
 from deriva.services.llm_log import LlmCallLog
 
+from .session_metrics import call_key
+
 __all__ = ["BenchmarkAnalyzer"]
 
 
@@ -310,17 +312,16 @@ class BenchmarkAnalyzer:
         call_logs: dict[str, list[dict[str, Any]]] = getattr(self, "call_logs", {})
         session_model = {sid: (info.get("config", {}).get("models") or [None])[0] for sid, info in getattr(self, "session_infos", {}).items()}
 
-        def add(run_id: str, step: str, key: str, decision: str | None) -> None:
+        def group_of(run_id: str) -> tuple[str, str, str | None] | None:
             parts = run_id.split(":")
             if len(parts) == 3 and parts[1] == "extraction":
-                family, repo, model = "extraction", parts[2], session_model.get(parts[0])
-            elif len(parts) >= 2:
-                family, repo, model = "derivation", parts[1], parts[2] if len(parts) >= 4 else None
-            else:
-                return
-            runs = answers.setdefault((repo, model), {}).setdefault(family, {})
-            runs.setdefault(run_id, {}).setdefault((step, key), []).append(decision)
+                return "extraction", parts[2], session_model.get(parts[0])
+            if len(parts) >= 2:
+                return "derivation", parts[1], parts[2] if len(parts) >= 4 else None
+            return None
 
+        # (run, step, cache key, key without the benchmark run or None, decision)
+        entries: list[tuple[str, str, str, str | None, str | None]] = []
         for session_id, ocel in self.ocel_logs.items():
             if session_id in call_logs:
                 continue
@@ -329,13 +330,24 @@ class BenchmarkAnalyzer:
                 if event.activity != "LLMQuery" or not step or not key:
                     continue
                 for run_id in event.objects.get("BenchmarkRun", []):
-                    add(run_id, step, key, event.attributes.get("decision_hash") or event.attributes.get("response_hash"))
+                    entries.append((run_id, step, key, None, event.attributes.get("decision_hash") or event.attributes.get("response_hash")))
         for calls in call_logs.values():
             for call in calls:
                 if call.get("step") and call.get("cache_key") and call.get("run_id"):
                     # Hashed as the event log records it (sessions read either way are compared); a failed call has no answer
                     content = call.get("response")
-                    add(call["run_id"], call["step"], call["cache_key"], hash_content(decision_content(content)) if content and not call.get("error") else None)
+                    decision = hash_content(decision_content(content)) if content and not call.get("error") else None
+                    entries.append((call["run_id"], call["step"], call["cache_key"], call_key(call), decision))
+        # A call log keys a prompt without the benchmark run (--bench-hash puts the run into every cache key); a group
+        # with a run read from its event log, which holds only the cache key, keys every run by the cache key
+        by_cache_key = {(g[1], g[2]) for run_id, _, _, own, _ in entries if own is None and (g := group_of(run_id))}
+        for run_id, step, cache, own, decision in entries:
+            group = group_of(run_id)
+            if group is None:
+                continue
+            family, repo, model = group
+            key = cache if own is None or (repo, model) in by_cache_key else own
+            answers.setdefault((repo, model), {}).setdefault(family, {}).setdefault(run_id, {}).setdefault((step, key), []).append(decision)
         # A combined session derives once over all repositories, under their joined name
         names = list(self.repositories) + (["_".join(sorted(self.repositories))] if len(self.repositories) > 1 else [])
         result: dict[str, list[AnswerStability]] = {}

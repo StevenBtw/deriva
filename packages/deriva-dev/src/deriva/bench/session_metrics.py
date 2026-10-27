@@ -206,13 +206,22 @@ def two_level_rows(sessions: list[Path]) -> list[dict[str, Any]]:
             runs.setdefault((repo, model), []).append((number, snapshot))
         for (repo, model), numbered in sorted(runs.items()):
             group = [(str(number), snapshot, calls.get((repo, model, number), [])) for number, snapshot in numbered]
-            rows += _two_level(repo, model, group, lambda c: str(c.get("cache_key")))
+            rows += _two_level(repo, model, group, call_key)
             pooled.setdefault(repo, {}).setdefault(model, []).extend((f"{session.name}:{model}:{label}", s, c) for label, s, c in group)
     for repo, by_model in sorted(pooled.items()):
         if len(by_model) > 1:
             group = [run for model in sorted(by_model) for run in by_model[model]]
             rows += _two_level(repo, ALL_MODELS, group, lambda c: hash_content(f"{c.get('schema')}\n{c.get('prompt')}"))
     return rows
+
+
+# What makes two calls of one model the same call: the cache key's parts without its benchmark run (--bench-hash puts
+# the run into every key, so no prompt would recur across runs)
+_CALL_PARTS = ("provider", "model", "schema", "system_prompt", "prompt", "temperature", "max_tokens", "reasoning")
+
+
+def call_key(call: dict[str, Any]) -> str:
+    return hash_content("\n".join(f"{part}={call.get(part)}" for part in _CALL_PARTS))
 
 
 def _two_level(repo: str, model: str, group: list[tuple[str, dict[str, Any], list[dict[str, Any]]]], prompt_key: Callable[[dict[str, Any]], str]) -> list[dict[str, Any]]:
