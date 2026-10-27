@@ -171,6 +171,7 @@ def run_stage(
                     phases=phases,
                 )
             _print_extraction_result(result)
+            _print_graph_total(session)
             if later_steps:
                 typer.echo(f"Later steps that may read what {only_step} writes (run them again to update them): {', '.join(later_steps)}")
 
@@ -225,9 +226,19 @@ def run_stage(
                     no_llm=no_llm,
                 )
             _print_pipeline_result(result)
+            _print_graph_total(session)
 
         if not result.get("success"):
             raise typer.Exit(1)
+
+
+def _print_graph_total(session: PipelineSession) -> None:
+    """The graph's distinct nodes after the run (the summary counts writes: a step can write a node another wrote)."""
+    try:
+        total = session.get_graph_stats()["total_nodes"]
+    except Exception:  # the summary stands without it
+        return
+    typer.echo(f"  Graph nodes:   {total} (distinct, as deriva-cli status counts them)")
 
 
 # =============================================================================
