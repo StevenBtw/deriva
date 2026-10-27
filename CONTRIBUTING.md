@@ -1693,6 +1693,7 @@ The studio is the local web UI: `packages/deriva-studio/src/deriva/studio/` (Fas
 ```bash
 uv run deriva                        # API + built front end on http://127.0.0.1:8765
 cd studio && npm run dev             # front-end development; Vite forwards /api, /grafeo, /widgets to 8765
+                                     # open http://localhost:5173/api/auth?token=<the token deriva printed>
 DERIVA_STUDIO_API=http://127.0.0.1:9000 npm run dev   # the same for a studio started with --port 9000
 npm test && npm run lint && npm run typecheck
 npm run build                        # writes packages/deriva-studio/src/deriva/studio/static/ (git-ignored, shipped in the wheel)
