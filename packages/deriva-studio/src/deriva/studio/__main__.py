@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> None:
     _stop_runs_on_exit(server, app)
     browser_host = "localhost" if local else f"[{args.host}]" if ":" in args.host else args.host
     url = f"http://{browser_host}:{args.port}{AUTH_PATH}?token={token}"
-    print(f"Deriva Studio: {url}")
+    print(f"Deriva Studio: {url}", flush=True)  # also when stdout is a file or a pipe (a service, a log)
     if not args.no_browser:
         _open_when_ready(server, url)
     server.run()
