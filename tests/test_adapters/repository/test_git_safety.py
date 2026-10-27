@@ -186,3 +186,20 @@ class TestEdges:
             pytest.raises(repo_manager.RepositoryError, match="seconds"),
         ):
             manager.update_repository("repo")
+
+
+class TestLocalNames:
+    @pytest.mark.parametrize(
+        ("url", "name"),
+        [
+            ("file:///srv/repos/LakesideMutual/.git", "LakesideMutual"),
+            ("file:///srv/repos/LakesideMutual", "LakesideMutual"),
+            ("file:///srv/repos/app.git", "app"),
+            ("https://github.com/user/repo.git", "repo"),
+        ],
+    )
+    def test_the_name_is_the_repository_folder(self, url, name):
+        assert repo_manager._extract_repo_name(url) == name
+
+    def test_a_working_tree_url_is_valid(self):
+        assert repo_manager._is_valid_git_url("file:///srv/repos/LakesideMutual")
