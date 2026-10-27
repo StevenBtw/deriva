@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 class FakeSession:
     """Stands in for PipelineSession: records calls, returns canned values from ``returns``."""
 
+    repository: str  # set by tests that need it; unset, reads go through __getattr__
+
     def __init__(self, connect_error: Exception | None = None, **returns: Any) -> None:
         self.calls: list[tuple[str, tuple, dict]] = []
         self.returns: dict[str, Any] = returns

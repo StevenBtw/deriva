@@ -383,7 +383,7 @@ def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases:
 def golden_comparison(
     derived: list[dict[str, Any]],
     reference: list[Any],
-    aliases: dict[str, list[str]] | None = None,
+    aliases: dict[str, Any] | None = None,
     derivable: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Recall and precision of derived elements against a hand-made reference model, overall and per layer.
