@@ -41,6 +41,14 @@ def default_excluded_directories():
         yield
 
 
+@pytest.fixture(autouse=True)
+def any_checkout_extracts():
+    """These tests run steps on fake or empty checkouts; the guard that skips those has its own tests
+    (test_extraction_missing_repository.py)."""
+    with patch("deriva.services.extraction.missing_checkout", return_value=None):
+        yield
+
+
 class TestRunExtraction:
     """Tests for run_extraction function."""
 

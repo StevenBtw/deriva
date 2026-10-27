@@ -1312,7 +1312,7 @@ class TestModelSettings:
         assert "temperature" not in sent
         assert manager.last_call["temperature"] is None
         # The key names what was sent: no temperature
-        assert manager.last_call["cache_key"] == CacheManager.generate_cache_key("Hello", "claude-haiku-5-5", None)
+        assert manager.last_call["cache_key"] == CacheManager.generate_cache_key("Hello", "claude-haiku-5-5", None, endpoint=manager._endpoint())
 
     def test_a_reasoning_level_reaches_the_call_and_its_key(self, tmp_path):
         plain = self._manager(tmp_path, provider="openai", model="gpt-6-luna")
@@ -1327,7 +1327,7 @@ class TestModelSettings:
         assert manager.last_call["reasoning"] == "none"
         assert manager.last_call["cache_key"] != plain_key
 
-    def test_configs_without_these_settings_keep_their_cache_keys(self, tmp_path):
+    def test_configs_without_these_settings_add_nothing_but_their_endpoint(self, tmp_path):
         from deriva.adapters.llm.cache import CacheManager
 
         manager = self._manager(tmp_path, provider="mistral", model="mistral-small-2603")
@@ -1336,7 +1336,7 @@ class TestModelSettings:
 
         assert sent["temperature"] == 0.0 and "openai_reasoning_effort" not in sent and "anthropic_thinking" not in sent
         assert manager.last_call["reasoning"] is None
-        assert manager.last_call["cache_key"] == CacheManager.generate_cache_key("Hello", "mistral-small-2603", None, temperature=0.0, max_tokens=100)
+        assert manager.last_call["cache_key"] == CacheManager.generate_cache_key("Hello", "mistral-small-2603", None, temperature=0.0, max_tokens=100, endpoint=manager._endpoint())
 
     @staticmethod
     def _answer(input_tokens, output_tokens):
@@ -1568,3 +1568,13 @@ class TestModelTemperature:
         env = {"LLM_M_PROVIDER": "ollama", "LLM_M_MODEL": "llama3", "LLM_M_TEMPERATURE": "0"}
         with patch("deriva.common.settings.read_env_file", return_value={}), patch.dict("os.environ", env, clear=True):
             assert load_benchmark_models()["m"].temperature == 0.0
+
+
+class TestNoModelConfigured:
+    def test_the_error_says_what_to_set_and_names_no_provider(self, tmp_path):
+        """Without LLM_DEFAULT_MODEL or LLM_PROVIDER no provider is assumed (it used to default to azure)."""
+        with patch("deriva.common.settings.read_env_file", return_value={}):
+            with patch.dict("os.environ", {"LLM_CACHE_DIR": str(tmp_path / "cache")}, clear=True):
+                with pytest.raises(ConfigurationError, match="LLM_DEFAULT_MODEL") as raised:
+                    LLMManager()
+        assert "azure" not in str(raised.value).lower()

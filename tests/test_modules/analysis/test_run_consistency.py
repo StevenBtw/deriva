@@ -189,3 +189,23 @@ def test_the_same_prompt_under_per_run_cache_keys_is_the_same_prompt():
     (flip,) = element_flips(runs, calls)
 
     assert flip["llm"] == "same prompt, different answer"
+
+
+def test_relationships_by_source_keep_the_types_of_their_ends():
+    """A component and its function share a graph node: a relationship to each is two relationships, not one."""
+    snapshot = {
+        "elements": [
+            {"identifier": "ac_a", "type": "ApplicationComponent", "name": "A", "source": "dir::a"},
+            {"identifier": "af_a", "type": "ApplicationFunction", "name": "A Function", "source": "dir::a"},
+            {"identifier": "do_x", "type": "DataObject", "name": "X", "source": "type::x"},
+        ],
+        "relationships": [
+            {"source": "ac_a", "target": "do_x", "type": "Access", "derived_from": "structure"},
+            {"source": "af_a", "target": "do_x", "type": "Access", "derived_from": "structure"},
+        ],
+    }
+
+    sets = run_sets(snapshot)
+
+    assert len(sets["rel_source"]) == 2
+    assert len(sets["prov:structure"]) == 2

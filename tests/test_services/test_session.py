@@ -517,6 +517,20 @@ class TestPipelineSessionOrchestration:
         assert kwargs["llm_query_fn"] is None
         assert kwargs["derivation_phases"] == ["prep"]
 
+    def test_run_pipeline_without_a_model_runs_as_no_llm(self, connected_session):
+        """No model configured: the LLM steps are skipped, as with --no-llm (no stand-in that answers None)."""
+        from deriva.services import derivation
+
+        connected_session._mock_pipeline.run_full_pipeline.return_value = {"success": True, "stats": {}}
+        connected_session._mock_derivation.STRUCTURAL_PHASES = derivation.STRUCTURAL_PHASES
+
+        with patch.object(connected_session, "_get_llm_query_fn", return_value=None):
+            connected_session.run_pipeline()
+
+        kwargs = connected_session._mock_pipeline.run_full_pipeline.call_args.kwargs
+        assert kwargs["llm_query_fn"] is None
+        assert kwargs["derivation_phases"] == ["prep"]
+
 
 class TestPipelineSessionIterators:
     """Tests for PipelineSession iterator methods (progress bar support)."""

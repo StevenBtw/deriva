@@ -116,6 +116,22 @@ class TestTwoLevel:
         assert concept["all LLMs"]["answers"] == {"identical": 0, "prompts": 1}
         assert concept["all LLMs"]["decisions"] == {"stable": 0, "items": 1}
 
+    def test_runs_with_a_bench_hash_still_share_their_prompts(self, tmp_path):
+        """--bench-hash puts the run into every cache key; the same prompt in two runs is still one prompt."""
+
+        def call(run, label, temperature=0.0):
+            answer = f'{{"labels": {{"x": "{label}"}}}}'
+            schema = "business_concept_classification"
+            return {"step": "BusinessConcept", "schema": schema, "cache_key": f"r:m:{run}", "prompt": "p", "temperature": temperature, "response": answer}
+
+        runs = [_run(SHOP, decisions={"BusinessConcept": {"x": "entity"}}) for _ in range(2)]
+        session = _session(tmp_path, "s1", "m", runs, {1: [call(1, "entity"), call(1, "entity", 0.5)], 2: [call(2, "entity"), call(2, "process", 0.5)]})
+
+        (concept,) = [r for r in pm.two_level_rows([session]) if r["decision"] == "BusinessConcept"]
+
+        # Two prompts (another temperature is another call): one answered alike, one not
+        assert concept["answers"] == {"identical": 1, "prompts": 2}
+
     def test_a_classification_is_decided_per_candidate_and_one_run_has_no_rows(self, tmp_path):
         """A role classification's decision per candidate is its stage (created or rejected); a single run has nothing
         to compare."""

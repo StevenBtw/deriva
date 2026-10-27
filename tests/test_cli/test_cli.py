@@ -191,10 +191,11 @@ class TestPrintPipelineResult:
     def test_prints_pipeline_summary(self, capsys):
         """Should print pipeline summary."""
         result = {
+            "success": True,
             "results": {
                 "extraction": {"stats": {"nodes_created": 50}},
                 "derivation": {"stats": {"elements_created": 10, "issues_found": 1}},
-            }
+            },
         }
         _print_pipeline_result(result)
         output = capsys.readouterr().out
@@ -1303,6 +1304,18 @@ class TestRunCommandDerivationSuccess:
 
 class TestRunCommandAllStage:
     """Tests for run command with 'all' stage."""
+
+    @patch("deriva.cli.cli.create_progress_reporter")
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_a_failed_pipeline_says_so(self, mock_session_class, mock_progress):
+        mock_session = MagicMock()
+        mock_session.run_pipeline.return_value = {"success": False, "results": {}, "errors": ["step failed"]}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["run", "all"])
+
+        assert result.exit_code == 1
+        assert "PIPELINE FAILED" in result.stdout and "PIPELINE COMPLETE" not in result.stdout
 
     @patch("deriva.cli.cli.create_progress_reporter")
     @patch("deriva.cli.cli.PipelineSession")
