@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from deriva.common.file_utils import is_inside
 from deriva.modules.extraction.file import extract_files
-from deriva.services.extraction import _read_documents, list_repo_files
+from deriva.services.extraction import _extract_llm_based, _read_documents, list_repo_files
 
 
 def _link_dir(target: Path, link: Path) -> None:
@@ -90,3 +92,28 @@ class TestReads:
         assert [d["path"] for d in documents] == ["docs/README.md"]
         assert all("secret" not in d["text"] for d in documents)
         assert any("docs/home/.env" in e for e in errors)
+
+
+class TestEdges:
+    def test_an_unresolvable_path_is_not_inside(self, layout):
+        repo, _ = layout
+        with patch.object(Path, "resolve", side_effect=OSError("loop")):
+            assert not is_inside(repo / "docs" / "README.md", repo)
+
+    def test_the_llm_steps_skip_a_file_through_a_link(self, layout):
+        repo, outside = layout
+        _link_dir(outside, repo / "docs" / "home")
+        cfg = MagicMock(node_type="Method", input_sources=json.dumps({"files": [{"type": "config", "subtype": "env"}]}), params=None)
+        llm = MagicMock()
+        result = _extract_llm_based(
+            node_type="Method",
+            cfg=cfg,
+            repo=MagicMock(name="repo"),
+            repo_path=repo,
+            classified_files=[{"path": "docs/home/.env", "file_type": "config", "subtype": "env"}],
+            graph_manager=MagicMock(),
+            llm_query_fn=llm,
+            engine=MagicMock(),
+        )
+        assert any("a link out of the repository" in e for e in result["errors"])
+        llm.assert_not_called()

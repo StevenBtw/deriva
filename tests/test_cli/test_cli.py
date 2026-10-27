@@ -2220,6 +2220,19 @@ class TestRepoCloneOptions:
         assert call_kwargs["branch"] == "develop"
 
     @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_clone_allows_local_urls_and_skips_submodules_on_request(self, mock_session_class):
+        """The command line may clone a local repository (the studio may not); --no-submodules skips them."""
+        mock_session = MagicMock()
+        mock_session.clone_repository.return_value = {"success": True, "name": "repo", "path": "p", "url": "file:///srv/repo.git"}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        assert runner.invoke(app, ["repo", "clone", "file:///srv/repo.git"]).exit_code == 0
+        kwargs = mock_session.clone_repository.call_args[1]
+        assert kwargs["allow_local"] is True and kwargs["submodules"] is True
+        assert runner.invoke(app, ["repo", "clone", "file:///srv/repo.git", "--no-submodules"]).exit_code == 0
+        assert mock_session.clone_repository.call_args[1]["submodules"] is False
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
     def test_clone_with_overwrite(self, mock_session_class):
         """Should pass overwrite option."""
         mock_session = MagicMock()
