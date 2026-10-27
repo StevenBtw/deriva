@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +16,7 @@ from deriva.adapters.graph import GraphManager
 from deriva.adapters.graph.models import FileNode, TechnologyNode
 from deriva.modules.extraction.base import generate_file_node_id
 from deriva.services import extraction as service
+from deriva.services.config import ExtractionConfig
 
 PLATFORMS = [{"file_type": "dependency", "subtype": "javascript", "name": "Runtime Js", "category": "platform"}]
 PARAMS = {"confidence": 0.9, "missing_retries": 1, "platforms": PLATFORMS}
@@ -216,10 +218,10 @@ class TestTechnologyStep:
 
 
 def test_the_step_runs_the_structure_flow(tmp_path):
-    cfg = SimpleNamespace(node_type="Technology", extraction_method="llm")
+    cfg = cast(ExtractionConfig, SimpleNamespace(node_type="Technology", extraction_method="llm"))
 
     with patch.object(service, "_extract_technologies", return_value={"nodes_created": 2, "edges_created": 0, "errors": []}) as step:
-        result = service._run_extraction_step(cfg, SimpleNamespace(name="r"), tmp_path, [], [], None, lambda *a, **k: None, None)
+        result = service._run_extraction_step(cfg, SimpleNamespace(name="r"), tmp_path, [], [], None, lambda *a, **k: None, None)  # ty: ignore[invalid-argument-type]: the step takes no graph (its None branch)
 
     assert result["nodes_created"] == 2
     step.assert_called_once()

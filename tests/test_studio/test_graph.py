@@ -107,7 +107,7 @@ def test_the_model_downloads_as_a_file_named_after_its_repository(make_client, t
         return {"success": True, "output_path": str(written)}
 
     session = FakeSession(export_model=export)
-    session.repository = "deriva"
+    session.repository = "deriva"  # ty: ignore[unresolved-attribute]: FakeSession declares no repository; the studio reads it from the session
     client = make_client(session)
 
     response = client.get("/api/model/download")

@@ -536,7 +536,7 @@ class TestPipelineSessionIterators:
             session = PipelineSession(auto_connect=True)
             session._mock_extraction = mock_extraction  # type: ignore[attr-defined]
             session._mock_derivation = mock_derivation  # type: ignore[attr-defined]
-            session._mock_config = mock_config  # type: ignore[attr-defined]
+            setattr(session, "_mock_config", mock_config)
             yield session
 
     def test_run_extraction_iter_yields_progress_updates(self, connected_session):
@@ -836,7 +836,7 @@ class TestPipelineSessionConfigMethods:
         ):
             session = PipelineSession(auto_connect=True)
             session._mock_engine = mock_db.return_value  # type: ignore[attr-defined]
-            session._mock_config = mock_config  # type: ignore[attr-defined]
+            setattr(session, "_mock_config", mock_config)
             yield session
 
     def test_later_steps_of_a_disabled_target_are_the_enabled_later_ones(self, connected_session):
@@ -2037,8 +2037,8 @@ class TestOnlyStep:
         key = "node_type" if step_type == "extraction" else "element_type"
         getter = "get_extraction_configs" if step_type == "extraction" else "get_derivation_configs"
         setattr(session, getter, lambda enabled_only=False: [{key: n, "enabled": e} for n, e in states.items()])
-        session.enable_step = lambda t, n: states.__setitem__(n, True) or True  # type: ignore[method-assign]
-        session.disable_step = lambda t, n: states.__setitem__(n, False) or True  # type: ignore[method-assign]
+        setattr(session, "enable_step", lambda t, n: states.__setitem__(n, True) or True)
+        setattr(session, "disable_step", lambda t, n: states.__setitem__(n, False) or True)
         return session
 
     def test_enables_only_target_inside_block_and_restores_after(self):
@@ -2160,7 +2160,7 @@ class TestConfinedModelExport:
     def test_a_path_outside_the_output_folder_is_refused(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
         session = PipelineSession()
-        session._ensure_connected = lambda: None  # type: ignore[method-assign]
+        setattr(session, "_ensure_connected", lambda: None)
         session._archimate_manager = MagicMock()
 
         with pytest.raises(ValueError, match="workspace"):
@@ -2171,7 +2171,7 @@ class TestConfinedModelExport:
     def test_a_relative_path_is_read_from_the_home_folder(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
         session = PipelineSession()
-        session._ensure_connected = lambda: None  # type: ignore[method-assign]
+        setattr(session, "_ensure_connected", lambda: None)
         session._archimate_manager = MagicMock()
         session._archimate_manager.get_elements.return_value = []
 
@@ -2182,7 +2182,7 @@ class TestConfinedModelExport:
 
 def test_deleting_the_session_repository_leaves_it_for_the_default_graph():
     session = PipelineSession(repository="deriva")
-    session._ensure_connected = lambda: None  # type: ignore[method-assign]
+    setattr(session, "_ensure_connected", lambda: None)
     session._repo_manager = MagicMock()
 
     with patch("deriva.services.session.use_database") as use:

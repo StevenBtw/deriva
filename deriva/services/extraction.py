@@ -78,7 +78,7 @@ from deriva.adapters.repository import RepoManager
 from deriva.adapters.treesitter import cdk
 from deriva.common.cache_utils import hash_inputs
 from deriva.common.document_reader import read_document
-from deriva.common.file_utils import describe_os_error, long_path, read_file_with_encoding
+from deriva.common.file_utils import describe_os_error, is_inside, long_path, read_file_with_encoding
 from deriva.common.naming import UNCOUNTABLE_WORDS, name_key
 from deriva.common.ocel import create_edge_id
 from deriva.modules import extraction
@@ -114,11 +114,11 @@ def repository_root(repo: Any) -> Path:
 
 
 def list_repo_files(repo_path: Path, excluded_dirs: list[str]) -> list[str]:
-    """Repository-relative file paths (forward slashes), skipping excluded directories and .pyc files."""
+    """Repository-relative file paths (forward slashes), skipping excluded directories, .pyc files and links."""
     return [
         rel
         for f in repo_path.rglob("*")
-        if f.is_file() and not str(f).endswith(".pyc") and not extraction.is_excluded_path(rel := f.relative_to(repo_path).as_posix(), excluded_dirs)
+        if f.is_file() and not str(f).endswith(".pyc") and not extraction.is_excluded_path(rel := f.relative_to(repo_path).as_posix(), excluded_dirs) and is_inside(f, repo_path)
     ]
 
 
@@ -2456,6 +2456,9 @@ def _extract_llm_based(
         file_path = repo_path / file_info["path"]
 
         try:
+            if not is_inside(file_path, repo_path):
+                errors.append(f"Skipped {file_info['path']}: a link out of the repository | repo={repo.name} | step={node_type}")
+                continue
             # Route document files to specialized reader
             if file_path.suffix.lower() in (".docx", ".pdf"):
                 content = read_document(file_path)
@@ -2640,6 +2643,9 @@ def _read_documents(repo_path: Path, files: list[dict], repo_name: str) -> tuple
     documents, errors = [], []
     for file_info in sorted(files, key=lambda f: f["path"]):
         file_path = repo_path / file_info["path"]
+        if not is_inside(file_path, repo_path):
+            errors.append(f"Skipped {file_info['path']}: a link out of the repository | repo={repo_name} | step=BusinessConcept")
+            continue
         try:
             text = read_document(file_path) if file_path.suffix.lower() in (".docx", ".pdf") else read_file_with_encoding(file_path)
         except Exception as e:
@@ -2834,7 +2840,7 @@ def _extract_technologies(
     files: list[dict[str, Any]] = []
     errors: list[str] = []
     for file_info in extraction.filter_files_by_input_sources(classified_files, input_sources):
-        if _is_unreadable(file_info):
+        if _is_unreadable(file_info) or not is_inside(repo_path / file_info["path"], repo_path):
             continue
         content = read_file_with_encoding(repo_path / file_info["path"])
         if content is None:

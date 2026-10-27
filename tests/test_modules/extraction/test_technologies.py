@@ -11,6 +11,12 @@ CATALOG = (
 )
 
 
+def _match(alias: str) -> Technology:
+    technology = match_technology(alias, CATALOG)
+    assert technology is not None
+    return technology
+
+
 def test_an_image_is_known_by_its_last_path_segment_without_registry_or_tag():
     assert image_name("public.ecr.aws/docker/library/python:3.12-slim") == "python"
     assert image_name("postgres:15-alpine") == "postgres"
@@ -19,10 +25,10 @@ def test_an_image_is_known_by_its_last_path_segment_without_registry_or_tag():
 
 
 def test_aliases_name_one_canonical_technology_and_unknown_names_fall_back():
-    assert match_technology("postgres", CATALOG).name == "PostgreSQL"
-    assert match_technology("PSYCOPG2", CATALOG).name == "PostgreSQL"  # a client library: use of the database
-    assert match_technology("bitnami/postgresql", CATALOG).name == "PostgreSQL"
-    assert match_technology("AWS::S3::Bucket", CATALOG).kind == "managed service"
+    assert _match("postgres").name == "PostgreSQL"
+    assert _match("PSYCOPG2").name == "PostgreSQL"  # a client library: use of the database
+    assert _match("bitnami/postgresql").name == "PostgreSQL"
+    assert _match("AWS::S3::Bucket").kind == "managed service"
     assert match_technology("my-custom-db", CATALOG) is None
 
 

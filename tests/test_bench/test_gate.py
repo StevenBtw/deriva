@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from deriva.bench.gate import GateRules, measure, verdict, verdict_markdown
 
 MODEL = "anthropic-haiku55"
-REFERENCE = {
+REFERENCE: dict[str, Any] = {
     "repository": "shop",
     "elements": [
         {"key": "core", "type": "ApplicationComponent", "name": "Customer Core"},

@@ -463,7 +463,7 @@ class TestAnswerStability:
     def test_counts_prompts_answered_identically_in_every_run(self):
         from deriva.modules.analysis import compute_answer_stability
 
-        runs = {
+        runs: dict[str, dict[tuple[str, str], list[str | None]]] = {
             "r1": {("Naming", "k1"): ["a"], ("Naming", "k2"): ["b"], ("Concepts", "k3"): ["c"]},
             "r2": {("Naming", "k1"): ["a"], ("Naming", "k2"): ["x"], ("Concepts", "k3"): ["c"]},
             "r3": {("Naming", "k1"): ["a"], ("Naming", "k2"): ["b"], ("Concepts", "k3"): ["c"], ("Concepts", "k4"): ["d"]},
@@ -477,7 +477,7 @@ class TestAnswerStability:
     def test_repeated_prompts_compare_as_multisets(self):
         from deriva.modules.analysis import compute_answer_stability
 
-        runs = {"r1": {("S", "k"): ["a", "b"]}, "r2": {("S", "k"): ["b", "a"]}}
+        runs: dict[str, dict[tuple[str, str], list[str | None]]] = {"r1": {("S", "k"): ["a", "b"]}, "r2": {("S", "k"): ["b", "a"]}}
 
         (stability,) = compute_answer_stability(runs)
 

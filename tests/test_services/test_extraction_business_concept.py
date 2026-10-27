@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -364,10 +365,10 @@ class TestBusinessConceptStep:
 
 
 def test_the_step_runs_the_candidate_flow(tmp_path):
-    cfg = SimpleNamespace(node_type="BusinessConcept", extraction_method="llm")
+    cfg = cast(Any, SimpleNamespace(node_type="BusinessConcept", extraction_method="llm"))
 
     with patch.object(service, "_extract_business_concepts", return_value={"nodes_created": 3, "edges_created": 0, "errors": []}) as step:
-        result = service._run_extraction_step(cfg, SimpleNamespace(name="r"), tmp_path, [], [], None, lambda *a, **k: None, None)
+        result = service._run_extraction_step(cfg, SimpleNamespace(name="r"), tmp_path, [], [], cast(Any, None), lambda *a, **k: None, None)
 
     assert result["nodes_created"] == 3
     step.assert_called_once()

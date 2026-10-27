@@ -6,10 +6,14 @@ import json
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import pytest
 
 from tests.test_studio.conftest import FakeSession
+
+if TYPE_CHECKING:
+    from deriva.studio.runs import RunManager, RunState
 
 
 @dataclass
@@ -42,6 +46,12 @@ def wait_for(predicate, timeout: float = 5.0) -> None:
 
 def finished(client, run_id: str) -> bool:
     return client.app.state.runs.get(run_id).status != "running"
+
+
+def run_of(runs: RunManager, run_id: str) -> RunState:
+    run = runs.get(run_id)
+    assert run is not None
+    return run
 
 
 def test_extraction_run_emits_progress_then_finished(make_client):
@@ -363,7 +373,7 @@ def test_a_finished_run_is_in_the_history_before_and_without_its_summary_on_disk
     manager = RunManager(SessionProvider(factory=lambda: session), runs_dir=tmp_path)
 
     run_id = manager.start("extraction", "deriva")
-    wait_for(lambda: manager.get(run_id).status == "finished")
+    wait_for(lambda: run_of(manager, run_id).status == "finished")
 
     assert [(h["run_id"], h["status"]) for h in manager.history(limit=5)] == [(run_id, "finished")]
 
@@ -381,11 +391,11 @@ def test_a_running_run_heads_the_history(tmp_path):
 
     runs = RunManager(SessionProvider(factory=lambda: FakeSession(run_extraction_iter=blocking, use_repository=None)), runs_dir=tmp_path)
     run_id = runs.start("extraction", "deriva")
-    wait_for(lambda: len(runs.get(run_id).events) >= 2)
+    wait_for(lambda: len(run_of(runs, run_id).events) >= 2)
 
     assert [(h["run_id"], h["status"]) for h in runs.history(limit=5)] == [(run_id, "running")]
     release.set()
-    wait_for(lambda: runs.get(run_id).status == "finished")
+    wait_for(lambda: run_of(runs, run_id).status == "finished")
     assert [(h["run_id"], h["status"]) for h in runs.history(limit=5)] == [(run_id, "finished")]
 
 
@@ -526,9 +536,9 @@ def test_a_run_whose_events_cannot_be_written_still_runs_and_streams(tmp_path, m
     runs = RunManager(SessionProvider(factory=lambda: FakeSession(run_extraction_iter=steps(2), use_repository=None)), runs_dir=tmp_path)
 
     run_id = runs.start("extraction", "deriva")
-    wait_for(lambda: runs.get(run_id).status != "running")
+    wait_for(lambda: run_of(runs, run_id).status != "running")
 
-    assert run_id == "fixedrunid00" and runs.get(run_id).status == "finished"
+    assert run_id == "fixedrunid00" and run_of(runs, run_id).status == "finished"
     assert [e["event"] for e in runs.events(run_id)] == ["started", "progress", "progress", "finished"]
 
 
@@ -582,6 +592,7 @@ def test_a_structural_run_derives_the_prep_phase_only_and_keeps_the_model(make_c
 
 def test_derivation_candidates_become_processing_events(make_client):
     def derive(on_candidates=None, **kwargs):
+        assert on_candidates is not None
         on_candidates("ApplicationComponent", [f"n{i}" for i in range(400)])
         yield Update(phase="derivation", step="ApplicationComponent", current=1, total=1)
 
@@ -608,7 +619,7 @@ def test_a_view_requested_after_a_step_completes_is_served_before_the_next_step(
 
     def recorded(*args, **kwargs):
         # The studio follows its runs from the start; wait for the follower so the test does not race it
-        wait_for(lambda: "run" in started and manager.get(started["run"]).followers > 0)
+        wait_for(lambda: "run" in started and run_of(manager, started["run"]).followers > 0)
         for i in (1, 2, 3):
             order.append(f"S{i}")
             yield Update(step=f"S{i}")
@@ -639,7 +650,7 @@ def test_an_unfollowed_run_does_not_pause_between_steps(tmp_path):
     manager = RunManager(provider, runs_dir=tmp_path)
     began = time.time()
     run_id = manager.start("extraction")
-    wait_for(lambda: manager.get(run_id).status == "finished")
+    wait_for(lambda: run_of(manager, run_id).status == "finished")
 
     assert time.time() - began < 5.0
 
@@ -651,10 +662,10 @@ def test_a_derivation_run_starts_from_an_empty_model_and_says_so(tmp_path):
     session = FakeSession(run_derivation_iter=steps(1, phase="derivation"), use_repository=None)
     manager = RunManager(SessionProvider(factory=lambda: session), runs_dir=tmp_path)
     run_id = manager.start("derivation")
-    wait_for(lambda: manager.get(run_id).status == "finished")
+    wait_for(lambda: run_of(manager, run_id).status == "finished")
 
     assert len(session.called("clear_model")) == 1
-    progress = [e["data"] for e in manager.get(run_id).events if e["event"] == "progress"]
+    progress = [e["data"] for e in run_of(manager, run_id).events if e["event"] == "progress"]
     assert progress[0]["step"] == "Clear model" and progress[0]["status"] == "complete"
     assert progress[1]["step"] == "S1"
 
@@ -666,10 +677,10 @@ def test_a_derivation_run_keeps_the_model_when_the_setting_is_off(tmp_path):
     session = FakeSession(run_derivation_iter=steps(1, phase="derivation"), use_repository=None, get_setting="false")
     manager = RunManager(SessionProvider(factory=lambda: session), runs_dir=tmp_path)
     run_id = manager.start("derivation")
-    wait_for(lambda: manager.get(run_id).status == "finished")
+    wait_for(lambda: run_of(manager, run_id).status == "finished")
 
     assert session.called("clear_model") == []
-    assert [e["data"]["step"] for e in manager.get(run_id).events if e["event"] == "progress"] == ["S1"]
+    assert [e["data"]["step"] for e in run_of(manager, run_id).events if e["event"] == "progress"] == ["S1"]
 
 
 def test_an_extraction_run_leaves_the_model_alone(tmp_path):
@@ -679,7 +690,7 @@ def test_an_extraction_run_leaves_the_model_alone(tmp_path):
     session = FakeSession(run_extraction_iter=steps(1), use_repository=None)
     manager = RunManager(SessionProvider(factory=lambda: session), runs_dir=tmp_path)
     run_id = manager.start("extraction")
-    wait_for(lambda: manager.get(run_id).status == "finished")
+    wait_for(lambda: run_of(manager, run_id).status == "finished")
 
     assert session.called("clear_model") == []
 
@@ -733,9 +744,8 @@ def test_shutdown_cancels_the_run_and_does_not_hang_on_a_long_step(tmp_path, mon
         release.wait(10)
         yield Update(step="S2")
 
-    client = TestClient(
-        studio_app.create_app(provider=SessionProvider(factory=lambda: FakeSession(run_extraction_iter=blocking, use_repository=None)), static_dir=None, runs_dir=tmp_path)
-    )
+    app = studio_app.create_app(provider=SessionProvider(factory=lambda: FakeSession(run_extraction_iter=blocking, use_repository=None)), static_dir=None, runs_dir=tmp_path)
+    client = TestClient(app)
     client.__enter__()
     run_id = client.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
     assert in_step.wait(5)
@@ -744,7 +754,7 @@ def test_shutdown_cancels_the_run_and_does_not_hang_on_a_long_step(tmp_path, mon
     client.__exit__(None, None, None)
 
     assert time.time() - began < 3
-    run = client.app.state.runs.get(run_id)
+    run = app.state.runs.get(run_id)
     assert run.cancel_requested
     release.set()
     wait_for(lambda: run.status == "cancelled")

@@ -25,7 +25,7 @@ def extractor():
 @pytest.fixture
 def parser(extractor):
     """Provide a tree-sitter parser for C#."""
-    raw_lang = extractor.get_language()
+    raw_lang: object = extractor.get_language()
     language = tree_sitter.Language(raw_lang)
     return tree_sitter.Parser(language)
 
@@ -49,7 +49,7 @@ class TestCSharpExtractorProperties:
 
     def test_get_language_returns_valid_language(self, extractor):
         """Should return a valid tree-sitter language."""
-        lang = extractor.get_language()
+        lang: object = extractor.get_language()
         # A grammar tree-sitter can parse with
         import tree_sitter
 

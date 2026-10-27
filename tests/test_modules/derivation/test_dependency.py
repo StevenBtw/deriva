@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from deriva.adapters.graph import GraphManager
 
 from deriva.modules.derivation.base import DependencyRule, derive_consolidated_relationships, derive_dependency_relationships
 
@@ -98,6 +101,8 @@ class TestConsolidatedPass:
     def test_dependencies_come_from_the_import_edges(self):
         graph = FakeGraph([("r/app/cli/main.py", "r/app/services/run.py")])
 
-        relationships = derive_consolidated_relationships(all_elements=ELEMENTS, relationship_rules={}, llm_query_fn=None, graph_manager=graph, dependency=RULES)
+        relationships = derive_consolidated_relationships(
+            all_elements=ELEMENTS, relationship_rules={}, llm_query_fn=None, graph_manager=cast("GraphManager", graph), dependency=RULES
+        )
 
         assert _pairs(relationships) == {("services", "Serving", "cli")}

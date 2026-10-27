@@ -46,6 +46,7 @@ def manager():
 class TestRegistration:
     def test_extractor_is_registered(self):
         extractor = get_extractor("bms")
+        assert extractor is not None
         assert type(extractor).__name__ == "BmsExtractor"
         assert extractor.language_name == "bms"
         assert extractor.get_language() is None

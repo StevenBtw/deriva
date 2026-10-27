@@ -8,7 +8,7 @@ constraints:
 - H2 at most one incoming relationship of a single-parent type per element
 - H3 no cycles in acyclic relationship types (lazy cuts on the merged model)
 - H4 a kept relationship between u and v excludes merging u and v
-- H5 merges must keep H1/H2 true after redirection
+- H5 merges must keep H1/H2 true after redirection (one merge, or two that join both ends)
 - H6 no merge chains without direct evidence (transitivity)
 
 Tiers are optimised in strict order (tier 1 first, fixed, then tier 2, then 3),
@@ -289,6 +289,7 @@ def _build_rows(props: list[Proposal], merges: list[MergeCandidate], single_pare
     rows += [_Row("H1", {i: 1.0 for i in idx}, 1.0) for idx in by_pair.values() if len(idx) > 1]
     rows += [_Row("H2", {i: 1.0 for i in idx}, 1.0) for idx in one_parent.values() if len(idx) > 1]
 
+    index = {(m.first, m.second): n_p + k for k, m in enumerate(merges)}
     for k, m in enumerate(merges):
         var = n_p + k
         pair = {m.first, m.second}
@@ -300,8 +301,14 @@ def _build_rows(props: list[Proposal], merges: list[MergeCandidate], single_pare
             for j in touching[a_idx + 1 :]:
                 if _collide_after_merge(props[i], props[j], m.first, m.second, single_parent):
                     rows.append(_Row("H5", {i: 1.0, j: 1.0, var: 1.0}, 2.0))
+        # Two merges, one joining the sources and one the targets of two relationships, put both on one pair; neither
+        # merge alone does (a chain of merges needs its direct merge, H6, so pairs of direct merges cover chains)
+        for i in (i for i, p in enumerate(props) if p.source == m.first):
+            for j in (j for j, q in enumerate(props) if q.source == m.second):
+                other = index.get(tuple(sorted((props[i].target, props[j].target))))
+                if other is not None and other != var and props[i].target != props[j].target:
+                    rows.append(_Row("H5", {i: 1.0, j: 1.0, var: 1.0, other: 1.0}, 3.0))
 
-    index = {(m.first, m.second): n_p + k for k, m in enumerate(merges)}
     for k1, m1 in enumerate(merges):
         for k2 in range(k1 + 1, len(merges)):
             m2 = merges[k2]

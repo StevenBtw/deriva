@@ -3,6 +3,7 @@
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -338,6 +339,6 @@ class TestCacheKeyCoversResponseShapingInputs:
         assert CacheManager.generate_cache_key("p", "m", **a) != CacheManager.generate_cache_key("p", "m", **b)
 
     def test_same_inputs_give_the_same_key(self):
-        kwargs = {"system_prompt": "s", "temperature": 0.3, "max_tokens": 4000}
+        kwargs: dict[str, Any] = {"system_prompt": "s", "temperature": 0.3, "max_tokens": 4000}
 
         assert CacheManager.generate_cache_key("p", "m", **kwargs) == CacheManager.generate_cache_key("p", "m", **kwargs)

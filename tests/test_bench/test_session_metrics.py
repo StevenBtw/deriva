@@ -136,7 +136,8 @@ class TestTwoLevel:
 def test_krippendorff_alpha_nominal():
     assert pm.krippendorff_alpha([{"a": 1, "b": 2}, {"a": 1, "b": 2}]) == 1.0
     assert pm.krippendorff_alpha([{"a": 1}, {"a": 1}]) is None  # one value only: alpha is undefined
-    assert pm.krippendorff_alpha([{"a": 1, "b": 2}, {"a": 2, "b": 1}]) < 0
+    disagreement = pm.krippendorff_alpha([{"a": 1, "b": 2}, {"a": 2, "b": 1}])
+    assert disagreement is not None and disagreement < 0
 
 
 class TestOutOfCandidates:
@@ -204,7 +205,7 @@ class TestGolden:
         ]
 
         listed = pm.golden_comparison(derived, self._reference(), aliases={"r3": ["Payments Host"]})
-        objects = pm.golden_comparison(derived, self._reference(), aliases={"r3": {"names": ["Payments Host"], "structure_refs": []}})
+        objects = pm.golden_comparison(derived, self._reference(), aliases={"r3": {"names": ["Payments Host"], "structure_refs": []}})  # ty: ignore[invalid-argument-type]: the annotation omits the {names, structure_refs} form the function accepts
 
         assert listed == objects
         assert (listed["recall"], listed["precision"], listed["manual_matches"], listed["structure_matches"]) == (0.5, round(2 / 3, 3), 1, 0)
@@ -229,7 +230,7 @@ class TestGolden:
             "g3": {"structure_refs": ["path:libs/publish"]},  # a parent folder of z: no match
         }
 
-        result = pm.golden_comparison(derived, reference, aliases=aliases)
+        result = pm.golden_comparison(derived, reference, aliases=aliases)  # ty: ignore[invalid-argument-type]: the annotation omits the {names, structure_refs} form the function accepts
 
         assert (result["recall"], result["structure_matches"]) == (round(2 / 3, 3), 2)
 
@@ -245,11 +246,11 @@ class TestGolden:
         # g1 is found by name; g2 and g3 point at the same folder, but x is already taken
         aliases = {"g2": {"structure_refs": ["path:core"]}, "g3": {"structure_refs": ["path:core"]}}
 
-        result = pm.golden_comparison(derived, reference, aliases=aliases)
+        result = pm.golden_comparison(derived, reference, aliases=aliases)  # ty: ignore[invalid-argument-type]: the annotation omits the {names, structure_refs} form the function accepts
 
         assert (result["recall"], result["structure_matches"]) == (round(1 / 3, 3), 0)
         # Without the name match, the first golden element (by id) that points at x takes it
-        alone = pm.golden_comparison([{**derived[0], "name": "Something Else"}], reference, aliases=aliases)
+        alone = pm.golden_comparison([{**derived[0], "name": "Something Else"}], reference, aliases=aliases)  # ty: ignore[invalid-argument-type]: the annotation omits the {names, structure_refs} form the function accepts
         assert (alone["recall"], alone["structure_matches"]) == (round(1 / 3, 3), 1)
         assert pm.golden_mapping([{**derived[0], "name": "Something Else"}], reference, aliases=aliases) == {"x": {"g2"}}
 

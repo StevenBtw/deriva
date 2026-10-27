@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deriva.adapters.graph import GraphManager
 from deriva.modules.derivation.base import PerCandidateConfig, RelationshipLLMConfig
 from deriva.modules.derivation.prep import GraphMetrics
 from deriva.services import derivation
@@ -370,7 +372,7 @@ class TestRunEnrichments:
     def test_one_read_until_invalidated(self):
         reads = []
         with patch.object(derivation, "get_enrichments_from_graph", side_effect=lambda gm: reads.append(gm) or {"n": len(reads)}):
-            run = derivation._RunEnrichments("gm")
+            run = derivation._RunEnrichments(cast("GraphManager", "gm"))
             first = run.get()
             assert run.get() is first
             run.invalidate()
@@ -2965,7 +2967,9 @@ class TestRoleConfig:
     def test_params_can_ask_for_one_element_per_candidate(self):
         params = '{"roles": {"labels": ["Technology"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate"}}'
 
-        assert derivation._role_config(params).element_per == "candidate"
+        roles = derivation._role_config(params)
+
+        assert roles is not None and roles.element_per == "candidate"
 
     def test_element_per_must_be_role_or_candidate(self):
         with pytest.raises(ValueError, match="element_per"):
@@ -2988,12 +2992,15 @@ class TestRoleConfig:
 
         roles = derivation._role_config(params)
 
+        assert roles is not None
         assert (roles.name_template, roles.container_type, roles.show_path) == ("{container} {subject} {role}", "ApplicationComponent", True)
 
     def test_params_can_name_role_elements_with_the_naming_call(self):
         params = {"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate", "naming_call": True}, "naming": {"instruction": "N"}}
 
-        assert derivation._role_config(json.dumps(params)).naming_call is True
+        roles = derivation._role_config(json.dumps(params))
+
+        assert roles is not None and roles.naming_call is True
 
     @pytest.mark.parametrize(
         "params",
@@ -3080,7 +3087,9 @@ class TestRelationshipTemperature:
     def test_row_temperature_is_part_of_the_config(self):
         row = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"persona": "P"}', temperature=0.0)
 
-        assert derivation._relationship_llm_config([row]).temperature == 0.0
+        config = derivation._relationship_llm_config([row])
+
+        assert config is not None and config.temperature == 0.0
 
     @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
     def test_consolidated_pass_uses_it(self, runner):
@@ -3267,8 +3276,10 @@ class TestGraphLinkConfig:
     def test_structural_roles_can_keep_the_name_as_written(self):
         roles = {"names": {"component": "C"}, "element_per": "candidate", "structural": [{"property": "category", "pattern": "^program$", "role": "component"}]}
 
-        assert derivation._role_config(json.dumps({"roles": roles})).structural_as_written is False
-        assert derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": True}})).structural_as_written is True
+        default, as_written = derivation._role_config(json.dumps({"roles": roles})), derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": True}}))
+
+        assert default is not None and default.structural_as_written is False
+        assert as_written is not None and as_written.structural_as_written is True
         with pytest.raises(ValueError, match="structural_as_written"):
             derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": "yes"}}))
 
@@ -3374,7 +3385,8 @@ class TestUnitConfigs:
         config = derivation._naming_config(json.dumps({"naming": {"instruction": "x", "choose_instruction": "CHOOSE"}}))
 
         assert config is not None and config.choose_instruction == "CHOOSE"
-        assert derivation._naming_config(json.dumps({"naming": {"instruction": "x"}})).choose_instruction == ""
+        default = derivation._naming_config(json.dumps({"naming": {"instruction": "x"}}))
+        assert default is not None and default.choose_instruction == ""
         with pytest.raises(ValueError, match="choose_instruction"):
             derivation._naming_config(json.dumps({"naming": {"instruction": "x", "choose_instruction": 3}}))
 
@@ -3386,7 +3398,8 @@ class TestUnitConfigs:
         assert config is not None
         assert config.guards.generic_words == frozenset({"app", "cli"}) and config.guards.kind_nouns["container"] == "Server"
         assert config.guards.reserved_labels == ("Technology", "ExternalDependency")
-        assert derivation._naming_config(json.dumps({"naming": {"instruction": "x"}})).guards.generic_words == frozenset()
+        default = derivation._naming_config(json.dumps({"naming": {"instruction": "x"}}))
+        assert default is not None and default.guards.generic_words == frozenset()
         with pytest.raises(ValueError, match="guards"):
             derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": {"generic_words": "app"}}}))
         with pytest.raises(ValueError, match="guards"):

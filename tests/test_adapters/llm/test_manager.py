@@ -246,7 +246,9 @@ class TestLLMManagerInit:
                 manager = LLMManager()
 
         # Ollama goes through the OpenAI-compatible client, for the configured model
-        assert (type(manager._pydantic_model).__name__, manager._pydantic_model.model_name) == ("OpenAIChatModel", "llama3")
+        model = manager._pydantic_model
+        assert not isinstance(model, str)
+        assert (type(model).__name__, model.model_name) == ("OpenAIChatModel", "llama3")
 
     def test_init_sets_default_values(self, tmp_path, monkeypatch):
         """Should set default values for optional config."""
@@ -1233,7 +1235,9 @@ def test_usage_as_property_is_recorded(tmp_path):
         agent_class.return_value.run_sync.return_value = result
         manager.query("Hello")
 
-    assert (manager.last_call["input_tokens"], manager.last_call["output_tokens"]) == (11, 7)
+    last_call = manager.last_call
+    assert last_call is not None
+    assert (last_call["input_tokens"], last_call["output_tokens"]) == (11, 7)
 
 
 def test_benchmark_models_and_rpm_come_from_the_merged_environment(monkeypatch):

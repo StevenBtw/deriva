@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
+from deriva.adapters.graph import GraphManager
 from deriva.modules.derivation.base import (
     ConfigurationRule,
     ContainmentRule,
@@ -120,7 +121,7 @@ class TestConsolidatedPass:
             all_elements=[docker_node, compose, docker, CORE],
             relationship_rules=rules,
             llm_query_fn=lambda prompt, schema, **kw: SimpleNamespace(content=json.dumps({"relationships": proposals})),
-            graph_manager=graph,
+            graph_manager=cast("GraphManager", graph),
             llm_config=RelationshipLLMConfig(instruction="rules", persona="P"),
             membership=MEMBERSHIP,
         )
@@ -150,7 +151,7 @@ class TestConsolidatedPass:
             all_elements=[compose, mysql],
             relationship_rules=rules,
             llm_query_fn=lambda prompt, schema, **kw: SimpleNamespace(content=json.dumps({"relationships": proposals})),
-            graph_manager=FakeGraph({}, [], connected=["file::r::docker-compose.yml", "tech::r::mysql"]),
+            graph_manager=cast("GraphManager", FakeGraph({}, [], connected=["file::r::docker-compose.yml", "tech::r::mysql"])),
             llm_config=RelationshipLLMConfig(instruction="rules", persona="P"),
             membership=MEMBERSHIP,
         )
@@ -162,7 +163,9 @@ class TestConsolidatedPass:
     def test_configuration_reads_the_configures_edges(self):
         graph = FakeGraph({"dir::r::core": "r/core"}, [("r/core/pom.xml", "tech::r::java")])
 
-        relationships = derive_consolidated_relationships(all_elements=[CORE, RUNTIME], relationship_rules={}, llm_query_fn=None, graph_manager=graph, configuration=CONFIGURATION)
+        relationships = derive_consolidated_relationships(
+            all_elements=[CORE, RUNTIME], relationship_rules={}, llm_query_fn=None, graph_manager=cast("GraphManager", graph), configuration=CONFIGURATION
+        )
 
         assert _pairs(relationships) == {("ts_runtime", "Serving", "ac_core")}
 
@@ -171,7 +174,12 @@ class TestConsolidatedPass:
         containment = [ContainmentRule(container="ApplicationComponent", contained="ApplicationComponent", relationship="Composition")]
 
         relationships = derive_consolidated_relationships(
-            all_elements=[CORE, CRUD, APP_SERVER, JBOSS, HOSTING], relationship_rules={}, llm_query_fn=None, graph_manager=graph, containment=containment, membership=MEMBERSHIP
+            all_elements=[CORE, CRUD, APP_SERVER, JBOSS, HOSTING],
+            relationship_rules={},
+            llm_query_fn=None,
+            graph_manager=cast("GraphManager", graph),
+            containment=containment,
+            membership=MEMBERSHIP,
         )
 
         assert _pairs(relationships) == {

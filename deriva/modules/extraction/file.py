@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from deriva.common.file_utils import is_inside
+
 from .base import (
     current_timestamp,
     generate_edge_id,
@@ -201,7 +203,7 @@ def extract_files(
 
         # First pass: collect all file paths for test matching
         for file_path in repo_path_obj.rglob("*"):
-            if file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs):
+            if file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs) or not is_inside(file_path, repo_path_obj):
                 continue
             rel_path = file_path.relative_to(repo_path_obj)
             file_paths_set.add(str(rel_path).replace("\\", "/"))
@@ -210,7 +212,7 @@ def extract_files(
         test_edges: list[dict[str, Any]] = []
 
         for file_path in repo_path_obj.rglob("*"):
-            if file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs):
+            if file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs) or not is_inside(file_path, repo_path_obj):
                 continue
 
             try:
