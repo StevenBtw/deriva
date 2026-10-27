@@ -274,7 +274,7 @@ def _is_valid_git_url(url: str) -> bool:
         r"^git@[^\s:]+:[^\s]+\.git$",
         r"^git@[^\s:]+:[^\s]+$",
         r"^ssh://[^\s]+\.git$",
-        r"^file://[^\s]+\.git$",
+        r"^file://[^\s]+$",  # a bare repository or a working tree
     ]
     return any(re.match(pattern, url) for pattern in patterns)
 
@@ -300,9 +300,11 @@ def _check_remote_exists(repo_url: str) -> bool:
 
 
 def _extract_repo_name(repo_url: str) -> str:
-    """Extract repository name from URL."""
+    """Extract repository name from URL (a local ``.../name/.git`` is named after the folder that holds it)."""
     url = repo_url.rstrip("/")
-    if url.endswith(".git"):
+    if url.endswith("/.git"):
+        url = url[:-5]
+    elif url.endswith(".git"):
         url = url[:-4]
     return url.split("/")[-1]
 
