@@ -76,7 +76,7 @@ def _print_derivation_result(result: dict) -> None:
 def _print_pipeline_result(result: dict) -> None:
     """Print full pipeline results."""
     typer.echo(f"\n{'=' * 60}")
-    typer.echo("PIPELINE COMPLETE")
+    typer.echo("PIPELINE COMPLETE" if result.get("success") else "PIPELINE FAILED")
     typer.echo(f"{'=' * 60}")
 
     results = result.get("results", {})

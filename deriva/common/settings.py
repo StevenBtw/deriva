@@ -139,7 +139,8 @@ class LlmSettings(_Group):
     model_config = SettingsConfigDict(env_prefix="LLM_", extra="ignore")
 
     default_model: str | None = None
-    provider: str = "azure"
+    # The older single-provider settings (LLM_PROVIDER with LLM_<PROVIDER>_*), used only when LLM_DEFAULT_MODEL is unset
+    provider: str | None = None
     azure_api_url: str | None = None
     azure_api_key: str | None = None
     azure_model: str = "gpt-4o-mini"

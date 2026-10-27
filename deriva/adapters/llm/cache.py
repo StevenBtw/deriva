@@ -10,6 +10,7 @@ import json
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from deriva.common.cache_utils import BaseDiskCache, dict_to_hashable, hash_inputs
 
@@ -26,6 +27,15 @@ def _hash_schema(schema_tuple: tuple) -> str:
     # Convert back to dict for JSON serialization
     schema_dict = dict(schema_tuple)
     return json.dumps(schema_dict, sort_keys=True)
+
+
+def endpoint_key(provider: str, api_url: str | None) -> str:
+    """The provider with its base URL, normalized (scheme and host in lower case, no trailing slash)."""
+    if not api_url:
+        return provider
+    parts = urlsplit(api_url.strip())
+    url = urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, ""))
+    return f"{provider}|{url}"
 
 
 class CacheManager(BaseDiskCache):
@@ -64,6 +74,7 @@ class CacheManager(BaseDiskCache):
         temperature: float | None = None,
         max_tokens: int | None = None,
         reasoning: str | None = None,
+        endpoint: str | None = None,
     ) -> str:
         """
         Generate a unique cache key from everything that shapes the response.
@@ -82,6 +93,7 @@ class CacheManager(BaseDiskCache):
             temperature: Effective sampling temperature of the call
             max_tokens: Effective max_tokens of the call
             reasoning: The model config's reasoning level (keys without one are unchanged)
+            endpoint: Provider and base URL (``endpoint_key``): one model id served by two providers shares no answers
 
         Returns:
             SHA256 hash as cache key
@@ -107,6 +119,8 @@ class CacheManager(BaseDiskCache):
             parts.append(f"max_tokens:{max_tokens}")
         if reasoning is not None:
             parts.append(f"reasoning:{reasoning}")
+        if endpoint is not None:
+            parts.append(f"endpoint:{endpoint}")
 
         return hash_inputs(*parts)
 

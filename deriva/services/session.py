@@ -874,11 +874,8 @@ class PipelineSession:
 
         llm_query_fn = self._get_llm_query_fn()
         if llm_query_fn is None:
-
-            def noop_llm(prompt: str, schema: dict) -> None:
-                return None
-
-            llm_query_fn = noop_llm
+            # No model configured: the run is a --no-llm run (the CLI says the LLM steps are skipped)
+            return self.run_pipeline(repo_name=repo_name, verbose=verbose, progress=progress, no_llm=True)
 
         return pipeline.run_full_pipeline(
             engine=self._engine,
