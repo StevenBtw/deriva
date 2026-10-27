@@ -326,6 +326,12 @@ uv run deriva-cli config setting show excluded_directories
 uv run deriva-cli config setting set excluded_directories '[".git", "node_modules", "third_party"]'
 ```
 
+**Limits for untrusted repositories:** extraction does not read a file larger than `max_read_bytes` (default 50 MB; it is reported, and the run goes on), and a run makes at most `max_llm_calls_per_run` LLM calls (default 2000), after which every further call of that run fails with a message naming the setting. Raise them for a very large repository.
+
+```bash
+uv run deriva-cli config setting set max_llm_calls_per_run 5000
+```
+
 **Derivation name patterns:** some derivation steps use include and exclude patterns on the names of their code candidates; business concepts are already classified and skip them. Most of these steps reject a name that contains an exclude pattern and keep one that contains an include pattern, and a name that matches neither follows the step's default (rejected by most steps, kept by BusinessFunction, ApplicationInterface, SystemSoftware and TechnologyService). BusinessObject (type definitions) and BusinessEvent (methods) use the patterns to rank candidates instead, and fill their remaining slots with names that did not match. A step that uses the default candidate filter (ApplicationComponent, ApplicationInterface, BusinessFunction, DataObject, Device, Node, SystemSoftware, TechnologyService) can limit the patterns to candidates with given graph labels with its `pattern_labels` param, and set a k-core threshold with `graph_filter`. Patterns are stored per step, type and category.
 
 ```bash
