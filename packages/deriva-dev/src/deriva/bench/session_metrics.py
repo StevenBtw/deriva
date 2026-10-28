@@ -198,16 +198,15 @@ def two_level_rows(sessions: list[Path]) -> list[dict[str, Any]]:
     several models, also over all their runs (``ALL_MODELS``), where a prompt is the same prompt text, not the per-model
     cache key."""
     rows = []
+    # The runs of one repository and model, pooled over the sessions (as consistency_rows pools them)
     pooled: dict[str, dict[str, list[tuple[str, dict[str, Any], list[dict[str, Any]]]]]] = {}
     for session in sessions:
         calls = _calls(session)
-        runs: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
         for repo, model, number, snapshot in run_snapshots(session):
-            runs.setdefault((repo, model), []).append((number, snapshot))
-        for (repo, model), numbered in sorted(runs.items()):
-            group = [(str(number), snapshot, calls.get((repo, model, number), [])) for number, snapshot in numbered]
+            pooled.setdefault(repo, {}).setdefault(model, []).append((f"{session.name}:{model}:{number}", snapshot, calls.get((repo, model, number), [])))
+    for repo, by_model in sorted(pooled.items()):
+        for model, group in sorted(by_model.items()):
             rows += _two_level(repo, model, group, call_key)
-            pooled.setdefault(repo, {}).setdefault(model, []).extend((f"{session.name}:{model}:{label}", s, c) for label, s, c in group)
     for repo, by_model in sorted(pooled.items()):
         if len(by_model) > 1:
             group = [run for model in sorted(by_model) for run in by_model[model]]

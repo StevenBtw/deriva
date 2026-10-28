@@ -821,6 +821,8 @@ def derive_unit_services(
                         "objects_from_domain": from_domain,
                         "members": sorted(({"name": members[m]["name"], "source": m} for m in group), key=lambda x: (x["name"], x["source"])),
                         "name_candidates": candidates,
+                        # An LLM chose among the candidates (structure names it with service_verbs, or with one candidate)
+                        "name_choice": not config.service_verbs and len(candidates) > 1,
                         "processes": sorted(life for life, sites in (lifecycle_sites or {}).items() if sites & {f for m in group for f in member_files(m)}),
                         "states": sorted(
                             f"{life}::{state}"
@@ -896,7 +898,14 @@ def derive_unit_services(
                 "name": name,
                 "element_type": "BusinessFunction",
                 "documentation": "",
-                "properties": {"source": domain, "services": served_by, "name_candidates": candidates, "confidence": 1.0, "derived_at": current_timestamp()},
+                "properties": {
+                    "source": domain,
+                    "services": served_by,
+                    "name_candidates": candidates,
+                    "name_choice": len(candidates) > 1,
+                    "confidence": 1.0,
+                    "derived_at": current_timestamp(),
+                },
             }
         )
 

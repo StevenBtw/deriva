@@ -177,7 +177,7 @@ def _build_repo_context(graph_manager: GraphManager | None) -> RepoContext:
     repo_name = ""
     if graph_manager is not None:
         try:
-            rows = graph_manager.query("MATCH (r:Graph:Repository) WHERE r.active = true RETURN r.repository_name as name LIMIT 1")
+            rows = graph_manager.query("MATCH (r:Graph:Repository) WHERE r.active = true RETURN r.repository_name as name ORDER BY r.repository_name LIMIT 1")
             if rows and rows[0].get("name"):
                 repo_name = rows[0]["name"]
         except Exception as e:
