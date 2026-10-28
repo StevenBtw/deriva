@@ -45,6 +45,17 @@ def test_write_query_is_rejected_before_it_reaches_the_database(make_client):
     assert session.called("query_graph_read_only") == []
 
 
+def test_a_query_that_reads_a_local_file_is_rejected(make_client):
+    """grafeo's LOAD CSV reads any local file (file:///...): the studio's query view must never pass it on."""
+    session = FakeSession(query_graph_read_only=[])
+    client = make_client(session)
+
+    for query in ("LOAD CSV FROM 'file:///etc/passwd' AS row RETURN row", "load csv with headers from 'file:///x' as r return r"):
+        response = client.post("/grafeo/query", json={"query": query, "language": "cypher"})
+        assert response.status_code == 400
+    assert session.called("query_graph_read_only") == []
+
+
 def test_unknown_database_and_language(make_client):
     client = make_client(FakeSession(query_graph_read_only=[]))
 

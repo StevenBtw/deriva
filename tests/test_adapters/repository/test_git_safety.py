@@ -203,3 +203,12 @@ class TestLocalNames:
 
     def test_a_working_tree_url_is_valid(self):
         assert repo_manager._is_valid_git_url("file:///srv/repos/LakesideMutual")
+
+
+def test_metadata_extraction_takes_one_folder_name(tmp_path):
+    from deriva.common.exceptions import RepositoryError
+
+    (tmp_path / "secret").mkdir()
+    manager = RepoManager(workspace_dir=tmp_path / "workspace")
+    with pytest.raises(RepositoryError, match="one folder name"):
+        manager.extract_metadata("../secret")
