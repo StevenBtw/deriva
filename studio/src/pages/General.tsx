@@ -773,6 +773,162 @@ function LlmSamples() {
   );
 }
 
+type Limit = {
+  key: string;
+  id: string;
+  label: string;
+  what: string;
+  /** Shown value per stored value (the read limit is stored in bytes, shown in MB) */
+  scale: number;
+  saved: (shown: string) => string;
+};
+
+const LIMITS: Limit[] = [
+  {
+    key: "max_read_bytes",
+    id: "max-read-bytes",
+    label: "Largest file read (MB)",
+    what: "the largest file read",
+    scale: 1_000_000,
+    saved: (shown) =>
+      `Saved: extraction reads files up to ${shown} MB (from the next run).`,
+  },
+  {
+    key: "max_llm_calls_per_run",
+    id: "max-llm-calls",
+    label: "LLM calls per run",
+    what: "LLM calls per run",
+    scale: 1,
+    saved: (shown) =>
+      `Saved: a run makes at most ${shown} LLM calls (from the next run).`,
+  },
+];
+
+/** One limit: its value (or the default while unset), saved or given back to the default. */
+function LimitRow({
+  limit,
+  onNote,
+}: {
+  limit: Limit;
+  onNote: (note: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [fallback, setFallback] = useState<string | null>(null);
+  const [isSet, setIsSet] = useState(false);
+  const shown = (stored: string | null | undefined) =>
+    stored == null ? "" : String(Number(stored) / limit.scale);
+
+  useEffect(() => {
+    settings
+      .get(limit.key)
+      .then(({ value, default: fallbackValue }) => {
+        setIsSet(value !== null);
+        setFallback(shown(fallbackValue));
+        setDraft(shown(value ?? fallbackValue));
+      })
+      .catch((reason) => onNote(message(reason)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit.key]);
+
+  const save = async () => {
+    if (draft === null) return;
+    const typed = Number(draft.trim());
+    if (!Number.isFinite(typed) || typed <= 0) {
+      onNote(`${limit.label} must be a positive number.`);
+      return;
+    }
+    try {
+      const { value } = await settings.set(
+        limit.key,
+        String(Math.round(typed * limit.scale)),
+      );
+      setIsSet(true);
+      onNote(limit.saved(shown(value)));
+    } catch (reason) {
+      onNote(message(reason));
+    }
+  };
+
+  const unset = async () => {
+    try {
+      await settings.unset(limit.key);
+      setIsSet(false);
+      setDraft(fallback ?? "");
+      onNote(`${limit.label}: the default (${fallback}) applies again.`);
+    } catch (reason) {
+      onNote(message(reason));
+    }
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        flexWrap: "wrap",
+      }}
+    >
+      <label htmlFor={limit.id} style={{ minWidth: 150 }}>
+        {limit.label}
+      </label>
+      <input
+        id={limit.id}
+        type="number"
+        min={limit.scale === 1 ? 1 : 0.001}
+        step="any"
+        value={draft ?? ""}
+        disabled={draft === null}
+        style={{ width: 100 }}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && void save()}
+      />
+      <button
+        type="button"
+        aria-label={`Save ${limit.what}`}
+        disabled={draft === null}
+        onClick={() => void save()}
+      >
+        Save
+      </button>
+      <button
+        type="button"
+        className="ghost"
+        aria-label={`Use the default ${limit.what}`}
+        disabled={!isSet}
+        onClick={() => void unset()}
+      >
+        Default
+      </button>
+    </div>
+  );
+}
+
+/** Limits for untrusted repositories: the largest file extraction reads and the LLM calls a run may make. */
+function RunLimits() {
+  const [note, setNote] = useState<string | null>(null);
+  return (
+    <div className="card">
+      <div className="hd">
+        <h3>Run limits</h3>
+      </div>
+      <div className="bd" style={{ display: "grid", gap: 8 }}>
+        {LIMITS.map((limit) => (
+          <LimitRow key={limit.key} limit={limit} onNote={setNote} />
+        ))}
+        <div className="note">
+          Guards for repositories you do not know. A file larger than the read
+          limit is not read (each one is reported, and the run goes on); after
+          the call limit, every further LLM call of the run fails with a message
+          naming the setting. Defaults: 50 MB and 2,000 calls; raise them for a
+          very large repository.
+        </div>
+      </div>
+      {note && <div className="bd note">{note}</div>}
+    </div>
+  );
+}
+
 const CLEAR_MODEL = "derivation_clear_model";
 
 /** Whether full derivation runs start from an empty model (the default, as benchmarks do); a switch for deriva-dev. */
@@ -846,6 +1002,7 @@ export function General({ benchmark = true }: { benchmark?: boolean }) {
           <ExcludedDirectories />
           <GraphViews />
           <LlmSamples />
+          <RunLimits />
           {benchmark && <DerivationRuns />}
           <Models />
         </div>
