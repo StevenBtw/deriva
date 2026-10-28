@@ -37,10 +37,14 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 ### Derivation
 
 - **Joint selection keeps one relationship per pair under two merges**: two merges that join both ends of two relationships no longer leave both relationships on one pair; neither merge alone did. Without merge candidates (every run so far) the model is unchanged
+- **Relationship identifiers from what the relationship is**: a relationship's identifier is a hash of its type, its ends and its origin instead of a random one, so the same relationship has the same identifier in every run and the last tie-break of joint selection is deterministic; adding a relationship that exists already stores it once. Exported models are unchanged
+- **Sampling caches each answer**: a step that votes (directory classification, element naming with `samples` above 1) numbers its answers, and each has its own cache entry, so a cached run votes over the answers the run got (before, every sample read one cached answer). A single call keeps its cache key
+- **One setting for the answers per decision**: the `llm_samples` system setting (1 to 20; the studio's General page, or `deriva-cli config setting set llm_samples 3`) replaces every voting step's own `samples` while it is set; `config setting unset` (or the page's button) gives each step its own again. Benchmark sessions record the value; above 1 the answers are combined by majority, so measure consistency with 1
 
 ### Development
 
 - **ty checks the whole repository**: CI and the pre-commit hook run `ty check .`, tests included
+- **Version 0.9.0 for all three packages**: deriva-cli, deriva-studio and deriva-dev move together (deriva-studio and deriva-dev pin the release beside them), and the studio front end reports 0.9.0
 
 # v0.8.x - Deriva Studio (October 2026 - )
 
