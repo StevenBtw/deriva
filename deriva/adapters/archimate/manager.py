@@ -128,6 +128,16 @@ class ArchimateManager:
             # The graph_relationships refine step needs this to link elements to source graph nodes
             source_identifier = element.properties.get("source") if element.properties else None
 
+            # Two sources on one identifier: the later element replaces the earlier, so say so
+            if source_identifier:
+                held = self.db.execute(
+                    f"MATCH (e:`{self.namespace}` {{identifier: $identifier}}) RETURN e.source_identifier AS source LIMIT 1",
+                    {"identifier": element.identifier},
+                )
+                earlier = held[0].get("source") if held else None
+                if earlier and earlier != source_identifier:
+                    logger.warning("Element %s from %s replaces the one from %s: their sources share an identifier", element.identifier, source_identifier, earlier)
+
             # Found through the identifier index; a MERGE would scan the namespace label
             self.db.merge_node(
                 "identifier",

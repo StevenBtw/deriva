@@ -95,6 +95,7 @@ from deriva.modules.derivation.base import (
     file_imports,
     get_enrichments_from_graph,
     graph_link_pairs,
+    repository_in_identifiers,
     source_concept_names,
     unit_scopes,
 )
@@ -1618,6 +1619,42 @@ def _model_totals(archimate_manager: ArchimateManager) -> str:
     return f"{len(archimate_manager.get_elements())} elements, {len(archimate_manager.get_relationships())} relationships in the model"
 
 
+def combined_run(graph_manager: Any) -> bool:
+    """Whether the graph holds several repositories (a combined run): its element identifiers keep the repository."""
+    try:
+        rows = graph_manager.query("MATCH (r:Graph:Repository) RETURN count(r) AS n")
+        return bool(rows) and int(rows[0].get("n") or 0) > 1
+    except Exception:  # no graph to ask (tests, a closed connection): the identifiers of one repository
+        return False
+
+
+def _graph_of(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+    return kwargs.get("graph_manager", args[1] if len(args) > 1 else None)
+
+
+def _identifier_scope[**P, R](run: Callable[P, R]) -> Callable[P, R]:
+    """Run a derivation with the element identifiers of its graph: with the repository in a combined run."""
+
+    @functools.wraps(run)
+    def scoped(*args: P.args, **kwargs: P.kwargs) -> R:
+        with repository_in_identifiers(combined_run(_graph_of(args, kwargs))):
+            return run(*args, **kwargs)
+
+    return scoped
+
+
+def _identifier_scope_iter[**P, U](run: Callable[P, Iterator[U]]) -> Callable[P, Iterator[U]]:
+    """``_identifier_scope`` for a derivation that yields its progress: the scope lasts until the last update."""
+
+    @functools.wraps(run)
+    def scoped(*args: P.args, **kwargs: P.kwargs) -> Iterator[U]:
+        with repository_in_identifiers(combined_run(_graph_of(args, kwargs))):
+            yield from run(*args, **kwargs)
+
+    return scoped
+
+
+@_identifier_scope
 def run_derivation(
     engine: Any,
     graph_manager: GraphManager,
@@ -2142,6 +2179,7 @@ def run_derivation(
 # in base.py (derive_batch_relationships).
 
 
+@_identifier_scope_iter
 def run_derivation_iter(
     engine: Any,
     graph_manager: GraphManager,

@@ -15,7 +15,9 @@ import json
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -2452,12 +2454,33 @@ def source_casing(name: str, source_name: str) -> str:
     return " ".join(spelled.get(word.lower(), word) for word in name.split(" "))
 
 
+# A combined run (several repositories in one graph) keeps the repository in element identifiers: the tails alone
+# collide there (two repositories' frontend, docs or customer). The derivation service sets it for the run.
+_KEEP_REPOSITORY: ContextVar[bool] = ContextVar("keep_repository", default=False)
+
+
+@contextmanager
+def repository_in_identifiers(keep: bool) -> Generator[None]:
+    """Element identifiers inside the block keep the repository part of their source ids (a combined run)."""
+    token = _KEEP_REPOSITORY.set(keep)
+    try:
+        yield
+    finally:
+        _KEEP_REPOSITORY.reset(token)
+
+
 def element_identifier(element_type: str, source_id: str) -> str:
-    """Stable element identifier from its type and source node (``ac_big_data_kafka``)."""
+    """Stable element identifier from its type and source node (``ac_big_data_kafka``); in a combined run with the
+    repository (``ac_bigdata__big_data_kafka``)."""
     prefix = "".join(c for c in element_type if c.isupper()).lower()
+    return sanitize_identifier(f"{prefix}_{_source_tail(source_id)}")
+
+
+def _source_tail(source_id: str) -> str:
+    """A source id without its kind and (outside a combined run) its repository: ``unit::shop::frontend`` gives
+    ``frontend``, in a combined run ``shop::frontend``."""
     parts = source_id.split("::")
-    tail = "::".join(parts[2:]) if len(parts) >= 3 else source_id
-    return sanitize_identifier(f"{prefix}_{tail}")
+    return "::".join(parts[1 if _KEEP_REPOSITORY.get() else 2 :]) if len(parts) >= 3 else source_id
 
 
 def candidate_identifier(element_type: str, source_id: str, sources: Iterable[str]) -> str:
@@ -2465,7 +2488,7 @@ def candidate_identifier(element_type: str, source_id: str, sources: Iterable[st
     unit's folder, with modules inside) keeps its kind in it, so the unit keeps the plain one."""
     identifier = element_identifier(element_type, source_id)
     if source_id.startswith("module::") and any(s.startswith(UNIT_PREFIX) and element_identifier(element_type, s) == identifier for s in sources):
-        return sanitize_identifier(f"{identifier.split('_', 1)[0]}_module::{source_id.split('::', 2)[2]}")
+        return sanitize_identifier(f"{identifier.split('_', 1)[0]}_module::{_source_tail(source_id)}")
     return identifier
 
 
