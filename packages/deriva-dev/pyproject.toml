@@ -1,6 +1,6 @@
 [project]
 name = "deriva-dev"
-version = "0.8.10"
+version = "0.9.0"
 description = "Deriva with benchmarking: the studio, the CLI and multi-model consistency benchmarks."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -8,7 +8,7 @@ license = "AGPL-3.0-or-later"
 # A copy of the repository LICENSE (a package cannot point outside its folder); tests/test_packaging.py keeps it identical
 license-files = ["LICENSE"]
 authors = [{ name = "S. T. Grond", email = "steven@deriva.dev" }]
-dependencies = ["deriva-studio==0.8.10"]
+dependencies = ["deriva-studio==0.9.0"]
 
 [project.urls]
 Homepage = "https://deriva.dev"
