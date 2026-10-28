@@ -504,6 +504,19 @@ def _print_metrics_report(metrics: dict) -> None:
     if metrics.get("consistency"):
         typer.echo("CONSISTENCY BY IDENTITY (cons / mean pairwise Jaccard; id = source-derived, name = type + name key; LLM part by id)")
         _print_consistency(metrics["consistency"])
+    levels = metrics.get("consistency_levels") or {}
+    if any(levels.values()):
+        typer.echo("CONSISTENCY PER LEVEL (by id, elements / relationships; solution: direct relationships only, enterprise: the derived viewpoint)")
+        header = f"{'Repository':<24} {'Model':<18} {'Solution E / R':<16} {'Enterprise E / R':<16}"
+        typer.echo("-" * len(header))
+        typer.echo(header)
+        typer.echo("-" * len(header))
+        by_key = {level: {(r["repository"], r["model"]): r["identities"]["id"] for r in rows} for level, rows in levels.items()}
+        for key in sorted({k for rows in by_key.values() for k in rows}):
+            cells = [by_key.get(level, {}).get(key) for level in ("solution", "enterprise")]
+            shown = [f"{_pct(c['elements']['cons'])} / {_pct(c['relationships']['cons'])}" if c else "-" for c in cells]
+            typer.echo(f"{key[0][:24]:<24} {key[1][:18]:<18} {shown[0]:<16} {shown[1]:<16}")
+        typer.echo("")
     if metrics.get("two_level"):
         typer.echo("TWO LEVELS (answers: same prompt answered alike; decisions: each item decided alike; alpha: Krippendorff, nominal)")
         header = f"{'Repository':<24} {'Model':<18} {'Decision':<36} {'Answers':>9} {'Decisions':>11} {'alpha':>6}"

@@ -458,4 +458,10 @@ def session_report(sessions: list[Path]) -> dict[str, Any]:
     sessions = [Path(s) for s in sessions if Path(s, "session_metadata.json").is_file()]
     if not sessions:
         return {}
-    return {"consistency": consistency_rows(sessions), "two_level": two_level_rows(sessions), "out_of_candidates": out_of_candidate_rows(sessions)}
+    return {
+        "consistency": consistency_rows(sessions),
+        # The solution level holds direct relationships only; the enterprise level the viewpoint derived from them
+        "consistency_levels": {level: consistency_rows(sessions, level=level) for level in ("solution", "enterprise")},
+        "two_level": two_level_rows(sessions),
+        "out_of_candidates": out_of_candidate_rows(sessions),
+    }
