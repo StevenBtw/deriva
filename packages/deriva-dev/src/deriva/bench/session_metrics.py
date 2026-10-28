@@ -355,13 +355,14 @@ def _structural_match(element: dict[str, Any], refs: list[str]) -> bool:
     return any((_clean_path(r[5:]) in paths) if r.startswith("path:") else (r in ids) for r in refs)
 
 
-def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases: dict[str, Any] | None = None) -> dict[str, set[str]]:
+def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases: dict[str, Any] | None = None, *, structure: bool = True) -> dict[str, set[str]]:
     """Derived element id -> the golden elements it is matched to.
 
     First by name, as always: the element matcher (a matching type, ``types_match``: a function covers a process of its
     layer; the same or a similar name) and the names the user
     accepted. Then a golden element still unmatched takes, through its structural refs, the first derived element of
     its type (by id) that no golden element has yet, so one derived element matches one golden element there.
+    ``structure`` False leaves the structural refs out: names only, what the element names alone find.
     """
     aliases = aliases or {}
     mapping: dict[str, set[str]] = {}
@@ -375,6 +376,8 @@ def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases:
         for alias in accepted(aliases.get(r.identifier))[0]:
             for derived_id in by_key.get((match_kind(r.element_type), name_key(alias)), []):
                 mapping.setdefault(derived_id, set()).add(r.identifier)
+    if not structure:
+        return mapping
     found = set().union(*mapping.values()) if mapping else set()
     for r in sorted(reference, key=lambda r: r.identifier):
         refs = accepted(aliases.get(r.identifier))[1]

@@ -459,9 +459,11 @@ def benchmark_gate(
     for level, by_side in measures.items():
         lines += [f"## {level.capitalize()} level", ""]
         lines += gate.table_markdown(by_side["baseline"], f"Baseline ({', '.join(sides['baseline'])})")
+        lines += gate.types_markdown(by_side["baseline"])
         payload["levels"][level] = {"baseline": by_side["baseline"]}
         if "candidate" in by_side:
             lines += gate.table_markdown(by_side["candidate"], f"Candidate ({', '.join(sides['candidate'])})")
+            lines += gate.types_markdown(by_side["candidate"])
             payload["levels"][level] |= {"candidate": by_side["candidate"], "verdict": gate.verdict(by_side["baseline"], by_side["candidate"])}
             lines += gate.verdict_markdown(payload["levels"][level]["verdict"])
     if sides["candidate"]:

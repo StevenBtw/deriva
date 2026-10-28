@@ -31,6 +31,9 @@ from deriva.bench import reference_eval, session_metrics
 from deriva.modules.analysis.semantic_matching import parse_archi_xml, parse_exchange_format_xml
 
 MEASURES = ("recall", "precision", "relationship_recall", "relationship_precision")
+# Reported next to the measures, not voting: element recall and precision from the element names alone (no structural
+# refs, no lineage), so a change in naming shows; the measures count an element found through its source whatever its name
+NAME_MEASURES = ("names_recall", "names_precision")
 GATE_LEVELS = ("enterprise", "solution", "union")  # Each is measured and judged; levels without a measure do not vote
 LABELS = {"recall": "recall", "precision": "precision", "relationship_recall": "relationship recall", "relationship_precision": "relationship precision"}
 
@@ -102,6 +105,38 @@ def golden_relationships(
     }
 
 
+def _type_counts(rows: list[dict[str, dict[str, float]]]) -> dict[str, dict[str, float]]:
+    """Per element type over the runs: ``golden`` (the reference elements in scope), and the mean ``found``, ``names``
+    (found by name alone) and ``derived``."""
+    out: dict[str, dict[str, float]] = {}
+    for t in sorted({t for row in rows for t in row}):
+        cells = [row.get(t, {}) for row in rows]
+        counts: dict[str, float] = {"golden": int(max((c.get("golden", 0) for c in cells), default=0))}
+        counts |= {k: round(sum(c.get(k, 0) for c in cells) / len(rows), 3) for k in ("found", "names", "derived")}
+        out[t] = counts
+    return out
+
+
+def _golden_types(derived: list[dict[str, Any]], reference: list[Any], aliases: dict[str, Any], scope: set[str]) -> tuple[set[str], dict[str, dict[str, float]]]:
+    """The golden elements that the element names alone find, and the per-type counts of one run."""
+    found = {g for ids in session_metrics.golden_mapping(derived, reference, aliases).values() for g in ids}
+    named = {g for ids in session_metrics.golden_mapping(derived, reference, aliases, structure=False).values() for g in ids}
+    counts: dict[str, dict[str, float]] = {}
+
+    def slot(kind: str) -> dict[str, float]:
+        return counts.setdefault(kind, {"golden": 0, "found": 0, "names": 0, "derived": 0})
+
+    for r in reference:
+        if r.identifier in scope:
+            c = slot(r.element_type)
+            c["golden"] += 1
+            c["found"] += r.identifier in found
+            c["names"] += r.identifier in named
+    for d in derived:
+        slot(str(d["type"]))["derived"] += 1
+    return named, counts
+
+
 def _golden_row(path: Path, reference_dir: Path, repo: str, snapshots: list[dict[str, Any]]) -> dict[str, Any]:
     reference, golden_rels = _golden_model(path)
     aliases, alias_template = _user_file(reference_dir, repo, "matches")
@@ -113,7 +148,7 @@ def _golden_row(path: Path, reference_dir: Path, repo: str, snapshots: list[dict
         scope = {r.identifier for r in reference if r.element_type in session_metrics.DERIVED_TYPES}
     else:
         scope = {r.identifier for r in reference if isinstance(derivable.get(r.identifier), dict) and derivable[r.identifier].get("derivable")}
-    elements, relationships = [], []
+    elements, relationships, names, types = [], [], [], []
     for snapshot in snapshots:
         derived = [
             {"id": e["identifier"], "name": e.get("name"), "type": str(e["type"]).removeprefix("Model:"), "source": e.get("source"), "lineage": e.get("lineage") or []}
@@ -121,6 +156,9 @@ def _golden_row(path: Path, reference_dir: Path, repo: str, snapshots: list[dict
         ]
         elements.append(session_metrics.golden_comparison(derived, reference, aliases=aliases, derivable=derivable))
         relationships.append(golden_relationships(derived, snapshot.get("relationships", []), reference, golden_rels, aliases, scope))
+        named, counts = _golden_types(derived, reference, aliases, scope)
+        names.append((round(len(named & scope) / len(scope), 3) if scope else None, round(len(named) / len(derived), 3) if derived else None))
+        types.append(counts)
     recall_key = "derivable_types_recall" if provisional else "derivable_recall"
     return {
         "source": "golden",
@@ -130,7 +168,14 @@ def _golden_row(path: Path, reference_dir: Path, repo: str, snapshots: list[dict
         "precision": _mean([r["precision"] for r in elements]),
         "relationship_recall": _mean([r["recall"] for r in relationships]),
         "relationship_precision": _mean([r["precision"] for r in relationships]),
+        "names_recall": _mean([n[0] for n in names]),
+        "names_precision": _mean([n[1] for n in names]),
+        "types": _type_counts(types),
     }
+
+
+def _reference_types(result: dict[str, Any]) -> dict[str, dict[str, float]]:
+    return {t: {"golden": s["required"], "found": s["covered"], "names": s["covered_names"], "derived": s["model"]} for t, s in result["elements"].items()}
 
 
 def measure(sessions: list[Path], goldens_dir: Path, reference_dir: Path, model: str | None = None, *, level: str | None = None) -> dict[str, dict[str, Any]]:
@@ -168,7 +213,7 @@ def measure(sessions: list[Path], goldens_dir: Path, reference_dir: Path, model:
             "provisional": False,
             "matches_provisional": False,
             "note": None,
-        } | dict.fromkeys(MEASURES)
+        } | dict.fromkeys(MEASURES + NAME_MEASURES)
         golden = Path(reference_dir) / f"{repo}.archimate"
         single = level not in (None, "union")
         has_level = not single or (repo in references and any(level in e.levels for e in references[repo].elements))
@@ -184,6 +229,9 @@ def measure(sessions: list[Path], goldens_dir: Path, reference_dir: Path, model:
                 "precision": _mean([r["element_precision"] for r in results]),
                 "relationship_recall": _mean([r["relationship_recall"] for r in results]),
                 "relationship_precision": _mean([r["relationship_totals"]["precision"] for r in results]),
+                "names_recall": _mean([r["element_recall_names"] for r in results]),
+                "names_precision": _mean([r["element_precision_names"] for r in results]),
+                "types": _type_counts([_reference_types(r) for r in results]),
             }
         elif golden.is_file():
             row |= _golden_row(golden, Path(reference_dir), repo, snapshots)
@@ -276,13 +324,28 @@ def table_markdown(measures: dict[str, dict[str, Any]], title: str) -> list[str]
     lines = [
         f"## {title}",
         "",
-        "| Repository | Measure | Runs | Recall | Precision | Rel. recall | Rel. precision | Elements by id | Relationships by id |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Repository | Measure | Runs | Recall | Precision | Rel. recall | Rel. precision | Recall (names) | Precision (names) | Elements by id | Relationships by id |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for repo, row in sorted(measures.items()):
         cons = row.get("consistency") or {}
-        values = " | ".join(_pct(row.get(m)) for m in MEASURES)
+        values = " | ".join(_pct(row.get(m)) for m in MEASURES + NAME_MEASURES)
         lines.append(f"| {repo} | {_source(row)} | {row['runs']} | {values} | {_pct(cons.get('elements'))} | {_pct(cons.get('relationships'))} |")
+    return [*lines, ""]
+
+
+def types_markdown(measures: dict[str, dict[str, Any]]) -> list[str]:
+    """Per element type over the measured repositories: the reference elements, those found (mean per run), those
+    found by name alone, and the derived elements."""
+    pooled: dict[str, dict[str, float]] = {}
+    for row in measures.values():
+        for t, c in (row.get("types") or {}).items():
+            p = pooled.setdefault(t, {"golden": 0, "found": 0.0, "names": 0.0, "derived": 0.0})
+            for k in p:
+                p[k] += c[k]
+    lines = ["### Per element type", "", "| Type | Reference | Found | Found by name | Derived |", "|---|---|---|---|---|"]
+    for t, p in sorted(pooled.items()):
+        lines.append(f"| {t} | {int(p['golden'])} | {p['found']:.1f} | {p['names']:.1f} | {p['derived']:.1f} |")
     return [*lines, ""]
 
 
