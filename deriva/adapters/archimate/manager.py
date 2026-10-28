@@ -170,6 +170,14 @@ class ArchimateManager:
         if validate:
             self._validate_relationship(relationship)
 
+        # The same relationship (its identifier comes from type, ends and origin) is stored once
+        existing = self.db.execute(
+            f"MATCH (:`{self.namespace}`)-[r]->(:`{self.namespace}`) WHERE r.identifier = $identifier RETURN r.identifier AS identifier LIMIT 1",
+            {"identifier": relationship.identifier},
+        )
+        if existing:
+            return relationship.identifier
+
         try:
             # Create Cypher query to add relationship
             # Use namespaced relationship type (e.g., Model:Realization, Model:Serving)

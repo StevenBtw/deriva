@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -336,7 +335,6 @@ class GraphRelationshipsStep:
                 source=source_id,
                 target=target_id,
                 relationship_type=rel_type,
-                identifier=f"rel-{uuid.uuid4().hex[:12]}",
                 documentation=f"Derived from Graph:{graph_edge} edge",
                 properties={"derived_from": f"Graph:{graph_edge}"},
             )

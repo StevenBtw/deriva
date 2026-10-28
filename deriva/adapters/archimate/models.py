@@ -9,6 +9,7 @@ Reference: https://pubs.opengroup.org/architecture/archimate3-doc/
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -610,9 +611,12 @@ class Relationship:
     properties: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        """Generate identifier if not provided."""
+        """Without a given identifier, one from what the relationship is (type, ends, origin): the same relationship
+        has the same identifier in every run, so a tie-break on identifiers is deterministic and a duplicate is one."""
         if not self.identifier:
-            self.identifier = f"id-{uuid.uuid4()}"
+            origin = f"{self.properties.get('derived_from') or ''}|{self.properties.get('redirected_from') or ''}"
+            digest = hashlib.sha256(f"{self.relationship_type}|{self.source}|{self.target}|{origin}".encode()).hexdigest()
+            self.identifier = f"id-{digest[:32]}"
 
     def to_dict(self) -> dict[str, Any]:
         """Convert relationship to dictionary representation."""
