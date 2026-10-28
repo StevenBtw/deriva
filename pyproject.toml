@@ -51,7 +51,7 @@ dependencies = [
     "tree-sitter-java>=0.23.0",
     "tree-sitter-c-sharp>=0.23",
     # Document Parsing
-    "pypdf>=6",
+    "pypdf>=6.21",
     "python-docx>=1.2",
     # NLP (business concept candidate terms; pinned, the versions decide the output; the spaCy pipelines download on first use)
     "spacy==3.8.18",

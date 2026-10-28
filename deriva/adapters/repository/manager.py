@@ -977,7 +977,7 @@ class RepoManager:
             MetadataError: If metadata extraction fails
             RepositoryError: If repository not found
         """
-        repo_path = self.workspace_dir / repo_name
+        repo_path = self._repository_path(repo_name)
 
         if not repo_path.exists():
             raise RepositoryError(f"Repository not found: {repo_name}")

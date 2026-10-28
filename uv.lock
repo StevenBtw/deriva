@@ -581,7 +581,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2" },
     { name = "pydantic-ai-slim", extras = ["openai", "anthropic"], specifier = ">=2.57" },
     { name = "pydantic-settings", specifier = ">=2" },
-    { name = "pypdf", specifier = ">=6" },
+    { name = "pypdf", specifier = ">=6.21" },
     { name = "python-docx", specifier = ">=1.2" },
     { name = "python-dotenv", specifier = ">=1.2" },
     { name = "pyyaml", specifier = ">=6.0" },
