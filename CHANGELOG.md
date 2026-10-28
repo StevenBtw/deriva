@@ -32,12 +32,15 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 
 ### Configuration
 
+- **`deriva-cli nlp fetch`**: downloads the BusinessConcept step's pinned language models (about 300 MB on disk) ahead of a run, for a machine that runs offline later; the README states the sizes and hosts, and `THIRD_PARTY_NOTICES.md` lists each downloaded model with its SHA-256 and licence
+- **`.env.example` starts local and repeatable**: the default model is a local Ollama model (a first run costs nothing), the temperature is 0, the provider keys are commented out (a placeholder was sent as a key), the older single-provider block is reduced to a note, and the example models and token limits name current models
 - **The shipped file types name no repository's documents**: the three exclusions of documents that describe one benchmark repository's reference model left the shipped seed; a database that has them keeps them, and every benchmark session records its file types in `session_inputs.json`
 
 ### Derivation
 
 - **Joint selection keeps one relationship per pair under two merges**: two merges that join both ends of two relationships no longer leave both relationships on one pair; neither merge alone did. Without merge candidates (every run so far) the model is unchanged
 - **Relationship identifiers from what the relationship is**: a relationship's identifier is a hash of its type, its ends and its origin instead of a random one, so the same relationship has the same identifier in every run and the last tie-break of joint selection is deterministic; adding a relationship that exists already stores it once. Exported models are unchanged
+- **Combined runs keep their repositories apart**: in a run over several repositories in one graph, element identifiers carry the repository (`ac_shop__frontend` and `ac_clinic__frontend` instead of one `ac_frontend`), so two repositories' frontend, docs or customer stay two elements; a run over one repository keeps the identifiers it had. An element that would replace one from another source on the same identifier is reported in the log
 - **Sampling caches each answer**: a step that votes (directory classification, element naming with `samples` above 1) numbers its answers, and each has its own cache entry, so a cached run votes over the answers the run got (before, every sample read one cached answer). A single call keeps its cache key
 - **One setting for the answers per decision**: the `llm_samples` system setting (1 to 20; the studio's General page, or `deriva-cli config setting set llm_samples 3`) replaces every voting step's own `samples` while it is set; `config setting unset` (or the page's button) gives each step its own again. Benchmark sessions record the value; above 1 the answers are combined by majority, so measure consistency with 1
 
