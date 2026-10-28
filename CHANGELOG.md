@@ -42,6 +42,7 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 
 ### Derivation
 
+- **Libraries serve their users**: a library module serves the modules and units whose files import it (Serving), instead of being aggregated by them; aggregation read as "the library is part of each user". On the repositories with shared libraries, relationship recall and precision rise (by 6 to 15 points on the development references), with no change elsewhere
 - **Joint selection keeps one relationship per pair under two merges**: two merges that join both ends of two relationships no longer leave both relationships on one pair; neither merge alone did. Without merge candidates (every run so far) the model is unchanged
 - **Relationship identifiers from what the relationship is**: a relationship's identifier is a hash of its type, its ends and its origin instead of a random one, so the same relationship has the same identifier in every run and the last tie-break of joint selection is deterministic; adding a relationship that exists already stores it once. Exported models are unchanged
 - **Combined runs keep their repositories apart**: in a run over several repositories in one graph, element identifiers carry the repository (`ac_shop__frontend` and `ac_clinic__frontend` instead of one `ac_frontend`), so two repositories' frontend, docs or customer stay two elements; a run over one repository keeps the identifiers it had. An element that would replace one from another source on the same identifier is reported in the log
