@@ -122,6 +122,29 @@ def list_repo_files(repo_path: Path, excluded_dirs: list[str]) -> list[str]:
     ]
 
 
+# The ArchiMate exchange format's namespace, which an exchange file declares at its root element
+_EXCHANGE_NAMESPACE = b"opengroup.org/xsd/archimate/"
+_EXCHANGE_HEAD_BYTES = 4096
+
+
+def model_files(repo_path: Path, file_paths: list[str]) -> set[str]:
+    """The .xml files that are ArchiMate exchange models (by the namespace in their first bytes): like .archimate files,
+    an architecture model is never an input, so a model shipped with the repository cannot become its own answer."""
+    found = set()
+    for rel in file_paths:
+        if not rel.lower().endswith(".xml"):
+            continue
+        file = repo_path / rel
+        try:
+            with open(file, "rb") as handle:
+                head = handle.read(_EXCHANGE_HEAD_BYTES)
+        except OSError:
+            continue
+        if _EXCHANGE_NAMESPACE in head and is_inside(file, repo_path):
+            found.add(rel)
+    return found
+
+
 def _skip_reason(file_path: Path, repo_path: Path, max_bytes: int) -> str | None:
     """Why a repository file is not read, or None: a link out of the checkout, or a file over the size limit."""
     if not is_inside(file_path, repo_path):
@@ -356,7 +379,7 @@ def run_extraction(
             continue
 
         # Classify files (always needed - prerequisite for parse phase)
-        classification_result = classification.classify_files(file_paths, registry_list)
+        classification_result = classification.classify_files(file_paths, registry_list, model_files(repo_path, file_paths))
         classified_files = classification_result["classified"]
         undefined_files = classification_result["undefined"]
 
@@ -3248,7 +3271,7 @@ def run_extraction_iter(
             continue
 
         # Classify files
-        classification_result = classification.classify_files(file_paths, registry_list)
+        classification_result = classification.classify_files(file_paths, registry_list, model_files(repo_path, file_paths))
         classified_files = classification_result["classified"]
         undefined_files = classification_result["undefined"]
 
