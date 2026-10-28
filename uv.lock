@@ -75,14 +75,14 @@ wheels = [
 
 [[package]]
 name = "anywidget-archimate"
-version = "0.3.1"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2b/4c/a04e560fe75bcda248da070b8496f6768a40751891344db3276266689277/anywidget_archimate-0.3.1.tar.gz", hash = "sha256:094088eebad3bcaa9dfa484f8b97c4a7b8c4638c0bab7611d567df9014f5591d", size = 242794, upload-time = "2026-10-12T19:44:11.838Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/84/e04f90da13baab717e49b2b47f175a1e944087c51ec92d3e189090c5b647/anywidget_archimate-0.4.0.tar.gz", hash = "sha256:361b1857f649b9bb526d67a7c70d0cfeab9528f02f448624cfe490ce742d0061", size = 246942, upload-time = "2026-10-28T21:13:55.611Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/2a/9c38690e5d5687feac8fb9947f32b97825e2fb80b078570eac9483fbce59/anywidget_archimate-0.3.1-py3-none-any.whl", hash = "sha256:784c0f5eac836cde6c5c4280c28e0a5a5340e12305222c6fd0238fa571ab1c22", size = 96793, upload-time = "2026-10-12T19:44:10.37Z" },
+    { url = "https://files.pythonhosted.org/packages/71/9b/1cdb53c57727db6fb5449e827ff828ecedc45c113507d86f5eeb68f2f7aa/anywidget_archimate-0.4.0-py3-none-any.whl", hash = "sha256:fbd932948304ee721e6be57a28008ac8497f24ad0a81f5241a56aee8b385b3e9", size = 98814, upload-time = "2026-10-28T21:13:54.252Z" },
 ]
 
 [[package]]
@@ -635,7 +635,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anywidget-archimate", specifier = ">=0.3.1" },
+    { name = "anywidget-archimate", specifier = ">=0.4.0" },
     { name = "anywidget-graph", specifier = ">=0.4.6" },
     { name = "deriva-cli", editable = "." },
     { name = "fastapi", specifier = ">=0.142.4" },
