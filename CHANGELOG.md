@@ -54,6 +54,7 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 
 ### Development
 
+- **The gate shows naming apart**: `benchmark gate` reports element recall and precision from the element names alone next to its measures (an element found through its source counts whatever it is named), and a table per element type with the reference elements, those found, those found by name and those derived; the verdict is unchanged
 - **ty checks the whole repository**: CI and the pre-commit hook run `ty check .`, tests included
 - **Version 0.9.0 for all three packages**: deriva-cli, deriva-studio and deriva-dev move together (deriva-studio and deriva-dev pin the release beside them), and the studio front end reports 0.9.0
 
