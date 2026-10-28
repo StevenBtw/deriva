@@ -102,10 +102,13 @@ def test_result_keeps_columns_and_converts_nested_values():
 
     result = to_widget_result([{"a": NODE, "r": EDGE, "names": [NODE], "n": 3}])
 
+    # grafeo-server's own shape, which the widget's server client parses: _id/_labels and _id/_type/_source/_target,
+    # properties flat on the item (namespaces stripped, Deriva's own id kept visible as deriva_id)
     assert result["columns"] == ["a", "r", "names", "n"]
-    assert result["rows"][0][0]["labels"] == ["Directory"]
-    assert result["rows"][0][2][0]["id"] == "1"
-    assert result["rows"][0][3] == 3
+    node, edge, nested, number = result["rows"][0]
+    assert node == {"_id": 1, "_labels": ["Directory"], "deriva_id": "dir::deriva::src", "name": "src", "active": True}
+    assert edge == {"_id": 5, "_type": "CONTAINS", "_source": 1, "_target": 6, "deriva_id": "e1"}
+    assert nested[0]["_id"] == 1 and number == 3
 
 
 def test_empty_result():

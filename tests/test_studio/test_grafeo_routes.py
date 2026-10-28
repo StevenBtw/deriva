@@ -223,5 +223,5 @@ def test_a_query_answers_from_the_chosen_database_only(make_client):
     graph = client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "database": "graph"}).json()
     model = client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "database": "model"}).json()
 
-    assert [row[0]["id"] for row in graph["rows"]] == ["1"]
-    assert [row[0]["id"] for row in model["rows"]] == ["2"]
+    assert [row[0]["_id"] for row in graph["rows"]] == [1]
+    assert [row[0]["_id"] for row in model["rows"]] == [2]
