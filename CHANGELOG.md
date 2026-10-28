@@ -29,6 +29,8 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 - **A missing checkout leaves the graph alone**: a repository whose folder is gone (moved or deleted) or lists no file runs no extraction step and fails with a message that names the folder; before, the later steps swept their earlier output and the graph kept only what the first steps rebuilt
 - **Local clones are named after their folder**: `repo clone file:///.../name/.git` clones into `name` (the name was empty), and a working tree's URL without `.git` is accepted
 - **The run summary counts honestly**: the extraction count reads "Nodes written" (a step can rewrite a node another step wrote), followed by the graph's distinct nodes as `deriva-cli status` counts them
+- **Determinism in combined runs**: the repository whose name is stripped from element names is the first by name, not whichever a query returned first
+- **Analysis counts what it says**: the two-level tables pool a model's runs over several sessions, as the consistency tables do (one row per model, not per session), and the component services record whether an LLM chose a name, so structure-named application services (`service_verbs`) no longer count as LLM-dependent in the origin split
 - **One warning per missing model**: a model that cannot be loaded is reported once per reason, not once before and again inside a run
 
 ### Configuration
