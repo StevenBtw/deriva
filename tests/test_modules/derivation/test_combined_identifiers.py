@@ -73,3 +73,17 @@ def test_a_module_beside_its_unit_keeps_its_repository_too():
         ids = [candidate_identifier("ApplicationComponent", s, sources) for s in sources]
     assert len(set(ids)) == 4
     assert candidate_identifier("ApplicationComponent", "module::repoA::svc", ["unit::repoA::svc", "module::repoA::svc"]) == "ac_module__svc"
+
+
+def test_the_active_repository_is_chosen_by_name_not_by_chance():
+    """A combined graph has several active repositories: the one whose name is stripped from element names is the
+    first by name, in every run (no LIMIT 1 without an order)."""
+    import inspect
+
+    from deriva.modules.derivation import element_base
+    from deriva.modules.derivation.refine import duplicate_elements
+
+    for module in (element_base, duplicate_elements):
+        source = inspect.getsource(module)
+        assert "RETURN r.repository_name as name LIMIT 1" not in source
+        assert "ORDER BY r.repository_name LIMIT 1" in source

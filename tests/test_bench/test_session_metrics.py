@@ -323,3 +323,20 @@ def test_consistency_by_id_per_level(tmp_path):
     assert solution["identities"]["id"]["elements"]["cons"] == 0.5
     assert union["identities"]["id"]["elements"]["cons"] == round(2 / 3, 3)
     assert pm.consistency_rows([session]) == pm.consistency_rows([session], level="union")  # None: as before levels
+
+
+def test_two_sessions_of_one_model_give_one_row_over_all_their_runs(tmp_path):
+    """As consistency_rows pools a model's runs over sessions, so do the two-level rows (not one row per session)."""
+
+    def call(label):
+        return [{"step": "BusinessConcept", "schema": "business_concept_classification", "cache_key": "k", "prompt": "p", "response": f'{{"labels": {{"x": "{label}"}}}}'}]
+
+    def session(name, label):
+        runs = [_run(SHOP, decisions={"BusinessConcept": {"x": label}}) for _ in range(2)]
+        return _session(tmp_path, name, "m", runs, {1: call(label), 2: call(label)})
+
+    rows = [r for r in pm.two_level_rows([session("s1", "entity"), session("s2", "process")]) if r["decision"] == "BusinessConcept"]
+
+    (row,) = rows
+    # Four runs: the item flips between the sessions, so it is not stable over the model's runs
+    assert row["decisions"] == {"stable": 0, "items": 1}

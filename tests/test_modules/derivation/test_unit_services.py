@@ -148,6 +148,7 @@ def test_names_are_a_closed_set_and_one_candidate_needs_no_call():
     assert len(calls) == 1 and '"Policy"' in calls[0] and '"Policy Administration"' in calls[0]
     assert '- "Policy Management"' not in calls[0]  # the component's own name is no service name candidate
     assert services[0]["name"] == "Policy Administration"  # the choice, one of the candidates
+    assert services[0]["properties"]["name_choice"] is True
 
 
 def test_a_business_function_is_a_shared_business_domain_of_cooperating_components():
@@ -552,6 +553,8 @@ def test_with_service_verbs_a_service_is_named_from_structure_without_a_call():
     assert by_unit["unit::pm"]["name"] == "Policy Management" and by_unit["unit::jobs"]["name"] == "Transaction Processing"
     assert {s["properties"]["name_rule"] for s in services} == {"domain object"}
     assert calls == []
+    # No LLM chose the name (the benchmark's LLM-dependent split reads this)
+    assert {s["properties"]["name_choice"] for s in services} == {False}
 
 
 def test_with_service_verbs_an_activity_names_a_group_that_reaches_no_domain_and_else_the_stem():
