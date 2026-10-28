@@ -1982,6 +1982,7 @@ class TestLlmSamplesPerStep:
         ]
         monkeypatch.setattr(config, "get_extraction_configs", lambda engine, enabled_only=False: extraction)
         monkeypatch.setattr(config, "get_derivation_configs", lambda engine, enabled_only=False, phase=None, llm_only=None: derivation)
+        monkeypatch.setattr(config, "get_llm_samples", lambda engine: None)  # the llm_samples setting is not set
 
         assert config.llm_samples_per_step(object()) == {"DocConcepts": 3, "DirClasses": 1, "TypeA.naming": 1}
 

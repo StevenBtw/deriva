@@ -3,12 +3,23 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../api/client", async () => {
-  const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
+  const actual =
+    await vi.importActual<typeof import("../api/client")>("../api/client");
   return {
     ...actual,
-    settings: { get: vi.fn(), set: vi.fn() },
-    fileTypes: { list: vi.fn(), add: vi.fn(), update: vi.fn(), remove: vi.fn() },
-    modelConfigs: { list: vi.fn(), save: vi.fn(), remove: vi.fn(), test: vi.fn() },
+    settings: { get: vi.fn(), set: vi.fn(), unset: vi.fn() },
+    fileTypes: {
+      list: vi.fn(),
+      add: vi.fn(),
+      update: vi.fn(),
+      remove: vi.fn(),
+    },
+    modelConfigs: {
+      list: vi.fn(),
+      save: vi.fn(),
+      remove: vi.fn(),
+      test: vi.fn(),
+    },
   };
 });
 
@@ -17,8 +28,14 @@ import { General } from "./General";
 
 describe("General", () => {
   beforeEach(() => {
-    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? '["node_modules", ".git"]' : "true" }));
-    vi.mocked(settings.set).mockImplementation(async (key: string, value: string) => ({ key, value }));
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({
+      key,
+      value:
+        key === "excluded_directories" ? '["node_modules", ".git"]' : "true",
+    }));
+    vi.mocked(settings.set).mockImplementation(
+      async (key: string, value: string) => ({ key, value }),
+    );
     vi.mocked(fileTypes.list).mockResolvedValue({
       file_types: [
         { extension: ".java", file_type: "source", subtype: "java" },
@@ -26,11 +43,29 @@ describe("General", () => {
       ],
       stats: { source: 1, docs: 1 },
     });
-    vi.mocked(fileTypes.add).mockResolvedValue({ extension: ".rs", file_type: "source", subtype: "rust" });
-    vi.mocked(fileTypes.update).mockResolvedValue({ extension: ".md", file_type: "docs", subtype: "md" });
-    vi.mocked(fileTypes.remove).mockResolvedValue({ extension: ".md", deleted: true });
+    vi.mocked(fileTypes.add).mockResolvedValue({
+      extension: ".rs",
+      file_type: "source",
+      subtype: "rust",
+    });
+    vi.mocked(fileTypes.update).mockResolvedValue({
+      extension: ".md",
+      file_type: "docs",
+      subtype: "md",
+    });
+    vi.mocked(fileTypes.remove).mockResolvedValue({
+      extension: ".md",
+      deleted: true,
+    });
     vi.mocked(modelConfigs.list).mockResolvedValue([
-      { name: "anthropic-haiku", provider: "anthropic", model: "claude-haiku", url: null, key: "sk-...abcd", key_env: null },
+      {
+        name: "anthropic-haiku",
+        provider: "anthropic",
+        model: "claude-haiku",
+        url: null,
+        key: "sk-...abcd",
+        key_env: null,
+      },
     ]);
     vi.mocked(modelConfigs.save).mockResolvedValue({ name: "x", saved: true });
     vi.mocked(modelConfigs.remove).mockResolvedValue(null);
@@ -41,94 +76,215 @@ describe("General", () => {
     expect(await screen.findByText("node_modules")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Remove .git" }));
-    await userEvent.type(screen.getByLabelText("Add excluded directory"), "dist{enter}");
-    await userEvent.click(screen.getByRole("button", { name: /Save settings/ }));
+    await userEvent.type(
+      screen.getByLabelText("Add excluded directory"),
+      "dist{enter}",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save settings/ }),
+    );
 
-    expect(settings.set).toHaveBeenCalledWith("excluded_directories", '["node_modules","dist"]');
+    expect(settings.set).toHaveBeenCalledWith(
+      "excluded_directories",
+      '["node_modules","dist"]',
+    );
   });
 
   it("starts from the built-in list while the setting is not set", async () => {
-    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: null, default: key === "excluded_directories" ? '[".git", "node_modules"]' : null }));
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({
+      key,
+      value: null,
+      default:
+        key === "excluded_directories" ? '[".git", "node_modules"]' : null,
+    }));
     render(<General />);
 
     expect(await screen.findByText(".git")).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("Add excluded directory"), "dist{enter}");
-    await userEvent.click(screen.getByRole("button", { name: /Save settings/ }));
+    await userEvent.type(
+      screen.getByLabelText("Add excluded directory"),
+      "dist{enter}",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save settings/ }),
+    );
 
-    expect(settings.set).toHaveBeenCalledWith("excluded_directories", '[".git","node_modules","dist"]');
+    expect(settings.set).toHaveBeenCalledWith(
+      "excluded_directories",
+      '[".git","node_modules","dist"]',
+    );
   });
 
   it("lets a stored value that is no list of names be replaced", async () => {
-    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "{}" : null }));
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({
+      key,
+      value: key === "excluded_directories" ? "{}" : null,
+    }));
     render(<General />);
 
     expect(await screen.findByText(/not a JSON list/)).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("Add excluded directory"), "dist{enter}");
-    await userEvent.click(screen.getByRole("button", { name: /Save settings/ }));
+    await userEvent.type(
+      screen.getByLabelText("Add excluded directory"),
+      "dist{enter}",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save settings/ }),
+    );
 
-    expect(settings.set).toHaveBeenCalledWith("excluded_directories", '["dist"]');
+    expect(settings.set).toHaveBeenCalledWith(
+      "excluded_directories",
+      '["dist"]',
+    );
   });
 
   it("lets deriva-dev switch off that full derivation runs start from an empty model", async () => {
-    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "[]" : null }));
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({
+      key,
+      value: key === "excluded_directories" ? "[]" : null,
+    }));
     render(<General benchmark />);
 
-    const toggle = await screen.findByRole("checkbox", { name: "Full derivation runs start from an empty model" });
+    const toggle = await screen.findByRole("checkbox", {
+      name: "Full derivation runs start from an empty model",
+    });
     await waitFor(() => expect(toggle).toBeChecked());
     await userEvent.click(toggle);
 
-    await waitFor(() => expect(settings.set).toHaveBeenCalledWith("derivation_clear_model", "false"));
+    await waitFor(() =>
+      expect(settings.set).toHaveBeenCalledWith(
+        "derivation_clear_model",
+        "false",
+      ),
+    );
     expect(toggle).not.toBeChecked();
   });
 
   it("sets how many nodes the graph views sample, from the built-in 300", async () => {
-    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "[]" : null, default: key === "graph_view_nodes" ? "300" : null }));
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({
+      key,
+      value: key === "excluded_directories" ? "[]" : null,
+      default: key === "graph_view_nodes" ? "300" : null,
+    }));
     render(<General />);
-    const count = await screen.findByRole("spinbutton", { name: "Nodes in the graph views" });
+    const count = await screen.findByRole("spinbutton", {
+      name: "Nodes in the graph views",
+    });
     await waitFor(() => expect(count).toHaveValue(300));
 
     await userEvent.clear(count);
     await userEvent.type(count, "1200");
-    await userEvent.click(screen.getByRole("button", { name: "Save the node count" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save the node count" }),
+    );
 
     expect(settings.set).toHaveBeenCalledWith("graph_view_nodes", "1200");
-    expect(await screen.findByText(/Saved: the graph views now sample 1,200 nodes/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Saved: the graph views now sample 1,200 nodes/),
+    ).toBeInTheDocument();
+  });
+
+  it("sets the LLM answers per decision, and gives each step its own again", async () => {
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({
+      key,
+      value: key === "excluded_directories" ? "[]" : null,
+      default: null,
+    }));
+    vi.mocked(settings.set).mockResolvedValue({
+      key: "llm_samples",
+      value: "3",
+    });
+    vi.mocked(settings.unset).mockResolvedValue({
+      key: "llm_samples",
+      deleted: true,
+    });
+    render(<General />);
+    const count = await screen.findByRole("spinbutton", {
+      name: "LLM answers per decision",
+    });
+    expect(
+      await screen.findByText(
+        /each step asks as many times as its own config says/i,
+      ),
+    ).toBeInTheDocument();
+
+    await userEvent.clear(count);
+    await userEvent.type(count, "3");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save the answers per decision" }),
+    );
+    expect(settings.set).toHaveBeenCalledWith("llm_samples", "3");
+    expect(
+      await screen.findByText(/Saved: every step that votes now asks 3 times/),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Use each step's own setting" }),
+    );
+    expect(settings.unset).toHaveBeenCalledWith("llm_samples");
   });
 
   it("says why a node count is refused and keeps what was typed", async () => {
-    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "[]" : key === "graph_view_nodes" ? "800" : null }));
-    vi.mocked(settings.set).mockRejectedValueOnce(new Error("graph_view_nodes must be a whole number from 50 to 5000, not '9000'"));
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({
+      key,
+      value:
+        key === "excluded_directories"
+          ? "[]"
+          : key === "graph_view_nodes"
+            ? "800"
+            : null,
+    }));
+    vi.mocked(settings.set).mockRejectedValueOnce(
+      new Error(
+        "graph_view_nodes must be a whole number from 50 to 5000, not '9000'",
+      ),
+    );
     render(<General />);
-    const count = await screen.findByRole("spinbutton", { name: "Nodes in the graph views" });
+    const count = await screen.findByRole("spinbutton", {
+      name: "Nodes in the graph views",
+    });
     await waitFor(() => expect(count).toHaveValue(800));
 
     await userEvent.clear(count);
     await userEvent.type(count, "9000");
-    await userEvent.click(screen.getByRole("button", { name: "Save the node count" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save the node count" }),
+    );
 
     expect(await screen.findByText(/from 50 to 5000/)).toBeInTheDocument();
     expect(count).toHaveValue(9000);
   });
 
   it("shows the stored setting and has no switch without benchmarking", async () => {
-    vi.mocked(settings.get).mockImplementation(async (key: string) => ({ key, value: key === "excluded_directories" ? "[]" : "false" }));
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({
+      key,
+      value: key === "excluded_directories" ? "[]" : "false",
+    }));
     const { unmount } = render(<General benchmark />);
-    const toggle = await screen.findByRole("checkbox", { name: "Full derivation runs start from an empty model" });
+    const toggle = await screen.findByRole("checkbox", {
+      name: "Full derivation runs start from an empty model",
+    });
     await waitFor(() => expect(toggle).not.toBeChecked());
     unmount();
 
     render(<General benchmark={false} />);
     await screen.findByRole("heading", { name: "Settings" });
-    expect(screen.queryByRole("checkbox", { name: "Full derivation runs start from an empty model" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: "Full derivation runs start from an empty model",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("lists file types with a filter", async () => {
     render(<General />);
-    expect(await screen.findByRole("cell", { name: ".java" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("cell", { name: ".java" }),
+    ).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("Filter file types"), "mark");
 
-    expect(screen.queryByRole("cell", { name: ".java" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("cell", { name: ".java" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("cell", { name: ".md" })).toBeInTheDocument();
   });
 
@@ -140,20 +296,30 @@ describe("General", () => {
     await userEvent.type(screen.getByLabelText("New type"), "source");
     await userEvent.type(screen.getByLabelText("New subtype"), "rust");
     await userEvent.click(screen.getByRole("button", { name: /^Add$/ }));
-    expect(fileTypes.add).toHaveBeenCalledWith({ extension: ".rs", file_type: "source", subtype: "rust" });
+    expect(fileTypes.add).toHaveBeenCalledWith({
+      extension: ".rs",
+      file_type: "source",
+      subtype: "rust",
+    });
 
-    vi.mocked(fileTypes.add).mockRejectedValue(new ApiError(409, "File type exists: .java", {}));
+    vi.mocked(fileTypes.add).mockRejectedValue(
+      new ApiError(409, "File type exists: .java", {}),
+    );
     await userEvent.type(screen.getByLabelText("New extension"), ".java");
     await userEvent.type(screen.getByLabelText("New type"), "source");
     await userEvent.type(screen.getByLabelText("New subtype"), "java");
     await userEvent.click(screen.getByRole("button", { name: /^Add$/ }));
-    expect(await screen.findByText("File type exists: .java")).toBeInTheDocument();
+    expect(
+      await screen.findByText("File type exists: .java"),
+    ).toBeInTheDocument();
   });
 
   it("edits a file type inline and deletes one after confirmation", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<General />);
-    const row = (await screen.findByRole("cell", { name: ".md" })).closest("tr")!;
+    const row = (await screen.findByRole("cell", { name: ".md" })).closest(
+      "tr",
+    )!;
 
     await userEvent.click(within(row).getByRole("button", { name: "Edit" }));
     const subtype = within(row).getByLabelText("Subtype of .md");
@@ -162,7 +328,11 @@ describe("General", () => {
     await userEvent.click(within(row).getByRole("button", { name: "Save" }));
     expect(fileTypes.update).toHaveBeenCalledWith(".md", "docs", "md");
 
-    await userEvent.click(within((await screen.findByRole("cell", { name: ".md" })).closest("tr")!).getByRole("button", { name: "Delete" }));
+    await userEvent.click(
+      within(
+        (await screen.findByRole("cell", { name: ".md" })).closest("tr")!,
+      ).getByRole("button", { name: "Delete" }),
+    );
     await waitFor(() => expect(fileTypes.remove).toHaveBeenCalledWith(".md"));
   });
 
@@ -177,7 +347,13 @@ describe("General", () => {
     await userEvent.type(model, "claude-haiku-2");
     await userEvent.click(screen.getByRole("button", { name: "Save model" }));
 
-    expect(modelConfigs.save).toHaveBeenCalledWith("anthropic-haiku", { provider: "anthropic", model: "claude-haiku-2", url: "", key: null, key_env: "" });
+    expect(modelConfigs.save).toHaveBeenCalledWith("anthropic-haiku", {
+      provider: "anthropic",
+      model: "claude-haiku-2",
+      url: "",
+      key: null,
+      key_env: "",
+    });
     await waitFor(() => expect(modelConfigs.list).toHaveBeenCalledTimes(2));
   });
 
@@ -189,18 +365,38 @@ describe("General", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add model" }));
     await userEvent.type(screen.getByLabelText("Model name"), "mistral-small");
     await userEvent.selectOptions(screen.getByLabelText("Provider"), "mistral");
-    await userEvent.type(screen.getByLabelText("Model id"), "mistral-small-latest");
+    await userEvent.type(
+      screen.getByLabelText("Model id"),
+      "mistral-small-latest",
+    );
     await userEvent.type(screen.getByLabelText("API key"), "sk-new-key");
     await userEvent.click(screen.getByRole("button", { name: "Save model" }));
-    expect(modelConfigs.save).toHaveBeenCalledWith("mistral-small", { provider: "mistral", model: "mistral-small-latest", url: "", key: "sk-new-key", key_env: "" });
+    expect(modelConfigs.save).toHaveBeenCalledWith("mistral-small", {
+      provider: "mistral",
+      model: "mistral-small-latest",
+      url: "",
+      key: "sk-new-key",
+      key_env: "",
+    });
 
-    await userEvent.click(within(screen.getByText("anthropic-haiku").closest("tr")!).getByRole("button", { name: "Delete" }));
+    await userEvent.click(
+      within(screen.getByText("anthropic-haiku").closest("tr")!).getByRole(
+        "button",
+        { name: "Delete" },
+      ),
+    );
     expect(modelConfigs.remove).toHaveBeenCalledWith("anthropic-haiku");
   });
 
   it("tests a model config with one small call and says how it went", async () => {
     vi.mocked(modelConfigs.test).mockResolvedValue({
-      ok: true, model: "anthropic-haiku", provider: "anthropic", model_id: "claude-haiku", served_model: "claude-haiku-5-5", latency_ms: 812.4, answer: "OK",
+      ok: true,
+      model: "anthropic-haiku",
+      provider: "anthropic",
+      model_id: "claude-haiku",
+      served_model: "claude-haiku-5-5",
+      latency_ms: 812.4,
+      answer: "OK",
     });
     render(<General />);
     const row = (await screen.findByText("anthropic-haiku")).closest("tr")!;
@@ -208,19 +404,28 @@ describe("General", () => {
     await userEvent.click(within(row).getByRole("button", { name: "Test" }));
 
     expect(modelConfigs.test).toHaveBeenCalledWith("anthropic-haiku");
-    expect(await screen.findByText("Works: claude-haiku-5-5 answered in 0.8 s")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Works: claude-haiku-5-5 answered in 0.8 s"),
+    ).toBeInTheDocument();
   });
 
   it("says what to fix when a model config does not work", async () => {
     vi.mocked(modelConfigs.test).mockResolvedValue({
-      ok: false, model: "anthropic-haiku", provider: "anthropic", model_id: "claude-haiku", error: "The provider refused the API key: check the key (ModelHTTPError)", detail: "status_code: 401",
+      ok: false,
+      model: "anthropic-haiku",
+      provider: "anthropic",
+      model_id: "claude-haiku",
+      error: "The provider refused the API key: check the key (ModelHTTPError)",
+      detail: "status_code: 401",
     });
     render(<General />);
     const row = (await screen.findByText("anthropic-haiku")).closest("tr")!;
 
     await userEvent.click(within(row).getByRole("button", { name: "Test" }));
 
-    const result = await screen.findByText("The provider refused the API key: check the key (ModelHTTPError)");
+    const result = await screen.findByText(
+      "The provider refused the API key: check the key (ModelHTTPError)",
+    );
     expect(result).toHaveAttribute("title", "status_code: 401");
   });
 
@@ -231,6 +436,10 @@ describe("General", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Save model" }));
 
-    expect(await screen.findByText("Saved anthropic-haiku. Press Test to check its key and model id.")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Saved anthropic-haiku. Press Test to check its key and model id.",
+      ),
+    ).toBeInTheDocument();
   });
 });

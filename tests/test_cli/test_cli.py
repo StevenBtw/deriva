@@ -2878,6 +2878,17 @@ class TestSettingCommands:
         assert result.exit_code == 1
         assert "JSON list" in result.output
 
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_setting_unset(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.delete_setting.return_value = True
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "setting", "unset", "llm_samples"])
+
+        assert result.exit_code == 0 and "Unset llm_samples" in result.output
+        mock_session.delete_setting.assert_called_once_with("llm_samples")
+
 
 class TestUpdateTemperature:
     """The LLM temperature of a step is a versioned column, settable from the CLI."""
