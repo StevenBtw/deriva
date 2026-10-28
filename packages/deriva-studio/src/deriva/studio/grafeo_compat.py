@@ -93,6 +93,9 @@ def to_server_value(value: Any) -> Any:
     if isinstance(value, dict) and "_type" in value and "_source" in value:
         properties = {("deriva_id" if k == "id" else k): v for k, v in value.items() if not k.startswith("_")}
         return {"_id": value.get("_id"), "_type": _strip_namespace(value["_type"]), "_source": value["_source"], "_target": value["_target"], **properties}
+    if isinstance(value, dict):
+        # A path ({"nodes", "edges"}) or any other map: the nodes and edges inside it get the same shape
+        return {k: to_server_value(v) for k, v in value.items()}
     return value
 
 
