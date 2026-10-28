@@ -132,3 +132,15 @@ def test_a_map_with_a_labels_key_but_no_id_is_no_node():
     value = {"_labels": ["x"], "count": 2}
 
     assert to_widget_value(value) == value
+
+
+def test_nodes_and_edges_inside_a_path_or_map_are_converted_too():
+    """A path (and any map) holds nodes and edges: they get the same shape, or the widget names a node "Graph"."""
+    from deriva.studio.grafeo_compat import to_widget_result
+
+    result = to_widget_result([{"p": {"nodes": [NODE], "edges": [EDGE]}, "m": {"owner": NODE, "count": 2}}])
+
+    path, mapping = result["rows"][0]
+    assert path["nodes"][0]["_labels"] == ["Directory"] and path["nodes"][0]["deriva_id"] == "dir::deriva::src"
+    assert path["edges"][0]["_type"] == "CONTAINS"
+    assert mapping == {"owner": result["rows"][0][0]["nodes"][0], "count": 2}
