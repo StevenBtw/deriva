@@ -17,10 +17,14 @@ type Props = {
   selected?: string | null;
   /** The node a viewer selects, or null when the selection is cleared */
   onSelect?: (id: string | null) => void;
+  /** How many nodes and edges the widget draws: the view, and the result of a query typed in its query box */
+  onDrawn?: (drawn: { nodes: number; edges: number }) => void;
 };
 
+const countItems = (value: unknown) => (Array.isArray(value) ? value.length : 0);
+
 /** anywidget-graph in grafeo server mode against the studio (/grafeo answers read-only from the embedded databases). */
-export function GraphWidget({ database, view, typeColors, dark, height = 420, loader, settings, selected, onSelect }: Props) {
+export function GraphWidget({ database, view, typeColors, dark, height = 420, loader, settings, selected, onSelect, onDrawn }: Props) {
   const { ref, model, error } = useWidget(
     "/widgets/anywidget-graph/index.js",
     "/widgets/anywidget-graph/styles.css",
@@ -45,6 +49,8 @@ export function GraphWidget({ database, view, typeColors, dark, height = 420, lo
       show_toolbar: true,
       show_settings: true,
       max_nodes: 300,
+      // A typed query draws its best-connected 300 nodes and says so (anywidget-graph 0.5.2; earlier builds ignore it)
+      max_query_nodes: 300,
       ...settings,
       ...(selected ? { selected_node: { id: selected }, selected_nodes: [selected] } : {}),
     }),
@@ -53,7 +59,8 @@ export function GraphWidget({ database, view, typeColors, dark, height = 420, lo
 
   useEffect(() => {
     if (!model) return;
-    model.set({ nodes: view.nodes, edges: view.edges, totals: view.totals ?? {} });
+    // A new view (another repository, a reload) replaces what a typed query drew, and the note that explained it
+    model.set({ nodes: view.nodes, edges: view.edges, totals: view.totals ?? {}, query_note: "" });
     model.save_changes();
   }, [model, view]);
 
@@ -91,6 +98,18 @@ export function GraphWidget({ database, view, typeColors, dark, height = 420, lo
     model.on("change:selected_node", report);
     return () => model.off("change:selected_node", report);
   }, [model, onSelect]);
+
+  useEffect(() => {
+    if (!model || !onDrawn) return;
+    const report = () => onDrawn({ nodes: countItems(model.get("nodes")), edges: countItems(model.get("edges")) });
+    report();
+    model.on("change:nodes", report);
+    model.on("change:edges", report);
+    return () => {
+      model.off("change:nodes", report);
+      model.off("change:edges", report);
+    };
+  }, [model, onDrawn]);
 
   // Colours per type follow the theme; only a different set is sent
   const sentColors = useRef<{ model: unknown; key: string } | null>(null);
