@@ -31,8 +31,14 @@ vi.mock("../api/client", async () => {
 });
 
 vi.mock("../widgets/GraphWidget", () => ({
-  GraphWidget: ({ database, view }: { database: string; view: { nodes: unknown[] } }) => (
-    <div data-testid={`graph-${database}`}>{view.nodes.length} nodes</div>
+  GraphWidget: ({ database, view, onDrawn }: { database: string; view: { nodes: unknown[] }; onDrawn?: (drawn: { nodes: number; edges: number }) => void }) => (
+    <div data-testid={`graph-${database}`}>
+      {view.nodes.length} nodes
+      {/* A query typed in the widget draws its result */}
+      <button type="button" onClick={() => onDrawn?.({ nodes: 5, edges: 2 })}>
+        query {database}
+      </button>
+    </div>
   ),
 }));
 
@@ -418,6 +424,18 @@ describe("Workspace", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Separate" }));
 
     expect((await screen.findAllByText("1 of 40 nodes · 0 of 39 edges")).length).toBe(2);
+  });
+
+  it("counts what a typed query draws in the separate view", async () => {
+    vi.mocked(graph.view).mockResolvedValue({ nodes: [{ id: "1" }], edges: [], totals: { nodes: { File: 40 }, edges: { CONTAINS: 39 } } });
+    render(<Workspace />);
+    await userEvent.click(await screen.findByRole("button", { name: "Separate" }));
+    await screen.findAllByText("1 of 40 nodes · 0 of 39 edges");
+
+    await userEvent.click(screen.getByRole("button", { name: "query graph" }));
+
+    expect(await screen.findByText("5 of 40 nodes · 2 of 39 edges")).toBeInTheDocument();
+    expect(screen.getAllByText("1 of 40 nodes · 0 of 39 edges")).toHaveLength(1); // the model pane keeps its own count
   });
 
   it("pulses the running derivation step's candidates in the linked view", async () => {
