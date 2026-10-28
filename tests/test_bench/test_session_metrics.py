@@ -269,6 +269,9 @@ class TestGolden:
         alone = pm.golden_comparison([{**derived[0], "name": "Something Else"}], reference, aliases=aliases)
         assert (alone["recall"], alone["structure_matches"]) == (round(1 / 3, 3), 1)
         assert pm.golden_mapping([{**derived[0], "name": "Something Else"}], reference, aliases=aliases) == {"x": {"g2"}}
+        # Names only: the structure refs are left out
+        assert pm.golden_mapping([{**derived[0], "name": "Something Else"}], reference, aliases=aliases, structure=False) == {}
+        assert pm.golden_mapping(derived, reference, aliases=aliases, structure=False) == {"x": {"g1"}}
 
     def test_internal_behaviour_matches_across_its_types_within_a_layer(self):
         """A function found for a reference process counts (user, 2026-10-19); across layers and for services it does not."""
