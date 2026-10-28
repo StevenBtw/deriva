@@ -2264,6 +2264,16 @@ class TestRepositoryWalkExclusions:
 
         assert list_repo_files(tmp_path, [".git", "node_modules"]) == ["src/app.py"]
 
+    def test_model_files_are_xml_files_in_the_archimate_exchange_format(self, tmp_path):
+        from deriva.services.extraction import model_files
+
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "model.xml").write_text('<?xml version="1.0"?>\n<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/" identifier="m"/>', encoding="utf-8")
+        (tmp_path / "pom.xml").write_text('<project xmlns="http://maven.apache.org/POM/4.0.0"/>', encoding="utf-8")
+        (tmp_path / "notes.md").write_text("http://www.opengroup.org/xsd/archimate/3.0/", encoding="utf-8")
+
+        assert model_files(tmp_path, ["docs/model.xml", "pom.xml", "notes.md"]) == {"docs/model.xml"}
+
     def test_extraction_walks_from_the_extended_root_so_deep_files_are_read(self, tmp_path):
         """Windows with long paths off cannot open a path over 260 characters unless the walk starts from \\\\?\\."""
         from types import SimpleNamespace
