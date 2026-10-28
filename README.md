@@ -113,7 +113,7 @@ uv tool install --python 3.14 deriva-dev
 Every GitHub release has a `constraints.txt` with the exact version of every dependency. Download it from the release's assets into the current folder, then install against it:
 
 ```bash
-uv tool install --python 3.14 deriva-dev==0.8.0 -c constraints.txt
+uv tool install --python 3.14 deriva-dev==0.9.0 -c constraints.txt
 ```
 
 ### Next to other Python packages
