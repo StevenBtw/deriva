@@ -22,7 +22,7 @@ Deriva brings determinism to AI-assisted architecture model derivation. From rep
 
 1. **Repository** (clone): the code as it is, a Git repository cloned locally. Deriva classifies every file by type, from source and config to docs, tests and build files.
 2. **Intermediate graph** (extract): parsing (tree-sitter for most languages) turns the code into a graph of directories, files, types, methods, dependencies, technologies and business concepts. Graph metrics (PageRank, Louvain communities, k-core) then rank what matters.
-3. **Output graph** (derive): graph structure picks the candidates; an LLM classifies and names them within ArchiMate's rules, then refine steps tidy the result. The studio shows both graphs side by side.
+3. **Output graph** (derive): graph structure picks the candidates and names them; an LLM makes the closed choices structure cannot (a directory's role, which documented concepts and actors count, how components group into applications), each from a fixed list, within ArchiMate's rules; then refine steps tidy the result. The studio shows both graphs side by side.
 4. **ArchiMate model** (export): the output graph exports in the Open Group ArchiMate exchange format, ready to open in Archi.
 
 ## Install
@@ -332,6 +332,13 @@ uv run deriva-cli config setting set excluded_directories '[".git", "node_module
 uv run deriva-cli config setting set max_llm_calls_per_run 5000
 ```
 
+**LLM answers per decision:** the steps that vote (directory classification and element naming) ask the same question `samples` times and keep the majority answer; every step ships with 1. The `llm_samples` setting (1 to 20, also on the studio's **General** page) replaces that for all of them while it is set, and `config setting unset llm_samples` gives each step its own value again. Answers only differ when the model samples (a temperature above 0); more answers cost that many more calls. Benchmark sessions record the value, so measure consistency with 1.
+
+```bash
+uv run deriva-cli config setting set llm_samples 3
+uv run deriva-cli config setting unset llm_samples
+```
+
 **Derivation name patterns:** some derivation steps use include and exclude patterns on the names of their code candidates; business concepts are already classified and skip them. Most of these steps reject a name that contains an exclude pattern and keep one that contains an include pattern, and a name that matches neither follows the step's default (rejected by most steps, kept by BusinessFunction, ApplicationInterface, SystemSoftware and TechnologyService). BusinessObject (type definitions) and BusinessEvent (methods) use the patterns to rank candidates instead, and fill their remaining slots with names that did not match. A step that uses the default candidate filter (ApplicationComponent, ApplicationInterface, BusinessFunction, DataObject, Device, Node, SystemSoftware, TechnologyService) can limit the patterns to candidates with given graph labels with its `pattern_labels` param, and set a k-core threshold with `graph_filter`. Patterns are stored per step, type and category.
 
 ```bash
@@ -570,7 +577,13 @@ uv sync --reinstall
 
 ### The business concept step cannot download its models
 
-On its first run this step downloads its language models (the spaCy pipelines and the translation models) into `workspace/cache/nlp` in your home folder and checks them by SHA-256. Check that the machine can reach the model hosts and run the step again. `DERIVA_NLP_MODELS_DIR` in `.env` moves the folder.
+On its first run with an LLM this step downloads its language models into `workspace/cache/nlp` in your home folder and checks them by SHA-256: three spaCy pipelines (English, German, French, about 63 MB) from GitHub and two translation models (German and French to English, about 220 MB) from argos-net.com, about 300 MB on disk. A run without an LLM skips the step and downloads nothing. Check that the machine can reach the model hosts and run the step again, or fetch the models ahead of time (for example before going offline):
+
+```bash
+uv run deriva-cli nlp fetch
+```
+
+`DERIVA_NLP_MODELS_DIR` in `.env` moves the folder. Their licences are listed in `THIRD_PARTY_NOTICES.md`.
 
 ---
 
