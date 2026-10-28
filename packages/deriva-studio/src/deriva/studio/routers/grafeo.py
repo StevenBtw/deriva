@@ -132,6 +132,7 @@ def view(database: str, limit: int | None = None, session: Any = Depends(get_ses
     return _graph_view(session, limit if limit is not None else session.graph_view_nodes())
 
 
+@router.get("/db/{database}/schema")  # the path anywidget-graph's grafeo client asks
 @router.get("/databases/{database}/schema")
 def schema(database: str, session: Any = Depends(get_session)) -> dict[str, Any]:
     run = _runner(session, database)
