@@ -222,6 +222,56 @@ describe("General", () => {
     expect(settings.unset).toHaveBeenCalledWith("llm_samples");
   });
 
+  it("sets the run limits, the read limit in MB, and restores a default", async () => {
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({
+      key,
+      value:
+        key === "excluded_directories"
+          ? "[]"
+          : key === "max_llm_calls_per_run"
+            ? "500"
+            : null,
+      default:
+        key === "max_read_bytes"
+          ? "50000000"
+          : key === "max_llm_calls_per_run"
+            ? "2000"
+            : null,
+    }));
+    vi.mocked(settings.set).mockImplementation(
+      async (key: string, value: string) => ({ key, value }),
+    );
+    vi.mocked(settings.unset).mockImplementation(async (key: string) => ({
+      key,
+      deleted: true,
+    }));
+    render(<General />);
+    const read = await screen.findByRole("spinbutton", {
+      name: "Largest file read (MB)",
+    });
+    const calls = screen.getByRole("spinbutton", {
+      name: "LLM calls per run",
+    });
+    await waitFor(() => expect(read).toHaveValue(50));
+    expect(calls).toHaveValue(500);
+
+    await userEvent.clear(read);
+    await userEvent.type(read, "10");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save the largest file read" }),
+    );
+    expect(settings.set).toHaveBeenCalledWith("max_read_bytes", "10000000");
+    expect(
+      await screen.findByText(/Saved: extraction reads files up to 10 MB/),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Use the default LLM calls per run" }),
+    );
+    expect(settings.unset).toHaveBeenCalledWith("max_llm_calls_per_run");
+    await waitFor(() => expect(calls).toHaveValue(2000));
+  });
+
   it("says why a node count is refused and keeps what was typed", async () => {
     vi.mocked(settings.get).mockImplementation(async (key: string) => ({
       key,
