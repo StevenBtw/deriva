@@ -203,12 +203,13 @@ def test_schema_lists_labels_and_edge_types_with_counts(make_client):
 
     client = make_client(FakeSession(query_graph_read_only=answer))
 
-    schema = client.get("/grafeo/databases/graph/schema").json()
-
-    assert schema == {
-        "labels": [{"name": "Directory", "count": 2}, {"name": "File", "count": 1}],
-        "edge_types": [{"name": "CONTAINS", "count": 4}],
-    }
+    # The widget's grafeo client asks /db/<name>/schema; the older /databases/<name>/schema answers the same
+    for path in ("/grafeo/db/graph/schema", "/grafeo/databases/graph/schema"):
+        schema = client.get(path).json()
+        assert schema == {
+            "labels": [{"name": "Directory", "count": 2}, {"name": "File", "count": 1}],
+            "edge_types": [{"name": "CONTAINS", "count": 4}],
+        }
 
 
 def test_a_query_answers_from_the_chosen_database_only(make_client):
