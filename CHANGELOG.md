@@ -33,6 +33,7 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 - **Determinism in combined runs**: the repository whose name is stripped from element names is the first by name, not whichever a query returned first
 - **Consistency per level**: `benchmark analyze` reports consistency by id for the solution level (direct relationships only) and the enterprise level (the viewpoint derived from them) next to the whole model, in its output and in `analysis/summary.json` (`consistency_levels`)
 - **Analysis counts what it says**: the two-level tables pool a model's runs over several sessions, as the consistency tables do (one row per model, not per session), and the component services record whether an LLM chose a name, so structure-named application services (`service_verbs`) no longer count as LLM-dependent in the origin split
+- **Architecture models are never an input, whatever their extension**: an `.xml` file in the ArchiMate exchange format (its namespace in the first 4 KB) is excluded like a `.archimate` file, so a model shipped with a repository never feeds the model derived from it. On a repository that holds such files, their File nodes change type (exclude, output), and the directory classification prompt of their folder changes with them
 - **One warning per missing model**: a model that cannot be loaded is reported once per reason, not once before and again inside a run
 
 ### Configuration
