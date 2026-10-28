@@ -582,6 +582,7 @@ class LLMManager:
         use_cache: bool = True,
         system_prompt: str | None = None,
         bench_hash: str | None = None,
+        sample: int | None = None,
     ) -> T | FailedResponse: ...
 
     @overload
@@ -596,6 +597,7 @@ class LLMManager:
         use_cache: bool = True,
         system_prompt: str | None = None,
         bench_hash: str | None = None,
+        sample: int | None = None,
     ) -> LLMResponse: ...
 
     @property
@@ -699,6 +701,7 @@ class LLMManager:
         use_cache: bool = True,
         system_prompt: str | None = None,
         bench_hash: str | None = None,
+        sample: int | None = None,
     ) -> T | LLMResponse:
         """
         Query the LLM with automatic caching and optional structured output.
@@ -712,6 +715,7 @@ class LLMManager:
             use_cache: Whether to use caching (default: True)
             system_prompt: Optional system prompt
             bench_hash: Optional benchmark hash for per-run cache isolation
+            sample: Which of k answers to one prompt (sampling); each sample has its own cache entry
 
         Returns:
             If response_model is provided: Validated Pydantic model instance or FailedResponse
@@ -732,6 +736,7 @@ class LLMManager:
             max_tokens=effective_max_tokens,
             reasoning=self.reasoning,
             endpoint=self._endpoint(),
+            sample=sample,
         )
 
         read_cache = use_cache and not self.nocache
@@ -749,6 +754,8 @@ class LLMManager:
             "seed": None,
             "max_tokens": effective_max_tokens,
             "reasoning": self.reasoning,
+            # Which of k answers to one prompt (sampling); None for a single call
+            "sample": sample,
             # The model the provider says answered (a retired id can be served by another model)
             "served_model": None,
             "cache_hit": False,

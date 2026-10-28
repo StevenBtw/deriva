@@ -341,6 +341,7 @@ class PipelineSession:
             max_tokens: int | None = None,
             system_prompt: str | None = None,
             response_model: type | None = None,
+            sample: int | None = None,
         ) -> Any:
             assert self._llm_manager is not None
             # A cancelled run stops at its next call, also inside a long step
@@ -358,6 +359,7 @@ class PipelineSession:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
+                    sample=sample,
                 )
             except Exception as exc:
                 self._record_call(prompt, schema, system_prompt, None, str(exc))
@@ -1379,6 +1381,12 @@ class PipelineSession:
         self._ensure_connected()
         assert self._engine is not None
         config.set_setting(self._engine, key, value)
+
+    def delete_setting(self, key: str) -> bool:
+        """Unset a system setting (its default applies again); False when it was not set."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.delete_setting(self._engine, key)
 
     def add_file_type(self, extension: str, file_type: str, subtype: str) -> bool:
         """Add a file type to the registry."""

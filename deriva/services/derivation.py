@@ -1046,7 +1046,7 @@ def _per_candidate_config(params: str | None) -> PerCandidateConfig | None:
     return PerCandidateConfig(min_pool=int(settings["min_pool"]), rules=settings["rules"], persona=settings["persona"], decorators=decorators)
 
 
-def _naming_config(params: str | None) -> NamingConfig | None:
+def _naming_config(params: str | None, samples: int | None = None) -> NamingConfig | None:
     """Read the isolated naming step from an element config's params.
 
     ``{"naming": {"instruction": "...", "samples": 1}}`` switches it on; without
@@ -1078,7 +1078,8 @@ def _naming_config(params: str | None) -> NamingConfig | None:
         raise ValueError("params.naming.source_order lists name sources in rank order (strings)")
     return NamingConfig(
         instruction=settings["instruction"],
-        samples=int(settings.get("samples", 1)),
+        # The llm_samples setting replaces the step's own samples while set
+        samples=samples if samples is not None else int(settings.get("samples", 1)),
         choose_instruction=choose,
         guards=NameGuards(generic_words=frozenset(w.lower() for w in words), kind_nouns=dict(nouns), reserved_labels=tuple(labels)),
         source_order=tuple(source_order),
@@ -1787,7 +1788,7 @@ def run_derivation(
                 step_ctx = run_logger.step_start(cfg.step_name, f"Generating {cfg.element_type} elements")
 
             # Wrap llm_query_fn with per-step temperature/max_tokens overrides
-            def step_llm_query_fn(prompt: str, schema: dict) -> Any:
+            def step_llm_query_fn(prompt: str, schema: dict, sample: int | None = None) -> Any:
                 if llm_query_fn is None:
                     raise ValueError("llm_query_fn is required for generate phase")
                 return llm_query_fn(
@@ -1795,6 +1796,7 @@ def run_derivation(
                     schema,
                     temperature=cfg.temperature,
                     max_tokens=cfg.max_tokens,
+                    **({"sample": sample} if sample is not None else {}),
                 )
 
             # Validate required config parameters (a function model step reads no candidates: only its instruction)
@@ -1860,7 +1862,7 @@ def run_derivation(
                         relationship_config=relationship_config(),
                         name_match_skip=_name_match_skip(relationship_configs),
                         per_candidate=_per_candidate_config(cfg.params),
-                        naming=_naming_config(cfg.params),
+                        naming=_naming_config(cfg.params, config.get_llm_samples(engine)),
                         pattern_labels=_pattern_labels(cfg.params),
                         roles=_role_config(cfg.params),
                         skip_when_directory_is=_skip_when_directory_is(cfg.params),
@@ -2251,7 +2253,7 @@ def run_derivation_iter(
                 print(f"  Generate: {cfg.step_name}")
 
             # Wrap llm_query_fn with per-step temperature/max_tokens overrides
-            def step_llm_query_fn(prompt: str, schema: dict) -> Any:
+            def step_llm_query_fn(prompt: str, schema: dict, sample: int | None = None) -> Any:
                 if llm_query_fn is None:
                     raise ValueError("llm_query_fn is required for generate phase")
                 return llm_query_fn(
@@ -2259,6 +2261,7 @@ def run_derivation_iter(
                     schema,
                     temperature=cfg.temperature,
                     max_tokens=cfg.max_tokens,
+                    **({"sample": sample} if sample is not None else {}),
                 )
 
             # Validate required config parameters (a function model step reads no candidates: only its instruction)
@@ -2331,7 +2334,7 @@ def run_derivation_iter(
                         relationship_config=relationship_config(),
                         name_match_skip=_name_match_skip(relationship_configs),
                         per_candidate=_per_candidate_config(cfg.params),
-                        naming=_naming_config(cfg.params),
+                        naming=_naming_config(cfg.params, config.get_llm_samples(engine)),
                         pattern_labels=_pattern_labels(cfg.params),
                         roles=_role_config(cfg.params),
                         skip_when_directory_is=_skip_when_directory_is(cfg.params),

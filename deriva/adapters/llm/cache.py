@@ -75,6 +75,7 @@ class CacheManager(BaseDiskCache):
         max_tokens: int | None = None,
         reasoning: str | None = None,
         endpoint: str | None = None,
+        sample: int | None = None,
     ) -> str:
         """
         Generate a unique cache key from everything that shapes the response.
@@ -94,6 +95,7 @@ class CacheManager(BaseDiskCache):
             max_tokens: Effective max_tokens of the call
             reasoning: The model config's reasoning level (keys without one are unchanged)
             endpoint: Provider and base URL (``endpoint_key``): one model id served by two providers shares no answers
+            sample: Which of k answers to one prompt (sampling): each has its own entry; sample 0 shares a single call's
 
         Returns:
             SHA256 hash as cache key
@@ -121,6 +123,8 @@ class CacheManager(BaseDiskCache):
             parts.append(f"reasoning:{reasoning}")
         if endpoint is not None:
             parts.append(f"endpoint:{endpoint}")
+        if sample:
+            parts.append(f"sample:{sample}")
 
         return hash_inputs(*parts)
 

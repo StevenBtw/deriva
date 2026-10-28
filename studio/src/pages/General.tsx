@@ -11,7 +11,9 @@ function message(reason: unknown): string {
 function directoryList(text: string): string[] | null {
   try {
     const value: unknown = JSON.parse(text);
-    return Array.isArray(value) && value.every((d) => typeof d === "string") ? value : null;
+    return Array.isArray(value) && value.every((d) => typeof d === "string")
+      ? value
+      : null;
   } catch {
     return null;
   }
@@ -33,7 +35,10 @@ function ExcludedDirectories() {
         }
         const list = directoryList(value);
         setDirs(list ?? []);
-        if (list === null) setNote("The stored value is not a JSON list of names; saving replaces it.");
+        if (list === null)
+          setNote(
+            "The stored value is not a JSON list of names; saving replaces it.",
+          );
       })
       .catch((reason) => setNote(message(reason)));
   }, []);
@@ -57,7 +62,13 @@ function ExcludedDirectories() {
     <div className="card">
       <div className="hd">
         <h3>Settings</h3>
-        <button type="button" className="primary" style={{ marginLeft: "auto" }} onClick={() => void save()} disabled={dirs === null}>
+        <button
+          type="button"
+          className="primary"
+          style={{ marginLeft: "auto" }}
+          onClick={() => void save()}
+          disabled={dirs === null}
+        >
           Save settings
         </button>
       </div>
@@ -67,7 +78,13 @@ function ExcludedDirectories() {
           {(dirs ?? []).map((d) => (
             <span key={d} className="pill">
               {d}{" "}
-              <button type="button" className="ghost" style={{ padding: 0, border: 0 }} aria-label={`Remove ${d}`} onClick={() => setDirs((dirs ?? []).filter((x) => x !== d))}>
+              <button
+                type="button"
+                className="ghost"
+                style={{ padding: 0, border: 0 }}
+                aria-label={`Remove ${d}`}
+                onClick={() => setDirs((dirs ?? []).filter((x) => x !== d))}
+              >
                 ×
               </button>
             </span>
@@ -98,7 +115,11 @@ function FileTypes() {
   const [filter, setFilter] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [edit, setEdit] = useState({ file_type: "", subtype: "" });
-  const [fresh, setFresh] = useState<FileType>({ extension: "", file_type: "", subtype: "" });
+  const [fresh, setFresh] = useState<FileType>({
+    extension: "",
+    file_type: "",
+    subtype: "",
+  });
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -124,16 +145,29 @@ function FileTypes() {
     }
   };
 
-  const shown = rows.filter((r) => `${r.extension} ${r.file_type} ${r.subtype}`.toLowerCase().includes(filter.toLowerCase()));
+  const shown = rows.filter((r) =>
+    `${r.extension} ${r.file_type} ${r.subtype}`
+      .toLowerCase()
+      .includes(filter.toLowerCase()),
+  );
 
   return (
     <div className="card">
       <div className="hd">
         <h3>File type registry</h3>
         <span className="muted">
-          {rows.length} extensions · {Object.entries(stats).map(([t, n]) => `${t} ${n}`).join(" · ")}
+          {rows.length} extensions ·{" "}
+          {Object.entries(stats)
+            .map(([t, n]) => `${t} ${n}`)
+            .join(" · ")}
         </span>
-        <input aria-label="Filter file types" placeholder="filter" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ marginLeft: "auto", width: 140 }} />
+        <input
+          aria-label="Filter file types"
+          placeholder="filter"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          style={{ marginLeft: "auto", width: 140 }}
+        />
       </div>
       {error && (
         <div className="bd error-text" role="alert">
@@ -152,19 +186,49 @@ function FileTypes() {
         <tbody>
           <tr>
             <td>
-              <input aria-label="New extension" placeholder=".ext" value={fresh.extension} onChange={(e) => setFresh({ ...fresh, extension: e.target.value })} style={{ width: 90 }} />
+              <input
+                aria-label="New extension"
+                placeholder=".ext"
+                value={fresh.extension}
+                onChange={(e) =>
+                  setFresh({ ...fresh, extension: e.target.value })
+                }
+                style={{ width: 90 }}
+              />
             </td>
             <td>
-              <input aria-label="New type" placeholder="source" value={fresh.file_type} onChange={(e) => setFresh({ ...fresh, file_type: e.target.value })} style={{ width: 100 }} />
+              <input
+                aria-label="New type"
+                placeholder="source"
+                value={fresh.file_type}
+                onChange={(e) =>
+                  setFresh({ ...fresh, file_type: e.target.value })
+                }
+                style={{ width: 100 }}
+              />
             </td>
             <td>
-              <input aria-label="New subtype" placeholder="language" value={fresh.subtype} onChange={(e) => setFresh({ ...fresh, subtype: e.target.value })} style={{ width: 110 }} />
+              <input
+                aria-label="New subtype"
+                placeholder="language"
+                value={fresh.subtype}
+                onChange={(e) =>
+                  setFresh({ ...fresh, subtype: e.target.value })
+                }
+                style={{ width: 110 }}
+              />
             </td>
             <td>
               <button
                 type="button"
                 disabled={!fresh.extension || !fresh.file_type}
-                onClick={() => void run(() => fileTypes.add(fresh), () => setFresh({ extension: "", file_type: "", subtype: "" }))}
+                onClick={() =>
+                  void run(
+                    () => fileTypes.add(fresh),
+                    () =>
+                      setFresh({ extension: "", file_type: "", subtype: "" }),
+                  )
+                }
               >
                 Add
               </button>
@@ -176,16 +240,47 @@ function FileTypes() {
               {editing === r.extension ? (
                 <>
                   <td>
-                    <input aria-label={`Type of ${r.extension}`} value={edit.file_type} onChange={(e) => setEdit({ ...edit, file_type: e.target.value })} style={{ width: 100 }} />
+                    <input
+                      aria-label={`Type of ${r.extension}`}
+                      value={edit.file_type}
+                      onChange={(e) =>
+                        setEdit({ ...edit, file_type: e.target.value })
+                      }
+                      style={{ width: 100 }}
+                    />
                   </td>
                   <td>
-                    <input aria-label={`Subtype of ${r.extension}`} value={edit.subtype} onChange={(e) => setEdit({ ...edit, subtype: e.target.value })} style={{ width: 110 }} />
+                    <input
+                      aria-label={`Subtype of ${r.extension}`}
+                      value={edit.subtype}
+                      onChange={(e) =>
+                        setEdit({ ...edit, subtype: e.target.value })
+                      }
+                      style={{ width: 110 }}
+                    />
                   </td>
                   <td>
-                    <button type="button" onClick={() => void run(() => fileTypes.update(r.extension, edit.file_type, edit.subtype), () => setEditing(null))}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void run(
+                          () =>
+                            fileTypes.update(
+                              r.extension,
+                              edit.file_type,
+                              edit.subtype,
+                            ),
+                          () => setEditing(null),
+                        )
+                      }
+                    >
                       Save
                     </button>{" "}
-                    <button type="button" className="ghost" onClick={() => setEditing(null)}>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => setEditing(null)}
+                    >
                       Cancel
                     </button>
                   </td>
@@ -209,7 +304,10 @@ function FileTypes() {
                       type="button"
                       className="ghost danger"
                       onClick={() => {
-                        if (window.confirm(`Delete the file type ${r.extension}?`)) void run(() => fileTypes.remove(r.extension));
+                        if (
+                          window.confirm(`Delete the file type ${r.extension}?`)
+                        )
+                          void run(() => fileTypes.remove(r.extension));
                       }}
                     >
                       Delete
@@ -225,23 +323,57 @@ function FileTypes() {
   );
 }
 
-const PROVIDERS = ["anthropic", "azure", "lmstudio", "mistral", "ollama", "openai"];
+const PROVIDERS = [
+  "anthropic",
+  "azure",
+  "lmstudio",
+  "mistral",
+  "ollama",
+  "openai",
+];
 
-type Draft = { isNew: boolean; name: string; provider: string; model: string; url: string; key: string; keyEnv: string };
+type Draft = {
+  isNew: boolean;
+  name: string;
+  provider: string;
+  model: string;
+  url: string;
+  key: string;
+  keyEnv: string;
+};
 
 function draftOf(row?: ModelConfigRow): Draft {
   return row
-    ? { isNew: false, name: row.name, provider: row.provider, model: row.model ?? "", url: row.url ?? "", key: "", keyEnv: row.key_env ?? "" }
-    : { isNew: true, name: "", provider: PROVIDERS[0], model: "", url: "", key: "", keyEnv: "" };
+    ? {
+        isNew: false,
+        name: row.name,
+        provider: row.provider,
+        model: row.model ?? "",
+        url: row.url ?? "",
+        key: "",
+        keyEnv: row.key_env ?? "",
+      }
+    : {
+        isNew: true,
+        name: "",
+        provider: PROVIDERS[0],
+        model: "",
+        url: "",
+        key: "",
+        keyEnv: "",
+      };
 }
 
 /** The model configs in .env: keys are shown masked and only ever sent, never read back. */
 /** How a model test went: what answered and how fast, or what to fix (the provider's message on hover). */
 function TestResult({ result }: { result: ModelTest | "testing" }) {
-  if (result === "testing") return <span className="note">Testing: one small call to the model…</span>;
+  if (result === "testing")
+    return <span className="note">Testing: one small call to the model…</span>;
   if (result.ok) {
     const seconds = ((result.latency_ms ?? 0) / 1000).toFixed(1);
-    return <span className="ok">{`Works: ${result.served_model || result.model_id} answered in ${seconds} s`}</span>;
+    return (
+      <span className="ok">{`Works: ${result.served_model || result.model_id} answered in ${seconds} s`}</span>
+    );
   }
   return (
     <span className="error-text" title={result.detail ?? undefined}>
@@ -290,7 +422,16 @@ function Models() {
       const result = await modelConfigs.test(name);
       setTests((t) => ({ ...t, [name]: result }));
     } catch (reason) {
-      setTests((t) => ({ ...t, [name]: { ok: false, model: name, provider: "", model_id: "", error: message(reason) } }));
+      setTests((t) => ({
+        ...t,
+        [name]: {
+          ok: false,
+          model: name,
+          provider: "",
+          model_id: "",
+          error: message(reason),
+        },
+      }));
     }
   };
 
@@ -305,7 +446,12 @@ function Models() {
     }
   };
 
-  const field = (key: keyof Draft, label: string, type = "text", placeholder?: string) => (
+  const field = (
+    key: keyof Draft,
+    label: string,
+    type = "text",
+    placeholder?: string,
+  ) => (
     <>
       <label className="muted" htmlFor={`model-${key}`}>
         {label}
@@ -316,7 +462,9 @@ function Models() {
         value={String(draft?.[key] ?? "")}
         placeholder={placeholder}
         disabled={key === "name" && !draft?.isNew}
-        onChange={(e) => setDraft((d) => (d ? { ...d, [key]: e.target.value } : d))}
+        onChange={(e) =>
+          setDraft((d) => (d ? { ...d, [key]: e.target.value } : d))
+        }
       />
     </>
   );
@@ -325,8 +473,14 @@ function Models() {
     <div className="card models">
       <div className="hd">
         <h3>Models</h3>
-        <span className="note">LLM model configs in .env; API keys are write-only</span>
-        <button type="button" style={{ marginLeft: "auto" }} onClick={() => setDraft(draftOf())}>
+        <span className="note">
+          LLM model configs in .env; API keys are write-only
+        </span>
+        <button
+          type="button"
+          style={{ marginLeft: "auto" }}
+          onClick={() => setDraft(draftOf())}
+        >
           Add model
         </button>
       </div>
@@ -350,15 +504,29 @@ function Models() {
                   <td>{row.provider}</td>
                   <td className="mono">{row.model}</td>
                   <td className="mono">{row.url ?? ""}</td>
-                  <td className="mono">{row.key ?? (row.key_env ? `from $${row.key_env}` : "not set")}</td>
+                  <td className="mono">
+                    {row.key ??
+                      (row.key_env ? `from $${row.key_env}` : "not set")}
+                  </td>
                   <td>
-                    <button type="button" disabled={tests[row.name] === "testing"} onClick={() => void test(row.name)}>
+                    <button
+                      type="button"
+                      disabled={tests[row.name] === "testing"}
+                      onClick={() => void test(row.name)}
+                    >
                       Test
                     </button>{" "}
-                    <button type="button" onClick={() => setDraft(draftOf(row))}>
+                    <button
+                      type="button"
+                      onClick={() => setDraft(draftOf(row))}
+                    >
                       Edit
                     </button>{" "}
-                    <button type="button" className="danger" onClick={() => void remove(row.name)}>
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={() => void remove(row.name)}
+                    >
                       Delete
                     </button>
                   </td>
@@ -375,26 +543,52 @@ function Models() {
           </tbody>
         </table>
         {draft && (
-          <div className="kv" style={{ gridTemplateColumns: "120px 1fr", marginTop: 10 }}>
+          <div
+            className="kv"
+            style={{ gridTemplateColumns: "120px 1fr", marginTop: 10 }}
+          >
             {field("name", "Model name")}
             <label className="muted" htmlFor="model-provider">
               Provider
             </label>
-            <select id="model-provider" value={draft.provider} onChange={(e) => setDraft({ ...draft, provider: e.target.value })}>
+            <select
+              id="model-provider"
+              value={draft.provider}
+              onChange={(e) => setDraft({ ...draft, provider: e.target.value })}
+            >
               {PROVIDERS.map((p) => (
                 <option key={p}>{p}</option>
               ))}
             </select>
             {field("model", "Model id")}
             {field("url", "API URL")}
-            {field("key", "API key", "password", draft.isNew ? "not set" : "unchanged")}
-            {field("keyEnv", "Key variable", "text", "optional: name of a variable holding the key")}
+            {field(
+              "key",
+              "API key",
+              "password",
+              draft.isNew ? "not set" : "unchanged",
+            )}
+            {field(
+              "keyEnv",
+              "Key variable",
+              "text",
+              "optional: name of a variable holding the key",
+            )}
             <span />
             <div>
-              <button type="button" className="primary" onClick={() => void save()} disabled={!draft.name || !draft.model}>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void save()}
+                disabled={!draft.name || !draft.model}
+              >
                 Save model
               </button>{" "}
-              <button type="button" className="ghost" onClick={() => setDraft(null)}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setDraft(null)}
+              >
                 Cancel
               </button>
             </div>
@@ -416,7 +610,9 @@ function GraphViews() {
   useEffect(() => {
     settings
       .get(GRAPH_VIEW_NODES)
-      .then(({ value, default: fallback }) => setDraft(value ?? fallback ?? "300"))
+      .then(({ value, default: fallback }) =>
+        setDraft(value ?? fallback ?? "300"),
+      )
       .catch((reason) => setNote(message(reason)));
   }, []);
 
@@ -424,7 +620,9 @@ function GraphViews() {
     if (draft === null) return;
     try {
       const { value } = await settings.set(GRAPH_VIEW_NODES, draft.trim());
-      setNote(`Saved: the graph views now sample ${Number(value).toLocaleString("en")} nodes (reopen a graph to see it).`);
+      setNote(
+        `Saved: the graph views now sample ${Number(value).toLocaleString("en")} nodes (reopen a graph to see it).`,
+      );
     } catch (reason) {
       setNote(message(reason));
     }
@@ -450,13 +648,124 @@ function GraphViews() {
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void save()}
           />
-          <button type="button" aria-label="Save the node count" disabled={draft === null} onClick={() => void save()}>
+          <button
+            type="button"
+            aria-label="Save the node count"
+            disabled={draft === null}
+            onClick={() => void save()}
+          >
             Save
           </button>
         </div>
         <div className="note">
-          The Workspace and Benchmark graphs show this many nodes of the graph (50 to 5,000; the model is always shown whole). More nodes show more
+          The Workspace and Benchmark graphs show this many nodes of the graph
+          (50 to 5,000; the model is always shown whole). More nodes show more
           of the graph and draw slower. A display setting: it changes no run.
+        </div>
+      </div>
+      {note && <div className="bd note">{note}</div>}
+    </div>
+  );
+}
+
+const LLM_SAMPLES = "llm_samples";
+
+/** Answers per LLM decision for the steps that vote; unset, each step keeps its own samples param. */
+function LlmSamples() {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [isSet, setIsSet] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    settings
+      .get(LLM_SAMPLES)
+      .then(({ value }) => {
+        setIsSet(value !== null);
+        setDraft(value ?? "1");
+      })
+      .catch((reason) => setNote(message(reason)));
+  }, []);
+
+  const save = async () => {
+    if (draft === null) return;
+    try {
+      const { value } = await settings.set(LLM_SAMPLES, draft.trim());
+      setIsSet(true);
+      setNote(
+        `Saved: every step that votes now asks ${value} times per decision (from the next run).`,
+      );
+    } catch (reason) {
+      setNote(message(reason));
+    }
+  };
+
+  const unset = async () => {
+    try {
+      await settings.unset(LLM_SAMPLES);
+      setIsSet(false);
+      setDraft("1");
+      setNote(
+        "Each step asks as many times as its own config says again (from the next run).",
+      );
+    } catch (reason) {
+      setNote(message(reason));
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="hd">
+        <h3>LLM answers</h3>
+      </div>
+      <div className="bd">
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          <label htmlFor="llm-samples">LLM answers per decision</label>
+          <input
+            id="llm-samples"
+            type="number"
+            min={1}
+            max={20}
+            step={1}
+            value={draft ?? ""}
+            disabled={draft === null}
+            style={{ width: 70 }}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void save()}
+          />
+          <button
+            type="button"
+            aria-label="Save the answers per decision"
+            disabled={draft === null}
+            onClick={() => void save()}
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            aria-label="Use each step's own setting"
+            disabled={!isSet}
+            onClick={() => void unset()}
+          >
+            Use each step&apos;s own
+          </button>
+        </div>
+        <div className="note">
+          {isSet
+            ? "Set for every step that votes. "
+            : "Not set: each step asks as many times as its own config says (1 by default). "}
+          Steps that vote (directory classification, element naming) ask the
+          same question this many times and keep the majority answer: steadier
+          answers for everyday runs, at that many times the calls. Answers
+          differ only when the model samples (a temperature above 0). Benchmark
+          sessions record the value; measure consistency with 1.
         </div>
       </div>
       {note && <div className="bd note">{note}</div>}
@@ -474,7 +783,12 @@ function DerivationRuns() {
   useEffect(() => {
     settings
       .get(CLEAR_MODEL)
-      .then(({ value }) => setOn(value === null || !["false", "0", "no", "off"].includes(value.trim().toLowerCase())))
+      .then(({ value }) =>
+        setOn(
+          value === null ||
+            !["false", "0", "no", "off"].includes(value.trim().toLowerCase()),
+        ),
+      )
       .catch((reason) => setNote(message(reason)));
   }, []);
 
@@ -496,11 +810,17 @@ function DerivationRuns() {
       </div>
       <div className="bd">
         <label className="check">
-          <input type="checkbox" checked={on ?? true} disabled={on === null} onChange={(e) => void change(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={on ?? true}
+            disabled={on === null}
+            onChange={(e) => void change(e.target.checked)}
+          />
           Full derivation runs start from an empty model
         </label>
         <div className="note">
-          As benchmarks do. Switched off, a run builds on the model of an earlier run and skips every candidate that model already has, so it
+          As benchmarks do. Switched off, a run builds on the model of an
+          earlier run and skips every candidate that model already has, so it
           derives less. Runs of one phase or one step always keep the model.
         </div>
       </div>
@@ -514,12 +834,18 @@ export function General({ benchmark = true }: { benchmark?: boolean }) {
     <section className="page">
       <div className="pagehead">
         <h2>General &amp; file types</h2>
-        <span className="sub">System settings, the file type registry and the LLM model configs</span>
+        <span className="sub">
+          System settings, the file type registry and the LLM model configs
+        </span>
       </div>
-      <div className="pad cols" style={{ gridTemplateColumns: "1fr 1.3fr", alignItems: "start" }}>
+      <div
+        className="pad cols"
+        style={{ gridTemplateColumns: "1fr 1.3fr", alignItems: "start" }}
+      >
         <div className="stack">
           <ExcludedDirectories />
           <GraphViews />
+          <LlmSamples />
           {benchmark && <DerivationRuns />}
           <Models />
         </div>

@@ -680,6 +680,7 @@ def _run_step_writes(
             repo=repo,
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
+            samples=config.get_llm_samples(engine),
         )
     elif node_type == "Technology":
         if llm_query_fn is None:
@@ -2162,8 +2163,10 @@ def _extract_directory_classification(
     repo: Any,
     graph_manager: GraphManager,
     llm_query_fn: Callable,
+    samples: int | None = None,
 ) -> dict[str, Any]:
-    """Extract BusinessConcept and Technology nodes from Directory classification.
+    """Extract BusinessConcept and Technology nodes from Directory classification (``samples``: the llm_samples
+    setting, which replaces the step's own samples param while set).
 
     This queries Directory nodes from the graph and classifies them using LLM
     into business concepts, technologies, or skips.
@@ -2219,6 +2222,8 @@ def _extract_directory_classification(
         "example": cfg.example or "",
         "params": json.loads(cfg.params) if cfg.params else {},
     }
+    if samples is not None and "samples" in extraction_config["params"]:
+        extraction_config["params"]["samples"] = samples
 
     # A technology answer for a directory named after the repository is skipped (params.skip_repository_name)
     skip_name = extraction_config["params"].get("skip_repository_name", False)
@@ -2226,13 +2231,14 @@ def _extract_directory_classification(
         return {"nodes_created": 0, "edges_created": 0, "errors": [f"DirectoryClassification params.skip_repository_name must be true or false, got {skip_name!r}"]}
 
     # Wrap llm_query_fn with per-step temperature/max_tokens overrides
-    def step_llm_query_fn(prompt: str, schema: dict, system_prompt: str | None = None) -> Any:
+    def step_llm_query_fn(prompt: str, schema: dict, system_prompt: str | None = None, sample: int | None = None) -> Any:
         return llm_query_fn(
             prompt,
             schema,
             temperature=cfg.temperature,
             max_tokens=cfg.max_tokens,
             system_prompt=system_prompt,
+            **({"sample": sample} if sample is not None else {}),
         )
 
     # Directories the structure decides (skip names, skipped trees, path steps) never reach the LLM;

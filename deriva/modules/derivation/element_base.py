@@ -1357,9 +1357,11 @@ class ElementDerivationBase(ABC):
         source = naming_source(candidate)
         prompt = build_naming_prompt(source, self.ELEMENT_TYPE, naming.instruction)
         answers: list[str | None] = []
-        for _ in range(naming.samples):
+        for index in range(naming.samples):
             try:
-                content, error = extract_response_content(llm_query_fn(prompt, NAMING_SCHEMA, **llm_kwargs))
+                # Numbered samples have their own cache entries (a single call passes none)
+                numbered = {"sample": index} if naming.samples > 1 else {}
+                content, error = extract_response_content(llm_query_fn(prompt, NAMING_SCHEMA, **llm_kwargs, **numbered))
                 if error:
                     continue
                 text = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()

@@ -217,7 +217,7 @@ def two_level_rows(sessions: list[Path]) -> list[dict[str, Any]]:
 
 # What makes two calls of one model the same call: the cache key's parts without its benchmark run (--bench-hash puts
 # the run into every key, so no prompt would recur across runs)
-_CALL_PARTS = ("provider", "model", "schema", "system_prompt", "prompt", "temperature", "max_tokens", "reasoning")
+_CALL_PARTS = ("provider", "model", "schema", "system_prompt", "prompt", "temperature", "max_tokens", "reasoning", "sample")
 
 
 def call_key(call: dict[str, Any]) -> str:

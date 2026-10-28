@@ -141,6 +141,7 @@ def record_call(
         seed=metrics.get("seed"),
         reasoning=metrics.get("reasoning"),
         max_tokens=metrics.get("max_tokens"),
+        sample=metrics.get("sample"),
         cache_hit=metrics.get("cache_hit"),
         latency_ms=metrics.get("latency_ms"),
         tokens_in=metrics.get("input_tokens"),
