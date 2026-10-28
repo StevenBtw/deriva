@@ -340,3 +340,23 @@ def test_two_sessions_of_one_model_give_one_row_over_all_their_runs(tmp_path):
     (row,) = rows
     # Four runs: the item flips between the sessions, so it is not stable over the model's runs
     assert row["decisions"] == {"stable": 0, "items": 1}
+
+
+def test_the_report_holds_consistency_per_level(tmp_path):
+    """The solution level holds direct relationships only; a derived enterprise relationship that flips lowers the
+    whole model's and the enterprise level's relationship consistency, never the solution level's."""
+    shop = {**SHOP, "levels": ["solution", "enterprise"]}
+    service = {**SERVICE, "levels": ["solution", "enterprise"]}
+    direct = {"source": "ac_shop", "target": "as_ordering", "type": "Realization", "derived_from": "listed_members", "levels": ["solution", "enterprise"]}
+    derived = {"source": "as_ordering", "target": "ac_shop", "type": "Serving", "derived_from": "derivation", "levels": ["enterprise"]}
+    runs = [_run(shop, service), _run(shop, service)]
+    runs[0]["relationships"] = [direct, derived]
+    runs[1]["relationships"] = [direct]
+    session = _session(tmp_path, "s1", "m", runs)
+
+    report = pm.session_report([session])
+
+    whole = report["consistency"][0]["identities"]["id"]["relationships"]["cons"]
+    solution = report["consistency_levels"]["solution"][0]["identities"]["id"]["relationships"]["cons"]
+    enterprise = report["consistency_levels"]["enterprise"][0]["identities"]["id"]["relationships"]["cons"]
+    assert (solution, whole, enterprise) == (1.0, 0.5, 0.5)
