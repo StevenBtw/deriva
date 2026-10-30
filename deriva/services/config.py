@@ -68,12 +68,14 @@ def llm_samples_per_step(engine: Any) -> dict[str, int]:
     samples: dict[str, int] = {}
     for cfg in get_extraction_configs(engine, enabled_only=True):
         if cfg.extraction_method == "llm":
-            samples[cfg.node_type] = int((json.loads(cfg.params) if cfg.params else {}).get("samples", 1))
+            params = json.loads(cfg.params) if cfg.params else {}
+            # A step whose params define samples votes, so the llm_samples setting applies to it
+            samples[cfg.node_type] = effective_samples(engine, int(params["samples"])) if "samples" in params else 1
     for cfg in get_derivation_configs(engine, enabled_only=True, phase="generate"):
         params = json.loads(cfg.params) if cfg.params else {}
         naming = params.get("naming")
         if naming:
-            samples[f"{cfg.step_name}.naming"] = int(naming.get("samples", 1))
+            samples[f"{cfg.step_name}.naming"] = effective_samples(engine, int(naming.get("samples", 1)))
         roles = params.get("roles")
         if isinstance(roles, dict) and roles.get("labels") and roles.get("instruction"):
             samples[f"{cfg.step_name}.roles"] = 1
@@ -737,7 +739,71 @@ def setting_default(key: str) -> str | None:
         return json.dumps(DEFAULT_EXCLUDED_DIRECTORIES)
     if key == GRAPH_VIEW_NODES_SETTING:
         return str(DEFAULT_GRAPH_VIEW_NODES)
+    if key in LIMIT_DEFAULTS:
+        return str(LIMIT_DEFAULTS[key])
     return None
+
+
+# Limits for untrusted repositories: a file larger than max_read_bytes is not read (a huge file would fill memory and,
+# chunked, take thousands of LLM calls), and a run makes at most max_llm_calls_per_run LLM calls, then stops calling
+MAX_READ_BYTES_SETTING = "max_read_bytes"
+LLM_CALL_BUDGET_SETTING = "max_llm_calls_per_run"
+LIMIT_DEFAULTS = {MAX_READ_BYTES_SETTING: 50_000_000, LLM_CALL_BUDGET_SETTING: 2000}
+
+
+def _parse_limit(key: str, raw: str) -> int:
+    text = raw.strip()
+    if not text.isdigit() or int(text) < 1:
+        raise ValueError(f"{key} must be a positive whole number, not {raw!r}")
+    return int(text)
+
+
+def _get_limit(engine: Any, key: str) -> int:
+    raw = get_setting(engine, key) if engine is not None else None
+    try:
+        return LIMIT_DEFAULTS[key] if raw is None else _parse_limit(key, str(raw))
+    except ValueError:
+        return LIMIT_DEFAULTS[key]
+
+
+# Answers per LLM decision for the steps that vote (DirectoryClassification, element naming): while set, it replaces
+# every such step's own samples param; unset, each step keeps its own. Above 1 the answers are combined by majority:
+# steadier for everyday use, reported per session, never for measuring consistency
+LLM_SAMPLES_SETTING = "llm_samples"
+LLM_SAMPLES_RANGE = (1, 20)
+
+
+def _parse_llm_samples(raw: str) -> int:
+    low, high = LLM_SAMPLES_RANGE
+    text = raw.strip()
+    if not text.isdigit() or not low <= int(text) <= high:
+        raise ValueError(f"llm_samples must be a whole number from {low} to {high}, not {raw!r}")
+    return int(text)
+
+
+def get_llm_samples(engine: Any) -> int | None:
+    """The llm_samples setting, or None while it is not set (or not a valid count)."""
+    raw = get_setting(engine, LLM_SAMPLES_SETTING) if engine is not None else None
+    try:
+        return None if raw is None else _parse_llm_samples(str(raw))
+    except ValueError:
+        return None
+
+
+def effective_samples(engine: Any, own: int) -> int:
+    """The answers a voting step asks per decision: the llm_samples setting while set, else the step's own samples."""
+    setting = get_llm_samples(engine)
+    return setting if setting is not None else own
+
+
+def get_max_read_bytes(engine: Any) -> int:
+    """The largest file extraction reads (bytes): the max_read_bytes setting, or 50 MB."""
+    return _get_limit(engine, MAX_READ_BYTES_SETTING)
+
+
+def get_llm_call_budget(engine: Any) -> int:
+    """The LLM calls one run may make: the max_llm_calls_per_run setting, or 2000."""
+    return _get_limit(engine, LLM_CALL_BUDGET_SETTING)
 
 
 # How many graph nodes the studio's graph views sample (the model is always shown whole); more shows more of the graph
@@ -802,6 +868,10 @@ def set_setting(engine: Any, key: str, value: str) -> None:
         _parse_excluded_directories(value)
     if key == GRAPH_VIEW_NODES_SETTING:
         value = str(_parse_graph_view_nodes(value))
+    if key in LIMIT_DEFAULTS:
+        value = str(_parse_limit(key, value))
+    if key == LLM_SAMPLES_SETTING:
+        value = str(_parse_llm_samples(value))
     existing = get_setting(engine, key)
     if existing is not None:
         engine.execute(
@@ -813,6 +883,14 @@ def set_setting(engine: Any, key: str, value: str) -> None:
             "INSERT INTO system_settings (key, value) VALUES (?, ?)",
             [key, value],
         )
+
+
+def delete_setting(engine: Any, key: str) -> bool:
+    """Unset a system setting (its default applies again); False when it was not set."""
+    if get_setting(engine, key) is None:
+        return False
+    engine.execute("DELETE FROM system_settings WHERE key = ?", [key])
+    return True
 
 
 # =============================================================================

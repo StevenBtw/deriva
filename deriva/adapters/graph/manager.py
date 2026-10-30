@@ -15,7 +15,7 @@ Usage:
         # Add relationships
         gm.add_edge("repo_myapp", "file_myapp_main_py", "CONTAINS")
 
-        # Query with Cypher
+        # Query (GQL by default)
         results = gm.execute("MATCH (r:Repository)-[:CONTAINS]->(f:File) RETURN f")
 
         # Get enrichment data
@@ -174,7 +174,7 @@ class GraphManager:
     This class provides a high-level interface for:
     - Creating and managing property graphs
     - Adding nodes and edges (Repository, Directory, File, Method, TypeDefinition, etc.)
-    - Querying graph structure with Cypher
+    - Querying graph structure (GQL by default)
     - Traversing relationships
 
     Uses the shared grafeo connection with "Graph" namespace.
@@ -533,10 +533,10 @@ class GraphManager:
             query = """
                 MATCH (n)
                 WHERE n.id = $node_id
-                RETURN count(n) > 0 as exists
+                RETURN count(n) > 0 AS found
             """
             result = self.db.execute_read(query, {"node_id": node_id})
-            return result[0]["exists"] if result else False
+            return result[0]["found"] if result else False
 
         except Exception as e:
             logger.error(f"Failed to check node existence {node_id}: {e}")
@@ -626,10 +626,10 @@ class GraphManager:
             raise
 
     def query(self, cypher_query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Execute a Cypher query.
+        """Execute a query in GRAFEO_QUERY_LANGUAGE (GQL by default).
 
         Args:
-            cypher_query: Cypher query string
+            cypher_query: Query string
             params: Optional query parameters
 
         Returns:
@@ -645,11 +645,11 @@ class GraphManager:
             logger.error(f"Query failed: {e}")
             raise
 
-    def query_read_only(self, cypher_query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Run a Cypher query whose writes are rolled back (queries typed by a user)."""
+    def query_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict[str, Any]]:
+        """Run a query whose writes are rolled back (queries typed by a user), in ``language`` or the configured one."""
         if self.db is None:
             raise RuntimeError("Not connected to grafeo. Call connect() first.")
-        return self.db.execute_rolled_back(cypher_query, params)
+        return self.db.execute_rolled_back(query, params, language)
 
     def clear_graph(self) -> None:
         """Clear all nodes and edges from the graph."""

@@ -715,6 +715,18 @@ def setting_set(
         typer.echo(f"Set {key} = {value}")
 
 
+@setting_app.command("unset")
+def setting_unset(
+    key: Annotated[str, typer.Argument(help="Setting key (e.g., 'llm_samples')")],
+) -> None:
+    """Unset a system setting: its default applies again."""
+    with PipelineSession() as session:
+        if session.delete_setting(key):
+            typer.echo(f"Unset {key}")
+        else:
+            typer.echo(f"Setting not set: {key}")
+
+
 # =============================================================================
 # Model Config Commands
 # =============================================================================

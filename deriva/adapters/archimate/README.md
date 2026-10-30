@@ -86,7 +86,7 @@ deriva/adapters/archimate/
 | `get_relationships(source_id=None)` | Get relationships |
 | `clear_model()` | Clear all ArchiMate data |
 | `export_to_xml(path, model_name)` | Export to Archi XML format |
-| `query(cypher, params)` | Execute custom Cypher query |
+| `query(query, params)` | Execute a custom query (GQL by default, `GRAFEO_QUERY_LANGUAGE`) |
 
 ## Data Isolation
 

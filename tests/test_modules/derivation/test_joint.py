@@ -189,6 +189,17 @@ class TestMerges:
         assert decision.kept == ["s_to_x"]
         assert decision.dropped["d_to_x"].startswith("H5")
 
+    def test_h5_two_merges_keep_one_relationship_per_pair(self):
+        # a->b and c->d meet on one pair only when both merges are taken: neither merge alone makes them collide
+        decision = run(
+            [el("a", pagerank=0.9), el("b", pagerank=0.9), el("c"), el("d")],
+            [rel("a_to_b", "a", "b", "Serving", tier=2), rel("c_to_d", "c", "d", "Serving", tier=3)],
+            [MergeCandidate("a", "c", tier=1, score=1.0), MergeCandidate("b", "d", tier=1, score=1.0)],
+        )
+        assert decision.merges == {"c": "a", "d": "b"}
+        assert decision.kept == ["a_to_b"]
+        assert decision.dropped["c_to_d"].startswith("H5")
+
     def test_h6_no_chain_without_direct_evidence(self):
         decision = run(
             [el("a"), el("b"), el("c")],

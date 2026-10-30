@@ -198,21 +198,29 @@ def two_level_rows(sessions: list[Path]) -> list[dict[str, Any]]:
     several models, also over all their runs (``ALL_MODELS``), where a prompt is the same prompt text, not the per-model
     cache key."""
     rows = []
+    # The runs of one repository and model, pooled over the sessions (as consistency_rows pools them)
     pooled: dict[str, dict[str, list[tuple[str, dict[str, Any], list[dict[str, Any]]]]]] = {}
     for session in sessions:
         calls = _calls(session)
-        runs: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
         for repo, model, number, snapshot in run_snapshots(session):
-            runs.setdefault((repo, model), []).append((number, snapshot))
-        for (repo, model), numbered in sorted(runs.items()):
-            group = [(str(number), snapshot, calls.get((repo, model, number), [])) for number, snapshot in numbered]
-            rows += _two_level(repo, model, group, lambda c: str(c.get("cache_key")))
-            pooled.setdefault(repo, {}).setdefault(model, []).extend((f"{session.name}:{model}:{label}", s, c) for label, s, c in group)
+            pooled.setdefault(repo, {}).setdefault(model, []).append((f"{session.name}:{model}:{number}", snapshot, calls.get((repo, model, number), [])))
+    for repo, by_model in sorted(pooled.items()):
+        for model, group in sorted(by_model.items()):
+            rows += _two_level(repo, model, group, call_key)
     for repo, by_model in sorted(pooled.items()):
         if len(by_model) > 1:
             group = [run for model in sorted(by_model) for run in by_model[model]]
             rows += _two_level(repo, ALL_MODELS, group, lambda c: hash_content(f"{c.get('schema')}\n{c.get('prompt')}"))
     return rows
+
+
+# What makes two calls of one model the same call: the cache key's parts without its benchmark run (--bench-hash puts
+# the run into every key, so no prompt would recur across runs)
+_CALL_PARTS = ("provider", "model", "schema", "system_prompt", "prompt", "temperature", "max_tokens", "reasoning", "sample")
+
+
+def call_key(call: dict[str, Any]) -> str:
+    return hash_content("\n".join(f"{part}={call.get(part)}" for part in _CALL_PARTS))
 
 
 def _two_level(repo: str, model: str, group: list[tuple[str, dict[str, Any], list[dict[str, Any]]]], prompt_key: Callable[[dict[str, Any]], str]) -> list[dict[str, Any]]:
@@ -347,13 +355,14 @@ def _structural_match(element: dict[str, Any], refs: list[str]) -> bool:
     return any((_clean_path(r[5:]) in paths) if r.startswith("path:") else (r in ids) for r in refs)
 
 
-def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases: dict[str, Any] | None = None) -> dict[str, set[str]]:
+def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases: dict[str, Any] | None = None, *, structure: bool = True) -> dict[str, set[str]]:
     """Derived element id -> the golden elements it is matched to.
 
     First by name, as always: the element matcher (a matching type, ``types_match``: a function covers a process of its
     layer; the same or a similar name) and the names the user
     accepted. Then a golden element still unmatched takes, through its structural refs, the first derived element of
     its type (by id) that no golden element has yet, so one derived element matches one golden element there.
+    ``structure`` False leaves the structural refs out: names only, what the element names alone find.
     """
     aliases = aliases or {}
     mapping: dict[str, set[str]] = {}
@@ -367,6 +376,8 @@ def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases:
         for alias in accepted(aliases.get(r.identifier))[0]:
             for derived_id in by_key.get((match_kind(r.element_type), name_key(alias)), []):
                 mapping.setdefault(derived_id, set()).add(r.identifier)
+    if not structure:
+        return mapping
     found = set().union(*mapping.values()) if mapping else set()
     for r in sorted(reference, key=lambda r: r.identifier):
         refs = accepted(aliases.get(r.identifier))[1]
@@ -383,7 +394,7 @@ def golden_mapping(derived: list[dict[str, Any]], reference: list[Any], aliases:
 def golden_comparison(
     derived: list[dict[str, Any]],
     reference: list[Any],
-    aliases: dict[str, list[str]] | None = None,
+    aliases: dict[str, Any] | None = None,
     derivable: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Recall and precision of derived elements against a hand-made reference model, overall and per layer.
@@ -450,4 +461,10 @@ def session_report(sessions: list[Path]) -> dict[str, Any]:
     sessions = [Path(s) for s in sessions if Path(s, "session_metadata.json").is_file()]
     if not sessions:
         return {}
-    return {"consistency": consistency_rows(sessions), "two_level": two_level_rows(sessions), "out_of_candidates": out_of_candidate_rows(sessions)}
+    return {
+        "consistency": consistency_rows(sessions),
+        # The solution level holds direct relationships only; the enterprise level the viewpoint derived from them
+        "consistency_levels": {level: consistency_rows(sessions, level=level) for level in ("solution", "enterprise")},
+        "two_level": two_level_rows(sessions),
+        "out_of_candidates": out_of_candidate_rows(sessions),
+    }

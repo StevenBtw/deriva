@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deriva.adapters.treesitter.models import ExtractedMethod
 from deriva.modules.extraction.base import generate_method_node_id
 from deriva.modules.extraction.edges import (
     ALL_EDGE_TYPES,
@@ -270,7 +272,7 @@ class TestBuildMethodLookup:
 
         methods = [mock_method1, mock_method2]
 
-        result = _build_method_lookup(methods)
+        result = _build_method_lookup(cast("list[ExtractedMethod]", methods))
 
         # Keys are just method names, not "ClassName.method"
         assert "func_a" in result
@@ -297,7 +299,7 @@ class TestBuildMethodLookup:
 
         methods = [mock_method1, mock_method2]
 
-        result = _build_method_lookup(methods)
+        result = _build_method_lookup(cast("list[ExtractedMethod]", methods))
 
         assert "func" in result
         # Both methods should be in the list

@@ -14,6 +14,12 @@ from deriva.adapters.database.manager import (
 )
 
 
+def _scalar(conn, sql: str):
+    row = conn.execute(sql).fetchone()
+    assert row is not None
+    return row[0]
+
+
 class TestDbPath:
     """Tests for database path constants."""
 
@@ -106,7 +112,7 @@ class TestEnsureDatabase:
         assert ensure_database(db) is True
 
         conn = duckdb.connect(str(db), read_only=True)
-        counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in self.CONFIG_TABLES}
+        counts = {t: _scalar(conn, f"SELECT COUNT(*) FROM {t}") for t in self.CONFIG_TABLES}
         conn.close()
         assert all(n > 0 for n in counts.values()), counts
 
@@ -120,8 +126,8 @@ class TestEnsureDatabase:
 
         conn = duckdb.connect(str(db), read_only=True)
         for table in ("extraction_config", "derivation_config"):
-            inactive = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE NOT is_active").fetchone()[0]
-            versions = conn.execute(f"SELECT MIN(version) FROM {table}").fetchone()[0]
+            inactive = _scalar(conn, f"SELECT COUNT(*) FROM {table} WHERE NOT is_active")
+            versions = _scalar(conn, f"SELECT MIN(version) FROM {table}")
             assert inactive == 0
             assert versions >= 1
         conn.close()
@@ -140,7 +146,7 @@ class TestEnsureDatabase:
         assert ensure_database(db) is False
 
         conn = duckdb.connect(str(db), read_only=True)
-        assert conn.execute("SELECT value FROM system_settings WHERE key = 'default_batch_size'").fetchone()[0] == "42"
+        assert _scalar(conn, "SELECT value FROM system_settings WHERE key = 'default_batch_size'") == "42"
         conn.close()
 
     def test_a_failed_seed_leaves_no_database_behind(self, tmp_path):
@@ -165,7 +171,7 @@ class TestEnsureDatabase:
         with patch.object(manager, "DB_PATH", db):
             conn = manager.get_connection(read_only=True)
             try:
-                assert conn.execute("SELECT COUNT(*) FROM extraction_config").fetchone()[0] > 0
+                assert _scalar(conn, "SELECT COUNT(*) FROM extraction_config") > 0
             finally:
                 conn.close()
 
@@ -185,8 +191,8 @@ def test_an_existing_database_without_the_schema_keeps_its_contents(tmp_path):
     assert ensure_database(db) is True
 
     conn = duckdb.connect(str(db), read_only=True)
-    assert conn.execute("SELECT text FROM notes").fetchone()[0] == "keep me"
-    assert conn.execute("SELECT COUNT(*) FROM extraction_config").fetchone()[0] > 0
+    assert _scalar(conn, "SELECT text FROM notes") == "keep me"
+    assert _scalar(conn, "SELECT COUNT(*) FROM extraction_config") > 0
     conn.close()
     assert [p.name for p in tmp_path.iterdir() if "partial" in p.name] == []
 

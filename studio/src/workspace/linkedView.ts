@@ -128,9 +128,12 @@ export function ofTotal(shown: number, total: number | undefined, one: string, m
   return total !== undefined && total > shown ? `${formatCount(shown)} of ${formatCount(total)} ${many}` : countOf(shown, one, many);
 }
 
-/** The counts of a separate graph pane: nodes and edges, against the totals of a sampled graph. */
-export function viewNote(view: GraphView): string {
-  return `${ofTotal(view.nodes.length, sumOf(view.totals?.nodes), "node", "nodes")} · ${ofTotal(view.edges.length, sumOf(view.totals?.edges), "edge", "edges")}`;
+/** The counts of a separate graph pane: the nodes and edges it draws (``drawn``: also a typed query's result; the
+ * view's own until the widget reports), against the totals of a sampled graph. */
+export function viewNote(view: GraphView, drawn?: { nodes: number; edges: number }): string {
+  const nodes = drawn?.nodes ?? view.nodes.length;
+  const edges = drawn?.edges ?? view.edges.length;
+  return `${ofTotal(nodes, sumOf(view.totals?.nodes), "node", "nodes")} · ${ofTotal(edges, sumOf(view.totals?.edges), "edge", "edges")}`;
 }
 
 /** The counts of the linked view: repositories, the (sampled) intermediate graph and its edges, the elements and how many are in the model. */

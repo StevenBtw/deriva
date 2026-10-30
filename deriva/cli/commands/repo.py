@@ -21,8 +21,9 @@ def repo_clone(
     name: Annotated[str | None, typer.Option("-n", "--name", help="Custom name for the repository")] = None,
     branch: Annotated[str | None, typer.Option("-b", "--branch", help="Branch to clone")] = None,
     overwrite: Annotated[bool, typer.Option("--overwrite", help="Overwrite existing repository")] = False,
+    no_submodules: Annotated[bool, typer.Option("--no-submodules", help="Skip git submodules")] = False,
 ) -> None:
-    """Clone a repository."""
+    """Clone a repository (a file:// URL clones a local repository)."""
     typer.echo(f"\n{'=' * 60}")
     typer.echo("DERIVA - Cloning Repository")
     typer.echo(f"{'=' * 60}")
@@ -33,7 +34,7 @@ def repo_clone(
         typer.echo(f"Branch: {branch}")
 
     with PipelineSession() as session:
-        result = session.clone_repository(url=url, name=name, branch=branch, overwrite=overwrite)
+        result = session.clone_repository(url=url, name=name, branch=branch, overwrite=overwrite, submodules=not no_submodules, allow_local=True)
         if result.get("success"):
             typer.echo("\nRepository cloned successfully!")
             typer.echo(f"  Name: {result.get('name', 'N/A')}")

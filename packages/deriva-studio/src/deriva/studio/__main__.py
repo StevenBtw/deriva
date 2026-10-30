@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import secrets
 import threading
 import time
 import webbrowser
@@ -12,6 +13,7 @@ import uvicorn
 
 from deriva.services import about
 from deriva.studio.app import create_app
+from deriva.studio.guard import AUTH_PATH
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 
@@ -49,18 +51,24 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1", help="Address to bind (default: 127.0.0.1, this machine only)")
     parser.add_argument("--port", type=int, default=8765, help="Port (default: 8765)")
     parser.add_argument("--no-browser", action="store_true", help="Do not open the studio in the browser")
-    parser.add_argument("--allow-remote", action="store_true", help="Allow a --host other machines can reach (the studio has no login)")
+    parser.add_argument("--allow-remote", action="store_true", help="Allow a --host other machines can reach (anyone with the launch link can use the studio)")
     args = parser.parse_args(argv)
     if args.host not in LOCAL_HOSTS:
         if not args.allow_remote:
             parser.error(f"--host {args.host} makes the studio reachable from other machines, and it has no login; add --allow-remote to do so")
-        print(f"Warning: the studio is reachable from other machines on {args.host}; it has no login.")
-    app = create_app()
+        print(f"Warning: the studio is reachable from other machines on {args.host}; anyone with the launch link can use it.")
+    # A fresh token per launch: only the link below opens the studio, so another site's page in the browser cannot
+    # drive it; bound to this machine, it also answers to its local names only (DNS rebinding)
+    token = secrets.token_urlsafe(32)
+    local = args.host in LOCAL_HOSTS
+    app = create_app(token=token, allowed_hosts=LOCAL_HOSTS if local else None)
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port))
     _stop_runs_on_exit(server, app)
+    browser_host = "localhost" if local else f"[{args.host}]" if ":" in args.host else args.host
+    url = f"http://{browser_host}:{args.port}{AUTH_PATH}?token={token}"
+    print(f"Deriva Studio: {url}", flush=True)  # also when stdout is a file or a pipe (a service, a log)
     if not args.no_browser:
-        browser_host = "localhost" if args.host in LOCAL_HOSTS else f"[{args.host}]" if ":" in args.host else args.host
-        _open_when_ready(server, f"http://{browser_host}:{args.port}/")
+        _open_when_ready(server, url)
     server.run()
 
 

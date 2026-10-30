@@ -73,6 +73,10 @@ class RunCancelled(RuntimeError):
     """The run was cancelled: the session makes no further LLM call until the cancel check is removed."""
 
 
+class LLMBudgetExceeded(RuntimeError):
+    """The run made its max_llm_calls_per_run LLM calls: every further call of the run is refused."""
+
+
 class PipelineSession:
     """Unified session for CLI and studio pipeline operations.
 
@@ -317,13 +321,18 @@ class PipelineSession:
                 self._llm_manager = LLMManager()
                 self._llm_error = None
             except Exception as e:
-                logger.warning("Failed to initialize LLM manager: %s", e)
+                # Once per reason: the CLI asks before a run and again in it
+                if str(e) != self._llm_error:
+                    logger.warning("Failed to initialize LLM manager: %s", e)
                 # Why, for the run that needed it (the manager's errors name variables, never values)
                 self._llm_error = str(e)
                 return None
 
         if no_cache:
             self._llm_manager.nocache = True
+        # Per run: each run asks for its own query function
+        budget = config.get_llm_call_budget(self._engine) if self._engine is not None else config.LIMIT_DEFAULTS[config.LLM_CALL_BUDGET_SETTING]
+        calls = 0
 
         def query_fn(
             prompt: str,
@@ -332,11 +341,16 @@ class PipelineSession:
             max_tokens: int | None = None,
             system_prompt: str | None = None,
             response_model: type | None = None,
+            sample: int | None = None,
         ) -> Any:
             assert self._llm_manager is not None
             # A cancelled run stops at its next call, also inside a long step
             if self._cancel_check is not None and self._cancel_check():
                 raise RunCancelled("run cancelled")
+            nonlocal calls
+            if calls >= budget:
+                raise LLMBudgetExceeded(f"The run made its {budget} LLM calls (max_llm_calls_per_run): no further call; raise the setting for a larger repository")
+            calls += 1
             try:
                 response = self._llm_manager.query(
                     prompt,
@@ -345,6 +359,7 @@ class PipelineSession:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
+                    sample=sample,
                 )
             except Exception as exc:
                 self._record_call(prompt, schema, system_prompt, None, str(exc))
@@ -507,29 +522,29 @@ class PipelineSession:
         relationships = [r for r in self._archimate_manager.get_relationships() if r.source in enabled_ids and r.target in enabled_ids]
         return export_levels.leveled_model(elements, relationships, export_levels.detail_lineage(self._graph_manager))
 
-    def query_graph(self, cypher: str) -> list[dict]:
-        """Run arbitrary Cypher query on Graph namespace."""
+    def query_graph(self, query: str) -> list[dict]:
+        """Run an arbitrary query (GRAFEO_QUERY_LANGUAGE, GQL by default) on the Graph namespace."""
         self._ensure_connected()
         assert self._graph_manager is not None
-        return self._graph_manager.query(cypher)
+        return self._graph_manager.query(query)
 
-    def query_model(self, cypher: str) -> list[dict]:
-        """Run arbitrary Cypher query on Model namespace."""
+    def query_model(self, query: str) -> list[dict]:
+        """Run an arbitrary query (GRAFEO_QUERY_LANGUAGE, GQL by default) on the Model namespace."""
         self._ensure_connected()
         assert self._archimate_manager is not None
-        return self._archimate_manager.query(cypher)
+        return self._archimate_manager.query(query)
 
-    def query_graph_read_only(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
-        """Run a user-typed Cypher query on the Graph namespace; writes are rolled back."""
+    def query_graph_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict]:
+        """Run a user-typed query on the Graph namespace, in ``language`` or the configured one; writes are rolled back."""
         self._ensure_connected()
         assert self._graph_manager is not None
-        return self._graph_manager.query_read_only(cypher, params)
+        return self._graph_manager.query_read_only(query, params, language)
 
-    def query_model_read_only(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
-        """Run a user-typed Cypher query on the Model namespace; writes are rolled back."""
+    def query_model_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict]:
+        """Run a user-typed query on the Model namespace, in ``language`` or the configured one; writes are rolled back."""
         self._ensure_connected()
         assert self._archimate_manager is not None
-        return self._archimate_manager.query_read_only(cypher, params)
+        return self._archimate_manager.query_read_only(query, params, language)
 
     def trace_element(self, element_id: str, calls: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
         """Where a model element comes from: sources, relationships and the given run calls that mention its sources."""
@@ -874,11 +889,8 @@ class PipelineSession:
 
         llm_query_fn = self._get_llm_query_fn()
         if llm_query_fn is None:
-
-            def noop_llm(prompt: str, schema: dict) -> None:
-                return None
-
-            llm_query_fn = noop_llm
+            # No model configured: the run is a --no-llm run (the CLI says the LLM steps are skipped)
+            return self.run_pipeline(repo_name=repo_name, verbose=verbose, progress=progress, no_llm=True)
 
         return pipeline.run_full_pipeline(
             engine=self._engine,
@@ -1039,11 +1051,14 @@ class PipelineSession:
         name: str | None = None,
         branch: str | None = None,
         overwrite: bool = False,
+        submodules: bool = True,
+        allow_local: bool = False,
     ) -> dict[str, Any]:
-        """Clone a repository (no database is needed, so a session that is not connected clones too)."""
+        """Clone a repository (no database is needed, so a session that is not connected clones too); ``allow_local``
+        accepts a ``file://`` URL, which only the command line passes."""
         repos = self._repo_manager or RepoManager(workspace_dir=self._workspace_dir)
         try:
-            result = repos.clone_repository(repo_url=url, target_name=name, branch=branch, overwrite=overwrite)
+            result = repos.clone_repository(repo_url=url, target_name=name, branch=branch, overwrite=overwrite, submodules=submodules, allow_local=allow_local)
             return {
                 "success": True,
                 "name": result.name,
@@ -1366,6 +1381,12 @@ class PipelineSession:
         self._ensure_connected()
         assert self._engine is not None
         config.set_setting(self._engine, key, value)
+
+    def delete_setting(self, key: str) -> bool:
+        """Unset a system setting (its default applies again); False when it was not set."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.delete_setting(self._engine, key)
 
     def add_file_type(self, extension: str, file_type: str, subtype: str) -> bool:
         """Add a file type to the registry."""

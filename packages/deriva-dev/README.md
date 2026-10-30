@@ -14,7 +14,7 @@ deriva-cli benchmark analyze <session>
 To reproduce a published release exactly, install it with the `constraints.txt` from its GitHub release:
 
 ```bash
-uv tool install --python 3.14 deriva-dev==0.8.0 -c constraints.txt
+uv tool install --python 3.14 deriva-dev==0.9.0 -c constraints.txt
 ```
 
 - Keeps its files in `~/.deriva` (`DERIVA_HOME` moves it).

@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from deriva.bench.gate import GateRules, measure, verdict, verdict_markdown
+from deriva.bench.gate import GateRules, measure, table_markdown, types_markdown, verdict, verdict_markdown
 
 MODEL = "anthropic-haiku55"
-REFERENCE = {
+REFERENCE: dict[str, Any] = {
     "repository": "shop",
     "elements": [
         {"key": "core", "type": "ApplicationComponent", "name": "Customer Core"},
@@ -329,3 +330,27 @@ def test_golden_elements_and_relationships_match_through_structure_refs(tmp_path
 
     assert ledger["recall"] == 1.0 and ledger["precision"] == 1.0  # Statements is the reports folder: Reporting
     assert (ledger["relationship_recall"], ledger["relationship_precision"]) == (1.0, 1.0)
+    # Names only: Statements finds nothing by its name, so naming is measured apart from the structure
+    assert (ledger["names_recall"], ledger["names_precision"]) == (0.5, 0.5)
+    assert ledger["types"] == {"ApplicationComponent": {"golden": 2, "found": 2.0, "names": 1.0, "derived": 2.0}}
+
+
+def test_names_only_scores_a_development_reference_without_lineage_and_per_type(tmp_path, folders):
+    run = {
+        "elements": [
+            {"identifier": "a", "type": "ApplicationComponent", "name": "Customer Core", "source": "unit::shop::core"},
+            {"identifier": "b", "type": "ApplicationComponent", "name": "Shop UI", "source": "unit::shop::web"},
+        ],
+        "relationships": [],
+    }
+    goldens, references = folders
+    reference = {**REFERENCE, "elements": [REFERENCE["elements"][0], {**REFERENCE["elements"][1], "lineage": ["unit::shop::web"]}]}
+    (goldens / "shop.json").write_text(json.dumps(reference), encoding="utf-8")
+
+    shop = measure([_session(tmp_path, "s1", "shop", [run])], goldens, references)["shop"]
+
+    assert (shop["recall"], shop["names_recall"], shop["names_precision"]) == (1.0, 0.5, 0.5)  # Shop UI only through lineage
+    assert shop["types"] == {"ApplicationComponent": {"golden": 2, "found": 2.0, "names": 1.0, "derived": 2.0}}
+    lines = "\n".join(table_markdown({"shop": shop}, "Union"))
+    assert "Recall (names)" in lines and "| 50.0% |" in lines
+    assert "| ApplicationComponent | 2 | 2.0 | 1.0 | 2.0 |" in "\n".join(types_markdown({"shop": shop}))

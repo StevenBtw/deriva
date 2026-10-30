@@ -712,33 +712,9 @@
     "chunk_overlap": 0
   },
   {
-    "extension": "path:**/AIM18 Documentation/Archimate_Dokumentation.docx",
-    "file_type": "exclude",
-    "subtype": "reference-model",
-    "chunk_delimiter": null,
-    "chunk_max_tokens": null,
-    "chunk_overlap": 0
-  },
-  {
-    "extension": "path:**/AIM18 Documentation/IST_Analyse.docx",
-    "file_type": "exclude",
-    "subtype": "reference-model",
-    "chunk_delimiter": null,
-    "chunk_max_tokens": null,
-    "chunk_overlap": 0
-  },
-  {
     "extension": "path:**/coverage/**",
     "file_type": "exclude",
     "subtype": "test",
-    "chunk_delimiter": null,
-    "chunk_max_tokens": null,
-    "chunk_overlap": 0
-  },
-  {
-    "extension": "path:**/diagrams/README.md",
-    "file_type": "exclude",
-    "subtype": "reference-model",
     "chunk_delimiter": null,
     "chunk_max_tokens": null,
     "chunk_overlap": 0

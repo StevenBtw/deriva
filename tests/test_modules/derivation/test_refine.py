@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from deriva.adapters.graph import GraphManager
 
 # =============================================================================
 # Tests for refine/base.py
@@ -921,7 +925,7 @@ class TestUnanchoredLayers:
         ]
         params = {"disable_unanchored": ["Business"], "code_support": {"multi_word_names": 1, "single_word_names": 3}}
 
-        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=self.Graph(), params=params)
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=cast("GraphManager", self.Graph()), params=params)
 
         assert result.success is True
         manager.disable_elements.assert_called_once_with(["event"], reason="no_cross_layer_anchor")
@@ -932,7 +936,7 @@ class TestUnanchoredLayers:
         manager = self._manager()
         params = {"disable_unanchored": ["Business"], "code_support": {"multi_word_names": 1, "single_word_names": None}}
 
-        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=self.Graph(), params=params)
+        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=cast("GraphManager", self.Graph()), params=params)
 
         assert result.success is True
         manager.disable_elements.assert_called_once_with(["actor", "event"], reason="no_cross_layer_anchor")
@@ -951,7 +955,9 @@ class TestUnanchoredLayers:
         from deriva.modules.derivation.refine.cross_layer import CrossLayerCoherenceStep
 
         manager = self._manager()
-        result = CrossLayerCoherenceStep().run(archimate_manager=manager, graph_manager=self.Graph(), params={"disable_unanchored": ["Business"], "code_support": support})
+        result = CrossLayerCoherenceStep().run(
+            archimate_manager=manager, graph_manager=cast("GraphManager", self.Graph()), params={"disable_unanchored": ["Business"], "code_support": support}
+        )
 
         assert result.success is False
         assert "code_support" in result.errors[0]

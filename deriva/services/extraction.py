@@ -78,7 +78,7 @@ from deriva.adapters.repository import RepoManager
 from deriva.adapters.treesitter import cdk
 from deriva.common.cache_utils import hash_inputs
 from deriva.common.document_reader import read_document
-from deriva.common.file_utils import describe_os_error, long_path, read_file_with_encoding
+from deriva.common.file_utils import describe_os_error, is_inside, long_path, read_file_with_encoding
 from deriva.common.naming import UNCOUNTABLE_WORDS, name_key
 from deriva.common.ocel import create_edge_id
 from deriva.modules import extraction
@@ -114,12 +114,57 @@ def repository_root(repo: Any) -> Path:
 
 
 def list_repo_files(repo_path: Path, excluded_dirs: list[str]) -> list[str]:
-    """Repository-relative file paths (forward slashes), skipping excluded directories and .pyc files."""
+    """Repository-relative file paths (forward slashes), skipping excluded directories, .pyc files and links."""
     return [
         rel
         for f in repo_path.rglob("*")
-        if f.is_file() and not str(f).endswith(".pyc") and not extraction.is_excluded_path(rel := f.relative_to(repo_path).as_posix(), excluded_dirs)
+        if f.is_file() and not str(f).endswith(".pyc") and not extraction.is_excluded_path(rel := f.relative_to(repo_path).as_posix(), excluded_dirs) and is_inside(f, repo_path)
     ]
+
+
+# The ArchiMate exchange format's namespace, which an exchange file declares at its root element
+_EXCHANGE_NAMESPACE = b"opengroup.org/xsd/archimate/"
+_EXCHANGE_HEAD_BYTES = 4096
+
+
+def model_files(repo_path: Path, file_paths: list[str]) -> set[str]:
+    """The .xml files that are ArchiMate exchange models (by the namespace in their first bytes): like .archimate files,
+    an architecture model is never an input, so a model shipped with the repository cannot become its own answer."""
+    found = set()
+    for rel in file_paths:
+        if not rel.lower().endswith(".xml"):
+            continue
+        file = repo_path / rel
+        try:
+            with open(file, "rb") as handle:
+                head = handle.read(_EXCHANGE_HEAD_BYTES)
+        except OSError:
+            continue
+        if _EXCHANGE_NAMESPACE in head and is_inside(file, repo_path):
+            found.add(rel)
+    return found
+
+
+def _skip_reason(file_path: Path, repo_path: Path, max_bytes: int) -> str | None:
+    """Why a repository file is not read, or None: a link out of the checkout, or a file over the size limit."""
+    if not is_inside(file_path, repo_path):
+        return "a link out of the repository"
+    try:
+        size = file_path.stat().st_size
+    except OSError:
+        return None  # the read reports it
+    return f"larger than {max_bytes} bytes (max_read_bytes)" if size > max_bytes else None
+
+
+def missing_checkout(repo: Any, repo_path: Path, file_paths: list[str]) -> str | None:
+    """Why a repository cannot be extracted, or None: a step that runs sweeps its earlier output, so a checkout that
+    is gone (moved, deleted) or lists no file must run none, or the graph keeps only what the first steps rebuild."""
+    if file_paths:
+        return None
+    shown = Path(str(repo.path))
+    if not repo_path.is_dir():
+        return f"Repository folder not found: {shown} | repo={repo.name} (clone it again, or remove the repository)"
+    return f"The repository has no files to extract (all excluded, or an empty checkout): {shown} | repo={repo.name}"
 
 
 def _unreadable_reason(shown: Path, opened: Path) -> str:
@@ -328,9 +373,13 @@ def run_extraction(
 
         # Get all files for classification (outside excluded dependency directories)
         file_paths = list_repo_files(repo_path, config.get_excluded_directories(engine))
+        missing = missing_checkout(repo, repo_path, file_paths)
+        if missing:
+            errors.append(missing)
+            continue
 
         # Classify files (always needed - prerequisite for parse phase)
-        classification_result = classification.classify_files(file_paths, registry_list)
+        classification_result = classification.classify_files(file_paths, registry_list, model_files(repo_path, file_paths))
         classified_files = classification_result["classified"]
         undefined_files = classification_result["undefined"]
 
@@ -654,6 +703,7 @@ def _run_step_writes(
             repo=repo,
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
+            samples=config.get_llm_samples(engine),
         )
     elif node_type == "Technology":
         if llm_query_fn is None:
@@ -665,6 +715,7 @@ def _run_step_writes(
             classified_files=classified_files,
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
+            max_bytes=config.get_max_read_bytes(engine),
         )
     elif node_type == "BusinessConcept":
         if llm_query_fn is None:
@@ -676,6 +727,7 @@ def _run_step_writes(
             classified_files=classified_files,
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
+            max_bytes=config.get_max_read_bytes(engine),
         )
     elif node_type in ["TypeDefinition", "Method", "ExternalDependency", "Test"]:
         # Without an LLM the parsers still run (tree-sitter, manifest files); only Test is LLM-only
@@ -1374,7 +1426,7 @@ def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 
     relative = path[len(repo_name) + 1 :] if path.startswith(repo_name + "/") else path
     file = repo_path / relative
     try:
-        if file.is_file() and file.stat().st_size <= max_bytes:
+        if file.is_file() and is_inside(file, repo_path) and file.stat().st_size <= max_bytes:
             return file.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
@@ -2134,8 +2186,10 @@ def _extract_directory_classification(
     repo: Any,
     graph_manager: GraphManager,
     llm_query_fn: Callable,
+    samples: int | None = None,
 ) -> dict[str, Any]:
-    """Extract BusinessConcept and Technology nodes from Directory classification.
+    """Extract BusinessConcept and Technology nodes from Directory classification (``samples``: the llm_samples
+    setting, which replaces the step's own samples param while set).
 
     This queries Directory nodes from the graph and classifies them using LLM
     into business concepts, technologies, or skips.
@@ -2191,6 +2245,8 @@ def _extract_directory_classification(
         "example": cfg.example or "",
         "params": json.loads(cfg.params) if cfg.params else {},
     }
+    if samples is not None and "samples" in extraction_config["params"]:
+        extraction_config["params"]["samples"] = samples
 
     # A technology answer for a directory named after the repository is skipped (params.skip_repository_name)
     skip_name = extraction_config["params"].get("skip_repository_name", False)
@@ -2198,13 +2254,14 @@ def _extract_directory_classification(
         return {"nodes_created": 0, "edges_created": 0, "errors": [f"DirectoryClassification params.skip_repository_name must be true or false, got {skip_name!r}"]}
 
     # Wrap llm_query_fn with per-step temperature/max_tokens overrides
-    def step_llm_query_fn(prompt: str, schema: dict, system_prompt: str | None = None) -> Any:
+    def step_llm_query_fn(prompt: str, schema: dict, system_prompt: str | None = None, sample: int | None = None) -> Any:
         return llm_query_fn(
             prompt,
             schema,
             temperature=cfg.temperature,
             max_tokens=cfg.max_tokens,
             system_prompt=system_prompt,
+            **({"sample": sample} if sample is not None else {}),
         )
 
     # Directories the structure decides (skip names, skipped trees, path steps) never reach the LLM;
@@ -2386,6 +2443,7 @@ def _extract_llm_based(
 
     Without an LLM (``llm_query_fn`` None) the parsers still run; files that only the LLM can read are skipped and counted.
     """
+    max_bytes = config.get_max_read_bytes(engine)
     nodes_created = 0
     edges_created = 0
     errors = []
@@ -2456,6 +2514,10 @@ def _extract_llm_based(
         file_path = repo_path / file_info["path"]
 
         try:
+            skip = _skip_reason(file_path, repo_path, max_bytes)
+            if skip:
+                errors.append(f"Skipped {file_info['path']}: {skip} | repo={repo.name} | step={node_type}")
+                continue
             # Route document files to specialized reader
             if file_path.suffix.lower() in (".docx", ".pdf"):
                 content = read_document(file_path)
@@ -2635,11 +2697,17 @@ def _code_names(graph_manager: GraphManager, repo_name: str) -> list[str]:
     return sorted({row["name"] for row in types + directories if row.get("name")})
 
 
-def _read_documents(repo_path: Path, files: list[dict], repo_name: str) -> tuple[list[dict[str, str]], list[str]]:
+def _read_documents(
+    repo_path: Path, files: list[dict], repo_name: str, max_bytes: int = config.LIMIT_DEFAULTS[config.MAX_READ_BYTES_SETTING]
+) -> tuple[list[dict[str, str]], list[str]]:
     """The text of every file in path order; empty files are left out, unreadable ones reported."""
     documents, errors = [], []
     for file_info in sorted(files, key=lambda f: f["path"]):
         file_path = repo_path / file_info["path"]
+        skip = _skip_reason(file_path, repo_path, max_bytes)
+        if skip:
+            errors.append(f"Skipped {file_info['path']}: {skip} | repo={repo_name} | step=BusinessConcept")
+            continue
         try:
             text = read_document(file_path) if file_path.suffix.lower() in (".docx", ".pdf") else read_file_with_encoding(file_path)
         except Exception as e:
@@ -2706,6 +2774,7 @@ def _extract_business_concepts(
     classified_files: list[dict],
     graph_manager: GraphManager,
     llm_query_fn: Callable,
+    max_bytes: int = config.LIMIT_DEFAULTS[config.MAX_READ_BYTES_SETTING],
 ) -> dict[str, Any]:
     """BusinessConcept step: structure decides the candidates, the LLM classifies them.
 
@@ -2732,7 +2801,7 @@ def _extract_business_concepts(
         return {"nodes_created": 0, "edges_created": 0, "errors": ["No input sources for BusinessConcept"]}
 
     files = [f for f in extraction.filter_files_by_input_sources(classified_files, input_sources) if not _is_unreadable(f)]
-    documents, errors = _read_documents(repo_path, files, repo.name)
+    documents, errors = _read_documents(repo_path, files, repo.name, max_bytes)
     if not documents:
         return {"nodes_created": 0, "edges_created": 0, "errors": errors, "warnings": [f"No documents for BusinessConcept in {repo.name}"]}
     # The system's own description for the classifier: the opening of the README at the repository root
@@ -2815,6 +2884,7 @@ def _extract_technologies(
     classified_files: list[dict],
     graph_manager: GraphManager,
     llm_query_fn: Callable,
+    max_bytes: int = config.LIMIT_DEFAULTS[config.MAX_READ_BYTES_SETTING],
 ) -> dict[str, Any]:
     """Technology step: structure decides the candidates, the LLM classifies them.
 
@@ -2835,6 +2905,10 @@ def _extract_technologies(
     errors: list[str] = []
     for file_info in extraction.filter_files_by_input_sources(classified_files, input_sources):
         if _is_unreadable(file_info):
+            continue
+        skip = _skip_reason(repo_path / file_info["path"], repo_path, max_bytes)
+        if skip:
+            errors.append(f"Skipped {file_info['path']}: {skip} | repo={repo.name} | step=Technology")
             continue
         content = read_file_with_encoding(repo_path / file_info["path"])
         if content is None:
@@ -3191,9 +3265,13 @@ def run_extraction_iter(
 
         # Get all files for classification (outside excluded dependency directories)
         file_paths = list_repo_files(repo_path, config.get_excluded_directories(engine))
+        missing = missing_checkout(repo, repo_path, file_paths)
+        if missing:
+            errors.append(missing)
+            continue
 
         # Classify files
-        classification_result = classification.classify_files(file_paths, registry_list)
+        classification_result = classification.classify_files(file_paths, registry_list, model_files(repo_path, file_paths))
         classified_files = classification_result["classified"]
         undefined_files = classification_result["undefined"]
 

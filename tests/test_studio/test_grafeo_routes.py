@@ -23,6 +23,18 @@ def test_query_on_the_graph_database(make_client):
     assert session.called("query_graph_read_only")[0][0] == ("MATCH (a)-[r]->(b) RETURN a, r", None)
 
 
+def test_the_query_runs_in_the_language_the_widget_chose(make_client):
+    session = FakeSession(query_graph_read_only=[])
+    client = make_client(session)
+
+    client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "language": "Cypher"})
+    client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "language": "gql"})
+    client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n"})
+
+    # Without a language the query runs in GRAFEO_QUERY_LANGUAGE
+    assert [kwargs for _, kwargs in session.called("query_graph_read_only")] == [{"language": "cypher"}, {"language": "gql"}, {"language": None}]
+
+
 def test_default_database_is_the_graph_and_model_is_separate(make_client):
     session = FakeSession(query_graph_read_only=[], query_model_read_only=[])
     client = make_client(session)
@@ -45,6 +57,17 @@ def test_write_query_is_rejected_before_it_reaches_the_database(make_client):
     assert session.called("query_graph_read_only") == []
 
 
+def test_a_query_that_reads_a_local_file_is_rejected(make_client):
+    """grafeo's LOAD CSV reads any local file (file:///...): the studio's query view must never pass it on."""
+    session = FakeSession(query_graph_read_only=[])
+    client = make_client(session)
+
+    for query in ("LOAD CSV FROM 'file:///etc/passwd' AS row RETURN row", "load csv with headers from 'file:///x' as r return r"):
+        response = client.post("/grafeo/query", json={"query": query, "language": "cypher"})
+        assert response.status_code == 400
+    assert session.called("query_graph_read_only") == []
+
+
 def test_unknown_database_and_language(make_client):
     client = make_client(FakeSession(query_graph_read_only=[]))
 
@@ -53,7 +76,7 @@ def test_unknown_database_and_language(make_client):
 
 
 def test_query_errors_are_400_with_the_message(make_client):
-    def fail(query, params):
+    def fail(query, params, language=None):
         raise ValueError("Syntax error at line 1")
 
     client = make_client(FakeSession(query_graph_read_only=fail))
@@ -192,12 +215,13 @@ def test_schema_lists_labels_and_edge_types_with_counts(make_client):
 
     client = make_client(FakeSession(query_graph_read_only=answer))
 
-    schema = client.get("/grafeo/databases/graph/schema").json()
-
-    assert schema == {
-        "labels": [{"name": "Directory", "count": 2}, {"name": "File", "count": 1}],
-        "edge_types": [{"name": "CONTAINS", "count": 4}],
-    }
+    # The widget's grafeo client asks /db/<name>/schema; the older /databases/<name>/schema answers the same
+    for path in ("/grafeo/db/graph/schema", "/grafeo/databases/graph/schema"):
+        schema = client.get(path).json()
+        assert schema == {
+            "labels": [{"name": "Directory", "count": 2}, {"name": "File", "count": 1}],
+            "edge_types": [{"name": "CONTAINS", "count": 4}],
+        }
 
 
 def test_a_query_answers_from_the_chosen_database_only(make_client):
@@ -206,10 +230,10 @@ def test_a_query_answers_from_the_chosen_database_only(make_client):
         {"n": {"_id": 1, "_labels": ["Graph", "File"], "id": "file_a"}},
         {"n": {"_id": 2, "_labels": ["Model", "Node"], "id": "n_server"}},
     ]
-    client = make_client(FakeSession(query_graph_read_only=lambda q, p: rows, query_model_read_only=lambda q, p: rows))
+    client = make_client(FakeSession(query_graph_read_only=lambda q, p, language=None: rows, query_model_read_only=lambda q, p, language=None: rows))
 
     graph = client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "database": "graph"}).json()
     model = client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "database": "model"}).json()
 
-    assert [row[0]["id"] for row in graph["rows"]] == ["1"]
-    assert [row[0]["id"] for row in model["rows"]] == ["2"]
+    assert [row[0]["_id"] for row in graph["rows"]] == [1]
+    assert [row[0]["_id"] for row in model["rows"]] == [2]

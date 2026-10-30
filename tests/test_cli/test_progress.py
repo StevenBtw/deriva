@@ -169,6 +169,7 @@ if RICH_AVAILABLE:
             with reporter:
                 reporter.start_step("connecting", None)
                 # No total: an indeterminate bar
+                assert reporter._progress is not None
                 assert [(t.description, t.total) for t in reporter._progress.tasks if t.id == reporter._step_task] == [("  connecting", None)]
 
         def test_start_step_zero_items(self):
@@ -177,6 +178,7 @@ if RICH_AVAILABLE:
             with reporter:
                 reporter.start_step("waiting", 0)
                 # Zero items is indeterminate too, never a bar that is done before it starts
+                assert reporter._progress is not None
                 assert [(t.description, t.total) for t in reporter._progress.tasks if t.id == reporter._step_task] == [("  waiting", None)]
 
         def test_update_modifies_task(self):
@@ -390,6 +392,7 @@ if RICH_AVAILABLE:
             with reporter:
                 reporter.start_benchmark("s1", 2, ["r"], ["m"])
                 reporter.start_step("processing", 10)
+                assert reporter._progress is not None
                 assert [(t.description, t.total) for t in reporter._progress.tasks if t.id == reporter._step_task] == [("  processing", 10)]
 
         def test_start_step_indeterminate_in_benchmark(self):
@@ -398,6 +401,7 @@ if RICH_AVAILABLE:
             with reporter:
                 reporter.start_benchmark("s1", 2, ["r"], ["m"])
                 reporter.start_step("connecting", None)
+                assert reporter._progress is not None
                 assert [(t.description, t.total) for t in reporter._progress.tasks if t.id == reporter._step_task] == [("  connecting", None)]
 
         def test_update_in_benchmark(self):

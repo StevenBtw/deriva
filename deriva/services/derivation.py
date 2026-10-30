@@ -95,6 +95,7 @@ from deriva.modules.derivation.base import (
     file_imports,
     get_enrichments_from_graph,
     graph_link_pairs,
+    repository_in_identifiers,
     source_concept_names,
     unit_scopes,
 )
@@ -1046,7 +1047,7 @@ def _per_candidate_config(params: str | None) -> PerCandidateConfig | None:
     return PerCandidateConfig(min_pool=int(settings["min_pool"]), rules=settings["rules"], persona=settings["persona"], decorators=decorators)
 
 
-def _naming_config(params: str | None) -> NamingConfig | None:
+def _naming_config(params: str | None, samples: int | None = None) -> NamingConfig | None:
     """Read the isolated naming step from an element config's params.
 
     ``{"naming": {"instruction": "...", "samples": 1}}`` switches it on; without
@@ -1078,7 +1079,8 @@ def _naming_config(params: str | None) -> NamingConfig | None:
         raise ValueError("params.naming.source_order lists name sources in rank order (strings)")
     return NamingConfig(
         instruction=settings["instruction"],
-        samples=int(settings.get("samples", 1)),
+        # The llm_samples setting replaces the step's own samples while set
+        samples=samples if samples is not None else int(settings.get("samples", 1)),
         choose_instruction=choose,
         guards=NameGuards(generic_words=frozenset(w.lower() for w in words), kind_nouns=dict(nouns), reserved_labels=tuple(labels)),
         source_order=tuple(source_order),
@@ -1617,6 +1619,42 @@ def _model_totals(archimate_manager: ArchimateManager) -> str:
     return f"{len(archimate_manager.get_elements())} elements, {len(archimate_manager.get_relationships())} relationships in the model"
 
 
+def combined_run(graph_manager: Any) -> bool:
+    """Whether the graph holds several repositories (a combined run): its element identifiers keep the repository."""
+    try:
+        rows = graph_manager.query("MATCH (r:Graph:Repository) RETURN count(r) AS n")
+        return bool(rows) and int(rows[0].get("n") or 0) > 1
+    except Exception:  # no graph to ask (tests, a closed connection): the identifiers of one repository
+        return False
+
+
+def _graph_of(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+    return kwargs.get("graph_manager", args[1] if len(args) > 1 else None)
+
+
+def _identifier_scope[**P, R](run: Callable[P, R]) -> Callable[P, R]:
+    """Run a derivation with the element identifiers of its graph: with the repository in a combined run."""
+
+    @functools.wraps(run)
+    def scoped(*args: P.args, **kwargs: P.kwargs) -> R:
+        with repository_in_identifiers(combined_run(_graph_of(args, kwargs))):
+            return run(*args, **kwargs)
+
+    return scoped
+
+
+def _identifier_scope_iter[**P, U](run: Callable[P, Iterator[U]]) -> Callable[P, Iterator[U]]:
+    """``_identifier_scope`` for a derivation that yields its progress: the scope lasts until the last update."""
+
+    @functools.wraps(run)
+    def scoped(*args: P.args, **kwargs: P.kwargs) -> Iterator[U]:
+        with repository_in_identifiers(combined_run(_graph_of(args, kwargs))):
+            yield from run(*args, **kwargs)
+
+    return scoped
+
+
+@_identifier_scope
 def run_derivation(
     engine: Any,
     graph_manager: GraphManager,
@@ -1787,7 +1825,7 @@ def run_derivation(
                 step_ctx = run_logger.step_start(cfg.step_name, f"Generating {cfg.element_type} elements")
 
             # Wrap llm_query_fn with per-step temperature/max_tokens overrides
-            def step_llm_query_fn(prompt: str, schema: dict) -> Any:
+            def step_llm_query_fn(prompt: str, schema: dict, sample: int | None = None) -> Any:
                 if llm_query_fn is None:
                     raise ValueError("llm_query_fn is required for generate phase")
                 return llm_query_fn(
@@ -1795,6 +1833,7 @@ def run_derivation(
                     schema,
                     temperature=cfg.temperature,
                     max_tokens=cfg.max_tokens,
+                    **({"sample": sample} if sample is not None else {}),
                 )
 
             # Validate required config parameters (a function model step reads no candidates: only its instruction)
@@ -1860,7 +1899,7 @@ def run_derivation(
                         relationship_config=relationship_config(),
                         name_match_skip=_name_match_skip(relationship_configs),
                         per_candidate=_per_candidate_config(cfg.params),
-                        naming=_naming_config(cfg.params),
+                        naming=_naming_config(cfg.params, config.get_llm_samples(engine)),
                         pattern_labels=_pattern_labels(cfg.params),
                         roles=_role_config(cfg.params),
                         skip_when_directory_is=_skip_when_directory_is(cfg.params),
@@ -2140,6 +2179,7 @@ def run_derivation(
 # in base.py (derive_batch_relationships).
 
 
+@_identifier_scope_iter
 def run_derivation_iter(
     engine: Any,
     graph_manager: GraphManager,
@@ -2251,7 +2291,7 @@ def run_derivation_iter(
                 print(f"  Generate: {cfg.step_name}")
 
             # Wrap llm_query_fn with per-step temperature/max_tokens overrides
-            def step_llm_query_fn(prompt: str, schema: dict) -> Any:
+            def step_llm_query_fn(prompt: str, schema: dict, sample: int | None = None) -> Any:
                 if llm_query_fn is None:
                     raise ValueError("llm_query_fn is required for generate phase")
                 return llm_query_fn(
@@ -2259,6 +2299,7 @@ def run_derivation_iter(
                     schema,
                     temperature=cfg.temperature,
                     max_tokens=cfg.max_tokens,
+                    **({"sample": sample} if sample is not None else {}),
                 )
 
             # Validate required config parameters (a function model step reads no candidates: only its instruction)
@@ -2331,7 +2372,7 @@ def run_derivation_iter(
                         relationship_config=relationship_config(),
                         name_match_skip=_name_match_skip(relationship_configs),
                         per_candidate=_per_candidate_config(cfg.params),
-                        naming=_naming_config(cfg.params),
+                        naming=_naming_config(cfg.params, config.get_llm_samples(engine)),
                         pattern_labels=_pattern_labels(cfg.params),
                         roles=_role_config(cfg.params),
                         skip_when_directory_is=_skip_when_directory_is(cfg.params),

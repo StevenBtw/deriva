@@ -45,6 +45,7 @@ def _generate(candidates, answer, roles=ROLES, web_entries=None):
         if "webEntries" in cypher:
             return [{"unit": unit, "node": f"file::r::{path.replace('/', '_')}", "path": path} for unit, paths in sorted((web_entries or {}).items()) for path in paths]
         if "Graph:INCLUDES" in cypher:
+            assert params is not None
             ids, paths = set(params["ids"]), set(params["paths"])
             rows = []
             for unit, (_, files, nodes) in UNITS.items():

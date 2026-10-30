@@ -145,9 +145,10 @@ def _type(value: str) -> str:
 _kind = match_kind
 
 
-def map_elements(reference: Reference, model: dict[str, Any]) -> dict[str, str]:
+def map_elements(reference: Reference, model: dict[str, Any], *, structure: bool = True) -> dict[str, str]:
     """Model element identifier -> reference element key: an exact name first, then an alias, then lineage, then (one to
-    one) derivation from a lineage node. Types match as ``types_match`` says: a function covers a process of its layer."""
+    one) derivation from a lineage node. Types match as ``types_match`` says: a function covers a process of its layer.
+    ``structure`` False stops after the names and aliases: what the element names alone find."""
     names: dict[tuple[str, str], str] = {}
     aliases: dict[tuple[str, str], str] = {}
     for ref in reference.elements:
@@ -159,10 +160,12 @@ def map_elements(reference: Reference, model: dict[str, Any]) -> dict[str, str]:
     for e in model.get("elements", []):
         t, key = _type(e["type"]), name_key(str(e.get("name") or ""))
         found = names.get((_kind(t), key)) or aliases.get((_kind(t), key))
-        if found is None:
+        if found is None and structure:
             found = next((r.key for r in reference.elements if any(types_match(t, rt) for rt in r.types) and ({str(e.get("source") or ""), e["identifier"]} & r.lineage)), None)
         if found is not None:
             mapping[e["identifier"]] = found
+    if not structure:
+        return mapping
     # An element derived from a lineage node (its source extends the id: "unit::r::u1::all" from unit::r::u1) maps to
     # that reference element only when nothing maps to it yet, and one to one: the first by identifier, the rest stay
     # extras (several services of one unit, or several units' services against one reference service)
@@ -219,6 +222,8 @@ def evaluate(reference: Reference, model: dict[str, Any], *, level: str | None =
     whole = model  # Chains may run below the scored level (an enterprise relationship derives from a solution chain)
     reference, model = at_level(reference, model, level)
     mapping = map_elements(reference, model)
+    by_name = map_elements(reference, model, structure=False)  # Names only: what naming alone finds
+    named = set(by_name.values())
     by_key = {r.key: r for r in reference.elements}
     covered: dict[str, list[str]] = defaultdict(list)  # reference key -> model identifiers
     for identifier, key in mapping.items():
@@ -227,13 +232,14 @@ def evaluate(reference: Reference, model: dict[str, Any], *, level: str | None =
     elements: dict[str, dict[str, Any]] = {}
 
     def slot(t: str) -> dict[str, Any]:
-        return elements.setdefault(t, {"required": 0, "covered": 0, "model": 0, "mapped": 0, "missing": [], "extra": [], "splits": {}})
+        return elements.setdefault(t, {"required": 0, "covered": 0, "covered_names": 0, "model": 0, "mapped": 0, "mapped_names": 0, "missing": [], "extra": [], "splits": {}})
 
     for ref in reference.elements:
         if ref.optional:
             continue
         s = slot(ref.types[0])
         s["required"] += 1
+        s["covered_names"] += ref.key in named
         if covered.get(ref.key):
             s["covered"] += 1
             if len(covered[ref.key]) > 1:
@@ -243,6 +249,7 @@ def evaluate(reference: Reference, model: dict[str, Any], *, level: str | None =
     for e in model.get("elements", []):
         s = slot(_type(e["type"]))
         s["model"] += 1
+        s["mapped_names"] += e["identifier"] in by_name
         if e["identifier"] in mapping:
             s["mapped"] += 1
         else:
@@ -302,6 +309,8 @@ def evaluate(reference: Reference, model: dict[str, Any], *, level: str | None =
         "optional": {"total": len(optional), "covered": sum(1 for r in optional if covered.get(r.key)), "names": sorted(r.name for r in optional)},
         "element_recall": round(sum(s["covered"] for s in elements.values()) / required, 3) if required else None,
         "element_precision": round(len(mapping) / len(model.get("elements", [])), 3) if model.get("elements") else None,
+        "element_recall_names": round(sum(s["covered_names"] for s in elements.values()) / required, 3) if required else None,
+        "element_precision_names": round(len(by_name) / len(model.get("elements", [])), 3) if model.get("elements") else None,
         "relationship_recall": _ratio(relationships, "matched", "required"),
         "relationship_recall_direct": _ratio(relationships, "drawn", "required"),
         "naming": naming(reference, model),

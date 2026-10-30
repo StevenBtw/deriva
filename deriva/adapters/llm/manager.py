@@ -55,7 +55,7 @@ from deriva.common.json_utils import extract_json_from_response
 from deriva.common.paths import resolve
 from deriva.common.settings import LlmSettings
 
-from .cache import CacheManager
+from .cache import CacheManager, endpoint_key
 from .model_registry import VALID_PROVIDERS, default_sampling, get_pydantic_ai_model, parse_sampling, reasoning_settings
 from .models import (
     BenchmarkModelConfig,
@@ -450,6 +450,10 @@ class LLMManager:
                 self.context,
             )
 
+    def _endpoint(self) -> str:
+        """The provider and base URL this manager calls, as the cache key holds them."""
+        return endpoint_key(str(self.config.get("provider") or ""), self.config.get("api_url"))
+
     def _redact(self, text: str) -> str:
         """Keep the configured API key out of exception text: h11 quotes header values in its errors."""
         key = self.config.get("api_key")
@@ -474,6 +478,10 @@ class LLMManager:
             model = config.model
             sampling, reasoning, context = config.sampling, config.reasoning, config.context
         else:
+            if not llm.provider:
+                raise ConfigurationError(
+                    "No LLM model is configured: add one in the studio's General page, or set LLM_{NAME}_* settings and LLM_DEFAULT_MODEL in .env in the home folder"
+                )
             provider = llm.provider
             reasoning, context = None, None
             key_variable, label = f"LLM_{(provider or '').upper()}_API_KEY", provider
@@ -574,6 +582,7 @@ class LLMManager:
         use_cache: bool = True,
         system_prompt: str | None = None,
         bench_hash: str | None = None,
+        sample: int | None = None,
     ) -> T | FailedResponse: ...
 
     @overload
@@ -588,6 +597,7 @@ class LLMManager:
         use_cache: bool = True,
         system_prompt: str | None = None,
         bench_hash: str | None = None,
+        sample: int | None = None,
     ) -> LLMResponse: ...
 
     @property
@@ -691,6 +701,7 @@ class LLMManager:
         use_cache: bool = True,
         system_prompt: str | None = None,
         bench_hash: str | None = None,
+        sample: int | None = None,
     ) -> T | LLMResponse:
         """
         Query the LLM with automatic caching and optional structured output.
@@ -704,6 +715,7 @@ class LLMManager:
             use_cache: Whether to use caching (default: True)
             system_prompt: Optional system prompt
             bench_hash: Optional benchmark hash for per-run cache isolation
+            sample: Which of k answers to one prompt (sampling); each sample has its own cache entry
 
         Returns:
             If response_model is provided: Validated Pydantic model instance or FailedResponse
@@ -723,6 +735,8 @@ class LLMManager:
             temperature=effective_temperature,
             max_tokens=effective_max_tokens,
             reasoning=self.reasoning,
+            endpoint=self._endpoint(),
+            sample=sample,
         )
 
         read_cache = use_cache and not self.nocache
@@ -740,6 +754,8 @@ class LLMManager:
             "seed": None,
             "max_tokens": effective_max_tokens,
             "reasoning": self.reasoning,
+            # Which of k answers to one prompt (sampling); None for a single call
+            "sample": sample,
             # The model the provider says answered (a retired id can be served by another model)
             "served_model": None,
             "cache_hit": False,

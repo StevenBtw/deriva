@@ -6,11 +6,13 @@ import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from deriva.modules.extraction.edges import EdgeType
+from deriva.services.config import ExtractionConfig
 from deriva.services.extraction import (
     _build_llm_prompt,
     _create_node_from_data,
@@ -25,12 +27,25 @@ from deriva.services.extraction import (
 )
 
 
+def _config(**fields: Any) -> ExtractionConfig:
+    """A partial extraction config: only the fields the step reads."""
+    return cast(ExtractionConfig, SimpleNamespace(**fields))
+
+
 @pytest.fixture(autouse=True)
 def default_excluded_directories():
     """Most tests use a bare MagicMock engine; give the walk the default exclusion list."""
     from deriva.services import config
 
     with patch.object(config, "get_excluded_directories", return_value=list(config.DEFAULT_EXCLUDED_DIRECTORIES)):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def any_checkout_extracts():
+    """These tests run steps on fake or empty checkouts; the guard that skips those has its own tests
+    (test_extraction_missing_repository.py)."""
+    with patch("deriva.services.extraction.missing_checkout", return_value=None):
         yield
 
 
@@ -393,7 +408,7 @@ class TestExtractLLMBased:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             (Path(tmpdir) / "manifest.txt").write_text("x")
-            cfg = SimpleNamespace(
+            cfg = _config(
                 node_type="Test",
                 input_sources=json_module.dumps({"files": [{"type": "config", "subtype": "text"}]}),
                 params=None,
@@ -1475,7 +1490,7 @@ class TestExtractEdges:
         from deriva.services.extraction import _run_step_writes
 
         params = {"call_languages": {"jcl": ["cobol"]}, "module_files": ["pom.xml", "Dockerfile*"]}
-        cfg = SimpleNamespace(node_type="Calls", params=json.dumps(params))
+        cfg = _config(node_type="Calls", params=json.dumps(params))
         files = [{"path": p} for p in ("svc/pom.xml", "svc/src/A.java", "svc/web/Dockerfile.web", "svc/web/app.js", "app/cbl/A.cbl")]
         graph_manager = MagicMock()
         graph_manager.get_nodes_by_type.return_value = []
@@ -1491,7 +1506,7 @@ class TestExtractEdges:
     def test_the_calls_step_validates_its_params(self):
         from deriva.services.extraction import _run_step_writes
 
-        cfg = SimpleNamespace(node_type="Calls", params=json.dumps({"call_languages": [["jcl", "cobol"]]}))
+        cfg = _config(node_type="Calls", params=json.dumps({"call_languages": [["jcl", "cobol"]]}))
         with pytest.raises(ValueError, match="Calls params"):
             _run_step_writes(cfg, SimpleNamespace(name="r"), Path("."), [], [], MagicMock(), None, MagicMock())
 
@@ -1537,7 +1552,7 @@ class TestExtractCalls:
             with patch("deriva.services.extraction._extract_edges") as mock_extract:
                 mock_extract.return_value = {"edges_created": 0, "errors": []}
 
-                _extract_calls(SimpleNamespace(params=None), mock_repo, Path(tmpdir), [], graph_manager)
+                _extract_calls(_config(params=None), mock_repo, Path(tmpdir), [], graph_manager)
 
             mock_extract.assert_called_once()
             assert mock_extract.call_args.args[4] == {EdgeType.CALLS}
@@ -1607,7 +1622,7 @@ class TestExtractDirectoryClassification:
             for i, (file_type, subtype) in enumerate([("source", "java"), ("source", "java"), ("docs", "markdown"), ("test", "java"), ("config", "yaml")]):
                 gm.add_node(FileNode(name=f"f{i}", path=f"alpha/f{i}", repository_name="r", file_type=file_type, subtype=subtype), node_id=f"file::r::f{i}")
                 gm.add_edge("dir::r::alpha", f"file::r::f{i}", "CONTAINS")
-            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
+            cfg = _config(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
                 _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1635,7 +1650,7 @@ class TestExtractDirectoryClassification:
                 gm.add_node(FileNode(name="f", path=f"{path.removeprefix('r/')}/f", repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}/f")
                 gm.add_edge(f"dir::r::{path}", f"file::r::{path}/f", "CONTAINS")
             params = {"skip_names": ["utils"], "skip_trees": [], "skip_pass_through": True}
-            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
+            cfg = _config(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
                 _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1654,7 +1669,7 @@ class TestExtractDirectoryClassification:
         close_database()
         with GraphManager() as gm:
             gm.add_node(DirectoryNode(name="billing", path="r/billing", repository_name="r"), node_id="dir::r::billing")
-            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
+            cfg = _config(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
                 _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1670,7 +1685,7 @@ class TestExtractDirectoryClassification:
         close_database()
         with GraphManager() as gm:
             gm.add_node(DirectoryNode(name="billing", path="r/billing", repository_name="r"), node_id="dir::r::billing")
-            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps({"skip_repository_name": 1}), temperature=None, max_tokens=None, batch_size=50)
+            cfg = _config(instruction="I", example="{}", params=json.dumps({"skip_repository_name": 1}), temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories") as classify:
                 result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1704,7 +1719,7 @@ class TestExtractDirectoryClassification:
         with GraphManager() as gm:
             for name in names:
                 gm.add_node(DirectoryNode(name=name, path=f"r/{name}", repository_name="r"), node_id=f"dir::r::{name}")
-            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=batch_size)
+            cfg = _config(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=batch_size)
             with patch("deriva.services.extraction.classify_directories", side_effect=classify) as spy:
                 result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1741,7 +1756,7 @@ class TestExtractDirectoryClassification:
         with GraphManager() as gm:
             for path in ("r/a/records", "r/b", "r/c/records"):
                 gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path.removeprefix("r/"), repository_name="r"), node_id=f"dir::r::{path}")
-            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=2)
+            cfg = _config(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=2)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
                 _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1764,7 +1779,7 @@ class TestExtractDirectoryClassification:
                 "nodes": [{"id": "concept::r::billing", "labels": ["Graph:BusinessConcept"], "properties": {"conceptName": "Billing"}}],
                 "edges": [{"source": "dir::r::billing", "target": "concept::r::billing", "relationship_type": "REPRESENTS"}],
             }
-            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
+            cfg = _config(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": answer}):
                 result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -2053,7 +2068,7 @@ class TestMethodLanguages:
             # The TypeDefinition step runs first and creates the class that holds the Java method
             orders = TypeDefinitionNode(name="Orders", type_category="class", file_path="app/Orders.java", repository_name="r")
             graph.add_node(orders, node_id="typedef::r::app_Orders.java::Orders")
-            cfg = SimpleNamespace(
+            cfg = _config(
                 node_type="Method",
                 input_sources=json.dumps({"files": [], "nodes": [{"label": "TypeDefinition", "property": "codeSnippet"}]}),
                 params=json.dumps(params) if params is not None else None,
@@ -2115,7 +2130,7 @@ class TestInheritanceResolution:
             for path, text in files.items():
                 (Path(tmpdir) / path).parent.mkdir(parents=True, exist_ok=True)
                 (Path(tmpdir) / path).write_text(text, encoding="utf-8")
-            cfg = SimpleNamespace(
+            cfg = _config(
                 node_type="TypeDefinition",
                 input_sources=json.dumps({"files": [{"type": "source", "subtype": "java"}]}),
                 params=None,
@@ -2249,6 +2264,16 @@ class TestRepositoryWalkExclusions:
 
         assert list_repo_files(tmp_path, [".git", "node_modules"]) == ["src/app.py"]
 
+    def test_model_files_are_xml_files_in_the_archimate_exchange_format(self, tmp_path):
+        from deriva.services.extraction import model_files
+
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "model.xml").write_text('<?xml version="1.0"?>\n<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/" identifier="m"/>', encoding="utf-8")
+        (tmp_path / "pom.xml").write_text('<project xmlns="http://maven.apache.org/POM/4.0.0"/>', encoding="utf-8")
+        (tmp_path / "notes.md").write_text("http://www.opengroup.org/xsd/archimate/3.0/", encoding="utf-8")
+
+        assert model_files(tmp_path, ["docs/model.xml", "pom.xml", "notes.md"]) == {"docs/model.xml"}
+
     def test_extraction_walks_from_the_extended_root_so_deep_files_are_read(self, tmp_path):
         """Windows with long paths off cannot open a path over 260 characters unless the walk starts from \\\\?\\."""
         from types import SimpleNamespace
@@ -2315,7 +2340,9 @@ class TestConceptNodesMergeAcrossFiles:
         try:
             for key in order:
                 _add_concept_node(gm, occurrences[key], "concept::repo::user")
-            return gm.get_node("concept::repo::user")["properties"], gm.query("MATCH (n:Graph:BusinessConcept) WHERE 'actor' IN n.conceptTypes RETURN n.id AS id")
+            node = gm.get_node("concept::repo::user")
+            assert node is not None
+            return node["properties"], gm.query("MATCH (n:Graph:BusinessConcept) WHERE 'actor' IN n.conceptTypes RETURN n.id AS id")
         finally:
             gm.disconnect()
             close_database()
@@ -2517,7 +2544,7 @@ class TestBuildModuleStep:
         close_database()
 
     def _step(self, graph, tmpdir, node_type, params, repo="r"):
-        cfg = SimpleNamespace(node_type=node_type, params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+        cfg = _config(node_type=node_type, params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
         return _run_extraction_step(cfg, SimpleNamespace(name=repo), Path(tmpdir), [], [], graph, None, MagicMock())
 
     def _files(self, graph, tmpdir, files, repo="r"):
@@ -2787,7 +2814,7 @@ class TestDeployableUnitStep:
             (Path(tmpdir) / path).write_text(text, encoding="utf-8")
             node = FileNode(name=Path(path).name, path=path, repository_name=repo, file_type=file_type, subtype=subtype)
             graph.add_node(node, node_id=f"file::{repo}::{path.replace('/', '_')}")
-        cfg = SimpleNamespace(
+        cfg = _config(
             node_type="DeployableUnit",
             params=json.dumps(params or {"code_subtypes": ["java", "python"]}),
             input_sources="",
@@ -3074,7 +3101,7 @@ class TestRerunnableSteps:
             )
 
     def _run(self, graph):
-        cfg = SimpleNamespace(
+        cfg = _config(
             node_type="DataEntity",
             params=json.dumps({"entity_annotations": ["Entity"]}),
             input_sources="",
@@ -3207,7 +3234,7 @@ def test_a_steps_own_node_it_only_links_to_again_is_kept():
 
     close_database()
     with GraphManager() as gm:
-        cfg = SimpleNamespace(node_type="TypeDefinition")
+        cfg = _config(node_type="TypeDefinition")
         with patch.object(service, "_run_step_writes", side_effect=step):
             service._run_extraction_step(cfg, SimpleNamespace(name="r"), Path("."), [], [], gm, None, MagicMock())
             result = service._run_extraction_step(cfg, SimpleNamespace(name="r"), Path("."), [], [], gm, None, MagicMock())
@@ -3454,7 +3481,7 @@ class TestDataDomainStep:
 
     def _run(self, graph, root, params=None, entity_params=None):
         entity_params = json.dumps(entity_params or {"entity_annotations": ["Entity"]})
-        entity_cfg = SimpleNamespace(node_type="DataEntity", params=entity_params, input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+        entity_cfg = _config(node_type="DataEntity", params=entity_params, input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
         _run_extraction_step(entity_cfg, SimpleNamespace(name="r"), root, [], [], graph, None, MagicMock())  # the entities come first
         with patch("deriva.services.extraction.config.get_extraction_config", return_value=entity_cfg):
             return _run_extraction_step(self._cfg(params), SimpleNamespace(name="r"), root, [], [], graph, None, MagicMock())

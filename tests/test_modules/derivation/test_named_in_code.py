@@ -6,8 +6,9 @@ directory is related to that component: the graph says where the concept lives i
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
+from deriva.adapters.graph import GraphManager
 from deriva.modules.derivation.base import NamedInCodeRule, code_names_with_paths, derive_consolidated_relationships, derive_named_in_code_relationships
 
 RULES = [NamedInCodeRule(owner="ApplicationComponent", named="BusinessObject", relationship="Access", min_names=2)]
@@ -113,14 +114,18 @@ class FakeGraph:
 
 class TestFromTheGraph:
     def test_code_names_are_the_repositories_own_types_and_directories_with_their_paths(self):
-        names = code_names_with_paths(FakeGraph())  # type: ignore[arg-type]
+        names = code_names_with_paths(cast("GraphManager", FakeGraph()))
 
         assert ("LedgerEntry", "services/billing/model/LedgerEntry.java") in names
         assert ("ledgers", "services/billing/ledgers") in names
 
     def test_the_consolidated_pass_adds_them(self):
         relationships = derive_consolidated_relationships(
-            all_elements=[BILLING, SHIPPING, LEDGER], relationship_rules={}, llm_query_fn=None, graph_manager=FakeGraph(), named_in_code=RULES
-        )  # type: ignore[arg-type]
+            all_elements=[BILLING, SHIPPING, LEDGER],
+            relationship_rules={},
+            llm_query_fn=None,
+            graph_manager=cast("GraphManager", FakeGraph()),
+            named_in_code=RULES,
+        )
 
         assert ("ac_billing", "Access", "bo_ledger") in _pairs(relationships)

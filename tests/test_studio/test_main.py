@@ -71,7 +71,7 @@ def test_main_serves_on_localhost_by_default_and_opens_the_browser():
     assert uvicorn.Config.call_args.kwargs["host"] == "127.0.0.1"
     assert uvicorn.Config.call_args.kwargs["port"] == 8765
     uvicorn.Server.return_value.run.assert_called_once()
-    assert opener.call_args.args[1] == "http://localhost:8765/"
+    assert opener.call_args.args[1].startswith("http://localhost:8765/api/auth?token=")
 
 
 def test_main_takes_host_port_and_no_browser():

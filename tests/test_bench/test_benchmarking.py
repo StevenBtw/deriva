@@ -2035,7 +2035,7 @@ class TestLLMQueryEvent:
         a = event.attributes
         assert (a["cache_key"], a["latency_ms"], a["wait_ms"], a["requests"]) == ("k1", 812.5, 40.0, 2)
         assert (a["tokens_in"], a["tokens_out"], a["cache_hit"], a["error_type"]) == (100, 20, False, None)
-        assert query_fn.used_cache_keys == ["k1"]
+        assert getattr(query_fn, "used_cache_keys") == ["k1"]
 
     def test_event_records_the_call_kind_from_the_schema_name(self):
         """keep / naming / relationship / extraction calls are told apart by their schema."""
@@ -2210,7 +2210,7 @@ class TestDatabasePerRepo:
         )
         calls: list[tuple[str, ...]] = []
         orchestrator._ensure_extraction = MagicMock(  # type: ignore[method-assign]
-            side_effect=lambda verbose=False, repositories=None: calls.append(("extract", *repositories)) or []
+            side_effect=lambda verbose=False, repositories=(): calls.append(("extract", *repositories)) or []
         )
         orchestrator._run_combined = MagicMock(  # type: ignore[method-assign]
             side_effect=lambda repositories, **kw: (
@@ -2365,6 +2365,7 @@ class TestRunModelSnapshot:
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
             xml_path = orchestrator._export_run_model("r", "m", 1, solve_report={})
 
+        assert xml_path is not None
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert [e["levels"] for e in snapshot["elements"]] == [["enterprise"], ["solution"]]
         assert (snapshot["relationships"][0]["levels"], snapshot["relationships"][0]["cross_level"]) == ([], True)
@@ -2403,6 +2404,7 @@ class TestRunModelSnapshot:
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
             xml_path = orchestrator._export_run_model("r", "m", 1, solve_report={})
 
+        assert xml_path is not None
         elements = {e["identifier"]: e for e in json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))["elements"]}
         assert (elements["as_card"]["name_candidates"], elements["as_card"]["name_choice"]) == (["Card Processing", "Card Management"], True)
         assert (elements["ac_shop"]["name_candidates"], elements["ac_shop"]["name_choice"]) == (["Shop", "Shop App"], False)  # recorded: no call
@@ -2437,6 +2439,7 @@ class TestRunModelSnapshot:
 
         from pathlib import Path
 
+        assert xml_path is not None
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert snapshot["solve"] == solve  # the MILP's report for this run (a safety net: what it decided)
         assert snapshot["elements"] == [
@@ -2585,6 +2588,7 @@ class TestRunSnapshotCandidates:
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
             xml_path = orchestrator._export_run_model("r", "m", 1, candidate_decisions=decisions)
 
+        assert xml_path is not None
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert snapshot["candidates"] == [
             {"type": "ApplicationComponent", "source": "dir::r::a", "stage": "created"},
@@ -2619,6 +2623,7 @@ class TestRunSnapshotCandidates:
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
             xml_path = orchestrator._export_run_model("r", "m", 1, candidate_decisions=decisions)
 
+        assert xml_path is not None
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert snapshot["disabled"] == [{"identifier": "bo_b", "type": "BusinessObject", "name": "B", "source": "concept::r::b", "reason": "no_cross_layer_anchor"}]
         assert snapshot["candidates"] == [
@@ -2686,6 +2691,7 @@ class TestRunSnapshotGraphNodes:
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
             xml_path = orchestrator._export_run_model("r", "m", 1)
 
+        assert xml_path is not None
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert snapshot["graph"] == {
             "concepts": [["concept::r::alpha", ["actor", "entity"]]],
@@ -2751,10 +2757,12 @@ class TestSessionInputs:
     def test_the_session_folder_records_its_inputs_at_the_start(self, tmp_path, monkeypatch):
         import json
         from datetime import datetime
+        from typing import cast
 
         import duckdb
 
         from deriva.adapters.database.manager import SCRIPTS_DIR
+        from deriva.adapters.llm.models import BenchmarkModelConfig
         from deriva.bench.benchmarking import BenchmarkConfig
         from deriva.services import config as config_service
 
@@ -2769,7 +2777,10 @@ class TestSessionInputs:
         orchestrator = BenchmarkOrchestrator(engine=engine, graph_manager=MagicMock(), archimate_manager=MagicMock(), config=BenchmarkConfig(repositories=["repo"], models=["m"]))
         orchestrator.session_start = datetime(2026, 10, 8, 9, 0, 0)
         orchestrator.session_id = "bench_20261008_090000"
-        orchestrator._model_configs = {"m": {"name": "m", "provider": "mistral", "model": "devstral", "api_key": "sk-secret"}, "unused": {"name": "unused"}}
+        # Plain mappings stand in for the configs (the record takes any mapping)
+        orchestrator._model_configs = cast(
+            dict[str, BenchmarkModelConfig], {"m": {"name": "m", "provider": "mistral", "model": "devstral", "api_key": "sk-secret"}, "unused": {"name": "unused"}}
+        )
 
         orchestrator._create_session()
 

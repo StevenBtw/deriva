@@ -458,7 +458,7 @@ class TestSampleLLM:
         lock = threading.Lock()
         active = peak = 0
 
-        def query(prompt, schema):
+        def query(prompt, schema, sample=None):
             nonlocal active, peak
             with lock:
                 active += 1

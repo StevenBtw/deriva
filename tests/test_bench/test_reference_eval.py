@@ -55,6 +55,10 @@ def test_elements_match_on_name_alias_or_lineage_and_splits_are_counted():
     assert result["elements"]["BusinessFunction"]["covered"] == 1  # the reference element's first type
     assert result["elements"]["ApplicationInterface"]["missing"] == ["Customer Core API"]
     assert result["optional"] == {"total": 1, "covered": 0, "names": ["Messaging"]}  # outside recall, reported
+    # Names only: Core Service (lineage) and the two data objects (lineage) no longer count
+    assert (components["covered_names"], components["mapped_names"]) == (1, 1)
+    assert (data["covered_names"], data["mapped_names"]) == (0, 0)
+    assert (result["element_recall_names"], result["element_precision_names"]) == (0.4, round(2 / 6, 3))
 
 
 def test_internal_behaviour_matches_across_its_types_within_a_layer_by_name_and_lineage():

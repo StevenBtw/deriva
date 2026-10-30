@@ -460,7 +460,7 @@ class GraphManager:
     High-level interface for graph database operations.
 
     Wraps grafeo complexity and provides domain-specific operations
-    like "add repository" rather than raw Cypher.
+    like "add repository" rather than raw graph queries.
     """
 ```
 
@@ -1005,7 +1005,7 @@ To add a new derivation element type (e.g., `Contract`):
    ) -> GenerationResult:
        # 1. Get enrichments from DuckDB
        enrichments = get_enrichments(engine)
-       # 2. Query candidates using the Cypher query
+       # 2. Query candidates using the graph query
        candidates = query_candidates(graph_manager, query, enrichments)
        # 3. Filter/limit candidates
        candidates = candidates[:max_candidates]
@@ -1249,7 +1249,7 @@ Provides shared utilities for all derivation modules:
 ```python
 from deriva.modules.derivation import (
     Candidate,              # Dataclass for candidate nodes with enrichment data
-    query_candidates,       # Execute Cypher and return enriched candidates
+    query_candidates,       # Run the graph query and return enriched candidates
     batch_candidates,       # Split candidates into batches for LLM
     build_derivation_prompt,    # Build LLM prompt for elements
     build_unified_relationship_prompt,  # Build LLM prompt for relationships
@@ -1290,7 +1290,7 @@ def generate(
     archimate_manager: ArchimateManager,
     engine: Any,  # DuckDB connection for enrichment
     llm_query_fn: Callable,
-    query: str,           # Cypher query for candidates
+    query: str,           # Graph query for candidates
     instruction: str,     # LLM derivation instructions
     example: str,         # Example output
     max_candidates: int,
@@ -1302,7 +1302,7 @@ def generate(
 ```
 
 **Rules for derivation modules:**
-- Query candidates using config's Cypher query
+- Query candidates using config's graph query
 - Enrich candidates with graph metrics (PageRank, community, k-core)
 - Filter and batch candidates before sending to LLM
 - Persist elements via `archimate_manager.add_element()`
@@ -1693,6 +1693,7 @@ The studio is the local web UI: `packages/deriva-studio/src/deriva/studio/` (Fas
 ```bash
 uv run deriva                        # API + built front end on http://127.0.0.1:8765
 cd studio && npm run dev             # front-end development; Vite forwards /api, /grafeo, /widgets to 8765
+                                     # open http://localhost:5173/api/auth?token=<the token deriva printed>
 DERIVA_STUDIO_API=http://127.0.0.1:9000 npm run dev   # the same for a studio started with --port 9000
 npm test && npm run lint && npm run typecheck
 npm run build                        # writes packages/deriva-studio/src/deriva/studio/static/ (git-ignored, shipped in the wheel)

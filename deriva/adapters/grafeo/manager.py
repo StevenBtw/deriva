@@ -6,7 +6,7 @@ ArchimateManager expect.
 
 Features:
 - Embedded graph database (no external server)
-- Cypher query language support
+- ISO GQL queries by default; Cypher when GRAFEO_QUERY_LANGUAGE=cypher
 - Namespace isolation via label prefixes
 - Configurable storage: one persistent `.grafeo` file per workspace key (a repository,
   or the joined names for a combined run) in `workspace/graphs` of the home folder
@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import time
 import weakref
@@ -34,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from deriva.common.paths import resolve
-from deriva.common.settings import GrafeoSettings
+from deriva.common.settings import QUERY_LANGUAGES, GrafeoSettings
 from deriva.common.timing import query_stats
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,12 @@ def _record_query(label: str, started: float, slow_ms: float) -> None:
 # ---------------------------------------------------------------------------
 
 DEFAULT_DATABASE = "default"
+_LANGUAGE_NAMES = {"gql": "GQL", "cypher": "Cypher"}
+# String literals and quoted names hold no statement (line comments are kept: `--` is also a Cypher edge); GQL runs
+# transaction and session statements inside a transaction (grafeo 0.6.0 commits its writes on COMMIT), so the
+# rolled-back path refuses them
+_NO_STATEMENT = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|`[^`]*`|/\*.*?\*/", re.DOTALL)
+_ENDS_TRANSACTION = re.compile(r"(?<![.\w])(COMMIT|ROLLBACK|SESSION|START\s+TRANSACTION)(?!\w)", re.IGNORECASE)
 
 _db: Any | None = None
 _db_key: str = DEFAULT_DATABASE
@@ -138,10 +145,12 @@ def get_database() -> Any:
     if _db is None:
         import grafeo
 
-        # Every query is Cypher; a grafeo build without it (a narrow local build) is refused before a file opens
-        if "cypher" not in grafeo.features():
+        # Every query is in GRAFEO_QUERY_LANGUAGE; a grafeo build without it (a narrow local build) is refused before a file opens
+        language = GrafeoSettings().query_language
+        if language not in grafeo.features():
             raise RuntimeError(
-                "This grafeo build has no Cypher support, which Deriva uses for every query: install the released wheel, or build the Python binding with its default features"
+                f"This grafeo build has no {_LANGUAGE_NAMES[language]} support, which Deriva uses for every query (GRAFEO_QUERY_LANGUAGE={language}): "
+                "install the released wheel, or build the Python binding with its default features"
             )
         path = database_file(_db_key)
         _db = grafeo.GrafeoDB(path)
@@ -218,6 +227,7 @@ class GrafeoConnection:
         grafeo = GrafeoSettings()
         self._log_queries = grafeo.log_queries
         self._slow_query_ms = grafeo.slow_query_ms
+        self.query_language = grafeo.query_language
 
         logger.info("Initialized GrafeoConnection with namespace: %s", namespace)
 
@@ -265,10 +275,10 @@ class GrafeoConnection:
         parameters: dict[str, Any] | None = None,
         database: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Execute a Cypher query and return results as list of dicts.
+        """Execute a query in the connection's query language (GQL by default) and return results as list of dicts.
 
         Args:
-            query: Cypher query string.
+            query: Query string.
             parameters: Query parameters (``$param`` syntax).
             database: Ignored (single embedded database).
 
@@ -285,7 +295,7 @@ class GrafeoConnection:
         started = time.perf_counter()
         try:
             params = parameters if parameters is not None else {}
-            result = self.db.execute_cypher(query, params)
+            result = self.db.execute(query, params) if self.query_language == "gql" else self.db.execute_cypher(query, params)
             return result.to_list()
 
         except Exception as e:
@@ -323,17 +333,25 @@ class GrafeoConnection:
         """
         return self.execute(query, parameters, database)
 
-    def execute_rolled_back(self, query: str, parameters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def execute_rolled_back(self, query: str, parameters: dict[str, Any] | None = None, language: str | None = None) -> list[dict[str, Any]]:
         """Run a query inside a transaction that is always rolled back: reads see the data, writes never persist.
 
-        Used for queries typed by a user (the studio's graph view), where nothing may change the graph.
+        Used for queries typed by a user (the studio's graph view), where nothing may change the graph. ``language``
+        (gql or cypher) overrides the connection's query language for this query.
         """
         if self.db is None:
             raise RuntimeError(f"Not connected to grafeo. Call connect() first. (Namespace: {self.namespace})")
+        language = self.query_language if language is None else language.strip().lower()
+        if language not in QUERY_LANGUAGES:
+            raise ValueError(f"Unknown query language {language!r}: one of {', '.join(QUERY_LANGUAGES)}")
+        if _ENDS_TRANSACTION.search(_NO_STATEMENT.sub(" ", query)):
+            raise ValueError("A read-only query cannot run transaction or session statements (COMMIT, ROLLBACK, START TRANSACTION, SESSION)")
         started = time.perf_counter()
         transaction = self.db.begin_transaction()
         try:
-            return transaction.execute_cypher(query, parameters if parameters is not None else {}).to_list()
+            params = parameters if parameters is not None else {}
+            result = transaction.execute(query, params) if language == "gql" else transaction.execute_cypher(query, params)
+            return result.to_list()
         finally:
             transaction.rollback()
             _record_query(query, started, self._slow_query_ms)

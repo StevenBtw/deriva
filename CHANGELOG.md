@@ -4,6 +4,64 @@ Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs
 
 ---
 
+# v0.9.x - Hardening (October 2026 - )
+
+Version 0.9.x makes Deriva safe to run on untrusted repositories, fixes the bugs found since 0.8.10, and improves the default configuration for more kinds of repositories.
+
+## v0.9.0 - (Unreleased)
+
+Some changes in this release can change derived models compared with 0.8.10; each says so. Use 0.8.10 for its exact output.
+
+### Security
+
+- **Links stay inside the repository**: a symlink or (on Windows) a junction in a cloned repository is skipped by every repository walk and file read, so a link to a file outside the clone (the home `.env` with provider keys, SSH keys) is never read, stored or sent to an LLM; clones check symlinks out as plain files
+- **Git on untrusted repositories**: clones, pulls and remote checks allow only the https, http, ssh and git protocols, also for submodules, so a submodule URL cannot read a local repository or run a command; git gets the process environment without provider variables or API keys; a clone or pull stops after `DERIVA_GIT_TIMEOUT` seconds (default 1800) and releases the run lock; after a clone with submodules, a git older than the July 2025 submodule fixes is reported. Submodules are still cloned by default (`repo clone --no-submodules`, or `submodules: false` in the studio API, skips them); a local `file://` URL is cloned from the command line only
+- **The studio answers only its own launch**: each start of `deriva` prints a launch link with a fresh token, which sets an HttpOnly, SameSite=Strict cookie; every server path (`/api`, `/grafeo`, `/widgets`, `/docs`) needs it (scripts send `X-Deriva-Token`), a studio bound to this machine answers only to its local host names (no DNS rebinding), and a request that changes state from another site is refused. A browser without the cookie sees a page that asks for the launch link. The launch line is flushed at once (also when the output goes to a file), and the front-end dev server keeps its own host name when it forwards the API, so writes from it pass the guard
+- **The model diagram shows names as text**: deriva-studio requires anywidget-archimate 0.5.1, whose details panel and diagram render element names, documentation and properties as text, never as HTML, so a hostile name in a repository cannot run script in the studio; an element without a type no longer blanks the diagram, every ArchiMate 3.2 element type has its notation icon (processes and functions their standard symbols), and a long filter panel scrolls inside the view
+- **The graph views show names as text**: deriva-studio requires anywidget-graph 0.5.2, whose properties panel renders node names, keys and values as text; its query box connects on the first query, draws the results the studio returns, fits a narrow pane, and explains a result with nothing to draw; a typed query draws at most 300 nodes, the best connected, and says so. A pane's header counts what the graph draws, also after a typed query
+- **Hostile documents and paths**: a `.docx` that unpacks to more than 100 MB is not read, a PDF is read up to 2000 pages and 20 million characters (pypdf, now at least 6.21, caps each decompressed stream itself), metadata extraction takes one folder name like every other repository command, and a studio graph query that reads a local file (`LOAD CSV`) is refused, now pinned by a test
+- **The graph query bar cannot end its transaction**: a typed query runs in a transaction that is always rolled back; in GQL a `COMMIT` statement would end that transaction and keep its writes, so the read-only path refuses transaction and session statements (`COMMIT`, `ROLLBACK`, `START TRANSACTION`, `SESSION`) before they run
+- **Limits on reading and on LLM calls**: extraction does not read a file larger than `max_read_bytes` (default 50 MB, reported per file), and a run makes at most `max_llm_calls_per_run` LLM calls (default 2000); every further call of the run fails with a message that names the setting. Both are system settings (`deriva-cli config setting set`)
+
+### Fixes
+
+- **Running without a model**: `run all` with no LLM model configured runs as `--no-llm` does (the structural extraction steps and the prep phase of derivation) instead of failing in the LLM steps; the summary heading reads "PIPELINE FAILED" when the run failed, and the message for a missing model names what to set instead of a provider the user never chose (the older single-provider settings no longer default to one)
+- **The LLM cache keeps providers apart**: the cache key holds the provider and its base URL, so one model id served by two providers (OpenAI and Azure, Ollama and LM Studio) never shares answers. Existing cache entries are not reused: the first run after the upgrade calls the LLM again
+- **Answer stability with `--bench-hash`**: per-model answer stability in `benchmark analyze` and in the two-level tables keys a prompt by everything the call sent except its benchmark run, so a session run with `--bench-hash` no longer reports 0 of 0 prompts; sessions without it give the same numbers as before
+- **Studio run consistency by source**: relationships are keyed by the type and source of both ends, so relationships to a component and to its function (which share a graph node) no longer collapse into one; the studio's numbers now equal `benchmark analyze`'s, and are lower where such pairs flip between runs
+- **A missing checkout leaves the graph alone**: a repository whose folder is gone (moved or deleted) or lists no file runs no extraction step and fails with a message that names the folder; before, the later steps swept their earlier output and the graph kept only what the first steps rebuilt
+- **Local clones are named after their folder**: `repo clone file:///.../name/.git` clones into `name` (the name was empty), and a working tree's URL without `.git` is accepted
+- **The run summary counts honestly**: the extraction count reads "Nodes written" (a step can rewrite a node another step wrote), followed by the graph's distinct nodes as `deriva-cli status` counts them
+- **The graph widget finds the schema**: the studio answers the schema request at the path the graph widget asks (`/grafeo/db/<name>/schema`) as well as the older one, so connecting its query box no longer fails with a 404; query results come in grafeo-server's own shape (`_id`, `_labels`, `_type`, `_source`, `_target`, properties flat; also inside paths and maps), so the widget draws them instead of emptying the view
+- **Determinism in combined runs**: the repository whose name is stripped from element names is the first by name, not whichever a query returned first
+- **Consistency per level**: `benchmark analyze` reports consistency by id for the solution level (direct relationships only) and the enterprise level (the viewpoint derived from them) next to the whole model, in its output and in `analysis/summary.json` (`consistency_levels`)
+- **Analysis counts what it says**: the two-level tables pool a model's runs over several sessions, as the consistency tables do (one row per model, not per session), and the component services record whether an LLM chose a name, so structure-named application services (`service_verbs`) no longer count as LLM-dependent in the origin split
+- **Architecture models are never an input, whatever their extension**: an `.xml` file in the ArchiMate exchange format (its namespace in the first 4 KB) is excluded like a `.archimate` file, so a model shipped with a repository never feeds the model derived from it. On a repository that holds such files, their File nodes change type (exclude, output), and the directory classification prompt of their folder changes with them
+- **One warning per missing model**: a model that cannot be loaded is reported once per reason, not once before and again inside a run
+
+### Configuration
+
+- **GQL is the query language**: every graph query (the pipeline, the managers, the studio) runs in ISO GQL by default; `GRAFEO_QUERY_LANGUAGE=cypher` switches back to Cypher, and a grafeo build without the chosen language is refused before a database opens. The studio's query bar starts in GQL and runs the language its settings pick. Every query Deriva and its shipped configuration send gives the same rows in both languages on the development repositories; the one exception, an alias GQL reserves (`exists`), is renamed. Derived models do not change
+- **`deriva-cli nlp fetch`**: downloads the BusinessConcept step's pinned language models (about 300 MB on disk) ahead of a run, for a machine that runs offline later; the README states the sizes and hosts, and `THIRD_PARTY_NOTICES.md` lists each downloaded model with its SHA-256 and licence
+- **`.env.example` starts local and repeatable**: the default model is a local Ollama model (a first run costs nothing), the temperature is 0, the provider keys are commented out (a placeholder was sent as a key), the older single-provider block is reduced to a note, and the example models and token limits name current models
+- **The shipped file types name no repository's documents**: the three exclusions of documents that describe one benchmark repository's reference model left the shipped seed; a database that has them keeps them, and every benchmark session records its file types in `session_inputs.json`
+
+### Derivation
+
+- **Libraries serve their users**: a library module serves the modules and units whose files import it (Serving), instead of being aggregated by them; aggregation read as "the library is part of each user". On the repositories with shared libraries, relationship recall and precision rise (by 6 to 15 points on the development references), with no change elsewhere
+- **Joint selection keeps one relationship per pair under two merges**: two merges that join both ends of two relationships no longer leave both relationships on one pair; neither merge alone did. Without merge candidates (every run so far) the model is unchanged
+- **Relationship identifiers from what the relationship is**: a relationship's identifier is a hash of its type, its ends and its origin instead of a random one, so the same relationship has the same identifier in every run and the last tie-break of joint selection is deterministic; adding a relationship that exists already stores it once. Exported models are unchanged
+- **Combined runs keep their repositories apart**: in a run over several repositories in one graph, element identifiers carry the repository (`ac_shop__frontend` and `ac_clinic__frontend` instead of one `ac_frontend`), so two repositories' frontend, docs or customer stay two elements; a run over one repository keeps the identifiers it had. An element that would replace one from another source on the same identifier is reported in the log
+- **Sampling caches each answer**: a step that votes (directory classification, element naming with `samples` above 1) numbers its answers, and each has its own cache entry, so a cached run votes over the answers the run got (before, every sample read one cached answer). A single call keeps its cache key
+- **Run limits in the studio**: the General page sets the largest file extraction reads (in MB) and the LLM calls a run may make, or gives each back its default
+- **One setting for the answers per decision**: the `llm_samples` system setting (1 to 20; the studio's General page, or `deriva-cli config setting set llm_samples 3`) replaces every voting step's own `samples` while it is set; `config setting unset` (or the page's button) gives each step its own again. Benchmark sessions record the value; above 1 the answers are combined by majority, so measure consistency with 1
+
+### Development
+
+- **The gate shows naming apart**: `benchmark gate` reports element recall and precision from the element names alone next to its measures (an element found through its source counts whatever it is named), and a table per element type with the reference elements, those found, those found by name and those derived; the verdict is unchanged
+- **ty checks the whole repository**: CI and the pre-commit hook run `ty check .`, tests included
+- **Version 0.9.0 for all three packages**: deriva-cli, deriva-studio and deriva-dev move together (deriva-studio and deriva-dev pin the release beside them), and the studio front end reports 0.9.0
+
 # v0.8.x - Deriva Studio (October 2026 - )
 
 Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.

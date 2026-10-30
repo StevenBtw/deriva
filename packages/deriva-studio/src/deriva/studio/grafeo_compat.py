@@ -75,7 +75,31 @@ def to_widget_graph(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]
     return {"nodes": list(nodes.values()), "edges": edges}
 
 
+def to_server_value(value: Any) -> Any:
+    """A grafeo node or edge in grafeo-server's own result shape, which the widget's server client parses: ``_id`` and
+    ``_labels`` (nodes) or ``_id``, ``_type``, ``_source`` and ``_target`` (edges), properties flat on the item.
+    Namespaces are stripped, a node without a name gets a display name, and Deriva's own ``id`` stays visible as
+    ``deriva_id`` (the widget keys nodes by ``_id`` and drops a property named ``id``)."""
+    if isinstance(value, list):
+        return [to_server_value(v) for v in value]
+    if isinstance(value, dict) and "_labels" in value and "_id" in value:
+        properties = {("deriva_id" if k == "id" else k): v for k, v in value.items() if not k.startswith("_")}
+        if "name" not in properties:
+            display = next((value[k] for k in DISPLAY_KEYS if value.get(k)), None)
+            if display is not None:
+                properties["name"] = display
+        labels = [label for label in value["_labels"] if label not in NAMESPACES] or list(value["_labels"])
+        return {"_id": value["_id"], "_labels": labels, **properties}
+    if isinstance(value, dict) and "_type" in value and "_source" in value:
+        properties = {("deriva_id" if k == "id" else k): v for k, v in value.items() if not k.startswith("_")}
+        return {"_id": value.get("_id"), "_type": _strip_namespace(value["_type"]), "_source": value["_source"], "_target": value["_target"], **properties}
+    if isinstance(value, dict):
+        # A path ({"nodes", "edges"}) or any other map: the nodes and edges inside it get the same shape
+        return {k: to_server_value(v) for k, v in value.items()}
+    return value
+
+
 def to_widget_result(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Rows as ``{"columns", "rows"}`` with every value converted."""
+    """Rows as ``{"columns", "rows"}`` with every node and edge in grafeo-server's shape (the widget's query box)."""
     columns = list(rows[0].keys()) if rows else []
-    return {"columns": columns, "rows": [[to_widget_value(row.get(c)) for c in columns] for row in rows]}
+    return {"columns": columns, "rows": [[to_server_value(row.get(c)) for c in columns] for row in rows]}

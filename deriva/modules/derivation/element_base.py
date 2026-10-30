@@ -1235,7 +1235,7 @@ class ElementDerivationBase(ABC):
     def _active_repo_name(self, graph_manager: GraphManager) -> str:
         """The active repository's name ("" when unknown), stripped from element names as a leading token."""
         try:
-            rows = graph_manager.query("MATCH (r:Graph:Repository) WHERE r.active = true RETURN r.repository_name as name LIMIT 1")
+            rows = graph_manager.query("MATCH (r:Graph:Repository) WHERE r.active = true RETURN r.repository_name as name ORDER BY r.repository_name LIMIT 1")
             if rows and rows[0].get("name"):
                 return rows[0]["name"]
         except Exception as e:
@@ -1357,9 +1357,11 @@ class ElementDerivationBase(ABC):
         source = naming_source(candidate)
         prompt = build_naming_prompt(source, self.ELEMENT_TYPE, naming.instruction)
         answers: list[str | None] = []
-        for _ in range(naming.samples):
+        for index in range(naming.samples):
             try:
-                content, error = extract_response_content(llm_query_fn(prompt, NAMING_SCHEMA, **llm_kwargs))
+                # Numbered samples have their own cache entries (a single call passes none)
+                numbered = {"sample": index} if naming.samples > 1 else {}
+                content, error = extract_response_content(llm_query_fn(prompt, NAMING_SCHEMA, **llm_kwargs, **numbered))
                 if error:
                     continue
                 text = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()

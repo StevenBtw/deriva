@@ -205,22 +205,114 @@ class TestDatabasePerKey:
             get_database()
 
 
-def test_a_grafeo_build_without_cypher_is_refused(monkeypatch):
-    """Deriva queries only through Cypher; a build without it (per grafeo.features()) is refused before a database opens."""
+@pytest.mark.parametrize(("language", "features"), [("gql", ["cypher", "algos"]), ("cypher", ["gql", "algos"])])
+def test_a_grafeo_build_without_the_query_language_is_refused(language, features, monkeypatch):
+    """A build without the configured language (per grafeo.features()) is refused before a database opens."""
     import grafeo
 
     from deriva.adapters.grafeo import manager
 
     opened = []
     close_database()
-    monkeypatch.setattr(grafeo, "features", lambda: ["gql", "algos"])
+    monkeypatch.setenv("GRAFEO_QUERY_LANGUAGE", language)
+    monkeypatch.setattr(grafeo, "features", lambda: features)
     monkeypatch.setattr(grafeo, "GrafeoDB", lambda *args, **kwargs: opened.append(args))
 
-    with pytest.raises(RuntimeError, match="Cypher"):
+    with pytest.raises(RuntimeError, match=language.upper() if language == "gql" else "Cypher"):
         manager.get_database()
 
     assert opened == []  # no database file is touched
     assert manager._db is None
+
+
+def test_a_build_without_cypher_opens_when_queries_are_gql(monkeypatch):
+    import grafeo
+
+    from deriva.adapters.grafeo import manager
+
+    close_database()
+    monkeypatch.setenv("GRAFEO_QUERY_LANGUAGE", "gql")
+    monkeypatch.setattr(grafeo, "features", lambda: ["gql", "algos"])
+    try:
+        assert manager.get_database() is not None
+    finally:
+        close_database()
+
+
+# FOR is GQL only; Cypher rejects it. EXISTS is a reserved word in GQL, so only Cypher takes it as an alias.
+GQL_ONLY = "FOR v IN [1, 2] RETURN v"
+CYPHER_ONLY = "RETURN 1 AS exists"
+
+
+def _connection(monkeypatch, language: str | None) -> GrafeoConnection:
+    if language is None:
+        monkeypatch.delenv("GRAFEO_QUERY_LANGUAGE", raising=False)
+    else:
+        monkeypatch.setenv("GRAFEO_QUERY_LANGUAGE", language)
+    close_database()
+    c = GrafeoConnection(namespace="Graph")
+    c.connect()
+    return c
+
+
+def test_queries_are_gql_by_default(monkeypatch):
+    c = _connection(monkeypatch, None)
+    try:
+        assert c.query_language == "gql"
+        assert c.execute(GQL_ONLY) == [{"v": 1}, {"v": 2}]
+        assert c.execute_rolled_back(GQL_ONLY) == [{"v": 1}, {"v": 2}]
+        with pytest.raises(Exception, match="GQL"):
+            c.execute(CYPHER_ONLY)
+    finally:
+        c.disconnect()
+        close_database()
+
+
+def test_the_setting_switches_queries_to_cypher(monkeypatch):
+    c = _connection(monkeypatch, "Cypher")
+    try:
+        assert c.query_language == "cypher"
+        assert c.execute(CYPHER_ONLY) == [{"exists": 1}]
+        assert c.execute_rolled_back(CYPHER_ONLY) == [{"exists": 1}]
+        with pytest.raises(Exception, match="Cypher"):
+            c.execute(GQL_ONLY)
+    finally:
+        c.disconnect()
+        close_database()
+
+
+def test_a_rolled_back_query_can_name_its_language(monkeypatch):
+    """The studio's query bar sends the language its user picked; it overrides the setting for that query only."""
+    c = _connection(monkeypatch, None)
+    try:
+        assert c.execute_rolled_back(CYPHER_ONLY, language="cypher") == [{"exists": 1}]
+        assert c.execute_rolled_back(GQL_ONLY, language="GQL") == [{"v": 1}, {"v": 2}]
+        with pytest.raises(ValueError, match="gql"):
+            c.execute_rolled_back(GQL_ONLY, language="gremlin")
+    finally:
+        c.disconnect()
+        close_database()
+
+
+@pytest.mark.parametrize("statement", ["COMMIT", "commit work", "ROLLBACK", "START TRANSACTION", "SESSION RESET", "/* c */ COMMIT", "-- c\nCOMMIT"])
+def test_a_rolled_back_query_cannot_end_its_transaction(statement, monkeypatch):
+    """GQL runs COMMIT inside a transaction (grafeo 0.6.0 commits its writes), so the rolled-back path refuses
+    transaction and session statements before they run."""
+    c = _connection(monkeypatch, None)
+    try:
+        with pytest.raises(ValueError, match="transaction"):
+            c.execute_rolled_back(statement)
+        # The words inside a string, a quoted name or a property are no statement
+        assert c.execute_rolled_back("RETURN 'COMMIT' AS `rollback`") == [{"rollback": "COMMIT"}]
+    finally:
+        c.disconnect()
+        close_database()
+
+
+def test_an_unknown_query_language_is_refused(monkeypatch):
+    monkeypatch.setenv("GRAFEO_QUERY_LANGUAGE", "gremlin")
+    with pytest.raises(ValueError, match="gql"):
+        GrafeoConnection(namespace="Graph")
 
 
 def test_tests_never_use_a_persistent_database():

@@ -183,7 +183,9 @@ The gate scores each level on its own (enterprise, solution) and both together (
 | `--no-cache-extraction-llm` | Run only the LLM extraction steps again, keep the structural ones |
 | `--only-extraction-step` | Run only this extraction step |
 | `--only-derivation-step` | Run only this derivation step |
-| `--no-defer-relationships` | Derive relationships after each element batch instead of in one pass after all elements (for comparison only) |
+| `--no-defer-relationships` | Derive relationships after each element batch instead of in one pass after all elements (for comparison only; the default, `--defer-relationships`, derives elements first, then the relationship pass) |
+| `--extract-per-run` | Every run repeats the whole pipeline: extraction with the run's model, no cache, on its own graph (kept in the session's graphs folder); needs `--stages extraction,derivation` and `--no-cache` |
+| `--baseline b1` | Run the LLM baseline instead of Deriva: one generation of the whole model from the repository's files, validated and repaired at most N times. It reads the `BaselineB1` derivation step, which ships disabled (`deriva-cli config enable derivation BaselineB1`); needs `--no-cache` |
 | `--no-export-models` | Do not write model files |
 | `--no-clear` | Do not clear the graph between runs |
 | `--bench-hash` | Keep each run's LLM cache separate |
@@ -196,10 +198,11 @@ The gate scores each level on its own (enterprise, solution) and both together (
 | --- | --- |
 | `benchmark step <step> --repos <repos> --model <model> [-n N] [-v]` | Repeat one step on a fixed input |
 | `benchmark list [-l N]` | List recent sessions |
-| `benchmark analyze <session_id> [-o file] [-f json\|markdown]` | Analyze a session |
+| `benchmark analyze <session_id> [--also <ids>] [-o file] [-f json\|markdown]` | Analyze a session; `--also` adds sessions of other LLMs on the same repositories, for agreement across all their runs |
+| `benchmark comprehensive-analysis <session_ids> [-o folder] [-f json\|markdown\|both] [--no-semantic]` | Every report over several sessions at once (consistency, stability, fit, semantic matching); `--no-semantic` skips the matching |
 | `benchmark deviations <session_id> [-o file] [-s deviation_count\|consistency_score\|total_objects]` | Variation per step |
 | `benchmark reference <session_id> [--run N] [-o folder] [--references folder]` | Recall and precision against the development references |
-| `benchmark gate --baseline <ids> [--candidate <ids>] [--model name] [-o folder]` | The verdict of a candidate against a baseline, per level |
+| `benchmark gate --baseline <ids> [--candidate <ids>] [--model name] [-o folder] [--goldens folder] [--reference folder] [--benchmarks folder]` | The verdict of a candidate against a baseline, per level; the folders default to `workspace/goldens/dev` (development references), `workspace/reference` (golden models) and `workspace/benchmarks` |
 | `benchmark export <session_id> -o <zip>` | Bundle a session with its configurations, environment and checksums |
 | `benchmark ocel <session_ids> -o <folder>` | Event logs of sessions for process mining (OCEL 2.0, CSV, XES) |
 | `benchmark conventions <session_ids> [-o folder] [--run N]` | Check the run snapshots against ArchiMate modelling conventions: a review page per repository and model, and a summary |

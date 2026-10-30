@@ -83,7 +83,9 @@ def test_graph_databases_from_a_relative_env_value(home, monkeypatch):
     from deriva.adapters.grafeo.manager import database_file
 
     monkeypatch.setenv("GRAFEO_DB_DIR", "workspace/graphs")
-    assert Path(database_file("repo")) == home / "workspace" / "graphs" / "repo.grafeo"
+    file = database_file("repo")
+    assert file is not None
+    assert Path(file) == home / "workspace" / "graphs" / "repo.grafeo"
 
 
 def test_a_fresh_home_keeps_its_graphs(home, monkeypatch):
@@ -91,7 +93,9 @@ def test_a_fresh_home_keeps_its_graphs(home, monkeypatch):
     from deriva.adapters.grafeo.manager import database_file
 
     monkeypatch.delenv("GRAFEO_DB_DIR", raising=False)
-    assert Path(database_file("repo")) == home / "workspace" / "graphs" / "repo.grafeo"
+    file = database_file("repo")
+    assert file is not None
+    assert Path(file) == home / "workspace" / "graphs" / "repo.grafeo"
 
 
 def test_an_empty_graph_folder_means_in_memory(home, monkeypatch):

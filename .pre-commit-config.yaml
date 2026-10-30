@@ -41,7 +41,7 @@ repos:
 
       - id: ty-check
         name: ty check
-        entry: uv run ty check deriva/
+        entry: uv run ty check .
         language: system
         pass_filenames: false
         types: [python]

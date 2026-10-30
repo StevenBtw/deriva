@@ -398,10 +398,11 @@ class TestRelationship:
         assert rel.relationship_type == "Serving"
 
     def test_relationship_auto_generates_identifier(self):
-        """Should auto-generate identifier if not provided."""
+        """Without a given identifier, one from type and ends: the same relationship gets the same one."""
         rel = Relationship(source="src", target="tgt", relationship_type="Serving")
-        assert re.fullmatch(r"id-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", rel.identifier)
-        assert Relationship(source="src", target="tgt", relationship_type="Serving").identifier != rel.identifier
+        assert re.fullmatch(r"id-[0-9a-f]{32}", rel.identifier)
+        assert Relationship(source="src", target="tgt", relationship_type="Serving").identifier == rel.identifier
+        assert Relationship(source="src", target="tgt", relationship_type="Flow").identifier != rel.identifier
 
     def test_relationship_with_properties(self):
         """Should store custom properties."""

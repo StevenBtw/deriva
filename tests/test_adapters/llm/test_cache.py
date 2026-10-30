@@ -3,6 +3,7 @@
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -338,6 +339,31 @@ class TestCacheKeyCoversResponseShapingInputs:
         assert CacheManager.generate_cache_key("p", "m", **a) != CacheManager.generate_cache_key("p", "m", **b)
 
     def test_same_inputs_give_the_same_key(self):
-        kwargs = {"system_prompt": "s", "temperature": 0.3, "max_tokens": 4000}
+        kwargs: dict[str, Any] = {"system_prompt": "s", "temperature": 0.3, "max_tokens": 4000}
 
         assert CacheManager.generate_cache_key("p", "m", **kwargs) == CacheManager.generate_cache_key("p", "m", **kwargs)
+
+
+class TestEndpointInKey:
+    """One model id served by two providers (OpenAI and Azure, Ollama and LM Studio) must not share answers."""
+
+    def test_provider_and_url_separate_entries(self):
+        from deriva.adapters.llm.cache import CacheManager, endpoint_key
+
+        openai = CacheManager.generate_cache_key("p", "gpt", endpoint=endpoint_key("openai", "https://api.openai.com/v1"))
+        azure = CacheManager.generate_cache_key("p", "gpt", endpoint=endpoint_key("azure", "https://x.openai.azure.com"))
+        other_host = CacheManager.generate_cache_key("p", "gpt", endpoint=endpoint_key("openai", "https://proxy.example/v1"))
+        assert len({openai, azure, other_host}) == 3
+
+    def test_the_url_is_normalized(self):
+        from deriva.adapters.llm.cache import endpoint_key
+
+        assert endpoint_key("ollama", "HTTP://LocalHost:11434/api/chat/") == endpoint_key("ollama", "http://localhost:11434/api/chat")
+        assert endpoint_key("anthropic", None) == "anthropic"
+
+    def test_the_manager_keys_by_its_endpoint(self):
+        from deriva.adapters.llm.manager import LLMManager
+
+        manager = LLMManager.__new__(LLMManager)
+        manager.config = {"provider": "openai", "api_url": "https://api.openai.com/v1/"}
+        assert manager._endpoint() == "openai|https://api.openai.com/v1"

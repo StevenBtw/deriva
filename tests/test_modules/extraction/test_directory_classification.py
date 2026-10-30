@@ -645,7 +645,8 @@ class TestDirectoryClassificationVoting:
         from deriva.adapters.llm.schemas import DirectoryClassificationItem
         from deriva.modules.extraction.directory_classification import DIRECTORY_CLASSIFICATION_SCHEMA
 
-        items = DIRECTORY_CLASSIFICATION_SCHEMA["schema"]["properties"]["classifications"]["items"]["properties"]
+        schema = cast(dict[str, Any], DIRECTORY_CLASSIFICATION_SCHEMA)
+        items = schema["schema"]["properties"]["classifications"]["items"]["properties"]
         assert set(items) == set(DirectoryClassificationItem.model_fields)
         assert "conceptName" not in items
         concept_types = DirectoryClassificationItem.model_json_schema()["properties"]["conceptType"]["enum"]

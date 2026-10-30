@@ -119,7 +119,7 @@ class ArchimateManager:
                 raise ValidationError(f"Element validation failed: {errors}")
 
         try:
-            # Create Cypher query to add element node
+            # Query to add element node
             # Use two separate labels: namespace (Model) + element_type (TechnologyService)
             # This allows queries like MATCH (e:TechnologyService) to work
             # while still having namespace isolation via the Model label
@@ -127,6 +127,16 @@ class ArchimateManager:
             # Extract source_identifier from properties for graph-based relationship derivation
             # The graph_relationships refine step needs this to link elements to source graph nodes
             source_identifier = element.properties.get("source") if element.properties else None
+
+            # Two sources on one identifier: the later element replaces the earlier, so say so
+            if source_identifier:
+                held = self.db.execute(
+                    f"MATCH (e:`{self.namespace}` {{identifier: $identifier}}) RETURN e.source_identifier AS source LIMIT 1",
+                    {"identifier": element.identifier},
+                )
+                earlier = held[0].get("source") if held else None
+                if earlier and earlier != source_identifier:
+                    logger.warning("Element %s from %s replaces the one from %s: their sources share an identifier", element.identifier, source_identifier, earlier)
 
             # Found through the identifier index; a MERGE would scan the namespace label
             self.db.merge_node(
@@ -170,8 +180,16 @@ class ArchimateManager:
         if validate:
             self._validate_relationship(relationship)
 
+        # The same relationship (its identifier comes from type, ends and origin) is stored once
+        existing = self.db.execute(
+            f"MATCH (:`{self.namespace}`)-[r]->(:`{self.namespace}`) WHERE r.identifier = $identifier RETURN r.identifier AS identifier LIMIT 1",
+            {"identifier": relationship.identifier},
+        )
+        if existing:
+            return relationship.identifier
+
         try:
-            # Create Cypher query to add relationship
+            # Query to add relationship
             # Use namespaced relationship type (e.g., Model:Realization, Model:Serving)
             # This is consistent with Graph namespace which uses Graph:CONTAINS, Graph:CALLS, etc.
             # Nodes are matched by having the namespace label (Model)
@@ -456,10 +474,10 @@ class ArchimateManager:
             raise
 
     def query(self, cypher_query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Execute a custom Cypher query.
+        """Execute a custom query in GRAFEO_QUERY_LANGUAGE (GQL by default).
 
         Args:
-            cypher_query: Cypher query string
+            cypher_query: Query string
             params: Optional query parameters
 
         Returns:
@@ -475,11 +493,11 @@ class ArchimateManager:
             logger.error(f"Query failed: {e}")
             raise
 
-    def query_read_only(self, cypher_query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Run a Cypher query whose writes are rolled back (queries typed by a user)."""
+    def query_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict[str, Any]]:
+        """Run a query whose writes are rolled back (queries typed by a user), in ``language`` or the configured one."""
         if self.db is None:
             raise RuntimeError("Not connected to grafeo. Call connect() first.")
-        return self.db.execute_rolled_back(cypher_query, params)
+        return self.db.execute_rolled_back(query, params, language)
 
     def disable_element(self, identifier: str, reason: str | None = None) -> bool:
         """Disable an element (soft delete for refine phase).

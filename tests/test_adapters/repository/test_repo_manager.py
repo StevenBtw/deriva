@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
 
@@ -678,11 +679,11 @@ def test_the_listing_reads_uncommitted_changes_now(tmp_path):
     """The stored state is from the clone: edits made since must show, or the studio deletes without warning."""
     manager = RepoManager(workspace_dir=tmp_path)
     (tmp_path / "repo" / ".git").mkdir(parents=True)
-    manager._state_manager.list_repositories = lambda: [{"name": "repo", "path": str(tmp_path / "repo"), "is_dirty": False}]
+    setattr(manager._state_manager, "list_repositories", lambda: [{"name": "repo", "path": str(tmp_path / "repo"), "is_dirty": False}])
 
     with patch("deriva.adapters.repository.manager.subprocess.run") as run:
         run.return_value = MagicMock(stdout=" M src/app.py\n")
-        (info,) = manager.list_repositories(detailed=True)
+        (info,) = cast("list[RepositoryInfo]", manager.list_repositories(detailed=True))
 
     assert info.is_dirty is True
 
@@ -877,6 +878,7 @@ class TestRegistryRepair:
         assert manager.unregistered() == ["orphan"]
         info = manager.register_repository("orphan")
 
+        assert info.last_commit is not None
         assert info.name == "orphan" and info.last_commit.endswith("first")
         assert manager.unregistered() == [] and manager.list_repositories(detailed=False) == ["orphan"]
         with pytest.raises(RepositoryError, match="no git checkout"):
@@ -895,7 +897,7 @@ class TestRegistryRepair:
 
         shutil.rmtree(tmp_path / "gone")
 
-        stale = {r.name: r.stale for r in manager.list_repositories(detailed=True)}
+        stale = {r.name: r.stale for r in cast("list[RepositoryInfo]", manager.list_repositories(detailed=True))}
         assert stale == {"ok": None, "gone": "its folder is gone", "plain": "its folder is no git checkout"}
 
     def test_a_stale_record_is_deleted_without_touching_files(self, tmp_path):
@@ -1033,4 +1035,4 @@ class TestGitHardening:
 
         assert info.url == "https://github.com/org/repo.git"
         assert "s3cret" not in (tmp_path / "workspace.yaml").read_text(encoding="utf-8")
-        assert manager.list_repositories(detailed=True)[0].url == "https://github.com/org/repo.git"
+        assert cast("list[RepositoryInfo]", manager.list_repositories(detailed=True))[0].url == "https://github.com/org/repo.git"

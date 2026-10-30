@@ -19,7 +19,7 @@ What you expected to happen.
 If applicable, add screenshots.
 
 **Environment:**
- - Deriva version: [e.g. 0.8.2]
+ - Deriva version: [e.g. 0.9.0]
  - Install: [deriva-studio | deriva-dev]
  - OS: [e.g. Windows 11]
  - Python: [e.g. 3.14.6]

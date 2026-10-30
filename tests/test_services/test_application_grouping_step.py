@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -143,7 +144,7 @@ def test_both_run_paths_dispatch_the_documentation_steps_and_refuse_bad_settings
 
     with patch.object(derivation.config, "get_derivation_configs") as get:
         get.side_effect = lambda engine, enabled_only, phase: cfgs if phase == "generate" else []
-        kwargs = {"engine": MagicMock(), "graph_manager": MagicMock(), "archimate_manager": MagicMock(), "llm_query_fn": MagicMock(), "phases": ["generate"]}
+        kwargs: dict[str, Any] = {"engine": MagicMock(), "graph_manager": MagicMock(), "archimate_manager": MagicMock(), "llm_query_fn": MagicMock(), "phases": ["generate"]}
         if iterate:
             messages = [u.message for u in derivation.run_derivation_iter(**kwargs) if u.status == "error"]
         else:

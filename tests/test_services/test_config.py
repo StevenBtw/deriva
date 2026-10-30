@@ -1927,7 +1927,9 @@ class TestExtractionConfigParams:
         result = create_extraction_config_version(engine, "Technology", params='{"prompt": {"closing_instruction": "x"}}')
 
         assert result["new_version"] == 2
-        assert get_extraction_config(engine, "Technology").params == '{"prompt": {"closing_instruction": "x"}}'
+        cfg = get_extraction_config(engine, "Technology")
+        assert cfg is not None
+        assert cfg.params == '{"prompt": {"closing_instruction": "x"}}'
 
     def test_params_are_kept_when_other_fields_change(self):
         from deriva.services.config import create_extraction_config_version, get_extraction_config
@@ -1936,7 +1938,9 @@ class TestExtractionConfigParams:
         create_extraction_config_version(engine, "Technology", params='{"a": 1}')
         create_extraction_config_version(engine, "Technology", instruction="new")
 
-        assert get_extraction_config(engine, "Technology").params == '{"a": 1}'
+        cfg = get_extraction_config(engine, "Technology")
+        assert cfg is not None
+        assert cfg.params == '{"a": 1}'
 
 
 class TestReadOnlyConnection:
@@ -1978,6 +1982,7 @@ class TestLlmSamplesPerStep:
         ]
         monkeypatch.setattr(config, "get_extraction_configs", lambda engine, enabled_only=False: extraction)
         monkeypatch.setattr(config, "get_derivation_configs", lambda engine, enabled_only=False, phase=None, llm_only=None: derivation)
+        monkeypatch.setattr(config, "get_llm_samples", lambda engine: None)  # the llm_samples setting is not set
 
         assert config.llm_samples_per_step(object()) == {"DocConcepts": 3, "DirClasses": 1, "TypeA.naming": 1}
 

@@ -159,6 +159,48 @@ def _git_env() -> dict[str, str]:
     return settings.child_environment(GIT_TERMINAL_PROMPT="0")
 
 
+def _git_safety(allow_local: bool = False) -> list[str]:
+    """Config for git on an untrusted repository, its submodules included (``-c`` reaches every git process it starts):
+    network protocols only, so a submodule URL cannot read a local repository or run a command (``ext::``); a local URL
+    only where the user gave it (``user``: never a submodule's); symlinks checked out as plain files, so no link in the
+    clone reaches outside it."""
+    configs = ["protocol.allow=never", *(f"protocol.{p}.allow=always" for p in ("https", "http", "ssh", "git"))]
+    configs += [f"protocol.file.allow={'user' if allow_local else 'never'}", "core.symlinks=false"]
+    return [part for config in configs for part in ("-c", config)]
+
+
+def _git_timeout() -> int:
+    """Seconds a clone or pull may take (``DERIVA_GIT_TIMEOUT``): a stalled remote must not hold the run lock forever."""
+    try:
+        return max(1, int(settings.get("DERIVA_GIT_TIMEOUT") or 1800))
+    except ValueError:
+        return 1800
+
+
+# The first release of each line with the fixes for the submodule CVEs of July 2025 (CVE-2025-48384 and others)
+_GIT_FIXED = {(2, 43): 7, (2, 44): 4, (2, 45): 4, (2, 46): 4, (2, 47): 3, (2, 48): 2, (2, 49): 1, (2, 50): 1}
+
+
+def git_outdated(version_output: str) -> bool:
+    """True for a ``git --version`` before the submodule fixes of its release line (unknown versions are not reported)."""
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", version_output)
+    if not match:
+        return False
+    major, minor, patch = (int(g) for g in match.groups())
+    if (major, minor) in _GIT_FIXED:
+        return patch < _GIT_FIXED[(major, minor)]
+    return (major, minor) < (2, 43)
+
+
+def _warn_if_git_outdated() -> None:
+    try:
+        output = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=10, check=False).stdout
+    except OSError, subprocess.SubprocessError:
+        return
+    if git_outdated(output):
+        logger.warning("%s predates the fixes for git's submodule vulnerabilities (CVE-2025-48384); update git before cloning untrusted repositories", output.strip())
+
+
 # STATUS_DLL_INIT_FAILED: Windows could not start git or one of its helpers (as git's exit code, unsigned or signed)
 _GIT_START_FAILED = (0xC0000142, 0xC0000142 - 2**32)
 GIT_COULD_NOT_START = (
@@ -176,6 +218,10 @@ _GIT_ERRORS: list[tuple[str, str]] = [
     (r"Could not resolve host: (\S+)", "Could not reach {1}: check the URL and the network connection"),
     (r"Authentication failed|Invalid username or password", "The git credentials were refused for this repository"),
     (r"Not possible to fast-forward|divergent branches", "The clone has commits of its own that the remote does not have, so it cannot be updated by fast-forward"),
+    (
+        r"transport '(\w+)' not allowed",
+        "A remote or submodule uses the {1} protocol, which clones do not allow (only https, http, ssh and git; a local URL only as the URL given to clone)",
+    ),
     (r"could not read Username|terminal prompts disabled", "This repository needs git credentials: set up a git credential helper or use a URL your git can open"),
 ]
 
@@ -228,7 +274,7 @@ def _is_valid_git_url(url: str) -> bool:
         r"^git@[^\s:]+:[^\s]+\.git$",
         r"^git@[^\s:]+:[^\s]+$",
         r"^ssh://[^\s]+\.git$",
-        r"^file://[^\s]+\.git$",
+        r"^file://[^\s]+$",  # a bare repository or a working tree
     ]
     return any(re.match(pattern, url) for pattern in patterns)
 
@@ -237,11 +283,12 @@ def _check_remote_exists(repo_url: str) -> bool:
     """Check if remote repository exists and is accessible."""
     try:
         subprocess.run(
-            ["git", "ls-remote", repo_url],
+            ["git", *_git_safety(), "ls-remote", repo_url],
             capture_output=True,
             text=True,
             timeout=10,
             check=True,
+            env=_git_env(),
         )
         return True
     except (
@@ -253,9 +300,11 @@ def _check_remote_exists(repo_url: str) -> bool:
 
 
 def _extract_repo_name(repo_url: str) -> str:
-    """Extract repository name from URL."""
+    """Extract repository name from URL (a local ``.../name/.git`` is named after the folder that holds it)."""
     url = repo_url.rstrip("/")
-    if url.endswith(".git"):
+    if url.endswith("/.git"):
+        url = url[:-5]
+    elif url.endswith(".git"):
         url = url[:-4]
     return url.split("/")[-1]
 
@@ -649,6 +698,8 @@ class RepoManager:
         branch: str | None = None,
         depth: int | None = None,
         overwrite: bool = False,
+        submodules: bool = True,
+        allow_local: bool = False,
     ) -> RepositoryInfo:
         """Clone a Git repository.
 
@@ -658,6 +709,8 @@ class RepoManager:
             branch: Specific branch to clone
             depth: Clone depth for shallow clones
             overwrite: If True, removes existing directory before cloning
+            submodules: Clone the submodules too (their URLs limited to network protocols)
+            allow_local: Accept a ``file://`` URL (the command line; the studio never clones local repositories)
 
         Returns:
             RepositoryInfo object with details about the cloned repository
@@ -667,6 +720,8 @@ class RepoManager:
             ValidationError: If the repository URL is invalid
         """
         self.validate_repository(repo_url)
+        if repo_url.startswith("file://") and not allow_local:
+            raise ValidationError("Local repositories are cloned from the command line only (deriva-cli repo clone)")
 
         if target_name is None:
             target_name = _extract_repo_name(repo_url)
@@ -684,18 +739,26 @@ class RepoManager:
 
         # Long paths: on Windows a deep home folder plus git's own file names can pass 260 characters
         # Submodules too: a repository that keeps its modules as submodules is nearly empty without them
-        cmd = ["git", "clone", "--config", "core.longpaths=true", "--recurse-submodules"]
+        cmd = ["git", *_git_safety(allow_local), "clone", "--config", "core.longpaths=true"]
+        if submodules:
+            cmd.append("--recurse-submodules")
         if branch:
             cmd.extend(["--branch", branch])
         if depth:
-            cmd.extend(["--depth", str(depth), "--shallow-submodules"])
+            cmd.extend(["--depth", str(depth)])
+            if submodules:
+                cmd.append("--shallow-submodules")
         # Into a staging folder first: only a clone that worked becomes the repository's folder, and a failed one
         # (a checkout that stopped half way) leaves nothing a retry would find in its way
         staging = self.workspace_dir / f".clone-{uuid.uuid4().hex[:8]}"
         cmd.extend([repo_url, str(staging)])
 
+        timeout = _git_timeout()
         try:
-            subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", check=True, env=_git_env())
+            subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", check=True, env=_git_env(), timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _discard(staging)
+            raise CloneError(f"The clone took longer than {timeout} seconds and was stopped (DERIVA_GIT_TIMEOUT sets the limit)")
         except subprocess.CalledProcessError as e:
             _discard(staging)
             raise CloneError(_git_failure(e, "clone"))
@@ -703,6 +766,8 @@ class RepoManager:
             _discard(staging)
             raise CloneError("Git is not installed or not in PATH. Please install Git to use clone functionality.")
         _move_into_place(staging, target_path)
+        if submodules:
+            _warn_if_git_outdated()
 
         result = _get_repository_info_from_path(target_path, redact_credentials(repo_url))
         self._state_manager.add_repository(result)
@@ -815,13 +880,17 @@ class RepoManager:
             raise RepositoryError(f"Repository has uncommitted changes: {repo_name}. Commit or discard them before updating.")
         try:
             subprocess.run(
-                ["git", "-C", str(repo_path), "pull", "--ff-only", "--recurse-submodules"],
+                # From the remote the clone came from (a URL the user gave, so it may be local); submodules never local
+                ["git", *_git_safety(allow_local=True), "-C", str(repo_path), "pull", "--ff-only", "--recurse-submodules"],
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
                 check=True,
                 env=_git_env(),
+                timeout=_git_timeout(),
             )
+        except subprocess.TimeoutExpired:
+            raise RepositoryError(f"The pull took longer than {_git_timeout()} seconds and was stopped (DERIVA_GIT_TIMEOUT sets the limit)")
         except subprocess.CalledProcessError as e:
             raise RepositoryError(_git_failure(e, "pull"))
         except FileNotFoundError:
@@ -908,7 +977,7 @@ class RepoManager:
             MetadataError: If metadata extraction fails
             RepositoryError: If repository not found
         """
-        repo_path = self.workspace_dir / repo_name
+        repo_path = self._repository_path(repo_name)
 
         if not repo_path.exists():
             raise RepositoryError(f"Repository not found: {repo_name}")

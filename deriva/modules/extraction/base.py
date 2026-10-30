@@ -335,20 +335,21 @@ MAX_SAMPLE_WORKERS = 8
 def sample_llm(llm_query_fn: Callable[..., Any], prompt: str, schema: dict[str, Any], samples: int) -> list[Any]:
     """Ask the same prompt ``samples`` times (in parallel) and return the answers in call order.
 
-    Used to stabilize open LLM extraction by majority vote. A call that raises
-    yields ``None`` so one failed sample does not lose the others.
+    Used to stabilize open LLM extraction by majority vote. Each sample is numbered (``sample=i``), so it has its own
+    cache entry and a replay votes over the answers the run got. A call that raises yields ``None`` so one failed
+    sample does not lose the others.
     """
     if samples <= 1:
         return [llm_query_fn(prompt, schema)]
 
-    def _call() -> Any:
+    def _call(index: int) -> Any:
         try:
-            return llm_query_fn(prompt, schema)
+            return llm_query_fn(prompt, schema, sample=index)
         except Exception:  # noqa: BLE001 - a failed sample is simply not counted
             return None
 
     with ThreadPoolExecutor(max_workers=min(samples, MAX_SAMPLE_WORKERS)) as pool:
-        return list(pool.map(lambda _: _call(), range(samples)))
+        return list(pool.map(_call, range(samples)))
 
 
 def sample_usage(responses: list[Any]) -> tuple[int, int]:

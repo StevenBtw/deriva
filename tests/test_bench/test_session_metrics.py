@@ -116,6 +116,22 @@ class TestTwoLevel:
         assert concept["all LLMs"]["answers"] == {"identical": 0, "prompts": 1}
         assert concept["all LLMs"]["decisions"] == {"stable": 0, "items": 1}
 
+    def test_runs_with_a_bench_hash_still_share_their_prompts(self, tmp_path):
+        """--bench-hash puts the run into every cache key; the same prompt in two runs is still one prompt."""
+
+        def call(run, label, temperature=0.0):
+            answer = f'{{"labels": {{"x": "{label}"}}}}'
+            schema = "business_concept_classification"
+            return {"step": "BusinessConcept", "schema": schema, "cache_key": f"r:m:{run}", "prompt": "p", "temperature": temperature, "response": answer}
+
+        runs = [_run(SHOP, decisions={"BusinessConcept": {"x": "entity"}}) for _ in range(2)]
+        session = _session(tmp_path, "s1", "m", runs, {1: [call(1, "entity"), call(1, "entity", 0.5)], 2: [call(2, "entity"), call(2, "process", 0.5)]})
+
+        (concept,) = [r for r in pm.two_level_rows([session]) if r["decision"] == "BusinessConcept"]
+
+        # Two prompts (another temperature is another call): one answered alike, one not
+        assert concept["answers"] == {"identical": 1, "prompts": 2}
+
     def test_a_classification_is_decided_per_candidate_and_one_run_has_no_rows(self, tmp_path):
         """A role classification's decision per candidate is its stage (created or rejected); a single run has nothing
         to compare."""
@@ -136,7 +152,8 @@ class TestTwoLevel:
 def test_krippendorff_alpha_nominal():
     assert pm.krippendorff_alpha([{"a": 1, "b": 2}, {"a": 1, "b": 2}]) == 1.0
     assert pm.krippendorff_alpha([{"a": 1}, {"a": 1}]) is None  # one value only: alpha is undefined
-    assert pm.krippendorff_alpha([{"a": 1, "b": 2}, {"a": 2, "b": 1}]) < 0
+    disagreement = pm.krippendorff_alpha([{"a": 1, "b": 2}, {"a": 2, "b": 1}])
+    assert disagreement is not None and disagreement < 0
 
 
 class TestOutOfCandidates:
@@ -252,6 +269,9 @@ class TestGolden:
         alone = pm.golden_comparison([{**derived[0], "name": "Something Else"}], reference, aliases=aliases)
         assert (alone["recall"], alone["structure_matches"]) == (round(1 / 3, 3), 1)
         assert pm.golden_mapping([{**derived[0], "name": "Something Else"}], reference, aliases=aliases) == {"x": {"g2"}}
+        # Names only: the structure refs are left out
+        assert pm.golden_mapping([{**derived[0], "name": "Something Else"}], reference, aliases=aliases, structure=False) == {}
+        assert pm.golden_mapping(derived, reference, aliases=aliases, structure=False) == {"x": {"g1"}}
 
     def test_internal_behaviour_matches_across_its_types_within_a_layer(self):
         """A function found for a reference process counts (user, 2026-10-19); across layers and for services it does not."""
@@ -306,3 +326,40 @@ def test_consistency_by_id_per_level(tmp_path):
     assert solution["identities"]["id"]["elements"]["cons"] == 0.5
     assert union["identities"]["id"]["elements"]["cons"] == round(2 / 3, 3)
     assert pm.consistency_rows([session]) == pm.consistency_rows([session], level="union")  # None: as before levels
+
+
+def test_two_sessions_of_one_model_give_one_row_over_all_their_runs(tmp_path):
+    """As consistency_rows pools a model's runs over sessions, so do the two-level rows (not one row per session)."""
+
+    def call(label):
+        return [{"step": "BusinessConcept", "schema": "business_concept_classification", "cache_key": "k", "prompt": "p", "response": f'{{"labels": {{"x": "{label}"}}}}'}]
+
+    def session(name, label):
+        runs = [_run(SHOP, decisions={"BusinessConcept": {"x": label}}) for _ in range(2)]
+        return _session(tmp_path, name, "m", runs, {1: call(label), 2: call(label)})
+
+    rows = [r for r in pm.two_level_rows([session("s1", "entity"), session("s2", "process")]) if r["decision"] == "BusinessConcept"]
+
+    (row,) = rows
+    # Four runs: the item flips between the sessions, so it is not stable over the model's runs
+    assert row["decisions"] == {"stable": 0, "items": 1}
+
+
+def test_the_report_holds_consistency_per_level(tmp_path):
+    """The solution level holds direct relationships only; a derived enterprise relationship that flips lowers the
+    whole model's and the enterprise level's relationship consistency, never the solution level's."""
+    shop = {**SHOP, "levels": ["solution", "enterprise"]}
+    service = {**SERVICE, "levels": ["solution", "enterprise"]}
+    direct = {"source": "ac_shop", "target": "as_ordering", "type": "Realization", "derived_from": "listed_members", "levels": ["solution", "enterprise"]}
+    derived = {"source": "as_ordering", "target": "ac_shop", "type": "Serving", "derived_from": "derivation", "levels": ["enterprise"]}
+    runs = [_run(shop, service), _run(shop, service)]
+    runs[0]["relationships"] = [direct, derived]
+    runs[1]["relationships"] = [direct]
+    session = _session(tmp_path, "s1", "m", runs)
+
+    report = pm.session_report([session])
+
+    whole = report["consistency"][0]["identities"]["id"]["relationships"]["cons"]
+    solution = report["consistency_levels"]["solution"][0]["identities"]["id"]["relationships"]["cons"]
+    enterprise = report["consistency_levels"]["enterprise"][0]["identities"]["id"]["relationships"]["cons"]
+    assert (solution, whole, enterprise) == (1.0, 0.5, 0.5)

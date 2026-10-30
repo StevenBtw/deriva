@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 class FakeSession:
     """Stands in for PipelineSession: records calls, returns canned values from ``returns``."""
 
+    repository: str  # set by tests that need it; unset, reads go through __getattr__
+
     def __init__(self, connect_error: Exception | None = None, **returns: Any) -> None:
         self.calls: list[tuple[str, tuple, dict]] = []
         self.returns: dict[str, Any] = returns
@@ -54,8 +56,9 @@ def make_client(tmp_path) -> Iterator[Callable[[FakeSession], TestClient]]:
     clients: list[TestClient] = []
 
     def make(session: FakeSession) -> TestClient:
-        client = TestClient(create_app(provider=SessionProvider(factory=lambda: session), static_dir=None, runs_dir=tmp_path / "runs"))
-        client.app.state.bench = lambda session: session  # a FakeSession answers the benchmark calls itself
+        app = create_app(provider=SessionProvider(factory=lambda: session), static_dir=None, runs_dir=tmp_path / "runs")
+        app.state.bench = lambda session: session  # a FakeSession answers the benchmark calls itself
+        client = TestClient(app)
         client.__enter__()
         clients.append(client)
         return client

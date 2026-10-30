@@ -192,6 +192,7 @@ def test_the_step_reports_the_solve_with_its_time():
     result = JointConsistencyStep().run(am, gm, params={"dry_run": False})
 
     report = result.report
+    assert report is not None
     assert report["status"] == "optimal" and report["rows"] == {"H1": 1} and report["dropped"] == 1 and report["kept"] == 1
     assert isinstance(report["seconds"], float) and report["seconds"] >= 0
     assert result.to_dict()["report"] == report

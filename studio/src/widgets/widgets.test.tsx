@@ -36,6 +36,8 @@ describe("GraphWidget", () => {
     expect(model.get("fill")).toBe(true);
     // The shim has no Python defaults: a trait the studio leaves out reads as undefined (labels would stay off)
     expect(model.get("show_labels")).toBe(true);
+    // A typed query draws at most as many nodes as the view (anywidget-graph 0.5.2 and later)
+    expect(model.get("max_query_nodes")).toBe(300);
   });
 
   it("updates nodes and edges when the view changes", async () => {
@@ -85,6 +87,31 @@ describe("GraphWidget", () => {
     models[0].set("selected_node", null);
 
     expect(onSelect.mock.calls).toEqual([["File"], [null]]);
+  });
+
+  it("clears a query's note when the view changes (another repository)", async () => {
+    const { loader, models } = capturingLoader();
+    const { rerender } = render(<GraphWidget database="graph" view={{ nodes: [{ id: "a" }], edges: [] }} dark={false} loader={loader} />);
+    await waitFor(() => expect(models).toHaveLength(1));
+    models[0].set("query_note", "The query returned 9,161 nodes; the 300 best connected are drawn (max_query_nodes).");
+
+    rerender(<GraphWidget database="graph" view={{ nodes: [{ id: "b" }], edges: [] }} dark={false} loader={loader} />);
+
+    await waitFor(() => expect(models[0].get("nodes")).toEqual([{ id: "b" }]));
+    expect(models[0].get("query_note")).toBe("");
+  });
+
+  it("reports what it draws: the host's view, then a query's result", async () => {
+    const { loader, models } = capturingLoader();
+    const onDrawn = vi.fn();
+    render(<GraphWidget database="graph" view={{ nodes: [{ id: "a" }], edges: [] }} dark={false} loader={loader} onDrawn={onDrawn} />);
+    await waitFor(() => expect(models).toHaveLength(1));
+    await waitFor(() => expect(onDrawn).toHaveBeenLastCalledWith({ nodes: 1, edges: 0 }));
+
+    // The query box sets the widget's own nodes and edges to the result
+    models[0].set({ nodes: [{ id: "a" }, { id: "b" }, { id: "c" }], edges: [{ source: "a", target: "b" }] });
+
+    expect(onDrawn).toHaveBeenLastCalledWith({ nodes: 3, edges: 1 });
   });
 
   it("selects the node the host picks, as a click would", async () => {

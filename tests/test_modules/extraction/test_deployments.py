@@ -27,6 +27,7 @@ def test_compose_services_are_matched_to_units_by_build_context_image_or_name():
     result = detect_deployments("r", {"r/docker-compose.yml": COMPOSE}, UNITS, RULES)
 
     env = result.primary
+    assert env is not None
     assert (env.kind, env.name, env.file) == ("compose", "Docker Compose", "r/docker-compose.yml")
     by_name = {s.name: s for s in env.services}
     assert by_name["shop"].unit == "unit::r::shop" and by_name["shop"].depends_on == ["db"]
@@ -56,7 +57,9 @@ services:
   db:
     image: acme/suite:mysql
 """
-    services = {s.name: s.unit for s in detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary.services}
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+    assert env is not None
+    services = {s.name: s.unit for s in env.services}
 
     assert services == {"order-store": "unit::r::OrderStore", "pay": "unit::r::services/PaymentDesk", "orders": None, "gateway": "unit::r::Gateway", "db": None}
 
@@ -70,6 +73,7 @@ def test_the_root_compose_is_the_primary_environment_and_the_others_are_reported
 
     result = detect_deployments("r", files, UNITS, RULES)
 
+    assert result.primary is not None
     assert result.primary.file == "r/docker-compose.yml"
     assert sorted((e.kind, e.file) for e in result.others) == [("compose", "r/examples/docker-compose_extra.yml"), ("kubernetes", "r/k8s")]
 
@@ -79,6 +83,7 @@ def test_kubernetes_workloads_are_an_environment_when_there_is_no_compose():
     files = {"r/k8s/shop.yaml": manifest + "---\nkind: Service\nmetadata:\n  name: shop\n"}
 
     env = detect_deployments("r", files, UNITS, RULES).primary
+    assert env is not None
 
     assert (env.kind, env.name) == ("kubernetes", "Kubernetes")
     assert [(s.name, s.unit, s.image) for s in env.services] == [("shop", "unit::r::shop", "acme/shop:3")]
@@ -91,6 +96,7 @@ def test_a_cloud_template_in_a_unit_folder_deploys_that_unit_and_names_its_manag
     )
 
     env = detect_deployments("r", {"r/shop/infra/cloudformation.yaml": template}, UNITS, RULES).primary
+    assert env is not None
 
     assert (env.kind, env.name) == ("cloud", "AWS ECS")
     assert [(s.name, s.unit, s.kind) for s in env.services] == [("App", "unit::r::shop", "container")]
@@ -251,6 +257,7 @@ def test_compose_services_carry_their_published_and_container_ports():
     compose = 'services:\n  shop:\n    build: ./shop\n    ports: ["8080:80", "9000"]\n  db:\n    image: postgres\n    ports:\n      - "127.0.0.1:5432:5432"\n'
 
     env = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary
+    assert env is not None
 
     assert {s.name: s.ports for s in env.services} == {"shop": [80, 8080, 9000], "db": [5432]}
 
@@ -272,6 +279,7 @@ def test_cdk_containers_are_matched_to_units_by_name_and_the_cloud_comes_before_
     result = detect_deployments("r", {"r/docker-compose.yml": COMPOSE}, UNITS, QUALIFIED, cdk=CDK)
 
     env = result.primary
+    assert env is not None
     assert (env.kind, env.name, env.file) == ("cloud", "AWS ECS Fargate", "r/infra/lib")  # the name the construct table gives
     assert [(s.name, s.unit) for s in env.services] == [("otherService", None), ("shopService", "unit::r::shop")]  # no unit named other
     assert env.managed == ["AWS::RDS::DBInstance::postgres"]  # the engine qualifies the managed service
@@ -285,6 +293,7 @@ def test_cloudformation_resources_are_qualified_by_their_property_or_its_default
     )
 
     env = detect_deployments("r", {"r/shop/infra/cloudformation.yaml": template}, UNITS, QUALIFIED).primary
+    assert env is not None
 
     # A load balancer without a Type is an application one; an engine that is no literal (a !Ref) qualifies nothing
     assert env.managed == ["AWS::ElasticLoadBalancingV2::LoadBalancer::application", "AWS::RDS::DBInstance::engineparameter"]
@@ -343,11 +352,14 @@ def test_an_engine_that_runs_in_the_environment_itself_stays_separate():
 def test_the_environment_folder_is_the_common_leading_part_of_its_files():
     """r/team-a/k8s and r/team-b/k8s share only r: a later equal folder name is no common folder."""
     manifest = "kind: Deployment\nmetadata:\n  name: {0}\nspec:\n  template:\n    spec:\n      containers:\n        - image: acme/{0}\n"
-    files = {"r/team-a/k8s/shop.yaml": manifest.format("shop"), "r/team-b/k8s/billing.yaml": manifest.format("billing")}
+    files: dict[str, str] = {"r/team-a/k8s/shop.yaml": manifest.format("shop"), "r/team-b/k8s/billing.yaml": manifest.format("billing")}
     template = "Resources:\n  App:\n    Type: AWS::ECS::Service\n"
 
-    assert detect_deployments("r", files, UNITS, RULES).primary.file == "r"
+    k8s = detect_deployments("r", files, UNITS, RULES).primary
+    assert k8s is not None
+    assert k8s.file == "r"
     cloud = detect_deployments("r", {"r/a/infra/t.yaml": template, "r/b/infra/t.yaml": template}, UNITS, RULES).primary
+    assert cloud is not None
     assert cloud.file == "r"
 
 
@@ -364,6 +376,7 @@ def test_a_build_context_that_several_units_share_is_matched_by_name_or_not_at_a
     compose = "services:\n  worker:\n    build: ./app\n  jobs:\n    build: ./app\n"
 
     env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+    assert env is not None
 
     assert {s.name: s.unit for s in env.services} == {"worker": "unit::r::worker", "jobs": None}
 
@@ -374,9 +387,11 @@ def test_managed_resources_without_a_container_still_make_a_cloud_environment():
     template = "Resources:\n  Fn:\n    Type: AWS::Lambda::Function\n  Files:\n    Type: AWS::S3::Bucket\n"
 
     alone = detect_deployments("r", {"r/infra/template.yaml": template}, UNITS, RULES)
+    assert alone.primary is not None
     assert (alone.primary.kind, alone.primary.services, alone.primary.managed) == ("cloud", [], ["AWS::Lambda::Function", "AWS::S3::Bucket"])
 
     with_compose = detect_deployments("r", {"r/infra/template.yaml": template, "r/docker-compose.yml": COMPOSE}, UNITS, RULES)
+    assert with_compose.primary is not None
     assert with_compose.primary.kind == "compose" and [e.kind for e in with_compose.others] == ["cloud"]
 
 
@@ -393,6 +408,7 @@ def test_a_bracketed_ipv6_host_is_no_port():
     compose = 'services:\n  db:\n    image: postgres\n    ports: ["[2001:1:2::1]:5432:80", "[::1]:9000:9000/tcp"]\n'
 
     env = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary
+    assert env is not None
 
     assert env.services[0].ports == [80, 5432, 9000]
 
@@ -405,7 +421,9 @@ def test_secret_values_are_not_kept_but_hosts_are():
         "      TOKEN_URL: http://auth:8080/token\n      CLIENT_SECRET: ${CLIENT_SECRET}\n      MODE: prod\n"
     )
 
-    (shop,) = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary.services
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary
+    assert env is not None
+    (shop,) = env.services
 
     assert shop.environment == {
         "DB_PASSWORD": "***",
@@ -430,6 +448,7 @@ def test_a_unit_only_a_variant_of_the_primary_file_deploys_is_variant_only():
 
     result = detect_deployments("r", files, units, RULES)
 
+    assert result.primary is not None
     assert result.primary.file == "r/docker-compose.yml"
     assert [e.file for e in result.variants] == ["r/docker-compose_metrics.yml"]
     assert result.variant_units == ["unit::r::probe"]
@@ -453,8 +472,10 @@ def test_the_compose_file_with_the_tools_default_name_is_primary_over_a_variant_
 
     result = detect_deployments("r", files, units, RULES)
 
+    assert result.primary is not None
     assert result.primary.file == "r/docker-compose.yml" and result.variant_units == ["unit::r::probe"]
     both = detect_deployments("r", {**files, "r/compose.yaml": COMPOSE}, units, RULES)
+    assert both.primary is not None
     assert both.primary.file == "r/compose.yaml"
 
 
@@ -468,6 +489,7 @@ def test_the_override_file_compose_merges_by_default_is_part_of_the_primary_not_
 
     result = detect_deployments("r", files, units, RULES)
 
+    assert result.primary is not None
     assert result.primary.file == "r/docker-compose.yml"
     assert [e.file for e in result.variants] == ["r/docker-compose_metrics.yml"] and result.variant_units == ["unit::r::probe"]
 
@@ -483,7 +505,9 @@ def test_an_environment_that_runs_the_systems_own_units_is_primary_before_one_th
     }
 
     before = detect_deployments("r", files, UNITS, RULES).primary
+    assert before is not None
     after = detect_deployments("r", files, UNITS, dataclasses.replace(RULES, primary_runs_units=True)).primary
+    assert after is not None
 
     assert before.kind == "compose"
     assert (after.kind, [(s.name, s.unit) for s in after.services]) == ("kubernetes", [("shop", "unit::r::shop")])
@@ -497,4 +521,6 @@ def test_with_primary_runs_units_a_compose_file_that_runs_units_stays_primary():
         "r/k8s/shop.yaml": "kind: Deployment\nmetadata:\n  name: shop\nspec:\n  template:\n    spec:\n      containers:\n        - image: acme/shop\n",
     }
 
-    assert detect_deployments("r", files, UNITS, dataclasses.replace(RULES, primary_runs_units=True)).primary.file == "r/docker-compose.yml"
+    env = detect_deployments("r", files, UNITS, dataclasses.replace(RULES, primary_runs_units=True)).primary
+    assert env is not None
+    assert env.file == "r/docker-compose.yml"

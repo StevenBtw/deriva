@@ -30,6 +30,7 @@ import typer
 
 from deriva.cli.commands.config import app as config_app
 from deriva.cli.commands.graph import app as graph_app
+from deriva.cli.commands.nlp import app as nlp_app
 from deriva.cli.commands.repo import app as repo_app
 from deriva.cli.commands.run import (
     _print_derivation_result,
@@ -51,6 +52,7 @@ app = typer.Typer(
 app.add_typer(config_app, name="config")
 app.add_typer(repo_app, name="repo")
 app.add_typer(graph_app, name="graph")
+app.add_typer(nlp_app, name="nlp")
 BENCHMARK_MISSING = "Benchmarking is part of deriva-dev: uv tool install --python 3.14 deriva-dev"
 
 if about.features()["benchmark"]:
@@ -171,6 +173,7 @@ def run_stage(
                     phases=phases,
                 )
             _print_extraction_result(result)
+            _print_graph_total(session)
             if later_steps:
                 typer.echo(f"Later steps that may read what {only_step} writes (run them again to update them): {', '.join(later_steps)}")
 
@@ -225,9 +228,19 @@ def run_stage(
                     no_llm=no_llm,
                 )
             _print_pipeline_result(result)
+            _print_graph_total(session)
 
         if not result.get("success"):
             raise typer.Exit(1)
+
+
+def _print_graph_total(session: PipelineSession) -> None:
+    """The graph's distinct nodes after the run (the summary counts writes: a step can write a node another wrote)."""
+    try:
+        total = session.get_graph_stats()["total_nodes"]
+    except Exception:  # the summary stands without it
+        return
+    typer.echo(f"  Graph nodes:   {total} (distinct, as deriva-cli status counts them)")
 
 
 # =============================================================================
