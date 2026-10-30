@@ -23,6 +23,18 @@ def test_query_on_the_graph_database(make_client):
     assert session.called("query_graph_read_only")[0][0] == ("MATCH (a)-[r]->(b) RETURN a, r", None)
 
 
+def test_the_query_runs_in_the_language_the_widget_chose(make_client):
+    session = FakeSession(query_graph_read_only=[])
+    client = make_client(session)
+
+    client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "language": "Cypher"})
+    client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "language": "gql"})
+    client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n"})
+
+    # Without a language the query runs in GRAFEO_QUERY_LANGUAGE
+    assert [kwargs for _, kwargs in session.called("query_graph_read_only")] == [{"language": "cypher"}, {"language": "gql"}, {"language": None}]
+
+
 def test_default_database_is_the_graph_and_model_is_separate(make_client):
     session = FakeSession(query_graph_read_only=[], query_model_read_only=[])
     client = make_client(session)
@@ -64,7 +76,7 @@ def test_unknown_database_and_language(make_client):
 
 
 def test_query_errors_are_400_with_the_message(make_client):
-    def fail(query, params):
+    def fail(query, params, language=None):
         raise ValueError("Syntax error at line 1")
 
     client = make_client(FakeSession(query_graph_read_only=fail))
@@ -218,7 +230,7 @@ def test_a_query_answers_from_the_chosen_database_only(make_client):
         {"n": {"_id": 1, "_labels": ["Graph", "File"], "id": "file_a"}},
         {"n": {"_id": 2, "_labels": ["Model", "Node"], "id": "n_server"}},
     ]
-    client = make_client(FakeSession(query_graph_read_only=lambda q, p: rows, query_model_read_only=lambda q, p: rows))
+    client = make_client(FakeSession(query_graph_read_only=lambda q, p, language=None: rows, query_model_read_only=lambda q, p, language=None: rows))
 
     graph = client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "database": "graph"}).json()
     model = client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "database": "model"}).json()

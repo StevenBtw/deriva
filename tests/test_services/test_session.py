@@ -1297,7 +1297,7 @@ class TestPipelineSessionCypherQueries:
         rows = connected_session.query_graph_read_only("MATCH (n) RETURN n.id AS id", {"x": 1})
 
         assert rows == [{"id": "d1"}]
-        connected_session._mock_graph.query_read_only.assert_called_once_with("MATCH (n) RETURN n.id AS id", {"x": 1})
+        connected_session._mock_graph.query_read_only.assert_called_once_with("MATCH (n) RETURN n.id AS id", {"x": 1}, None)
         connected_session._mock_graph.query.assert_not_called()
 
     def test_query_model_read_only_uses_the_rolled_back_path(self, connected_session):
@@ -1305,7 +1305,7 @@ class TestPipelineSessionCypherQueries:
 
         connected_session.query_model_read_only("MATCH (e) RETURN e")
 
-        connected_session._mock_archimate.query_read_only.assert_called_once_with("MATCH (e) RETURN e", None)
+        connected_session._mock_archimate.query_read_only.assert_called_once_with("MATCH (e) RETURN e", None, None)
 
     def test_query_graph_raises_when_not_connected(self):
         """Should raise RuntimeError when not connected."""
