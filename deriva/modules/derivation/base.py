@@ -1505,8 +1505,8 @@ def get_connected_source_ids(
     if not source_ids or not graph_manager:
         return set(source_ids) if source_ids else set()
 
-    # Build Cypher query for neighbors within max_hops
-    # Using variable-length path pattern for efficiency
+    # Neighbors within max_hops, as a variable-length pattern. GQL matches walks (Cypher trails), so a source
+    # can come back as its own neighbor; the result includes the sources either way.
     query = f"""
         MATCH (n)
         WHERE n.id IN $source_ids

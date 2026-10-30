@@ -119,7 +119,7 @@ class ArchimateManager:
                 raise ValidationError(f"Element validation failed: {errors}")
 
         try:
-            # Create Cypher query to add element node
+            # Query to add element node
             # Use two separate labels: namespace (Model) + element_type (TechnologyService)
             # This allows queries like MATCH (e:TechnologyService) to work
             # while still having namespace isolation via the Model label
@@ -189,7 +189,7 @@ class ArchimateManager:
             return relationship.identifier
 
         try:
-            # Create Cypher query to add relationship
+            # Query to add relationship
             # Use namespaced relationship type (e.g., Model:Realization, Model:Serving)
             # This is consistent with Graph namespace which uses Graph:CONTAINS, Graph:CALLS, etc.
             # Nodes are matched by having the namespace label (Model)
@@ -474,10 +474,10 @@ class ArchimateManager:
             raise
 
     def query(self, cypher_query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Execute a custom Cypher query.
+        """Execute a custom query in GRAFEO_QUERY_LANGUAGE (GQL by default).
 
         Args:
-            cypher_query: Cypher query string
+            cypher_query: Query string
             params: Optional query parameters
 
         Returns:
@@ -493,11 +493,11 @@ class ArchimateManager:
             logger.error(f"Query failed: {e}")
             raise
 
-    def query_read_only(self, cypher_query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Run a Cypher query whose writes are rolled back (queries typed by a user)."""
+    def query_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict[str, Any]]:
+        """Run a query whose writes are rolled back (queries typed by a user), in ``language`` or the configured one."""
         if self.db is None:
             raise RuntimeError("Not connected to grafeo. Call connect() first.")
-        return self.db.execute_rolled_back(cypher_query, params)
+        return self.db.execute_rolled_back(query, params, language)
 
     def disable_element(self, identifier: str, reason: str | None = None) -> bool:
         """Disable an element (soft delete for refine phase).

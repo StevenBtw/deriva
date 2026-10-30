@@ -183,6 +183,9 @@ class LlmSettings(_Group):
         return value
 
 
+QUERY_LANGUAGES = ("gql", "cypher")
+
+
 class GrafeoSettings(_Group):
     model_config = SettingsConfigDict(env_prefix="GRAFEO_", extra="ignore")
 
@@ -190,6 +193,15 @@ class GrafeoSettings(_Group):
     db_path: str = ""  # no longer supported; refused when set
     log_queries: bool = False
     slow_query_ms: float = 1000.0
+    query_language: str = "gql"  # gql (ISO GQL, the default) or cypher
+
+    @field_validator("query_language")
+    @classmethod
+    def _known_language(cls, value: str) -> str:
+        language = value.strip().lower()
+        if language not in QUERY_LANGUAGES:
+            raise ValueError(f"GRAFEO_QUERY_LANGUAGE must be one of {', '.join(QUERY_LANGUAGES)}, not {value!r}")
+        return language
 
 
 class GraphSettings(_Group):

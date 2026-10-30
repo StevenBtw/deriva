@@ -26,7 +26,7 @@ ALWAYS_SHOWN = "Repository"
 
 class QueryRequest(BaseModel):
     query: str
-    language: str = "cypher"
+    language: str | None = None  # gql or cypher, as picked in the widget; None runs GRAFEO_QUERY_LANGUAGE
     database: str = "graph"
 
 
@@ -43,13 +43,14 @@ def health() -> dict[str, str]:
 
 @router.post("/query")
 def query(request: QueryRequest, session: Any = Depends(get_session)) -> dict[str, Any]:
-    if request.language.lower() not in ("cypher", "gql"):
-        raise HTTPException(status_code=400, detail="The studio answers Cypher queries")
+    language = request.language.strip().lower() if request.language else None
+    if language is not None and language not in ("cypher", "gql"):
+        raise HTTPException(status_code=400, detail="The studio answers GQL and Cypher queries")
     run = _runner(session, request.database)
     if is_write_query(request.query):
         raise HTTPException(status_code=400, detail="The studio graph view is read-only")
     try:
-        rows = run(request.query, None)
+        rows = run(request.query, None, language=language)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # Both namespaces share one graph file: rows with the other namespace's nodes or edges are left out

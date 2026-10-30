@@ -42,7 +42,8 @@ export function GraphWidget({ database, view, typeColors, dark, height = 420, lo
       grafeo_connection_mode: "server",
       grafeo_server_url: `${window.location.origin}/grafeo`,
       connection_database: database,
-      query_language: "cypher",
+      // The query bar starts in GQL; its settings switch it to Cypher (the studio runs what it sends)
+      query_language: "gql",
       show_query_input: true,
       // The shim has no Python trait defaults: left out, labels would stay off
       show_labels: true,

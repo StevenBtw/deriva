@@ -522,29 +522,29 @@ class PipelineSession:
         relationships = [r for r in self._archimate_manager.get_relationships() if r.source in enabled_ids and r.target in enabled_ids]
         return export_levels.leveled_model(elements, relationships, export_levels.detail_lineage(self._graph_manager))
 
-    def query_graph(self, cypher: str) -> list[dict]:
-        """Run arbitrary Cypher query on Graph namespace."""
+    def query_graph(self, query: str) -> list[dict]:
+        """Run an arbitrary query (GRAFEO_QUERY_LANGUAGE, GQL by default) on the Graph namespace."""
         self._ensure_connected()
         assert self._graph_manager is not None
-        return self._graph_manager.query(cypher)
+        return self._graph_manager.query(query)
 
-    def query_model(self, cypher: str) -> list[dict]:
-        """Run arbitrary Cypher query on Model namespace."""
+    def query_model(self, query: str) -> list[dict]:
+        """Run an arbitrary query (GRAFEO_QUERY_LANGUAGE, GQL by default) on the Model namespace."""
         self._ensure_connected()
         assert self._archimate_manager is not None
-        return self._archimate_manager.query(cypher)
+        return self._archimate_manager.query(query)
 
-    def query_graph_read_only(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
-        """Run a user-typed Cypher query on the Graph namespace; writes are rolled back."""
+    def query_graph_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict]:
+        """Run a user-typed query on the Graph namespace, in ``language`` or the configured one; writes are rolled back."""
         self._ensure_connected()
         assert self._graph_manager is not None
-        return self._graph_manager.query_read_only(cypher, params)
+        return self._graph_manager.query_read_only(query, params, language)
 
-    def query_model_read_only(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
-        """Run a user-typed Cypher query on the Model namespace; writes are rolled back."""
+    def query_model_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict]:
+        """Run a user-typed query on the Model namespace, in ``language`` or the configured one; writes are rolled back."""
         self._ensure_connected()
         assert self._archimate_manager is not None
-        return self._archimate_manager.query_read_only(cypher, params)
+        return self._archimate_manager.query_read_only(query, params, language)
 
     def trace_element(self, element_id: str, calls: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
         """Where a model element comes from: sources, relationships and the given run calls that mention its sources."""
