@@ -409,7 +409,7 @@ The studio is Deriva's local web UI (`uv run deriva`): a FastAPI backend over `P
 | **Intermediate / Output ontology** | Every node type and element type with its count and the step that produces it, the edge and relationship types, and the matrix of what connects to what |
 | **Extraction / Derivation config** | Step tables with versions; edit instructions and examples, save as a new version, switch steps on or off |
 
-The graphs use [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) (its query bar runs read-only Cypher against the embedded databases) and the model uses [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate). While a CLI run holds the databases, the studio says so and shows what it can.
+The graphs use [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) (its query bar runs read-only GQL or Cypher against the embedded databases) and the model uses [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate). While a CLI run holds the databases, the studio says so and shows what it can.
 
 For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` (Vite forwards the API to port 8765, or to `DERIVA_STUDIO_API` for a studio on another port), then open the printed launch link with the dev server's address (`http://localhost:5173/api/auth?token=...`); `npm test`, `npm run lint` and `npm run typecheck` check it.
 
@@ -442,20 +442,22 @@ The model panel's **Quality** pill (and `deriva-cli quality --repo <name>`, with
 
 ## Querying the Graph
 
-In the Workspace's Separate view, each graph panel has a query bar that runs read-only Cypher against the embedded Grafeo database. A few to start with:
+In the Workspace's Separate view, each graph panel has a query bar that runs read-only queries against the embedded Grafeo database, in ISO GQL by default (the bar's settings switch it to Cypher). A few to start with:
 
-```cypher
-// All repositories
+```gql
+-- All repositories
 MATCH (r:Graph:Repository) RETURN r.repoName, r.url
 
-// The files of one repository, with their type
-MATCH (repo:Graph:Repository)-[:`Graph:CONTAINS`*]->(f:Graph:File)
+-- The files of one repository, with their type
+MATCH (repo:Graph:Repository)-[:`Graph:CONTAINS`]->{1,}(f:Graph:File)
 WHERE repo.repoName = 'my-repo'
 RETURN f.filePath, f.fileType
 
-// Type definitions
+-- Type definitions
 MATCH (td:Graph:TypeDefinition) RETURN td.typeName, td.category, td.filePath
 ```
+
+Deriva itself queries in GQL too; `GRAFEO_QUERY_LANGUAGE=cypher` in `.env` switches its own queries to Cypher.
 
 ---
 
