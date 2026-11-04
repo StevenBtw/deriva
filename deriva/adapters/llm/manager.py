@@ -839,7 +839,7 @@ class LLMManager:
             usage = None
             # pydantic-ai 2: result.usage is a property; 1.x: a method
             usage_attr = getattr(result, "usage", None)
-            run_usage = usage_attr() if callable(usage_attr) else usage_attr
+            run_usage = usage_attr if hasattr(usage_attr, "input_tokens") else usage_attr() if callable(usage_attr) else usage_attr
             if run_usage is not None:
                 call["requests"] = run_usage.requests + failed_attempts
                 call["input_tokens"] = run_usage.input_tokens
