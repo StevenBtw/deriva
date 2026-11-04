@@ -372,6 +372,46 @@ describe("Output ontology", () => {
     await waitFor(() => expect(configs.setEnabled).toHaveBeenCalledWith("derivation", "BusinessProcess", true));
   });
 
+  it("turns on an aspect none of whose steps ship on, instead of doing nothing", async () => {
+    vi.mocked(configs.setEnabled).mockClear();
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    render(<OutputOntologyPage />);
+
+    await userEvent.click(await screen.findByRole("switch", { name: "Derive Business behaviour" }));
+
+    await waitFor(() => expect(configs.setEnabled).toHaveBeenCalledWith("derivation", "BusinessProcess", true));
+  });
+
+  it("takes no other switch while one is being written, so a slow answer loses no click", async () => {
+    vi.mocked(configs.setEnabled).mockClear();
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    let release: (value: { name: string; enabled: boolean }) => void = () => {};
+    vi.mocked(configs.setEnabled).mockImplementation(() => new Promise((resolve) => (release = resolve)));
+    render(<OutputOntologyPage />);
+
+    await userEvent.click(await screen.findByRole("switch", { name: "Enable BusinessObject" }));
+    const other = screen.getByRole("switch", { name: "Derive the Business layer" });
+    expect(other).toBeDisabled();
+    await userEvent.click(other);
+    expect(configs.setEnabled).toHaveBeenCalledTimes(1);
+
+    release({ name: "BusinessObject", enabled: false });
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Derive the Business layer" })).toBeEnabled());
+    vi.mocked(configs.setEnabled).mockResolvedValue({ name: "x", enabled: true });
+  });
+
+  it("says when a switch was only partly saved", async () => {
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    vi.mocked(configs.setEnabled).mockReset();
+    vi.mocked(configs.setEnabled).mockResolvedValueOnce({ name: "BusinessActor", enabled: false }).mockRejectedValueOnce(new Error("disk full"));
+    render(<OutputOntologyPage />);
+
+    await userEvent.click(await screen.findByRole("switch", { name: "Enable BusinessActor" }));
+
+    expect(await screen.findByText(/1 of 2 changes saved: disk full/)).toBeInTheDocument();
+    vi.mocked(configs.setEnabled).mockResolvedValue({ name: "x", enabled: true });
+  });
+
   it("says when a selected type needs one that is off, and how much is selected", async () => {
     vi.mocked(ontology.output).mockResolvedValue(SELECTION);
     render(<OutputOntologyPage />);

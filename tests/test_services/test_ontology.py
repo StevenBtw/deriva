@@ -42,8 +42,9 @@ class FakeSession:
             {"element_type": "pagerank", "enabled": True, "phase": "prep", "input_graph_query": None},
         ]
 
-    def get_config_versions(self):
-        return {"extraction": {"Directory": 2, "Technology": 7, "DirectoryClassification": 9}, "derivation": {"Node": 4}}
+    def get_config_versions(self, include_disabled=False):
+        derivation = {"Node": 4, "ApplicationComponent": 6} if include_disabled else {"Node": 4}
+        return {"extraction": {"Directory": 2, "Technology": 7, "DirectoryClassification": 9}, "derivation": derivation}
 
     def get_archimate_stats(self):
         return {"total_elements": 3, "total_relationships": 2, "by_type": {"Node": 2, "ApplicationComponent": 1}}
@@ -114,6 +115,8 @@ def test_output_ontology_gives_each_type_what_a_selection_of_the_metamodel_needs
     assert steps["DocumentationActors"]["shipped"] is True
     assert [s["name"] for s in types["Node"]["steps"]] == ["Node"] and types["Node"]["steps"][0]["version"] == 4
     assert types["BusinessRole"]["steps"] == []
+    # A step switched off keeps its version
+    assert types["ApplicationComponent"]["steps"][0]["version"] == 6
     # What its elements are built on, from switching each step off
     assert types["ApplicationService"]["needs"] == ["ApplicationComponent", "ApplicationInterface"]
     assert types["BusinessActor"]["needs"] == ["ApplicationComponent"]
