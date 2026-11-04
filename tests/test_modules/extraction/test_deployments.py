@@ -388,6 +388,27 @@ def test_a_compose_build_from_the_root_context_is_matched_by_its_dockerfiles_fol
     assert by_name == {"shopfront": "unit::r::web", "gateway": "unit::r::api", "rootonly": "unit::r::web"}
 
 
+def test_a_dockerfiles_folder_never_beats_a_context_name_or_image_match():
+    """Shared Dockerfiles live in a folder of their own: the unit there (or the only one below it) is not what they build."""
+    units = [
+        {"id": "unit::r::api", "path": "r/services/api", "name": "api"},
+        {"id": "unit::r::web", "path": "r/services/web", "name": "web"},
+        {"id": "unit::r::docker", "path": "r/docker", "name": "docker"},
+        {"id": "unit::r::gateway", "path": "r/edge/gateway", "name": "gateway"},
+    ]
+    compose = (
+        "services:\n"
+        "  first:\n    build:\n      context: ./services/api\n      dockerfile: ../../docker/api.Dockerfile\n"
+        "  web:\n    build:\n      context: .\n      dockerfile: docker/Dockerfile\n      target: web\n"
+        "  third:\n    image: acme/api\n    build:\n      context: .\n      dockerfile: edge/Dockerfile\n"
+    )
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+
+    assert env is not None
+    assert {s.name: s.unit for s in env.services} == {"first": "unit::r::api", "web": "unit::r::web", "third": "unit::r::api"}
+
+
 def test_a_build_context_that_several_units_share_is_matched_by_name_or_not_at_all():
     units = [{"id": "unit::r::api", "path": "r/app", "name": "api"}, {"id": "unit::r::worker", "path": "r/app", "name": "worker"}]
     compose = "services:\n  worker:\n    build: ./app\n  jobs:\n    build: ./app\n"

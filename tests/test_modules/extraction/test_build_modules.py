@@ -358,6 +358,42 @@ def test_a_module_no_unit_builds_is_a_component_by_who_uses_it():
     assert usage_role(users=0, behaviour=4.0, entry=False, min_behaviour=1) == "no entry point"
 
 
+def _excluded_reasons(repository, folders, words=("test", "tests", "example", "examples")):
+    files = [{"path": f"{folder}/pyproject.toml", "name": "pyproject.toml", "file_type": "build", "subtype": "toml"} for folder in folders]
+    files += [{"path": f"{folder}/code.py", "name": "code.py", "file_type": "source", "subtype": "python"} for folder in folders]
+    manifests = {f"{folder}/pyproject.toml": f'[project]\nname = "{folder.rsplit("/", 1)[-1].rsplit(".", 1)[-1]}"\n' for folder in folders}
+    rules = ModuleRules(manifests=("pyproject.toml",), code_subtypes=frozenset({"python"}), test_words=words)
+    return {m.path: m.excluded for m in detect_modules(repository, files, manifests, rules)}
+
+
+def test_test_words_read_a_modules_own_folder_and_only_exact_folders_above_it():
+    found = _excluded_reasons(
+        "shop",
+        [
+            "shop/examples/demo",  # a folder above is a test word
+            "shop/tests/fixtures/app",
+            "shop/com.example.orders",  # a dotted folder is named by its last part
+            "shop/org.example.shop.web",
+            "shop/services/ab-test-service/backend",  # a word inside a folder above is no test folder
+            "shop/test-helpers",  # its own folder's words count, as before
+        ],
+    )
+
+    assert found == {
+        "shop/examples/demo": "test-only",
+        "shop/tests/fixtures/app": "test-only",
+        "shop/com.example.orders": None,
+        "shop/org.example.shop.web": None,
+        "shop/services/ab-test-service/backend": None,
+        "shop/test-helpers": "test-only",
+    }
+
+
+def test_the_repositories_own_name_is_no_test_word():
+    assert _excluded_reasons("load-testing", ["load-testing"], words=("testing",)) == {"load-testing": None}
+    assert _excluded_reasons("example-voting-app", ["example-voting-app/worker"]) == {"example-voting-app/worker": None}
+
+
 def test_a_library_repositories_own_module_is_its_component_when_nothing_else_is():
     root = BuildModule(path="lib", name="Lib", manifest="lib/pyproject.toml", module=True, excluded="no entry point")
     sample = BuildModule(path="lib/examples/a", name="A", manifest="lib/examples/a/pyproject.toml", module=True, excluded="test-only")
