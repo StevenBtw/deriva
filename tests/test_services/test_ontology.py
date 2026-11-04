@@ -119,7 +119,9 @@ def test_output_ontology_gives_each_type_what_a_selection_of_the_metamodel_needs
     assert types["ApplicationComponent"]["steps"][0]["version"] == 6
     # What its elements are built on, from switching each step off
     assert types["ApplicationService"]["needs"] == ["ApplicationComponent", "ApplicationInterface"]
-    assert types["BusinessActor"]["needs"] == ["ApplicationComponent"]
+    # A business element's enterprise links run through these
+    assert types["BusinessActor"]["needs"] == ["ApplicationComponent", "ApplicationService"]
+    assert types["BusinessObject"]["needs"] == ["DataObject"]
     assert types["Node"]["needs"] == []
 
 

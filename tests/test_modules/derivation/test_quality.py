@@ -100,7 +100,7 @@ def test_elements_that_float_at_the_enterprise_level_make_a_model_weak():
     assert report["orphans"] == []
     assert [e["name"] for e in report["enterprise_orphans"]] == ["Account", "Card"]
     assert report["verdict"] == "weak"
-    assert any("enterprise level" in reason and "2 of 4" in reason for reason in report["reasons"])
+    assert any("business elements at the enterprise level" in reason and "2 of 2" in reason for reason in report["reasons"])
 
     connected = _quality(*_enterprise_model(connected=True))
     assert connected["enterprise_orphans"] == [] and connected["verdict"] == "ok"
@@ -115,3 +115,13 @@ def test_a_model_of_one_enterprise_element_has_nothing_to_connect_to():
     relationships = [{**_rel("lib", "fn", "Assignment"), "levels": []}, {**_rel("host", "lib"), "levels": []}]
 
     assert _quality(elements, relationships)["verdict"] == "ok"
+
+
+def test_services_without_a_business_layer_do_not_float():
+    """The business layer may be empty by design: only its elements can float."""
+    elements = [_level(_element(name), "enterprise") for name in ("first", "second")] + [_level(_element("host", layer="Technology"), "solution")]
+    relationships = [{**_rel("host", "first"), "levels": []}, {**_rel("host", "second"), "levels": []}]
+
+    report = _quality(elements, relationships)
+
+    assert report["enterprise_orphans"] == [] and report["verdict"] == "ok"
