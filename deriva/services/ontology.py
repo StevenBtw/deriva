@@ -31,7 +31,8 @@ TYPE_NEEDS = {
     "ApplicationFunction": ("ApplicationComponent",),
     "ApplicationService": ("ApplicationComponent", "ApplicationInterface"),
     "Artifact": ("ApplicationComponent",),
-    "BusinessActor": ("ApplicationComponent",),
+    "BusinessActor": ("ApplicationComponent", "ApplicationService"),  # Its Serving link at the enterprise level
+    "BusinessObject": ("DataObject",),  # Its Access link at the enterprise level
 }
 
 

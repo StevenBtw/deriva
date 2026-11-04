@@ -1,9 +1,9 @@
 """Model quality: a verdict on a derived model from its structure.
 
 A report: it reads the model and the graph and changes no result. A model is weak when many elements have no
-relationship, overall or within the enterprise level (the view a reader sees first), when nearly all relationships
-are Composition or Aggregation (structure without behaviour), when the Application or Technology layer is empty (the
-business layer may be empty by design), or when elements have no artifact behind them: none of their located sources
+relationship, when many business elements connect to nothing within the enterprise level (the view a reader sees first),
+when nearly all relationships are Composition or Aggregation (structure without behaviour), when the Application or
+Technology layer is empty (the business layer may be empty by design), or when elements have no artifact behind them: none of their located sources
 is a file, type or method, and no source file lies under a folder-like source (a directory, a deployable unit or a
 build module). Sources without a location (a data domain, a piece of software) neither count for nor against an element.
 """
@@ -60,8 +60,10 @@ def model_quality(
     enterprise = [e for e in elements if "enterprise" in (e.get("levels") or ())]
     within = [r for r in relationships if "enterprise" in (r.get("levels") or ())]
     linked_there = {r["source"] for r in within} | {r["target"] for r in within}
-    # One element alone has nothing to connect to (a library's single component)
-    floating = [{"id": e["id"], "name": e["name"], "type": e["type"]} for e in enterprise if e["id"] not in linked_there] if len(enterprise) > 1 else []
+    # Only the business layer can float: the rest of the system may stand alone, and with nothing else at the level
+    # there is nothing to connect to
+    business = [e for e in enterprise if e.get("layer") == "Business"]
+    floating = [{"id": e["id"], "name": e["name"], "type": e["type"]} for e in business if e["id"] not in linked_there] if len(enterprise) > 1 else []
     types = Counter(str(r["type"]) for r in relationships)
     structural = sum(types[t] for t in STRUCTURAL)
     layers = {layer: sum(1 for e in elements if e.get("layer") == layer) for layer in LAYERS}
@@ -85,8 +87,8 @@ def model_quality(
         max_orphans, max_structural = thresholds["quality_max_orphan_share"], thresholds["quality_max_structural_share"]
         if _share(len(orphans), len(elements)) > max_orphans:
             reasons.append(f"{len(orphans)} of {len(elements)} elements ({_share(len(orphans), len(elements)):.0%}) have no relationship (above {max_orphans:.0%})")
-        if _share(len(floating), len(enterprise)) > max_orphans:
-            reasons.append(f"{len(floating)} of {len(enterprise)} elements at the enterprise level connect to nothing there ({_names(floating)})")
+        if _share(len(floating), len(business)) > max_orphans:
+            reasons.append(f"{len(floating)} of {len(business)} business elements at the enterprise level connect to nothing there ({_names(floating)})")
         if relationships and _share(structural, len(relationships)) > max_structural:
             counted = (
                 f"all {len(relationships)} relationships are"
