@@ -25,7 +25,7 @@ class ElementType:
 
     name: str
     layer: str  # Application, Technology, Business, Strategy, Physical, Motivation, Implementation
-    aspect: str  # Behavior, Structure, Passive
+    aspect: str  # Behavior, Structure, Passive, Composite
     description: str
 
 
@@ -154,6 +154,108 @@ ELEMENT_TYPES: dict[str, ElementType] = {
         aspect="Passive",
         description="A piece of data that is used or produced in a software development process, or by deployment and operation of an IT system",
     ),
+    "BusinessCollaboration": ElementType(
+        name="BusinessCollaboration",
+        layer="Business",
+        aspect="Structure",
+        description="Two or more business actors or roles that work together to perform collective behavior",
+    ),
+    "BusinessInterface": ElementType(
+        name="BusinessInterface",
+        layer="Business",
+        aspect="Structure",
+        description="A point of access where a business service is made available to the environment",
+    ),
+    "BusinessInteraction": ElementType(
+        name="BusinessInteraction",
+        layer="Business",
+        aspect="Behavior",
+        description="A unit of collective business behavior performed by two or more business actors, roles or collaborations",
+    ),
+    "Contract": ElementType(
+        name="Contract",
+        layer="Business",
+        aspect="Passive",
+        description="A formal or informal specification of an agreement between a provider and a consumer",
+    ),
+    "Representation": ElementType(
+        name="Representation",
+        layer="Business",
+        aspect="Passive",
+        description="A perceptible form of the information carried by a business object",
+    ),
+    "Product": ElementType(
+        name="Product",
+        layer="Business",
+        aspect="Composite",
+        description="A coherent collection of services and passive elements, with a contract, offered as a whole",
+    ),
+    "ApplicationCollaboration": ElementType(
+        name="ApplicationCollaboration",
+        layer="Application",
+        aspect="Structure",
+        description="Two or more application components that work together to perform collective behavior",
+    ),
+    "ApplicationProcess": ElementType(
+        name="ApplicationProcess",
+        layer="Application",
+        aspect="Behavior",
+        description="A sequence of application behaviors that achieves a specific result",
+    ),
+    "ApplicationInteraction": ElementType(
+        name="ApplicationInteraction",
+        layer="Application",
+        aspect="Behavior",
+        description="A unit of collective application behavior performed by two or more application components",
+    ),
+    "ApplicationEvent": ElementType(
+        name="ApplicationEvent",
+        layer="Application",
+        aspect="Behavior",
+        description="An application state change",
+    ),
+    "TechnologyCollaboration": ElementType(
+        name="TechnologyCollaboration",
+        layer="Technology",
+        aspect="Structure",
+        description="Two or more nodes that work together to perform collective technology behavior",
+    ),
+    "TechnologyInterface": ElementType(
+        name="TechnologyInterface",
+        layer="Technology",
+        aspect="Structure",
+        description="A point of access where technology services offered by a node can be accessed",
+    ),
+    "Path": ElementType(
+        name="Path",
+        layer="Technology",
+        aspect="Structure",
+        description="A link between two or more nodes, through which they exchange data, energy or material",
+    ),
+    "CommunicationNetwork": ElementType(
+        name="CommunicationNetwork",
+        layer="Technology",
+        aspect="Structure",
+        description="A set of structures that connects nodes for transmission, routing and reception of data",
+    ),
+    "TechnologyProcess": ElementType(
+        name="TechnologyProcess",
+        layer="Technology",
+        aspect="Behavior",
+        description="A sequence of technology behaviors that achieves a specific result",
+    ),
+    "TechnologyInteraction": ElementType(
+        name="TechnologyInteraction",
+        layer="Technology",
+        aspect="Behavior",
+        description="A unit of collective technology behavior performed by two or more nodes",
+    ),
+    "TechnologyEvent": ElementType(
+        name="TechnologyEvent",
+        layer="Technology",
+        aspect="Behavior",
+        description="A technology state change",
+    ),
 }
 
 
@@ -163,6 +265,13 @@ ELEMENT_TYPES: dict[str, ElementType] = {
 
 # Structure elements (active structure)
 STRUCTURE_ELEMENTS: set[str] = {
+    "BusinessCollaboration",
+    "BusinessInterface",
+    "ApplicationCollaboration",
+    "TechnologyCollaboration",
+    "TechnologyInterface",
+    "Path",
+    "CommunicationNetwork",
     "ApplicationComponent",
     "ApplicationInterface",
     "BusinessActor",
@@ -174,6 +283,13 @@ STRUCTURE_ELEMENTS: set[str] = {
 
 # Behavior elements (processes, services, functions)
 BEHAVIOR_ELEMENTS: set[str] = {
+    "BusinessInteraction",
+    "ApplicationProcess",
+    "ApplicationInteraction",
+    "ApplicationEvent",
+    "TechnologyProcess",
+    "TechnologyInteraction",
+    "TechnologyEvent",
     "ApplicationService",
     "ApplicationFunction",
     "BusinessProcess",
@@ -186,16 +302,22 @@ BEHAVIOR_ELEMENTS: set[str] = {
 
 # Passive elements (data/objects)
 PASSIVE_ELEMENTS: set[str] = {
+    "Contract",
+    "Representation",
     "DataObject",
     "BusinessObject",
     "Artifact",
 }
 
 # All elements
-ALL_ELEMENTS: set[str] = STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS | PASSIVE_ELEMENTS
+ALL_ELEMENTS: set[str] = STRUCTURE_ELEMENTS | BEHAVIOR_ELEMENTS | PASSIVE_ELEMENTS | {"Product"}  # Product is composite
 
 # Layer groupings
 APPLICATION_LAYER: set[str] = {
+    "ApplicationCollaboration",
+    "ApplicationProcess",
+    "ApplicationInteraction",
+    "ApplicationEvent",
     "ApplicationComponent",
     "ApplicationInterface",
     "ApplicationService",
@@ -204,6 +326,12 @@ APPLICATION_LAYER: set[str] = {
 }
 
 BUSINESS_LAYER: set[str] = {
+    "BusinessCollaboration",
+    "BusinessInterface",
+    "BusinessInteraction",
+    "Contract",
+    "Representation",
+    "Product",
     "BusinessActor",
     "BusinessRole",
     "BusinessService",
@@ -214,6 +342,13 @@ BUSINESS_LAYER: set[str] = {
 }
 
 TECHNOLOGY_LAYER: set[str] = {
+    "TechnologyCollaboration",
+    "TechnologyInterface",
+    "Path",
+    "CommunicationNetwork",
+    "TechnologyProcess",
+    "TechnologyInteraction",
+    "TechnologyEvent",
     "Node",
     "Device",
     "SystemSoftware",
@@ -268,6 +403,10 @@ def match_kind(element_type: str) -> str:
 # same-type composition, aggregation and specialization. Triggering and flow only where a figure draws both line ends
 # unambiguously. Association is allowed between any two elements (uppercase everywhere).
 #
+# The core's other 17 types (0.9.0): the letters of Appendix B.5, whose case agrees with those figures on all 324 cells
+# above but two kinds, read from the figures here as well: a service serves behaviour across layers and an interface the
+# active structure (Fig. 104, 105), and triggering and flow between an event and a service of its layer stay derived.
+#
 # Uppercase letter: relationship explicit in the metamodel figures ("direct").
 # Lowercase letter: allowed only via the spec's derivation rules ("derived").
 # Deriva never applies derivation rules itself; the tier is read from the table.
@@ -290,44 +429,218 @@ _LETTER_BY_RELATIONSHIP = {name: letter for letter, name in RELATIONSHIP_LETTERS
 _TABLE_COLUMNS = (
     "BusinessActor",
     "BusinessRole",
+    "BusinessCollaboration",
+    "BusinessInterface",
     "BusinessProcess",
     "BusinessFunction",
+    "BusinessInteraction",
     "BusinessEvent",
     "BusinessService",
     "BusinessObject",
+    "Contract",
+    "Representation",
+    "Product",
     "ApplicationComponent",
+    "ApplicationCollaboration",
     "ApplicationInterface",
-    "ApplicationService",
+    "ApplicationProcess",
     "ApplicationFunction",
+    "ApplicationInteraction",
+    "ApplicationEvent",
+    "ApplicationService",
     "DataObject",
     "Node",
     "Device",
     "SystemSoftware",
+    "TechnologyCollaboration",
+    "TechnologyInterface",
+    "Path",
+    "CommunicationNetwork",
+    "TechnologyProcess",
     "TechnologyFunction",
+    "TechnologyInteraction",
+    "TechnologyEvent",
     "TechnologyService",
     "Artifact",
 )
 
 # fmt: off
 _TABLE_ROWS: dict[str, tuple[str, ...]] = {
-    "BusinessActor":        ("SCGvtfO", "IvtfO", "IvtfO", "IvtfO", "IvtfO", "irvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessRole":         ("vtfO", "SCGvtfO", "IvtfO", "IvtfO", "IvtfO", "irvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessProcess":      ("vtfO", "vtfO", "SCGvTFO", "CGvTFO", "vTFO", "RvtfO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessFunction":     ("vtfO", "vtfO", "CGvTFO", "SCGvTFO", "vTFO", "RvtfO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessEvent":        ("vtfO", "vtfO", "vTFO", "vTFO", "SCGvTFO", "vtfO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "BusinessService":      ("VtfO", "VtfO", "VtfO", "VtfO", "vtfO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "VtfO", "aO", "vtfO", "vtfO", "vtfO", "VtfO", "vtfO", "aO"),
-    "BusinessObject":       ("O", "O", "O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O"),
-    "ApplicationComponent": ("vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGRvtfO", "CgrvtfO", "irvtfO", "IrvtfO", "aO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),  # noqa: E501
-    "ApplicationInterface": ("VtfO", "VtfO", "vtfO", "vtfO", "vtfO", "rvtfO", "aO", "VtfO", "SCGvtfO", "IvtfO", "vtfO", "aO", "VtfO", "VtfO", "VtfO", "vtfO", "vtfO", "aO"),
-    "ApplicationService":   ("vtfO", "vtfO", "VtfO", "VtfO", "vtfO", "RvtfO", "aO", "VtfO", "vtfO", "SCGvTFO", "VtfO", "AO", "vtfO", "vtfO", "vtfO", "VtfO", "vtfO", "aO"),
-    "ApplicationFunction":  ("vtfO", "vtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "vtfO", "vtfO", "RvtfO", "SCGvTFO", "AO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO"),
-    "DataObject":           ("O", "O", "O", "O", "O", "O", "RO", "O", "O", "O", "O", "SCGO", "O", "O", "O", "O", "O", "O"),
-    "Node":                 ("ivtfO", "ivtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGivtfO", "CGirvtfO", "CGirvtfO", "IrvtfO", "irvtfO", "iaO"),  # noqa: E501
-    "Device":               ("vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "SCGvtfO", "CGIrvtfO", "IrvtfO", "irvtfO", "IaO"),  # noqa: E501
-    "SystemSoftware":       ("vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "vtfO", "SCGIrvtfO", "IrvtfO", "irvtfO", "IaO"),  # noqa: E501
-    "TechnologyFunction":   ("vtfO", "vtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "vtfO", "vtfO", "rvtfO", "RvtfO", "aO", "vtfO", "vtfO", "vtfO", "SCGvTFO", "RvtfO", "AO"),
-    "TechnologyService":    ("vtfO", "vtfO", "VtfO", "VtfO", "vtfO", "RvtfO", "aO", "vtfO", "vtfO", "RvtfO", "VtfO", "aO", "VtfO", "VtfO", "VtfO", "VtfO", "SCGvTFO", "AO"),
-    "Artifact":             ("O", "O", "rO", "rO", "rO", "rO", "RO", "RO", "rO", "rO", "rO", "RO", "O", "O", "RO", "rO", "rO", "SCGrO"),
+    "BusinessActor": (
+        "SCGvtfO", "IvtfO", "vtfO", "CgivtfO", "IvtfO", "IvtfO", "IvtfO", "IvtfO", "irvtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "BusinessRole": (
+        "vtfO", "SCGvtfO", "vtfO", "CgvtfO", "IvtfO", "IvtfO", "IvtfO", "IvtfO", "irvtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "BusinessCollaboration": (
+        "GvtfO", "GivtfO", "SCGvtfO", "CgivtfO", "IvtfO", "IvtfO", "IvtfO", "IvtfO", "irvtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "BusinessInterface": (
+        "VtfO", "VtfO", "VtfO", "SCGvtfO", "vtfO", "vtfO", "vtfO", "vtfO", "IvtfO", "aO", "aO", "aO",
+        "vtfO", "VtfO", "VtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "VtfO", "VtfO",
+        "VtfO", "VtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "BusinessProcess": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "SCGvTFO", "CGvTFO", "CGvTFO", "vTFO", "RvtfO", "AO", "AO", "AO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "BusinessFunction": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "CGvTFO", "SCGvTFO", "CGvTFO", "vTFO", "RvtfO", "AO", "AO", "AO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "BusinessInteraction": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "CGvTFO", "CGvTFO", "SCGvTFO", "vTFO", "RvtfO", "AO", "AO", "AO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "BusinessEvent": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "vTFO", "vTFO", "vTFO", "SCGvTFO", "vtfO", "AO", "AO", "AO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "BusinessService": (
+        "VtfO", "VtfO", "VtfO", "vtfO", "VtfO", "VtfO", "VtfO", "vtfO", "SCGvTFO", "AO", "AO", "AO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "VtfO", "VtfO", "VtfO", "vtfO", "vtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "VtfO", "VtfO", "VtfO", "vtfO", "vtfO", "aO",
+    ),
+    "BusinessObject": (
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "SCGO", "SCGO", "O",
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O",
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O",
+    ),
+    "Contract": (
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "SCGO", "SCGO", "O",
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O",
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O",
+    ),
+    "Representation": (
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "RO", "RO", "SCGO",
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O",
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O",
+    ),
+    "Product": (
+        "vtfO", "vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "CGrvtfO", "CGaO", "CGaO", "CGaO",
+        "SCGvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "CGrvtfO", "CGaO", "vtfO", "rvtfO",
+        "rvtfO", "vtfO", "rvtfO", "vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "CGrvtfO", "CGaO",
+    ),
+    "ApplicationComponent": (
+        "vtfO", "vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "SCGRvtfO", "vtfO", "CgrvtfO", "IrvtfO", "IrvtfO", "IrvtfO", "IrvtfO", "irvtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "ApplicationCollaboration": (
+        "vtfO", "vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "GrvtfO", "SCGvtfO", "CgrvtfO", "IrvtfO", "IrvtfO", "IrvtfO", "IrvtfO", "irvtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "ApplicationInterface": (
+        "VtfO", "VtfO", "VtfO", "RvtfO", "vtfO", "vtfO", "vtfO", "vtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "VtfO", "VtfO", "SCGvtfO", "vtfO", "vtfO", "vtfO", "vtfO", "IvtfO", "aO", "VtfO", "VtfO",
+        "VtfO", "VtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "ApplicationProcess": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "SCGvTFO", "CGvTFO", "CGvTFO", "vTFO", "RvtfO", "AO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "ApplicationFunction": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "CGvTFO", "SCGvTFO", "CGvTFO", "vTFO", "RvtfO", "AO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "ApplicationInteraction": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "CGvTFO", "CGvTFO", "SCGvTFO", "vTFO", "RvtfO", "AO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "ApplicationEvent": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "vtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vTFO", "vTFO", "vTFO", "SCGvTFO", "vtfO", "AO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "aO",
+    ),
+    "ApplicationService": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "VtfO", "VtfO", "VtfO", "vtfO", "RvtfO", "aO", "aO", "aO",
+        "vtfO", "VtfO", "VtfO", "vtfO", "VtfO", "VtfO", "VtfO", "vtfO", "SCGvTFO", "AO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "VtfO", "VtfO", "VtfO", "vtfO", "vtfO", "aO",
+    ),
+    "DataObject": (
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "RO", "RO", "O",
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "SCGO", "O", "O",
+        "O", "O", "O", "O", "O", "O", "O", "O", "O", "O", "O",
+    ),
+    "Node": (
+        "ivtfO", "ivtfO", "ivtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "aO", "aO",
+        "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "SCGivtfO", "CGirvtfO",
+        "CGirvtfO", "vtfO", "CgirvtfO", "vtfO", "vtfO", "IrvtfO", "IrvtfO", "IrvtfO", "IrvtfO", "irvtfO", "iaO",
+    ),
+    "Device": (
+        "vtfO", "vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "SCGvtfO",
+        "CGIrvtfO", "vtfO", "CgirvtfO", "vtfO", "vtfO", "IrvtfO", "IrvtfO", "IrvtfO", "IrvtfO", "irvtfO", "IaO",
+    ),
+    "SystemSoftware": (
+        "vtfO", "vtfO", "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "vtfO", "vtfO",
+        "SCGIrvtfO", "vtfO", "CgirvtfO", "vtfO", "vtfO", "IrvtfO", "IrvtfO", "IrvtfO", "IrvtfO", "irvtfO", "IaO",
+    ),
+    "TechnologyCollaboration": (
+        "ivtfO", "ivtfO", "ivtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "aO", "aO",
+        "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "GivtfO", "GirvtfO",
+        "GirvtfO", "SCGvtfO", "CgirvtfO", "vtfO", "vtfO", "IrvtfO", "IrvtfO", "IrvtfO", "IrvtfO", "irvtfO", "iaO",
+    ),
+    "TechnologyInterface": (
+        "VtfO", "VtfO", "VtfO", "RvtfO", "vtfO", "vtfO", "vtfO", "vtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "VtfO", "VtfO", "RvtfO", "vtfO", "vtfO", "vtfO", "vtfO", "rvtfO", "aO", "VtfO", "VtfO",
+        "VtfO", "VtfO", "SCGvtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "IvtfO", "aO",
+    ),
+    "Path": (
+        "ivtfO", "ivtfO", "ivtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "aO", "aO", "aO",
+        "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "GivtfO", "GirvtfO",
+        "GirvtfO", "GvtfO", "girvtfO", "SCGvtfO", "vtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "iaO",
+    ),
+    "CommunicationNetwork": (
+        "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "rvtfO", "aO", "rvtfO", "GrvtfO",
+        "GirvtfO", "rvtfO", "girvtfO", "RvtfO", "SCGvtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "irvtfO", "iaO",
+    ),
+    "TechnologyProcess": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "SCGvTFO", "CGvTFO", "CGvTFO", "vTFO", "RvtfO", "AO",
+    ),
+    "TechnologyFunction": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "CGvTFO", "SCGvTFO", "CGvTFO", "vTFO", "RvtfO", "AO",
+    ),
+    "TechnologyInteraction": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "RvtfO", "RvtfO", "vtfO", "rvtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "CGvTFO", "CGvTFO", "SCGvTFO", "vTFO", "RvtfO", "AO",
+    ),
+    "TechnologyEvent": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "vtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "RvtfO", "vtfO", "aO", "vtfO", "vtfO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "vtfO", "vTFO", "vTFO", "vTFO", "SCGvTFO", "vtfO", "AO",
+    ),
+    "TechnologyService": (
+        "vtfO", "vtfO", "vtfO", "vtfO", "VtfO", "VtfO", "VtfO", "vtfO", "RvtfO", "aO", "aO", "aO",
+        "vtfO", "vtfO", "vtfO", "vtfO", "VtfO", "VtfO", "VtfO", "vtfO", "RvtfO", "aO", "VtfO", "VtfO",
+        "VtfO", "VtfO", "vtfO", "vtfO", "vtfO", "VtfO", "VtfO", "VtfO", "vtfO", "SCGvTFO", "AO",
+    ),
+    "Artifact": (
+        "O", "O", "O", "rO", "rO", "rO", "rO", "rO", "rO", "RO", "RO", "O",
+        "O", "RO", "RO", "rO", "rO", "rO", "rO", "rO", "rO", "RO", "O", "O",
+        "RO", "O", "rO", "O", "O", "rO", "rO", "rO", "rO", "rO", "SCGrO",
+    ),
 }
 # fmt: on
 

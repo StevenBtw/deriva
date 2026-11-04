@@ -521,6 +521,7 @@ const ASPECTS: [string, string][] = [
   ["Structure", "active structure"],
   ["Behavior", "behaviour"],
   ["Passive", "passive structure"],
+  ["Composite", "composite"],
 ];
 
 const isSelected = (t: OutputElementType) => t.steps.some((s) => s.enabled);
