@@ -391,13 +391,30 @@ describe("Output ontology", () => {
 
     await userEvent.click(await screen.findByRole("switch", { name: "Enable BusinessObject" }));
     const other = screen.getByRole("switch", { name: "Derive the Business layer" });
-    expect(other).toBeDisabled();
+    expect(other).toHaveAttribute("aria-disabled", "true");
     await userEvent.click(other);
     expect(configs.setEnabled).toHaveBeenCalledTimes(1);
 
     release({ name: "BusinessObject", enabled: false });
-    await waitFor(() => expect(screen.getByRole("switch", { name: "Derive the Business layer" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Derive the Business layer" })).toHaveAttribute("aria-disabled", "false"));
     vi.mocked(configs.setEnabled).mockResolvedValue({ name: "x", enabled: true });
+  });
+
+  it("keeps keyboard focus on a switch through its change", async () => {
+    vi.mocked(configs.setEnabled).mockClear();
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    vi.mocked(configs.setEnabled).mockResolvedValue({ name: "x", enabled: true });
+    render(<OutputOntologyPage />);
+
+    const toggle = await screen.findByRole("switch", { name: "Enable BusinessObject" });
+    toggle.focus();
+    await userEvent.keyboard(" ");
+    await waitFor(() => expect(configs.setEnabled).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Enable BusinessObject" })).toHaveAttribute("aria-disabled", "false"));
+
+    expect(document.activeElement).toBe(screen.getByRole("switch", { name: "Enable BusinessObject" }));
+    await userEvent.keyboard(" ");
+    await waitFor(() => expect(configs.setEnabled).toHaveBeenCalledTimes(2));
   });
 
   it("says when a switch was only partly saved", async () => {
