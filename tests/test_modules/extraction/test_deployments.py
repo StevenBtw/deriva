@@ -371,6 +371,23 @@ def test_a_registry_variable_before_the_image_name_is_dropped_with_its_slash():
     assert built_images("r", files, ("*.sh",)) == {"shop-base": "r/base/Dockerfile", "app": "r/Dockerfile"}
 
 
+def test_a_compose_build_from_the_root_context_is_matched_by_its_dockerfiles_folder():
+    """``context: .`` with ``dockerfile: src/web/Dockerfile`` builds the unit in src/web, under whatever image name."""
+    units = [{"id": "unit::r::web", "path": "r/src/web", "name": "web"}, {"id": "unit::r::api", "path": "r/src/api", "name": "api"}]
+    compose = (
+        "services:\n"
+        "  shopfront:\n    image: ${REGISTRY-}shopfront\n    build:\n      context: .\n      dockerfile: src/web/Dockerfile\n"
+        "  gateway:\n    build:\n      context: ./src\n      dockerfile: api/Dockerfile\n"
+        "  rootonly:\n    build:\n      context: ./src/web\n      dockerfile: Dockerfile\n"
+    )
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+
+    assert env is not None
+    by_name = {s.name: s.unit for s in env.services}
+    assert by_name == {"shopfront": "unit::r::web", "gateway": "unit::r::api", "rootonly": "unit::r::web"}
+
+
 def test_a_build_context_that_several_units_share_is_matched_by_name_or_not_at_all():
     units = [{"id": "unit::r::api", "path": "r/app", "name": "api"}, {"id": "unit::r::worker", "path": "r/app", "name": "worker"}]
     compose = "services:\n  worker:\n    build: ./app\n  jobs:\n    build: ./app\n"

@@ -4,7 +4,17 @@ dropped from the front."""
 
 from __future__ import annotations
 
-from deriva.modules.extraction.build_modules import ModuleRules, behaviour_per_file, declares_entry, detect_modules, feature_areas, module_id, usage_role
+from deriva.modules.extraction.build_modules import (
+    BuildModule,
+    ModuleRules,
+    behaviour_per_file,
+    declares_entry,
+    detect_modules,
+    feature_areas,
+    library_repository,
+    module_id,
+    usage_role,
+)
 
 RULES = ModuleRules(
     manifests=("pom.xml", "package.json", "pyproject.toml", "build.gradle", "build.gradle.kts", "settings.gradle"), code_subtypes=frozenset({"java", "python", "javascript"})
@@ -346,6 +356,22 @@ def test_a_module_no_unit_builds_is_a_component_by_who_uses_it():
     # No unit: a standalone program, a component only with a declared entry point
     assert usage_role(users=0, behaviour=0.5, entry=True, min_behaviour=1) is None
     assert usage_role(users=0, behaviour=4.0, entry=False, min_behaviour=1) == "no entry point"
+
+
+def test_a_library_repositories_own_module_is_its_component_when_nothing_else_is():
+    root = BuildModule(path="lib", name="Lib", manifest="lib/pyproject.toml", module=True, excluded="no entry point")
+    sample = BuildModule(path="lib/examples/a", name="A", manifest="lib/examples/a/pyproject.toml", module=True, excluded="test-only")
+
+    # The only unit lies in an example: the repository's own module takes the role
+    assert library_repository([root, sample], ["lib/examples/a"]) is root
+    assert library_repository([root], []) is root
+    # A unit of the system itself, or another component, leaves it out
+    assert library_repository([root, sample], ["lib/server"]) is None
+    assert library_repository([root, BuildModule(path="lib/app", name="App", manifest="m", module=True)], []) is None
+    # Other reasons are decisions about use, and two at one depth say nothing
+    assert library_repository([BuildModule(path="lib", name="Lib", manifest="m", module=True, excluded="part of one unit")], []) is None
+    one, two = (BuildModule(path=f"r/{n}", name=n, manifest="m", module=True, excluded="no entry point") for n in "ab")
+    assert library_repository([one, two], []) is None
 
 
 def test_a_manifest_declares_an_entry_point_by_its_ecosystems_convention():

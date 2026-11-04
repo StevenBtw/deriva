@@ -2697,6 +2697,22 @@ class TestBuildModuleStep:
         excluded = {r["id"].split("::")[-1]: r["x"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.excluded AS x")}
         assert excluded == {"lib": None, "data": "data-only library", "only": "part of one unit", "tool": None, "probe": "no entry point"}
 
+    def test_a_library_repository_keeps_its_own_module_as_the_component(self, graph):
+        """Its only units are examples (test words in their folder); without the rule the model has no component."""
+        files = {
+            "pyproject.toml": ("build", "toml", '[project]\nname = "lib"\n'),
+            "src/lib/core.py": ("source", "python", "def run():\n    return 1\n"),
+            "examples/demo/pyproject.toml": ("build", "toml", '[project]\nname = "demo"\n[project.scripts]\ndemo = "demo:main"\n'),
+            "examples/demo/demo.py": ("source", "python", "def main():\n    return 1\n"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files, repo="lib")
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["python"]}, repo="lib")
+            self._step(graph, tmpdir, "BuildModule", {**self.MODULE_PARAMS, "min_behaviour": 1, "test_words": ["examples"]}, repo="lib")
+
+        excluded = {r["id"]: r["x"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.excluded AS x")}
+        assert excluded == {"module::lib::lib": None, "module::lib::examples/demo": "test-only"}
+
     def test_a_folder_of_code_outside_every_unit_that_two_units_use_with_behaviour_is_a_library(self, graph):
         """shared/lib: two units import it, it has behaviour; shared/data: accessors only; shared/one: one unit imports it."""
         from deriva.adapters.graph.models import MethodNode
