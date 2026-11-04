@@ -380,43 +380,6 @@ class GraphManager:
             logger.error(f"Failed to update property on {node_id}: {e}")
             raise
 
-    def update_nodes_property(self, node_ids: list[str], property_name: str, value: Any) -> int:
-        """Update a property on multiple nodes.
-
-        Args:
-            node_ids: List of node IDs to update
-            property_name: Property name to set
-            value: Property value
-
-        Returns:
-            Number of nodes updated
-        """
-        if self.db is None:
-            raise RuntimeError("Not connected to grafeo. Call connect() first.")
-
-        if not node_ids:
-            return 0
-
-        try:
-            query = f"""
-                MATCH (n)
-                WHERE n.id IN $node_ids
-                SET n.{property_name} = $value
-                RETURN count(n) as updated
-            """
-
-            result = self.db.execute_write(query, {"node_ids": node_ids, "value": value})
-
-            if result:
-                count = result[0]["updated"]
-                logger.debug(f"Updated {property_name}={value} on {count} nodes")
-                return count
-            return 0
-
-        except Exception as e:
-            logger.error(f"Failed to bulk update property: {e}")
-            raise
-
     def batch_update_properties(self, updates: dict[str, dict[str, Any]]) -> int:
         """Batch update multiple properties on multiple nodes.
 

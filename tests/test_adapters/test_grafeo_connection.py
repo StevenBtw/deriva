@@ -55,6 +55,31 @@ def test_set_node_properties_counts_only_nodes_it_changed(conn):
     assert conn.set_node_properties("id", {"a": {}}) == 0
 
 
+def test_set_node_properties_writes_each_value_and_skips_unknown_keys(conn):
+    conn.execute("CREATE (:Graph {id: 'a', old: 1, kept: 'k'})")
+    conn.execute("CREATE (:Graph {id: 'b'})")
+
+    count = conn.set_node_properties("id", {"a": {"old": None, "rank": 0.5, "steps": ["A", "B"]}, "b": {"on": True}, "missing": {"x": 1}})
+
+    assert count == 2
+    rows = conn.execute("MATCH (n:Graph) RETURN n.id AS id, properties(n) AS p ORDER BY id")
+    assert rows == [
+        {"id": "a", "p": {"id": "a", "kept": "k", "rank": 0.5, "steps": ["A", "B"]}},
+        {"id": "b", "p": {"id": "b", "on": True}},
+    ]
+
+
+def test_set_node_properties_writes_a_batch_in_one_grafeo_call(conn):
+    conn.execute("CREATE (:Graph {id: 'a'})")
+    conn.execute("CREATE (:Graph {id: 'b'})")
+
+    with patch.object(conn, "db", wraps=conn.db) as db:
+        conn.set_node_properties("id", {"a": {"x": 1}, "b": {"x": 2}, "empty": {}})
+
+    db.update_nodes.assert_called_once_with(["Graph"], [{"id": "a", "x": 1}, {"id": "b", "x": 2}], key="id")
+    db.set_node_property.assert_not_called()
+
+
 @pytest.mark.parametrize("key", ["../elsewhere", "a/b", r"a\b", "..", ""])
 def test_database_key_must_be_a_plain_file_name(key, tmp_path, monkeypatch):
     from deriva.adapters.grafeo.manager import database_file
@@ -294,16 +319,17 @@ def test_a_rolled_back_query_can_name_its_language(monkeypatch):
         close_database()
 
 
-@pytest.mark.parametrize("statement", ["COMMIT", "commit work", "ROLLBACK", "START TRANSACTION", "SESSION RESET", "/* c */ COMMIT", "-- c\nCOMMIT"])
+@pytest.mark.parametrize(
+    "statement",
+    ["COMMIT", "ROLLBACK", "START TRANSACTION", "/* c */ COMMIT", "-- c\nCOMMIT", "CREATE (:Graph {id: 'kept'}) NEXT COMMIT"],
+)
 def test_a_rolled_back_query_cannot_end_its_transaction(statement, monkeypatch):
-    """GQL runs COMMIT inside a transaction (grafeo 0.6.0 commits its writes), so the rolled-back path refuses
-    transaction and session statements before they run."""
+    """The rolled-back path relies on grafeo refusing transaction statements inside a transaction (since 0.6.1)."""
     c = _connection(monkeypatch, None)
     try:
-        with pytest.raises(ValueError, match="transaction"):
+        with pytest.raises(Exception, match="inside a transaction|part of another statement"):
             c.execute_rolled_back(statement)
-        # The words inside a string, a quoted name or a property are no statement
-        assert c.execute_rolled_back("RETURN 'COMMIT' AS `rollback`") == [{"rollback": "COMMIT"}]
+        assert c.execute("MATCH (n:Graph) RETURN n.id AS id") == []
     finally:
         c.disconnect()
         close_database()

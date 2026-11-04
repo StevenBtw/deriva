@@ -27,7 +27,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import time
 import weakref
@@ -55,11 +54,6 @@ def _record_query(label: str, started: float, slow_ms: float) -> None:
 
 DEFAULT_DATABASE = "default"
 _LANGUAGE_NAMES = {"gql": "GQL", "cypher": "Cypher"}
-# String literals and quoted names hold no statement (line comments are kept: `--` is also a Cypher edge); GQL runs
-# transaction and session statements inside a transaction (grafeo 0.6.0 commits its writes on COMMIT), so the
-# rolled-back path refuses them
-_NO_STATEMENT = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|`[^`]*`|/\*.*?\*/", re.DOTALL)
-_ENDS_TRANSACTION = re.compile(r"(?<![.\w])(COMMIT|ROLLBACK|SESSION|START\s+TRANSACTION)(?!\w)", re.IGNORECASE)
 
 _db: Any | None = None
 _db_key: str = DEFAULT_DATABASE
@@ -344,8 +338,6 @@ class GrafeoConnection:
         language = self.query_language if language is None else language.strip().lower()
         if language not in QUERY_LANGUAGES:
             raise ValueError(f"Unknown query language {language!r}: one of {', '.join(QUERY_LANGUAGES)}")
-        if _ENDS_TRANSACTION.search(_NO_STATEMENT.sub(" ", query)):
-            raise ValueError("A read-only query cannot run transaction or session statements (COMMIT, ROLLBACK, START TRANSACTION, SESSION)")
         started = time.perf_counter()
         transaction = self.db.begin_transaction()
         try:
@@ -364,7 +356,7 @@ class GrafeoConnection:
             updates: Mapping of key value to the properties to set.
 
         Returns:
-            Number of nodes updated (unknown key values are skipped).
+            Number of key values that matched a node of this namespace (unknown ones and empty updates are skipped).
         """
         if self.db is None:
             raise RuntimeError("Not connected to grafeo. Call connect() first.")
@@ -372,24 +364,11 @@ class GrafeoConnection:
         started = time.perf_counter()
         if not self.db.has_property_index(key):
             self.db.create_property_index(key)
-        count = 0
-        for value, props in updates.items():
-            if not props:
-                continue
-            for node in self._find_nodes(key, value):
-                # The database is shared by all namespaces; touch only this one's nodes
-                if self.namespace not in (self.db.get_node_labels(node) or []):
-                    continue
-                for name, prop in props.items():
-                    self.db.set_node_property(node, name, prop)
-                count += 1
+        rows = [{key: value, **props} for value, props in updates.items() if props]
+        # The database is shared by all namespaces; the label touches only this one's nodes
+        result = self.db.update_nodes([self.namespace], rows, key=key)
         _record_query(f"set_node_properties({key})", started, self._slow_query_ms)
-        return count
-
-    def _find_nodes(self, key: str, value: Any) -> list[int]:
-        """Nodes with ``key`` = ``value`` via the property index (deleted nodes are not returned)."""
-        assert self.db is not None
-        return list(self.db.find_nodes_by_property(key, value))
+        return result["updated"]
 
     def merge_node(self, key: str, value: Any, labels: list[str], properties: dict[str, Any], replace: bool = False) -> None:
         """Create or update the node with ``key`` = ``value`` and all ``labels``, through grafeo's index-backed upsert.
