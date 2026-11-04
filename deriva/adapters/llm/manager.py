@@ -48,6 +48,7 @@ from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai.exceptions import IncompleteToolCall, ModelHTTPError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RunUsage
 
 from deriva.common import settings
 from deriva.common.exceptions import CircuitOpenError
@@ -839,7 +840,7 @@ class LLMManager:
             usage = None
             # pydantic-ai 2: result.usage is a property; 1.x: a method
             usage_attr = getattr(result, "usage", None)
-            run_usage = usage_attr if hasattr(usage_attr, "input_tokens") else usage_attr() if callable(usage_attr) else usage_attr
+            run_usage = usage_attr() if callable(usage_attr) and not isinstance(usage_attr, RunUsage) else usage_attr
             if run_usage is not None:
                 call["requests"] = run_usage.requests + failed_attempts
                 call["input_tokens"] = run_usage.input_tokens
