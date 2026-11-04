@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { configs, ontology } from "../api/client";
 import type { IntermediateOntology, NodeType, OntologyStep, OutputElementType, OutputOntology, RelationshipRule, StepType } from "../api/types";
@@ -46,18 +46,38 @@ function useOntology<T>(load: () => Promise<T>) {
     }
   }, []);
 
-  // Several steps at once (a layer, an aspect, a type with more than one step), one after the other
-  const applySteps = useCallback(async (stepType: StepType, changes: { name: string; enabled: boolean }[]) => {
-    try {
-      for (const change of changes) await configs.setEnabled(stepType, change.name, change.enabled);
-      setNotice(null);
-    } catch (reason) {
-      setNotice(message(reason));
-    }
-    setReload((n) => n + 1);
-  }, []);
+  // Several steps at once (a layer, an aspect, a type with more than one step), one after the other. Nothing else starts
+  // until they are written and the page has reloaded: what it shows meanwhile is the state before them
+  const [applying, setApplying] = useState(false);
+  const running = useRef(false);
+  const applySteps = useCallback(
+    async (stepType: StepType, changes: { name: string; enabled: boolean }[]) => {
+      if (running.current || !changes.length) return;
+      running.current = true;
+      setApplying(true);
+      let saved = 0;
+      try {
+        for (const change of changes) {
+          await configs.setEnabled(stepType, change.name, change.enabled);
+          saved += 1;
+        }
+        setNotice(null);
+      } catch (reason) {
+        setNotice(changes.length > 1 ? `${saved} of ${changes.length} changes saved: ${message(reason)}` : message(reason));
+      }
+      try {
+        setData(await load());
+        setError(null);
+      } catch (reason) {
+        setError(message(reason));
+      }
+      running.current = false;
+      setApplying(false);
+    },
+    [load],
+  );
 
-  return { data, error, notice, retry, toggle, applySteps, dismiss: useCallback(() => setNotice(null), []) };
+  return { data, error, notice, retry, toggle, applying, applySteps, dismiss: useCallback(() => setNotice(null), []) };
 }
 
 /** A failed load (with Retry) or a failed switch (dismissable) above the page, which stays usable. */
@@ -526,13 +546,13 @@ const ASPECTS: [string, string][] = [
 
 const isSelected = (t: OutputElementType) => t.steps.some((s) => s.enabled);
 
-/** The step changes of a switch over these types: any step on turns them all off, else the shipped steps come on
- * (``anyStep``: a single type shipped off is chosen by hand, so its steps come on anyway). */
-function switchChanges(types: OutputElementType[], anyStep = false): { name: string; enabled: boolean }[] {
+/** The step changes of a switch over these types: any step on turns them all off, else the shipped steps come on, and
+ * every step where none ships on (chosen by hand: a type or an aspect the release leaves off). */
+function switchChanges(types: OutputElementType[]): { name: string; enabled: boolean }[] {
   const steps = types.flatMap((t) => t.steps);
   if (steps.some((s) => s.enabled)) return steps.filter((s) => s.enabled).map((s) => ({ name: s.name, enabled: false }));
   const shipped = steps.filter((s) => s.shipped);
-  return (shipped.length || !anyStep ? shipped : steps).map((s) => ({ name: s.name, enabled: true }));
+  return (shipped.length ? shipped : steps).map((s) => ({ name: s.name, enabled: true }));
 }
 
 function ruleCell(rule?: RelationshipRule): { text: string; title: string } {
@@ -549,14 +569,26 @@ function header(type: string): string {
 }
 
 /** A switch over several types (a layer, an aspect): on while any of their steps is. */
-function SelectionSwitch({ label, types, onApply }: { label: string; types: OutputElementType[]; onApply: (stepType: StepType, changes: { name: string; enabled: boolean }[]) => Promise<void> }) {
+function SelectionSwitch({
+  label,
+  types,
+  disabled,
+  onApply,
+}: {
+  label: string;
+  types: OutputElementType[];
+  disabled: boolean;
+  onApply: (stepType: StepType, changes: { name: string; enabled: boolean }[]) => Promise<void>;
+}) {
   if (!types.some((t) => t.steps.length)) return null;
-  return <button type="button" className="toggle" role="switch" aria-checked={types.some(isSelected)} aria-label={label} onClick={() => void onApply("derivation", switchChanges(types))} />;
+  return (
+    <button type="button" className="toggle" role="switch" aria-checked={types.some(isSelected)} aria-label={label} disabled={disabled} onClick={() => void onApply("derivation", switchChanges(types))} />
+  );
 }
 
 /** ArchiMate as Deriva derives it: element types per layer and aspect with the switches that select them, relationship types, and the rules matrix. */
 export function OutputOntologyPage() {
-  const { data, error, notice, retry, applySteps, dismiss } = useOntology<OutputOntology>(loadOutput);
+  const { data, error, notice, retry, applying, applySteps, dismiss } = useOntology<OutputOntology>(loadOutput);
   const problems = <Problems error={error} notice={notice} onRetry={retry} onDismiss={dismiss} />;
 
   if (!data) return <div className="page pad">{error ? problems : <span className="muted">Loading the output ontology…</span>}</div>;
@@ -575,12 +607,13 @@ export function OutputOntologyPage() {
         </span>
       </div>
       {problems}
-      <div className="pad cols" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+      {/* Three layers side by side where they fit, else fewer: a switch must stay on its own row */}
+      <div className="pad cols" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))" }}>
         {LAYERS.map((layer) => (
           <div key={layer} className="card">
             <div className="hd">
               <h3>{layer} layer</h3>
-              <SelectionSwitch label={`Derive the ${layer} layer`} types={data.element_types.filter((t) => t.layer === layer)} onApply={applySteps} />
+              <SelectionSwitch label={`Derive the ${layer} layer`} types={data.element_types.filter((t) => t.layer === layer)} disabled={applying} onApply={applySteps} />
             </div>
             <table>
               {ASPECTS.map(([aspect, title]) => {
@@ -593,7 +626,7 @@ export function OutputOntologyPage() {
                         {title}
                       </th>
                       <td>
-                        <SelectionSwitch label={`Derive ${layer} ${title}`} types={types} onApply={applySteps} />
+                        <SelectionSwitch label={`Derive ${layer} ${title}`} types={types} disabled={applying} onApply={applySteps} />
                       </td>
                     </tr>
                     {types.map((t) => {
@@ -601,7 +634,7 @@ export function OutputOntologyPage() {
                       const extra = t.steps.filter((s) => s.name !== t.name);
                       return (
                         <tr key={t.name}>
-                          <td>
+                          <td style={{ overflowWrap: "anywhere" }}>
                             {t.name}
                             {extra.length > 0 && <span className="faint"> + {extra.map((s) => s.name).join(", ")}</span>}
                             {missing.length > 0 && (
@@ -620,7 +653,8 @@ export function OutputOntologyPage() {
                                   role="switch"
                                   aria-checked={isSelected(t)}
                                   aria-label={`Enable ${t.name}`}
-                                  onClick={() => void applySteps("derivation", switchChanges([t], true))}
+                                  disabled={applying}
+                                  onClick={() => void applySteps("derivation", switchChanges([t]))}
                                 />
                                 {t.step && t.step.version !== null ? `v${t.step.version}` : ""}
                               </span>

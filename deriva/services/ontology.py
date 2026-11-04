@@ -107,7 +107,8 @@ def output_ontology(session: Any) -> dict[str, Any]:
     """Element types per layer and aspect (count, the steps that make them, the types they need), relationship types
     (count) and the allowed relationships per pair of types."""
     counts = session.get_archimate_stats().get("by_type", {})
-    versions = session.get_config_versions().get("derivation", {})
+    # A step switched off keeps its version
+    versions = session.get_config_versions(include_disabled=True).get("derivation", {})
     steps = {c["element_type"]: c for c in session.get_derivation_configs()}
     shipped = _shipped_steps()
     element_types = []
