@@ -71,3 +71,47 @@ def test_an_empty_model_is_weak_with_one_reason():
     report = _quality([], [])
 
     assert report["verdict"] == "weak" and report["reasons"] == ["the model has no elements"]
+
+
+def _level(element: dict, *levels: str) -> dict:
+    return {**element, "levels": list(levels)}
+
+
+def _enterprise_model(connected: bool):
+    elements = [
+        _level(_element("system"), "enterprise"),
+        _level(_element("service", element_type="ApplicationService"), "enterprise"),
+        _level(_element("account", layer="Business", element_type="BusinessObject"), "enterprise"),
+        _level(_element("card", layer="Business", element_type="BusinessObject"), "enterprise"),
+        _level(_element("unit"), "solution"),
+        _level(_element("host", layer="Technology"), "solution"),
+    ]
+    relationships = [{**_rel("system", "service", "Realization"), "levels": ["enterprise"]}, {**_rel("host", "unit"), "levels": ["solution"]}]
+    # At the solution level everything connects, which the whole model's orphans cannot tell apart
+    relationships += [{**_rel("unit", name), "levels": []} for name in ("account", "card", "system")]
+    if connected:
+        relationships += [{**_rel("system", name, "Access"), "levels": ["enterprise"]} for name in ("account", "card")]
+    return elements, relationships
+
+
+def test_elements_that_float_at_the_enterprise_level_make_a_model_weak():
+    report = _quality(*_enterprise_model(connected=False))
+
+    assert report["orphans"] == []
+    assert [e["name"] for e in report["enterprise_orphans"]] == ["Account", "Card"]
+    assert report["verdict"] == "weak"
+    assert any("enterprise level" in reason and "2 of 4" in reason for reason in report["reasons"])
+
+    connected = _quality(*_enterprise_model(connected=True))
+    assert connected["enterprise_orphans"] == [] and connected["verdict"] == "ok"
+
+
+def test_a_model_of_one_enterprise_element_has_nothing_to_connect_to():
+    elements = [
+        _level(_element("lib"), "enterprise"),
+        _level(_element("fn", element_type="ApplicationFunction"), "solution"),
+        _level(_element("host", layer="Technology"), "solution"),
+    ]
+    relationships = [{**_rel("lib", "fn", "Assignment"), "levels": []}, {**_rel("host", "lib"), "levels": []}]
+
+    assert _quality(elements, relationships)["verdict"] == "ok"
