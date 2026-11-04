@@ -266,7 +266,7 @@ class AbstractionLevelsStep:
             levels,
             {e.identifier: e.element_type for e in elements},
             patterns,
-            metamodel.derivation_rules,
+            metamodel.enterprise_derivation_rules,
             metamodel.structural_strength,
             metamodel.tier,
         )

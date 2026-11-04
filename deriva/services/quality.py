@@ -31,11 +31,14 @@ def model_quality(engine: Any, graph_manager: Any, archimate_manager: Any) -> di
             "type": e.element_type,
             "layer": ELEMENT_TYPES[e.element_type].layer if e.element_type in ELEMENT_TYPES else "",
             "sources": _sources(e.properties or {}),
+            "levels": (e.properties or {}).get("levels") or [],
         }
         for e in archimate_manager.get_elements()
         if e.enabled
     ]
-    relationships = [{"source": r.source, "target": r.target, "type": r.relationship_type} for r in archimate_manager.get_relationships()]
+    relationships = [
+        {"source": r.source, "target": r.target, "type": r.relationship_type, "levels": (r.properties or {}).get("levels") or []} for r in archimate_manager.get_relationships()
+    ]
 
     located = {r["id"]: r["p"] for r in graph_manager.query("MATCH (n:Graph) WHERE n.path IS NOT NULL RETURN n.id AS id, n.path AS p")}
     artifacts = set()

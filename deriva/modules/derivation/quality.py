@@ -1,11 +1,11 @@
 """Model quality: a verdict on a derived model from its structure.
 
 A report: it reads the model and the graph and changes no result. A model is weak when many elements have no
-relationship, when nearly all relationships are Composition or Aggregation (structure without behaviour), when the
-Application or Technology layer is empty (the business layer may be empty by design), or when elements have no
-artifact behind them: none of their located sources is a file, type or method, and no source file lies under a
-folder-like source (a directory, a deployable unit or a build module). Sources without a location (a data domain,
-a piece of software) neither count for nor against an element.
+relationship, overall or within the enterprise level (the view a reader sees first), when nearly all relationships
+are Composition or Aggregation (structure without behaviour), when the Application or Technology layer is empty (the
+business layer may be empty by design), or when elements have no artifact behind them: none of their located sources
+is a file, type or method, and no source file lies under a folder-like source (a directory, a deployable unit or a
+build module). Sources without a location (a data domain, a piece of software) neither count for nor against an element.
 """
 
 from __future__ import annotations
@@ -44,8 +44,8 @@ def model_quality(
     """The quality verdict of one model.
 
     Args:
-        elements: The enabled elements: ``id``, ``name``, ``type``, ``layer`` and their graph ``sources``
-        relationships: ``source``, ``target`` and ``type``
+        elements: The enabled elements: ``id``, ``name``, ``type``, ``layer``, their graph ``sources`` and ``levels``
+        relationships: ``source``, ``target``, ``type`` and ``levels``
         located: Graph node ids with a location (``path`` or ``filePath``), by id
         artifacts: The located node ids that are files, types or methods
         source_files: The paths of the graph's source files
@@ -57,6 +57,11 @@ def model_quality(
     """
     linked = {r["source"] for r in relationships} | {r["target"] for r in relationships}
     orphans = [{"id": e["id"], "name": e["name"], "type": e["type"]} for e in elements if e["id"] not in linked]
+    enterprise = [e for e in elements if "enterprise" in (e.get("levels") or ())]
+    within = [r for r in relationships if "enterprise" in (r.get("levels") or ())]
+    linked_there = {r["source"] for r in within} | {r["target"] for r in within}
+    # One element alone has nothing to connect to (a library's single component)
+    floating = [{"id": e["id"], "name": e["name"], "type": e["type"]} for e in enterprise if e["id"] not in linked_there] if len(enterprise) > 1 else []
     types = Counter(str(r["type"]) for r in relationships)
     structural = sum(types[t] for t in STRUCTURAL)
     layers = {layer: sum(1 for e in elements if e.get("layer") == layer) for layer in LAYERS}
@@ -80,6 +85,8 @@ def model_quality(
         max_orphans, max_structural = thresholds["quality_max_orphan_share"], thresholds["quality_max_structural_share"]
         if _share(len(orphans), len(elements)) > max_orphans:
             reasons.append(f"{len(orphans)} of {len(elements)} elements ({_share(len(orphans), len(elements)):.0%}) have no relationship (above {max_orphans:.0%})")
+        if _share(len(floating), len(enterprise)) > max_orphans:
+            reasons.append(f"{len(floating)} of {len(enterprise)} elements at the enterprise level connect to nothing there ({_names(floating)})")
         if relationships and _share(structural, len(relationships)) > max_structural:
             counted = (
                 f"all {len(relationships)} relationships are"
@@ -98,6 +105,7 @@ def model_quality(
         "relationships": len(relationships),
         "orphans": orphans,
         "orphan_share": _share(len(orphans), len(elements)),
+        "enterprise_orphans": floating,
         "structural_share": _share(structural, len(relationships)),
         "relationship_types": dict(types.most_common()),
         "layers": layers,

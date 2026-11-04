@@ -665,6 +665,9 @@ VALID_DERIVATION_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...], str, 
     ("DR 7", ("Triggering",), STRUCTURAL_RELATIONSHIPS, "chain", "first"),  # p. 130
     ("DR 8", ("Triggering",), ("Triggering",), "chain", "first"),  # p. 131: transitivity of triggering
 )
+# The enterprise viewpoint also takes one potential rule, B.3 PDR 5 (p. 136): what accesses a data object accesses the
+# business object it realizes. A potential rule might not hold, so it serves that viewpoint's patterns only, never scoring.
+ENTERPRISE_DERIVATION_RULES = (*VALID_DERIVATION_RULES, ("PDR 5", ("Access",), ("Realization",), "chain", "first"))
 
 # Relationship types Deriva may propose. Association, Specialization and Influence
 # are valid ArchiMate but deliberately not derived.
@@ -736,6 +739,7 @@ class ArchiMateMetamodel:
     acyclic_relationship_types: frozenset[str] = frozenset({"Composition"})
     # Appendix B.2: the valid derivation rules as data, and the structural strength order they use (weakest first)
     derivation_rules = VALID_DERIVATION_RULES
+    enterprise_derivation_rules = ENTERPRISE_DERIVATION_RULES
     structural_strength = STRUCTURAL_STRENGTH
 
     def __init__(self):
