@@ -224,6 +224,27 @@ def behaviour_per_file(
     return total / len(wanted) if wanted else 0.0
 
 
+# Why a module and the units inside it are no part of the system itself (the DeployableUnit derivation queries read these too)
+_NOT_THE_SYSTEM = frozenset({"infrastructure-as-code", "test-only", "tooling"})
+
+
+def library_repository(modules: list[BuildModule], unit_paths: list[str]) -> BuildModule | None:
+    """The module to keep as the component of a repository that is a library: no module stays a component and every
+    unit lies in a test, tooling or infrastructure module, so without it the model would hold no component. The
+    outermost module without an entry point takes that role; two at the same depth say nothing, so none does."""
+    if any(m.module and m.excluded is None for m in modules):
+        return None
+    outside = [m.path for m in modules if m.excluded in _NOT_THE_SYSTEM]
+    if any(not any(unit == path or unit.startswith(path + "/") for path in outside) for unit in unit_paths):
+        return None
+    unused = [m for m in modules if m.module and m.excluded == "no entry point"]
+    if not unused:
+        return None
+    depth = min(m.path.count("/") for m in unused)
+    top = [m for m in unused if m.path.count("/") == depth]
+    return top[0] if len(top) == 1 else None
+
+
 def usage_role(users: int, behaviour: float, entry: bool, min_behaviour: float) -> str | None:
     """Why a module that no unit builds is no component (None: it is one), by how many units use its code: two or more
     make it a shared library, a component only with behaviour (more than ``min_behaviour`` non-accessor methods per
@@ -335,7 +356,9 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
             return "infrastructure-as-code"
         if rules.test_dependencies and dependencies and all(matches(d, rules.test_dependencies) for d in dependencies):
             return "test-only"
-        named = {w.casefold() for w in _words(_folder_name(folder)) + _words(_manifest_name(manifest, manifests.get(manifest, "")) or "")}
+        # Every folder on its path inside the repository (examples/demo), not the repository's own name
+        inside = folder.removeprefix(repository).strip("/").split("/")
+        named = {w.casefold() for part in inside for w in _words(part)} | {w.casefold() for w in _words(_manifest_name(manifest, manifests.get(manifest, "")) or "")}
         if named & {w.casefold() for w in rules.test_words}:
             return "test-only"
         return None

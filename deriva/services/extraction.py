@@ -1595,6 +1595,9 @@ def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: P
     if rules.min_behaviour is not None:
         judged = [m for m in found if m.module and not m.system and m.excluded is None and not same_as(m)]
         libraries = _judge_by_usage(q, norm, repo.name, found, judged, [path for _, path in units], files, manifests, rules)
+        library = build_modules.library_repository(found, [path for _, path in units]) if not libraries else None
+        if library is not None:
+            library.excluded = None
         found = sorted([*found, *libraries], key=lambda m: m.path)
         ids.update({m.path: build_modules.module_id(repo.name, m.path) for m in libraries})
     # Fixed before feature packages nest inside a unit's folder: the unit and its own module stay one element
