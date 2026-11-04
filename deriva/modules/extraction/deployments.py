@@ -218,8 +218,10 @@ def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Env
         unit = unit or (units.by_name(image, str(name)) if (image or not context) else None) or units.by_image(image)
         dockerfile = build.get("dockerfile") if isinstance(build, dict) else None
         if unit is None and isinstance(dockerfile, str):
-            # Nothing else names it (``context: .`` from the repository root): its name, else the unit in the Dockerfile's own folder
-            unit = units.by_name(image, str(name)) or units.at_folder(_normalize(f"{_parent(path)}/{context or '.'}/{_parent(dockerfile)}"), image, str(name))
+            # Nothing else names it (``context: .`` from the repository root): its exact name, the unit in the Dockerfile's own
+            # folder, and only then the last word of its name, a guess that an explicit path overrules
+            folder = _normalize(f"{_parent(path)}/{context or '.'}/{_parent(dockerfile)}")
+            unit = units.by_exact_name([str(name)]) or units.at_folder(folder, image, str(name)) or units.by_name(image, str(name))
         depends = spec.get("depends_on") or []
         variables = spec.get("environment") or {}
         if isinstance(variables, list):

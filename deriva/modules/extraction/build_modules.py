@@ -346,6 +346,10 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
 
     tooling = development_only(manifests)
 
+    def _after_repository(name: str) -> list[str]:
+        words, own = _words(name), [w.casefold() for w in _words(_folder_name(repository))]
+        return words[len(own) :] if [w.casefold() for w in words[: len(own)]] == own else words
+
     def excluded(folder: str) -> str | None:
         manifest = candidates[folder]
         if folder in tooling:
@@ -357,9 +361,9 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
         if rules.test_dependencies and dependencies and all(matches(d, rules.test_dependencies) for d in dependencies):
             return "test-only"
         words = {w.casefold() for w in rules.test_words}
-        # The repository's own name says nothing about its code
+        # The repository's own name says nothing about its code, also in front of a module's name (example-shop-orders)
         if folder != repository:
-            own = _words(_folder_name(folder)) + _words(_manifest_name(manifest, manifests.get(manifest, "")) or "")
+            own = _after_repository(_folder_name(folder)) + _after_repository(_manifest_name(manifest, manifests.get(manifest, "")) or "")
             # A folder above it counts only when it is a test word itself (examples/demo, not ab-test-service/backend)
             above = folder.removeprefix(repository).strip("/").split("/")[:-1]
             if {w.casefold() for w in own} & words or {part.casefold() for part in above} & words:

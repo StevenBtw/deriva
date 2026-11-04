@@ -293,12 +293,16 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
     def marks(t: dict[str, Any]) -> set[str]:
         return {_bare(d) for d in t.get("decorators") or [] if ":" not in str(d)} | ancestors(t)
 
-    root_names = {str(t["name"]).casefold() for t in types if marks(t) & roots}
+    def is_root_type(t: dict[str, Any]) -> bool:
+        # An interface that extends the marker only passes it on
+        return bool(marks(t) & roots) and t.get("category") != "interface"
+
+    root_names = {str(t["name"]).casefold() for t in types if is_root_type(t)}
     # ORM bases of the repository itself: types other types name as their base that descend from an ORM base
     referenced = {_bare(b) for t in types for b in t.get("bases") or []}
     orm_names = {str(t["name"]).casefold() for t in types if t.get("bases") and ancestors(t) & orm and str(t["name"]).casefold() in referenced}
     has_roots = bool(root_names)
-    root_folders = {PurePosixPath(str(t.get("path") or "")).parent.as_posix() for t in types if marks(t) & roots}
+    root_folders = {PurePosixPath(str(t.get("path") or "")).parent.as_posix() for t in types if is_root_type(t)}
     table_marks, technical_signals = lower(rules.table_annotations), set(rules.technical_signals)
     result = EntityResult()
     found: dict[str, Entity] = {}
@@ -343,7 +347,7 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
             signal = "table"
         elif category == "record" and _is_mainframe(path):
             signal = "shared record"
-        elif m & roots:
+        elif is_root_type(t):
             signal = "aggregate root"
         elif m & entity_marks or (ancestors(t) & orm and name.casefold() not in orm_names):
             signal = "orm entity"
