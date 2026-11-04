@@ -34,6 +34,18 @@ def _reasons(result) -> dict[str, str]:
     return {x.name: x.reason for x in result.excluded}
 
 
+def test_an_interface_extending_a_root_marker_is_no_entity_and_marks_no_root():
+    types = [
+        _t("ICatalogRoot", "r/core/ICatalogRoot.cs", category="interface", bases=["AggregateRoot"]),
+        _t("Order", "r/core/Order.cs", bases=["AggregateRoot"]),
+    ]
+    assert _names(detect_entities(types, {}, {}, RULES)) == ["Order"]
+
+    # An interface alone does not switch the repository to "only the roots are entities"
+    types = [_t("IRoot", "r/core/IRoot.cs", category="interface", bases=["AggregateRoot"]), _t("Customer", "r/core/Customer.java", decorators=["Entity"])]
+    assert _names(detect_entities(types, {}, {}, RULES)) == ["Customer"]
+
+
 def test_when_a_repository_marks_aggregate_roots_only_the_roots_are_entities():
     types = [
         _t("CustomerAggregateRoot", "r/core/Customer.java", decorators=["Entity"], bases=["RootEntity"]),

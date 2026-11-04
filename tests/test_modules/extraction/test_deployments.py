@@ -409,6 +409,25 @@ def test_a_dockerfiles_folder_never_beats_a_context_name_or_image_match():
     assert {s.name: s.unit for s in env.services} == {"first": "unit::r::api", "web": "unit::r::web", "third": "unit::r::api"}
 
 
+def test_a_services_own_dockerfile_beats_the_last_word_of_its_name_not_its_exact_name():
+    units = [
+        {"id": "unit::r::admin", "path": "r/src/admin", "name": "admin"},
+        {"id": "unit::r::web", "path": "r/src/web", "name": "web"},
+        {"id": "unit::r::api", "path": "r/src/api", "name": "api"},
+    ]
+    compose = (
+        "services:\n"
+        "  admin-web:\n    build:\n      context: .\n      dockerfile: src/admin/Dockerfile\n"
+        "  api:\n    build:\n      context: .\n      dockerfile: src/web/Dockerfile\n"
+        "  public-web:\n    build:\n      context: .\n      dockerfile: docker/Dockerfile\n"
+    )
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+
+    assert env is not None
+    assert {s.name: s.unit for s in env.services} == {"admin-web": "unit::r::admin", "api": "unit::r::api", "public-web": "unit::r::web"}
+
+
 def test_a_build_context_that_several_units_share_is_matched_by_name_or_not_at_all():
     units = [{"id": "unit::r::api", "path": "r/app", "name": "api"}, {"id": "unit::r::worker", "path": "r/app", "name": "worker"}]
     compose = "services:\n  worker:\n    build: ./app\n  jobs:\n    build: ./app\n"

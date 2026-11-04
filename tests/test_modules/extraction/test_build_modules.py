@@ -394,6 +394,20 @@ def test_the_repositories_own_name_is_no_test_word():
     assert _excluded_reasons("example-voting-app", ["example-voting-app/worker"]) == {"example-voting-app/worker": None}
 
 
+def test_a_repository_name_in_front_of_a_modules_name_is_no_test_word():
+    files = [{"path": f"example-shop/{m}/pom.xml", "name": "pom.xml", "file_type": "build", "subtype": "xml"} for m in ("orders", "test")]
+    files += [{"path": f"example-shop/{m}/A.java", "name": "A.java", "file_type": "source", "subtype": "java"} for m in ("orders", "test")]
+    pom = "<project><artifactId>{}</artifactId></project>"
+    manifests: dict[str, str] = {"example-shop/orders/pom.xml": pom.format("example-shop-orders"), "example-shop/test/pom.xml": pom.format("example-shop-test")}
+    rules = ModuleRules(manifests=("pom.xml",), code_subtypes=frozenset({"java"}), test_words=("test", "example"))
+
+    excluded = {m.path: m.excluded for m in detect_modules("example-shop", files, manifests, rules)}
+
+    assert excluded["example-shop/orders"] is None
+    # What follows the repository's name still counts
+    assert excluded["example-shop/test"] == "test-only"
+
+
 def test_a_library_repositories_own_module_is_its_component_when_nothing_else_is():
     root = BuildModule(path="lib", name="Lib", manifest="lib/pyproject.toml", module=True, excluded="no entry point")
     sample = BuildModule(path="lib/examples/a", name="A", manifest="lib/examples/a/pyproject.toml", module=True, excluded="test-only")
