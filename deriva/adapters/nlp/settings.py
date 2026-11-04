@@ -24,6 +24,14 @@ class Settings:
     # Noun compound: head noun plus modifiers, at most this many nouns; English verb object at most this many
     max_noun_tokens: int = 3
     max_object_tokens: int = 2
+    # English only, each off by default. A capitalised word (tagged a proper noun) counts as a noun; a hyphen does not end a
+    # compound
+    noun_proper: bool = False
+    noun_hyphens: bool = False
+    # English only. A verb also takes its object through these prepositions ("apply for a permit"); a sentence's first word,
+    # tagged a noun but with an object or a listed preposition, is read as a verb (imperative headings and list items)
+    verb_prepositions: tuple[str, ...] = ()
+    leading_verbs: bool = False
     # Translation: greedy decoding, at most this many output tokens per term
     mt_max_decoding: int = 24
     # Context snippet around an occurrence, at most this many characters
@@ -40,6 +48,8 @@ class Settings:
         unknown = sorted(set(values) - known)
         if unknown:
             raise ValueError(f"Unknown settings: {', '.join(unknown)}")
+        if "verb_prepositions" in values:
+            values = {**values, "verb_prepositions": tuple(values["verb_prepositions"])}
         return cls(**values)
 
     def to_dict(self) -> dict[str, Any]:
