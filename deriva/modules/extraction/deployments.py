@@ -145,13 +145,17 @@ class _Units:
                 last.setdefault(words[-1], []).append(str(u["id"]))
         self.by_last = {word: ids[0] for word, ids in last.items() if len(ids) == 1}
 
-    def by_folder(self, folder: str, *names: str | None) -> str | None:
-        """The unit in a folder; units that share it are told apart by name (``by_name``), else none is."""
+    def at_folder(self, folder: str, *names: str | None) -> str | None:
+        """The unit exactly in a folder; units that share it are told apart by name (``by_name``), else none is."""
         exact = [u for u in self.units if u["path"] == folder]
         if len(exact) > 1:
             return _Units(exact).by_name(*names)
-        if exact:
-            return str(exact[0]["id"])
+        return str(exact[0]["id"]) if exact else None
+
+    def by_folder(self, folder: str, *names: str | None) -> str | None:
+        """The unit in a folder (``at_folder``), else the only one below it."""
+        if any(u["path"] == folder for u in self.units):
+            return self.at_folder(folder, *names)
         below = [u for u in self.units if str(u["path"]).startswith(folder + "/")]
         return str(below[0]["id"]) if len(below) == 1 else None
 
@@ -210,11 +214,12 @@ def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Env
         build = spec.get("build")
         context = build.get("context") if isinstance(build, dict) else build
         image = spec.get("image") if isinstance(spec.get("image"), str) else None
-        dockerfile = build.get("dockerfile") if isinstance(build, dict) else None
-        # The Dockerfile's folder says more than the context (``context: .`` from the repository root)
-        unit = units.by_folder(_normalize(f"{_parent(path)}/{context or '.'}/{_parent(dockerfile)}"), image, str(name)) if isinstance(dockerfile, str) else None
-        unit = unit or (units.by_folder(_normalize(f"{_parent(path)}/{context}"), image, str(name)) if isinstance(context, str) else None)
+        unit = units.by_folder(_normalize(f"{_parent(path)}/{context}"), image, str(name)) if isinstance(context, str) else None
         unit = unit or (units.by_name(image, str(name)) if (image or not context) else None) or units.by_image(image)
+        dockerfile = build.get("dockerfile") if isinstance(build, dict) else None
+        if unit is None and isinstance(dockerfile, str):
+            # Nothing else names it (``context: .`` from the repository root): its name, else the unit in the Dockerfile's own folder
+            unit = units.by_name(image, str(name)) or units.at_folder(_normalize(f"{_parent(path)}/{context or '.'}/{_parent(dockerfile)}"), image, str(name))
         depends = spec.get("depends_on") or []
         variables = spec.get("environment") or {}
         if isinstance(variables, list):

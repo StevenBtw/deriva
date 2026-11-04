@@ -356,11 +356,14 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
             return "infrastructure-as-code"
         if rules.test_dependencies and dependencies and all(matches(d, rules.test_dependencies) for d in dependencies):
             return "test-only"
-        # Every folder on its path inside the repository (examples/demo), not the repository's own name
-        inside = folder.removeprefix(repository).strip("/").split("/")
-        named = {w.casefold() for part in inside for w in _words(part)} | {w.casefold() for w in _words(_manifest_name(manifest, manifests.get(manifest, "")) or "")}
-        if named & {w.casefold() for w in rules.test_words}:
-            return "test-only"
+        words = {w.casefold() for w in rules.test_words}
+        # The repository's own name says nothing about its code
+        if folder != repository:
+            own = _words(_folder_name(folder)) + _words(_manifest_name(manifest, manifests.get(manifest, "")) or "")
+            # A folder above it counts only when it is a test word itself (examples/demo, not ab-test-service/backend)
+            above = folder.removeprefix(repository).strip("/").split("/")[:-1]
+            if {w.casefold() for w in own} & words or {part.casefold() for part in above} & words:
+                return "test-only"
         return None
 
     reasons = {folder: reason for folder in code if (reason := excluded(folder))}
