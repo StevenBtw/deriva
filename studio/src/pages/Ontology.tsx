@@ -582,7 +582,7 @@ function SelectionSwitch({
 }) {
   if (!types.some((t) => t.steps.length)) return null;
   return (
-    <button type="button" className="toggle" role="switch" aria-checked={types.some(isSelected)} aria-label={label} disabled={disabled} onClick={() => void onApply("derivation", switchChanges(types))} />
+    <button type="button" className="toggle" role="switch" aria-checked={types.some(isSelected)} aria-label={label} aria-disabled={disabled} onClick={() => void onApply("derivation", switchChanges(types))} />
   );
 }
 
@@ -603,7 +603,7 @@ export function OutputOntologyPage() {
       <div className="pagehead">
         <h2>Output ontology</h2>
         <span className="sub">
-          Choose the part of ArchiMate to derive: {selected.size} of {derivable.length} types selected. The switches hold from the next derivation run; a layer or aspect switched back on takes its shipped steps.
+          Choose the part of ArchiMate to derive: {selected.size} of {derivable.length} types selected. The switches hold from the next derivation run; a layer or aspect switched back on takes the steps the release ships on, or all its steps where none ships on.
         </span>
       </div>
       {problems}
@@ -653,7 +653,7 @@ export function OutputOntologyPage() {
                                   role="switch"
                                   aria-checked={isSelected(t)}
                                   aria-label={`Enable ${t.name}`}
-                                  disabled={applying}
+                                  aria-disabled={applying}
                                   onClick={() => void applySteps("derivation", switchChanges([t]))}
                                 />
                                 {t.step && t.step.version !== null ? `v${t.step.version}` : ""}
