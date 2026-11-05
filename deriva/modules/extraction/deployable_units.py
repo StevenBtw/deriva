@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
-from deriva.modules.extraction.build_modules import development_only
+from deriva.modules.extraction.build_modules import csproj_entry, development_only
 
 
 @dataclass(frozen=True)
@@ -175,7 +175,10 @@ def _manifest_entries(path: str, text: str) -> tuple[list[tuple[str, str, str, s
     name = PurePosixPath(path).name.lower()
     entries: list[tuple[str, str, str, str]] = []
     title = description = None
-    if name == "package.json":
+    if name.endswith(".csproj"):
+        if kind := csproj_entry(text):
+            entries.append((kind, "", "", f"{kind}: {path}"))
+    elif name == "package.json":
         try:
             data = json.loads(text)
         except ValueError:

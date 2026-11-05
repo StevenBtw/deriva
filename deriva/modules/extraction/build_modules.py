@@ -53,6 +53,7 @@ class BuildModule:
     files: list[str] = field(default_factory=list)  # The files it holds itself, sorted
     members: list[str] = field(default_factory=list)  # For a system: the module paths it lists, sorted
     excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only, tooling)
+    grouped: bool = False  # A folder with the same project layout as another one: a module of the design, whoever uses it
 
 
 def module_id(repository: str, path: str) -> str:
@@ -185,11 +186,20 @@ def development_only(manifests: dict[str, str]) -> set[str]:
     return folders
 
 
+def csproj_entry(text: str) -> str | None:
+    """The kind of program a .NET project builds, None for a class library: ``web`` by the web or worker SDK, ``exe`` by its output type."""
+    if re.search(r"""<Project\s[^>]*Sdk\s*=\s*["']Microsoft\.NET\.Sdk\.(Web|Worker)["']""", text):
+        return "web"
+    return "exe" if re.search(r"<OutputType>\s*(Win)?Exe\s*</OutputType>", text) else None
+
+
 def declares_entry(path: str, text: str) -> bool:
     """Whether a manifest declares an entry point by its ecosystem's convention: npm ``bin``, ``main`` or a ``start``
     script, a Maven ``mainClass``, the Spring Boot plugin or war packaging, Gradle's application, Spring Boot or war
-    plugin, or pyproject project scripts."""
+    plugin, pyproject project scripts, or a .NET project that builds a program."""
     lower = PurePosixPath(path).name.lower()
+    if lower.endswith(".csproj"):
+        return csproj_entry(text) is not None
     if lower == "package.json":
         try:
             data = json.loads(text)
@@ -280,6 +290,23 @@ def feature_areas(code_files: list[str], route_files: set[str], entity_files: se
     entities = {a for p in code_files if p in entity_files and (a := area_of(p))}
     areas = sorted(f"{root}/{a}" for a in routes & entities)
     return areas if len(areas) >= 2 else []
+
+
+def repeated_layouts(modules: set[str], manifest_folders: set[str], min_members: int) -> dict[str, list[str]]:
+    """Folders without a manifest of their own whose modules repeat another such folder's layout (at least ``min_members``
+    of the same names, Application and Domain under both Orders and Billing) -> those modules: one module of the design
+    built as several projects. Modules that share no such layout stay as they are."""
+    children: dict[str, set[str]] = {}
+    for module in modules:
+        folder = _parent(module)
+        if folder not in manifest_folders:
+            children.setdefault(folder, set()).add(PurePosixPath(module).name)
+    groups: dict[str, list[str]] = {}
+    for folder, names in children.items():
+        shared = max((len(names & other) for f, other in children.items() if f != folder), default=0)
+        if shared >= min_members:
+            groups[folder] = sorted(f"{folder}/{name}" for name in names)
+    return groups
 
 
 def _listed(path: str, text: str) -> list[str]:
@@ -379,6 +406,11 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
 
     reasons = {folder: reason for folder in code if (reason := excluded(folder))}
     modules = set(code) - set(reasons)
+    groups = repeated_layouts(modules, set(candidates), rules.min_members)
+    for folder, members in groups.items():
+        candidates[folder] = ""
+        own[folder] = sorted(path for member in members for path in own.get(member, []))
+        modules = (modules - set(members)) | {folder}
     systems: dict[str, list[str]] = {}
     for folder, manifest in candidates.items():
         listed: set[str] = set()
@@ -414,6 +446,7 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
                 files=sorted(own.get(folder, [])),
                 members=systems.get(folder, []),
                 excluded=reasons.get(folder),
+                grouped=folder in groups,
             )
         )
     # The root holds the repository: it takes the repository's name (an aggregator's own name is often "parent")

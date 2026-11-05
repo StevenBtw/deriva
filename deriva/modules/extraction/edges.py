@@ -461,6 +461,7 @@ def extract_edges_from_file(
     call_languages: dict[str, frozenset[str]] | None = None,
     scope_of: Callable[[str], str] | None = None,
     java_files: dict[str, list[str]] | None = None,
+    csharp_namespaces: dict[str, list[str]] | None = None,
     import_roots: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """
@@ -475,6 +476,7 @@ def extract_edges_from_file(
         edge_types: Which edge types to extract (default: all)
         ts_manager: Optional TreeSitterManager instance to reuse
         java_files: Optional index of the repository's Java files by name (built from all_file_paths when missing)
+        csharp_namespaces: Optional index of the repository's C# namespaces (without it no using resolves to a file)
 
     Returns:
         Dictionary with:
@@ -518,6 +520,7 @@ def extract_edges_from_file(
         filter_constants = manager.get_filter_constants(file_path=file_path)
         if java_files is None and file_path.endswith(".java") and imports:
             java_files = _java_file_index(all_file_paths)
+        csharp_imports = _csharp_imports(imports, file_path, file_content, csharp_namespaces) if csharp_namespaces and file_path.endswith(".cs") else {}
 
         # Build lookups once (shared across edge types)
         type_lookup = {t.name: t for t in types}
@@ -535,6 +538,7 @@ def extract_edges_from_file(
                 filter_constants=filter_constants,
                 java_files=java_files,
                 import_roots=import_roots,
+                csharp_imports=csharp_imports,
             )
             edges.extend(import_edges)
             nodes.extend(import_nodes)
@@ -549,7 +553,7 @@ def extract_edges_from_file(
                 repo_name=repo_name,
                 filter_constants=filter_constants,
                 global_method_lookup=global_method_lookup,
-                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants, java_files, import_roots),
+                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants, java_files, import_roots, csharp_imports),
                 call_languages=call_languages,
                 scope_of=scope_of,
             )
@@ -666,6 +670,7 @@ def extract_edges_batch(
     source_files = [f for f in files if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES]
 
     total = len(source_files)
+    csharp_namespaces = _csharp_namespace_index({f["path"]: text for f in source_files if f.get("subtype") == "csharp" and (text := _source_text(f, repo_path)) is not None})
 
     # Reuse single TreeSitterManager instance for all files
     ts_manager = TreeSitterManager()
@@ -701,6 +706,7 @@ def extract_edges_batch(
             scope_of=scope_of,
             java_files=java_files,
             import_roots=tuple(roots),
+            csharp_namespaces=csharp_namespaces,
         )
 
         all_edges.extend(result["data"]["edges"])
@@ -758,6 +764,7 @@ def _extract_import_edges(
     filter_constants: FilterConstants | None = None,
     java_files: dict[str, list[str]] | None = None,
     import_roots: tuple[str, ...] = (),
+    csharp_imports: dict[str, list[str]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     """Extract IMPORTS and USES edges from import statements.
 
@@ -780,7 +787,7 @@ def _extract_import_edges(
 
     for imp in imports:
         # from <package> import <module>: the module's own file (and the package for names that are no module)
-        submodules, only_modules = _python_submodules(imp.module, imp.names, file_path, all_file_paths) if imp.is_from_import else ([], False)
+        submodules, only_modules = _direct_targets(imp, file_path, all_file_paths, csharp_imports)
         for target_path in submodules if EdgeType.IMPORTS in edge_types else []:
             target_file_id = generate_file_node_id(repo_name, target_path)
             edges.append(
@@ -880,6 +887,7 @@ def _imported_paths(
     filter_constants: FilterConstants | None = None,
     java_files: dict[str, list[str]] | None = None,
     import_roots: tuple[str, ...] = (),
+    csharp_imports: dict[str, list[str]] | None = None,
 ) -> set[str]:
     """The repository files a file imports (its internal imports, resolved as the IMPORTS edges are)."""
     stdlib_modules = filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
@@ -887,7 +895,7 @@ def _imported_paths(
         java_files = _java_file_index(all_file_paths)
     paths: set[str] = set()
     for imp in imports:
-        submodules, only_modules = _python_submodules(imp.module, imp.names, file_path, all_file_paths) if imp.is_from_import else ([], False)
+        submodules, only_modules = _direct_targets(imp, file_path, all_file_paths, csharp_imports)
         paths.update(submodules)
         if only_modules:
             continue
@@ -1000,6 +1008,56 @@ def _resolve_import(
 
     # Could be external package not in our list
     return {"type": "external", "package": top_level}
+
+
+_CSHARP_NAMESPACE = re.compile(r"^\s*namespace\s+([\w.]+)", re.MULTILINE)
+
+
+def _source_text(file_info: dict[str, Any], repo_path: Path) -> str | None:
+    """A source file's text, as given or from the checkout; None when it cannot be read."""
+    content = file_info.get("content")
+    if content is not None:
+        return content
+    try:
+        return (repo_path / file_info["path"]).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _csharp_namespace_index(sources: dict[str, str]) -> dict[str, list[str]]:
+    """Every namespace the repository's C# files declare, and each namespace above one, -> the files declaring it."""
+    index: dict[str, list[str]] = {}
+    for path, text in sorted(sources.items()):
+        for namespace in _CSHARP_NAMESPACE.findall(text):
+            parts = namespace.split(".")
+            for depth in range(1, len(parts)):
+                index.setdefault(".".join(parts[:depth]), [])
+            index.setdefault(namespace, []).append(path)
+    return index
+
+
+def _csharp_imports(imports: list[ExtractedImport], file_path: str, file_content: str, namespaces: dict[str, list[str]]) -> dict[str, list[str]]:
+    """The usings of the repository's own namespaces -> the files they reach: of a namespace the files whose type (the
+    file's name, by the language's convention) this file names, of a ``using static`` its type's file."""
+    named = set(re.findall(r"\w+", file_content))
+    stem = lambda path: PurePosixPath(path).name.split(".")[0]  # noqa: E731 - a one-line helper
+    found: dict[str, list[str]] = {}
+    for imp in imports:
+        if imp.module in namespaces:
+            found[imp.module] = [p for p in namespaces[imp.module] if p != file_path and stem(p) in named]
+        elif imp.is_from_import:
+            outer, _, type_name = imp.module.rpartition(".")
+            if targets := [p for p in namespaces.get(outer, []) if stem(p) == type_name]:
+                found[imp.module] = targets
+    return found
+
+
+def _direct_targets(imp: ExtractedImport, file_path: str, all_file_paths: set[str], csharp_imports: dict[str, list[str]] | None) -> tuple[list[str], bool]:
+    """The files an import reaches before any module lookup, and whether that settles it: a C# using of an own
+    namespace, the module files of a Python ``from`` import."""
+    if csharp_imports and imp.module in csharp_imports:
+        return csharp_imports[imp.module], True
+    return _python_submodules(imp.module, imp.names, file_path, all_file_paths) if imp.is_from_import else ([], False)
 
 
 def _java_file_index(all_file_paths: set[str]) -> dict[str, list[str]]:

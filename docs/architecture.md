@@ -44,7 +44,7 @@ Which element types sit on which level is a versioned table (the `abstraction_le
 
 ### The component hierarchy
 
-The `BuildModule` extraction step finds the folders with a build manifest and code of their own (manifests such as Maven's, npm's, uv's or Gradle's, from a versioned list), and a parent system where an aggregator manifest lists at least two of them. The hierarchy goes from systems to units to modules to libraries:
+The `BuildModule` extraction step finds the folders with a build manifest and code of their own (manifests such as Maven's, npm's, uv's, Gradle's or a .NET project file, from a versioned list), and a parent system where an aggregator manifest lists at least two of them. The hierarchy goes from systems to units to modules to libraries:
 
 - a system holds the units and modules in its folders;
 - the only deployable unit at a module's folder holds that module; several units there are the module's entry points, and the module holds them;
