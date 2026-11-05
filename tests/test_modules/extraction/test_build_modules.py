@@ -503,6 +503,19 @@ def test_folders_with_the_same_project_layout_are_one_module_each():
     assert modules["r/mods/Bills/Tests/Unit"].excluded == "test-only"  # stays apart from its group
 
 
+def test_an_aggregator_listing_grouped_projects_stays_a_system_over_their_groups():
+    folders = ("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Application", "r/mods/Bills/Domain")
+    files = [f for folder in folders for f in (_f(f"{folder}/pom.xml", "maven", "build"), _f(f"{folder}/Thing.java"))] + [_f("r/pom.xml", "maven", "build")]
+    listing = "".join(f"<module>{folder.removeprefix('r/')}</module>" for folder in folders)
+    manifests = {"r/pom.xml": f"<project><artifactId>shop</artifactId><packaging>pom</packaging><modules>{listing}</modules></project>"}
+    manifests |= {f"{folder}/pom.xml": f"<project><artifactId>{folder.rsplit('/', 2)[-2].lower()}-{folder.rsplit('/', 1)[-1].lower()}</artifactId></project>" for folder in folders}
+
+    modules = _by_path(detect_modules("r", files, manifests, RULES))
+
+    assert modules["r/mods/Orders"].grouped and modules["r/mods/Bills"].grouped
+    assert modules["r"].system and sorted(modules["r"].members) == ["r/mods/Bills", "r/mods/Orders"]
+
+
 def test_a_layout_only_one_folder_has_groups_nothing():
     files = _projects("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Web", "r/mods/Bills/Worker")
 

@@ -1875,8 +1875,27 @@ class TestCsharpImports:
             self._source("core/Unused.cs", "namespace Acme.Core { class Unused { } }\n"),
         )
 
-        assert len(self._imported(result)) == 1
+        assert self._imported(result) == {("web_Page.cs", "core_Order.cs")}
         assert result["stats"]["imports"]["internal"] == 1
+        assert result["stats"]["imports"]["external"] == 0
+
+    def test_a_namespace_named_only_in_the_using_line_reaches_no_file_of_that_name(self):
+        """``using Acme.Core;`` names Core, but the file uses no type Core: Core.cs is not reached."""
+        result = self._edges(
+            self._source("web/Page.cs", "using Acme.Core;\nnamespace Acme.Web;\nclass Page { Order o; }\n"),
+            self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+            self._source("core/Core.cs", "namespace Acme.Core;\nclass Core { }\n"),
+        )
+
+        assert self._imported(result) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_an_alias_using_of_a_type_reaches_the_file_of_that_type(self):
+        result = self._edges(
+            self._source("web/Page.cs", "using Item = Acme.Core.Order;\nnamespace Acme.Web;\nclass Page { Item o; }\n"),
+            self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+        )
+
+        assert self._imported(result) == {("web_Page.cs", "core_Order.cs")}
         assert result["stats"]["imports"]["external"] == 0
 
     def test_an_own_namespace_without_a_named_file_is_no_external_package(self):

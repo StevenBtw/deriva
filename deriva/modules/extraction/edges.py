@@ -670,7 +670,9 @@ def extract_edges_batch(
     source_files = [f for f in files if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES]
 
     total = len(source_files)
-    csharp_namespaces = _csharp_namespace_index({f["path"]: text for f in source_files if f.get("subtype") == "csharp" and (text := _source_text(f, repo_path)) is not None})
+    # C# sources are read once: for the namespace index here and for their edges below
+    csharp_texts = {f["path"]: text for f in source_files if f.get("subtype") == "csharp" and (text := _source_text(f, repo_path)) is not None}
+    csharp_namespaces = _csharp_namespace_index(csharp_texts)
 
     # Reuse single TreeSitterManager instance for all files
     ts_manager = TreeSitterManager()
@@ -683,6 +685,8 @@ def extract_edges_batch(
 
         # Read file content if not provided
         content = file_info.get("content")
+        if content is None:
+            content = csharp_texts.get(file_path)
         if content is None:
             try:
                 full_path = repo_path / file_path
@@ -1011,6 +1015,8 @@ def _resolve_import(
 
 
 _CSHARP_NAMESPACE = re.compile(r"^\s*namespace\s+([\w.]+)", re.MULTILINE)
+# The using and namespace lines of a C# file: the names in them are no uses of a type
+_CSHARP_DIRECTIVE = re.compile(r"^\s*(?:global\s+)?(?:using|namespace)\b[^\n]*", re.MULTILINE)
 
 
 def _source_text(file_info: dict[str, Any], repo_path: Path) -> str | None:
@@ -1038,14 +1044,15 @@ def _csharp_namespace_index(sources: dict[str, str]) -> dict[str, list[str]]:
 
 def _csharp_imports(imports: list[ExtractedImport], file_path: str, file_content: str, namespaces: dict[str, list[str]]) -> dict[str, list[str]]:
     """The usings of the repository's own namespaces -> the files they reach: of a namespace the files whose type (the
-    file's name, by the language's convention) this file names, of a ``using static`` its type's file."""
-    named = set(re.findall(r"\w+", file_content))
+    file's name, by the language's convention) this file names outside its using and namespace lines, of a
+    ``using static`` or an alias of a type that type's file."""
+    named = set(re.findall(r"\w+", _CSHARP_DIRECTIVE.sub("", file_content)))
     stem = lambda path: PurePosixPath(path).name.split(".")[0]  # noqa: E731 - a one-line helper
     found: dict[str, list[str]] = {}
     for imp in imports:
         if imp.module in namespaces:
             found[imp.module] = [p for p in namespaces[imp.module] if p != file_path and stem(p) in named]
-        elif imp.is_from_import:
+        elif imp.is_from_import or imp.alias:
             outer, _, type_name = imp.module.rpartition(".")
             if targets := [p for p in namespaces.get(outer, []) if stem(p) == type_name]:
                 found[imp.module] = targets

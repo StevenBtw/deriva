@@ -411,15 +411,18 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
         candidates[folder] = ""
         own[folder] = sorted(path for member in members for path in own.get(member, []))
         modules = (modules - set(members)) | {folder}
+    group_of = {member: folder for folder, members in groups.items() for member in members}
     systems: dict[str, list[str]] = {}
     for folder, manifest in candidates.items():
         listed: set[str] = set()
         for pattern in _listed(manifest, manifests.get(manifest, "")):
             target = str(PurePosixPath(folder, pattern.strip("/")))
             listed |= {m for m in set(code) if fnmatch.fnmatchcase(m, target)}
-        # Excluded modules count as listed (the aggregation is a fact of the build); its members are the other ones
-        if len(listed) >= rules.min_members and listed & modules:
-            systems[folder] = sorted(listed & modules)
+        # Excluded modules count as listed (the aggregation is a fact of the build); its members are the other ones, a
+        # grouped project by its group
+        members = {group_of.get(m, m) for m in listed} & modules
+        if len(listed) >= rules.min_members and members:
+            systems[folder] = sorted(members)
 
     out = []
     raws: dict[str, str] = {}

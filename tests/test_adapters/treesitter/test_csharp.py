@@ -491,6 +491,12 @@ class TestCSharpExtractImports:
         assert len(imports) == 1
         # Alias handling varies by tree-sitter version
 
+    def test_an_alias_using_names_its_target_and_keeps_the_alias_apart(self, extractor, parser):
+        source = "using Order = Acme.Core.Order;\nusing Core = Acme.Core;"
+        imports = extractor.extract_imports(parse(parser, source), source.encode("utf-8"))
+
+        assert [(i.module, i.alias, i.is_from_import) for i in imports] == [("Acme.Core.Order", "Order", False), ("Acme.Core", "Core", False)]
+
     def test_extracts_static_using(self, extractor, parser):
         """Should extract static using directive."""
         source = "using static System.Math;"
