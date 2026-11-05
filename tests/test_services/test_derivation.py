@@ -1431,6 +1431,7 @@ class TestCollectRelationshipRules:
             "Device",
             "Node",
             "SystemSoftware",
+            *derivation.EXPERIMENTAL_TYPES,  # the direct relationships of the metamodel
         }  # Artifact, BusinessRole, TechnologyFunction and TechnologyService relate through structure only
 
     def test_contains_rules_for_registered_types(self):
@@ -1447,6 +1448,8 @@ class TestCollectRelationshipRules:
 
         for element_type, (outbound, inbound) in rules.items():
             assert type(outbound) is list and type(inbound) is list, element_type
+            if element_type in derivation.EXPERIMENTAL_TYPES:
+                continue  # Their rules are the metamodel's direct relationships to any type (test_core_type)
             for rule in outbound + inbound:
                 assert rule.target_type in {
                     "ApplicationComponent",

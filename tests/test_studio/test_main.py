@@ -124,20 +124,74 @@ def test_no_browser_when_the_server_stops_before_it_started():
     open_url.assert_not_called()
 
 
-def test_a_network_address_needs_allow_remote():
-    """The studio has no login: binding beyond this machine is an explicit choice."""
+def test_a_network_address_needs_allow_remote(tmp_path):
+    """The studio has no login: binding beyond this machine is an explicit choice, also with TLS."""
     import pytest
 
     from deriva.studio.__main__ import main
 
     with patch("deriva.studio.__main__.uvicorn") as uvicorn, pytest.raises(SystemExit):
-        main(["--host", "0.0.0.0", "--no-browser"])
+        main(["--host", "0.0.0.0", "--no-browser", *_certificate(tmp_path)])
     uvicorn.Server.return_value.run.assert_not_called()
 
-    with patch("deriva.studio.__main__.uvicorn") as uvicorn:
+
+def _certificate(tmp_path):
+    (tmp_path / "cert.pem").write_text("cert", encoding="utf-8")
+    (tmp_path / "key.pem").write_text("key", encoding="utf-8")
+    return ["--tls-cert", str(tmp_path / "cert.pem"), "--tls-key", str(tmp_path / "key.pem")]
+
+
+def test_a_network_address_without_tls_is_refused():
+    """The launch link carries the token: over plain HTTP anyone on the network could read it and use the studio."""
+    import pytest
+
+    from deriva.studio.__main__ import main
+
+    with patch("deriva.studio.__main__.uvicorn") as uvicorn, pytest.raises(SystemExit):
         main(["--host", "0.0.0.0", "--allow-remote", "--no-browser"])
-    assert uvicorn.Config.call_args.kwargs["host"] == "0.0.0.0"
+    uvicorn.Server.return_value.run.assert_not_called()
+
+
+def test_a_network_address_with_tls_serves_https(tmp_path, capsys):
+    from deriva.studio.__main__ import main
+
+    tls = _certificate(tmp_path)
+    with patch("deriva.studio.__main__.uvicorn") as uvicorn:
+        main(["--host", "0.0.0.0", "--allow-remote", "--no-browser", *tls])
+    config = uvicorn.Config.call_args.kwargs
+    assert config["host"] == "0.0.0.0"
+    assert config["ssl_certfile"] == tls[1] and config["ssl_keyfile"] == tls[3]
     uvicorn.Server.return_value.run.assert_called_once()
+    assert "Deriva Studio: https://0.0.0.0:8765/api/auth?token=" in capsys.readouterr().out
+
+
+def test_tls_on_this_machine_needs_no_allow_remote(tmp_path, capsys):
+    from deriva.studio.__main__ import main
+
+    with patch("deriva.studio.__main__.uvicorn"):
+        main(["--no-browser", *_certificate(tmp_path)])
+    assert "Deriva Studio: https://localhost:8765/api/auth?token=" in capsys.readouterr().out
+
+
+def test_this_machine_stays_plain_http_without_a_certificate(capsys):
+    from deriva.studio.__main__ import main
+
+    with patch("deriva.studio.__main__.uvicorn") as uvicorn:
+        main(["--no-browser"])
+    assert "ssl_certfile" not in uvicorn.Config.call_args.kwargs
+    assert "Deriva Studio: http://localhost:8765/api/auth?token=" in capsys.readouterr().out
+
+
+def test_a_certificate_needs_its_key_and_both_must_exist(tmp_path):
+    import pytest
+
+    from deriva.studio.__main__ import main
+
+    tls = _certificate(tmp_path)
+    for arguments in (tls[:2], tls[2:], ["--tls-cert", str(tmp_path / "missing.pem"), tls[2], tls[3]], [tls[0], tls[1], "--tls-key", str(tmp_path / "missing.pem")]):
+        with patch("deriva.studio.__main__.uvicorn") as uvicorn, pytest.raises(SystemExit):
+            main(["--no-browser", *arguments])
+        uvicorn.Server.return_value.run.assert_not_called()
 
 
 def test_the_api_namespaces_themselves_are_no_front_end_routes(tmp_path):

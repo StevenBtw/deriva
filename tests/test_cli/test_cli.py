@@ -2670,8 +2670,26 @@ class TestConfigAddCommand:
         result = runner.invoke(app, ["config", "add", "derivation", "joint_consistency", "--phase", "refine", "--sequence", "4", "--params", '{"dry_run": true}'])
 
         assert result.exit_code == 0
-        mock_session.add_derivation_step.assert_called_once_with("joint_consistency", "refine", 4, params='{"dry_run": true}')
+        mock_session.add_derivation_step.assert_called_once_with("joint_consistency", "refine", 4, params='{"dry_run": true}', llm=False)
         assert "Added derivation step: joint_consistency (disabled)" in result.stdout
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_adds_an_llm_step(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.add_derivation_step.return_value = True
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "add", "derivation", "NewType", "--phase", "generate", "--sequence", "21", "--llm"])
+
+        assert result.exit_code == 0
+        mock_session.add_derivation_step.assert_called_once_with("NewType", "generate", 21, params=None, llm=True)
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_llm_flag_is_for_derivation_steps(self, mock_session_class):
+        result = runner.invoke(app, ["config", "add", "extraction", "NewNode", "--sequence", "21", "--llm"])
+
+        assert result.exit_code == 1
+        assert "--llm applies to derivation steps only" in result.output
 
     @patch("deriva.cli.commands.config.PipelineSession")
     def test_existing_step_exits_1(self, mock_session_class):

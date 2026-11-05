@@ -2697,6 +2697,22 @@ class TestBuildModuleStep:
         excluded = {r["id"].split("::")[-1]: r["x"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.excluded AS x")}
         assert excluded == {"lib": None, "data": "data-only library", "only": "part of one unit", "tool": None, "probe": "no entry point"}
 
+    def test_folders_with_the_same_project_layout_stay_components_whoever_uses_them(self, graph):
+        """Nobody imports orders, bills or spare; the first two repeat a layout, so they are modules of the design."""
+        files = {"api/Api.csproj": ("unknown", "csproj", '<Project Sdk="Microsoft.NET.Sdk.Web"></Project>'), "api/Program.cs": ("source", "csharp", "class Program {}\n")}
+        for project in ("mods/orders/core", "mods/orders/data", "mods/bills/core", "mods/bills/data", "spare"):
+            files[f"{project}/P.csproj"] = ("unknown", "csproj", '<Project Sdk="Microsoft.NET.Sdk" />')
+            files[f"{project}/Thing.cs"] = ("source", "csharp", "class Thing {}\n")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["csharp"]})
+            self._step(graph, tmpdir, "BuildModule", {"manifests": ["*.csproj"], "code_subtypes": ["csharp"], "min_behaviour": 1})
+
+        excluded = {r["path"]: r["x"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.path AS path, m.excluded AS x")}
+        assert excluded == {"r/api": None, "r/mods/bills": None, "r/mods/orders": None, "r/spare": "no entry point"}
+        units = [r["name"] for r in graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.name AS name")]
+        assert units == ["api"]
+
     def test_a_library_repository_keeps_its_own_module_as_the_component(self, graph):
         """Its only units are examples (test words in their folder); without the rule the model has no component."""
         files = {

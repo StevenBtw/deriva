@@ -1852,3 +1852,56 @@ def test_a_bare_import_resolves_against_an_import_root_only_when_nothing_else_re
     assert dotted == {"type": "internal", "target_path": "shared/middleware/__init__.py"}
     assert existing == {"type": "internal", "target_path": "security/__init__.py"}  # a repository-relative match wins
     assert external["type"] == "external"
+
+
+class TestCsharpImports:
+    """A using of a namespace the repository declares reaches the files it names; it is no external package."""
+
+    @staticmethod
+    def _source(path: str, content: str) -> dict:
+        return {"path": path, "file_type": "source", "subtype": "csharp", "content": content}
+
+    def _edges(self, *files: dict) -> dict:
+        return extract_edges_batch(files=list(files), repo_name="r", repo_path="/repo", edge_types={EdgeType.IMPORTS, EdgeType.USES})
+
+    @staticmethod
+    def _imported(result: dict) -> set[tuple[str, str]]:
+        return {(edge["from_node_id"].rsplit("::", 1)[-1], edge["to_node_id"].rsplit("::", 1)[-1]) for edge in result["data"]["edges"] if edge["relationship_type"] == "IMPORTS"}
+
+    def test_a_using_reaches_the_files_of_the_namespace_it_names(self):
+        result = self._edges(
+            self._source("web/Page.cs", "using Acme.Core;\nnamespace Acme.Web;\nclass Page { Order o; }\n"),
+            self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+            self._source("core/Unused.cs", "namespace Acme.Core { class Unused { } }\n"),
+        )
+
+        assert len(self._imported(result)) == 1
+        assert result["stats"]["imports"]["internal"] == 1
+        assert result["stats"]["imports"]["external"] == 0
+
+    def test_an_own_namespace_without_a_named_file_is_no_external_package(self):
+        result = self._edges(
+            self._source("web/Page.cs", "using Acme;\nusing Acme.Core;\nnamespace Acme.Web;\nclass Page { }\n"),
+            self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+        )
+
+        assert self._imported(result) == set()
+        assert not [node for node in result["data"]["nodes"] if node["properties"].get("dependencyName") == "Acme"]
+
+    def test_another_namespace_stays_an_external_package(self):
+        result = self._edges(
+            self._source("web/Page.cs", "using Vendor.Tools;\nnamespace Acme.Web;\nclass Page { }\n"),
+            self._source("core/Vendor.cs", "namespace Acme.Core;\nclass Vendor { }\n"),
+        )
+
+        assert self._imported(result) == set()
+        assert [node["properties"]["dependencyName"] for node in result["data"]["nodes"]] == ["Vendor"]
+
+    def test_a_using_static_reaches_the_file_of_its_type(self):
+        result = self._edges(
+            self._source("web/Page.cs", "using static Acme.Core.Limits;\nnamespace Acme.Web;\nclass Page { int m = Max; }\n"),
+            self._source("core/Limits.cs", "namespace Acme.Core;\nstatic class Limits { public const int Max = 1; }\n"),
+        )
+
+        assert result["stats"]["imports"]["internal"] == 1
+        assert result["stats"]["imports"]["external"] == 0

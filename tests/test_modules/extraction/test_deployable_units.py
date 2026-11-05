@@ -616,3 +616,24 @@ def test_name_candidates_do_not_depend_on_the_order_of_the_inputs():
     assert {k: u.name_candidates for k, u in forward.items()} == {k: u.name_candidates for k, u in backward.items()}
     # A manifest name with capitals keeps its own casing (a lower case one takes title case: "Lease Ops" above)
     assert ("TeaShop UI", "manifest") in forward["r/web"].name_candidates
+
+
+def test_a_csproj_entry_point_makes_a_unit_and_a_class_library_does_not():
+    rules = UnitRules(code_subtypes=frozenset({"csharp"}))
+    files = [
+        _file("r/Api/Api.csproj"),
+        _file("r/Api/Program.cs", "csharp"),
+        _file("r/Job/Job.csproj"),
+        _file("r/Job/Program.cs", "csharp"),
+        _file("r/Core/Core.csproj"),
+        _file("r/Core/Order.cs", "csharp"),
+    ]
+    manifests = {
+        "r/Api/Api.csproj": '<Project Sdk="Microsoft.NET.Sdk.Web"></Project>',
+        "r/Job/Job.csproj": '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>',
+        "r/Core/Core.csproj": '<Project Sdk="Microsoft.NET.Sdk" />',
+    }
+
+    units = detect_units(RepoFacts(repository="r", files=files, manifests=manifests), rules)
+
+    assert [(u.path, u.kind) for u in units] == [("r/Api", "web"), ("r/Job", "exe")]

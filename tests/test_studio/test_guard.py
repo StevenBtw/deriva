@@ -103,15 +103,30 @@ class TestLauncher:
         assert create_app.call_args_list[0].kwargs["allowed_hosts"] == LOCAL
         assert opener.call_args_list[0].args[1] == f"http://localhost:8765/api/auth?token={tokens[0]}"
 
-    def test_a_remote_studio_checks_no_host_but_still_the_token(self):
+    def test_a_remote_studio_checks_no_host_but_still_the_token(self, tmp_path):
         from unittest.mock import patch
 
         from deriva.studio.__main__ import main
 
+        (tmp_path / "cert.pem").write_text("cert", encoding="utf-8")
+        (tmp_path / "key.pem").write_text("key", encoding="utf-8")
+        tls = ["--tls-cert", str(tmp_path / "cert.pem"), "--tls-key", str(tmp_path / "key.pem")]
         with patch("deriva.studio.__main__.uvicorn"), patch("deriva.studio.__main__.create_app") as create_app:
-            main(["--host", "0.0.0.0", "--allow-remote", "--no-browser"])
+            main(["--host", "0.0.0.0", "--allow-remote", "--no-browser", *tls])
         assert create_app.call_args.kwargs["allowed_hosts"] is None
         assert create_app.call_args.kwargs["token"]
+
+
+class TestSecureCookie:
+    """The cookie is the launch token: once the studio serves TLS, a browser must never send it over plain HTTP."""
+
+    def test_over_https_the_cookie_is_secure(self, tmp_path):
+        client = guarded(tmp_path, base_url="https://localhost:8765")
+        assert "; Secure" in client.get(f"/api/auth?token={TOKEN}").headers["set-cookie"]
+
+    def test_over_http_it_is_not_or_the_browser_would_drop_it(self, tmp_path):
+        client = guarded(tmp_path)
+        assert "Secure" not in client.get(f"/api/auth?token={TOKEN}").headers["set-cookie"]
 
 
 class TestOtherCookies:

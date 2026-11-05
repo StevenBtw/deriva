@@ -1841,6 +1841,13 @@ class TestAddDerivationStep:
 
         assert add_derivation_step(engine, "graph_relationships", "refine", 4) is False
 
+    def test_a_step_can_be_added_as_an_llm_step(self, engine):
+        """A step that classifies with the LLM is added with the flag that hands it the LLM, still disabled."""
+        from deriva.services.config import add_derivation_step
+
+        assert add_derivation_step(engine, "new_type", "generate", 21, llm=True) is True
+        assert engine.execute("SELECT enabled, llm FROM derivation_config WHERE step_name = 'new_type'").fetchone() == (False, True)
+
     @pytest.mark.parametrize(
         ("phase", "sequence", "params", "message"),
         [

@@ -106,6 +106,22 @@ def test_elements_that_float_at_the_enterprise_level_make_a_model_weak():
     assert connected["enterprise_orphans"] == [] and connected["verdict"] == "ok"
 
 
+def test_roles_do_not_float_while_no_step_can_link_them():
+    """A role on its own says nothing about the model: no step derives what a role would be assigned to."""
+    roles = [_level(_element(name, layer="Business", element_type="BusinessRole"), "enterprise") for name in ("clerk", "manager", "owner")]
+    system = [_level(_element("app"), "enterprise"), _level(_element("host", layer="Technology"), "solution")]
+    below = [{**_rel(role["id"], "app"), "levels": []} for role in roles] + [{**_rel("host", "app"), "levels": []}]
+
+    report = _quality([*roles, *system], below)
+    assert report["enterprise_orphans"] == [] and report["verdict"] == "ok"
+
+    # The other business elements are still judged, on their own share
+    business = _level(_element("bo", layer="Business", element_type="BusinessObject"), "enterprise")
+    report = _quality([*roles, business, *system], [*below, {**_rel("bo", "app"), "levels": []}])
+    assert [e["id"] for e in report["enterprise_orphans"]] == ["bo"]
+    assert any("1 of 1 business elements" in reason for reason in report["reasons"])
+
+
 def test_a_model_of_one_enterprise_element_has_nothing_to_connect_to():
     elements = [
         _level(_element("lib"), "enterprise"),

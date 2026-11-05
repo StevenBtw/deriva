@@ -479,3 +479,55 @@ def test_layered_packages_and_a_single_feature_are_no_split():
 
     assert feature_areas(layered, {f"{base}/rest/OrderResource.java", f"{base}/servlet/IndexServlet.java"}, {f"{base}/domain/Order.java"}) == []
     assert feature_areas(single, {f"{base}/order/OrderController.java"}, {f"{base}/order/Order.java"}) == []
+
+
+CSPROJ_RULES = ModuleRules(manifests=("*.csproj",), code_subtypes=frozenset({"csharp"}), test_words=("tests",))
+
+
+def _projects(*folders: str) -> list[dict]:
+    files: list[dict] = []
+    for folder in folders:
+        files += [_f(f"{folder}/{folder.rsplit('/', 1)[-1]}.csproj", "csproj", "unknown"), _f(f"{folder}/Thing.cs", "csharp")]
+    return files
+
+
+def test_folders_with_the_same_project_layout_are_one_module_each():
+    files = _projects("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Application", "r/mods/Bills/Domain", "r/mods/Bills/Tests/Unit", "r/Core")
+
+    modules = _by_path(detect_modules("r", files, {}, CSPROJ_RULES))
+
+    assert sorted(p for p, m in modules.items() if m.excluded is None) == ["r/Core", "r/mods/Bills", "r/mods/Orders"]
+    assert modules["r/mods/Orders"].grouped and not modules["r/Core"].grouped
+    assert (modules["r/mods/Orders"].module, modules["r/mods/Orders"].name, modules["r/mods/Orders"].manifest) == (True, "Orders", "")
+    assert "r/mods/Orders/Domain/Thing.cs" in modules["r/mods/Orders"].files
+    assert modules["r/mods/Bills/Tests/Unit"].excluded == "test-only"  # stays apart from its group
+
+
+def test_a_layout_only_one_folder_has_groups_nothing():
+    files = _projects("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Web", "r/mods/Bills/Worker")
+
+    modules = _by_path(detect_modules("r", files, {}, CSPROJ_RULES))
+
+    assert sorted(modules) == ["r/mods/Bills/Web", "r/mods/Bills/Worker", "r/mods/Orders/Application", "r/mods/Orders/Domain"]
+    assert not any(m.grouped for m in modules.values())
+
+
+def test_folders_sharing_one_project_name_are_no_layout():
+    files = _projects("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Application", "r/mods/Bills/Worker")
+
+    assert not any(m.grouped for m in detect_modules("r", files, {}, CSPROJ_RULES))
+
+
+def test_a_folder_with_its_own_manifest_is_no_layout_group():
+    files = [*_projects("r/a/x", "r/a/y", "r/b/x", "r/b/y"), _f("r/a/a.csproj", "csproj", "unknown"), _f("r/b/b.csproj", "csproj", "unknown")]
+
+    assert not any(m.grouped for m in detect_modules("r", files, {}, CSPROJ_RULES))
+
+
+def test_a_csproj_declares_an_entry_by_its_sdk_or_its_output():
+    assert declares_entry("r/a/A.csproj", '<Project Sdk="Microsoft.NET.Sdk.Web"></Project>')
+    assert declares_entry("r/a/A.csproj", '﻿<Project Sdk="Microsoft.NET.Sdk.Worker"></Project>')
+    assert declares_entry("r/a/A.csproj", '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>')
+    assert declares_entry("r/a/A.csproj", "<Project><PropertyGroup><OutputType> WinExe </OutputType></PropertyGroup></Project>")
+    assert not declares_entry("r/a/A.csproj", '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Library</OutputType></PropertyGroup></Project>')
+    assert not declares_entry("r/a/A.csproj", '<Project Sdk="Microsoft.NET.Sdk" />')
