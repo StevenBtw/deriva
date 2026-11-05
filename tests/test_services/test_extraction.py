@@ -3745,3 +3745,17 @@ def test_the_read_limit_reaches_the_structural_readers(tmp_path):
         assert _read_checkout(tmp_path, "r", "big.txt") is None
     finally:
         _read_limit.reset(token)
+
+
+def test_the_read_limit_ends_with_its_step(tmp_path):
+    from unittest.mock import MagicMock, patch
+
+    from deriva.services import extraction
+
+    seen = []
+    cfg = MagicMock(node_type="Repository")
+    record = lambda *a: seen.append(extraction._read_limit.get()) or {}  # noqa: E731 - a one-line helper
+    with patch.object(extraction.config, "get_max_read_bytes", return_value=1000), patch.object(extraction, "_extract_repository", side_effect=record):
+        extraction._run_step_writes(cfg, MagicMock(), tmp_path, [], [], MagicMock(), None, MagicMock())
+    assert seen == [1000]
+    assert extraction._read_limit.get() is None

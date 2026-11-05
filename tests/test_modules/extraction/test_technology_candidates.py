@@ -326,3 +326,19 @@ class TestNodesAndEdges:
 
         assert "tech::r::storealpha" not in {n["node_id"] for n in nodes}
         assert {e["to_node_id"] for e in edges if e["properties"]["route"] == "llm"} == {"tech::r::store_alpha"}
+
+
+class TestImportsJoinLibraries:
+    def test_an_import_joins_a_library_spelled_with_a_hyphen(self):
+        collected = tc.collect([_file("r/package.json", _package("alpha-client"))], PLATFORMS, imported={"alpha_client": {"r/a.py"}})
+
+        assert list(collected.items) == ["npm library::alpha-client"]
+        assert collected.declared["npm library::alpha-client"] == {"r/a.py", "r/package.json"}
+
+    def test_an_import_named_like_an_image_or_a_variable_stays_an_import(self):
+        compose = "services:\n  cache:\n    image: alpha\n"
+        files = [_file("docker-compose.yml", compose, "infra", "docker-compose"), _file(".env", "ALPHA=1\n", "config", "env")]
+        collected = tc.collect(files, [], imported={"alpha": {"r/a.py"}})
+
+        assert "imported library::alpha" in collected.items
+        assert collected.declared["imported library::alpha"] == {"r/a.py"}

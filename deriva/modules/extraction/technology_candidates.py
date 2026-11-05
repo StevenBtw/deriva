@@ -29,6 +29,8 @@ from .base import current_timestamp, generate_edge_id, generate_file_node_id
 from .external_dependency import parse_requirement_line
 
 IMPORTED_KIND = "imported library"
+# The kinds a package manifest declares: the ones an imported library can be
+_LIBRARY_KINDS = frozenset({"maven library", "npm library", "python library", "go module", "php library", "ruby gem", "rust crate"})
 CATEGORIES = ("system_software", "service", "infrastructure", "platform", "network", "security")
 LABELS = (*CATEGORIES, "none")
 
@@ -338,11 +340,12 @@ def collect(
             key = item_key(text, kind)
             collected.items.setdefault(key, TechnologyItem(key, text, kind))
             collected.declared.setdefault(key, set()).add(f["path"])
-    by_text = {item.text.casefold(): key for key, item in collected.items.items()}
+    # An import joins a library a manifest declares (tree_sitter is tree-sitter), never an image, a service or a variable
+    by_name = {name_key(item.text): key for key, item in collected.items.items() if item.kind.split(",")[0] in _LIBRARY_KINDS}
     for text, paths in sorted((imported or {}).items()):
         if _names_repository(text, IMPORTED_KIND, repository_name):
             continue
-        key = by_text.get(text.casefold()) or item_key(text, IMPORTED_KIND)
+        key = by_name.get(name_key(text)) or item_key(text, IMPORTED_KIND)
         collected.items.setdefault(key, TechnologyItem(key, text, IMPORTED_KIND))
         collected.declared.setdefault(key, set()).update(paths)
     return collected

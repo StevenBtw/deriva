@@ -657,9 +657,27 @@ def _run_step_writes(
     engine: Any,
     model: str | None = None,
 ) -> dict[str, Any]:
-    """Run a single extraction step based on node type (its writes; the sweep is _run_extraction_step's)."""
+    """Run a single extraction step based on node type (its writes; the sweep is _run_extraction_step's), with the
+    max_read_bytes setting as the structural readers' limit for that step only."""
+    token = _read_limit.set(config.get_max_read_bytes(engine))
+    try:
+        return _step_writes(cfg, repo, repo_path, classified_files, undefined_files, graph_manager, llm_query_fn, engine, model)
+    finally:
+        _read_limit.reset(token)
+
+
+def _step_writes(
+    cfg: config.ExtractionConfig,
+    repo: Any,
+    repo_path: Path,
+    classified_files: list[dict],
+    undefined_files: list[dict],
+    graph_manager: GraphManager,
+    llm_query_fn: Callable | None,
+    engine: Any,
+    model: str | None,
+) -> dict[str, Any]:
     node_type = cfg.node_type
-    _read_limit.set(config.get_max_read_bytes(engine))
 
     if node_type == "Repository":
         result = _extract_repository(repo, graph_manager)
