@@ -166,7 +166,12 @@ def _verb_phrases(doc: Any, lang: str, segment: int, settings: Settings, keep_su
         verb_words, objects = _verb_objects(verb, lang)
         linked = [(obj, verb_words) for obj in objects]
         linked += [
-            (obj, [*verb_words, prep.lower_]) for prep in verb.children if prep.dep_ == "prep" and prep.lower_ in prepositions for obj in prep.children if obj.dep_ == "pobj"
+            (obj, [*verb_words, prep.lower_])
+            for prep in verb.children
+            if prep.dep_ == "prep" and prep.lower_ in prepositions
+            for pobj in prep.children
+            if pobj.dep_ == "pobj"
+            for obj in (pobj, *(c for c in pobj.children if c.dep_ == "conj"))
         ]
         for obj, verb_words in linked:
             if obj.pos_ not in nouns or not _valid(obj):

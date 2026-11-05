@@ -205,13 +205,12 @@ class TestPipelineSessionQueries:
 
     def test_get_graph_stats(self, connected_session):
         """Should aggregate node counts by type."""
-        connected_session._mock_graph.get_nodes_by_type.side_effect = lambda t: [{"id": "1"}] if t == "Repository" else []
+        connected_session._mock_graph.query.return_value = [{"labels": ["Graph", "Repository"], "nodes": 1}, {"labels": ["Graph", "Role"], "nodes": 2}]
 
         stats = connected_session.get_graph_stats()
 
-        assert stats["total_nodes"] == 1
-        assert stats["by_type"]["Repository"] == 1
-        assert stats["by_type"]["File"] == 0
+        assert stats["total_nodes"] == 3
+        assert stats["by_type"] == {"Repository": 1, "Role": 2}
 
     def test_get_graph_nodes(self, connected_session):
         """Should return nodes of specific type."""
@@ -523,6 +522,7 @@ class TestPipelineSessionOrchestration:
 
         connected_session._mock_pipeline.run_full_pipeline.return_value = {"success": True, "stats": {}}
         connected_session._mock_derivation.STRUCTURAL_PHASES = derivation.STRUCTURAL_PHASES
+        connected_session._llm_no_model = True
 
         with patch.object(connected_session, "_get_llm_query_fn", return_value=None):
             connected_session.run_pipeline()

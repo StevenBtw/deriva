@@ -214,8 +214,9 @@ def two_level_rows(sessions: list[Path]) -> list[dict[str, Any]]:
     return rows
 
 
-# What makes two calls of one model the same call: the cache key's parts without its benchmark run (--bench-hash puts
-# the run into every key, so no prompt would recur across runs)
+# What makes two calls of one model the same call: most of the cache key's parts, without its benchmark run (--bench-hash
+# puts the run into every key, so no prompt would recur across runs). The call log has the provider but not its base URL,
+# and the schema's name but not its content: calls the cache keeps apart by those two pool as one call here
 _CALL_PARTS = ("provider", "model", "schema", "system_prompt", "prompt", "temperature", "max_tokens", "reasoning", "sample")
 
 

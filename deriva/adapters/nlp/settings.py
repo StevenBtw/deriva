@@ -48,8 +48,14 @@ class Settings:
         unknown = sorted(set(values) - known)
         if unknown:
             raise ValueError(f"Unknown settings: {', '.join(unknown)}")
+        for f in fields(cls):
+            if f.name in values and isinstance(f.default, bool) and not isinstance(values[f.name], bool):
+                raise ValueError(f"{f.name} must be true or false, got {values[f.name]!r}")
         if "verb_prepositions" in values:
-            values = {**values, "verb_prepositions": tuple(values["verb_prepositions"])}
+            words = values["verb_prepositions"]
+            if not isinstance(words, list | tuple) or not all(isinstance(w, str) and w for w in words):
+                raise ValueError(f"verb_prepositions must be a list of words, got {words!r}")
+            values = {**values, "verb_prepositions": tuple(words)}
         return cls(**values)
 
     def to_dict(self) -> dict[str, Any]:

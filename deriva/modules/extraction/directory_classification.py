@@ -326,13 +326,10 @@ def classify_directories(
 
         # Call LLM: k answers to the same prompt, combined by majority (params.samples / min_votes)
         params = config.get("params") or {}
-        responses = sample_llm(
-            llm_query_fn,
-            prompt,
-            DIRECTORY_CLASSIFICATION_SCHEMA,
-            int(params.get("samples", 1)),
-        )
-        min_votes = int(params.get("min_votes", 1))
+        samples = int(params.get("samples", 1))
+        responses = sample_llm(llm_query_fn, prompt, DIRECTORY_CLASSIFICATION_SCHEMA, samples)
+        # The llm_samples setting can lower the samples below the step's votes: never more votes than answers
+        min_votes = min(int(params.get("min_votes", 1)), samples)
         response = next((r for r in responses if r is not None and not getattr(r, "error", None)), None)
         if response is None:
             failed = next((r for r in responses if r is not None and getattr(r, "error", None)), None)

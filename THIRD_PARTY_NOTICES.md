@@ -12,7 +12,7 @@ The full PCF and the industry-specific versions are available from APQC at <http
 
 ## Downloaded at runtime
 
-The BusinessConcept extraction step downloads these language models on first use into `workspace/cache/nlp` (`DERIVA_NLP_MODELS_DIR`) and checks each against its pinned SHA-256 (`deriva/adapters/nlp/models.py`). They are not part of Deriva's packages; each comes under its own terms, as its package states them.
+The BusinessConcept extraction step downloads these language models on first use into `workspace/cache/nlp` in the home folder (`DERIVA_NLP_MODELS_DIR`) and checks each against its pinned SHA-256 (`deriva/adapters/nlp/models.py`). They are not part of Deriva's packages; each comes under its own terms, as its package states them.
 
 | Model | Source | SHA-256 | Licence (as the package states it) |
 | --- | --- | --- | --- |

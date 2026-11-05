@@ -28,6 +28,7 @@ from typing import Any
 
 import yaml
 
+from deriva.common.naming import contains_name
 from deriva.modules.extraction.technologies import Technology, image_name, match_technology
 
 _WORKLOADS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"}
@@ -59,6 +60,8 @@ class DeploymentRules:
     manifest_runtimes: tuple[tuple[str, str], ...] = ()
     # An environment that runs one of the repository's own units ranks before one that runs only ready-made images
     primary_runs_units: bool = False
+    # Categories of the Technology step whose answers join the system software; none: only this step's own signals
+    classified_categories: tuple[str, ...] = ()
 
 
 @dataclass
@@ -215,13 +218,13 @@ def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Env
         context = build.get("context") if isinstance(build, dict) else build
         image = spec.get("image") if isinstance(spec.get("image"), str) else None
         unit = units.by_folder(_normalize(f"{_parent(path)}/{context}"), image, str(name)) if isinstance(context, str) else None
-        unit = unit or (units.by_name(image, str(name)) if (image or not context) else None) or units.by_image(image)
         dockerfile = build.get("dockerfile") if isinstance(build, dict) else None
         if unit is None and isinstance(dockerfile, str):
-            # Nothing else names it (``context: .`` from the repository root): its exact name, the unit in the Dockerfile's own
-            # folder, and only then the last word of its name, a guess that an explicit path overrules
-            folder = _normalize(f"{_parent(path)}/{context or '.'}/{_parent(dockerfile)}")
-            unit = units.by_exact_name([str(name)]) or units.at_folder(folder, image, str(name)) or units.by_name(image, str(name))
+            # Nothing else names it (``context: .`` from the repository root): its image or name exactly, the unit in the
+            # Dockerfile's own folder, and only then the last word of either, a guess that an explicit path overrules
+            folder = _normalize(f"{_parent(path)}/{context or '.'}/{_parent(dockerfile.replace(chr(92), '/'))}")
+            unit = units.by_image(image) or units.by_exact_name([str(name)]) or units.at_folder(folder, image, str(name)) or units.by_name(image, str(name))
+        unit = unit or (units.by_name(image, str(name)) if (image or not context) else None) or units.by_image(image)
         depends = spec.get("depends_on") or []
         variables = spec.get("environment") or {}
         if isinstance(variables, list):
@@ -594,6 +597,7 @@ def technology_layer(
     catalog: tuple[Technology, ...],
     sources: dict[str, str],
     cdk: dict[str, dict[str, Any]] | None = None,
+    classified: Iterable[tuple[str, tuple[str, ...]]] = (),
 ) -> TechnologyLayer:
     """The primary environment, the units it runs and the system software with its evidence.
 
@@ -615,6 +619,8 @@ def technology_layer(
         catalog: The closed list of technologies
         sources: Path -> text of the source files searched for content markers
         cdk: Path -> the resources of the CDK app files (see ``detect_deployments``)
+        classified: (name, files) the Technology step classified (``rules.classified_categories``): a name that holds an
+            entry of the closed list's name is that entry, any other stays as written, not listed
     """
     deployments = detect_deployments(repository, files, units, rules, cdk)
     layer = TechnologyLayer(deployments=deployments, environment=deployments.primary)
@@ -683,6 +689,11 @@ def technology_layer(
                 add(dependency, f"dependency of {holder}", serves=(holder,))
             if runtime and holder not in deployments.base_images:
                 add(runtime, f"manifest of {holder}", serves=(holder,))
+
+    for name, paths in sorted(classified):
+        holders = tuple(sorted({unit for p in paths for unit in lookup.holders(p)}))
+        tech = match_technology(name, catalog) or next((t for t in catalog if contains_name(name, t.name)), None)
+        add(tech.name if tech else name, f"classified from {len(paths)} files", serves=holders, fallback=True)
 
     # A driver-detected engine (not running in the environment itself) is the managed service of that engine
     # when the environment has one: the qualifier names the engine; its evidence and users move to the service

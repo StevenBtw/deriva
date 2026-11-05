@@ -51,7 +51,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
 from deriva.common import settings
-from deriva.common.exceptions import CircuitOpenError
+from deriva.common.exceptions import CircuitOpenError, NoModelConfigured
 from deriva.common.json_utils import extract_json_from_response
 from deriva.common.paths import resolve
 from deriva.common.settings import LlmSettings
@@ -311,7 +311,7 @@ class LLMManager:
         except ConfigurationError as e:
             if LlmSettings().default_model:
                 raise
-            raise ConfigurationError(
+            raise NoModelConfigured(
                 f"No LLM model is configured ({e}): add one in the studio's General page, or set LLM_{{NAME}}_* settings and LLM_DEFAULT_MODEL in .env in the home folder"
             ) from e
 
@@ -480,7 +480,7 @@ class LLMManager:
             sampling, reasoning, context = config.sampling, config.reasoning, config.context
         else:
             if not llm.provider:
-                raise ConfigurationError(
+                raise NoModelConfigured(
                     "No LLM model is configured: add one in the studio's General page, or set LLM_{NAME}_* settings and LLM_DEFAULT_MODEL in .env in the home folder"
                 )
             provider = llm.provider

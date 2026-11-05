@@ -6,7 +6,9 @@ import json
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -858,3 +860,26 @@ def test_run_history_routes_filter_delete_and_prune(make_client, tmp_path):
     assert client.delete("/api/runs/r2").status_code == 404
     assert client.post("/api/runs/prune", json={"keep": 1}).json() == {"deleted": ["r0"]}
     assert client.post("/api/runs/prune", json={}).status_code == 400
+
+
+def test_a_run_cannot_be_deleted_while_its_summary_is_written(make_client, tmp_path):
+    client = make_client(FakeSession(run_extraction_iter=lambda *a, **k: iter([Update(step="S1")]), use_repository=None))
+    runs = client.app.state.runs
+    write_text = Path.write_text
+    deleting: list[threading.Thread] = []
+    blocked: list[bool] = []
+
+    def writing(self, *args, **kwargs):
+        if self.name == "run.json":
+            deleting.append(threading.Thread(target=runs.delete, args=(self.parent.name,)))
+            deleting[0].start()
+            deleting[0].join(0.2)
+            blocked.append(deleting[0].is_alive())
+        return write_text(self, *args, **kwargs)
+
+    with patch.object(Path, "write_text", writing):
+        running = client.post("/api/runs", json={"kind": "extraction"}).json()["run_id"]
+        wait_for(lambda: bool(blocked) and not deleting[0].is_alive())
+
+    assert blocked == [True]
+    assert not (tmp_path / "runs" / running).exists()

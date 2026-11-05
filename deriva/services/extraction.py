@@ -37,6 +37,7 @@ import logging
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from types import ModuleType
@@ -123,12 +124,17 @@ def list_repo_files(repo_path: Path, excluded_dirs: list[str]) -> list[str]:
 
 
 # The ArchiMate exchange format's namespace, which an exchange file declares at its root element
+# The running step's max_read_bytes, for the structural readers (no limit outside a step)
+_read_limit: ContextVar[int | None] = ContextVar("read_limit", default=None)
+
 _EXCHANGE_NAMESPACE = b"opengroup.org/xsd/archimate/"
-_EXCHANGE_HEAD_BYTES = 4096
+_EXCHANGE_HEAD_BYTES = 65536
+_XML_PROLOG = re.compile(rb"<!--.*?-->|<\?.*?\?>|<!DOCTYPE[^>]*>", re.DOTALL)
+_XML_ROOT = re.compile(rb"<[A-Za-z_][^>]*>")
 
 
 def model_files(repo_path: Path, file_paths: list[str]) -> set[str]:
-    """The .xml files that are ArchiMate exchange models (by the namespace in their first bytes): like .archimate files,
+    """The .xml files that are ArchiMate exchange models (by the namespace on their root element): like .archimate files,
     an architecture model is never an input, so a model shipped with the repository cannot become its own answer."""
     found = set()
     for rel in file_paths:
@@ -140,7 +146,8 @@ def model_files(repo_path: Path, file_paths: list[str]) -> set[str]:
                 head = handle.read(_EXCHANGE_HEAD_BYTES)
         except OSError:
             continue
-        if _EXCHANGE_NAMESPACE in head and is_inside(file, repo_path):
+        root = _XML_ROOT.search(_XML_PROLOG.sub(b"", head))
+        if root is not None and _EXCHANGE_NAMESPACE in root.group(0) and is_inside(file, repo_path):
             found.add(rel)
     return found
 
@@ -652,6 +659,7 @@ def _run_step_writes(
 ) -> dict[str, Any]:
     """Run a single extraction step based on node type (its writes; the sweep is _run_extraction_step's)."""
     node_type = cfg.node_type
+    _read_limit.set(config.get_max_read_bytes(engine))
 
     if node_type == "Repository":
         result = _extract_repository(repo, graph_manager)
@@ -957,9 +965,11 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
     file name patterns ``compose_files``, ``compose_defaults`` (the names Compose looks up, in order), ``compose_overrides``
     (the files it merges into them), ``build_scripts`` and ``marker_suffixes``, ``cloud_qualifiers``
     (resource type -> {property, default}), ``cdk_constructs`` ("module.Class" -> {type, environment, properties}) and
-    ``primary_runs_units`` (an environment that runs the repository's own units is the primary one before others)."""
+    ``primary_runs_units`` (an environment that runs the repository's own units is the primary one before others) and
+    ``classified_categories`` (the Technology step's categories whose answers join the system software)."""
     settings = json.loads(params) if params else {}
-    lists, maps = ("compose_files", "compose_defaults", "compose_overrides", "build_scripts", "marker_suffixes"), ("cloud_resources", "manifest_runtimes", "environment_names")
+    lists = ("compose_files", "compose_defaults", "compose_overrides", "build_scripts", "marker_suffixes", "classified_categories")
+    maps = ("cloud_resources", "manifest_runtimes", "environment_names")
     unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs", "primary_runs_units"}
     qualifiers, constructs = settings.get("cloud_qualifiers", {}), settings.get("cdk_constructs", {})
     text = lambda v: isinstance(v, str) and bool(v)  # noqa: E731 - a one-line helper
@@ -1007,6 +1017,7 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
         marker_suffixes=tuple(s.lower() for s in settings.get("marker_suffixes", [])),
         manifest_runtimes=tuple(settings.get("manifest_runtimes", {}).items()),
         primary_runs_units=runs_units,
+        classified_categories=tuple(settings.get("classified_categories", [])),
     )
     return rules, catalog
 
@@ -1080,7 +1091,26 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
     files = {p: text for p in paths if wanted(p) and (text := _read_checkout(repo_path, repo.name, p)) is not None}
     sources = {p: text for p in paths if p.lower().endswith(rules.marker_suffixes) and rules.marker_suffixes and (text := _read_checkout(repo_path, repo.name, p)) is not None}
     units = _units_with_members(q)
-    layer = deployments.technology_layer(repo.name, files, units, rules, catalog, sources, cdk=_cdk_resources(paths, rules, repo, repo_path))
+    classified: dict[str, set[str]] = {}
+    if rules.classified_categories:
+        rows = q(
+            "MATCH (f:Graph:File)-[:`Graph:CONFIGURES`]->(t:Graph:Technology) WHERE t.active = true AND t.repository_name = $repo_name AND t.techCategory IN $categories "
+            "RETURN t.techName AS name, f.filePath AS path",
+            {"categories": list(rules.classified_categories)},
+        )
+        for row in rows:
+            if row.get("name") and row.get("path"):
+                classified.setdefault(str(row["name"]), set()).add(str(row["path"]).replace(chr(92), "/"))
+    layer = deployments.technology_layer(
+        repo.name,
+        files,
+        units,
+        rules,
+        catalog,
+        sources,
+        cdk=_cdk_resources(paths, rules, repo, repo_path),
+        classified=[(name, tuple(sorted(found))) for name, found in classified.items()],
+    )
 
     nodes = edges = 0
     env = layer.environment
@@ -1422,7 +1452,11 @@ def _extract_business_layer(cfg: config.ExtractionConfig, repo: Any, repo_path: 
 
 
 def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 200_000) -> str | None:
-    """A file's text from the checkout (graph paths start with the repository folder)."""
+    """A file's text from the checkout (graph paths start with the repository folder), up to ``max_bytes`` and
+    the max_read_bytes setting of the running step."""
+    limit = _read_limit.get()
+    if limit is not None:
+        max_bytes = min(max_bytes, limit)
     relative = path[len(repo_name) + 1 :] if path.startswith(repo_name + "/") else path
     file = repo_path / relative
     try:
@@ -2918,7 +2952,21 @@ def _extract_technologies(
             errors.append(f"Could not read {repo_path / file_info['path']} | repo={repo.name} | step=Technology")
             continue
         files.append({**file_info, "content": content})
-    if not files:
+    use_imports = params.get("imported_libraries", False)
+    if not isinstance(use_imports, bool):
+        return {"nodes_created": 0, "edges_created": 0, "errors": [f"Technology params.imported_libraries must be true or false, got {use_imports!r}"]}
+    imported: dict[str, set[str]] = {}
+    if use_imports:
+        rows = graph_manager.query(
+            "MATCH (f:Graph:File)-[:`Graph:USES`]->(d:Graph:ExternalDependency) WHERE d.active = true AND d.repository_name = $repo_name "
+            "RETURN f.filePath AS path, d.dependencyName AS name",
+            {"repo_name": repo.name},
+        )
+        for row in rows:
+            if row.get("name") and row.get("path"):
+                # The node's path starts with the repository; declared files and their ids take the path inside it
+                imported.setdefault(str(row["name"]), set()).add(str(row["path"]).replace(chr(92), "/").removeprefix(f"{repo.name}/"))
+    if not files and not imported:
         return {"nodes_created": 0, "edges_created": 0, "errors": errors, "warnings": [f"No input files for Technology in {repo.name}"]}
 
     try:
@@ -2928,7 +2976,7 @@ def _extract_technologies(
     skip_name = params.get("skip_repository_name", False)
     if not isinstance(skip_name, bool):
         return {"nodes_created": 0, "edges_created": 0, "errors": [f"Technology params.skip_repository_name must be true or false, got {skip_name!r}"]}
-    collected = technology_candidates.collect(files, params["platforms"], own_units, repository_name=repo.name if skip_name else "")
+    collected = technology_candidates.collect(files, params["platforms"], own_units, repository_name=repo.name if skip_name else "", imported=imported)
     labels: dict[str, dict[str, str]] = {}
     issues = {"unmatched": 0, "duplicates": 0, "missing": 0}
     retries = {"calls": 0, "recovered": 0}

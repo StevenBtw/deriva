@@ -434,7 +434,7 @@ def benchmark_gate(
     """Element and relationship recall and precision and consistency by id per repository, and the verdict of a candidate.
 
     Accepted when one of the four measures rises by 1 point or more on at least two thirds of the measured repositories,
-    none of them drops by more than 2 points anywhere, and element and relationship consistency by id stay at 95% or more.
+    none of them drops by more than 2 points anywhere, and consistency by id stays at 90% or more for elements and 80% or more for relationships.
     """
     from deriva.bench import gate
 

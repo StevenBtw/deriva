@@ -163,9 +163,9 @@ def _git_safety(allow_local: bool = False) -> list[str]:
     """Config for git on an untrusted repository, its submodules included (``-c`` reaches every git process it starts):
     network protocols only, so a submodule URL cannot read a local repository or run a command (``ext::``); a local URL
     only where the user gave it (``user``: never a submodule's); symlinks checked out as plain files, so no link in the
-    clone reaches outside it."""
+    clone reaches outside it; no bundle a server advertises (CVE-2025-48385)."""
     configs = ["protocol.allow=never", *(f"protocol.{p}.allow=always" for p in ("https", "http", "ssh", "git"))]
-    configs += [f"protocol.file.allow={'user' if allow_local else 'never'}", "core.symlinks=false"]
+    configs += [f"protocol.file.allow={'user' if allow_local else 'never'}", "core.symlinks=false", "transfer.bundleURI=false"]
     return [part for config in configs for part in ("-c", config)]
 
 
@@ -192,13 +192,16 @@ def git_outdated(version_output: str) -> bool:
     return (major, minor) < (2, 43)
 
 
-def _warn_if_git_outdated() -> None:
+def _submodules_unsafe() -> bool:
+    """True, with a warning, when this git has the submodule vulnerabilities: a clone or pull then leaves submodules out."""
     try:
         output = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=10, check=False).stdout
     except OSError, subprocess.SubprocessError:
-        return
-    if git_outdated(output):
-        logger.warning("%s predates the fixes for git's submodule vulnerabilities (CVE-2025-48384); update git before cloning untrusted repositories", output.strip())
+        return False
+    if not git_outdated(output):
+        return False
+    logger.warning("%s predates the fixes for git's submodule vulnerabilities (CVE-2025-48384): submodules are left out; update git", output.strip())
+    return True
 
 
 # STATUS_DLL_INIT_FAILED: Windows could not start git or one of its helpers (as git's exit code, unsigned or signed)
@@ -739,6 +742,7 @@ class RepoManager:
 
         # Long paths: on Windows a deep home folder plus git's own file names can pass 260 characters
         # Submodules too: a repository that keeps its modules as submodules is nearly empty without them
+        submodules = submodules and not _submodules_unsafe()
         cmd = ["git", *_git_safety(allow_local), "clone", "--config", "core.longpaths=true"]
         if submodules:
             cmd.append("--recurse-submodules")
@@ -766,8 +770,6 @@ class RepoManager:
             _discard(staging)
             raise CloneError("Git is not installed or not in PATH. Please install Git to use clone functionality.")
         _move_into_place(staging, target_path)
-        if submodules:
-            _warn_if_git_outdated()
 
         result = _get_repository_info_from_path(target_path, redact_credentials(repo_url))
         self._state_manager.add_repository(result)
@@ -881,7 +883,7 @@ class RepoManager:
         try:
             subprocess.run(
                 # From the remote the clone came from (a URL the user gave, so it may be local); submodules never local
-                ["git", *_git_safety(allow_local=True), "-C", str(repo_path), "pull", "--ff-only", "--recurse-submodules"],
+                ["git", *_git_safety(allow_local=True), "-C", str(repo_path), "pull", "--ff-only", *([] if _submodules_unsafe() else ["--recurse-submodules"])],
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",

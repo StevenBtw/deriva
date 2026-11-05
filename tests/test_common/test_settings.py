@@ -234,3 +234,10 @@ def test_llm_credentials_strip_padding_inside_quotes(dotenv, monkeypatch):
     assert llm.provider == "openai"
     assert llm.anthropic_api_key == "sk-ant-123"
     assert llm.anthropic_model == "claude-sonnet-4-20250514"
+
+
+def test_an_empty_query_language_is_the_default(monkeypatch):
+    from deriva.common.settings import GrafeoSettings
+
+    monkeypatch.setenv("GRAFEO_QUERY_LANGUAGE", "")
+    assert GrafeoSettings().query_language == "gql"

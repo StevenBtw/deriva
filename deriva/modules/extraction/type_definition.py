@@ -613,6 +613,7 @@ def _build_type_node_from_treesitter(
     # Map AST kind to extraction category
     category_map = {
         "class": "class",
+        "interface": "interface",
         "function": "function",
         "type_alias": "alias",
         # Structural sources (mainframe): the kind is the category

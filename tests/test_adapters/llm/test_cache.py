@@ -367,3 +367,9 @@ class TestEndpointInKey:
         manager = LLMManager.__new__(LLMManager)
         manager.config = {"provider": "openai", "api_url": "https://api.openai.com/v1/"}
         assert manager._endpoint() == "openai|https://api.openai.com/v1"
+
+
+def test_a_malformed_url_is_kept_as_written():
+    from deriva.adapters.llm.cache import endpoint_key
+
+    assert endpoint_key("openai", "http://[bad") == "openai|http://[bad"

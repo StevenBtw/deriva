@@ -28,6 +28,7 @@ from deriva.common import (
     extract_llm_details,
     parse_json_array,
 )
+from deriva.common.exceptions import RunStopped
 from deriva.common.naming import singularize
 from deriva.common.types import LLMDetails, PipelineResult
 
@@ -345,6 +346,8 @@ def sample_llm(llm_query_fn: Callable[..., Any], prompt: str, schema: dict[str, 
     def _call(index: int) -> Any:
         try:
             return llm_query_fn(prompt, schema, sample=index)
+        except RunStopped:
+            raise
         except Exception:  # noqa: BLE001 - a failed sample is simply not counted
             return None
 

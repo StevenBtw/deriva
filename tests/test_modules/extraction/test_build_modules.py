@@ -408,6 +408,23 @@ def test_a_repository_name_in_front_of_a_modules_name_is_no_test_word():
     assert excluded["example-shop/test"] == "test-only"
 
 
+def test_the_repository_name_in_a_modules_name_counts_after_a_scope_and_as_shared_leading_words():
+    def excluded(repository, artifact):
+        files = [{"path": f"{repository}/orders/pom.xml", "name": "pom.xml", "file_type": "build", "subtype": "xml"}]
+        files += [{"path": f"{repository}/orders/A.java", "name": "A.java", "file_type": "source", "subtype": "java"}]
+        manifests: dict[str, str] = {f"{repository}/orders/pom.xml": f"<project><artifactId>{artifact}</artifactId></project>"}
+        rules = ModuleRules(manifests=("pom.xml",), code_subtypes=frozenset({"java"}), test_words=("test", "example"))
+        return {m.path: m.excluded for m in detect_modules(repository, files, manifests, rules)}[f"{repository}/orders"]
+
+    assert excluded("example-scoped", "@acme/example-scoped-orders") is None
+    assert excluded("acme.example-dotted", "acme.example-dotted.orders") is None
+    assert excluded("example-voting-app", "example-vote-worker") is None
+    # A word of its own still counts, and a name that is only the shared word is not emptied
+    assert excluded("example-shop", "example-shop-test") == "test-only"
+    assert excluded("shop", "example") == "test-only"
+    assert excluded("example-shop", "example") == "test-only"
+
+
 def test_a_library_repositories_own_module_is_its_component_when_nothing_else_is():
     root = BuildModule(path="lib", name="Lib", manifest="lib/pyproject.toml", module=True, excluded="no entry point")
     sample = BuildModule(path="lib/examples/a", name="A", manifest="lib/examples/a/pyproject.toml", module=True, excluded="test-only")

@@ -34,6 +34,21 @@ def _reasons(result) -> dict[str, str]:
     return {x.name: x.reason for x in result.excluded}
 
 
+def test_an_interface_the_parser_finds_is_stored_as_an_interface():
+    """From the real parser to the stored category: the rule below reads what the pipeline writes."""
+    from deriva.adapters.treesitter import TreeSitterManager
+    from deriva.modules.extraction.type_definition import _build_type_node_from_treesitter
+
+    source = "public interface IShipmentRoot : AggregateRoot { }\npublic class Shipment : AggregateRoot { }\n"
+    found = TreeSitterManager().extract_types(source, "r/core/Shipment.cs")
+    nodes = {t.name: _build_type_node_from_treesitter(t, "r/core/Shipment.cs", source, "r") for t in found}
+    categories = {name: node["properties"]["category"] for name, node in nodes.items()}
+
+    assert categories == {"IShipmentRoot": "interface", "Shipment": "class"}
+    types = [_t(name, "r/core/Shipment.cs", category=category, bases=["AggregateRoot"]) for name, category in categories.items()]
+    assert _names(detect_entities(types, {}, {}, RULES)) == ["Shipment"]
+
+
 def test_an_interface_extending_a_root_marker_is_no_entity_and_marks_no_root():
     types = [
         _t("ICatalogRoot", "r/core/ICatalogRoot.cs", category="interface", bases=["AggregateRoot"]),

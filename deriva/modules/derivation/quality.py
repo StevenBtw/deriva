@@ -58,7 +58,8 @@ def model_quality(
     linked = {r["source"] for r in relationships} | {r["target"] for r in relationships}
     orphans = [{"id": e["id"], "name": e["name"], "type": e["type"]} for e in elements if e["id"] not in linked]
     enterprise = [e for e in elements if "enterprise" in (e.get("levels") or ())]
-    within = [r for r in relationships if "enterprise" in (r.get("levels") or ())]
+    enterprise_ids = {e["id"] for e in enterprise}
+    within = [r for r in relationships if "enterprise" in (r.get("levels") or ()) and r["source"] in enterprise_ids and r["target"] in enterprise_ids]
     linked_there = {r["source"] for r in within} | {r["target"] for r in within}
     # Only the business layer can float: the rest of the system may stand alone, and with nothing else at the level
     # there is nothing to connect to

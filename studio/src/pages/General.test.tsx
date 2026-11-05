@@ -222,6 +222,29 @@ describe("General", () => {
     expect(settings.unset).toHaveBeenCalledWith("llm_samples");
   });
 
+  it("refuses a fractional count of LLM calls instead of rounding it", async () => {
+    vi.mocked(settings.get).mockImplementation(async (key: string) => ({
+      key,
+      value: key === "excluded_directories" ? "[]" : null,
+      default: key === "max_llm_calls_per_run" ? "2000" : null,
+    }));
+    vi.mocked(settings.set).mockClear();
+    render(<General />);
+    const calls = await screen.findByRole("spinbutton", {
+      name: "LLM calls per run",
+    });
+    await waitFor(() => expect(calls).toHaveValue(2000));
+    expect(calls).toHaveAttribute("step", "1");
+
+    await userEvent.clear(calls);
+    await userEvent.type(calls, "2.5{Enter}");
+
+    expect(
+      await screen.findByText("LLM calls per run must be a whole number."),
+    ).toBeInTheDocument();
+    expect(settings.set).not.toHaveBeenCalled();
+  });
+
   it("sets the run limits, the read limit in MB, and restores a default", async () => {
     vi.mocked(settings.get).mockImplementation(async (key: string) => ({
       key,

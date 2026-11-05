@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import zipfile
+
 import typer
 
 from deriva.services import nlp_models
@@ -15,7 +17,7 @@ def fetch() -> None:
     network for them; models that are present and verified are not downloaded again."""
     try:
         result = nlp_models.fetch()
-    except OSError as e:
+    except (OSError, ValueError, zipfile.BadZipFile) as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from e
     typer.echo(f"NLP models in {result['models_dir']}:")

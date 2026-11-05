@@ -125,3 +125,11 @@ def test_services_without_a_business_layer_do_not_float():
     report = _quality(elements, relationships)
 
     assert report["enterprise_orphans"] == [] and report["verdict"] == "ok"
+
+
+def test_a_link_to_a_disabled_element_does_not_hide_a_floating_business_element():
+    business = {"id": "bo", "name": "Order", "type": "BusinessObject", "layer": "Business", "sources": [], "levels": ["enterprise"]}
+    system = {"id": "ac", "name": "Shop", "type": "ApplicationComponent", "layer": "Application", "sources": [], "levels": ["enterprise"]}
+    # "gone" is disabled: the caller passes enabled elements only
+    link = {"source": "gone", "target": "bo", "type": "Access", "levels": ["enterprise"]}
+    assert [o["id"] for o in _quality([business, system], [link])["enterprise_orphans"]] == ["bo"]

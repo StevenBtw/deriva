@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import zipfile
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from deriva.cli.cli import app
@@ -14,6 +16,10 @@ def test_fetch_downloads_into_the_models_folder_and_reports_sizes(tmp_path):
     def download(self):
         (self.models_dir / "en_core_web_sm-3.8.0").mkdir(parents=True)
         (self.models_dir / "en_core_web_sm-3.8.0" / "model.bin").write_bytes(b"x" * 2048)
+        # Something else in the folder is no model
+        (self.models_dir / "old-download").mkdir()
+        (self.models_dir / "old-download" / "left.bin").write_bytes(b"x" * 99)
+        return {"en": self.models_dir / "en_core_web_sm-3.8.0"}
 
     with patch("deriva.adapters.nlp.NlpTool.ensure_models", download):
         result = nlp_models.fetch(tmp_path / "nlp")
@@ -27,7 +33,8 @@ def test_the_command_prints_each_model_and_the_total():
         result = CliRunner().invoke(app, ["nlp", "fetch"])
 
     assert result.exit_code == 0
-    assert "/home/nlp" in result.output and "a" in result.output and "4.0 MB" in result.output
+    lines = [line.split() for line in result.output.splitlines()]
+    assert "/home/nlp" in result.output and ["a", "3.0", "MB"] in lines and ["b", "1.0", "MB"] in lines and ["total", "4.0", "MB"] in lines
 
 
 def test_a_failed_download_exits_1():
@@ -35,3 +42,10 @@ def test_a_failed_download_exits_1():
         result = CliRunner().invoke(app, ["nlp", "fetch"])
 
     assert result.exit_code == 1 and "network unreachable" in result.output
+
+
+@pytest.mark.parametrize("failure", [ValueError("SHA-256 of x is y, expected z"), zipfile.BadZipFile("not a zip")])
+def test_a_bad_download_is_an_error_message(failure):
+    with patch("deriva.cli.commands.nlp.nlp_models.fetch", side_effect=failure):
+        result = CliRunner().invoke(app, ["nlp", "fetch"])
+    assert result.exit_code == 1 and "Error:" in result.output and not isinstance(result.exception, type(failure))

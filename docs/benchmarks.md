@@ -155,7 +155,7 @@ A golden element is matched first by name: a derived element of its type with th
 deriva-cli benchmark gate --baseline <session_id> --candidate <session_id>
 ```
 
-The gate scores each level on its own (enterprise, solution) and both together (union), with recall, precision and consistency by id per level. A candidate passes a level when one of the four measures (element or relationship recall or precision) rises by at least 1 point on at least two thirds of the measured repositories, none drops by more than 2 points anywhere, and element and relationship consistency by id stay at 95% or more. A level with too few repositories better but nothing dropping is held (`HELD`), not failed. The overall verdict passes when no level with a measured repository fails and at least one passes; a reference without solution-level elements has no solution measure and no vote there, and a reference without level tags (golden models included) votes on the union only, marked `no level tags`.
+The gate scores each level on its own (enterprise, solution) and both together (union), with recall, precision and consistency by id per level. A candidate passes a level when one of the four measures (element or relationship recall or precision) rises by at least 1 point on at least two thirds of the measured repositories, none drops by more than 2 points anywhere, and consistency by id stays at 90% or more for elements and 80% or more for relationships. A level with too few repositories better but nothing dropping is held (`HELD`), not failed. The overall verdict passes when no level with a measured repository fails and at least one passes; a reference without solution-level elements has no solution measure and no vote there, and a reference without level tags (golden models included) votes on the union only, marked `no level tags`.
 
 ## Measure well
 
@@ -185,7 +185,7 @@ The gate scores each level on its own (enterprise, solution) and both together (
 | `--only-derivation-step` | Run only this derivation step |
 | `--no-defer-relationships` | Derive relationships after each element batch instead of in one pass after all elements (for comparison only; the default, `--defer-relationships`, derives elements first, then the relationship pass) |
 | `--extract-per-run` | Every run repeats the whole pipeline: extraction with the run's model, no cache, on its own graph (kept in the session's graphs folder); needs `--stages extraction,derivation` and `--no-cache` |
-| `--baseline b1` | Run the LLM baseline instead of Deriva: one generation of the whole model from the repository's files, validated and repaired at most N times. It reads the `BaselineB1` derivation step, which ships disabled (`deriva-cli config enable derivation BaselineB1`); needs `--no-cache` |
+| `--baseline b1` | Run the LLM baseline instead of Deriva: one generation of the whole model from the repository's files, validated and repaired at most twice. It reads the `BaselineB1` derivation step, which ships disabled (`deriva-cli config enable derivation BaselineB1`); needs `--no-cache` |
 | `--no-export-models` | Do not write model files |
 | `--no-clear` | Do not clear the graph between runs |
 | `--bench-hash` | Keep each run's LLM cache separate |

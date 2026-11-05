@@ -338,6 +338,10 @@ class GrafeoConnection:
         language = self.query_language if language is None else language.strip().lower()
         if language not in QUERY_LANGUAGES:
             raise ValueError(f"Unknown query language {language!r}: one of {', '.join(QUERY_LANGUAGES)}")
+        import grafeo
+
+        if language not in grafeo.features():
+            raise ValueError(f"This grafeo build has no {_LANGUAGE_NAMES[language]} support")
         started = time.perf_counter()
         transaction = self.db.begin_transaction()
         try:

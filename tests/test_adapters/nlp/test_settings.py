@@ -16,3 +16,10 @@ class TestSettings:
         # Every segment would share the empty shingle and count as a duplicate
         with pytest.raises(ValueError, match="dedup_shingle"):
             Settings.from_dict({"dedup_shingle": size})
+
+
+def test_a_switch_takes_true_or_false_and_prepositions_a_list_of_words():
+    assert Settings.from_dict({"noun_proper": True}).noun_proper is True
+    for bad in ({"noun_hyphens": "false"}, {"leading_verbs": 1}, {"verb_prepositions": "for"}, {"verb_prepositions": [1]}):
+        with pytest.raises(ValueError):
+            Settings.from_dict(bad)

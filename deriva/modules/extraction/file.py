@@ -201,20 +201,21 @@ def extract_files(
 
         repo_id = f"repo::{repo_name}"
 
+        eligible = [
+            file_path
+            for file_path in repo_path_obj.rglob("*")
+            if not (file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs) or not is_inside(file_path, repo_path_obj))
+        ]
+
         # First pass: collect all file paths for test matching
-        for file_path in repo_path_obj.rglob("*"):
-            if file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs) or not is_inside(file_path, repo_path_obj):
-                continue
+        for file_path in eligible:
             rel_path = file_path.relative_to(repo_path_obj)
             file_paths_set.add(str(rel_path).replace("\\", "/"))
 
         # Second pass: build nodes and edges
         test_edges: list[dict[str, Any]] = []
 
-        for file_path in repo_path_obj.rglob("*"):
-            if file_path.is_dir() or is_excluded_path(file_path.relative_to(repo_path_obj).as_posix(), excluded_dirs) or not is_inside(file_path, repo_path_obj):
-                continue
-
+        for file_path in eligible:
             try:
                 rel_path = file_path.relative_to(repo_path_obj)
                 rel_path_str = str(rel_path).replace("\\", "/")

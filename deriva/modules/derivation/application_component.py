@@ -32,10 +32,9 @@ class ApplicationComponentDerivation(HybridDerivation):
     """
     ApplicationComponent element derivation.
 
-    Uses hybrid filtering with emphasis on graph structure:
-    - Prioritizes community roots (natural component boundaries)
-    - High PageRank nodes (important directories)
-    - Optional pattern filtering from config
+    Which components exist comes from the step's graph query (see the module docstring). The filter settings below
+    (community roots, PageRank, patterns from config) apply only to candidates without a structural role; the shipped
+    role rule gives every candidate one, so they do not decide anything there.
     """
 
     ELEMENT_TYPE = "ApplicationComponent"

@@ -33,7 +33,10 @@ def endpoint_key(provider: str, api_url: str | None) -> str:
     """The provider with its base URL, normalized (scheme and host in lower case, no trailing slash)."""
     if not api_url:
         return provider
-    parts = urlsplit(api_url.strip())
+    try:
+        parts = urlsplit(api_url.strip())
+    except ValueError:  # An unbalanced [ in the host: the call fails later, with its own message
+        return f"{provider}|{api_url.strip()}"
     url = urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, ""))
     return f"{provider}|{url}"
 

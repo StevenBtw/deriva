@@ -837,6 +837,10 @@ function LimitRow({
       onNote(`${limit.label} must be a positive number.`);
       return;
     }
+    if (limit.scale === 1 && !Number.isInteger(typed)) {
+      onNote(`${limit.label} must be a whole number.`);
+      return;
+    }
     try {
       const { value } = await settings.set(
         limit.key,
@@ -876,7 +880,7 @@ function LimitRow({
         id={limit.id}
         type="number"
         min={limit.scale === 1 ? 1 : 0.001}
-        step="any"
+        step={limit.scale === 1 ? 1 : "any"}
         value={draft ?? ""}
         disabled={draft === null}
         style={{ width: 100 }}

@@ -325,19 +325,25 @@ class RunManager:
 
     def _finish(self, run: RunState, status: str, data: dict[str, Any]) -> None:
         self._emit(run, status, data)
-        with self._changed:
+        with self._lock, self._changed:
             run.status = status
             run.finished_at = time.time()
+            # The run's summary stays in its folder: the studio's run history, also after a restart. Written under the
+            # lock: a run that shows as finished can be deleted, and a late write would bring its folder back
+            try:
+                folder = self._runs_dir / run.run_id
+                folder.mkdir(parents=True, exist_ok=True)
+                (folder / "run.json").write_text(json.dumps(run.summary(), indent=2), encoding="utf-8")
+            except OSError:
+                pass
             self._changed.notify_all()
-        # The run's summary stays in its folder: the studio's run history, also after a restart
-        try:
-            folder = self._runs_dir / run.run_id
-            folder.mkdir(parents=True, exist_ok=True)
-            (folder / "run.json").write_text(json.dumps(run.summary(), indent=2), encoding="utf-8")
-        except OSError:
-            pass
 
     def _steps(self, session: Any, run: RunState, no_llm: bool) -> Generator[Any]:
+        # Extraction and derivation ask for a query function each; max_llm_calls_per_run is one limit for the run
+        with session.one_llm_budget():
+            yield from self._stages(session, run, no_llm)
+
+    def _stages(self, session: Any, run: RunState, no_llm: bool) -> Generator[Any]:
         if run.kind in ("all", "extraction"):
             yield from session.run_extraction_iter(repo_name=run.repository, no_llm=no_llm)
         if run.kind in ("all", "derivation"):

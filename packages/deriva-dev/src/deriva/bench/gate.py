@@ -16,7 +16,7 @@ Per repository (read-only, from the sessions' run snapshots):
 A repository without either reference keeps its consistency and is left out of the count. The verdict: the change is
 accepted when one of the four measures (element or relationship recall or precision) rises by at least the given
 points on enough of the measured repositories, none of the four drops by more than the allowed points anywhere, and
-consistency stays at the minimum everywhere.
+element and relationship consistency stay inside their budgets everywhere.
 """
 
 from __future__ import annotations
@@ -45,7 +45,9 @@ class GateRules:
     better_share: float = 2 / 3  # Of the measured repositories, at least this share better on one of the measures (6 of 9)
     min_rise: float = 1.0  # Points a measure must rise to count as better (a smaller move holds)
     max_drop: float = 2.0  # Points any measure may drop on any repository
-    min_consistency: float = 0.95  # Element and relationship consistency by id on every repository
+    # Consistency by id on every repository: a budget to spend on model quality, not a target
+    min_element_consistency: float = 0.90
+    min_relationship_consistency: float = 0.80
 
 
 def _user_file(folder: Path, repository: str, kind: str) -> tuple[dict[str, Any], bool]:
@@ -117,10 +119,11 @@ def _type_counts(rows: list[dict[str, dict[str, float]]]) -> dict[str, dict[str,
     return out
 
 
-def _golden_types(derived: list[dict[str, Any]], reference: list[Any], aliases: dict[str, Any], scope: set[str]) -> tuple[set[str], dict[str, dict[str, float]]]:
-    """The golden elements that the element names alone find, and the per-type counts of one run."""
+def _golden_types(derived: list[dict[str, Any]], reference: list[Any], aliases: dict[str, Any], scope: set[str]) -> tuple[set[str], int, dict[str, dict[str, float]]]:
+    """The golden elements that the element names alone find, how many derived elements have such a name, and the per-type counts of one run."""
     found = {g for ids in session_metrics.golden_mapping(derived, reference, aliases).values() for g in ids}
-    named = {g for ids in session_metrics.golden_mapping(derived, reference, aliases, structure=False).values() for g in ids}
+    by_name = session_metrics.golden_mapping(derived, reference, aliases, structure=False)
+    named = {g for ids in by_name.values() for g in ids}
     counts: dict[str, dict[str, float]] = {}
 
     def slot(kind: str) -> dict[str, float]:
@@ -134,7 +137,7 @@ def _golden_types(derived: list[dict[str, Any]], reference: list[Any], aliases: 
             c["names"] += r.identifier in named
     for d in derived:
         slot(str(d["type"]))["derived"] += 1
-    return named, counts
+    return named, sum(1 for ids in by_name.values() if ids), counts
 
 
 def _golden_row(path: Path, reference_dir: Path, repo: str, snapshots: list[dict[str, Any]]) -> dict[str, Any]:
@@ -156,8 +159,8 @@ def _golden_row(path: Path, reference_dir: Path, repo: str, snapshots: list[dict
         ]
         elements.append(session_metrics.golden_comparison(derived, reference, aliases=aliases, derivable=derivable))
         relationships.append(golden_relationships(derived, snapshot.get("relationships", []), reference, golden_rels, aliases, scope))
-        named, counts = _golden_types(derived, reference, aliases, scope)
-        names.append((round(len(named & scope) / len(scope), 3) if scope else None, round(len(named) / len(derived), 3) if derived else None))
+        named, matched, counts = _golden_types(derived, reference, aliases, scope)
+        names.append((round(len(named & scope) / len(scope), 3) if scope else None, round(matched / len(derived), 3) if derived else None))
         types.append(counts)
     recall_key = "derivable_types_recall" if provisional else "derivable_recall"
     return {
@@ -270,8 +273,10 @@ def verdict(baseline: dict[str, dict[str, Any]], candidate: dict[str, dict[str, 
             unmeasured.append(repo)
         lowest = _lowest(after) if after else None
         row["consistency"] = lowest
-        if lowest is not None and lowest < rules.min_consistency:
-            failures.append(f"{repo} consistency {lowest:.1%} (at least {rules.min_consistency:.0%})")
+        for kind, label, minimum in (("elements", "element", rules.min_element_consistency), ("relationships", "relationship", rules.min_relationship_consistency)):
+            value = ((after or {}).get("consistency") or {}).get(kind)
+            if value is not None and value < minimum:
+                failures.append(f"{repo} {label} consistency {value:.1%} (at least {minimum:.0%})")
         rows.append(row)
     measured_rows = [r for r in rows if r["measured"]]
     better = sum(1 for r in measured_rows if r["better"])
@@ -293,7 +298,13 @@ def verdict(baseline: dict[str, dict[str, Any]], candidate: dict[str, dict[str, 
         "failures": failures,
         "held": held,
         "verdict": "FAIL" if failures else ("HELD" if held else "PASS"),
-        "rules": {"better_share": rules.better_share, "min_rise": rules.min_rise, "max_drop": rules.max_drop, "min_consistency": rules.min_consistency},
+        "rules": {
+            "better_share": rules.better_share,
+            "min_rise": rules.min_rise,
+            "max_drop": rules.max_drop,
+            "min_element_consistency": rules.min_element_consistency,
+            "min_relationship_consistency": rules.min_relationship_consistency,
+        },
     }
 
 

@@ -534,3 +534,8 @@ def test_the_slow_query_threshold_is_read_once_per_connection(monkeypatch):
     monkeypatch.setenv("GRAFEO_SLOW_QUERY_MS", "250")
 
     assert GrafeoConnection("Graph")._slow_query_ms == 250.0
+
+
+def test_a_language_the_build_lacks_is_refused_per_query_too(conn):
+    with patch("grafeo.features", return_value=["gql"]), pytest.raises(ValueError, match="no Cypher support"):
+        conn.execute_rolled_back("MATCH (n) RETURN n", language="cypher")

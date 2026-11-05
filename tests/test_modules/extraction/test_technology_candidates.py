@@ -139,6 +139,19 @@ def _package(*names):
 
 
 class TestCollect:
+    def test_a_library_only_the_source_imports_is_an_item_with_the_files_that_import_it(self):
+        collected = tc.collect([], PLATFORMS, imported={"alpha_client": {"r/a.py", "r/b.py"}})
+
+        assert list(collected.items) == ["imported library::alpha_client"]
+        assert collected.items["imported library::alpha_client"].kind == "imported library"
+        assert collected.declared["imported library::alpha_client"] == {"r/a.py", "r/b.py"}
+
+    def test_a_declared_library_is_not_asked_again_as_an_import(self):
+        collected = tc.collect([_file("r/package.json", _package("alpha-client"))], PLATFORMS, imported={"alpha-client": {"r/a.js"}, "beta_client": {"r/b.js"}})
+
+        assert sorted(collected.items) == ["imported library::beta_client", "npm library::alpha-client"]
+        assert collected.declared["npm library::alpha-client"] == {"r/a.js", "r/package.json"}
+
     def test_an_item_is_collected_once_with_every_file_that_declares_it(self):
         collected = tc.collect([_file("a/package.json", _package("alpha-client")), _file("b/package.json", _package("alpha-client"))], PLATFORMS)
 

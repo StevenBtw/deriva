@@ -3701,3 +3701,31 @@ class TestReadErrorMessages:
 
         with patch("builtins.open", side_effect=PermissionError(13, "Permission denied", r"\\?\C:\x\a.py")):
             assert _unreadable_reason(tmp_path / "a.py", tmp_path / "a.py") == "[Errno 13] Permission denied"
+
+
+class TestModelFileRoots:
+    def _found(self, tmp_path, text):
+        from deriva.services.extraction import model_files
+
+        (tmp_path / "a.xml").write_text(text, encoding="utf-8")
+        return model_files(tmp_path, ["a.xml"])
+
+    def test_a_mention_is_no_model(self, tmp_path):
+        assert not self._found(tmp_path, "<!-- see http://www.opengroup.org/xsd/archimate/3.0/ --><config><a>1</a></config>")
+        assert not self._found(tmp_path, "<notes>http://www.opengroup.org/xsd/archimate/3.0/</notes>")
+
+    def test_a_long_header_does_not_hide_a_model(self, tmp_path):
+        comment = "<!-- " + "licence text " * 500 + "-->"
+        assert self._found(tmp_path, f'<?xml version="1.0"?>{comment}<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/"></model>') == {"a.xml"}
+
+
+def test_the_read_limit_reaches_the_structural_readers(tmp_path):
+    from deriva.services.extraction import _read_checkout, _read_limit
+
+    (tmp_path / "big.txt").write_text("x" * 5000, encoding="utf-8")
+    assert _read_checkout(tmp_path, "r", "big.txt") is not None
+    token = _read_limit.set(1000)
+    try:
+        assert _read_checkout(tmp_path, "r", "big.txt") is None
+    finally:
+        _read_limit.reset(token)

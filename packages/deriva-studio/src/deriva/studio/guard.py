@@ -12,9 +12,10 @@ from __future__ import annotations
 import hmac
 import json
 from collections.abc import Awaitable, Callable, Collection
-from http.cookies import SimpleCookie
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
+
+from starlette.requests import cookie_parser
 
 Scope = dict[str, Any]
 Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -81,8 +82,8 @@ class Guard:
 
     def _has_token(self, headers: dict[str, str], port: int | None) -> bool:
         assert self.token is not None
-        cookies = SimpleCookie(headers.get("cookie", ""))
-        given = headers.get(TOKEN_HEADER) or (cookies[cookie_name(port)].value if cookie_name(port) in cookies else "")
+        # Starlette's parser: one cookie with an illegal name (from another site on this host) does not fail the others
+        given = headers.get(TOKEN_HEADER) or cookie_parser(headers.get("cookie", "")).get(cookie_name(port), "")
         return hmac.compare_digest(given.encode(), self.token.encode())
 
     async def _sign_in(self, scope: Scope, send: Send, port: int | None) -> None:

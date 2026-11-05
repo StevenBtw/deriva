@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -40,6 +41,7 @@ from deriva.adapters.database import get_connection, run_migrations
 from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, database_bytes, database_exists, delete_database, use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
+from deriva.common.exceptions import NoModelConfigured, RunStopped
 from deriva.common.logging import RunLogger
 from deriva.common.paths import home, resolve, workspace
 from deriva.common.settings import RepositorySettings
@@ -69,12 +71,27 @@ class UnknownRepository(ValueError):
         super().__init__(f"Unknown repository: {name} (known: {', '.join(available) or 'none'})")
 
 
-class RunCancelled(RuntimeError):
+class RunCancelled(RunStopped):
     """The run was cancelled: the session makes no further LLM call until the cancel check is removed."""
 
 
-class LLMBudgetExceeded(RuntimeError):
+class LLMBudgetExceeded(RunStopped):
     """The run made its max_llm_calls_per_run LLM calls: every further call of the run is refused."""
+
+
+class _CallBudget:
+    """The LLM calls a run has left; sampling takes from it on several threads."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def take(self) -> None:
+        with self._lock:
+            if self.calls >= self.limit:
+                raise LLMBudgetExceeded(f"The run made its {self.limit} LLM calls (max_llm_calls_per_run): no further call; raise the setting for a larger repository")
+            self.calls += 1
 
 
 class PipelineSession:
@@ -87,6 +104,9 @@ class PipelineSession:
     - Infrastructure: graph database control, data clearing
     - Export: ArchiMate XML export
     """
+
+    _llm_no_model = False  # The LLM manager could not start because no model is configured (no error: a structural run)
+    _run_budget: _CallBudget | None = None  # The budget all query functions share (one_llm_budget)
 
     def __init__(
         self,
@@ -312,6 +332,19 @@ class PipelineSession:
     # LLM (Lazy loaded)
     # =========================================================================
 
+    def _new_llm_budget(self) -> _CallBudget:
+        limit = config.get_llm_call_budget(self._engine) if self._engine is not None else config.LIMIT_DEFAULTS[config.LLM_CALL_BUDGET_SETTING]
+        return _CallBudget(limit)
+
+    @contextmanager
+    def one_llm_budget(self) -> Generator[None]:
+        """Inside the block every query function draws from one budget: a run of several stages is one run."""
+        self._run_budget = self._new_llm_budget()
+        try:
+            yield
+        finally:
+            self._run_budget = None
+
     def _get_llm_query_fn(self, no_cache: bool = False) -> Callable[..., Any] | None:
         """Get LLM query function, lazy loading the manager."""
         if self._llm_manager is None:
@@ -326,13 +359,13 @@ class PipelineSession:
                     logger.warning("Failed to initialize LLM manager: %s", e)
                 # Why, for the run that needed it (the manager's errors name variables, never values)
                 self._llm_error = str(e)
+                self._llm_no_model = isinstance(e, NoModelConfigured)
                 return None
 
         if no_cache:
             self._llm_manager.nocache = True
-        # Per run: each run asks for its own query function
-        budget = config.get_llm_call_budget(self._engine) if self._engine is not None else config.LIMIT_DEFAULTS[config.LLM_CALL_BUDGET_SETTING]
-        calls = 0
+        # Per run: each run asks for its own query function, or shares one budget (one_llm_budget)
+        budget = self._run_budget or self._new_llm_budget()
 
         def query_fn(
             prompt: str,
@@ -347,10 +380,7 @@ class PipelineSession:
             # A cancelled run stops at its next call, also inside a long step
             if self._cancel_check is not None and self._cancel_check():
                 raise RunCancelled("run cancelled")
-            nonlocal calls
-            if calls >= budget:
-                raise LLMBudgetExceeded(f"The run made its {budget} LLM calls (max_llm_calls_per_run): no further call; raise the setting for a larger repository")
-            calls += 1
+            budget.take()
             try:
                 response = self._llm_manager.query(
                     prompt,
@@ -432,20 +462,15 @@ class PipelineSession:
         self._ensure_connected()
         assert self._graph_manager is not None
 
-        node_types = ["Repository", "Directory", "File", "BusinessConcept", "Technology", "TypeDefinition", "Method", "Test", "ExternalDependency"]
-
-        stats: dict[str, Any] = {"total_nodes": 0, "by_type": {}}
+        # Every node type the graph holds; counted, so a large graph is not read into memory for a summary
         by_type: dict[str, int] = {}
         total = 0
-        for node_type in node_types:
-            nodes = self._graph_manager.get_nodes_by_type(node_type)
-            count = len(nodes)
-            by_type[node_type] = count
-            total += count
-
-        stats["by_type"] = by_type
-        stats["total_nodes"] = total
-        return stats
+        for row in self._graph_manager.query("MATCH (n:Graph) RETURN labels(n) AS labels, count(n) AS nodes"):
+            total += row["nodes"]
+            for label in row["labels"]:
+                if label != "Graph":
+                    by_type[label.removeprefix("Graph:")] = by_type.get(label.removeprefix("Graph:"), 0) + row["nodes"]
+        return {"total_nodes": total, "by_type": by_type}
 
     def get_graph_nodes(self, node_type: str, limit: int | None = None) -> list[dict]:
         """Get nodes of a specific type (the first ``limit`` by id when given)."""
@@ -889,6 +914,9 @@ class PipelineSession:
 
         llm_query_fn = self._get_llm_query_fn()
         if llm_query_fn is None:
+            if not self._llm_no_model:
+                # A model is configured and cannot start (a missing key): the run needs it, so it says so
+                return {"success": False, "errors": [f"LLM not available: {self._llm_error}"], "results": {}}
             # No model configured: the run is a --no-llm run (the CLI says the LLM steps are skipped)
             return self.run_pipeline(repo_name=repo_name, verbose=verbose, progress=progress, no_llm=True)
 

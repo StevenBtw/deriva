@@ -112,3 +112,19 @@ class TestLauncher:
             main(["--host", "0.0.0.0", "--allow-remote", "--no-browser"])
         assert create_app.call_args.kwargs["allowed_hosts"] is None
         assert create_app.call_args.kwargs["token"]
+
+
+class TestOtherCookies:
+    """Another site on this host can set a cookie the standard library's parser refuses."""
+
+    def test_an_illegal_cookie_name_is_no_server_error(self, tmp_path):
+        client = guarded(tmp_path)
+        assert client.get("/api/repositories", headers={"X-Deriva-Token": TOKEN, "Cookie": "a@b=1"}).status_code == 200
+        assert client.get("/api/repositories", headers={"Cookie": "a@b=1"}).status_code == 401
+
+    def test_the_session_cookie_still_counts_beside_it(self, tmp_path):
+        client = guarded(tmp_path)
+        set_cookie = client.get(f"/api/auth?token={TOKEN}").headers["set-cookie"]
+        session = set_cookie.split(";", 1)[0]
+        client.cookies.clear()
+        assert client.get("/api/repositories", headers={"Cookie": f"a@b=1; {session}; c,d=2"}).status_code == 200

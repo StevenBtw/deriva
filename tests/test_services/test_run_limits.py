@@ -99,3 +99,67 @@ def test_a_failed_model_load_is_logged_once_per_reason(caplog):
         session._get_llm_query_fn()
         session._get_llm_query_fn()
     assert caplog.text.count("Failed to initialize LLM manager") == 1
+
+
+class TestOneBudgetForARun:
+    def _session(self, budget):
+        from deriva.services.session import PipelineSession
+
+        session = PipelineSession.__new__(PipelineSession)
+        session._engine = object()
+        session._run_budget = None
+        session._cancel_check = None
+        session._llm_error = None
+        session._llm_no_model = False
+        session._llm_manager = MagicMock()
+        session._record_call = MagicMock()
+        return session
+
+    def test_the_query_functions_of_one_run_share_the_budget(self):
+        from deriva.services.session import LLMBudgetExceeded
+
+        session = self._session(3)
+        with patch("deriva.services.session.config.get_llm_call_budget", return_value=3), session.one_llm_budget():
+            extraction, derivation = session._get_llm_query_fn(), session._get_llm_query_fn()
+            for query in (extraction, extraction, derivation):
+                query("p")
+            with pytest.raises(LLMBudgetExceeded):
+                derivation("p")
+        assert session._run_budget is None
+
+    def test_threads_cannot_pass_the_limit_together(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        from deriva.services.session import LLMBudgetExceeded, _CallBudget
+
+        budget = _CallBudget(50)
+
+        def take(_):
+            try:
+                budget.take()
+                return 1
+            except LLMBudgetExceeded:
+                return 0
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            assert sum(pool.map(take, range(400))) == 50
+
+    def test_a_broken_model_configuration_fails_the_pipeline_run(self):
+        session = self._session(3)
+        session._connected = True
+        session._graph_manager = session._archimate_manager = object()
+        session._llm_manager = None
+        session._llm_error = "LLM_X_KEY is not set"
+        with patch.object(type(session), "_get_llm_query_fn", return_value=None):
+            result = session.run_pipeline(repo_name="r")
+        assert result["success"] is False and "LLM_X_KEY" in result["errors"][0]
+
+    def test_no_model_at_all_is_a_structural_run(self):
+        session = self._session(3)
+        session._connected = True
+        session._graph_manager = session._archimate_manager = object()
+        session._llm_no_model = True
+        finished = {"success": True}
+        with patch.object(type(session), "_get_llm_query_fn", return_value=None), patch("deriva.services.session.pipeline.run_full_pipeline", return_value=finished) as run:
+            assert session.run_pipeline(repo_name="r")["success"] is True
+        assert run.call_args.kwargs["llm_query_fn"] is None

@@ -1884,7 +1884,8 @@ def get_derivation_limit(engine: Any, key: str, default: int | None = None) -> i
 
 
 # The model quality verdict (a report; it changes no result) calls a model weak above these shares: elements without
-# a relationship, and relationships that are Composition or Aggregation. Models judged good stay well below both.
+# a relationship (and, by the same share, business elements that connect to nothing at the enterprise level), and
+# relationships that are Composition or Aggregation. Models judged good stay well below both.
 QUALITY_THRESHOLDS = {"quality_max_orphan_share": 0.25, "quality_max_structural_share": 0.8}
 
 

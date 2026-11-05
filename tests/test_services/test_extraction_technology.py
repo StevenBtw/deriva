@@ -13,7 +13,7 @@ import pytest
 
 from deriva.adapters.grafeo.manager import close_database
 from deriva.adapters.graph import GraphManager
-from deriva.adapters.graph.models import FileNode, TechnologyNode
+from deriva.adapters.graph.models import ExternalDependencyNode, FileNode, TechnologyNode
 from deriva.modules.extraction.base import generate_file_node_id
 from deriva.services import extraction as service
 from deriva.services.config import ExtractionConfig
@@ -84,6 +84,35 @@ def _run(tmp_path, graph, llm, cfg=None, files=None):
 def _configures(graph):
     rows = graph.query("MATCH (t:Graph:Technology)<-[r]-(f:Graph) RETURN f.id AS src, t.id AS dst, type(r) AS rel")
     return sorted((row["src"], row["dst"], row["rel"]) for row in rows)
+
+
+class TestImportedLibraries:
+    def _graph_with_import(self, graph):
+        # The node stores its path with the repository in front ("r/app/db.py"); its id takes the path inside the repository
+        source = generate_file_node_id("r", "app/db.py")
+        graph.add_node(FileNode(name="db.py", path="app/db.py", repository_name="r", file_type="source", subtype="python"), node_id=source)
+        graph.add_node(ExternalDependencyNode(name="beta_client", dependency_category="library", repository_name="r"), node_id="dep::r::beta_client")
+        graph.batch_update_properties({"dep::r::beta_client": {"repository_name": "r"}})  # The extraction stamps it
+        graph.add_edge(source, "dep::r::beta_client", "USES")
+        return source
+
+    def test_a_repository_without_a_manifest_classifies_what_its_source_imports(self, tmp_path, graph):
+        source = self._graph_with_import(graph)
+        llm = FakeLlm({"beta_client": ("system_software", "Queue Beta")})
+
+        result = _run(tmp_path, graph, llm, cfg=_cfg({**PARAMS, "imported_libraries": True}), files={})
+
+        assert result["errors"] == []
+        assert llm.prompted_items(0) == ["beta_client"]
+        assert (source, "tech::r::queuebeta", "Graph:CONFIGURES") in _configures(graph)
+
+    def test_without_the_setting_imports_are_no_items(self, tmp_path, graph):
+        self._graph_with_import(graph)
+        llm = FakeLlm({"beta_client": ("system_software", "Queue Beta")})
+
+        result = _run(tmp_path, graph, llm, files={})
+
+        assert llm.calls == [] and result["nodes_created"] == 0
 
 
 class TestTechnologyStep:

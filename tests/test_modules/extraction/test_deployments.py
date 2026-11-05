@@ -162,6 +162,30 @@ CATALOG_ENTRIES = [
 ]
 
 
+def test_technologies_the_classification_names_join_the_system_software():
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    classified = (("Hosted PostgreSQL", ("r/shop/db.py",)), ("Queue Engine", ("r/services/billing/send.py", "r/other.py")))
+
+    layer = technology_layer("r", {}, UNITS, DeploymentRules(), catalog_from_params(CATALOG_ENTRIES), {}, classified=classified)
+    software = {s.name: s for s in layer.software}
+
+    # The closed list's own name inside the answer is that entry; a name off the list stays as written, not listed
+    assert sorted(software) == ["PostgreSQL", "Queue Engine"]
+    assert software["PostgreSQL"].listed and software["PostgreSQL"].kind == "database" and software["PostgreSQL"].serves == ["unit::r::shop"]
+    assert not software["Queue Engine"].listed and software["Queue Engine"].serves == ["unit::r::services/billing"]
+    assert software["PostgreSQL"].evidence == ["classified from 1 files"]
+    assert not software["PostgreSQL"].in_environment
+
+
+def test_without_classified_technologies_the_software_is_what_it_was():
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    assert technology_layer("r", {}, UNITS, DeploymentRules(), catalog_from_params(CATALOG_ENTRIES), {}).software == []
+
+
 def _layer(files, sources=None, units=UNITS):
     from deriva.modules.extraction.deployments import technology_layer
     from deriva.modules.extraction.technologies import catalog_from_params
@@ -428,6 +452,26 @@ def test_a_services_own_dockerfile_beats_the_last_word_of_its_name_not_its_exact
     assert {s.name: s.unit for s in env.services} == {"admin-web": "unit::r::admin", "api": "unit::r::api", "public-web": "unit::r::web"}
 
 
+def test_a_services_own_dockerfile_beats_the_last_word_of_its_image_too():
+    units = [
+        {"id": "unit::r::admin", "path": "r/src/admin", "name": "admin"},
+        {"id": "unit::r::web", "path": "r/src/web", "name": "web"},
+        {"id": "unit::r::api", "path": "r/src/api", "name": "api"},
+    ]
+    compose = (
+        "services:\n"
+        "  admin-web:\n    image: acme/admin-web\n    build:\n      context: .\n      dockerfile: src/admin/Dockerfile\n"
+        "  other:\n    image: acme/api\n    build:\n      context: .\n      dockerfile: src/web/Dockerfile\n"
+        "  third:\n    image: acme/public-web\n    build:\n      context: .\n      dockerfile: docker/Dockerfile\n"
+    )
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+
+    assert env is not None
+    # An image that names a unit exactly still wins; a guess from its last word comes after the Dockerfile's folder
+    assert {s.name: s.unit for s in env.services} == {"admin-web": "unit::r::admin", "other": "unit::r::api", "third": "unit::r::web"}
+
+
 def test_a_build_context_that_several_units_share_is_matched_by_name_or_not_at_all():
     units = [{"id": "unit::r::api", "path": "r/app", "name": "api"}, {"id": "unit::r::worker", "path": "r/app", "name": "worker"}]
     compose = "services:\n  worker:\n    build: ./app\n  jobs:\n    build: ./app\n"
@@ -581,3 +625,12 @@ def test_with_primary_runs_units_a_compose_file_that_runs_units_stays_primary():
     env = detect_deployments("r", files, UNITS, dataclasses.replace(RULES, primary_runs_units=True)).primary
     assert env is not None
     assert env.file == "r/docker-compose.yml"
+
+
+def test_a_dockerfile_path_with_backslashes_finds_its_folder():
+    from deriva.modules.extraction.deployments import _compose, _Units
+
+    units = _Units([{"id": "unit::web", "path": "r/src/web", "name": "front", "members": []}, {"id": "unit::api", "path": "r/src/api", "name": "back", "members": []}])
+    text = "services:\n  shop:\n    build:\n      context: .\n      dockerfile: 'src\\web\\Dockerfile'\n"
+    environment = _compose("r/docker-compose.yml", text, units, DeploymentRules())
+    assert environment is not None and environment.services[0].unit == "unit::web"

@@ -16,7 +16,7 @@ Usage:
         gm.add_edge("repo_myapp", "file_myapp_main_py", "CONTAINS")
 
         # Query (GQL by default)
-        results = gm.execute("MATCH (r:Repository)-[:CONTAINS]->(f:File) RETURN f")
+        results = gm.query("MATCH (r:Repository)-[:CONTAINS]->(f:File) RETURN f")
 
         # Get enrichment data
         enrichments = gm.get_enrichments(["file_myapp_main_py"])
@@ -187,7 +187,7 @@ class GraphManager:
             gm.add_node(RepositoryNode(id="repo_myapp", name="myapp", url="..."))
 
             # Query nodes
-            results = gm.execute("MATCH (n:Repository) RETURN n")
+            results = gm.query("MATCH (n:Repository) RETURN n")
 
             # Get node by ID
             node = gm.get_node("repo_myapp")
@@ -492,18 +492,14 @@ class GraphManager:
         if self.db is None:
             raise RuntimeError("Not connected to grafeo. Call connect() first.")
 
-        try:
-            query = """
-                MATCH (n)
-                WHERE n.id = $node_id
-                RETURN count(n) > 0 AS found
-            """
-            result = self.db.execute_read(query, {"node_id": node_id})
-            return result[0]["found"] if result else False
-
-        except Exception as e:
-            logger.error(f"Failed to check node existence {node_id}: {e}")
-            return False
+        # A failed query raises: it is no missing node, and the callers would drop their edges without a word
+        query = """
+            MATCH (n)
+            WHERE n.id = $node_id
+            RETURN count(n) > 0 AS found
+        """
+        result = self.db.execute_read(query, {"node_id": node_id})
+        return result[0]["found"] if result else False
 
     def get_nodes_by_type(self, node_type: str, limit: int | None = None) -> list[dict[str, Any]]:
         """Retrieve the nodes of a specific type (the first ``limit`` by id when given).

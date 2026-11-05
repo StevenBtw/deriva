@@ -12,8 +12,8 @@ from deriva.adapters.nlp import NlpTool, manager, translate
 
 def test_ensure_models_downloads_into_the_models_directory(tmp_path, monkeypatch):
     calls = []
-    monkeypatch.setattr(manager, "ensure_spacy", lambda models_dir, download: calls.append(("spacy", models_dir, download)))
-    monkeypatch.setattr(manager, "ensure_all", lambda models_dir, download: calls.append(("translation", models_dir, download)))
+    monkeypatch.setattr(manager, "ensure_spacy", lambda models_dir, download: calls.append(("spacy", models_dir, download)) or {})
+    monkeypatch.setattr(manager, "ensure_all", lambda models_dir, download: calls.append(("translation", models_dir, download)) or {})
 
     NlpTool(models_dir=tmp_path / "models").ensure_models()
 

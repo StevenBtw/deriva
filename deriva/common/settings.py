@@ -198,7 +198,7 @@ class GrafeoSettings(_Group):
     @field_validator("query_language")
     @classmethod
     def _known_language(cls, value: str) -> str:
-        language = value.strip().lower()
+        language = value.strip().lower() or "gql"
         if language not in QUERY_LANGUAGES:
             raise ValueError(f"GRAFEO_QUERY_LANGUAGE must be one of {', '.join(QUERY_LANGUAGES)}, not {value!r}")
         return language

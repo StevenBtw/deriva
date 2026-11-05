@@ -89,3 +89,22 @@ def test_an_unset_setting_gives_each_step_its_own_again(engine):
     assert config.delete_setting(engine, "llm_samples") is True
     assert config.get_llm_samples(engine) is None
     assert config.delete_setting(engine, "llm_samples") is False
+
+
+class TestAStoppedRun:
+    def test_it_is_no_failed_sample(self):
+        from deriva.common.exceptions import RunStopped
+
+        def llm(prompt, schema, sample=None):
+            raise RunStopped("budget")
+
+        with pytest.raises(RunStopped):
+            sample_llm(llm, "p", {}, 3)
+
+    def test_a_failed_sample_is_still_just_not_counted(self):
+        def llm(prompt, schema, sample=None):
+            if sample == 1:
+                raise ValueError("provider")
+            return sample
+
+        assert sample_llm(llm, "p", {}, 3) == [0, None, 2]

@@ -149,7 +149,8 @@ class TestWithRealGit:
         info = manager.clone_repository(app.as_uri() + "/.git", target_name="plain", submodules=False, allow_local=True)
         assert (Path(info.path) / "app.txt").exists()
 
-        with pytest.raises(CloneError, match="uses the file protocol"):
+        # Whatever git this machine has: the point here is what git refuses when submodules are asked for
+        with patch.object(repo_manager, "_submodules_unsafe", return_value=False), pytest.raises(CloneError, match="uses the file protocol"):
             manager.clone_repository(app.as_uri() + "/.git", target_name="with-submodules", allow_local=True)
         assert not (workspace / "with-submodules").exists()
 
@@ -163,8 +164,11 @@ class TestEdges:
         assert repo_manager.git_outdated("git version unknown") is False
         assert repo_manager.git_outdated("git version 2.39.5") is True
 
-    def test_an_outdated_git_is_logged_after_a_clone(self, tmp_path, caplog):
+    def test_an_outdated_git_clones_without_submodules(self, tmp_path, caplog):
+        commands = []
+
         def run(cmd, **kwargs):
+            commands.append(cmd)
             if "clone" in cmd:
                 (Path(cmd[-1]) / ".git").mkdir(parents=True)
             return MagicMock(stdout="git version 2.43.0" if "--version" in cmd else "main", stderr="")
@@ -172,10 +176,15 @@ class TestEdges:
         with patch(RUN, side_effect=run), caplog.at_level("WARNING"):
             RepoManager(workspace_dir=tmp_path).clone_repository("https://github.com/user/repo.git")
         assert "CVE-2025-48384" in caplog.text
+        clone = next(cmd for cmd in commands if "clone" in cmd)
+        assert "--recurse-submodules" not in clone and "--shallow-submodules" not in clone
 
     def test_no_git_to_ask_is_no_warning(self):
         with patch(RUN, side_effect=OSError("no git")):
-            repo_manager._warn_if_git_outdated()
+            assert repo_manager._submodules_unsafe() is False
+
+    def test_bundles_a_server_advertises_are_not_fetched(self):
+        assert "transfer.bundleURI=false" in repo_manager._git_safety()
 
     def test_a_pull_that_takes_too_long_is_stopped(self, tmp_path, git):
         manager = RepoManager(workspace_dir=tmp_path)

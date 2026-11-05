@@ -360,6 +360,7 @@ describe("Output ontology", () => {
 
     await waitFor(() => expect(vi.mocked(configs.setEnabled).mock.calls.map((c) => c[1]).sort()).toEqual(["BusinessActor", "BusinessObject", "DocumentationActors"]));
     expect(configs.setEnabled).not.toHaveBeenCalledWith("derivation", "BusinessProcess", true);
+    expect(vi.mocked(configs.setEnabled).mock.calls.every((c) => c[2] === true)).toBe(true);
   });
 
   it("a type shipped off can still be chosen on its own", async () => {

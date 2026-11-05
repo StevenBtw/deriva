@@ -12,7 +12,7 @@ def fetch(models_dir: Path | None = None) -> dict[str, Any]:
     """Download and verify the pinned models (nothing is downloaded when they are present); the folder and the size
     of each model in bytes."""
     tool = NlpTool(models_dir)
-    tool.ensure_models()
+    pinned = tool.ensure_models()
     folder = Path(tool.models_dir)
-    models = {entry.name: sum(f.stat().st_size for f in entry.rglob("*") if f.is_file()) for entry in sorted(folder.iterdir()) if entry.is_dir()}
+    models = {path.name: sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) for path in sorted(pinned.values(), key=lambda p: p.name)}
     return {"models_dir": str(folder), "models": models}

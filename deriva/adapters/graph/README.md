@@ -109,7 +109,7 @@ deriva/adapters/graph/
 | `update_node_property(id, key, val)` | Update single property |
 | `delete_node(node_id)` | Delete node and its edges |
 | `clear_graph()` | Clear all graph data |
-| `query(query, params)` | Execute a custom query (GQL by default, `GRAFEO_QUERY_LANGUAGE`) |
+| `query(cypher_query, params)` | Execute a custom query (GQL by default, `GRAFEO_QUERY_LANGUAGE`) |
 
 ## Data Isolation
 

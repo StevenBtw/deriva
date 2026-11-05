@@ -24,7 +24,7 @@ class TestIdentifier:
 
     def test_a_source_without_a_repository_part_is_unchanged(self):
         with repository_in_identifiers(True):
-            assert element_identifier("BusinessFunction", "function::Billing") == element_identifier("BusinessFunction", "function::Billing")
+            assert element_identifier("BusinessFunction", "function::Billing") == "bf_function__billing"
         assert element_identifier("BusinessFunction", "function::Billing") == "bf_function__billing"
 
 
@@ -78,12 +78,17 @@ def test_a_module_beside_its_unit_keeps_its_repository_too():
 def test_the_active_repository_is_chosen_by_name_not_by_chance():
     """A combined graph has several active repositories: the one whose name is stripped from element names is the
     first by name, in every run (no LIMIT 1 without an order)."""
-    import inspect
+    from deriva.adapters.graph import GraphManager
+    from deriva.modules.derivation.application_component import ApplicationComponentDerivation
+    from deriva.modules.derivation.refine.duplicate_elements import _build_repo_context
 
-    from deriva.modules.derivation import element_base
-    from deriva.modules.derivation.refine import duplicate_elements
-
-    for module in (element_base, duplicate_elements):
-        source = inspect.getsource(module)
-        assert "RETURN r.repository_name as name LIMIT 1" not in source
-        assert "ORDER BY r.repository_name LIMIT 1" in source
+    graph = GraphManager()
+    graph.connect()
+    try:
+        assert graph.db is not None
+        for name in ("zebra", "alpha", "mango"):
+            graph.db.execute(f"INSERT (:Graph:Repository {{id: 'repo::{name}', repository_name: '{name}', active: true}})")
+        assert ApplicationComponentDerivation()._active_repo_name(graph) == "alpha"
+        assert _build_repo_context(graph).repo_name == "alpha"
+    finally:
+        graph.disconnect()

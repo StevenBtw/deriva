@@ -757,3 +757,22 @@ class TestOneDecisionPerName:
         (node,) = result["data"]["nodes"]
         assert node["properties"]["conceptName"] == "EventLogger"  # the directory's name, not the echo
         assert sorted(e["source"] for e in result["data"]["edges"]) == ["d1", "d2"]
+
+
+def test_votes_never_exceed_the_samples_llm_samples_leaves():
+    import json
+    from types import SimpleNamespace
+
+    from deriva.modules.extraction.directory_classification import classify_directories
+
+    choice = {"directoryName": "a", "classification": "business", "conceptType": "entity", "technologyType": None, "confidence": 0.9}
+    llm = MagicMock(return_value=SimpleNamespace(content=json.dumps({"classifications": [choice]}), usage=None))
+    result = classify_directories(
+        directories=[{"name": "a", "path": "a", "id": "dir::r::a"}],
+        repo_name="r",
+        llm_query_fn=llm,
+        config={"instruction": "i", "example": "{}", "params": {"samples": 1, "min_votes": 2}},
+    )
+
+    assert llm.call_count == 1
+    assert result["stats"]["business_concepts"] == 1

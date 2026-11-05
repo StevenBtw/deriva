@@ -28,6 +28,7 @@ from deriva.common.naming import contains_name, name_key
 from .base import current_timestamp, generate_edge_id, generate_file_node_id
 from .external_dependency import parse_requirement_line
 
+IMPORTED_KIND = "imported library"
 CATEGORIES = ("system_software", "service", "infrastructure", "platform", "network", "security")
 LABELS = (*CATEGORIES, "none")
 
@@ -309,8 +310,17 @@ def technology_node_id(repo_name: str, tech_name: str) -> str:
     return f"tech::{repo_name}::{name_key(tech_name)}"
 
 
-def collect(files: list[dict[str, Any]], platforms: list[dict[str, str]], own_units: frozenset[str] = frozenset(), repository_name: str = "") -> Collected:
+def collect(
+    files: list[dict[str, Any]],
+    platforms: list[dict[str, str]],
+    own_units: frozenset[str] = frozenset(),
+    repository_name: str = "",
+    imported: dict[str, set[str]] | None = None,
+) -> Collected:
     """The items the files declare and the platforms their types imply (platforms: the step's params table).
+
+    ``imported`` holds the libraries the source imports with the files that do: a repository without a manifest declares
+    nothing, so what it runs on shows only there. A library also declared stays that one item, with these files added.
 
     A compose service that is one of the repository's own modules (``own_units``, name keys) is no item, and with
     ``repository_name`` neither is an item named after the repository (an image, a library, a service running such
@@ -328,6 +338,13 @@ def collect(files: list[dict[str, Any]], platforms: list[dict[str, str]], own_un
             key = item_key(text, kind)
             collected.items.setdefault(key, TechnologyItem(key, text, kind))
             collected.declared.setdefault(key, set()).add(f["path"])
+    by_text = {item.text.casefold(): key for key, item in collected.items.items()}
+    for text, paths in sorted((imported or {}).items()):
+        if _names_repository(text, IMPORTED_KIND, repository_name):
+            continue
+        key = by_text.get(text.casefold()) or item_key(text, IMPORTED_KIND)
+        collected.items.setdefault(key, TechnologyItem(key, text, IMPORTED_KIND))
+        collected.declared.setdefault(key, set()).update(paths)
     return collected
 
 

@@ -80,3 +80,8 @@ def test_a_passage_that_opens_with_a_verb_the_tagger_missed_is_read_as_one(pipel
 
 def test_settings_read_a_json_list_of_prepositions():
     assert Settings.from_dict({"verb_prepositions": ["for", "to"]}).verb_prepositions == ("for", "to")
+
+
+def test_a_verb_with_a_preposition_keeps_coordinated_objects(pipelines):
+    found = _with(pipelines, "Members can apply for a permit or a license.", verb_prepositions=("for",))
+    assert ("verb", "apply for permit") in found and ("verb", "apply for license") in found

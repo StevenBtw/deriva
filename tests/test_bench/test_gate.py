@@ -166,6 +166,17 @@ def _row(repo, recall, precision, consistency=1.0, source="reference", rel_recal
     }
 
 
+def test_elements_and_relationships_each_have_their_own_consistency_budget():
+    baseline = {"a": _row("a", 0.50, 0.50)}
+    within = {"a": {**_row("a", 0.52, 0.50), "consistency": {"elements": 0.90, "relationships": 0.80}}}
+    elements = {"a": {**_row("a", 0.52, 0.50), "consistency": {"elements": 0.89, "relationships": 1.0}}}
+    relationships = {"a": {**_row("a", 0.52, 0.50), "consistency": {"elements": 1.0, "relationships": 0.79}}}
+
+    assert verdict(baseline, within)["verdict"] == "PASS"
+    assert verdict(baseline, elements)["failures"] == ["a element consistency 89.0% (at least 90%)"]
+    assert verdict(baseline, relationships)["failures"] == ["a relationship consistency 79.0% (at least 80%)"]
+
+
 def test_the_verdict_counts_better_repositories_the_largest_drop_and_the_lowest_consistency():
     baseline = {r: _row(r, 0.50, 0.50) for r in ("a", "b", "c", "d", "e", "f", "g", "h", "i")}
     candidate = {r: _row(r, 0.52, 0.50) for r in ("a", "b", "c", "d", "e", "f")}  # 6 better on recall
@@ -183,10 +194,10 @@ def test_the_verdict_counts_better_repositories_the_largest_drop_and_the_lowest_
     ("change", "reason"),
     [
         ({"a": _row("a", 0.47, 0.60)}, "a drops 3.0 points"),  # more than 2 points down on recall, despite the precision
-        ({"b": _row("b", 0.52, 0.50, consistency=0.94)}, "consistency 94.0%"),
+        ({"b": _row("b", 0.52, 0.50, consistency=0.79)}, "relationship consistency 79.0%"),
     ],
 )
-def test_a_drop_beyond_two_points_or_consistency_below_95_fails(change, reason):
+def test_a_drop_beyond_two_points_or_consistency_below_its_budget_fails(change, reason):
     baseline = {r: _row(r, 0.50, 0.50) for r in "abcdefghi"}
     candidate = {r: _row(r, 0.52, 0.50) for r in "abcdefghi"} | change
 
@@ -354,3 +365,19 @@ def test_names_only_scores_a_development_reference_without_lineage_and_per_type(
     lines = "\n".join(table_markdown({"shop": shop}, "Union"))
     assert "Recall (names)" in lines and "| 50.0% |" in lines
     assert "| ApplicationComponent | 2 | 2.0 | 1.0 | 2.0 |" in "\n".join(types_markdown({"shop": shop}))
+
+
+def test_names_precision_counts_derived_elements_not_the_golden_ones_they_hit(tmp_path, folders):
+    run = {
+        "elements": [
+            {"identifier": "a", "type": "ApplicationComponent", "name": "Customer Core", "source": "unit::shop::core"},
+            {"identifier": "b", "type": "ApplicationComponent", "name": "customer core", "source": "unit::shop::other"},
+        ],
+        "relationships": [],
+    }
+    goldens, references = folders
+    (goldens / "shop.json").write_text(json.dumps(REFERENCE), encoding="utf-8")
+
+    shop = measure([_session(tmp_path, "s1", "shop", [run])], goldens, references)["shop"]
+
+    assert shop["names_precision"] == 1.0  # both are named like a golden element, even if it is the same one

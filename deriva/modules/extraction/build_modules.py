@@ -347,8 +347,15 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
     tooling = development_only(manifests)
 
     def _after_repository(name: str) -> list[str]:
+        # What follows the repository's name, a scope or group before it included; else what follows the leading words
+        # they share (example-vote-worker in example-voting-app). A name that is only those words keeps them
         words, own = _words(name), [w.casefold() for w in _words(_folder_name(repository))]
-        return words[len(own) :] if [w.casefold() for w in words[: len(own)]] == own else words
+        lower = [w.casefold() for w in words]
+        for start in range(len(words) - len(own) + 1):
+            if lower[start : start + len(own)] == own:
+                return words[start + len(own) :]
+        shared = next((i for i, (a, b) in enumerate(zip(lower, own, strict=False)) if a != b), min(len(lower), len(own)))
+        return words[shared:] if shared < len(words) else words
 
     def excluded(folder: str) -> str | None:
         manifest = candidates[folder]

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -13,6 +14,10 @@ class FakeSession:
     """Stands in for PipelineSession: records calls, returns canned values from ``returns``."""
 
     repository: str  # set by tests that need it; unset, reads go through __getattr__
+
+    @contextmanager
+    def one_llm_budget(self) -> Generator[None]:
+        yield
 
     def __init__(self, connect_error: Exception | None = None, **returns: Any) -> None:
         self.calls: list[tuple[str, tuple, dict]] = []

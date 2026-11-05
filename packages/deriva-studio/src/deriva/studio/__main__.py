@@ -56,7 +56,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.host not in LOCAL_HOSTS:
         if not args.allow_remote:
             parser.error(f"--host {args.host} makes the studio reachable from other machines, and it has no login; add --allow-remote to do so")
-        print(f"Warning: the studio is reachable from other machines on {args.host}; anyone with the launch link can use it.")
+        print(
+            f"Warning: the studio is reachable from other machines on {args.host}; anyone with the launch link can use it, and it "
+            "serves plain HTTP: the link and all traffic can be read on the network. Use a trusted network, or put a TLS proxy in front."
+        )
     # A fresh token per launch: only the link below opens the studio, so another site's page in the browser cannot
     # drive it; bound to this machine, it also answers to its local names only (DNS rebinding)
     token = secrets.token_urlsafe(32)

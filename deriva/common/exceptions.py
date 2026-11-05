@@ -52,6 +52,14 @@ class ConfigurationError(BaseError):
     """Raised when configuration is invalid or missing."""
 
 
+class NoModelConfigured(ConfigurationError):
+    """No LLM model is configured at all, which is a valid setup: only the structural steps run."""
+
+
+class RunStopped(RuntimeError):
+    """The run must stop (cancelled, out of budget): no failed call that a step may count and go on from."""
+
+
 # =============================================================================
 # API and External Service Errors
 # =============================================================================
