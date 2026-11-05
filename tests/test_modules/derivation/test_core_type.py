@@ -82,3 +82,25 @@ def test_an_experimental_step_runs_on_an_empty_graph_without_a_call():
         )
         assert isinstance(result, GenerationResult) and result.success and result.elements_created == 0
     llm.assert_not_called()
+
+
+def test_a_collaboration_comes_from_a_lifecycle_two_or_more_roles_take_part_in_and_aggregates_them():
+    """A collaboration has two or more participants: its candidates are lifecycles with two or more assigned roles, and
+    a structural link aggregates those roles and actors into it."""
+    rows = _seed_rows()
+    row = rows["BusinessCollaboration"]
+    assert "Lifecycle" in row["input_graph_query"] and ">= 2" in row["input_graph_query"] and "ASSIGNED" in row["input_graph_query"]
+    roles = _role_config(row["params"])
+    assert roles is not None and roles.labels == frozenset({"Lifecycle"})
+    links = json.loads(rows["GlobalRelationships"]["params"])["graph_links"]
+    aggregated = {link["target"] for link in links if link["source"] == "BusinessCollaboration" and link["relationship"] == "Aggregation"}
+    assert aggregated == {"BusinessRole", "BusinessActor"}
+    for target in aggregated:
+        assert relationship_tier("BusinessCollaboration", "Aggregation", target) == "direct"
+
+
+def test_a_path_is_one_per_connection_between_two_units():
+    row = _seed_rows()["Path"]
+    assert "CONSUMES" in row["input_graph_query"] and "a.id || '>' || b.id" in row["input_graph_query"]
+    roles = _role_config(row["params"])
+    assert roles is not None and roles.labels == frozenset({"DeployableUnit"})
