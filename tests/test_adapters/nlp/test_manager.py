@@ -84,3 +84,14 @@ def test_the_real_models_give_english_forms():
     terms = {(c["language"], c["term"]): c["english"] for c in result["candidates"]}
     assert terms[("en", "Invoice")] == "invoice"
     assert terms[("de", "Rechnung")] == "invoice"
+
+
+def test_spacy_and_translation_models_of_one_language_are_both_reported(tmp_path, monkeypatch):
+    spacy = {"de": tmp_path / "de_core_news_sm", "en": tmp_path / "en_core_web_sm"}
+    translation = {"de": tmp_path / "opus-mt-de-en"}
+    monkeypatch.setattr(manager, "ensure_spacy", lambda models_dir, download: spacy)
+    monkeypatch.setattr(manager, "ensure_all", lambda models_dir, download: translation)
+
+    models = NlpTool(models_dir=tmp_path).ensure_models()
+
+    assert sorted(models) == ["de_core_news_sm", "en_core_web_sm", "opus-mt-de-en"]

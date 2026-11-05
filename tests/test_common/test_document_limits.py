@@ -77,3 +77,16 @@ def test_a_docx_over_the_limit_says_why(docx_file, monkeypatch, caplog):
     with caplog.at_level("WARNING"):
         assert document_reader.read_docx(docx_file) is None
     assert "unpacks to more than 1000 bytes" in caplog.text
+
+
+def test_a_page_past_the_text_limit_is_not_unpacked(tmp_path, monkeypatch):
+    pytest.importorskip("pypdf")
+    monkeypatch.setattr(document_reader, "MAX_DOCUMENT_CHARS", 8)
+
+    def broken():
+        raise ValueError("bad stream")
+
+    pages = [SimpleNamespace(extract_text=lambda: "a" * 8, get_contents=lambda: None), SimpleNamespace(extract_text=lambda: "b", get_contents=broken)]
+    with patch("pypdf.PdfReader", return_value=SimpleNamespace(pages=pages)):
+        text = document_reader.read_pdf(tmp_path / "x.pdf")
+    assert text is not None and "a" * 8 in text  # The read pages stay

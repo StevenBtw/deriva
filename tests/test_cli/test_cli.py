@@ -3223,3 +3223,21 @@ class TestConfigModelTest:
 
         assert result.exit_code == 1
         assert "No model config named nope" in result.output
+
+
+@patch("deriva.cli.cli.create_progress_reporter")
+@patch("deriva.cli.cli.PipelineSession")
+def test_a_full_run_says_it_stops_without_its_configured_model(mock_session_class, mock_progress):
+    mock_session = MagicMock()
+    mock_session.llm_info = None
+    mock_session.llm_no_model = False
+    mock_session.llm_error = "The model config mini has no API key: set LLM_MINI_KEY"
+    mock_session.run_pipeline.return_value = {"success": False, "errors": ["LLM not available: x"], "results": {}}
+    mock_session_class.return_value.__enter__.return_value = mock_session
+    mock_progress.return_value.__enter__ = MagicMock(return_value=MagicMock())
+    mock_progress.return_value.__exit__ = MagicMock(return_value=False)
+
+    result = runner.invoke(app, ["run", "all"])
+
+    assert "A full run needs the configured model and stops" in result.stdout
+    assert "will be skipped" not in result.stdout

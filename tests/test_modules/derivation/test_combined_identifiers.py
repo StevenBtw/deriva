@@ -78,6 +78,7 @@ def test_a_module_beside_its_unit_keeps_its_repository_too():
 def test_the_active_repository_is_chosen_by_name_not_by_chance():
     """A combined graph has several active repositories: the one whose name is stripped from element names is the
     first by name, in every run (no LIMIT 1 without an order)."""
+    from deriva.adapters.grafeo.manager import close_database
     from deriva.adapters.graph import GraphManager
     from deriva.modules.derivation.application_component import ApplicationComponentDerivation
     from deriva.modules.derivation.refine.duplicate_elements import _build_repo_context
@@ -92,3 +93,4 @@ def test_the_active_repository_is_chosen_by_name_not_by_chance():
         assert _build_repo_context(graph).repo_name == "alpha"
     finally:
         graph.disconnect()
+        close_database()  # The three repositories stay out of later tests

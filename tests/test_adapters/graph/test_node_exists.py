@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from deriva.adapters.grafeo.manager import close_database
 from deriva.adapters.graph import GraphManager
 
 
@@ -19,3 +20,4 @@ def test_a_failed_query_raises():
             graph.node_exists("nothing")
     finally:
         graph.disconnect()
+        close_database()
