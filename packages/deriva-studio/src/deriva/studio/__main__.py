@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import secrets
+import socket
 import threading
 import time
 import webbrowser
@@ -17,6 +18,7 @@ from deriva.studio.app import create_app
 from deriva.studio.guard import AUTH_PATH
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+WILDCARD_HOSTS = ("0.0.0.0", "::")
 
 
 def _open_when_ready(server: Any, url: str) -> threading.Thread:
@@ -75,7 +77,14 @@ def main(argv: list[str] | None = None) -> None:
     tls = {"ssl_certfile": args.tls_cert, "ssl_keyfile": args.tls_key} if args.tls_cert else {}
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, **tls))
     _stop_runs_on_exit(server, app)
-    browser_host = "localhost" if local else f"[{args.host}]" if ":" in args.host else args.host
+    if local:
+        browser_host = "localhost"
+    elif args.host in WILDCARD_HOSTS:
+        # All addresses: no other machine can open 0.0.0.0 and no certificate names it, so the link names this machine
+        browser_host = socket.gethostname()
+        print("Listening on all addresses: open the link with the name your certificate is issued for, if it differs from this one.")
+    else:
+        browser_host = f"[{args.host}]" if ":" in args.host else args.host
     url = f"{'https' if tls else 'http'}://{browser_host}:{args.port}{AUTH_PATH}?token={token}"
     print(f"Deriva Studio: {url}", flush=True)  # also when stdout is a file or a pipe (a service, a log)
     if not args.no_browser:

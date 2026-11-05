@@ -162,7 +162,28 @@ def test_a_network_address_with_tls_serves_https(tmp_path, capsys):
     assert config["host"] == "0.0.0.0"
     assert config["ssl_certfile"] == tls[1] and config["ssl_keyfile"] == tls[3]
     uvicorn.Server.return_value.run.assert_called_once()
-    assert "Deriva Studio: https://0.0.0.0:8765/api/auth?token=" in capsys.readouterr().out
+
+
+def test_a_wildcard_host_prints_a_link_with_the_machine_s_name(tmp_path, capsys):
+    """0.0.0.0 is no address another machine can open, and no certificate names it: the link uses the machine's name."""
+    from deriva.studio.__main__ import main
+
+    with patch("deriva.studio.__main__.uvicorn"), patch("deriva.studio.__main__.socket.gethostname", return_value="studio-host"):
+        main(["--host", "0.0.0.0", "--allow-remote", "--no-browser", *_certificate(tmp_path)])
+        out = capsys.readouterr().out
+        main(["--host", "::", "--allow-remote", "--no-browser", *_certificate(tmp_path)])
+        out_v6 = capsys.readouterr().out
+    assert "Deriva Studio: https://studio-host:8765/api/auth?token=" in out and "0.0.0.0:8765" not in out
+    assert "the name your certificate is issued for" in out
+    assert "Deriva Studio: https://studio-host:8765/api/auth?token=" in out_v6
+
+
+def test_a_named_remote_host_keeps_its_name_in_the_link(tmp_path, capsys):
+    from deriva.studio.__main__ import main
+
+    with patch("deriva.studio.__main__.uvicorn"):
+        main(["--host", "192.0.2.10", "--allow-remote", "--no-browser", *_certificate(tmp_path)])
+    assert "Deriva Studio: https://192.0.2.10:8765/api/auth?token=" in capsys.readouterr().out
 
 
 def test_tls_on_this_machine_needs_no_allow_remote(tmp_path, capsys):
