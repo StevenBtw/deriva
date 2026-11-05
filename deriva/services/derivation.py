@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from deriva.adapters.archimate import ArchimateManager
-from deriva.adapters.archimate.models import Element, Relationship, validate_relationship_rule
+from deriva.adapters.archimate.models import ELEMENT_TYPES, Element, Relationship, relationship_tier, validate_relationship_rule
 from deriva.common.naming import name_key
 from deriva.common.paths import workspace
 from deriva.common.types import PipelineResult, ProgressUpdate
@@ -84,6 +84,7 @@ from deriva.modules.derivation.base import (
     NestedFilter,
     PerCandidateConfig,
     RelationshipLLMConfig,
+    RelationshipRule,
     RoleConfig,
     SameNameRule,
     UnitFilter,
@@ -108,6 +109,7 @@ from deriva.modules.derivation.business_object import BusinessObjectDerivation
 from deriva.modules.derivation.business_process import BusinessProcessDerivation
 from deriva.modules.derivation.business_role import BusinessRoleDerivation
 from deriva.modules.derivation.component_services import ComponentServicesConfig, derive_component_services, derive_member_services, derive_unit_services
+from deriva.modules.derivation.core_type import core_type_class
 from deriva.modules.derivation.data_object import DataObjectDerivation
 from deriva.modules.derivation.device import DeviceDerivation
 from deriva.modules.derivation.documentation_actors import actor_schema, build_actor_prompt, parse_actors, verified_candidates
@@ -182,6 +184,23 @@ DERIVATION_REGISTRY: dict[str, type[ElementDerivationBase]] = {
     "Device": DeviceDerivation,
     "SystemSoftware": SystemSoftwareDerivation,
 }
+
+# Experimental core types: every element type of the metamodel without a step of its own gets the generic step (off
+# by default in its config row), related through the direct relationships the metamodel draws for it
+EXPERIMENTAL_TYPES: tuple[str, ...] = tuple(t for t in ELEMENT_TYPES if t not in DERIVATION_REGISTRY)
+CORE_RELATIONSHIPS = ("Composition", "Aggregation", "Assignment", "Realization", "Serving", "Access", "Triggering", "Flow")
+
+
+def _metamodel_rules(element_type: str) -> tuple[list[RelationshipRule], list[RelationshipRule]]:
+    """The direct relationships of the metamodel from and to ``element_type``, in table order."""
+    outbound = [RelationshipRule(other, rel) for other in ELEMENT_TYPES for rel in CORE_RELATIONSHIPS if relationship_tier(element_type, rel, other) == "direct"]
+    others = [other for other in ELEMENT_TYPES if other != element_type]
+    inbound = [RelationshipRule(other, rel) for other in others for rel in CORE_RELATIONSHIPS if relationship_tier(other, rel, element_type) == "direct"]
+    return outbound, inbound
+
+
+for _type in EXPERIMENTAL_TYPES:
+    DERIVATION_REGISTRY[_type] = core_type_class(_type, *_metamodel_rules(_type))
 
 # Instance cache for reuse
 _DERIVATION_INSTANCES: dict[str, ElementDerivationBase] = {}

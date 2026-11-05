@@ -1332,11 +1332,11 @@ class PipelineSession:
         assert self._engine is not None
         return config.add_extraction_step(self._engine, node_type, sequence, extraction_method=extraction_method, params=params)
 
-    def add_derivation_step(self, step_name: str, phase: str, sequence: int, params: str | None = None) -> bool:
-        """Add a new derivation step (disabled, version 1)."""
+    def add_derivation_step(self, step_name: str, phase: str, sequence: int, params: str | None = None, llm: bool = False) -> bool:
+        """Add a new derivation step (disabled, version 1); ``llm`` hands it the LLM."""
         self._ensure_connected()
         assert self._engine is not None
-        return config.add_derivation_step(self._engine, step_name, phase, sequence, params=params)
+        return config.add_derivation_step(self._engine, step_name, phase, sequence, params=params, llm=llm)
 
     def save_derivation_config(
         self,

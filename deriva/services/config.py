@@ -579,8 +579,10 @@ def add_derivation_step(
     phase: str,
     sequence: int,
     params: str | None = None,
+    llm: bool = False,
 ) -> bool:
-    """Add a new derivation step as version 1, disabled. Returns False if it exists.
+    """Add a new derivation step as version 1, disabled. Returns False if it exists. ``llm`` hands the step the LLM
+    (a step that classifies or names with it).
 
     Raises:
         ValueError: phase is not a derivation phase, sequence is negative, or params is not a JSON object.
@@ -596,8 +598,8 @@ def add_derivation_step(
         return False
     next_id = engine.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM derivation_config").fetchone()[0]
     engine.execute(
-        "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, llm, params, is_active) VALUES (?, ?, ?, 1, ?, FALSE, FALSE, ?, TRUE)",
-        [next_id, step_name, phase, sequence, params],
+        "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, llm, params, is_active) VALUES (?, ?, ?, 1, ?, FALSE, ?, ?, TRUE)",
+        [next_id, step_name, phase, sequence, llm, params],
     )
     return True
 

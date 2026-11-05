@@ -62,8 +62,8 @@ def model_quality(
     within = [r for r in relationships if "enterprise" in (r.get("levels") or ()) and r["source"] in enterprise_ids and r["target"] in enterprise_ids]
     linked_there = {r["source"] for r in within} | {r["target"] for r in within}
     # Only the business layer can float: the rest of the system may stand alone, and with nothing else at the level
-    # there is nothing to connect to
-    business = [e for e in enterprise if e.get("layer") == "Business"]
+    # there is nothing to connect to. Roles are left out: no step derives what a role would be assigned to
+    business = [e for e in enterprise if e.get("layer") == "Business" and e.get("type") != "BusinessRole"]
     floating = [{"id": e["id"], "name": e["name"], "type": e["type"]} for e in business if e["id"] not in linked_there] if len(enterprise) > 1 else []
     types = Counter(str(r["type"]) for r in relationships)
     structural = sum(types[t] for t in STRUCTURAL)
