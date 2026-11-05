@@ -7,6 +7,7 @@ import secrets
 import threading
 import time
 import webbrowser
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -51,24 +52,31 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1", help="Address to bind (default: 127.0.0.1, this machine only)")
     parser.add_argument("--port", type=int, default=8765, help="Port (default: 8765)")
     parser.add_argument("--no-browser", action="store_true", help="Do not open the studio in the browser")
-    parser.add_argument("--allow-remote", action="store_true", help="Allow a --host other machines can reach (anyone with the launch link can use the studio)")
+    parser.add_argument("--allow-remote", action="store_true", help="Allow a --host other machines can reach; needs --tls-cert and --tls-key (the link opens the studio)")
+    parser.add_argument("--tls-cert", help="Serve HTTPS with this certificate file (PEM); needs --tls-key")
+    parser.add_argument("--tls-key", help="The private key file of --tls-cert (PEM)")
     args = parser.parse_args(argv)
+    if bool(args.tls_cert) != bool(args.tls_key):
+        parser.error("--tls-cert and --tls-key go together: give both")
+    for path in (args.tls_cert, args.tls_key):
+        if path and not Path(path).is_file():
+            parser.error(f"{path}: no such file")
     if args.host not in LOCAL_HOSTS:
         if not args.allow_remote:
             parser.error(f"--host {args.host} makes the studio reachable from other machines, and it has no login; add --allow-remote to do so")
-        print(
-            f"Warning: the studio is reachable from other machines on {args.host}; anyone with the launch link can use it, and it "
-            "serves plain HTTP: the link and all traffic can be read on the network. Use a trusted network, or put a TLS proxy in front."
-        )
+        if not args.tls_cert:
+            parser.error(f"--host {args.host} would send the launch link and all traffic over the network unencrypted; add --tls-cert and --tls-key")
+        print(f"Warning: the studio is reachable from other machines on {args.host}; anyone with the launch link can use it.")
     # A fresh token per launch: only the link below opens the studio, so another site's page in the browser cannot
     # drive it; bound to this machine, it also answers to its local names only (DNS rebinding)
     token = secrets.token_urlsafe(32)
     local = args.host in LOCAL_HOSTS
     app = create_app(token=token, allowed_hosts=LOCAL_HOSTS if local else None)
-    server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port))
+    tls = {"ssl_certfile": args.tls_cert, "ssl_keyfile": args.tls_key} if args.tls_cert else {}
+    server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, **tls))
     _stop_runs_on_exit(server, app)
     browser_host = "localhost" if local else f"[{args.host}]" if ":" in args.host else args.host
-    url = f"http://{browser_host}:{args.port}{AUTH_PATH}?token={token}"
+    url = f"{'https' if tls else 'http'}://{browser_host}:{args.port}{AUTH_PATH}?token={token}"
     print(f"Deriva Studio: {url}", flush=True)  # also when stdout is a file or a pipe (a service, a log)
     if not args.no_browser:
         _open_when_ready(server, url)

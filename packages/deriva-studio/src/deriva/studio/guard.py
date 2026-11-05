@@ -93,7 +93,8 @@ class Guard:
         if not hmac.compare_digest(given.encode(), self.token.encode()):
             await _answer(send, 401, {"detail": NO_TOKEN})
             return
-        cookie = f"{cookie_name(port)}={self.token}; Path=/; HttpOnly; SameSite=Strict"
+        secure = "; Secure" if scope.get("scheme") == "https" else ""
+        cookie = f"{cookie_name(port)}={self.token}; Path=/; HttpOnly; SameSite=Strict{secure}"
         await send({"type": "http.response.start", "status": 303, "headers": [(b"location", b"/"), (b"set-cookie", cookie.encode()), (b"cache-control", b"no-store")]})
         await send({"type": "http.response.body", "body": b""})
 
