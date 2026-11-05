@@ -56,7 +56,7 @@ uv tool install --python 3.14 deriva-studio
 deriva
 ```
 
-`deriva` starts the studio and opens it in your browser at http://127.0.0.1:8765. It listens on this machine only; `--port` picks another port, `--no-browser` leaves the browser closed, and the API documentation is at `/docs`. Each start prints a launch link with a fresh token: the studio answers only a browser that opened that link (or a script that sends the token as an `X-Deriva-Token` header), so another website open in your browser cannot use it.
+`deriva` starts the studio and opens it in your browser at http://127.0.0.1:8765. It listens on this machine only; `--port` picks another port, `--no-browser` leaves the browser closed, and the API documentation is at `/docs`. Each start prints a launch link with a fresh token: the studio answers only a browser that opened that link (or a script that sends the token as an `X-Deriva-Token` header), so another website open in your browser cannot use it. To reach it from other machines, use `--host <address> --allow-remote --tls-cert <file> --tls-key <file>`; it does not start without TLS, because the launch link would cross the network readable.
 
 To try Deriva without installing it:
 
