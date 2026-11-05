@@ -15,7 +15,7 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 ### Security
 
 - **Cloning stays out of two more git attacks**: a clone or pull fetches no bundle a server advertises (`transfer.bundleURI=false`), and with a git that predates the July 2025 submodule fixes it leaves submodules out, checked before the clone instead of warning after it. On such a git, repositories with submodules lose their content until git is updated
-- **A studio on another machine needs TLS**: `--allow-remote` no longer starts over plain HTTP, where anyone on the network could read the launch link and all traffic; give it `--tls-cert` and `--tls-key`, and the studio serves HTTPS with a Secure cookie
+- **A studio on another machine needs TLS**: `--allow-remote` no longer starts over plain HTTP, where anyone on the network could read the launch link and all traffic; give it `--tls-cert` and `--tls-key`, and the studio serves HTTPS with a Secure cookie; bound to all addresses (`0.0.0.0`), its launch link names the machine instead
 - **PDFs have a limit on what they unpack**: reading stops past 100 MB of unpacked page content, and a document cut at a limit or refused for its size says so in the log
 - **Another site's cookie cannot take the studio down**: a cookie with an illegal name on the same host made every request fail
 - **Links stay inside the repository**: a symlink or (on Windows) a junction in a cloned repository is skipped by every repository walk and file read, so a link to a file outside the clone (the home `.env` with provider keys, SSH keys) is never read, stored or sent to an LLM; clones check symlinks out as plain files
