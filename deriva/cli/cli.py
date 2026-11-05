@@ -151,7 +151,12 @@ def run_stage(
             typer.echo(f"LLM configured: {llm_info['provider']}/{llm_info['model']}")
         else:
             reason = session.llm_error
-            typer.echo(f"Warning: LLM not configured: {reason}. LLM-based steps will be skipped." if reason else "Warning: LLM not configured. LLM-based steps will be skipped.")
+            if stage == "all" and reason and not session.llm_no_model:
+                # A configured model that cannot start: a full run needs it and stops (no structural run in its place)
+                typer.echo(f"Warning: LLM not available: {reason}. A full run needs the configured model and stops; fix it, or run with --no-llm.")
+            else:
+                skipped = "LLM-based steps will be skipped."
+                typer.echo(f"Warning: LLM not configured: {reason}. {skipped}" if reason else f"Warning: LLM not configured. {skipped}")
 
         # Create progress reporter
         progress_reporter = create_progress_reporter(quiet=quiet or verbose)

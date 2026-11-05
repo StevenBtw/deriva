@@ -57,7 +57,9 @@ class NoModelConfigured(ConfigurationError):
 
 
 class RunStopped(RuntimeError):
-    """The run must stop (cancelled, out of budget): no failed call that a step may count and go on from."""
+    """The run must stop (cancelled, out of budget). Every further LLM call of the run raises it, so none reaches the
+    model. sample_llm passes it on instead of counting a failed sample; a step that catches every exception records
+    the refused calls as errors and goes on, and the studio stops a cancelled run before its next step."""
 
 
 # =============================================================================
@@ -158,6 +160,9 @@ __all__ = [
     "BaseError",
     # Configuration
     "ConfigurationError",
+    "NoModelConfigured",
+    # Run
+    "RunStopped",
     # API/External
     "APIError",
     "ProviderError",

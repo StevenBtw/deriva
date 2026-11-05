@@ -433,6 +433,11 @@ class PipelineSession:
         return None
 
     @property
+    def llm_no_model(self) -> bool:
+        """True when the LLM did not start because no model is configured (a valid setup: the structural steps run)."""
+        return self._llm_no_model
+
+    @property
     def llm_error(self) -> str | None:
         """Why the LLM could not start (a missing key variable, the .env read), or None; names variables, never values."""
         return self._llm_error
