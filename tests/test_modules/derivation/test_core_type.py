@@ -52,6 +52,7 @@ def test_its_shipped_step_is_off_and_classifies_with_one_closed_llm_call(element
     row = _seed_rows().get(element_type)
     assert row is not None, f"no shipped config row for {element_type}"
     assert row["enabled"] is False and row["llm"] is True and row["phase"] == "generate"
+    assert row["temperature"] == 0.0  # like the other generate steps, not the LLM_TEMPERATURE fallback
     # The fields the derivation service requires of a generate step, or it fails at run time
     assert row["instruction"] and row["input_graph_query"] and row["example"] and row["max_candidates"] > 0 and row["batch_size"] > 0
     roles = _role_config(row["params"])

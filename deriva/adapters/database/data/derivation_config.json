@@ -420,10 +420,10 @@
     "created_at": "2026-10-26T09:45:15.634811"
   },
   {
-    "id": 807,
+    "id": 842,
     "step_name": "BusinessService",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 21,
     "enabled": false,
     "llm": true,
@@ -435,15 +435,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:51:49.488022"
+    "created_at": "2026-11-05T22:28:45.388853"
   },
   {
-    "id": 809,
+    "id": 843,
     "step_name": "BusinessCollaboration",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 22,
     "enabled": false,
     "llm": true,
@@ -455,15 +455,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:51:52.495048"
+    "created_at": "2026-11-05T22:28:46.858534"
   },
   {
-    "id": 811,
+    "id": 844,
     "step_name": "BusinessInterface",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 23,
     "enabled": false,
     "llm": true,
@@ -475,15 +475,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:51:55.537870"
+    "created_at": "2026-11-05T22:28:48.338672"
   },
   {
-    "id": 813,
+    "id": 845,
     "step_name": "BusinessInteraction",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 24,
     "enabled": false,
     "llm": true,
@@ -495,15 +495,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:51:58.584380"
+    "created_at": "2026-11-05T22:28:49.842569"
   },
   {
-    "id": 815,
+    "id": 846,
     "step_name": "Contract",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 25,
     "enabled": false,
     "llm": true,
@@ -515,15 +515,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:01.587946"
+    "created_at": "2026-11-05T22:28:51.306894"
   },
   {
-    "id": 817,
+    "id": 847,
     "step_name": "Representation",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 26,
     "enabled": false,
     "llm": true,
@@ -535,15 +535,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:04.615642"
+    "created_at": "2026-11-05T22:28:52.814309"
   },
   {
-    "id": 819,
+    "id": 848,
     "step_name": "Product",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 27,
     "enabled": false,
     "llm": true,
@@ -555,15 +555,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:07.660317"
+    "created_at": "2026-11-05T22:28:54.336161"
   },
   {
-    "id": 821,
+    "id": 849,
     "step_name": "ApplicationCollaboration",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 28,
     "enabled": false,
     "llm": true,
@@ -575,15 +575,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:10.695618"
+    "created_at": "2026-11-05T22:28:55.836498"
   },
   {
-    "id": 823,
+    "id": 850,
     "step_name": "ApplicationProcess",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 29,
     "enabled": false,
     "llm": true,
@@ -595,15 +595,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:13.755184"
+    "created_at": "2026-11-05T22:28:57.339182"
   },
   {
-    "id": 825,
+    "id": 851,
     "step_name": "ApplicationInteraction",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 30,
     "enabled": false,
     "llm": true,
@@ -615,15 +615,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:16.831778"
+    "created_at": "2026-11-05T22:28:58.822939"
   },
   {
-    "id": 827,
+    "id": 852,
     "step_name": "ApplicationEvent",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 31,
     "enabled": false,
     "llm": true,
@@ -635,15 +635,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:20.139185"
+    "created_at": "2026-11-05T22:29:00.283441"
   },
   {
-    "id": 829,
+    "id": 853,
     "step_name": "TechnologyCollaboration",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 32,
     "enabled": false,
     "llm": true,
@@ -655,15 +655,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:23.718242"
+    "created_at": "2026-11-05T22:29:01.749940"
   },
   {
-    "id": 831,
+    "id": 854,
     "step_name": "TechnologyInterface",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 33,
     "enabled": false,
     "llm": true,
@@ -675,15 +675,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:27.125520"
+    "created_at": "2026-11-05T22:29:03.196329"
   },
   {
-    "id": 833,
+    "id": 855,
     "step_name": "Path",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 34,
     "enabled": false,
     "llm": true,
@@ -695,15 +695,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:30.610401"
+    "created_at": "2026-11-05T22:29:04.662234"
   },
   {
-    "id": 835,
+    "id": 856,
     "step_name": "CommunicationNetwork",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 35,
     "enabled": false,
     "llm": true,
@@ -715,15 +715,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:34.351153"
+    "created_at": "2026-11-05T22:29:06.070131"
   },
   {
-    "id": 837,
+    "id": 857,
     "step_name": "TechnologyProcess",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 36,
     "enabled": false,
     "llm": true,
@@ -735,15 +735,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:38.155688"
+    "created_at": "2026-11-05T22:29:07.493164"
   },
   {
-    "id": 839,
+    "id": 858,
     "step_name": "TechnologyInteraction",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 37,
     "enabled": false,
     "llm": true,
@@ -755,15 +755,15 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:41.901686"
+    "created_at": "2026-11-05T22:29:08.895938"
   },
   {
-    "id": 841,
+    "id": 859,
     "step_name": "TechnologyEvent",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 38,
     "enabled": false,
     "llm": true,
@@ -775,9 +775,9 @@
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 20,
-    "temperature": null,
+    "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-11-05T20:52:45.817292"
+    "created_at": "2026-11-05T22:29:10.362953"
   },
   {
     "id": 224,
