@@ -224,10 +224,14 @@ def read_pdf(file_path: Path) -> str | None:
         unpacked = 0
 
         for i, page in enumerate(reader.pages, start=1):
+            # A page past the page or text limit is not even unpacked: a bad stream there cannot cost the pages read
+            if i > MAX_PDF_PAGES or chars >= MAX_DOCUMENT_CHARS:
+                logger.warning("%s read up to page %d: it passes the limits on pages, text or unpacked size", file_path, i - 1)
+                break
             # What a page's streams unpack to counts too: a page of drawing commands adds no text but all the work
-            contents = page.get_contents() if i <= MAX_PDF_PAGES else None
+            contents = page.get_contents()
             unpacked += len(contents.get_data()) if contents is not None else 0
-            if i > MAX_PDF_PAGES or chars >= MAX_DOCUMENT_CHARS or unpacked > MAX_PDF_UNPACKED:
+            if unpacked > MAX_PDF_UNPACKED:
                 logger.warning("%s read up to page %d: it passes the limits on pages, text or unpacked size", file_path, i - 1)
                 break
             text = page.extract_text()

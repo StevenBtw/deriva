@@ -15,8 +15,6 @@ from collections.abc import Awaitable, Callable, Collection
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from starlette.requests import cookie_parser
-
 Scope = dict[str, Any]
 Receive = Callable[[], Awaitable[dict[str, Any]]]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
@@ -82,8 +80,8 @@ class Guard:
 
     def _has_token(self, headers: dict[str, str], port: int | None) -> bool:
         assert self.token is not None
-        # Starlette's parser: one cookie with an illegal name (from another site on this host) does not fail the others
-        given = headers.get(TOKEN_HEADER) or cookie_parser(headers.get("cookie", "")).get(cookie_name(port), "")
+        # A lenient parser (_cookies): one cookie with an illegal name (from another site on this host) does not fail the others
+        given = headers.get(TOKEN_HEADER) or _cookies(headers.get("cookie", "")).get(cookie_name(port), "")
         return hmac.compare_digest(given.encode(), self.token.encode())
 
     async def _sign_in(self, scope: Scope, send: Send, port: int | None) -> None:
@@ -103,3 +101,14 @@ async def _answer(send: Send, status: int, content: dict[str, Any]) -> None:
     body = json.dumps(content).encode()
     await send({"type": "http.response.start", "status": status, "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
     await send({"type": "http.response.body", "body": body})
+
+
+def _cookies(header: str) -> dict[str, str]:
+    """The cookies of a Cookie header, read leniently: a pair without a name or with an illegal one (another site's
+    cookie on this host) is kept or skipped, never an error. The last of a repeated name wins."""
+    found: dict[str, str] = {}
+    for chunk in header.split(";"):
+        name, sep, value = chunk.partition("=")
+        if sep and name.strip():
+            found[name.strip()] = value.strip()
+    return found
