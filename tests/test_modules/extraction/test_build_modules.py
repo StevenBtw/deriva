@@ -423,6 +423,10 @@ def test_the_repository_name_in_a_modules_name_counts_after_a_scope_and_as_share
     assert excluded("example-shop", "example-shop-test") == "test-only"
     assert excluded("shop", "example") == "test-only"
     assert excluded("example-shop", "example") == "test-only"
+    # A test word in front of the repository's name counts; a scope in front of it is the publisher, not the module
+    assert excluded("shop", "test-shop-helper") == "test-only"
+    assert excluded("shop", "@example/shop-orders") is None
+    assert excluded("shop", "example:shop-orders") is None
 
 
 def test_a_library_repositories_own_module_is_its_component_when_nothing_else_is():

@@ -374,13 +374,15 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
     tooling = development_only(manifests)
 
     def _after_repository(name: str) -> list[str]:
-        # What follows the repository's name, a scope or group before it included; else what follows the leading words
-        # they share (example-vote-worker in example-voting-app). A name that is only those words keeps them
-        words, own = _words(name), [w.casefold() for w in _words(_folder_name(repository))]
+        # The name without the repository's words, and without a scope or group in front (@acme/, acme:), which names
+        # the publisher; a word in front of the repository's name stays (test-shop-helper). Else what follows the
+        # leading words they share (example-vote-worker in example-voting-app). A name that is only those words keeps them
+        scope = re.match(r"@[^/]+/|[\w.-]+:", name)
+        words, own = _words(name[scope.end() :] if scope else name), [w.casefold() for w in _words(_folder_name(repository))]
         lower = [w.casefold() for w in words]
         for start in range(len(words) - len(own) + 1):
             if lower[start : start + len(own)] == own:
-                return words[start + len(own) :]
+                return words[:start] + words[start + len(own) :]
         shared = next((i for i, (a, b) in enumerate(zip(lower, own, strict=False)) if a != b), min(len(lower), len(own)))
         return words[shared:] if shared < len(words) else words
 
