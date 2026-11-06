@@ -35,7 +35,7 @@ classifiers = [
 
 dependencies = [
     # Core
-    "pydantic>=2",
+    "pydantic>=2.14.3",
     "pydantic-settings>=2",
     "python-dotenv>=1.2",
     "pyyaml>=6.0",
@@ -51,12 +51,12 @@ dependencies = [
     "tree-sitter-java>=0.23.0",
     "tree-sitter-c-sharp>=0.23",
     # Document Parsing
-    "pypdf>=6.21",
+    "pypdf>=7.0",
     "python-docx>=1.2",
     # NLP (business concept candidate terms; pinned, the versions decide the output; the spaCy pipelines download on first use)
     "spacy==3.8.18",
-    "ctranslate2==4.8.4",
-    "sentencepiece==0.2.2",
+    "ctranslate2==4.8.5",
+    "sentencepiece==0.2.3",
     # Graph Algorithms
     "solvor>=0.6.3",
     # LLM
@@ -66,7 +66,7 @@ dependencies = [
     # Utilities
     "httpx2>=2",
     "lmdb>=1.6",
-    "typer>=0.27",
+    "typer>=0.28",
     "tree-sitter-typescript==0.23.2",
 ]
 
@@ -77,8 +77,8 @@ dev = [
     "prek>=0.5",
     "pytest>=9",
     "pytest-cov>=7",
-    "ruff>=0.17",
-    "ty>=0.0",
+    "ruff>=0.17.4",
+    "ty>=0.0.99",
     "types-lxml>=2026.2",
 ]
 
