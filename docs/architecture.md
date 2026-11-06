@@ -201,6 +201,7 @@ Structure gives every candidate, every identifier and the relationships between 
 | Interface role | Files and methods that look like entry points | Which are interfaces, and what kind |
 | Service names | Name candidates from the component's interfaces, ordered by how much of the component each covers | The object or activity of the service; its verb stays structural |
 | Tooling | The repository's deployable units, with the README title and lines | Which units are tooling around the product rather than part of it |
+| Software an image runs | Container images that are not on the closed list of technologies | The system each image runs, or none, as the technology label names it |
 
 The LLM also labels the documentation's terms, directories and technologies, which feed later steps. Everything else, the element types, the levels and the relationships, comes from structure: given the same LLM answers, it is the same in every run. Steps marked experimental may use the LLM in further ways; they are off by default.
 

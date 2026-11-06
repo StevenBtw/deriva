@@ -157,7 +157,7 @@ Software that provides an environment for other software to run in.
 
 - **Aspect:** active structure.
 - **Deriva's candidates:** the software the deployments use, such as databases, message brokers, caches and runtimes.
-- **Naming:** the product or platform: "PostgreSQL", "Relational Database".
+- **Naming:** the product or platform: "PostgreSQL", "Relational Database". An image that is not on the closed list of technologies takes the system the Technology step's LLM label names for it ("Alpine Linux" for an `alpine` image), or is no software when the label says it is none; without that label it keeps its image name.
 
 SystemSoftware is platform software. Software written for the organization itself is an ApplicationComponent.
 
