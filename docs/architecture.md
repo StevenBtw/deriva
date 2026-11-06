@@ -190,6 +190,20 @@ The studio's **Runs & storage** page shows what each part of the workspace takes
 
 `deriva.common.settings` is the only code that reads configuration from the environment. It merges the home folder's `.env` with the process environment, and the process environment wins. Settings come in typed groups by prefix: `LLM_`, `GRAFEO_`, `GRAPH_`, `ARCHIMATE_`, `DERIVA_NLP_` and `REPOSITORY_`. Only the LLM providers' own keys (such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `MISTRAL_API_KEY`) are passed on to the process environment for the provider libraries, and never over a variable that is already set.
 
+## Where the LLM decides
+
+Structure gives every candidate, every identifier and the relationships between elements. The LLM makes a few decisions that structure cannot make, each one a choice from a closed set that structure proposes. Compared with a run in which every LLM answer is empty, these are the decisions that change the model:
+
+| Decision | What structure proposes | What the LLM chooses |
+| --- | --- | --- |
+| Actors from the documentation | The people and organizations the documentation names next to the system | Which of them use the application or are served by it |
+| Applications | The top-level components | Which belong to one application, named by a part of the README title; with no documentation shown, structure decides |
+| Interface role | Files and methods that look like entry points | Which are interfaces, and what kind |
+| Service names | Name candidates from the component's interfaces, ordered by how much of the component each covers | The object or activity of the service; its verb stays structural |
+| Tooling | The repository's deployable units, with the README title and lines | Which units are tooling around the product rather than part of it |
+
+The LLM also labels the documentation's terms, directories and technologies, which feed later steps. Everything else, the element types, the levels and the relationships, comes from structure: given the same LLM answers, it is the same in every run. Steps marked experimental may use the LLM in further ways; they are off by default.
+
 ## Design decisions
 
 1. **Services are the API.** The CLI and the studio go through the services layer only (mostly `PipelineSession`), so both behave the same and a change has one place to go.
