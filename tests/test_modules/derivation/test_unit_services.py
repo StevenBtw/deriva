@@ -618,6 +618,26 @@ def test_a_stem_that_ends_in_the_names_first_word_writes_that_word_once():
     assert sorted((s["properties"]["sources"][0], s["name"]) for s in services) == [("unit::cart", "Cart Order Management"), ("unit::ledger", "Ledger Order Management")]
 
 
+def test_two_components_with_the_same_stem_still_give_two_names():
+    """Two components that clean to the same stem ("Shop") and repeat a service name share no word with it: the second
+    qualified name another service already holds takes the first free number."""
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_verbs=VERBS)
+    elements = [
+        _component("east", "Shop"),
+        _interface("east", "rest", ["OrderHolder", "OrderResource"]),
+        _component("west", "Shop"),
+        _interface("west", "rest", ["CartHolder", "CartResource"]),
+        _data("order", "Order"),
+    ]
+    reach = {"OrderHolder": ["order"], "OrderResource": ["order"], "CartHolder": ["order"], "CartResource": ["order"]}
+
+    services, _, _ = _run(elements, reach, objects={"domain::order": "Order"}, config=config)
+
+    assert sorted(s["name"] for s in services) == ["Shop Order Management", "Shop Order Management 2"]
+
+
 def _two_domain_shop():
     elements = [
         _component("auth", "Auth Service"),

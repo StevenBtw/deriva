@@ -2858,6 +2858,21 @@ class TestDeployableUnitStep:
         )
         return _run_extraction_step(cfg, SimpleNamespace(name=repo), Path(tmpdir), [], [], graph, None, MagicMock())
 
+    @pytest.mark.parametrize("check", ["Decide.", {"instructions": "Decide."}, {"instruction": ""}, {"instruction": 3}])
+    def test_a_malformed_tooling_check_is_an_error_not_a_silent_off(self, graph, tmp_path, check):
+        with pytest.raises(ValueError, match="tool_check"):
+            self._run(graph, tmp_path, {"shop/app.py": ("source", "python", "print(1)\n")}, params={"code_subtypes": ["python"], "tool_check": check})
+
+    def test_without_an_llm_the_tooling_check_warns_that_it_was_skipped(self, graph, tmp_path):
+        files = {
+            f"{u}/{f}": spec for u in ("shop", "loader") for f, spec in (("Dockerfile", ("infra", "docker", "FROM python:3.12\n")), ("app.py", ("source", "python", "print(1)\n")))
+        }
+
+        result = self._run(graph, tmp_path, files, params={"code_subtypes": ["python"], "tool_check": {"instruction": "Decide."}})
+
+        assert result["errors"] == []
+        assert any("tooling check" in w and "no LLM" in w for w in result.get("warnings", []))
+
     def test_a_folder_whose_file_defines_a_serverless_handler_becomes_a_function_unit(self, graph):
         from deriva.adapters.graph.models import MethodNode
 

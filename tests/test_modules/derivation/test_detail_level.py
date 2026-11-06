@@ -90,3 +90,15 @@ def test_a_file_member_is_named_without_its_extension_and_a_repeat_takes_its_fol
     detail = detail_level(elements, DetailLineage(files=files))
 
     assert sorted(e["name"] for e in detail.elements) == ["Account Index", "Home Index", "List", "OrderController", "OrderResource"]
+
+
+def test_members_whose_folders_repeat_take_folders_until_their_names_differ():
+    """An area's page and the main page of the same folder name (Areas/Admin/Views/Home and Views/Home) take further
+    folders in front until the names differ; a name that is unique keeps a single folder."""
+    members = [{"name": "Index.cshtml", "source": f"file::r::{k}"} for k in "abc"]
+    files = {"file::r::a": "r/web/Areas/Admin/Views/Home/Index.cshtml", "file::r::b": "r/web/Views/Home/Index.cshtml", "file::r::c": "r/web/Views/Account/Index.cshtml"}
+    elements = [_el("ai_web__ui", "ApplicationInterface", "Web UI", source="unit::r::web", role="web", members=members)]
+
+    detail = detail_level(elements, DetailLineage(files=files))
+
+    assert sorted(e["name"] for e in detail.elements) == ["Account Index", "Admin Views Home Index", "Web Views Home Index"]

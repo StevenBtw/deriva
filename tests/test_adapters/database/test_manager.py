@@ -98,6 +98,105 @@ class TestExtractionParamsMigration:
         conn.execute("SELECT 1")  # a passed-in connection stays open
 
 
+class TestMarkdownFileTypeMigration:
+    """A database from before 0.9.0 gets the .markdown file type through a numbered migration; one that has it keeps its row."""
+
+    @staticmethod
+    def _registry(conn, md: bool = True):
+        """A registry from an earlier version: seeded (it lists .md), or empty as in a fresh database before its seed."""
+        conn.execute(
+            "CREATE TABLE file_type_registry (extension VARCHAR PRIMARY KEY, file_type VARCHAR NOT NULL, subtype VARCHAR NOT NULL, "
+            "chunk_delimiter VARCHAR, chunk_max_tokens INTEGER, chunk_overlap INTEGER DEFAULT 0)"
+        )
+        conn.execute("CREATE TABLE system_settings (key VARCHAR PRIMARY KEY, value VARCHAR)")
+        if md:
+            conn.execute("INSERT INTO file_type_registry (extension, file_type, subtype) VALUES ('.md', 'docs', 'markdown')")
+            conn.execute("INSERT INTO system_settings (key, value) VALUES ('default_batch_size', '10')")
+
+    def test_an_existing_database_gets_markdown_once(self):
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        self._registry(conn)
+
+        run_migrations(conn)
+        run_migrations(conn)
+
+        assert conn.execute("SELECT extension, file_type, subtype FROM file_type_registry WHERE extension = '.markdown'").fetchall() == [(".markdown", "docs", "markdown")]
+
+    def test_markdown_is_chunked_like_md_in_the_seed_and_the_migration(self):
+        import json
+
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        self._registry(conn)
+        run_migrations(conn)
+
+        seed = {r["extension"]: r for r in json.loads((SCRIPTS_DIR.parent / "data" / "file_types.json").read_text(encoding="utf-8"))}
+        migrated = _scalar(conn, "SELECT chunk_delimiter FROM file_type_registry WHERE extension = '.markdown'")
+        assert migrated == seed[".markdown"]["chunk_delimiter"] == seed[".md"]["chunk_delimiter"]
+
+    def test_a_markdown_row_deleted_after_the_migration_stays_deleted(self):
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        self._registry(conn)
+        run_migrations(conn)
+        conn.execute("DELETE FROM file_type_registry WHERE extension = '.markdown'")
+
+        run_migrations(conn)
+
+        assert _scalar(conn, "SELECT COUNT(*) FROM file_type_registry WHERE extension = '.markdown'") == 0
+
+    def test_an_empty_registry_is_left_to_the_seed(self):
+        """The seed fills only empty tables: a row added before it would keep the whole seed out."""
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        self._registry(conn, md=False)
+
+        run_migrations(conn)
+
+        assert _scalar(conn, "SELECT COUNT(*) FROM file_type_registry") == 0
+        assert _scalar(conn, "SELECT COUNT(*) FROM system_settings") == 0
+
+    def test_empty_settings_are_left_to_the_seed(self):
+        """A database with file types but no settings yet gets no marker, which would keep the settings seed out."""
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        self._registry(conn)
+        conn.execute("DELETE FROM system_settings")
+
+        run_migrations(conn)
+
+        assert _scalar(conn, "SELECT COUNT(*) FROM system_settings") == 0
+
+    def test_a_database_with_its_own_markdown_row_keeps_it(self):
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        self._registry(conn)
+        conn.execute("INSERT INTO file_type_registry (extension, file_type, subtype) VALUES ('.markdown', 'exclude', 'generated')")
+
+        run_migrations(conn)
+
+        assert conn.execute("SELECT file_type, subtype FROM file_type_registry WHERE extension = '.markdown'").fetchall() == [("exclude", "generated")]
+
+
 class TestEnsureDatabase:
     """A fresh install creates the schema and seeds the shipped configuration on first use."""
 
@@ -115,6 +214,23 @@ class TestEnsureDatabase:
         counts = {t: _scalar(conn, f"SELECT COUNT(*) FROM {t}") for t in self.CONFIG_TABLES}
         conn.close()
         assert all(n > 0 for n in counts.values()), counts
+
+    def test_every_shipped_seed_row_reaches_a_fresh_database(self, tmp_path):
+        """Migrations run before the seed; one that adds a row to an empty table would keep that table's seed out."""
+        import json
+
+        import duckdb
+
+        from deriva.adapters.database.manager import ensure_database
+
+        db = tmp_path / "sql.db"
+        ensure_database(db)
+
+        conn = duckdb.connect(str(db), read_only=True)
+        for table, file in (("file_type_registry", "file_types.json"), ("system_settings", "system_settings.json")):
+            shipped = json.loads((SCRIPTS_DIR.parent / "data" / file).read_text(encoding="utf-8"))
+            assert _scalar(conn, f"SELECT COUNT(*) FROM {table}") == len(shipped), table
+        conn.close()
 
     def test_seeded_steps_are_the_active_versions(self, tmp_path):
         import duckdb

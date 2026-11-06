@@ -450,6 +450,19 @@ def test_comments_and_a_trailing_comma_in_an_enum_body_give_no_state():
     assert _enum_states(text) == ["DRAFT", "OPEN", "CLOSED"]
 
 
+def test_a_url_string_before_an_enum_is_no_comment():
+    """A "//" inside a string starts no comment, so the string's quotes stay paired and the enum after it is found."""
+    text = 'class Links { String HOME = "http://example.org/a"; }\npublic enum LoanState { DRAFT("Draft"), OPEN("Open"), CLOSED("Closed"); }\n'
+
+    assert _enum_states(text) == ["DRAFT", "OPEN", "CLOSED"]
+
+
+def test_a_quote_inside_a_comment_opens_no_string():
+    text = "// the loan's states\npublic enum LoanState { DRAFT, OPEN, CLOSED }\n// it's done\n"
+
+    assert _enum_states(text) == ["DRAFT", "OPEN", "CLOSED"]
+
+
 def test_a_kotlin_enum_with_a_constructor_gives_the_bare_names():
     text = "enum class LoanState(val code: Int) { DRAFT(0), OPEN(1), CLOSED(2) }"
 
@@ -492,3 +505,50 @@ def test_verb_names_skip_an_empty_name_of_the_object():
 
     assert verb_names(life, ["", "Loan"], {"APPROVED": "Approve"}) == ["Approve Loan", "Manage Loan"]
     assert verb_names(life, "  ", {"APPROVED": "Approve"}) == []
+
+
+def test_a_pascal_case_enum_s_states_are_reached_where_its_values_are_set():
+    """C# enum states (Draft, Open) count where the code sets them, like SCREAMING_CASE states do."""
+    files = {
+        "r/a/LoanState.cs": "public enum LoanState { Draft, Open, Closed }",
+        "r/a/Opening.cs": "loan.State = LoanState.Open;",
+        "r/b/Closing.cs": "loan.State = LoanState.Closed;",
+    }
+    members = [{"domain": "domain::loan", "object": "Loan", "name": "LoanState", "path": "r/a/LoanState.cs"}]
+
+    [life] = detect_lifecycles(files, members, _units("a", "b"), RULES, docs={})
+
+    assert life.states == ["Draft", "Open", "Closed"]
+    assert life.units_of_state["Open"] == ["unit::a"] and life.units_of_state["Closed"] == ["unit::b"]
+
+
+def test_an_enum_constant_with_a_class_body_keeps_the_states_after_it():
+    """A Java constant may have its own body (DRAFT { ... }): the states after it still count, the members after ";" do not."""
+    files = {
+        "r/a/LoanStatus.java": (
+            "public enum LoanStatus {\n  DRAFT { boolean editable() { return true; } },\n  APPROVED,\n  CLOSED;\n"
+            "  boolean editable() { return false; }\n  private final int code = 0;\n}\n"
+        )
+    }
+    members = [{"domain": "domain::loan", "object": "Loan", "name": "LoanStatus", "path": "r/a/LoanStatus.java"}]
+
+    [life] = detect_lifecycles(files, members, [], RULES, docs={})
+
+    assert life.states == ["DRAFT", "APPROVED", "CLOSED"]
+
+
+def test_a_plural_folder_is_named_after_its_singular_domain():
+    """A folder "businesses" is named after the Business domain, as "cargos" is after Cargo."""
+    from deriva.modules.extraction.lifecycles import status_members
+
+    files = {
+        "r/businesses/Business.java": "class Business {}",
+        "r/businesses/Partner.java": "class Partner {}",
+        "r/businesses/ApprovalStatus.java": "enum ApprovalStatus { A1, B1, C1 }",
+    }
+    members = [
+        {"domain": "domain::business", "object": "Business", "name": "Business", "path": "r/businesses/Business.java"},
+        {"domain": "domain::partner", "object": "Partner", "name": "Partner", "path": "r/businesses/Partner.java"},
+    ]
+
+    assert {m["name"]: m["domain"] for m in status_members(members, files, RULES)[2:]} == {"ApprovalStatus": "domain::business"}
