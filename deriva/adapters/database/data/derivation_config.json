@@ -400,24 +400,24 @@
     "created_at": "2026-11-06T21:40:36.596284"
   },
   {
-    "id": 799,
+    "id": 869,
     "step_name": "DocumentationActors",
     "phase": "generate",
-    "version": 1,
+    "version": 2,
     "sequence": 20,
     "enabled": true,
     "llm": true,
     "input_graph_query": null,
     "input_model_query": null,
-    "instruction": "You decide which business actors each application of one software repository serves, from its documentation.\n\nFor every application you get a closed list of candidate actors: words the documentation uses for people or organisations, each mentioned in a documentation section together with that application. Choose the candidates that are business actors the application serves: a person, role or organisation outside the software that uses it or is served by it.\n\nRules:\n- Choose none (an empty list) when no candidate fits.\n- Leave out generic words that name no business actor of this application (a user of any software, a developer, an operator of the infrastructure, a participant in a workshop or demo, a team that runs the deployment).\n- Choose only from the application's own candidates, exactly as written. Do not invent actors.\n- The same input always gives the same answer.\n",
+    "instruction": "You decide which business actors each application of one software repository serves, from its documentation.\n\nFor every application you get a closed list of candidate actors: words the documentation uses for people or organisations, each mentioned in a documentation section together with that application. Each candidate comes with its evidence: the sentence of that section that names it, with its file and heading. Judge every candidate by its evidence, not by what software of this kind usually serves. Choose the candidates that are business actors the application serves: a person, role or organisation outside the software that uses it or is served by it.\n\nRules:\n- Choose none (an empty list) when no candidate fits.\n- Choose a candidate only when its evidence shows it using the application or being served by it.\n- Leave out generic words that name no business actor of this application (a user of any software, a developer, an operator of the infrastructure, a participant in a workshop or demo, a team that runs the deployment).\n- Leave out a demo, sample or test account (a login the documentation gives to try the software) and a generic word for a group of people (people, users, members, everyone), even when the evidence shows it using the application.\n- Choose only from the application's own candidates, exactly as written. Do not invent actors.\n- The same input always gives the same answer.\n",
     "example": "{\"actors\": {\"ac_<application>\": [\"<Actor from the candidates>\"], \"ac_<other application>\": []}}\n",
-    "params": "{\n \"documentation_actors\": {\n  \"kind_words\": [\n   \"Backend\",\n   \"Frontend\",\n   \"Server\",\n   \"Client\"\n  ],\n  \"intro_chars\": 1500\n }\n}",
+    "params": "{\n \"documentation_actors\": {\n  \"kind_words\": [\n   \"Backend\",\n   \"Frontend\",\n   \"Server\",\n   \"Client\"\n  ],\n  \"intro_chars\": 1500,\n  \"evidence_chars\": 240,\n  \"generic_actors\": [\n   \"person\",\n   \"user\",\n   \"member\",\n   \"everyone\",\n   \"anyone\",\n   \"individual\"\n  ]\n }\n}\n",
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 10,
     "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-10-26T09:45:15.634811"
+    "created_at": "2026-11-06T22:18:39.874492"
   },
   {
     "id": 842,

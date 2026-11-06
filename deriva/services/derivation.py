@@ -869,6 +869,7 @@ def _application_grouping_config(params: str | None) -> dict[str, Any] | None:
         not isinstance(settings, dict)
         or not all(isinstance(w, str) for w in settings.get("kind_words", []))
         or not isinstance(intro, int)
+        or isinstance(intro, bool)
         or intro < 0
         or title not in ("all", "first", "marked")
         or settings.get("without_documentation", "ask") not in ("ask", "title")
@@ -947,10 +948,15 @@ def _documentation_actors_config(params: str | None) -> dict[str, Any] | None:
     if settings is None:
         return None
     counts = [settings.get(key, 0) for key in ("intro_chars", "evidence_chars")] if isinstance(settings, dict) else []
-    if not isinstance(settings, dict) or not all(isinstance(n, int) and n >= 0 for n in counts) or not all(isinstance(w, str) for w in settings.get("kind_words", [])):
+    words = [settings.get(key, []) for key in ("kind_words", "generic_actors")] if isinstance(settings, dict) else []
+    if (
+        not isinstance(settings, dict)
+        or not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in counts)
+        or not all(isinstance(w, list) and all(isinstance(x, str) for x in w) for w in words)
+    ):
         raise ValueError(
-            "params.documentation_actors is an object with kind_words, intro_chars (the root README's introduction shown, in characters) "
-            "and evidence_chars (the sentence shown per candidate, in characters; 0 shows none)"
+            "params.documentation_actors is an object with kind_words, intro_chars (the root README's introduction shown, in characters), "
+            "evidence_chars (the sentence shown per candidate, in characters; 0 shows none) and generic_actors (words for people that are no actor)"
         )
     return settings
 
@@ -974,6 +980,7 @@ def _documentation_actors_step(
     if not top:
         return empty
     kind_words = tuple(settings.get("kind_words", []))
+    generic = {name_key(w) for w in settings.get("generic_actors", [])}
 
     def descendants(root: str) -> list[str]:
         out, frontier = [root], [root]
@@ -999,7 +1006,8 @@ def _documentation_actors_step(
     # (paths and concept ids carry the repository, so a graph of one repository keeps all of them)
     for repo, apps in _by_repository(top, sources):
         scoped = {p: t for p, t in documents.items() if p.startswith(f"{repo}/")}
-        known = {c: n for c, n in concepts.items() if c.split("::")[1:2] == [repo]}
+        # A generic word for people (generic_actors, by name key) is no candidate: the LLM never sees it
+        known = {c: n for c, n in concepts.items() if c.split("::")[1:2] == [repo] and name_key(n) not in generic}
         verified = verified_candidates(scoped, {app: words[app] for app in apps}, known)
         if not verified:
             continue
