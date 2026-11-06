@@ -82,6 +82,11 @@ def _ensure_extractors_loaded() -> None:
     except ImportError:
         pass
 
+    try:
+        from . import golang  # noqa: F401
+    except ImportError:
+        pass
+
     # Structural extractors (no grammar package)
     from . import (
         bms,  # noqa: F401

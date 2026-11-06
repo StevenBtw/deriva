@@ -70,7 +70,7 @@ class EdgeType(str, Enum):  # noqa: UP042 - StrEnum would change str() of member
 ALL_EDGE_TYPES = set(EdgeType)
 
 # Supported languages for tree-sitter extraction
-SUPPORTED_LANGUAGES = ("python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms")
+SUPPORTED_LANGUAGES = ("python", "javascript", "typescript", "java", "csharp", "golang", "cobol", "jcl", "bms")
 # Sources that include other sources by member name (COPY RECA), not by path
 MEMBER_EXTENSIONS = frozenset({".cbl", ".cob", ".cobol", ".cpy", ".jcl", ".prc", ".proc", ".bms"})
 
@@ -463,9 +463,11 @@ def extract_edges_from_file(
     java_files: dict[str, list[str]] | None = None,
     csharp_namespaces: dict[str, list[str]] | None = None,
     import_roots: tuple[str, ...] = (),
+    go_modules: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
-    Extract edges from a single source file using a single AST parse.
+    Extract edges from a single source file using a single AST parse (``go_modules``: module path -> the folder its
+    go.mod covers, so a Go import of an own package reaches that package's files).
 
     Args:
         file_path: Relative path to the file within the repo
@@ -521,6 +523,8 @@ def extract_edges_from_file(
         if java_files is None and file_path.endswith(".java") and imports:
             java_files = _java_file_index(all_file_paths)
         csharp_imports = _csharp_imports(imports, file_path, file_content, csharp_namespaces) if csharp_namespaces and file_path.endswith(".cs") else {}
+        if go_modules and file_path.endswith(".go"):
+            csharp_imports = _go_imports(imports, go_modules, all_file_paths)
 
         # Build lookups once (shared across edge types)
         type_lookup = {t.name: t for t in types}
@@ -665,6 +669,18 @@ def extract_edges_batch(
                 continue
     folders = {str(parent) for path in all_file_paths for parent in PurePosixPath(path).parents if str(parent) != "."}
     roots, unmapped_roots = import_roots(dockerfiles, folders)
+    # Go modules: the module path each go.mod declares, and the folder it covers
+    go_modules: dict[str, str] = {}
+    for f in files:
+        if PurePosixPath(f["path"]).name == "go.mod":
+            text = f.get("content")
+            if text is None:
+                try:
+                    text = (repo_path / f["path"]).read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+            if found := re.search(r"^\s*module\s+(\S+)", text, re.MULTILINE):
+                go_modules[found.group(1).strip('"')] = str(PurePosixPath(f["path"]).parent)
 
     # Filter to only source files that Tree-sitter can parse
     source_files = [f for f in files if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES]
@@ -711,6 +727,7 @@ def extract_edges_batch(
             java_files=java_files,
             import_roots=tuple(roots),
             csharp_namespaces=csharp_namespaces,
+            go_modules=go_modules,
         )
 
         all_edges.extend(result["data"]["edges"])
@@ -932,6 +949,8 @@ def _infer_ecosystem(file_path: str) -> str:
         return "maven"
     elif ext == ".cs":
         return "nuget"
+    elif ext == ".go":
+        return "go"
     else:
         return "unknown"
 
@@ -976,6 +995,8 @@ def _resolve_import(
     stdlib = stdlib_modules if stdlib_modules else PYTHON_STDLIB
 
     suffix = PurePosixPath(current_file).suffix.lower()
+    if suffix == ".go":
+        return _resolve_go_import(module, external_packages)
     if suffix == ".java":
         return _resolve_java_import(module, names or [], current_file, all_file_paths, stdlib_modules or set(), java_files, is_static=is_from_import)
     if suffix in MEMBER_EXTENSIONS:
@@ -1014,6 +1035,29 @@ def _resolve_import(
 
     # Could be external package not in our list
     return {"type": "external", "package": top_level}
+
+
+def _go_imports(imports: list[ExtractedImport], go_modules: dict[str, str], all_file_paths: set[str]) -> dict[str, list[str]]:
+    """Import path -> the files of the own package it names (the longest module path it starts with, then the folder
+    under that module's go.mod; test files left out). A path of an own module whose folder holds no file stays an own
+    import with no file: it is no external package."""
+    out: dict[str, list[str]] = {}
+    for imp in imports:
+        module = max((m for m in go_modules if imp.module == m or imp.module.startswith(m + "/")), key=len, default=None)
+        if module is None:
+            continue
+        folder = str(PurePosixPath(go_modules[module], imp.module[len(module) :].lstrip("/")))
+        out[imp.module] = sorted(p for p in all_file_paths if str(PurePosixPath(p).parent) == folder and p.endswith(".go") and not p.endswith("_test.go"))
+    return out
+
+
+def _resolve_go_import(module: str, external_packages: set[str]) -> dict[str, Any]:
+    """A Go import that is no own package: the standard library when its first element has no dot (net/http), else the
+    external module that holds it, the longest declared module path it starts with or the whole path."""
+    if "." not in module.split("/")[0]:
+        return {"type": "stdlib", "module": module}
+    declared = max((p for p in external_packages if module == p or module.startswith(p + "/")), key=len, default=None)
+    return {"type": "external", "package": declared or module}
 
 
 _CSHARP_NAMESPACE = re.compile(r"^\s*namespace\s+([\w.]+)", re.MULTILINE)

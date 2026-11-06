@@ -2551,7 +2551,7 @@ def _is_unreadable(file_info: dict) -> bool:
 
 
 # Languages the tree-sitter adapter extracts types and methods from
-_TREESITTER_LANGUAGES = frozenset({"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms", "sql"})
+_TREESITTER_LANGUAGES = frozenset({"python", "javascript", "typescript", "java", "csharp", "golang", "cobol", "jcl", "bms", "sql"})
 
 
 def _extract_llm_based(
@@ -2595,6 +2595,15 @@ def _extract_llm_based(
         if not isinstance(languages, list) or not languages or not set(languages) <= _TREESITTER_LANGUAGES:
             return {"nodes_created": 0, "edges_created": 0, "errors": [f"Method params.languages must be a non-empty list of {sorted(_TREESITTER_LANGUAGES)}, got {languages!r}"]}
         matching_files = [f for f in classified_files if (f.get("subtype") or "").lower() in languages]
+
+    # A Go method's receiver type may sit in another file of its package (folder): the package's types by name
+    go_types: dict[str, dict[str, str]] = {}
+    if node_type == "Method" and any((f.get("subtype") or "").lower() == "golang" for f in matching_files):
+        rows = graph_manager.query("MATCH (t:Graph:TypeDefinition) WHERE t.repository_name = $repo_name RETURN t.typeName AS n, t.filePath AS p", {"repo_name": repo.name})
+        for row in rows:
+            path = str(row.get("p") or "").replace(chr(92), "/").removeprefix(f"{repo.name}/")
+            if path.endswith(".go") and row.get("n"):
+                go_types.setdefault(str(PurePosixPath(path).parent), {}).setdefault(str(row["n"]), path)
 
     if not matching_files:
         # Not an error - valid case when no files match input sources
@@ -2684,7 +2693,8 @@ def _extract_llm_based(
             if node_type == "TypeDefinition":
                 result = extraction.extract_types_from_source(file_info["path"], content, repo.name)
             else:  # Method
-                result = extraction.extract_methods_from_source(file_info["path"], content, repo.name)
+                package = go_types.get(str(PurePosixPath(file_info["path"].replace(chr(92), "/")).parent)) if file_subtype == "golang" else None
+                result = extraction.extract_methods_from_source(file_info["path"], content, repo.name, type_files=package)
             file_nodes = result["data"]["nodes"] if result["success"] else []
             file_edges = result["data"].get("edges", []) if result["success"] else []
             file_errors = result.get("errors", [])

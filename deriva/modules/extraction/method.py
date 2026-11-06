@@ -504,9 +504,11 @@ def extract_methods_from_source(
     file_path: str,
     file_content: str,
     repo_name: str,
+    type_files: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
-    Extract Method nodes from source code using tree-sitter.
+    Extract Method nodes from source code using tree-sitter (``type_files``: type name -> the file that declares it,
+    for a language whose methods may sit in another file than their type, as Go's do within a package).
 
     This is deterministic and produces accurate line numbers.
     Supports Python, JavaScript, Java, C#, and Perl.
@@ -540,7 +542,9 @@ def extract_methods_from_source(
             if ext_method.class_name:
                 # Method belongs to class - edge from TypeDefinition to Method
                 type_name_slug = ext_method.class_name.replace(" ", "_").replace("-", "_")
-                type_node_id = f"typedef::{repo_name}::{safe_path}::{type_name_slug}"
+                declared = (type_files or {}).get(ext_method.class_name, original_path)
+                type_path = declared.replace("/", "_").replace("\\", "_")
+                type_node_id = f"typedef::{repo_name}::{type_path}::{type_name_slug}"
                 edge = {
                     "edge_id": generate_edge_id(type_node_id, node_data["node_id"], "CONTAINS"),
                     "from_node_id": type_node_id,

@@ -84,7 +84,7 @@ class TreeSitterManager:
     """
 
     # Supported languages
-    SUPPORTED_LANGUAGES = {"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms", "sql"}
+    SUPPORTED_LANGUAGES = {"python", "javascript", "typescript", "java", "csharp", "golang", "cobol", "jcl", "bms", "sql"}
 
     # Extension to language mapping
     EXTENSION_MAP: dict[str, str] = {
@@ -101,6 +101,7 @@ class TreeSitterManager:
         ".cts": "typescript",
         ".java": "java",
         ".cs": "csharp",
+        ".go": "golang",
         ".cbl": "cobol",
         ".cob": "cobol",
         ".cobol": "cobol",
