@@ -44,6 +44,8 @@ class UnitRules:
     title_cut_words: tuple[str, ...] = ()
     kind_nouns: tuple[tuple[str, str], ...] = ()
     max_doc_names: int = 3
+    # A lowercase word written together ("ledgerservice") is split before one of these suffixes, three letters in front
+    split_suffixes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -178,6 +180,8 @@ def _manifest_entries(path: str, text: str) -> tuple[list[tuple[str, str, str, s
     if name.endswith(".csproj"):
         if kind := csproj_entry(text):
             entries.append((kind, "", "", f"{kind}: {path}"))
+        assembly = re.search(r"<AssemblyName>\s*([^<$]+?)\s*</AssemblyName>", text)
+        title = assembly.group(1) if assembly else PurePosixPath(path).stem
     elif name == "package.json":
         try:
             data = json.loads(text)
@@ -327,14 +331,8 @@ def _readme_lines(unit: Unit, documents: dict[str, str], limit: int) -> list[str
 def _readme_title(unit: Unit, documents: dict[str, str]) -> str | None:
     """The first Markdown heading of a README in the unit's own folder."""
     for path in sorted(p for p in documents if _parent(p) == unit.path and PurePosixPath(p).name.lower().startswith("readme")):
-        for line in documents[path].splitlines():
-            if match := re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line):
-                # Plain text: images dropped, links as their text, emphasis marks removed
-                text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", match.group(1))
-                text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
-                text = " ".join(re.sub(r"[*_`]+", "", text).split())
-                if text:
-                    return text
+        if title := _first_heading(documents[path]):
+            return title
     return None
 
 
@@ -370,12 +368,32 @@ def _doc_name(text: str) -> str:
     return _plain(text).rstrip(":;,").strip()
 
 
-def _first_heading(text: str) -> str | None:
+def _headings(text: str) -> list[tuple[int, str]]:
+    """The Markdown headings of a text as (level, plain text), outside fenced code blocks (a shell comment is none)."""
+    found: list[tuple[int, str]] = []
+    fence: str | None = None
     for line in text.splitlines():
-        if match := re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line):
-            if title := _plain(match.group(1)):
-                return title
-    return None
+        if mark := re.match(r"^\s*(```|~~~)", line):
+            fence = None if fence == mark.group(1) else fence or mark.group(1)
+            continue
+        if fence is None and (match := re.match(r"^(#{1,6})\s+(.+?)\s*#*\s*$", line)) and (title := _plain(match.group(2))):
+            found.append((len(match.group(1)), title))
+    return found
+
+
+def _first_heading(text: str) -> str | None:
+    return next((title for _, title in _headings(text)), None)
+
+
+def _titles(headings: list[tuple[int, str]], names: list[str], generic: set[str]) -> bool:
+    """Whether a README's first heading is its title: its only level-1 heading, or one that shares a word (not a generic
+    one) with the repository or manifest name. A first heading of a lower level, or the first of several level-1
+    headings, is otherwise a section ("Architecture", "Status")."""
+    level, title = headings[0]
+    if level == 1 and sum(1 for lv, _ in headings if lv == 1) == 1:
+        return True
+    keys = [_key(n) for n in names if n]
+    return any(len(k := _key(w)) >= 3 and k not in generic and any(k in n for n in keys) for w in _words(title))
 
 
 def _words(name: str) -> list[str]:
@@ -385,6 +403,19 @@ def _words(name: str) -> list[str]:
 def _key(text: str) -> str:
     """Formatting-independent comparison key of a name: its words, casefolded, without separators."""
     return "".join(w.casefold() for w in re.findall(r"[A-Za-z0-9]+", text))
+
+
+def _spelled(title: str, name: str) -> str | None:
+    """The shortest run of a title's words that spells a name, formatting aside ("Acme LeaseDesk Reference Application"
+    and leasedesk: "LeaseDesk"), else None."""
+    words, key = title.split(), _key(name)
+    runs = [words[i:j] for i in range(len(words)) for j in range(i + 1, len(words) + 1) if key and _key(" ".join(words[i:j])) == key]
+    return " ".join(min(runs, key=len)) if runs else None
+
+
+def _identifier(text: str) -> bool:
+    """A text written as one lowercase identifier ("ledger-service", "ledgerservice"): a folder or package name."""
+    return bool(re.fullmatch(r"[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*", text))
 
 
 def _name_like(text: str) -> bool:
@@ -398,6 +429,7 @@ class _Naming:
 
     def __init__(self, facts: RepoFacts, rules: UnitRules):
         self.casing = {w.casefold(): w for w in rules.generic_words}
+        self.suffixes = sorted({s.casefold() for s in rules.split_suffixes}, key=lambda s: (-len(s), s))
         self.cut = {w.casefold() for w in rules.title_cut_words}
         self.kind_nouns = dict(rules.kind_nouns)
         self.max_docs = rules.max_doc_names
@@ -406,23 +438,34 @@ class _Naming:
         self.root_readme = facts.documents[readmes[0]] if readmes else ""
         self.root_readme_path = readmes[0] if readmes else f"{repo}/README.md"
         self.docs = {p: t for p, t in sorted(facts.documents.items()) if _parent(p) == f"{repo}/docs" and p.lower().endswith(".md")}
-        title = _first_heading(self.root_readme) or ""
-        self.title_parts = [p.strip() for p in _SEPARATORS.split(title) if p.strip()] if title else []
         root_manifest = next((name for p, t in sorted(facts.manifests.items()) if _parent(p) == repo and (name := _manifest_entries(p, t)[1])), None)
+        headings = _headings(self.root_readme)
+        title = headings[0][1] if headings and _titles(headings, [repo, root_manifest or ""], set(self.casing)) else ""
+        self.title = title or None  # The root README's title, None when its first heading is a section
+        self.title_parts = [p.strip() for p in _SEPARATORS.split(title) if p.strip()] if title else []
         if self.title_parts:
-            self.product = self.title_parts[0]
+            self.product = _spelled(self.title_parts[0], repo) or self.title_parts[0]
         elif root_manifest:
             self.product = self.cased(" ".join(_words(root_manifest)))
         else:
-            self.product = repo
+            self.product = self.cased(" ".join(_words(repo)))
         self.reserved = {_key(r) for r in facts.reserved}
 
     def generic(self, words: list[str]) -> bool:
         return all(w.casefold() in self.casing for w in words)
 
     def cased(self, name: str) -> str:
-        """Folder and manifest words: title case, generic words in the list's casing."""
-        return " ".join(self.casing.get(w.casefold(), w[0].upper() + w[1:] if w.islower() else w) for w in name.split())
+        """Folder and manifest words: title case, generic words in the list's casing, a lowercase word written together
+        split before a configured suffix ("ledgerservice": "Ledger Service")."""
+        words = [part for w in name.split() for part in self.split(w)]
+        return " ".join(self.casing.get(w.casefold(), w[0].upper() + w[1:] if w.islower() else w) for w in words)
+
+    def split(self, word: str) -> list[str]:
+        if word.isalpha() and word.islower():
+            for suffix in self.suffixes:
+                if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+                    return [word[: -len(suffix)], suffix]
+        return [word]
 
     def doc_cased(self, name: str) -> str:
         """Documentation keeps its spelling; only a lowercase generic word takes the list's casing."""
@@ -487,7 +530,7 @@ class _Naming:
             others = [p for p in self.title_parts[1:] if _key(p) != _key(self.product)]
             raw += [(self.doc_cased(f"{part} {unit.kind.title()}"), "mainframe") for part in [self.product, *others]]
         elif unit.kind != "script":
-            raw += [(self.doc_cased(n), "readme") for n in self.title_names(unit.readme_title or "")]
+            raw += [(self.cased(" ".join(_words(n))) if _identifier(n) else self.doc_cased(n), "readme") for n in self.title_names(unit.readme_title or "")]
             raw += [(self.doc_cased(n), "docs") for n in self.doc_names(unit.path, folder_name)]
         if unit.manifest_name and unit.kind != "script":
             words = _words(unit.manifest_name)
@@ -622,7 +665,8 @@ def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
     shipped, _ = bundler_outputs(facts.bundler_configs)
     for unit in units:
         unit.readme_lines = _readme_lines(unit, facts.documents, rules.readme_lines)
-        unit.readme_title = _readme_title(unit, facts.documents)
+        # The unit at the repository root reads the root README, whose title the product decided
+        unit.readme_title = naming.title if unit.path == facts.repository else _readme_title(unit, facts.documents)
         # Pages inside a nested unit or a nested module (a folder with its own manifest) are not this unit's
         nested = [f for f in sorted({*folders, *manifest_folders}) if f != unit.path and _below(f, unit.path)]
         unit.web_entries = _web_entries(unit, paths, nested, rules)
@@ -636,3 +680,74 @@ def detect_units(facts: RepoFacts, rules: UnitRules) -> list[Unit]:
         unit.name_candidates = naming.candidates(unit, facts.repository)
         unit.excluded = "tooling" if unit.path in tooling else None
     return units
+
+
+# The closed labels of the tooling check (params.tool_check): a unit labelled tooling is no application component
+TOOL_LABELS = ("application", "tooling")
+
+
+def tool_candidates(units: list[Unit], repository: str = "") -> list[Unit]:
+    """The units the tooling check asks about: those structure did not exclude, when at least two remain (a lone unit
+    is the system itself), by path; a unit at the repository's root is the system itself and is not asked."""
+    kept = sorted((u for u in units if u.excluded is None), key=lambda u: (u.path, u.entry or "", u.kind))
+    return [u for u in kept if not repository or u.path != repository] if len(kept) >= 2 else []
+
+
+def tool_key(unit: Unit) -> str:
+    """The key a unit has in the tooling check: its folder, with its entry or kind where a folder holds several."""
+    return f"{unit.path}::{unit.entry}" if unit.entry else (f"{unit.path}::{unit.kind}" if unit.kind in ("online", "batch") else unit.path)
+
+
+def build_tool_prompt(instruction: str, units: list[Unit], product: str = "") -> str:
+    """The tooling check's prompt: the instruction (config text), the repository's title, then one line per unit."""
+    rows = [
+        {
+            "key": tool_key(u),
+            "name": u.name,
+            "folder": u.path,
+            "kind": u.kind,
+            "readme_title": u.readme_title or "",
+            "description": u.manifest_description or "",
+            "readme": " ".join(u.readme_lines)[:300],
+        }
+        for u in units
+    ]
+    listed = "\n".join(json.dumps(r, ensure_ascii=False) for r in rows)
+    return f"""{instruction}
+
+## Repository
+{product}
+
+## Deployable units
+{listed}
+
+Return {{"units": {{"<unit key>": "<label>", ...}}}} with one label from {list(TOOL_LABELS)} for every unit."""
+
+
+def tool_schema(keys: list[str]) -> dict[str, Any]:
+    """The output contract: one closed label per unit key."""
+    return {
+        "type": "object",
+        "properties": {
+            "units": {
+                "type": "object",
+                "properties": {k: {"type": "string", "enum": list(TOOL_LABELS)} for k in keys},
+                "required": list(keys),
+                "additionalProperties": False,
+            }
+        },
+        "required": ["units"],
+        "additionalProperties": False,
+    }
+
+
+def parse_tools(content: str, keys: list[str]) -> set[str]:
+    """The unit keys labelled tooling; an unreadable answer, a missing unit or a label outside the set keeps the unit."""
+    try:
+        data = json.loads(content)
+    except TypeError, ValueError:
+        return set()
+    answer = data.get("units") if isinstance(data, dict) else None
+    if not isinstance(answer, dict):
+        return set()
+    return {k for k in keys if answer.get(k) == "tooling"}

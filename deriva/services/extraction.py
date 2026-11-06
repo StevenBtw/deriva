@@ -75,6 +75,7 @@ from deriva.adapters.graph.models import (
     repo_relative,
 )
 from deriva.adapters.nlp import NlpTool
+from deriva.adapters.nlp.verbs import has_english, state_verbs
 from deriva.adapters.repository import RepoManager
 from deriva.adapters.treesitter import cdk
 from deriva.common.cache_utils import hash_inputs
@@ -487,6 +488,8 @@ def run_extraction(
                         error_with_context = f"[Extraction - {node_type}] {err}"
                         errors.append(error_with_context)
                         logger.error(error_with_context)
+                # The step's own warnings (a switch it could not apply, inputs it found none of)
+                warnings.extend(f"[Extraction - {node_type}] {w}" for w in result.get("warnings", []))
 
             except Exception as e:
                 error_msg = f"Error in {node_type}: {str(e)}"
@@ -704,8 +707,9 @@ def _step_writes(
         # Persistent concepts from structure (roots, ORM entities, shared records, tables); no LLM
         result = _extract_data_entities(cfg, repo, repo_path, graph_manager)
     elif node_type == "DeployableUnit":
-        # Deployable units from structure (containers, manifest entry points, mainframe applications); no LLM
-        result = _extract_deployable_units(cfg, repo, repo_path, graph_manager)
+        # Deployable units from structure (containers, manifest entry points, mainframe applications); the tooling
+        # check (params.tool_check) is one closed LLM classification
+        result = _extract_deployable_units(cfg, repo, repo_path, graph_manager, llm_query_fn)
     elif node_type == "BuildModule":
         # Build modules and parent systems from the manifests; which unit builds which module; no LLM
         result = _extract_build_modules(cfg, repo, repo_path, graph_manager)
@@ -801,8 +805,9 @@ def _unit_rules(params: str | None) -> deployable_units.UnitRules:
     if not isinstance(naming, dict):
         raise ValueError("DeployableUnit params: naming must be an object")
     words, cut, nouns, docs = naming.get("generic_words", []), naming.get("title_cut_words", []), naming.get("kind_nouns", {}), naming.get("max_doc_names", 3)
+    suffixes = naming.get("split_suffixes", [])
     if (
-        not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in (words, cut))
+        not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in (words, cut, suffixes))
         or not isinstance(nouns, dict)
         or not all(isinstance(k, str) and isinstance(v, str) and v for k, v in nouns.items())
         or not isinstance(docs, int)
@@ -810,7 +815,7 @@ def _unit_rules(params: str | None) -> deployable_units.UnitRules:
         or docs < 0
     ):
         raise ValueError(
-            "DeployableUnit params: naming holds generic_words and title_cut_words (lists of strings), kind_nouns (unit kind -> noun) and max_doc_names (a whole number)"
+            "DeployableUnit params: naming holds generic_words, title_cut_words and split_suffixes (string lists), kind_nouns (kind -> noun) and max_doc_names (a whole number)"
         )
     return deployable_units.UnitRules(
         code_subtypes=frozenset(subtypes),
@@ -820,6 +825,7 @@ def _unit_rules(params: str | None) -> deployable_units.UnitRules:
         title_cut_words=tuple(cut),
         kind_nouns=tuple(sorted(nouns.items())),
         max_doc_names=docs,
+        split_suffixes=tuple(suffixes),
         **signals,
     )
 
@@ -1207,8 +1213,10 @@ def _units_with_members(q: Callable[..., list[dict[str, Any]]]) -> list[dict[str
         if r.get("path"):
             members.setdefault(r["u"], set()).add(str(r["path"]).replace(chr(92), "/"))
     return [
-        {"id": r["id"], "path": str(r["path"]).replace(chr(92), "/"), "name": r["name"], "members": sorted(members.get(r["id"], ()))}
-        for r in q("MATCH (u:Graph:DeployableUnit) WHERE u.active = true AND u.repository_name = $repo_name RETURN u.id AS id, u.path AS path, u.name AS name")
+        {"id": r["id"], "path": str(r["path"]).replace(chr(92), "/"), "name": r["name"], "manifest": r.get("manifest") or "", "members": sorted(members.get(r["id"], ()))}
+        for r in q(
+            "MATCH (u:Graph:DeployableUnit) WHERE u.active = true AND u.repository_name = $repo_name RETURN u.id AS id, u.path AS path, u.name AS name, u.manifestName AS manifest"
+        )
     ]
 
 
@@ -1369,16 +1377,22 @@ def _extract_data_domains(cfg: config.ExtractionConfig, repo: Any, repo_path: Pa
 
 def _business_layer_rules(params: str | None) -> tuple[lifecycles.LifecycleRules, roles.RoleRules]:
     """The BusinessLayer step's signals (``params``): lifecycle words and patterns (``status_words``, ``min_states``,
-    ``value_pattern``, ``flow_words``, ``heading_noise``, ``unit_noise``, ``name_templates``) and the role signals
+    ``value_pattern``, ``flow_words``, ``heading_noise``, ``unit_noise``, ``name_templates``, ``status_members``, ``verb_names``) and the role signals
     (``markers``: patterns whose first group holds role constants, ``generic_roles``, ``generic_actors``)."""
     settings = json.loads(params) if params else {}
     lists = ("status_words", "flow_words", "heading_noise", "unit_noise", "name_templates", "markers", "generic_roles", "generic_actors")
-    unknown = set(settings) - {*lists, "min_states", "value_pattern"}
+    unknown = set(settings) - {*lists, "min_states", "value_pattern", "status_members", "verb_names"}
     lists_ok = all(isinstance(settings.get(k, []), list) and all(isinstance(x, str) and x for x in settings.get(k, [])) for k in lists)
     states = settings.get("min_states", lifecycles.LifecycleRules.min_states)
     pattern = settings.get("value_pattern", lifecycles.LifecycleRules.value_pattern)
-    if unknown or not lists_ok or not isinstance(states, int) or isinstance(states, bool) or states < 2 or not isinstance(pattern, str):
-        raise ValueError(f"BusinessLayer params: lists of strings under {list(lists)}, min_states a whole number of at least 2, value_pattern a pattern")
+    status_members = settings.get("status_members", lifecycles.LifecycleRules.status_members)
+    verb_names = settings.get("verb_names", lifecycles.LifecycleRules.verb_names)
+    switches_ok = isinstance(status_members, bool) and isinstance(verb_names, bool)
+    if unknown or not lists_ok or not isinstance(states, int) or isinstance(states, bool) or states < 2 or not isinstance(pattern, str) or not switches_ok:
+        raise ValueError(
+            f"BusinessLayer params: lists of strings under {list(lists)}, min_states a whole number of at least 2, value_pattern a pattern, "
+            "status_members and verb_names true or false"
+        )
     for p in [pattern, *settings.get("markers", [])]:
         try:
             re.compile(p)
@@ -1389,6 +1403,8 @@ def _business_layer_rules(params: str | None) -> tuple[lifecycles.LifecycleRules
         **{k: tuple(settings[k]) if k in settings else getattr(life_defaults, k) for k in ("status_words", "flow_words", "heading_noise", "unit_noise", "name_templates")},
         min_states=states,
         value_pattern=pattern,
+        status_members=status_members,
+        verb_names=verb_names,
     )
     return life, roles.RoleRules(**{k: tuple(settings.get(k, [])) for k in ("markers", "generic_roles", "generic_actors")})
 
@@ -1415,7 +1431,20 @@ def _extract_business_layer(cfg: config.ExtractionConfig, repo: Any, repo_path: 
         {"id": r["id"], "path": norm(r["path"]), "name": r["name"], "web": bool(r.get("web"))}
         for r in q("MATCH (u:Graph:DeployableUnit) WHERE u.active = true AND u.repository_name = $repo_name RETURN u.id AS id, u.path AS path, u.name AS name, u.webEntries AS web")
     ]
+    if life_rules.status_members:
+        members = lifecycles.status_members(members, files, life_rules)
     found = lifecycles.detect_lifecycles(files, members, units, life_rules, docs)
+    warnings: list[str] = []
+    if life_rules.verb_names and found:
+        # What happens to the object, from the states that are participles (the English pipeline; none without it)
+        models_dir = NlpTool().models_dir
+        if not has_english(models_dir):
+            warnings.append(f"BusinessLayer verb_names is on, but the English pipeline is missing in {models_dir}: no verb names (deriva-cli nlp fetch)")
+        verbs = state_verbs(sorted({s for life in found for s in life.states}), models_dir)
+        objects = {m["domain"]: m["object"] for m in members}
+        for life in found:
+            names = lifecycles.verb_names(life, [objects.get(life.domain, life.entity), life.entity], verbs)
+            life.name_candidates = list(dict.fromkeys([*life.name_candidates, *names]))
     concepts = [
         {"id": r["id"], "name": r["name"], "files": [norm(f) for f in r["files"] or []]}
         for r in q(
@@ -1466,7 +1495,15 @@ def _extract_business_layer(cfg: config.ExtractionConfig, repo: Any, repo_path: 
             graph_manager.add_edge(node, life, "ASSIGNED")
             edges += 1
     events = sum(len(life.events) for life in found)
-    return {"nodes_created": len(found) + events + len(found_roles), "edges_created": edges, "errors": [], "lifecycles": len(found), "events": events, "roles": len(found_roles)}
+    return {
+        "nodes_created": len(found) + events + len(found_roles),
+        "edges_created": edges,
+        "errors": [],
+        "warnings": warnings,
+        "lifecycles": len(found),
+        "events": events,
+        "roles": len(found_roles),
+    }
 
 
 def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 200_000) -> str | None:
@@ -1717,7 +1754,7 @@ def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: P
     return {"nodes_created": nodes, "edges_created": edges, "errors": [], "modules": sum(1 for m in found if m.module), "systems": sum(1 for m in found if m.system)}
 
 
-def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
+def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager, llm_query_fn: Callable | None = None) -> dict[str, Any]:
     """Deployable unit nodes with INCLUDES edges to their members, from the graph and the manifests (no LLM)."""
     rules = _unit_rules(cfg.params)
     # A combined graph holds several repositories: every source read is this repository's
@@ -1797,6 +1834,23 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
         },
     )
     units = deployable_units.detect_units(facts, rules)
+    errors: list[str] = []
+    check = (json.loads(cfg.params) if cfg.params else {}).get("tool_check")
+    instruction = str(check.get("instruction") or "") if isinstance(check, dict) else ""
+    asked = deployable_units.tool_candidates(units, repo.name) if instruction and llm_query_fn is not None else []
+    if asked and llm_query_fn is not None:
+        # Structure proposes the units, the LLM labels each application or tooling, a tooling unit is excluded
+        keys = [deployable_units.tool_key(u) for u in asked]
+        product = next((u.product for u in units if u.product), "")
+        prompt = deployable_units.build_tool_prompt(instruction, asked, product)
+        response = llm_query_fn(prompt, deployable_units.tool_schema(keys), temperature=cfg.temperature, max_tokens=cfg.max_tokens)
+        if getattr(response, "error", None):
+            errors.append(f"LLM error in the tooling check: {response.error}")
+        else:
+            tools = deployable_units.parse_tools(getattr(response, "content", "") or "", keys)
+            for unit in asked:
+                if deployable_units.tool_key(unit) in tools:
+                    unit.excluded = "tooling"
 
     # What an earlier run wrote and this one no longer produces is swept after the step (_run_extraction_step)
     file_ids = {f["path"]: f["id"] for f in files}
@@ -1829,7 +1883,7 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
         for target in sorted({file_ids[p] for p in unit.members | set(unit.web_entries) if p in file_ids} | unit.nodes):
             graph_manager.add_edge(node_id, target, INCLUDES)
             edges += 1
-    return {"nodes_created": nodes, "edges_created": edges, "errors": []}
+    return {"nodes_created": nodes, "edges_created": edges, "errors": errors}
 
 
 def _extract_repository(repo: Any, graph_manager: GraphManager) -> dict[str, Any]:
@@ -3289,6 +3343,7 @@ def run_extraction_iter(
         "steps_skipped": 0,
     }
     errors: list[str] = []
+    warnings: list[str] = []
 
     # Get repositories
     repo_mgr = RepoManager()
@@ -3371,6 +3426,7 @@ def run_extraction_iter(
                 if result.get("skipped"):
                     # An LLM-only step without an LLM did not run: a warning, not an error
                     stats["steps_skipped"] += 1
+                    warnings.append(result["skipped"])
                     yield ProgressUpdate(
                         phase="extraction",
                         step=node_type,
@@ -3399,8 +3455,12 @@ def run_extraction_iter(
                 )
 
                 for err in result.get("errors", []):
-                    if "LLM required" not in err and "No input sources" not in err:
+                    if "LLM required" in err or "No input sources" in err:
+                        warnings.append(err)
+                    else:
                         errors.append(err)
+                # The step's own warnings (a switch it could not apply, inputs it found none of)
+                warnings.extend(f"[Extraction - {node_type}] {w}" for w in result.get("warnings", []))
 
             except Exception as e:
                 error_msg = f"Error in {node_type}: {e!s}"
@@ -3433,5 +3493,6 @@ def run_extraction_iter(
             "success": len(errors) == 0,
             "stats": stats,
             "errors": errors,
+            "warnings": warnings,
         },
     )

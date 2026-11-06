@@ -177,9 +177,13 @@ class _Units:
         return sorted(str(u["id"]) for u in (listing or nearest))
 
     def by_exact_name(self, names: list[str]) -> str | None:
-        """The one unit whose name or folder name is one of the names (case-insensitive), first name first."""
+        """The one unit whose name, folder name or manifest name is one of the names (case-insensitive), first name first."""
         for name in names:
-            found = [u for u in self.units if name.casefold() in (str(u.get("name") or "").casefold(), PurePosixPath(str(u["path"])).name.casefold())]
+            found = [
+                u
+                for u in self.units
+                if name.casefold() in (str(u.get("name") or "").casefold(), PurePosixPath(str(u["path"])).name.casefold(), str(u.get("manifest") or "").casefold())
+            ]
             if len(found) == 1:
                 return str(found[0]["id"])
         return None
@@ -192,15 +196,19 @@ class _Units:
         return None
 
     def by_image(self, image: str | None) -> str | None:
-        """The one unit whose name or folder name equals the image's last name segment or its tag, exact after
-        normalisation (one image repository for every service, the service in the tag: ``acme/suite:orderstore``)."""
+        """The one unit whose name, folder name or manifest name equals the image's last name segment or its tag, exact
+        after normalisation (one image repository for every service, the service in the tag: ``acme/suite:orderstore``)."""
         if not image:
             return None
         reference = image.strip().split("@", 1)[0]
         tag = reference.rsplit(":", 1)[1] if ":" in reference.rsplit("/", 1)[-1] else ""
         keys = ["".join(_tokens(image_name(image).rsplit("/", 1)[-1])), "".join(_tokens(tag))]
         for key in (k for k in keys if k):
-            found = [u for u in self.units if key in ("".join(_tokens(str(u.get("name") or ""))), "".join(_tokens(PurePosixPath(str(u["path"])).name)))]
+            found = [
+                u
+                for u in self.units
+                if key in ("".join(_tokens(str(u.get("name") or ""))), "".join(_tokens(PurePosixPath(str(u["path"])).name)), "".join(_tokens(str(u.get("manifest") or ""))))
+            ]
             if len(found) == 1:
                 return str(found[0]["id"])
         return None

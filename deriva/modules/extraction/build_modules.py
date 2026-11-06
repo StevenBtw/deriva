@@ -186,9 +186,14 @@ def development_only(manifests: dict[str, str]) -> set[str]:
     return folders
 
 
+# The project types of a .NET Framework web application and web site: their output is a library the web server loads
+_WEB_PROJECT_TYPES = re.compile(r"<ProjectTypeGuids>[^<]*\{(349c5851-65df-11da-9384-00065b846f21|e24c65dc-7377-472b-9aba-bc803b73c61a)\}", re.IGNORECASE)
+
+
 def csproj_entry(text: str) -> str | None:
-    """The kind of program a .NET project builds, None for a class library: ``web`` by the web or worker SDK, ``exe`` by its output type."""
-    if re.search(r"""<Project\s[^>]*Sdk\s*=\s*["']Microsoft\.NET\.Sdk\.(Web|Worker)["']""", text):
+    """The kind of program a .NET project builds, None for a class library: ``web`` by the web or worker SDK or a
+    .NET Framework web project type, ``exe`` by its output type."""
+    if re.search(r"""<Project\s[^>]*Sdk\s*=\s*["']Microsoft\.NET\.Sdk\.(Web|Worker)["']""", text) or _WEB_PROJECT_TYPES.search(text):
         return "web"
     return "exe" if re.search(r"<OutputType>\s*(Win)?Exe\s*</OutputType>", text) else None
 
@@ -420,9 +425,10 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
         for pattern in _listed(manifest, manifests.get(manifest, "")):
             target = str(PurePosixPath(folder, pattern.strip("/")))
             listed |= {m for m in set(code) if fnmatch.fnmatchcase(m, target)}
-        # Excluded modules count as listed (the aggregation is a fact of the build); its members are the other ones, a
-        # grouped project by its group
-        members = {group_of.get(m, m) for m in listed} & modules
+        # Excluded modules count as listed (the aggregation is a fact of the build); its members are the other ones. A
+        # grouped project counts as its group, for the members and for the minimum (two projects of one group are one)
+        listed = {group_of.get(m, m) for m in listed}
+        members = listed & modules
         if len(listed) >= rules.min_members and members:
             systems[folder] = sorted(members)
 

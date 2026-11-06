@@ -294,6 +294,14 @@ def _own_module_service(text: str, kind: str, own_units: frozenset[str]) -> bool
     return ":" in reference and name_key(reference.rsplit(":", 1)[1]) in own_units
 
 
+def _own_module_image(text: str, file_type: str, subtype: str, own_units: frozenset[str]) -> bool:
+    """An image a deployment manifest runs that is named like one of the repository's own modules (its last path segment,
+    without tag or digest): the module's own build. A container file's base image is never one."""
+    if not own_units or (file_type, subtype) != ("infra", "kubernetes"):
+        return False
+    return name_key(text.split("@", 1)[0].rsplit("/", 1)[-1].split(":", 1)[0]) in own_units
+
+
 def _names_repository(text: str, kind: str, repository_name: str) -> bool:
     """An item named after the repository, or a compose service running an image named after it: the software itself."""
     if not repository_name:
@@ -335,7 +343,8 @@ def collect(
         if platform:
             collected.platforms.setdefault(platform, set()).add(f["path"])
         for text, kind in items_from_file(f["path"], f["content"], f["file_type"], f.get("subtype")):
-            if _own_module_service(text, kind, own_units) or _names_repository(text, kind, repository_name):
+            own = _own_module_service(text, kind, own_units) or _own_module_image(text, f["file_type"], f.get("subtype") or "", own_units)
+            if own or _names_repository(text, kind, repository_name):
                 continue
             key = item_key(text, kind)
             collected.items.setdefault(key, TechnologyItem(key, text, kind))
