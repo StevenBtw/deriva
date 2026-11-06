@@ -497,6 +497,8 @@ uv run deriva-cli config show extraction BusinessConcept
 # must also be implemented and registered in code under the same name
 uv run deriva-cli config add derivation my_refine_step --phase refine --sequence 4 --params '{"dry_run": true}'
 uv run deriva-cli config enable derivation my_refine_step
+# --llm adds a step that uses the LLM (an element step classifying candidates, for example)
+uv run deriva-cli config add derivation MyElementType --phase generate --sequence 40 --llm
 
 # Manage file types
 uv run deriva-cli config filetype list
