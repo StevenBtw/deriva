@@ -295,16 +295,12 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
     def marks(t: dict[str, Any]) -> set[str]:
         return {_bare(d) for d in t.get("decorators") or [] if ":" not in str(d)} | ancestors(t)
 
-    def marked_root(t: dict[str, Any]) -> bool:
-        # An interface that extends the marker only passes it on
-        return bool(marks(t) & roots) and t.get("category") != "interface"
+    def is_root_type(t: dict[str, Any]) -> bool:
+        # An interface that extends the marker only passes it on; a type named like a marker (the EventSourced base
+        # class that implements IEventSourced) is the marker itself, no root
+        return bool(marks(t) & roots) and t.get("category") != "interface" and str(t["name"]).casefold() not in roots
 
     referenced = {_bare(b) for t in types for b in t.get("bases") or []}
-    # A marked type other types name as their base passes the marker on (a base class of event-sourced roots)
-    root_bases = {str(t["name"]).casefold() for t in types if marked_root(t) and str(t["name"]).casefold() in referenced}
-
-    def is_root_type(t: dict[str, Any]) -> bool:
-        return marked_root(t) and str(t["name"]).casefold() not in root_bases
 
     root_names = {str(t["name"]).casefold() for t in types if is_root_type(t)}
     # ORM bases of the repository itself: types other types name as their base that descend from an ORM base

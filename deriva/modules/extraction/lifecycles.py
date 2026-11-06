@@ -263,12 +263,19 @@ def detect_lifecycles(files: dict[str, str], members: list[dict[str, Any]], unit
     specific: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     generic: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
 
+    # Comments and string and character literals go first: a brace, bracket or comma inside one is no part of a
+    # declaration, and a state named inside one is no site. One pass, so whichever starts first wins: "//" in a URL
+    # string is no comment, a quote in a comment no string. Each file once, when an enum needs it
+    stripped: dict[str, str] = {}
+
+    def code_of(path: str) -> str:
+        if path not in stripped:
+            stripped[path] = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/', " ", files.get(path, ""), flags=re.DOTALL)
+        return stripped[path]
+
     # Enums: a status-named domain member declared as an enum; its constants in order, its uses as sites
     for m in members:
-        # Comments and string and character literals go first: a brace, bracket or comma inside one is no part of the
-        # declaration. One pass, so whichever starts first wins: "//" in a URL string is no comment, a quote in a comment
-        # no string
-        code = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/', " ", files.get(m["path"], ""), flags=re.DOTALL)
+        code = code_of(m["path"])
         declared = re.search(rf"\benum\s+(?:class\s+)?{re.escape(m['name'])}\b[^{{]*\{{", code)
         if not _is_status(m["name"], rules) or not declared:
             continue
@@ -284,8 +291,8 @@ def detect_lifecycles(files: dict[str, str], members: list[dict[str, Any]], unit
         life = found.setdefault(key, Lifecycle(key=key, domain=m["domain"], entity=m["object"], attribute=m["name"], from_enum=True))
         life.states += [s for s in states if s not in life.states]
         # A use of one of the enum's own states is a site, whatever its naming style
-        for path, text in files.items():
-            for s in re.findall(rf"\b{re.escape(m['name'])}\.([A-Za-z_]\w*)\b", text):
+        for path in files:
+            for s in re.findall(rf"\b{re.escape(m['name'])}\.([A-Za-z_]\w*)\b", code_of(path)):
                 if s in life.states:
                     specific[key][s].add(path)
 

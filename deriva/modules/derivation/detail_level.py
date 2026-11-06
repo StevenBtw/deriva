@@ -46,9 +46,9 @@ def _relationship(kind: str, source: str, target: str) -> dict[str, Any]:
 
 def _member_names(members: list[dict[str, Any]], files: dict[str, str]) -> dict[str, str]:
     """Each endpoint member's name by its node: a file's name without its extension and with a capital first letter, a
-    name two members share with their folders in front (nearest first, each with a capital first letter) until it
-    differs; a template whose name starts with an underscore (a partial or layout) is no endpoint and has none. Other
-    members keep their names."""
+    name two members share with folders in front until it differs: the nearest folder first, then the next one up,
+    written in path order ("Admin Views Home Index"), each with a capital first letter; a template whose name starts
+    with an underscore (a partial or layout) is no endpoint and has none. Other members keep their names."""
     names: dict[str, str] = {}
     for m in members:
         node, name = str(m.get("source") or ""), str(m.get("name") or m.get("source") or "")
