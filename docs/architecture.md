@@ -28,7 +28,7 @@ Repository --> Extraction --> Graph --> Derivation --> ArchiMate model --> Expor
               and view, which Archi and other tools import
 ```
 
-Most extraction is deterministic: directories and files come from the file system, type definitions and methods from parsing the code with tree-sitter (Python, JavaScript, Java and C#) or with structural parsers (COBOL programs and copybooks, JCL jobs and BMS screen maps), dependencies and tests from parsers. LLM steps classify within closed sets, for example which documented terms are business concepts. Derivation picks its candidates from the graph with queries and graph properties, and asks the LLM to classify and name them.
+Most extraction is deterministic: directories and files come from the file system, type definitions and methods from parsing the code with tree-sitter (Python, JavaScript, TypeScript, Java, C# and Go) or with structural parsers (COBOL programs and copybooks, JCL jobs and BMS screen maps), dependencies and tests from parsers. LLM steps classify within closed sets, for example which documented terms are business concepts. Derivation picks its candidates from the graph with queries and graph properties, and asks the LLM to classify and name them.
 
 ## Abstraction levels
 
