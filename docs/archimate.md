@@ -1,6 +1,6 @@
 # ArchiMate
 
-ArchiMate is the open standard for describing an enterprise architecture: who acts, what they do and what they work on, across business, applications and technology. By default Deriva derives 13 of its element types and 8 of its relationship types from a code repository; this page explains each one and where Deriva finds it in code. Every other core type has an experimental step that is off by default.
+ArchiMate is the open standard for describing an enterprise architecture: who acts, what they do and what they work on, across business, applications and technology. By default Deriva derives 13 of its element types and 8 of its relationship types from a code repository; this page explains each one and where Deriva finds it in code. Every other core type has a step that is off by default; most of these steps are experimental.
 
 Deriva follows ArchiMate 3.2, the current version of the standard published by The Open Group.
 
@@ -166,7 +166,7 @@ SystemSoftware is platform software. Software written for the organization itsel
 Technology functionality that is explicitly exposed, and the internal behavior that realizes it.
 
 - **Aspect:** behavior.
-- **Deriva's candidates:** every technology realizer, the environment and each service software in it, gets one function and one service; no LLM call.
+- **Deriva's candidates:** every technology realizer (the environment and the service software in it) whose kind a closed table names gets one function and one service; a kind the table does not list gets none. No LLM call.
 - **Naming:** a service noun by the realizer's kind, such as "Data Storage"; the function is named after its realizer.
 
 ### Artifact
@@ -235,7 +235,7 @@ Each element's identifier is made of the initials of its type and the identifier
 
 ### Order of derivation
 
-Deriva derives elements in aspect order, so that the elements later steps refer to already exist: active structure first, then behavior, then passive structure. Application services come last: a service is built from the components, interfaces and objects derived before it. The default order is:
+Deriva derives elements in aspect order, so that the elements later steps refer to already exist: active structure first, then behavior, then passive structure. Steps that build on elements of those phases come after them, whatever their own aspect: an application service, for example, is built from the components, interfaces and objects derived before it, and a role is active structure but follows the elements it is built from. The default order is:
 
 | Phase | Element types |
 | --- | --- |
@@ -243,7 +243,7 @@ Deriva derives elements in aspect order, so that the elements later steps refer 
 | Behavior | TechnologyService |
 | Passive structure | DataObject, BusinessObject |
 | Built from the above | ApplicationService, ApplicationFunction, Artifact, BusinessRole, TechnologyFunction |
-| Abstraction | The grouping of components into applications, the actors from the documentation |
+| Abstraction | The grouping of components into applications; BusinessActor from the documentation (the same type as above, from a second source) |
 
 Steps that are off by default keep their place in this order when they are switched on.
 

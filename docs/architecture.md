@@ -196,7 +196,7 @@ Structure gives every candidate, every identifier and the relationships between 
 
 | Decision | What structure proposes | What the LLM chooses |
 | --- | --- | --- |
-| Actors from the documentation | The people and organizations the documentation names next to the system | Which of them use the application or are served by it |
+| Actors from the documentation | The people and organizations the documentation names next to the system, without generic words for people, each with the sentence that names it | Which of them use the application or are served by it |
 | Applications | The top-level components | Which belong to one application, named by a part of the README title; with no documentation shown, structure decides |
 | Interface role | Files and methods that look like entry points | Which are interfaces, and what kind |
 | Service names | Name candidates from the component's interfaces, ordered by how much of the component each covers | The object or activity of the service; its verb stays structural |
