@@ -57,6 +57,7 @@ class EntityRules:
     table_annotations: tuple[str, ...] = ()  # Annotations whose name argument names a code type's table
     table_attributes: tuple[str, ...] = ()  # Class-level attributes whose string value names a code type's table
     join_tables: bool = False  # A table whose columns are all foreign keys (no key of its own) is no entity
+    test_words: tuple[str, ...] = ()  # A folder (below the repository) with one of these words in its name holds test code
 
 
 @dataclass
@@ -261,6 +262,7 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
     """
     lower = lambda values: {v.casefold() for v in values}  # noqa: E731 - a one-line helper
     roots, entity_marks, orm, values, ids = map(lower, (rules.root_markers, rules.entity_annotations, rules.orm_bases, rules.value_markers, rules.id_markers))
+    test_words = lower(rules.test_words)
     dto_bases, dto_suffixes, dto_dirs = lower(rules.dto_bases), lower(rules.dto_suffixes), lower(rules.dto_dirs)
     configs, config_suffixes, technical = lower(rules.config_markers), lower(rules.config_suffixes), lower(rules.technical_words)
 
@@ -293,13 +295,19 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
     def marks(t: dict[str, Any]) -> set[str]:
         return {_bare(d) for d in t.get("decorators") or [] if ":" not in str(d)} | ancestors(t)
 
-    def is_root_type(t: dict[str, Any]) -> bool:
+    def marked_root(t: dict[str, Any]) -> bool:
         # An interface that extends the marker only passes it on
         return bool(marks(t) & roots) and t.get("category") != "interface"
 
+    referenced = {_bare(b) for t in types for b in t.get("bases") or []}
+    # A marked type other types name as their base passes the marker on (a base class of event-sourced roots)
+    root_bases = {str(t["name"]).casefold() for t in types if marked_root(t) and str(t["name"]).casefold() in referenced}
+
+    def is_root_type(t: dict[str, Any]) -> bool:
+        return marked_root(t) and str(t["name"]).casefold() not in root_bases
+
     root_names = {str(t["name"]).casefold() for t in types if is_root_type(t)}
     # ORM bases of the repository itself: types other types name as their base that descend from an ORM base
-    referenced = {_bare(b) for t in types for b in t.get("bases") or []}
     orm_names = {str(t["name"]).casefold() for t in types if t.get("bases") and ancestors(t) & orm and str(t["name"]).casefold() in referenced}
     has_roots = bool(root_names)
     root_folders = {PurePosixPath(str(t.get("path") or "")).parent.as_posix() for t in types if is_root_type(t)}
@@ -354,6 +362,9 @@ def detect_entities(types: list[dict[str, Any]], importers: dict[str, int], owne
         elif m & (values | ids | dto_bases):
             signal = ""  # Looks like data: listed with its reason below
         else:
+            continue
+        if test_words and any({w.casefold() for w in _words(part)} & test_words for part in PurePosixPath(path).parts[1:-1]):
+            exclude(t, "test code")
             continue
         cleaned = entity_name(name, owners.get(path, ""), rules, table=signal == "table")
         code = signal not in ("table", "shared record")  # DTO and config rules are about code classes

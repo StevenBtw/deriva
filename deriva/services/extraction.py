@@ -845,6 +845,7 @@ _ENTITY_LISTS = (
     "name_suffixes",
     "table_annotations",
     "table_attributes",
+    "test_words",
 )
 
 
