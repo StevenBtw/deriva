@@ -85,9 +85,9 @@
     "params": "{\n \"prompt\": {\n  \"persona\": \"You are analyzing a source code file to extract type definitions.\",\n  \"task\": \"Extract all type definitions from this file.\"\n }\n}"
   },
   {
-    "id": 82,
+    "id": 112,
     "node_type": "Method",
-    "version": 1,
+    "version": 2,
     "sequence": 6,
     "enabled": true,
     "input_sources": "{\"files\": [], \"nodes\": [{\"label\": \"TypeDefinition\", \"property\": \"codeSnippet\"}]}",
@@ -97,9 +97,9 @@
     "extraction_method": "treesitter",
     "temperature": 0.30000001192092896,
     "max_tokens": 4000,
-    "created_at": "2026-10-10T13:45:16.359634",
+    "created_at": "2026-11-06T23:30:23.354003",
     "batch_size": 1,
-    "params": "{\"languages\": [\"python\", \"java\", \"javascript\", \"typescript\", \"csharp\", \"cobol\", \"jcl\"]}"
+    "params": "{\"languages\": [\"python\", \"java\", \"javascript\", \"typescript\", \"csharp\", \"golang\", \"cobol\", \"jcl\"]}"
   },
   {
     "id": 34,
