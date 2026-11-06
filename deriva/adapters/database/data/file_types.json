@@ -432,6 +432,14 @@
     "chunk_overlap": 0
   },
   {
+    "extension": ".markdown",
+    "file_type": "docs",
+    "subtype": "markdown",
+    "chunk_delimiter": null,
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
     "extension": ".md",
     "file_type": "docs",
     "subtype": "markdown",
