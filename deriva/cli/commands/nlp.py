@@ -13,8 +13,9 @@ app = typer.Typer(help="The language models of the BusinessConcept step")
 
 @app.command("fetch")
 def fetch() -> None:
-    """Download the pinned spaCy pipelines and translation models now (about 250 MB on first use), so a run needs no
-    network for them; models that are present and verified are not downloaded again."""
+    """Download the pinned spaCy pipelines and translation models now (about 250 MB on first use).
+
+    A run then needs no network for them; models that are present and verified are not downloaded again."""
     try:
         result = nlp_models.fetch()
     except (OSError, ValueError, zipfile.BadZipFile) as e:

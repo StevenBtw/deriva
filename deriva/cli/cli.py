@@ -296,8 +296,9 @@ def quality(
     repo: Annotated[str, typer.Option("--repo", help="Repository whose model to judge")],
     as_json: Annotated[bool, typer.Option("--json", help="The whole report as JSON")] = False,
 ) -> None:
-    """The verdict on a repository's model from its structure: orphans, relationship types, layers, and elements
-    without a file, type or method behind them (a report; no LLM, nothing changes)."""
+    """The verdict on a repository's model from its structure (a report; no LLM, nothing changes).
+
+    Orphans, relationship types, layers, and elements without a file, type or method behind them."""
     PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session:
         report = session.model_quality()

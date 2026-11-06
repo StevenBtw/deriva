@@ -109,6 +109,8 @@ def repo_delete(
             else:
                 typer.echo(f"\nError: {result.get('error', 'Unknown error')}", err=True)
                 raise typer.Exit(1)
+        except typer.Exit:
+            raise
         except Exception as e:
             typer.echo(f"\nError: {e}", err=True)
             if "uncommitted changes" in str(e).lower():
@@ -180,6 +182,8 @@ def repo_info(
             typer.echo(f"  Size:        {info.get('size_mb', 0):.2f} MB")
             typer.echo(f"  Cloned At:   {info.get('cloned_at', 'N/A')}")
             typer.echo("")
+        except typer.Exit:
+            raise
         except Exception as e:
             typer.echo(f"\nError: {e}", err=True)
             raise typer.Exit(1)

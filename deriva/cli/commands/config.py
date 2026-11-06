@@ -414,8 +414,7 @@ def config_versions() -> None:
 def config_reset_versions(
     yes: Annotated[bool, typer.Option("--yes", help="Confirm: the version history is removed")] = False,
 ) -> None:
-    """Make every active config row version 1 and remove the version history (a release reset; the history stays in
-    the older releases)."""
+    """Make every active config row version 1 and remove the version history (a release reset; the history stays in the older releases)."""
     if not yes:
         typer.echo("This removes the version history of every step (the active rows become version 1). Run again with --yes.", err=True)
         raise typer.Exit(1)

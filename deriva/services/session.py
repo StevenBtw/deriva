@@ -353,6 +353,7 @@ class PipelineSession:
 
                 self._llm_manager = LLMManager()
                 self._llm_error = None
+                self._llm_no_model = False
             except Exception as e:
                 # Once per reason: the CLI asks before a run and again in it
                 if str(e) != self._llm_error:
