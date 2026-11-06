@@ -49,7 +49,14 @@ export function RunPanel({ run, onStart, onCancel, collapsed, onToggle, onReposi
   };
 
   useEffect(() => {
-    // The session's repository first (it answers busy while a step runs), then the first one cloned.
+    runs
+      .history(8)
+      .then(setHistory)
+      .catch(() => setHistory([]));
+    // Both reads need the session, which a running run holds (each would answer busy until it ends): the run's
+    // repository is shown meanwhile, and the list is read again when the run has ended.
+    if (running) return;
+    // The session's repository first, then the first one cloned.
     // A fresh session reads the shared "default" graph, which is no repository and cannot be chosen.
     Promise.all([repositories.list(), session.current().catch(() => ({ repository: null }))])
       .then(([list, current]) => {
@@ -58,14 +65,7 @@ export function RunPanel({ run, onStart, onCancel, collapsed, onToggle, onReposi
         const cloned = list.some((r) => r.name === current.repository) ? current.repository : null;
         setRepository((shown) => shown || cloned || list[0]?.name || "");
       })
-      .catch((reason: Error) => {
-        // While a run holds the databases the list may be unavailable: the run's repository is shown below
-        if (!running) setLoadError(reason.message);
-      });
-    runs
-      .history(8)
-      .then(setHistory)
-      .catch(() => setHistory([]));
+      .catch((reason: Error) => setLoadError(reason.message));
   }, [run.status, running]);
 
   // Switching the session's repository waits for the run to end

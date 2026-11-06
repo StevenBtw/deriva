@@ -8,9 +8,9 @@ import { size } from "../components/size";
 const count = (n: number) => n.toLocaleString("en-US");
 
 
-/** "2026-10-18 22:41 · all · finished", or a dash when the repository has no such run */
-function runLine(run: RunSummary | null): string {
-  if (!run) return "none yet";
+/** "2026-10-18 22:41 · all · finished"; without a studio run, whether its result exists (the CLI keeps no run record) */
+function runLine(run: RunSummary | null, built: boolean): string {
+  if (!run) return built ? "run outside the studio" : "none yet";
   const when = new Date(run.started_at * 1000);
   const pad = (n: number) => String(n).padStart(2, "0");
   const date = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ${pad(when.getHours())}:${pad(when.getMinutes())}`;
@@ -416,9 +416,9 @@ export function Repositories() {
                 <span className="muted">On disk</span>
                 <span>{size(shown.database_bytes)}</span>
                 <span className="muted">Extraction</span>
-                <span>{runLine(shown.last_runs.extraction)}</span>
+                <span>{runLine(shown.last_runs.extraction, shown.graph.nodes > 0)}</span>
                 <span className="muted">Derivation</span>
-                <span>{runLine(shown.last_runs.derivation)}</span>
+                <span>{runLine(shown.last_runs.derivation, shown.model.elements > 0)}</span>
               </div>
             ) : (
               <div className="bd note">{dataNote ?? "Counting…"}</div>

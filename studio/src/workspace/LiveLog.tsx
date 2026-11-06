@@ -15,7 +15,7 @@ function line(event: RunEvent): string {
   if (event.event === "cancelled") return "Run cancelled";
   if (event.event === "error") return `Error: ${d.message ?? "unknown"}`;
   const position = d.total ? ` (${d.current}/${d.total})` : "";
-  return `${d.status === "complete" ? "✓" : "▸"} ${d.step ?? d.phase ?? ""}${position}${d.message ? ` · ${d.message}` : ""}`;
+  return `${d.status === "complete" ? "✓" : "▸"} ${d.step || d.phase || ""}${position}${d.message ? ` · ${d.message}` : ""}`;
 }
 
 /** Each event with the phase header to show before it (when the phase changes). */
