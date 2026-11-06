@@ -206,6 +206,27 @@ class TestTechnologyStep:
         # The "app" service runs the repository's own app module (a directory holding a dependency file)
         assert sorted(llm.prompted_items(0)) == ["alpha-client", "beta-lib", "store"]
 
+    def test_the_image_labels_are_kept_on_the_repository_for_the_deployments(self, tmp_path, graph):
+        """Each labelled image with the system its label names ("" for none) is written on the repository node."""
+        from datetime import datetime
+
+        from deriva.adapters.graph.models import RepositoryNode
+
+        graph.add_node(RepositoryNode(name="r", url="", created_at=datetime(2026, 1, 1)), node_id="repo::r")
+        compose = "services:\n  cache:\n    image: acme/keyvalue:2\n  admin:\n    image: acme/dbadmin:1\n"
+        path = "deploy/docker-compose.yml"
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(compose, encoding="utf-8")
+        graph.add_node(FileNode(name="docker-compose.yml", path=path, repository_name="r", file_type="infra", subtype="docker-compose"), node_id=generate_file_node_id("r", path))
+        cfg = _cfg()
+        cfg.input_sources = json.dumps({"files": [{"type": "infra", "subtype": "*"}], "nodes": []})
+        llm = FakeLlm({"cache": ("system_software", "Key Value Store")})
+
+        service._extract_technologies(cfg, SimpleNamespace(name="r"), tmp_path, [{"path": path, "file_type": "infra", "subtype": "docker-compose"}], graph, llm)
+
+        (row,) = graph.query("MATCH (r:Graph:Repository) RETURN r.imageLabels AS labels")
+        assert row["labels"] == ["acme/dbadmin=", "acme/keyvalue=Key Value Store"]
+
     @pytest.mark.parametrize("skip, prompted", [(True, ["beta-lib"]), (False, ["alpha-client", "beta-lib"])])
     def test_items_named_after_the_repository_are_skipped_when_configured(self, tmp_path, graph, skip, prompted):
         (tmp_path / "app").mkdir()

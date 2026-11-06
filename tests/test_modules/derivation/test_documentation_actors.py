@@ -98,3 +98,23 @@ def test_the_prompt_shows_the_evidence_per_candidate_and_without_it_stays_as_bef
     assert '## Evidence per candidate\n- app_shop:\n  - Shopper: A shopper orders. (r/README.md, "Ordering")\n' in shown
     assert build_actor_prompt("Choose.", apps, candidates) == build_actor_prompt("Choose.", apps, candidates, evidence={})
     assert "## Evidence" not in build_actor_prompt("Choose.", apps, candidates)
+
+
+def test_evidence_names_an_application_written_with_an_underscore():
+    """A unit word with an underscore (order_service) is still found in the sentence once its code marks are gone, so
+    the sentence that names both the candidate and the application is the evidence."""
+    docs = {"r/README.md": "# Shop\n\n## Use\n\nA Shopper browses the catalog. A Shopper places orders through `order_service`.\n"}
+
+    found = actor_evidence(docs, {"app_shop": {"order_service"}}, {"concept::shopper": "Shopper"}, {"app_shop": ["concept::shopper"]}, max_chars=200)
+
+    assert found["app_shop"]["Shopper"].startswith("A Shopper places orders through order_service.")
+
+
+def test_a_word_only_in_fenced_code_is_no_mention():
+    """A section that names the application or the candidate only inside fenced code mentions neither: no candidate
+    for verification, no section for evidence."""
+    fence = "`" * 3
+    docs = {"r/README.md": f"# Shop\n\n## Setup\n\nRun the service.\n\n{fence}\nshopper front\n{fence}\n\n## Use\n\nA shopper buys tea.\n"}
+
+    assert verified_candidates(docs, {"app_shop": {"front"}}, {"concept::shopper": "Shopper"}) == {}
+    assert actor_evidence(docs, {"app_shop": {"front"}}, {"concept::shopper": "Shopper"}, {"app_shop": ["concept::shopper"]}, max_chars=200) == {}

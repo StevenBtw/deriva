@@ -298,6 +298,26 @@ class TestPromptAndLabels:
             tc.parse_labels(json.dumps({"items": [{"item": "alpha-client", "category": "framework", "system": ""}]}), self.BATCH)
 
 
+def test_image_labels_name_each_labelled_image_by_its_system_and_none_by_nothing():
+    """A container image (Dockerfile, Kubernetes) and a compose service's image map to the system their label names,
+    without registry, tag or digest; an image labelled none maps to ""; the first label in key order wins."""
+    files = [
+        _file("shop/Dockerfile", "FROM registry.local:5000/acme/base-runner:2 AS build\nFROM alpine:3.20\n", "infra", "docker"),
+        _file("deploy/app.yaml", "spec:\n  containers:\n    - image: acme/kv@sha256:abc\n", "infra", "kubernetes"),
+        _file("docker-compose.yml", "services:\n  board:\n    image: acme/board\n    environment:\n      MODE: x\n", "infra", "docker-compose"),
+    ]
+    collected = tc.collect(files, [])
+    by_text = {item.text: key for key, item in collected.items.items()}
+    labels = {
+        by_text["registry.local:5000/acme/base-runner:2"]: {"category": "runtime", "system": "Base Runner"},
+        by_text["alpine:3.20"]: {"category": "none", "system": ""},
+        by_text["acme/kv@sha256:abc"]: {"category": "system_software", "system": "Key Value Store"},
+        by_text["board"]: {"category": "service", "system": "Board"},
+    }
+
+    assert tc.image_labels(labels, collected) == {"acme/base-runner": "Base Runner", "alpine": "", "acme/kv": "Key Value Store", "acme/board": "Board"}
+
+
 class TestNodesAndEdges:
     FILES = [_file("a/package.json", _package("alpha-client", "gamma")), _file("b/package.json", _package("beta-client"))]
     LABELS = {

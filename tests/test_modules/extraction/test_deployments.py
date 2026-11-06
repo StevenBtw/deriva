@@ -236,6 +236,29 @@ def test_an_image_off_the_list_is_kept_as_fallback_software():
     assert (fallback.name, fallback.listed, fallback.in_environment, fallback.serves) == ("acme/keyvalue", False, True, ["unit::r::shop"])
 
 
+def test_an_image_off_the_list_takes_the_name_the_technology_labels_give_it():
+    """With the Technology step's image labels, an image off the list is the system its label names (on the list when
+    the name is), an image labelled none is no software, and an image without a label stays as before."""
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    compose = (
+        "services:\n  cache:\n    image: acme/keyvalue:2\n  ui:\n    image: acme/dbadmin:1\n  db:\n    image: acme/pgfork:15\n"
+        "  tool:\n    image: acme/other:3\n  shop:\n    build: ./shop\n    depends_on: [cache, db]\n"
+    )
+    labels = {"acme/keyvalue": "Key Value Store", "acme/dbadmin": "", "acme/pgfork": "Hosted PostgreSQL"}  # a name that holds an entry's name is it
+
+    layer = technology_layer("r", {"r/docker-compose.yml": compose}, UNITS, DeploymentRules(), catalog_from_params(CATALOG_ENTRIES), {}, image_labels=labels)
+    software = {s.name: s for s in layer.software}
+
+    assert sorted(software) == ["Key Value Store", "PostgreSQL", "acme/other"]
+    assert not software["Key Value Store"].listed and software["Key Value Store"].serves == ["unit::r::shop"]
+    assert software["PostgreSQL"].listed and software["PostgreSQL"].kind == "database"
+    assert software["acme/other"].kind == "fallback"
+    plain = technology_layer("r", {"r/docker-compose.yml": compose}, UNITS, DeploymentRules(), catalog_from_params(CATALOG_ENTRIES), {})
+    assert sorted(s.name for s in plain.software) == ["acme/dbadmin", "acme/keyvalue", "acme/other", "acme/pgfork"]
+
+
 def test_mainframe_subsystems_without_another_environment_make_a_mainframe_environment():
     layer = _layer({}, sources={"r/shop/cbl/a.cbl": "EXEC CICS RETURN END-EXEC"})
 

@@ -3356,6 +3356,23 @@ class TestDeploymentStep:
         assert [(r["s"], r["u"]) for r in serves] == [("Java runtime", "unit::r::shop"), ("PostgreSQL", "unit::r::shop")]
         assert result["software"] == {"listed": 2, "fallback": 0, "unconnected": 0}
 
+    def test_the_technology_image_labels_name_the_software_an_image_runs(self, graph, tmp_path):
+        """With the image labels the Technology step keeps on the repository, an image off the list runs the system its
+        label names and an image labelled none is no software."""
+        from datetime import datetime
+
+        from deriva.adapters.graph.models import RepositoryNode
+
+        compose = "services:\n  shop:\n    build: ./shop\n    depends_on: [cache, admin]\n  cache:\n    image: acme/keyvalue:2\n  admin:\n    image: acme/dbadmin:1\n"
+        self._repo(graph, tmp_path, {"docker-compose.yml": compose})
+        graph.add_node(RepositoryNode(name="r", url="", created_at=datetime(2026, 1, 1)), node_id="repo::r")
+        graph.update_node_property("repo::r", "imageLabels", ["acme/dbadmin=", "acme/keyvalue=Key Value Store"])
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == []
+        assert [r["s"] for r in graph.query("MATCH (s:Graph:Software) RETURN s.name AS s ORDER BY s")] == ["Key Value Store"]
+
     def test_a_cdk_app_is_read_statically_and_is_the_primary_environment(self, graph, tmp_path):
         params = {
             **self.PARAMS,
