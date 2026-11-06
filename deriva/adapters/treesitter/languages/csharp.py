@@ -847,7 +847,8 @@ class CSharpExtractor(LanguageExtractor):
         texts = [self.get_node_text(child, source) for child in node.children]
         if "=" in texts:
             after = node.children[texts.index("=") + 1 :]
-            target = next((c for c in after if c.type in ("qualified_name", "identifier", "generic_name", "alias_qualified_name")), None)
+            # Any type can be aliased (A.B, List<int>, int[], int*, Foo?, (int, string), int): the first named node after "="
+            target = next((c for c in after if c.is_named and c.type != "comment"), None)
             if target is not None:
                 alias, module = module, self.get_node_text(target, source)
 

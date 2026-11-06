@@ -790,6 +790,8 @@ def _extract_import_edges(
         java_files = _java_file_index(all_file_paths)
 
     for imp in imports:
+        if file_path.endswith(".cs") and _csharp_type_alias(imp):
+            continue  # An alias of a built-in or composite type (int, int[], (int, string)) imports nothing
         # from <package> import <module>: the module's own file (and the package for names that are no module)
         submodules, only_modules = _direct_targets(imp, file_path, all_file_paths, csharp_imports)
         for target_path in submodules if EdgeType.IMPORTS in edge_types else []:
@@ -1015,8 +1017,26 @@ def _resolve_import(
 
 
 _CSHARP_NAMESPACE = re.compile(r"^\s*namespace\s+([\w.]+)", re.MULTILINE)
-# The using and namespace lines of a C# file: the names in them are no uses of a type
-_CSHARP_DIRECTIVE = re.compile(r"^\s*(?:global\s+)?(?:using|namespace)\b[^\n]*", re.MULTILINE)
+# The using and namespace directives of a C# file, up to their ";" or "{": the names in them are no uses of a type, code
+# after them on the same line is. A using directive is one path, or an alias of one, before ";": a using declaration or
+# statement in a method (using var x = ..., using (var x = ...), using StreamReader r = ...) is code
+_CSHARP_DIRECTIVE = re.compile(
+    r"^\s*(?:(?:global\s+)?using\s+(?:static\s+)?(?!var\b)[\w.:]+\s*(?:=\s*[^;\n]*)?;|namespace\s+[\w.]+\s*[;{]?)",
+    re.MULTILINE,
+)
+
+
+# A namespace or type path an alias can name (A.B, A.B.C<int>, global::A.B); other targets are types, no imports
+_CSHARP_PATH = re.compile(r"(?:global::)?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:<.*>)?")
+# The language's built-in type keywords (C# reference, built-in types)
+_CSHARP_BUILT_IN = frozenset(
+    {"bool", "byte", "sbyte", "char", "decimal", "double", "float", "int", "uint", "nint", "nuint", "long", "ulong", "short", "ushort", "object", "string", "dynamic"}
+)
+
+
+def _csharp_type_alias(imp: ExtractedImport) -> bool:
+    """An alias using of a built-in or composite type (``using Number = int;``, ``using Pair = (int, string);``)."""
+    return bool(imp.alias) and (imp.module in _CSHARP_BUILT_IN or not _CSHARP_PATH.fullmatch(imp.module))
 
 
 def _source_text(file_info: dict[str, Any], repo_path: Path) -> str | None:
@@ -1050,10 +1070,12 @@ def _csharp_imports(imports: list[ExtractedImport], file_path: str, file_content
     stem = lambda path: PurePosixPath(path).name.split(".")[0]  # noqa: E731 - a one-line helper
     found: dict[str, list[str]] = {}
     for imp in imports:
-        if imp.module in namespaces:
-            found[imp.module] = [p for p in namespaces[imp.module] if p != file_path and stem(p) in named]
+        # global:: names the root namespace explicitly: global::Acme.Core is Acme.Core
+        module = imp.module.removeprefix("global::")
+        if module in namespaces:
+            found[imp.module] = [p for p in namespaces[module] if p != file_path and stem(p) in named]
         elif imp.is_from_import or imp.alias:
-            outer, _, type_name = imp.module.rpartition(".")
+            outer, _, type_name = module.rpartition(".")
             if targets := [p for p in namespaces.get(outer, []) if stem(p) == type_name]:
                 found[imp.module] = targets
     return found
