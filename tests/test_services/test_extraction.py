@@ -3624,6 +3624,66 @@ class TestBusinessLayerStep:
     def test_the_signals_are_validated(self, graph, tmp_path):
         with pytest.raises(ValueError, match="BusinessLayer"):
             _run_extraction_step(self._cfg({"markers": "require_role"}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        with pytest.raises(ValueError, match="status_members"):
+            _run_extraction_step(self._cfg({**self.PARAMS, "status_members": "yes"}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+    def test_verb_names_add_what_happens_to_the_object_to_the_name_candidates_when_switched_on(self, graph, tmp_path):
+        from unittest.mock import patch
+
+        from deriva.adapters.graph.models import DataDomainNode, DataEntityNode, FileNode, TypeDefinitionNode
+
+        text = 'class LeaseApplication(Base):\n    status = Column(String(20), default="DRAFT")\n\ndef go(app):\n    app.status = "SUBMITTED"\n    app.status = "APPROVED"\n'
+        (tmp_path / "lease").mkdir()
+        (tmp_path / "lease" / "models.py").write_text(text, encoding="utf-8")
+        graph.add_node(FileNode(name="models.py", path="lease/models.py", repository_name="r", file_type="source", subtype="python"), node_id="file::r::lease/models.py")
+        graph.add_node(TypeDefinitionNode(name="LeaseApplication", type_category="class", file_path="lease/models.py", repository_name="r"), node_id="typedef::r::LeaseApplication")
+        graph.add_node(DataEntityNode(name="Lease Application", signal="orm entity", repository_name="r"), node_id="entity::r::leaseapplication")
+        graph.add_edge("entity::r::leaseapplication", "typedef::r::LeaseApplication", "INCLUDES")
+        graph.add_node(DataDomainNode(name="Lease Application", kind="single", repository_name="r", business_object="Lease Application"), node_id="domain::r::leaseapplication")
+        graph.add_edge("domain::r::leaseapplication", "entity::r::leaseapplication", "INCLUDES")
+
+        verbs = {"SUBMITTED": "Submit", "APPROVED": "Approve"}
+        with patch("deriva.services.extraction.state_verbs", return_value=verbs) as read, patch("deriva.services.extraction.has_english", return_value=True):
+            off = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+            assert read.call_count == 0
+            ((before,),) = [graph.query("MATCH (l:Graph:Lifecycle) RETURN l.nameCandidates AS names")]
+            on = _run_extraction_step(self._cfg({**self.PARAMS, "verb_names": True}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        ((after,),) = [graph.query("MATCH (l:Graph:Lifecycle) RETURN l.nameCandidates AS names, l.states AS states")]
+
+        assert off["errors"] == [] and on["errors"] == [] and not on.get("warnings")
+        assert list(before["names"]) == ["Lease Application Lifecycle"]
+
+        # Switched on without the English pipeline: no verbs, and the step says so (the config differs from what it does)
+        with patch("deriva.services.extraction.has_english", return_value=False):
+            bare = _run_extraction_step(self._cfg({**self.PARAMS, "verb_names": True}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        assert bare["errors"] == [] and any("verb_names" in w and "English" in w for w in bare.get("warnings", []))
+        in_state_order = [f"{verbs[s]} Lease Application" for s in after["states"] if s in verbs]
+        assert list(after["names"]) == ["Lease Application Lifecycle", *in_state_order, "Manage Lease Application"] and len(in_state_order) == 2
+
+    def test_status_members_take_a_status_type_beside_the_domain_only_when_switched_on(self, graph, tmp_path):
+        from deriva.adapters.graph.models import DataDomainNode, DataEntityNode, FileNode, TypeDefinitionNode
+
+        files = {
+            "shipment/Shipment.java": "public class Shipment { private Delivery delivery; }",
+            "shipment/TransportStatus.java": "public enum TransportStatus { NOT_RECEIVED, IN_PORT, ONBOARD, CLAIMED }",
+        }
+        for path, text in files.items():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_text(text, encoding="utf-8")
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}")
+        graph.add_node(TypeDefinitionNode(name="Shipment", type_category="class", file_path="shipment/Shipment.java", repository_name="r"), node_id="typedef::r::Shipment")
+        graph.add_node(DataEntityNode(name="Shipment", signal="orm entity", repository_name="r"), node_id="entity::r::shipment")
+        graph.add_edge("entity::r::shipment", "typedef::r::Shipment", "INCLUDES")
+        graph.add_node(DataDomainNode(name="Shipment", kind="single", repository_name="r", business_object="Shipment"), node_id="domain::r::shipment")
+        graph.add_edge("domain::r::shipment", "entity::r::shipment", "INCLUDES")
+
+        off = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        on = _run_extraction_step(self._cfg({**self.PARAMS, "status_members": True}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert (off["errors"], off["lifecycles"]) == ([], 0)
+        assert (on["errors"], on["lifecycles"]) == ([], 1)
+        (life,) = graph.query("MATCH (l:Graph:Lifecycle) RETURN l.states AS states")
+        assert list(life["states"]) == ["NOT_RECEIVED", "IN_PORT", "ONBOARD", "CLAIMED"]
 
 
 def test_names_that_share_a_slug_get_ids_of_their_own():
@@ -3759,3 +3819,43 @@ def test_the_read_limit_ends_with_its_step(tmp_path):
         extraction._run_step_writes(cfg, MagicMock(), tmp_path, [], [], MagicMock(), None, MagicMock())
     assert seen == [1000]
     assert extraction._read_limit.get() is None
+
+
+class TestStepWarningsReachTheRun:
+    """A step that ran and returns warnings (the BusinessLayer's missing English pipeline, unclassified directories)
+    gets them into the run's result, where the CLI prints them."""
+
+    def test_a_step_s_warnings_are_in_the_run_result(self, tmp_path):
+        repo = MagicMock()
+        repo.name, repo.path, repo.url, repo.branch = "r", str(tmp_path), "https://example.com/r.git", "main"
+        step = MagicMock()
+        step.node_type, step.input_sources = "Repository", None
+        written = {"nodes_created": 1, "edges_created": 0, "errors": [], "warnings": ["the step's own warning"]}
+        with (
+            patch("deriva.services.extraction.RepoManager", **{"return_value.list_repositories.return_value": [repo]}),
+            patch("deriva.services.extraction.config.get_extraction_configs", return_value=[step]),
+            patch("deriva.services.extraction.config.get_file_types", return_value=[]),
+            patch("deriva.services.extraction._run_extraction_step", return_value=written),
+        ):
+            result = run_extraction(MagicMock(), MagicMock())
+
+        assert result["success"] is True
+        assert any("the step's own warning" in w for w in result["warnings"])
+
+    def test_the_iterator_s_final_update_carries_the_step_s_warnings(self, tmp_path):
+        from deriva.services.extraction import run_extraction_iter
+
+        repo = MagicMock()
+        repo.name, repo.path, repo.url, repo.branch = "r", str(tmp_path), "https://example.com/r.git", "main"
+        step = MagicMock()
+        step.node_type, step.input_sources = "Repository", None
+        written = {"nodes_created": 1, "edges_created": 0, "errors": [], "warnings": ["the step's own warning"]}
+        with (
+            patch("deriva.services.extraction.RepoManager", **{"return_value.list_repositories.return_value": [repo]}),
+            patch("deriva.services.extraction.config.get_extraction_configs", return_value=[step]),
+            patch("deriva.services.extraction.config.get_file_types", return_value=[]),
+            patch("deriva.services.extraction._run_extraction_step", return_value=written),
+        ):
+            updates = list(run_extraction_iter(MagicMock(), MagicMock()))
+
+        assert any("the step's own warning" in w for w in updates[-1].stats["warnings"])

@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from deriva.common.naming import name_key
 from deriva.modules.extraction import technology_candidates as tc
 from deriva.modules.extraction.base import generate_file_node_id
 
@@ -186,6 +187,23 @@ class TestCollect:
         collected = tc.collect([_file("deploy/docker-compose.yml", compose, "infra", "docker-compose")], [], own_units=own)
 
         assert sorted(collected.items) == ["compose service::store"]
+
+    def test_a_deployment_image_named_like_an_own_module_is_no_item_and_a_base_image_stays(self):
+        """A manifest that deploys an own module's image (by its name, with or without registry, tag or digest) runs the
+        repository's own software; a container file's base image in a folder of that name is still a technology."""
+        manifest = """spec:
+  containers:
+    - image: ledgerservice
+    - image: registry.local:5000/team/billing-service:1.4
+    - image: redis:7
+"""
+        files = [_file("deploy/app.yaml", manifest, "infra", "kubernetes"), _file("redis/Dockerfile", "FROM redis:7-alpine\n", "infra", "docker")]
+        own = frozenset(name_key(n) for n in ("ledgerservice", "billing-service", "redis"))
+
+        collected = tc.collect(files, [], own_units=own)
+
+        # The three deployed images are own builds; the base image of the folder's container file stays
+        assert sorted(collected.items) == ["container image::redis:7-alpine"]
 
     def test_items_named_after_the_repository_are_no_items(self):
         manifest = """spec:

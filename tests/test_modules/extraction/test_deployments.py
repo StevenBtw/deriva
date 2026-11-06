@@ -64,6 +64,17 @@ services:
     assert services == {"order-store": "unit::r::OrderStore", "pay": "unit::r::services/PaymentDesk", "orders": None, "gateway": "unit::r::Gateway", "db": None}
 
 
+def test_a_unit_in_a_layout_folder_is_found_by_its_manifest_name():
+    """A unit whose folder is src/ is named by its project file: a workload that runs an image of that name deploys it."""
+    units = [{"id": "unit::r::ledgerservice/src", "path": "r/ledgerservice/src", "name": "src", "manifest": "ledgerservice"}]
+    manifest = "kind: Deployment\nmetadata:\n  name: ledgerservice\nspec:\n  template:\n    spec:\n      containers:\n        - image: ledgerservice\n"
+
+    env = detect_deployments("r", {"r/k8s/ledger.yaml": manifest}, units, RULES).primary
+    assert env is not None
+
+    assert [(s.name, s.unit) for s in env.services] == [("ledgerservice", "unit::r::ledgerservice/src")]
+
+
 def test_the_root_compose_is_the_primary_environment_and_the_others_are_reported():
     files = {
         "r/docker-compose.yml": COMPOSE,

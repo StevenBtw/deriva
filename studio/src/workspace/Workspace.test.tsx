@@ -174,6 +174,17 @@ describe("Workspace", () => {
     expect(within(log).getByText(/Run started · extraction · ToolShed/)).toBeInTheDocument();
   });
 
+  it("shows no tokens or latency for a cache hit (no request was sent)", async () => {
+    await startRun();
+
+    act(() => handlers.onEvent?.(llm(2, "c9", { cache_hit: true, tokens_in: 0, latency_ms: 0 })));
+
+    const log = screen.getByRole("log");
+    expect(log).toHaveTextContent("LLM #9 · DirectoryClassification · cache hit");
+    expect(log).not.toHaveTextContent("tokens in");
+    expect(log).not.toHaveTextContent(" ms");
+  });
+
   it("says which metrics a call did not record instead of showing zeros", async () => {
     await startRun();
 
@@ -207,6 +218,26 @@ describe("Workspace", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Cancel/ }));
 
     expect(runs.cancel).toHaveBeenCalledWith("r1");
+  });
+
+  it("reads the repositories again when the run has finished, not while it holds the session", async () => {
+    vi.mocked(session.current).mockResolvedValue({ repository: "deriva" });
+    render(<Workspace />);
+    await screen.findByRole("option", { name: "deriva" });
+    await act(async () => {});
+    const lists = vi.mocked(repositories.list).mock.calls.length;
+    const reads = vi.mocked(session.current).mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: /^Run$/ }));
+    expect(await screen.findByRole("button", { name: /Cancel/ })).toBeInTheDocument();
+    act(() => handlers.onEvent?.(event(2, "progress", { phase: "extraction", step: "Repository", status: "complete" })));
+    await act(async () => {});
+    expect(vi.mocked(repositories.list).mock.calls.length).toBe(lists);
+    expect(vi.mocked(session.current).mock.calls.length).toBe(reads);
+
+    act(() => handlers.onEnd?.("finished"));
+    await waitFor(() => expect(vi.mocked(repositories.list).mock.calls.length).toBe(lists + 1));
+    expect(vi.mocked(session.current).mock.calls.length).toBe(reads + 1);
   });
 
   it("explains a run that is already in progress", async () => {

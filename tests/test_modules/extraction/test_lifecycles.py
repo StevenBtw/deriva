@@ -216,3 +216,279 @@ def test_with_transitions_the_states_follow_them_and_the_start_event_comes_out_o
     # By first file the order would be REMINDER, LEGAL_NOTICE, OVERDUE_NOTICE; the transitions decide
     assert life.states == ["REMINDER", "OVERDUE_NOTICE", "LEGAL_NOTICE"]
     assert life.events == ["OVERDUE_NOTICE"]
+
+
+# Status types beside their domain (BusinessLayer params status_members): a status type is often no member of its business
+# domain, but lies in the folder of a member, is declared in a member's file, or carries a member's name
+
+
+def _widened(files, members):
+    from deriva.modules.extraction.lifecycles import status_members
+
+    return detect_lifecycles(files, status_members(members, files, RULES), [], RULES, docs={})
+
+
+def test_a_status_enum_in_the_folder_of_a_domain_member_is_that_domain_s_lifecycle():
+    files = {
+        "r/cargo/Cargo.java": "public class Cargo { private Delivery delivery; }",
+        "r/cargo/TransportStatus.java": "public enum TransportStatus { NOT_RECEIVED, IN_PORT, ONBOARD_CARRIER, CLAIMED }",
+    }
+    members = [{"domain": "domain::cargo", "object": "Cargo", "name": "Cargo", "path": "r/cargo/Cargo.java"}]
+
+    assert detect_lifecycles(files, members, [], RULES, docs={}) == []
+    [life] = _widened(files, members)
+    assert (life.domain, life.attribute, life.states) == ("domain::cargo", "TransportStatus", ["NOT_RECEIVED", "IN_PORT", "ONBOARD_CARRIER", "CLAIMED"])
+
+
+def test_a_status_enum_declared_in_a_member_s_file_is_that_domain_s_lifecycle():
+    files = {"r/book/BookEntity.java": "class BookEntity { enum BookState { AVAILABLE, ON_HOLD, CHECKED_OUT } BookState state; }"}
+    members = [{"domain": "domain::book", "object": "Book", "name": "BookEntity", "path": "r/book/BookEntity.java"}]
+
+    [life] = _widened(files, members)
+    assert (life.attribute, life.states) == ("BookState", ["AVAILABLE", "ON_HOLD", "CHECKED_OUT"])
+
+
+def test_a_status_type_named_after_a_member_elsewhere_joins_it_by_the_closest_folder():
+    """The same package in another module wins over a copy in an unrelated folder (a test fixture); a tie joins none."""
+    files = {
+        "r/provider/x/loan/domain/Loan.java": "public class Loan { private Integer loanStatus; }",
+        "r/core/x/loan/domain/LoanStatus.java": "public enum LoanStatus { SUBMITTED, APPROVED, ACTIVE, CLOSED }",
+        "r/checks/data/LoanStatus.java": "public enum LoanStatus { PENDING, DONE, FAILED }",
+    }
+    members = [{"domain": "domain::loan", "object": "Loan", "name": "Loan", "path": "r/provider/x/loan/domain/Loan.java"}]
+
+    [life] = _widened(files, members)
+    assert (life.attribute, life.states) == ("LoanStatus", ["SUBMITTED", "APPROVED", "ACTIVE", "CLOSED"])
+
+    tied = {"r/a/Order.java": "class Order {}", "r/b/OrderStatus.java": "enum OrderStatus { NEW, PAID, SENT }", "r/c/OrderStatus.java": "enum OrderStatus { X1, X2, X3 }"}
+    assert _widened(tied, [{"domain": "domain::order", "object": "Order", "name": "Order", "path": "r/a/Order.java"}]) == []
+
+
+def test_a_member_s_own_type_and_unrelated_types_are_not_added():
+    from deriva.modules.extraction.lifecycles import status_members
+
+    files = {"r/a/Order.java": "class Order {}", "r/a/OrderService.java": "class OrderService {}", "r/z/PaymentStatus.java": "enum PaymentStatus { A1, B1, C1 }"}
+    members = [{"domain": "domain::order", "object": "Order", "name": "Order", "path": "r/a/Order.java"}]
+
+    assert status_members(members, files, RULES) == members
+
+
+def test_a_folder_shared_by_several_domains_gives_its_status_type_to_the_member_it_names_or_to_none():
+    from deriva.modules.extraction.lifecycles import status_members
+
+    files = {
+        "r/m/Loan.java": "class Loan {}",
+        "r/m/Group.java": "class Group {}",
+        "r/m/LoanSubStatus.java": "enum LoanSubStatus { A1, B1, C1 }",
+        "r/m/TransferStatus.java": "enum TransferStatus { A1, B1, C1 }",
+    }
+    members = [
+        {"domain": "domain::group", "object": "Group", "name": "Group", "path": "r/m/Group.java"},
+        {"domain": "domain::loan", "object": "Loan", "name": "Loan", "path": "r/m/Loan.java"},
+    ]
+
+    added = {m["name"]: m["domain"] for m in status_members(members, files, RULES)[2:]}
+    assert added == {"LoanSubStatus": "domain::loan"}
+
+    # A folder named after one of its domains keeps its status types there
+    named = {"r/order/Order.java": "class Order {}", "r/order/OrderLine.java": "class OrderLine {}", "r/order/ShippingStatus.java": "enum ShippingStatus { A1, B1, C1 }"}
+    in_order = [
+        {"domain": "domain::order", "object": "Order", "name": "Order", "path": "r/order/Order.java"},
+        {"domain": "domain::line", "object": "Order Line", "name": "OrderLine", "path": "r/order/OrderLine.java"},
+    ]
+    assert {m["name"]: m["domain"] for m in status_members(in_order, named, RULES)[2:]} == {"ShippingStatus": "domain::order"}
+
+    # A status type no member's name starts goes to the one domain whose member file uses it
+    files["r/m/Group.java"] = "class Group { TransferStatus transfer; }"
+    added = {m["name"]: m["domain"] for m in status_members(members, files, RULES)[2:]}
+    assert added == {"LoanSubStatus": "domain::loan", "TransferStatus": "domain::group"}
+
+
+def test_verb_names_name_the_process_by_what_happens_to_its_object_then_manage_it():
+    from deriva.modules.extraction.lifecycles import Lifecycle, verb_names
+
+    life = Lifecycle(key="k", domain="d", entity="Loan Application", attribute="status", states=["DRAFT", "SUBMITTED", "APPROVED", "IN_PORT", "WRITTEN_OFF"])
+    verbs = {"SUBMITTED": "Submit", "APPROVED": "Approve", "WRITTEN_OFF": "Write Off"}
+
+    assert verb_names(life, "Loan Application", verbs) == ["Submit Loan Application", "Approve Loan Application", "Write Off Loan Application", "Manage Loan Application"]
+    assert verb_names(life, "Loan Application", {}) == ["Manage Loan Application"]
+
+
+def test_a_kotlin_enum_class_in_a_member_s_file_is_that_domain_s_lifecycle():
+    files = {"r/loan/Loan.kt": "class Loan(val state: LoanState)\nenum class LoanState { DRAFT, OPEN, CLOSED }\n"}
+    members = [{"domain": "domain::loan", "object": "Loan", "name": "Loan", "path": "r/loan/Loan.kt"}]
+
+    [life] = _widened(files, members)
+    assert (life.attribute, life.states) == ("LoanState", ["DRAFT", "OPEN", "CLOSED"])
+
+
+def test_an_enum_named_only_in_a_comment_joins_nothing():
+    from deriva.modules.extraction.lifecycles import status_members
+
+    files = {"r/loan/Loan.java": "// the enum LoanStatus moved to the api module\nclass Loan { }\n"}
+    members = [{"domain": "domain::loan", "object": "Loan", "name": "Loan", "path": "r/loan/Loan.java"}]
+
+    assert status_members(members, files, RULES) == members
+
+
+def test_a_folder_of_two_domains_where_no_rule_decides_gives_its_status_type_to_none():
+    from deriva.modules.extraction.lifecycles import status_members
+
+    files = {"r/m/Loan.java": "class Loan {}", "r/m/Group.java": "class Group {}", "r/m/AccountStatus.java": "enum AccountStatus { A1, B1, C1 }"}
+    members = [
+        {"domain": "domain::group", "object": "Group", "name": "Group", "path": "r/m/Group.java"},
+        {"domain": "domain::loan", "object": "Loan", "name": "Loan", "path": "r/m/Loan.java"},
+    ]
+
+    assert status_members(members, files, RULES) == members
+
+
+def test_a_plural_folder_named_after_a_domain_keeps_its_status_type_there():
+    from deriva.modules.extraction.lifecycles import status_members
+
+    files = {"r/cargos/Cargo.java": "class Cargo {}", "r/cargos/Leg.java": "class Leg {}", "r/cargos/HandlingStatus.java": "enum HandlingStatus { A1, B1, C1 }"}
+    members = [
+        {"domain": "domain::cargo", "object": "Cargo", "name": "Cargo", "path": "r/cargos/Cargo.java"},
+        {"domain": "domain::leg", "object": "Leg", "name": "Leg", "path": "r/cargos/Leg.java"},
+    ]
+
+    assert {m["name"]: m["domain"] for m in status_members(members, files, RULES)[2:]} == {"HandlingStatus": "domain::cargo"}
+
+
+def test_the_main_status_file_wins_over_its_test_copy():
+    from deriva.modules.extraction.lifecycles import status_members
+
+    files = {
+        "r/src/main/java/x/loan/Loan.java": "class Loan {}",
+        "r/src/main/java/x/loan/LoanStatus.java": "enum LoanStatus { A1, B1, C1 }",
+        "r/src/test/java/x/loan/LoanStatus.java": "enum LoanStatus { T1, T2, T3 }",
+    }
+    members = [{"domain": "domain::loan", "object": "Loan", "name": "Loan", "path": "r/src/main/java/x/loan/Loan.java"}]
+
+    [added] = status_members(members, files, RULES)[1:]
+    assert added["path"] == "r/src/main/java/x/loan/LoanStatus.java"
+
+
+def test_status_members_is_stable_under_the_order_of_members_and_files():
+    from deriva.modules.extraction.lifecycles import status_members
+
+    files = {
+        "r/m/Loan.java": "class Loan {}",
+        "r/m/Group.java": "class Group { TransferStatus transfer; }",
+        "r/m/LoanSubStatus.java": "enum LoanSubStatus { A1, B1, C1 }",
+        "r/m/TransferStatus.java": "enum TransferStatus { A1, B1, C1 }",
+    }
+    members = [
+        {"domain": "domain::group", "object": "Group", "name": "Group", "path": "r/m/Group.java"},
+        {"domain": "domain::loan", "object": "Loan", "name": "Loan", "path": "r/m/Loan.java"},
+    ]
+    forward = status_members(members, files, RULES)
+    backward = status_members(members[::-1], dict(reversed(list(files.items()))), RULES)
+
+    assert sorted((m["name"], m["domain"]) for m in forward) == sorted((m["name"], m["domain"]) for m in backward)
+
+
+def test_verb_names_say_each_verb_once():
+    from deriva.modules.extraction.lifecycles import Lifecycle, verb_names
+
+    life = Lifecycle(key="k", domain="d", entity="Loan", attribute="status", states=["APPROVED", "RE_APPROVED", "CLOSED"])
+
+    assert verb_names(life, "Loan", {"APPROVED": "Approve", "RE_APPROVED": "Approve", "CLOSED": "Close"}) == ["Approve Loan", "Close Loan", "Manage Loan"]
+    assert verb_names(Lifecycle(key="k", domain="d", entity="Loan", attribute="status", states=[]), "Loan", {}) == ["Manage Loan"]
+
+
+def test_a_csharp_enum_with_its_brace_on_the_next_line_in_a_member_s_file_is_that_domain_s_lifecycle():
+    files = {"r/Loans/Loan.cs": "public class Loan { public LoanState State; }\npublic enum LoanState\n{\n    Draft,\n    Open,\n    Closed\n}\n"}
+    members = [{"domain": "domain::loan", "object": "Loan", "name": "Loan", "path": "r/Loans/Loan.cs"}]
+
+    [life] = _widened(files, members)
+    assert (life.attribute, life.states) == ("LoanState", ["Draft", "Open", "Closed"])
+
+
+def test_an_enum_a_block_comment_names_joins_nothing():
+    from deriva.modules.extraction.lifecycles import status_members
+
+    files = {"r/loan/Loan.java": "/* enum LoanStatus { OLD } was here */\nclass Loan { }\n"}
+    members = [{"domain": "domain::loan", "object": "Loan", "name": "Loan", "path": "r/loan/Loan.java"}]
+
+    assert status_members(members, files, RULES) == members
+
+
+def _enum_states(text: str, name: str = "LoanState", path: str = "r/loan/LoanState.java") -> list[str]:
+    members = [{"domain": "domain::loan", "object": "Loan", "name": name, "path": path}]
+    lives = detect_lifecycles({path: text}, members, [], RULES, docs={})
+    return lives[0].states if lives else []
+
+
+def test_a_java_enum_with_a_constructor_gives_the_bare_names():
+    text = 'public enum LoanState {\n    DRAFT(0, "x"),\n    OPEN(1, "y"),\n    CLOSED(2, "z");\n    LoanState(int c, String d) { }\n}\n'
+
+    assert _enum_states(text) == ["DRAFT", "OPEN", "CLOSED"]
+
+
+def test_a_constructor_argument_that_is_a_name_is_no_state():
+    text = "public enum LoanState { DRAFT(0, NONE, 2), OPEN(1, Level.LOW, 3), CLOSED(2, FINAL, 4); }"
+
+    assert _enum_states(text) == ["DRAFT", "OPEN", "CLOSED"]
+
+
+def test_a_csharp_enum_with_values_gives_the_bare_names():
+    text = "public enum LoanState\n{\n    Draft = 0,\n    Open = 1,\n    Closed = 2,\n}\n"
+
+    assert _enum_states(text, path="r/Loans/LoanState.cs") == ["Draft", "Open", "Closed"]
+
+
+def test_a_csharp_constant_with_an_attribute_keeps_its_name():
+    text = 'public enum LoanState\n{\n    [Description("New")] Draft,\n    [Display(Name = "Open")] Open,\n    Closed\n}\n'
+
+    assert _enum_states(text, path="r/Loans/LoanState.cs") == ["Draft", "Open", "Closed"]
+
+
+def test_comments_and_a_trailing_comma_in_an_enum_body_give_no_state():
+    text = "public enum LoanState {\n    /** the first */ DRAFT,\n    OPEN, // still open\n    CLOSED,\n}\n"
+
+    assert _enum_states(text) == ["DRAFT", "OPEN", "CLOSED"]
+
+
+def test_a_kotlin_enum_with_a_constructor_gives_the_bare_names():
+    text = "enum class LoanState(val code: Int) { DRAFT(0), OPEN(1), CLOSED(2) }"
+
+    assert _enum_states(text, path="r/loan/LoanState.kt") == ["DRAFT", "OPEN", "CLOSED"]
+
+
+def test_a_string_with_a_bracket_or_a_comma_in_a_constructor_argument_leaves_the_names_whole():
+    text = 'public enum LoanState { DRAFT("a("), OPEN("b, c"), CLOSED("d]"), SETTLED(")") }'
+
+    assert _enum_states(text) == ["DRAFT", "OPEN", "CLOSED", "SETTLED"]
+
+
+def test_an_attribute_with_a_comma_in_its_text_leaves_the_names_whole():
+    text = 'public enum LoanState\n{\n    [Obsolete("Use Open, not this")] Draft,\n    [Description("[open]")] Open,\n    Closed\n}\n'
+
+    assert _enum_states(text, path="r/Loans/LoanState.cs") == ["Draft", "Open", "Closed"]
+
+
+def test_verb_names_cover_every_name_of_the_object_in_order():
+    """A lifecycle of an entity whose domain names its object otherwise (Underwriting Case in the Assessment domain)
+    offers the verbs for both names, as the Lifecycle templates do."""
+    from deriva.modules.extraction.lifecycles import Lifecycle, verb_names
+
+    life = Lifecycle(key="k", domain="d", entity="Underwriting Case", attribute="status", states=["PENDING", "APPROVED"])
+
+    assert verb_names(life, ["Assessment", "Underwriting Case"], {"APPROVED": "Approve"}) == [
+        "Approve Assessment",
+        "Manage Assessment",
+        "Approve Underwriting Case",
+        "Manage Underwriting Case",
+    ]
+    assert verb_names(life, ["Assessment", "Assessment"], {"APPROVED": "Approve"}) == ["Approve Assessment", "Manage Assessment"]
+
+
+def test_verb_names_skip_an_empty_name_of_the_object():
+    """A domain whose businessObject is an empty string gives no " Manage " name; the entity's name still counts."""
+    from deriva.modules.extraction.lifecycles import Lifecycle, verb_names
+
+    life = Lifecycle(key="k", domain="d", entity="Loan", attribute="status", states=["APPROVED"])
+
+    assert verb_names(life, ["", "Loan"], {"APPROVED": "Approve"}) == ["Approve Loan", "Manage Loan"]
+    assert verb_names(life, "  ", {"APPROVED": "Approve"}) == []

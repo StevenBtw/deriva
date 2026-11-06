@@ -1924,3 +1924,91 @@ class TestCsharpImports:
 
         assert result["stats"]["imports"]["internal"] == 1
         assert result["stats"]["imports"]["external"] == 0
+
+
+class TestCsharpDirectivesOnOneLine:
+    """A using or namespace directive ends at its semicolon or brace: a declaration on the same line still names types."""
+
+    _source = staticmethod(TestCsharpImports._source)
+    _imported = staticmethod(TestCsharpImports._imported)
+    _edges = TestCsharpImports._edges
+
+    def _order(self, page: str) -> set[tuple[str, str]]:
+        return self._imported(
+            self._edges(
+                self._source("web/Page.cs", page),
+                self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+                self._source("core/Unused.cs", "namespace Acme.Core;\nclass Unused { }\n"),
+            )
+        )
+
+    def test_a_class_after_the_using_on_its_line(self):
+        assert self._order("using Acme.Core; public class Page { Order o; }\n") == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_class_after_a_file_scoped_namespace_on_its_line(self):
+        assert self._order("using Acme.Core;\nnamespace Acme.Web; class Page : Order { }\n") == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_block_namespace_on_one_line(self):
+        assert self._order("using Acme.Core;\nnamespace Acme.Web { class Page : Order { } }\n") == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_name_only_in_the_directive_still_reaches_nothing(self):
+        assert self._order("using Acme.Core; namespace Acme.Web { class Page { } }\n") == set()
+
+
+class TestCsharpAliasTargets:
+    """An alias of a built-in or composite type imports nothing; an alias of a type path still reaches its file; a using
+    statement or declaration in a method is no directive."""
+
+    _source = staticmethod(TestCsharpImports._source)
+    _imported = staticmethod(TestCsharpImports._imported)
+    _edges = TestCsharpImports._edges
+
+    def _run(self, page: str) -> dict:
+        order = self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n")
+        return self._edges(self._source("web/Page.cs", page), order)
+
+    def test_built_in_and_composite_aliases_are_no_packages(self):
+        result = self._run("using Number = int;\nusing IntArr = int[];\nusing Pair = (int, string);\nusing Name = string;\nclass Page { }\n")
+
+        assert result["stats"]["imports"]["external"] == 0
+        assert self._imported(result) == set()
+
+    def test_an_alias_with_the_global_prefix_reaches_the_file_of_its_type(self):
+        result = self._run("using Item = global::Acme.Core.Order;\nclass Page { Item i; }\n")
+
+        assert self._imported(result) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_using_declaration_in_a_method_still_names_its_types(self):
+        page = "using Acme.Core;\nclass Page {\n    void Run() {\n        using var order = new Order();\n    }\n}\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_using_statement_in_a_method_still_names_its_types(self):
+        page = "using Acme.Core;\nclass Page {\n    void Run() {\n        using (var order = new Order()) { }\n    }\n}\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_namespace_using_with_the_global_prefix_reaches_the_files_it_names(self):
+        page = "using global::Acme.Core;\nclass Page { Order o; }\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_global_using_directive_still_hides_its_own_names(self):
+        page = "global using Acme.Core;\nclass Page { }\n"
+
+        assert self._imported(self._run(page)) == set()
+
+    def test_a_using_alias_of_a_namespace_keeps_its_names_out(self):
+        page = "using Core = Acme.Core;\nclass Page { Core.Order o; }\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_using_declaration_with_a_type_name_stays_code(self):
+        page = "using Acme.Core;\nclass Page {\n    void Run() {\n        using Order order = new Order();\n    }\n}\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_using_static_directive_with_an_alias_like_spacing_is_still_a_directive(self):
+        page = "using static   Acme.Core.Order ;\nclass Page { }\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}

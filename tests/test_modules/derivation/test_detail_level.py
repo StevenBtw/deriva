@@ -64,3 +64,29 @@ def test_a_deployment_is_no_detail_artifact():
 
     assert not any(e["element_type"] == "Artifact" for e in detail.elements)
     assert not any("node_env" in (r["source"], r["target"]) for r in detail.relationships)
+
+
+def test_a_file_member_is_named_without_its_extension_and_a_repeat_takes_its_folder():
+    """Pages and code files are members by their file: the name drops the extension and starts with a capital, two members
+    of one interface with the same name each take their folder in front, and a template whose name starts with an
+    underscore (a partial or layout) is no endpoint. A type member keeps its name."""
+    members = [
+        {"name": "Index.cshtml", "source": "file::r::a"},
+        {"name": "Index.cshtml", "source": "file::r::b"},
+        {"name": "list.html", "source": "file::r::c"},
+        {"name": "_Layout.cshtml", "source": "file::r::d"},
+        {"name": "OrderController.java", "source": "file::r::e"},
+        {"name": "OrderResource", "source": "typedef::r::OrderResource"},
+    ]
+    files = {
+        "file::r::a": "r/web/Views/Home/Index.cshtml",
+        "file::r::b": "r/web/Views/Account/Index.cshtml",
+        "file::r::c": "r/web/templates/list.html",
+        "file::r::d": "r/web/Views/Shared/_Layout.cshtml",
+        "file::r::e": "r/web/src/OrderController.java",
+    }
+    elements = [_el("ai_web__ui", "ApplicationInterface", "Web UI", source="unit::r::web", role="web", members=members)]
+
+    detail = detail_level(elements, DetailLineage(files=files))
+
+    assert sorted(e["name"] for e in detail.elements) == ["Account Index", "Home Index", "List", "OrderController", "OrderResource"]

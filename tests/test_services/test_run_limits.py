@@ -163,3 +163,22 @@ class TestOneBudgetForARun:
         with patch.object(type(session), "_get_llm_query_fn", return_value=None), patch("deriva.services.session.pipeline.run_full_pipeline", return_value=finished) as run:
             assert session.run_pipeline(repo_name="r")["success"] is True
         assert run.call_args.kwargs["llm_query_fn"] is None
+
+
+def test_a_model_configured_after_a_start_without_one_clears_the_flag():
+    """The studio can add a model after a session started without one: the session then has a model."""
+    from deriva.common.exceptions import NoModelConfigured
+    from deriva.services.session import PipelineSession
+
+    session = PipelineSession.__new__(PipelineSession)
+    session._llm_manager = None
+    session._llm_error = None
+    session._cancel_check = None
+    session._engine = None
+    session._record_call = MagicMock()
+    with patch("deriva.adapters.llm.LLMManager", side_effect=NoModelConfigured("No LLM model is configured")):
+        assert session._get_llm_query_fn() is None
+    assert session.llm_no_model is True
+    with patch("deriva.adapters.llm.LLMManager", return_value=MagicMock()):
+        assert session._get_llm_query_fn() is not None
+    assert session.llm_no_model is False and session.llm_error is None

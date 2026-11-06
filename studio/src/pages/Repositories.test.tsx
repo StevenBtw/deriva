@@ -155,6 +155,14 @@ describe("Repositories", () => {
     expect(repositories.data).toHaveBeenCalledWith("deriva");
   });
 
+  it("says a graph and model without a studio run were built outside the studio, and none yet without them", async () => {
+    vi.mocked(repositories.data).mockResolvedValue({ ...DATA, model: { elements: 0, relationships: 0 }, last_runs: { extraction: null, derivation: null } });
+    render(<Repositories />);
+
+    expect(await screen.findByText("run outside the studio")).toBeInTheDocument();
+    expect(screen.getByText("none yet")).toBeInTheDocument();
+  });
+
   it("says the extraction is complete and what it noticed", async () => {
     render(<Repositories />);
 

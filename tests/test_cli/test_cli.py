@@ -3239,5 +3239,50 @@ def test_a_full_run_says_it_stops_without_its_configured_model(mock_session_clas
 
     result = runner.invoke(app, ["run", "all"])
 
+    assert result.exit_code == 1, result.output
     assert "A full run needs the configured model and stops" in result.stdout
     assert "will be skipped" not in result.stdout
+
+
+class TestRepoErrorsSayItOnce:
+    """repo delete and repo info end with their own message and exit 1; the exit is no error of its own ("Error: 1")."""
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_repo_delete_of_an_unknown_repository_says_why_once(self, mock_session_class):
+        session = MagicMock()
+        session.delete_repository.return_value = {"success": False, "error": "Repository not found: nosuch"}
+        mock_session_class.return_value.__enter__.return_value = session
+
+        result = runner.invoke(app, ["repo", "delete", "nosuch"])
+
+        assert result.exit_code == 1
+        assert "Repository not found: nosuch" in result.output
+        assert "Error: 1" not in result.output
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_repo_info_of_an_unknown_repository_says_why_once(self, mock_session_class):
+        session = MagicMock()
+        session.get_repository_info.return_value = None
+        mock_session_class.return_value.__enter__.return_value = session
+
+        result = runner.invoke(app, ["repo", "info", "nosuch"])
+
+        assert result.exit_code == 1
+        assert "Repository 'nosuch' not found." in result.output
+        assert "Error: 1" not in result.output
+
+
+class TestCommandSummaries:
+    """The command lists show a command's first help paragraph as it is written: a line break there splits a sentence."""
+
+    def test_every_command_summary_is_one_line(self):
+        import typer.main
+
+        def walk(command, path):
+            for name, sub in getattr(command, "commands", {}).items():
+                yield from walk(sub, [*path, name])
+            yield path, command
+
+        split = [" ".join(path) for path, command in walk(typer.main.get_command(app), []) if "\n" in (command.help or "").strip().split("\n\n")[0]]
+
+        assert split == []

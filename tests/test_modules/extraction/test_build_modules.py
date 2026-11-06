@@ -8,6 +8,7 @@ from deriva.modules.extraction.build_modules import (
     BuildModule,
     ModuleRules,
     behaviour_per_file,
+    csproj_entry,
     declares_entry,
     detect_modules,
     feature_areas,
@@ -548,3 +549,36 @@ def test_a_csproj_declares_an_entry_by_its_sdk_or_its_output():
     assert declares_entry("r/a/A.csproj", "<Project><PropertyGroup><OutputType> WinExe </OutputType></PropertyGroup></Project>")
     assert not declares_entry("r/a/A.csproj", '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Library</OutputType></PropertyGroup></Project>')
     assert not declares_entry("r/a/A.csproj", '<Project Sdk="Microsoft.NET.Sdk" />')
+
+
+def test_a_classic_csproj_is_a_web_program_by_its_web_project_type():
+    """A .NET Framework web application builds a library its web server loads: the web application or web site project
+    type says it is a program."""
+    project = "<Project><PropertyGroup><ProjectTypeGuids>{}</ProjectTypeGuids><OutputType>Library</OutputType></PropertyGroup></Project>".format
+
+    assert csproj_entry(project("{E3E379DF-F4C6-4180-9B81-6769533ABE47};{349C5851-65DF-11DA-9384-00065B846F21}")) == "web"
+    assert csproj_entry(project("{e24c65dc-7377-472b-9aba-bc803b73c61a}")) == "web"
+    assert csproj_entry(project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}")) is None
+
+
+def _grouped_aggregator(listed: tuple[str, ...]) -> dict:
+    folders = ("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Application", "r/mods/Bills/Domain")
+    files = [f for folder in folders for f in (_f(f"{folder}/pom.xml", "maven", "build"), _f(f"{folder}/Thing.java"))] + [_f("r/pom.xml", "maven", "build")]
+    listing = "".join(f"<module>{folder.removeprefix('r/')}</module>" for folder in listed)
+    manifests = {"r/pom.xml": f"<project><artifactId>shop</artifactId><packaging>pom</packaging><modules>{listing}</modules></project>"}
+    manifests |= {f"{folder}/pom.xml": f"<project><artifactId>{folder.rsplit('/', 2)[-2].lower()}-{folder.rsplit('/', 1)[-1].lower()}</artifactId></project>" for folder in folders}
+    return _by_path(detect_modules("r", files, manifests, RULES))
+
+
+def test_an_aggregator_listing_the_projects_of_one_group_only_is_no_system():
+    """Two listed projects that are one grouped module are one member: below min_members."""
+    modules = _grouped_aggregator(("r/mods/Orders/Application", "r/mods/Orders/Domain"))
+
+    assert modules["r/mods/Orders"].grouped
+    assert "r" not in modules or not modules["r"].system
+
+
+def test_an_aggregator_listing_one_project_of_each_of_two_groups_is_a_system():
+    modules = _grouped_aggregator(("r/mods/Orders/Application", "r/mods/Bills/Application"))
+
+    assert modules["r"].system and sorted(modules["r"].members) == ["r/mods/Bills", "r/mods/Orders"]

@@ -12,6 +12,7 @@ import pytest
 from deriva.adapters.graph import GraphManager
 from deriva.modules.derivation.base import PerCandidateConfig, RelationshipLLMConfig
 from deriva.modules.derivation.prep import GraphMetrics
+from deriva.modules.derivation.refine.base import RefineResult
 from deriva.services import derivation
 
 # =============================================================================
@@ -1942,12 +1943,7 @@ class TestRunDerivationIterRefinePhase:
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [refine_cfg] if phase == "refine" else []
             with patch.object(derivation, "run_refine_step") as mock_refine:
-                mock_result = MagicMock()
-                mock_result.elements_disabled = 1
-                mock_result.relationships_deleted = 0
-                mock_result.issues_found = 2
-                mock_result.errors = []
-                mock_refine.return_value = mock_result
+                mock_refine.return_value = RefineResult(success=True, step_name="deduplicate", elements_disabled=1, issues_found=2)
 
                 updates = list(
                     derivation.run_derivation_iter(
@@ -1960,8 +1956,7 @@ class TestRunDerivationIterRefinePhase:
 
         step_updates = [u for u in updates if u.step == "deduplicate"]
         assert len(step_updates) == 1
-        assert "2 issues" in step_updates[0].message
-        assert "1 disabled" in step_updates[0].message
+        assert step_updates[0].message == "Refine: 2 flagged, 1 disabled"
 
     def test_yields_error_for_refine_exception(self):
         """Should yield error update when refine step fails."""
@@ -3453,3 +3448,25 @@ class TestNothingChangesTheModelAfterTheJointSelection:
         result = self._run(lambda am, Relationship: am.update_element_properties({"ac_a": {"levels": ["enterprise"]}}))
 
         assert not any("after the joint selection" in e for e in result["errors"])
+
+
+class TestRefineMessage:
+    """A refine step's progress line says what it changed; findings it only reports are flagged, never "issues"."""
+
+    def test_a_check_that_changes_nothing_says_so(self):
+        result = RefineResult(success=True, step_name="structural_consistency", issues_found=95)
+
+        assert derivation._refine_message(result) == "Refine: 95 flagged, nothing changed"
+
+    def test_a_step_that_only_adds_relationships_says_how_many(self):
+        result = RefineResult(success=True, step_name="graph_relationships", relationships_created=12)
+
+        assert derivation._refine_message(result) == "Refine: 12 relationships created"
+
+    def test_every_change_is_named(self):
+        result = RefineResult(success=True, step_name="x", elements_disabled=2, elements_merged=1, relationships_created=1, relationships_deleted=3, issues_found=4)
+
+        assert derivation._refine_message(result) == "Refine: 4 flagged, 2 disabled, 1 merged, 1 relationship created, 3 relationships deleted"
+
+    def test_a_step_that_found_nothing(self):
+        assert derivation._refine_message(RefineResult(success=True, step_name="x")) == "Refine: nothing to change"
