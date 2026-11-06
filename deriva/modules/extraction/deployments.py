@@ -606,6 +606,7 @@ def technology_layer(
     sources: dict[str, str],
     cdk: dict[str, dict[str, Any]] | None = None,
     classified: Iterable[tuple[str, tuple[str, ...]]] = (),
+    image_labels: dict[str, str] | None = None,
 ) -> TechnologyLayer:
     """The primary environment, the units it runs and the system software with its evidence.
 
@@ -629,6 +630,8 @@ def technology_layer(
         cdk: Path -> the resources of the CDK app files (see ``detect_deployments``)
         classified: (name, files) the Technology step classified (``rules.classified_categories``): a name that holds an
             entry of the closed list's name is that entry, any other stays as written, not listed
+        image_labels: Image -> the system the Technology step's label names ("" for none): an image off the list is
+            that system (on the list when its name is), an image labelled none is no software
     """
     deployments = detect_deployments(repository, files, units, rules, cdk)
     layer = TechnologyLayer(deployments=deployments, environment=deployments.primary)
@@ -655,6 +658,13 @@ def technology_layer(
         tech = match_technology(alias, catalog)
         if tech is None and not fallback:
             return
+        if tech is None and image_labels is not None and alias in image_labels:
+            # An image off the list runs the system its label names; labelled none, it is no software
+            if not image_labels[alias]:
+                return
+            # As a classified name: one that holds an entry's name is that entry ("Apache Kafka" is Kafka)
+            alias = image_labels[alias]
+            tech = match_technology(alias, catalog) or next((t for t in catalog if contains_name(alias, t.name)), None)
         key = tech.name if tech else alias
         entry = software.setdefault(key, Software(name=key, kind=tech.kind if tech else "fallback", listed=tech is not None))
         if evidence not in entry.evidence:

@@ -27,6 +27,7 @@ from deriva.common.naming import contains_name, name_key
 
 from .base import current_timestamp, generate_edge_id, generate_file_node_id
 from .external_dependency import parse_requirement_line
+from .technologies import image_name
 
 IMPORTED_KIND = "imported library"
 # The kinds a package manifest declares: the ones an imported library can be
@@ -313,6 +314,29 @@ def _names_repository(text: str, kind: str, repository_name: str) -> bool:
 def item_key(text: str, kind: str) -> str:
     """One item per kind and text, whatever details the kind shows."""
     return f"{kind.split(',')[0]}::{text.casefold()}"
+
+
+def _item_image(item: TechnologyItem) -> str | None:
+    """The container image an item names (a container image itself, a compose service's image), as ``image_name`` writes it."""
+    kind = item.kind.split(",")[0]
+    if kind == "container image":
+        return image_name(item.text) or None
+    # The kind lists its parts with ", " between them: the image ends before a comma
+    found = re.search(r"(?:^|, )image ([^\s,]+)", item.kind) if kind == "compose service" else None
+    return (image_name(found.group(1)) or None) if found else None
+
+
+def image_labels(labels: dict[str, dict[str, str]], collected: Collected) -> dict[str, str]:
+    """Image -> the system its label names ("" for an image labelled none), for every labelled item that names a
+    container image; the first label in key order wins. The deployments read it to name the software an image runs."""
+    out: dict[str, str] = {}
+    for key in sorted(labels):
+        item = collected.items.get(key)
+        image = _item_image(item) if item else None
+        if image and image not in out:
+            label = labels[key]
+            out[image] = "" if label["category"] == "none" else label["system"].strip()
+    return out
 
 
 def technology_node_id(repo_name: str, tech_name: str) -> str:

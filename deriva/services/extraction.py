@@ -1130,6 +1130,9 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
         for row in rows:
             if row.get("name") and row.get("path"):
                 classified.setdefault(str(row["name"]), set()).add(str(row["path"]).replace(chr(92), "/"))
+    # The Technology step's image labels (absent without that step's LLM call: images keep their own names)
+    stored = q("MATCH (r:Graph:Repository) WHERE r.id = $id RETURN r.imageLabels AS labels", {"id": f"repo::{repo.name}"})
+    image_labels = dict(str(p).split("=", 1) for p in stored[0]["labels"] if "=" in str(p)) if stored and stored[0].get("labels") is not None else None
     layer = deployments.technology_layer(
         repo.name,
         files,
@@ -1139,6 +1142,7 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
         sources,
         cdk=_cdk_resources(paths, rules, repo, repo_path),
         classified=[(name, tuple(sorted(found))) for name, found in classified.items()],
+        image_labels=image_labels,
     )
 
     nodes = edges = 0
@@ -3080,6 +3084,9 @@ def _extract_technologies(
     rows = graph_manager.query("MATCH (t:Graph:Technology) WHERE t.repository_name = $repo_name RETURN t.id AS id, t.techName AS name", {"repo_name": repo.name})
     existing = {name_key(row["name"]): row["id"] for row in rows if row.get("name")}
     nodes, edges = technology_candidates.technology_nodes_and_edges(labels, collected, repo.name, float(params["confidence"]), existing)
+    # What each labelled image runs ("image=system", empty for none), on the repository: the Deployment step names its software by it
+    images = technology_candidates.image_labels(labels, collected)
+    graph_manager.update_node_property(f"repo::{repo.name}", "imageLabels", [f"{image}={system}" for image, system in sorted(images.items())])
     for node_data in nodes:
         graph_manager.add_node(_create_node_from_data("Technology", node_data, repo.name, node_data["method"]), node_id=node_data["node_id"])
     edge_ids: list[str] = []
