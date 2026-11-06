@@ -1027,7 +1027,8 @@ _CSHARP_DIRECTIVE = re.compile(
 
 
 # A namespace or type path an alias can name (A.B, A.B.C<int>, global::A.B); other targets are types, no imports
-_CSHARP_PATH = re.compile(r"(?:global::)?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:<.*>)?")
+# A segment starts with a letter of any script or an underscore ([^\W\d] is a Unicode letter or _)
+_CSHARP_PATH = re.compile(r"(?:global::)?[^\W\d]\w*(?:\.[^\W\d]\w*)*(?:<.*>)?")
 # The language's built-in type keywords (C# reference, built-in types)
 _CSHARP_BUILT_IN = frozenset(
     {"bool", "byte", "sbyte", "char", "decimal", "double", "float", "int", "uint", "nint", "nuint", "long", "ulong", "short", "ushort", "object", "string", "dynamic"}

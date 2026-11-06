@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .models import ensure_spacy
+from .models import SPACY_PACKAGES, ensure_spacy_package
 
 # Penn tags of a past participle or past tense form, and of the particles that belong to its verb (off, out, over, up);
 # an adverb (automatically, early, back) is no part of the verb
@@ -31,8 +31,10 @@ def verb_from_tokens(tokens: list[tuple[str, str, str]]) -> str | None:
 
 @lru_cache(maxsize=4)
 def _english(models_dir: str) -> Any | None:
-    path = ensure_spacy(Path(models_dir), download=False).get("en")
-    if path is None or not Path(path).exists():
+    # The English pipeline alone: a missing German or French one does not hide it; a missing English one gives None
+    try:
+        path = ensure_spacy_package(SPACY_PACKAGES["en"], Path(models_dir), download=False)
+    except FileNotFoundError:
         return None
     import spacy
 
