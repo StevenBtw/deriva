@@ -485,6 +485,9 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
     business_functions = settings.get("business_functions", defaults.business_functions)
     if not isinstance(business_functions, bool):
         raise ValueError(f"params.component_services.business_functions must be true or false, got {business_functions!r}")
+    verb_choice = settings.get("verb_choice", defaults.verb_choice)
+    if not isinstance(verb_choice, bool):
+        raise ValueError(f"params.component_services.verb_choice must be true or false, got {verb_choice!r}")
     return ComponentServicesConfig(
         **whole,
         **{k: tuple(v) for k, v in words.items()},
@@ -503,6 +506,7 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
         object_links=tuple(settings.get("object_links", [])),
         business_functions=business_functions,
         service_verbs=tuple((role, verb) for role, verb in verbs),
+        verb_choice=verb_choice,
     )
 
 
@@ -875,45 +879,60 @@ def _application_grouping_config(params: str | None) -> dict[str, Any] | None:
     return settings
 
 
+def _by_repository(identifiers: list[str], sources: dict[str, str]) -> list[tuple[str, list[str]]]:
+    """Element ids per repository (the second part of each source, ``unit::<repository>::<path>``), by repository: a
+    joint run's graph holds several, and each is decided on its own."""
+    groups: dict[str, list[str]] = {}
+    for identifier in identifiers:
+        source = sources.get(identifier, "")
+        groups.setdefault(source.split("::")[1] if source.count("::") >= 2 else "", []).append(identifier)
+    return sorted(groups.items())
+
+
 def _application_grouping_step(
     settings: dict[str, Any], instruction: str, graph_manager: GraphManager, archimate_manager: ArchimateManager, llm_query_fn: Callable[..., Any]
 ) -> dict[str, Any]:
     """Group the top-level components into the applications the documentation names: structure decides where it can (a
     system component is the anchor, a single top-level component its own application), else one closed LLM choice per
-    repository; the result has the shape of ``generate_element``'s, with the choice per component (``grouping_decisions``)."""
+    repository (a joint run decides each repository on its own); the result has the shape of ``generate_element``'s,
+    with the choice per component (``grouping_decisions``)."""
     stored = archimate_manager.get_elements()
     by_id = {e.identifier: e for e in stored}
-    components, sources, units_at, built_by = component_hierarchy(stored, graph_manager)
-    parents = component_parents(components, units_at, built_by)
-    top = sorted((c for c in components if parents[c.identifier] is None and c.kind in ("unit", "module")), key=lambda c: c.identifier)
-    empty = _stored_services([], archimate_manager) | {"grouping_decisions": {}}
-    if any(c.kind in ("system", "application") for c in components) or len(top) < 2:
-        return empty
-    repo = sources[top[0].identifier].split("::")[1]
-    documents = _documentation_files(graph_manager)
-    kind_words = tuple(settings.get("kind_words", []))
-    own = {c.identifier: own_name(by_id[c.identifier].name, kind_words) for c in top}
-    parts = title_parts(documents, repo)
-    titles = grouping_candidates(parts[:1] if settings.get("title") == "first" else parts, [])
-    candidates = grouping_candidates(titles, [own[c.identifier] for c in top])
-    shown = [{"key": c.identifier, "name": by_id[c.identifier].name, "folder": c.folder, "title": " - ".join(title_parts(documents, c.folder))} for c in top]
-    intro = introduction(documents, repo, int(settings.get("intro_chars", 0)))
-    prompt = build_grouping_prompt(instruction, shown, candidates, intro, len(titles), mark_name=settings.get("title") == "marked")
-    content, error = extract_response_content(llm_query_fn(prompt, grouping_schema([c.identifier for c in top], candidates)))
-    assignment = parse_grouping("" if error else content, own, candidates)
-    created = []
-    for name, keys in applications(assignment):
-        identity = f"{APPLICATION_PREFIX}{repo}::{name_key(name)}"
-        created.append(
-            {
-                "identifier": element_identifier("ApplicationComponent", identity),
-                "name": name,
-                "element_type": "ApplicationComponent",
-                "documentation": "",
-                "properties": {"source": identity, "sources": sorted(sources[k] for k in keys), "candidates": candidates, "structure_name": name},
-            }
-        )
-    return _stored_services(created, archimate_manager) | {"grouping_decisions": assignment}
+    every, sources, units_at, built_by = component_hierarchy(stored, graph_manager)
+    parents = component_parents(every, units_at, built_by)
+    created: list[dict[str, Any]] = []
+    decisions: dict[str, str] = {}
+    documents: dict[str, str] | None = None
+    of = {c.identifier: c for c in every}
+    for repo, members in _by_repository([c.identifier for c in every], sources):
+        components = [of[m] for m in members]
+        top = sorted((c for c in components if parents[c.identifier] is None and c.kind in ("unit", "module")), key=lambda c: c.identifier)
+        if any(c.kind in ("system", "application") for c in components) or len(top) < 2:
+            continue
+        documents = _documentation_files(graph_manager) if documents is None else documents
+        kind_words = tuple(settings.get("kind_words", []))
+        own = {c.identifier: own_name(by_id[c.identifier].name, kind_words) for c in top}
+        parts = title_parts(documents, repo)
+        titles = grouping_candidates(parts[:1] if settings.get("title") == "first" else parts, [])
+        candidates = grouping_candidates(titles, [own[c.identifier] for c in top])
+        shown = [{"key": c.identifier, "name": by_id[c.identifier].name, "folder": c.folder, "title": " - ".join(title_parts(documents, c.folder))} for c in top]
+        intro = introduction(documents, repo, int(settings.get("intro_chars", 0)))
+        prompt = build_grouping_prompt(instruction, shown, candidates, intro, len(titles), mark_name=settings.get("title") == "marked")
+        content, error = extract_response_content(llm_query_fn(prompt, grouping_schema([c.identifier for c in top], candidates)))
+        assignment = parse_grouping("" if error else content, own, candidates)
+        decisions |= assignment
+        for name, keys in applications(assignment):
+            identity = f"{APPLICATION_PREFIX}{repo}::{name_key(name)}"
+            created.append(
+                {
+                    "identifier": element_identifier("ApplicationComponent", identity),
+                    "name": name,
+                    "element_type": "ApplicationComponent",
+                    "documentation": "",
+                    "properties": {"source": identity, "sources": sorted(sources[k] for k in keys), "candidates": candidates, "structure_name": name},
+                }
+            )
+    return _stored_services(created, archimate_manager) | {"grouping_decisions": decisions}
 
 
 def _documentation_actors_config(params: str | None) -> dict[str, Any] | None:
@@ -966,15 +985,27 @@ def _documentation_actors_step(
         if r.get("id") and r.get("name")
     }
     documents = _documentation_files(graph_manager)
-    verified = verified_candidates(documents, words, concepts)
-    if not verified:
+    chosen: dict[str, list[str]] = {}
+    # A joint run's graph holds several repositories: each chooses from its own documentation and concepts
+    partitions = _by_repository(top, sources)
+    for key, apps in partitions:
+        if len(partitions) == 1:
+            scoped, known = documents, concepts
+            repo = next((s.split("::")[1] for s in sources.values() if s.count("::") >= 2), "")
+        else:
+            repo = key
+            scoped = {p: t for p, t in documents.items() if p.startswith(f"{repo}/")}
+            known = {c: n for c, n in concepts.items() if c.split("::")[1:2] == [repo]}
+        verified = verified_candidates(scoped, {app: words[app] for app in apps}, known)
+        if not verified:
+            continue
+        candidates = {app: sorted({known[c] for c in ids}) for app, ids in verified.items()}
+        shown = [{"key": app, "name": by_id[app].name, "units": sorted(folders[u] for u in units[app] if folders.get(u))} for app in sorted(candidates)]
+        prompt = build_actor_prompt(instruction, shown, candidates, introduction(scoped, repo, int(settings.get("intro_chars", 0))))
+        content, error = extract_response_content(llm_query_fn(prompt, actor_schema(candidates)))
+        chosen |= parse_actors("" if error else content, candidates)
+    if not chosen:
         return empty
-    candidates = {app: sorted({concepts[c] for c in ids}) for app, ids in verified.items()}
-    shown = [{"key": app, "name": by_id[app].name, "units": sorted(folders[u] for u in units[app] if folders.get(u))} for app in sorted(candidates)]
-    repo = next((s.split("::")[1] for s in sources.values() if s.count("::") >= 2), "")
-    prompt = build_actor_prompt(instruction, shown, candidates, introduction(documents, repo, int(settings.get("intro_chars", 0))))
-    content, error = extract_response_content(llm_query_fn(prompt, actor_schema(candidates)))
-    chosen = parse_actors("" if error else content, candidates)
 
     # One element per concept: an actor or role of the same name the model holds already is that element
     existing = {name_key(e.name): e for e in stored if e.element_type in ("BusinessActor", "BusinessRole")}
@@ -1632,6 +1663,26 @@ def _run_prep_step(
 # =============================================================================
 
 
+def _refine_message(result: Any) -> str:
+    """What a refine step changed, after what it only flagged: a check that changes nothing says so (its findings are a
+    report, no fault)."""
+    plural = {1: "relationship"}
+    changes = [
+        f"{n} {what}"
+        for n, what in (
+            (result.elements_disabled, "disabled"),
+            (result.elements_merged, "merged"),
+            (result.relationships_created, f"{plural.get(result.relationships_created, 'relationships')} created"),
+            (result.relationships_deleted, f"{plural.get(result.relationships_deleted, 'relationships')} deleted"),
+        )
+        if n
+    ]
+    if not changes:
+        return f"Refine: {result.issues_found} flagged, nothing changed" if result.issues_found else "Refine: nothing to change"
+    flagged = [f"{result.issues_found} flagged"] if result.issues_found else []
+    return "Refine: " + ", ".join([*flagged, *changes])
+
+
 def _model_totals(archimate_manager: ArchimateManager) -> str:
     """The closing summary: what the model holds, counted as the studio's model stats count it. The step counters
     miss what refine steps add and delete (graph relationships, duplicates), so they stay in ``stats`` only."""
@@ -2148,10 +2199,7 @@ def run_derivation(
                     step_ctx.complete()
 
                 if progress:
-                    msg = f"Refine: {refine_result.issues_found} issues"
-                    if refine_result.elements_disabled > 0:
-                        msg += f", {refine_result.elements_disabled} disabled"
-                    progress.complete_step(msg)
+                    progress.complete_step(_refine_message(refine_result))
 
                 if refine_result.errors:
                     errors.extend(refine_result.errors)
@@ -2581,9 +2629,7 @@ def run_derivation_iter(
                 if refine_result.report is not None:
                     cast("dict[str, Any]", stats).setdefault("refine_reports", {})[cfg.step_name] = refine_result.report
 
-                msg = f"Refine: {refine_result.issues_found} issues"
-                if refine_result.elements_disabled > 0:
-                    msg += f", {refine_result.elements_disabled} disabled"
+                msg = _refine_message(refine_result)
 
                 yield ProgressUpdate(
                     phase="derivation",

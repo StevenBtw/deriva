@@ -94,6 +94,7 @@ class ComponentServicesConfig:
     # "<object> <verb>" on two components names two services, each qualified by its component's stem in front
     # (ids stay unique from structure)
     service_verbs: tuple[tuple[str, str], ...] = ()
+    verb_choice: bool = False  # With service_verbs: the LLM chooses among the candidates (the verb stays structural)
     # Business functions from shared domains of cooperating components (gap 3); off when a function model supplies them
     business_functions: bool = True
 
@@ -498,6 +499,15 @@ def _name_words(text: str) -> list[str]:
     return re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", text)
 
 
+def _with_stem(stem: str, name: str, taken: set[str]) -> str:
+    """The stem in front of a name, a word the stem ends in and the name starts with written once ("Ledger Order" and
+    "Order Management": "Ledger Order Management"); the plain stem in front when the merged name is taken."""
+    stem_words, words = stem.split(), name.split()
+    shared = max((n for n in range(1, min(len(stem_words), len(words)) + 1) if [w.casefold() for w in stem_words[-n:]] == [w.casefold() for w in words[:n]]), default=0)
+    merged = " ".join([*stem_words, *words[shared:]])
+    return merged if shared and name_key(merged) not in taken else f"{stem} {name}"
+
+
 def clean_member_name(name: str, kind_words: tuple[str, ...], generic_names: tuple[str, ...]) -> str | None:
     """A member's name as a service name candidate: the extension and the kind words (prefix or suffix) dropped,
     words spaced and title-cased; None for a generic or empty name."""
@@ -805,7 +815,8 @@ def derive_unit_services(
                 "data": [e["name"] for e in data_objects if e["identifier"] in group_objects],
             }
             # Named by structure (the first candidate of the closed order), else by the LLM's closed choice
-            name = candidates[0] if config.service_verbs else _choose(candidates, source, ELEMENT_TYPE, instruction, llm_query_fn, llm_kwargs)
+            structural = config.service_verbs and not config.verb_choice
+            name = candidates[0] if structural else _choose(candidates, source, ELEMENT_TYPE, instruction, llm_query_fn, llm_kwargs)
             identity = f"{unit}::{key if len(merged) > 1 else 'all'}"
             services.append(
                 {
@@ -822,7 +833,7 @@ def derive_unit_services(
                         "members": sorted(({"name": members[m]["name"], "source": m} for m in group), key=lambda x: (x["name"], x["source"])),
                         "name_candidates": candidates,
                         # An LLM chose among the candidates (structure names it with service_verbs, or with one candidate)
-                        "name_choice": not config.service_verbs and len(candidates) > 1,
+                        "name_choice": not structural and len(candidates) > 1,
                         "processes": sorted(life for life, sites in (lifecycle_sites or {}).items() if sites & {f for m in group for f in member_files(m)}),
                         "states": sorted(
                             f"{life}::{state}"
@@ -847,6 +858,17 @@ def derive_unit_services(
         reads = {o for a, b in consumes or () if a == unit and b != unit for o in provided.get(b, ())}
         item["properties"]["consumed_objects"] = sorted(reads - set(item["properties"]["objects"]))
 
+    # verb_choice: the LLM never takes the name structure gives a sibling service of the same component; such a choice
+    # falls back to the service's own structural name (order-independent, so a choice cannot push a sibling aside)
+    if config.verb_choice:
+        given: dict[str, set[str]] = defaultdict(set)
+        for item in services:
+            given[item["properties"]["sources"][0]].add(name_key(item["properties"]["structure_name"]))
+        for item in services:
+            own, chosen = name_key(item["properties"]["structure_name"]), name_key(item["name"])
+            if chosen != own and chosen in given[item["properties"]["sources"][0]]:
+                item["name"] = item["properties"]["structure_name"]
+
     # Services are named (unique within the type) before the functions, so a function never takes a service's name.
     # Named by structure (service_verbs), a name is first unique within its component; the same "<object> <verb>" on
     # two components then names two services, each copy with its component's stem in front ("Shop Order Management")
@@ -862,7 +884,7 @@ def derive_unit_services(
         for item in services:
             stem = clean_member_name(components[item["properties"]["sources"][0]]["name"], config.kind_words, ()) or ""
             if repeats[name_key(item["name"])] > 1 and stem and not name_key(item["name"]).startswith(name_key(stem)):
-                item["name"] = f"{stem} {item['name']}"
+                item["name"] = _with_stem(stem, item["name"], {name_key(s["name"]) for s in services if s is not item})
 
     # Business functions: a business domain that services of cooperating components access
     undirected = {frozenset(pair) for pair in lines if len(set(pair)) == 2}

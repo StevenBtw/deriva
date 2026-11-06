@@ -22,6 +22,7 @@ from deriva.modules.derivation.detail_level import DetailLevel, DetailLineage, d
 ENTITIES = "MATCH (d:Graph:DataDomain)-[:`Graph:INCLUDES`]->(e:Graph:DataEntity) RETURN d.id AS d, e.id AS e, e.name AS n"
 PROGRAMS = "MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(t:Graph:TypeDefinition) WHERE t.category = 'program' RETURN u.id AS u, t.id AS t, t.typeName AS n"
 STATES = "MATCH (l:Graph:Lifecycle) RETURN l.id AS l, l.states AS s"
+FILES = "MATCH (f:Graph:File) RETURN f.id AS f, f.filePath AS p"
 
 
 @dataclass
@@ -54,6 +55,7 @@ def detail_lineage(graph_manager: Any | None) -> DetailLineage:
         entities=_grouped(graph_manager.query(ENTITIES), "d", "e", "n"),
         programs=_grouped(graph_manager.query(PROGRAMS), "u", "t", "n"),
         states={str(r["l"]): list(r.get("s") or []) for r in graph_manager.query(STATES) if r.get("l") and r.get("s")},
+        files={str(r["f"]): str(r["p"]) for r in graph_manager.query(FILES) if r.get("f") and r.get("p")},
     )
 
 

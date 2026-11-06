@@ -14,9 +14,12 @@ Identities come from structure (the member's source node), so every run gives th
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from typing import Any
 
+from deriva.common.naming import name_key
 from deriva.modules.derivation.base import element_identifier
 
 
@@ -27,6 +30,7 @@ class DetailLineage:
     entities: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # domain id -> (entity id, name)
     programs: dict[str, list[tuple[str, str]]] = field(default_factory=dict)  # unit id -> (program id, name)
     states: dict[str, list[str]] = field(default_factory=dict)  # lifecycle id -> states in order
+    files: dict[str, str] = field(default_factory=dict)  # file node id -> path (members that are files)
 
 
 @dataclass
@@ -38,6 +42,26 @@ class DetailLevel:
 
 def _relationship(kind: str, source: str, target: str) -> dict[str, Any]:
     return {"identifier": f"rel_detail_{kind.lower()}_{source}_{target}", "source": source, "target": target, "relationship_type": kind}
+
+
+def _member_names(members: list[dict[str, Any]], files: dict[str, str]) -> dict[str, str]:
+    """Each endpoint member's name by its node: a file's name without its extension and with a capital first letter, a
+    name two members share with their folder in front; a template whose name starts with an underscore (a partial or
+    layout) is no endpoint and has none. Other members keep their names."""
+    names: dict[str, str] = {}
+    for m in members:
+        node, name = str(m.get("source") or ""), str(m.get("name") or m.get("source") or "")
+        path = files.get(node)
+        if path is None:
+            names[node] = name
+        elif not PurePosixPath(path).name.startswith("_"):
+            stem = PurePosixPath(path).stem
+            names[node] = stem[:1].upper() + stem[1:]
+    repeats = Counter(name_key(n) for n in names.values())
+    for node, name in names.items():
+        if node in files and repeats[name_key(name)] > 1 and (folder := PurePosixPath(files[node]).parent.name):
+            names[node] = f"{folder} {name}"
+    return names
 
 
 def detail_level(elements: list[dict[str, Any]], lineage: DetailLineage) -> DetailLevel:
@@ -60,10 +84,12 @@ def detail_level(elements: list[dict[str, Any]], lineage: DetailLineage) -> Deta
             for entity, name in lineage.entities.get(source, []):
                 out.relationships.append(_relationship("Composition", parent, member("DataObject", entity, name, parent, entity)))
         elif kind == "ApplicationInterface":
-            for m in sorted(props.get("members") or [], key=lambda m: (str(m.get("name") or ""), str(m.get("source") or ""))):
-                node = str(m.get("source") or "")
-                if node:
-                    child = member("ApplicationInterface", f"{parent}::{node}", str(m.get("name") or node), parent, node)
+            members = sorted((m for m in props.get("members") or [] if m.get("source")), key=lambda m: (str(m.get("name") or ""), str(m.get("source") or "")))
+            names = _member_names(members, lineage.files)
+            for m in members:
+                node = str(m["source"])
+                if node in names:
+                    child = member("ApplicationInterface", f"{parent}::{node}", names[node], parent, node)
                     out.relationships.append(_relationship("Composition", parent, child))
         elif kind == "ApplicationComponent":
             for program, name in lineage.programs.get(source, []):
