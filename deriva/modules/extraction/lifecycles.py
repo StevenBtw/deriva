@@ -29,6 +29,8 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
+from deriva.common.naming import singularize
+
 
 @dataclass(frozen=True)
 class LifecycleRules:
@@ -177,11 +179,10 @@ def verb_names(life: Lifecycle, object_names: str | list[str], verbs: dict[str, 
 
 
 def _folder_key(value: str, whole: bool = False) -> str:
-    """The comparable key of a file's folder name (or, ``whole``, of a name): letters and digits only, lowercase,
-    without a trailing plural s."""
+    """The comparable key of a file's folder name (or, ``whole``, of a name): letters and digits only, lowercase, in
+    the singular, so "businesses" and "Business" meet as "business" and "cargos" and "Cargo" as "cargo"."""
     name = value if whole else PurePosixPath(value).parent.name
-    key = re.sub(r"[^a-z0-9]", "", name.casefold())
-    return key[:-1] if key.endswith("s") and len(key) > 3 else key
+    return singularize(re.sub(r"[^a-z0-9]", "", name.casefold()))
 
 
 def status_members(members: list[dict[str, Any]], files: dict[str, str], rules: LifecycleRules) -> list[dict[str, Any]]:
@@ -264,26 +265,29 @@ def detect_lifecycles(files: dict[str, str], members: list[dict[str, Any]], unit
 
     # Enums: a status-named domain member declared as an enum; its constants in order, its uses as sites
     for m in members:
-        text = files.get(m["path"], "")
-        declared = re.search(rf"\benum\s+(?:class\s+)?{re.escape(m['name'])}\b[^{{]*\{{(.*?)(?:;|\}})", text, re.DOTALL)
+        # Comments and string and character literals go first: a brace, bracket or comma inside one is no part of the
+        # declaration. One pass, so whichever starts first wins: "//" in a URL string is no comment, a quote in a comment
+        # no string
+        code = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/', " ", files.get(m["path"], ""), flags=re.DOTALL)
+        declared = re.search(rf"\benum\s+(?:class\s+)?{re.escape(m['name'])}\b[^{{]*\{{", code)
         if not _is_status(m["name"], rules) or not declared:
             continue
-        body = re.sub(r"//[^\n]*|/\*.*?\*/|@\w+(\([^)]*\))?", " ", declared.group(1), flags=re.DOTALL)
+        body = re.sub(r"@\w+(\([^)]*\))?", " ", _braced(code, declared.end()))
         # An enum declares its states, in any naming style (SUBMITTED in Java, Submitted = 1 in C#). Constructor arguments
-        # (DRAFT(0, NONE)) and attributes ([Display(Name = "Open")]) go first, innermost groups again and again, so no
-        # comma or name inside them counts
-        # String and character literals first: a bracket or comma inside one is no part of the declaration
-        body = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', " ", body)
-        while (bare := re.sub(r"\([^()]*\)|\[[^\[\]]*\]", " ", body)) != body:
+        # (DRAFT(0, NONE)), attributes ([Display(Name = "Open")]) and a constant's own body (DRAFT { ... }) go first,
+        # innermost groups again and again, so no comma or name inside them counts; what follows ";" is members
+        while (bare := re.sub(r"\([^()]*\)|\[[^\[\]]*\]|\{[^{}]*\}", " ", body)) != body:
             body = bare
-        states = [part.split("=")[0].strip() for part in body.split(",")]
+        states = [part.split("=")[0].strip() for part in body.split(";")[0].split(",")]
         states = [s for s in states if re.fullmatch(r"[A-Za-z_]\w*", s)]
         key = f"{m['domain']}::{m['name']}"
         life = found.setdefault(key, Lifecycle(key=key, domain=m["domain"], entity=m["object"], attribute=m["name"], from_enum=True))
         life.states += [s for s in states if s not in life.states]
+        # A use of one of the enum's own states is a site, whatever its naming style
         for path, text in files.items():
-            for s in re.findall(rf"\b{re.escape(m['name'])}\.({rules.value_pattern})\b", text):
-                specific[key][s].add(path)
+            for s in re.findall(rf"\b{re.escape(m['name'])}\.([A-Za-z_]\w*)\b", text):
+                if s in life.states:
+                    specific[key][s].add(path)
 
     # ORM status attributes: classes of domain members with a status column
     tables: dict[str, str] = {}  # table name -> class
