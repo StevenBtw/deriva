@@ -22,6 +22,7 @@ from deriva.common.naming import name_key
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _DASH = re.compile(r"\s+[-–—]\s+")
+_FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
 @dataclass(frozen=True)
@@ -35,20 +36,35 @@ class Heading:
 
 
 def clean_heading(text: str) -> str:
-    """A heading without images, link targets, emphasis or code marks."""
+    """A heading without images, link targets, emphasis or code marks; an underscore inside a word (order_service)
+    is part of the word."""
     text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
-    text = re.sub(r"[*_`]", "", text)
+    text = re.sub(r"[*`]|(?<![^\W_])_+|_+(?![^\W_])", "", text)
     return " ".join(text.split())
+
+
+def fence(line: str, open_fence: str) -> str:
+    """The code fence open after a line ("" for none): three or more backticks or tildes open one, and the same
+    character, at least as many times, with nothing after it, closes it; any other line leaves it as it was."""
+    found = _FENCE.match(line)
+    if not found:
+        return open_fence
+    marker = found.group(1)
+    if not open_fence:
+        return marker
+    closes = marker[0] == open_fence[0] and len(marker) >= len(open_fence) and not line.strip()[len(marker) :].strip()
+    return "" if closes else open_fence
 
 
 def doc_headings(documents: dict[str, str], terms: dict[str, set[str]], max_level: int = 3) -> list[Heading]:
     """Every heading up to ``max_level`` of the documentation files (path order, fenced code skipped), with the keys of
-    ``terms`` (key -> its words, as written in folder or element names) whose word appears in the heading or the text
-    under it, up to the next heading."""
+    ``terms`` (key -> its words, as written in folder or element names) whose word appears in the heading or the prose
+    under it, up to the next heading (a word only inside fenced code is no mention)."""
     out: list[Heading] = []
-    for path, level, text, body, _ in doc_sections(documents, max_level):
-        haystack = f"{text}\n" + "\n".join(body)
+    # Fenced code is no prose: a word only inside it is no mention
+    for path, level, text, _, prose in doc_sections(documents, max_level):
+        haystack = f"{text}\n" + "\n".join(prose)
         mentions = frozenset(key for key, words in terms.items() if any(mentions_word(haystack, w) for w in words if w))
         out.append(Heading(path=path, level=level, text=text, mentions=mentions))
     return out
@@ -65,10 +81,10 @@ def doc_sections(documents: dict[str, str], max_level: int = 3) -> list[tuple[st
     out: list[tuple[str, int, str, list[str], list[str]]] = []
     for path in sorted(documents):
         sections: list[tuple[int, str, list[str], list[str]]] = []
-        fenced = False
+        fenced = ""
         for line in documents[path].splitlines():
-            if line.strip().startswith("```"):
-                fenced = not fenced
+            if (after := fence(line, fenced)) != fenced:
+                fenced = after
                 continue
             match = None if fenced else _HEADING.match(line)
             if match:
@@ -93,10 +109,10 @@ def introduction(documents: dict[str, str], repo: str, max_chars: int) -> str:
     if readme is None:
         return ""
     lines: list[str] = []
-    started = fenced = False
+    started, fenced = False, ""
     for line in documents[readme].splitlines():
-        if line.strip().startswith("```"):
-            fenced = not fenced
+        if (after := fence(line, fenced)) != fenced:
+            fenced = after
             continue
         if fenced:
             continue

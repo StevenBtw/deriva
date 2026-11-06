@@ -69,7 +69,8 @@ def actor_evidence(
     """Application key -> candidate name -> the documentation that names it with the application: of the sections
     (path order) that mention both, the first sentence that names the candidate and the application, else the first
     that names the candidate, cut to ``max_chars`` around the candidate, with the file and heading."""
-    sections = [(path, heading, f"{heading}\n" + "\n".join(body), _sentences(prose)) for path, _, heading, body, prose in doc_sections(documents)]
+    # A section counts by its prose, as its sentences do: fenced code names nothing
+    sections = [(path, heading, f"{heading}\n" + "\n".join(prose), _sentences(prose)) for path, _, heading, _, prose in doc_sections(documents)]
     out: dict[str, dict[str, str]] = {}
     for app, ids in sorted(verified.items()):
         words = {w for w in applications.get(app, set()) if w}

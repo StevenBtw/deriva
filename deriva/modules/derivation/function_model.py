@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from deriva.common.json_utils import extract_json_from_response
+from deriva.modules.derivation.application_grouping import fence
 from deriva.modules.derivation.base import element_identifier, extract_response_content
 
 logger = logging.getLogger(__name__)
@@ -233,10 +234,10 @@ def component_documentation(unit_path: str, unit_name: str, documents: dict[str,
     parts: list[str] = []
     own = sorted(p for p in documents if p.rsplit("/", 1)[0] == unit_path and p.rsplit("/", 1)[-1].lower().startswith("readme"))
     for path in own[:1]:
-        fenced = False
+        fenced = ""
         for line in documents[path].splitlines():
-            if line.strip().startswith("```"):
-                fenced = not fenced
+            if (after := fence(line, fenced)) != fenced:
+                fenced = after
                 continue
             if fenced:
                 continue
