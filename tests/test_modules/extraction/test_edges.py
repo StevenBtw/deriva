@@ -1993,6 +1993,7 @@ class TestCsharpAliasTargets:
         result = self._edges(self._source("web/Page.cs", "using Item = Élément.Core.Order;\nclass Page { Item i; }\n"), element)
 
         assert result["stats"]["imports"]["internal"] == 1 and result["stats"]["imports"]["external"] == 0
+        assert self._imported(result) == {("web_Page.cs", "élément_Order.cs")}
 
     def test_a_using_declaration_in_a_method_still_names_its_types(self):
         page = "using Acme.Core;\nclass Page {\n    void Run() {\n        using var order = new Order();\n    }\n}\n"

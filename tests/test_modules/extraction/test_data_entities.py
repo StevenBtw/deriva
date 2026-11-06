@@ -109,11 +109,22 @@ def test_types_in_a_test_folder_are_no_entities():
     assert len(detect_entities(types, {}, {}, RULES).entities) == 3
 
 
-def test_a_marked_base_class_of_roots_is_no_root_itself():
-    """A type that carries the root marker and that other types name as their base passes the marker on."""
-    types = [_t("EventSourcedBase", "r/lib/EventSourcedBase.cs", bases=["AggregateRoot"]), _t("Order", "r/core/Order.cs", bases=["EventSourcedBase"])]
+def test_the_marker_type_itself_is_no_root_and_a_root_others_extend_stays_one():
+    """A type named like a root marker (the EventSourced base class that implements IEventSourced) is the marker, no
+    entity; a concrete root that another type extends (Order, and SpecialOrder over it) stays an entity."""
+    import dataclasses
 
-    assert _names(detect_entities(types, {}, {}, RULES)) == ["Order"]
+    rules = dataclasses.replace(RULES, root_markers=("AggregateRoot", "EventSourced", "IEventSourced"))
+    types = [
+        _t("EventSourced", "r/lib/EventSourced.cs", bases=["IEventSourced"]),
+        _t("Booking", "r/core/Booking.cs", bases=["EventSourced"]),
+        _t("Order", "r/core/Order.cs", bases=["AggregateRoot"]),
+        _t("SpecialOrder", "r/core/SpecialOrder.cs", bases=["Order"]),
+    ]
+
+    names = _names(detect_entities(types, {}, {}, rules))
+
+    assert "Booking" in names and "Order" in names and "Event Sourced" not in names and "EventSourced" not in names
 
 
 def test_dtos_configs_and_technical_records_are_out_with_their_reason():

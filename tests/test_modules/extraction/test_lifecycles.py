@@ -522,6 +522,19 @@ def test_a_pascal_case_enum_s_states_are_reached_where_its_values_are_set():
     assert life.units_of_state["Open"] == ["unit::a"] and life.units_of_state["Closed"] == ["unit::b"]
 
 
+def test_a_state_named_in_a_comment_or_a_string_is_no_site():
+    files = {
+        "r/a/LoanState.cs": "public enum LoanState { Draft, Open, Closed }",
+        "r/a/Opening.cs": "loan.State = LoanState.Open;",
+        "r/b/Notes.cs": '// once LoanState.Closed\nvar label = "LoanState.Closed"; /* LoanState.Closed */',
+    }
+    members = [{"domain": "domain::loan", "object": "Loan", "name": "LoanState", "path": "r/a/LoanState.cs"}]
+
+    [life] = detect_lifecycles(files, members, _units("a", "b"), RULES, docs={})
+
+    assert life.units_of_state["Open"] == ["unit::a"] and not life.units_of_state.get("Closed")
+
+
 def test_an_enum_constant_with_a_class_body_keeps_the_states_after_it():
     """A Java constant may have its own body (DRAFT { ... }): the states after it still count, the members after ";" do not."""
     files = {

@@ -105,10 +105,16 @@ def test_the_documentation_step_settings_are_read_from_their_params_key_and_chec
     assert derivation._application_grouping_config(json.dumps({"application_grouping": settings})) == settings
     with pytest.raises(ValueError, match="params.application_grouping"):
         derivation._application_grouping_config(json.dumps({"application_grouping": {"title": "some"}}))
+    with pytest.raises(ValueError, match="params.application_grouping"):
+        derivation._application_grouping_config(json.dumps({"application_grouping": {"intro_chars": True}}))
     assert derivation._documentation_actors_config(json.dumps({"other": 1})) is None
     assert derivation._documentation_actors_config(json.dumps({"documentation_actors": {"intro_chars": 200}})) == {"intro_chars": 200}
     with pytest.raises(ValueError, match="params.documentation_actors"):
         derivation._documentation_actors_config(json.dumps({"documentation_actors": {"intro_chars": -1}}))
+    # A switch is no character count, although bool is an int in Python
+    for flag in (True, False):
+        with pytest.raises(ValueError, match="params.documentation_actors"):
+            derivation._documentation_actors_config(json.dumps({"documentation_actors": {"evidence_chars": flag}}))
 
 
 def test_the_actor_step_makes_no_call_without_components_or_without_a_documented_actor(am, monkeypatch):
@@ -223,6 +229,26 @@ def test_in_a_joint_run_each_repository_chooses_its_actors_from_its_own_document
 
     assert calls == [{"ac_r": ["Customer"]}, {"ac_s": ["Auditor"]}]
     assert sorted((e["name"], e["properties"]["sources"]) for e in result["created_elements"]) == [("Auditor", ["unit::s::ledger"]), ("Customer", ["unit::r::shop"])]
+
+
+def test_generic_actor_words_are_no_candidates_and_the_llm_never_sees_them(am, monkeypatch):
+    """With ``generic_actors``, a candidate whose name is one of the words (by name key: "People" is "person") is left
+    out before the call; without it nothing changes."""
+    am.add_element(Element(name="Shop", element_type="ApplicationComponent", identifier="ac_r", properties={"source": "unit::r::shop"}))
+    monkeypatch.setattr(derivation, "_documentation_files", lambda graph: {"r/README.md": "# Shop\n\n## Use\n\nPeople and the customer use the shop.\n"})
+    concepts = [{"id": "concept::r::customer", "name": "Customer"}, {"id": "concept::r::people", "name": "People"}]
+    calls = []
+
+    def llm(prompt, schema, **kwargs):
+        options = schema["schema"]["properties"]["actors"]["properties"]
+        calls.append({app: spec["items"]["enum"] for app, spec in options.items()})
+        return SimpleNamespace(content=json.dumps({"actors": {app: [] for app in options}}))
+
+    graph = _joint_graph([_unit_row("r", "shop")], concepts)
+    derivation._documentation_actors_step({"generic_actors": ["person", "user"]}, "Choose.", graph, am, llm)
+    derivation._documentation_actors_step({}, "Choose.", graph, am, llm)
+
+    assert calls == [{"ac_r": ["Customer"]}, {"ac_r": ["Customer", "People"]}]
 
 
 def test_with_evidence_chars_the_actor_prompt_shows_the_sentence_per_candidate(am, monkeypatch):
