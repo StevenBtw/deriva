@@ -75,7 +75,7 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 - **Units are found by their manifest name**: a deployment that names a unit's manifest deploys it, and a Kubernetes image named like one of the repository's own modules is no technology item, as in compose files
 - **Test code and event-sourced roots in data entities**: a type in a folder below the repository whose name is a test word is test code, no data entity, and a type that an aggregate root type (including an event-sourced one) is the base of passes the marker on
 - **.NET Framework web projects are web units**: a project whose ProjectTypeGuids mark a web application or web site is an entry point, also with OutputType Library
-- **`.markdown` is documentation**: files with that extension are read as Markdown documents
+- **`.markdown` is documentation**: files with that extension are read as Markdown documents and split at second-level headings like `.md`; a database made by an earlier version gets the file type once through a migration, unless it lists `.markdown` already
 - **C# imports reach files**: a `using` of a namespace the repository declares links to the files of that namespace whose type the file names, and no longer counts as an external package. This changes models of C# repositories
 
 ### Derivation
