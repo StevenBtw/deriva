@@ -435,7 +435,7 @@
     "extension": ".markdown",
     "file_type": "docs",
     "subtype": "markdown",
-    "chunk_delimiter": null,
+    "chunk_delimiter": "\n## ",
     "chunk_max_tokens": null,
     "chunk_overlap": 0
   },
