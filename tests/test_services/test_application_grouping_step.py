@@ -52,6 +52,23 @@ def test_the_components_the_llm_groups_become_one_application_and_the_call_sees_
     assert result["grouping_decisions"] == {"ac_back": "Shop System", "ac_front": "Shop System", "ac_jobs": "Nightly Jobs"}
 
 
+@pytest.mark.parametrize("readme, calls", [("# Shop System - Online Store\n", 0), ("# Shop System - Online Store\n\nA shop and its nightly jobs.\n", 1)])
+def test_without_documentation_to_judge_structure_puts_every_component_under_the_title(am, monkeypatch, readme, calls):
+    """With ``without_documentation`` "title", a repository whose prompt would show no introduction and no component
+    README title makes no call: every component belongs to the application its title names. An introduction asks."""
+    for unit, name in (("front", "Shop Frontend"), ("back", "Shop Backend"), ("jobs", "Nightly Jobs")):
+        am.add_element(Element(name=name, element_type="ApplicationComponent", identifier=f"ac_{unit}", properties={"source": f"unit::r::{unit}"}))
+    monkeypatch.setattr(derivation, "_documentation_files", lambda graph: {"r/README.md": readme})
+    llm = MagicMock(return_value=SimpleNamespace(content=json.dumps({"assignments": {}})))
+    settings = {"kind_words": ["Frontend", "Backend"], "intro_chars": 500, "title": "first", "without_documentation": "title"}
+
+    result = derivation._application_grouping_step(settings, "Group.", _graph(["front", "back", "jobs"]), am, llm)
+
+    assert llm.call_count == calls
+    if not calls:
+        assert [(e["name"], e["properties"]["sources"]) for e in result["created_elements"]] == [("Shop System", ["unit::r::back", "unit::r::front", "unit::r::jobs"])]
+
+
 def test_a_system_component_or_a_single_top_level_component_makes_no_call(am):
     am.add_element(Element(name="Only", element_type="ApplicationComponent", identifier="ac_only", properties={"source": "unit::r::only"}))
     llm = MagicMock()
@@ -206,3 +223,39 @@ def test_in_a_joint_run_each_repository_chooses_its_actors_from_its_own_document
 
     assert calls == [{"ac_r": ["Customer"]}, {"ac_s": ["Auditor"]}]
     assert sorted((e["name"], e["properties"]["sources"]) for e in result["created_elements"]) == [("Auditor", ["unit::s::ledger"]), ("Customer", ["unit::r::shop"])]
+
+
+def test_with_evidence_chars_the_actor_prompt_shows_the_sentence_per_candidate(am, monkeypatch):
+    am.add_element(Element(name="Shop", element_type="ApplicationComponent", identifier="ac_r", properties={"source": "unit::r::shop"}))
+    monkeypatch.setattr(derivation, "_documentation_files", lambda graph: {"r/README.md": "# Shop\n\n## Use\n\nA customer uses the shop. Nothing else.\n"})
+    graph = _joint_graph([_unit_row("r", "shop")], [{"id": "concept::r::customer", "name": "Customer"}])
+    prompts = []
+
+    def llm(prompt, schema, **kwargs):
+        prompts.append(prompt)
+        return SimpleNamespace(content=json.dumps({"actors": {"ac_r": []}}))
+
+    derivation._documentation_actors_step({"evidence_chars": 200}, "Choose.", graph, am, llm)
+    derivation._documentation_actors_step({}, "Choose.", graph, am, llm)
+
+    assert '## Evidence per candidate\n- ac_r:\n  - Customer: A customer uses the shop. (r/README.md, "Use")\n' in prompts[0]
+    assert "## Evidence" not in prompts[1]
+
+
+def test_in_a_joint_run_where_one_repository_has_applications_it_reads_only_its_own_documentation(am, monkeypatch):
+    """A joint graph whose other repositories hold no top-level component still scopes the one repository's call to
+    its own documentation and concepts."""
+    am.add_element(Element(name="Shop", element_type="ApplicationComponent", identifier="ac_r", properties={"source": "unit::r::shop"}))
+    documents = {"r/README.md": "# Shop\n\n## Use\n\nA customer uses the shop.\n", "s/README.md": "# Notes\n\n## Use\n\nAn auditor checks the shop.\n"}
+    monkeypatch.setattr(derivation, "_documentation_files", lambda graph: documents)
+    concepts = [{"id": "concept::r::customer", "name": "Customer"}, {"id": "concept::s::auditor", "name": "Auditor"}]
+    calls = []
+
+    def llm(prompt, schema, **kwargs):
+        options = schema["schema"]["properties"]["actors"]["properties"]
+        calls.append({app: spec["items"]["enum"] for app, spec in options.items()})
+        return SimpleNamespace(content=json.dumps({"actors": {app: [] for app in options}}))
+
+    derivation._documentation_actors_step({}, "Choose.", _joint_graph([_unit_row("r", "shop")], concepts), am, llm)
+
+    assert calls == [{"ac_r": ["Customer"]}]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from deriva.modules.extraction.data_entities import EntityRules, detect_entities
 
 RULES = EntityRules(
@@ -89,6 +91,29 @@ def test_orm_entities_are_found_by_annotation_and_by_inheritance_over_two_steps(
     # The owning unit's name is no part of the entity's name; the ORM base itself is no entity
     assert _names(result) == ["Lease Application", "Order"]
     assert _reasons(result)["LeaseCreate"] == "dto"
+
+
+def test_types_in_a_test_folder_are_no_entities():
+    """With ``test_words``, a type in a folder whose name holds one of them (below the repository folder) is test code."""
+    types = [
+        _t("TestAggregateRoot", "r/src/Shop.IntegrationTests/Fixture.cs", bases=["AggregateRoot"]),
+        _t("Order", "r/src/Shop/Order.cs", bases=["AggregateRoot"]),
+        _t("Invoice", "tests-repo/core/Invoice.cs", bases=["AggregateRoot"]),  # the repository's own name does not count
+    ]
+    rules = replace(RULES, test_words=("test", "tests"))
+
+    result = detect_entities(types, {}, {}, rules)
+
+    assert _names(result) == ["Invoice", "Order"]
+    assert _reasons(result) == {"TestAggregateRoot": "test code"}
+    assert len(detect_entities(types, {}, {}, RULES).entities) == 3
+
+
+def test_a_marked_base_class_of_roots_is_no_root_itself():
+    """A type that carries the root marker and that other types name as their base passes the marker on."""
+    types = [_t("EventSourcedBase", "r/lib/EventSourcedBase.cs", bases=["AggregateRoot"]), _t("Order", "r/core/Order.cs", bases=["EventSourcedBase"])]
+
+    assert _names(detect_entities(types, {}, {}, RULES)) == ["Order"]
 
 
 def test_dtos_configs_and_technical_records_are_out_with_their_reason():

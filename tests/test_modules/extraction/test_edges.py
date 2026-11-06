@@ -1952,7 +1952,16 @@ class TestCsharpDirectivesOnOneLine:
         assert self._order("using Acme.Core;\nnamespace Acme.Web { class Page : Order { } }\n") == {("web_Page.cs", "core_Order.cs")}
 
     def test_a_name_only_in_the_directive_still_reaches_nothing(self):
-        assert self._order("using Acme.Core; namespace Acme.Web { class Page { } }\n") == set()
+        """The namespace's last part (Core) names a file and a type there: the directive alone still reaches neither,
+        while a page that uses the type reaches its file."""
+        files = lambda page: (  # noqa: E731 - a one-line helper
+            self._source("web/Page.cs", page),
+            self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+            self._source("core/Core.cs", "namespace Acme.Core;\nclass Core { }\n"),
+        )
+
+        assert self._imported(self._edges(*files("using Acme.Core; namespace Acme.Web { class Page { } }\n"))) == set()
+        assert self._imported(self._edges(*files("using Acme.Core; namespace Acme.Web { class Page { Core c; } }\n"))) == {("web_Page.cs", "core_Core.cs")}
 
 
 class TestCsharpAliasTargets:
@@ -1977,6 +1986,13 @@ class TestCsharpAliasTargets:
         result = self._run("using Item = global::Acme.Core.Order;\nclass Page { Item i; }\n")
 
         assert self._imported(result) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_an_alias_to_a_namespace_starting_with_a_non_ascii_letter_reaches_its_file(self):
+        """C# names may start with any letter: Élément is a namespace segment, no composite type."""
+        element = self._source("élément/Order.cs", "namespace Élément.Core;\nclass Order { }\n")
+        result = self._edges(self._source("web/Page.cs", "using Item = Élément.Core.Order;\nclass Page { Item i; }\n"), element)
+
+        assert result["stats"]["imports"]["internal"] == 1 and result["stats"]["imports"]["external"] == 0
 
     def test_a_using_declaration_in_a_method_still_names_its_types(self):
         page = "using Acme.Core;\nclass Page {\n    void Run() {\n        using var order = new Order();\n    }\n}\n"

@@ -193,7 +193,7 @@ class TestCollect:
         repository's own software; a container file's base image in a folder of that name is still a technology."""
         manifest = """spec:
   containers:
-    - image: ledgerservice
+    - image: ledgerservice@sha256:0f3c2a9d8e7b6a5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c
     - image: registry.local:5000/team/billing-service:1.4
     - image: redis:7
 """

@@ -3027,6 +3027,15 @@ class TestDataEntityStep:
 
         assert importers == {"r/app/REC.cpy": 2}  # stored paths carry the repository
 
+    def test_test_words_are_a_list_of_words(self):
+        """``test_words`` is a list of words in the DataEntity params; anything else under that key is refused."""
+        from deriva.services.extraction import _entity_rules
+
+        assert _entity_rules(json.dumps({"test_words": ["test", "tests"]})).test_words == ("test", "tests")
+        assert _entity_rules(json.dumps({})).test_words == ()
+        with pytest.raises(ValueError):
+            _entity_rules(json.dumps({"test_words": "tests"}))
+
     def test_entities_are_written_with_their_types_and_the_rest_is_reported(self, graph):
         from deriva.adapters.graph.models import TypeDefinitionNode
 

@@ -813,3 +813,14 @@ def test_the_product_is_the_run_of_title_words_that_spells_the_repository_name()
     assert glued["leasedesk/shop"].product == "LeaseDesk"
     assert spaced["lease-desk/shop"].product == "Lease Desk"
     assert other["lease-desk/shop"].product == "Rental Office Suite"
+
+
+def test_the_shipped_tooling_check_runs_at_temperature_zero():
+    """The tooling check drops a unit from the model, so the shipped step answers the same way every run."""
+    import json
+    from pathlib import Path
+
+    seed = Path(__file__).parents[3] / "deriva" / "adapters" / "database" / "data" / "extraction_config.json"
+    row = next(r for r in json.loads(seed.read_text(encoding="utf-8")) if r["node_type"] == "DeployableUnit" and r.get("is_active"))
+
+    assert json.loads(row["params"]).get("tool_check", {}).get("instruction") and row["temperature"] == 0.0

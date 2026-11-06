@@ -41,7 +41,37 @@ def test_an_adverb_after_the_participle_is_no_part_of_the_verb():
 
 def test_a_split_prefix_is_no_verb():
     """RE_OPENED: the tagger reads "re" as a past tense; "Re" is no verb."""
-    assert verb_from_tokens([("re", "re", "VBD"), ("opened", "open", "VBN")]) in (None, "Reopen")
+    assert verb_from_tokens([("re", "re", "VBD"), ("opened", "open", "VBN")]) is None
+
+
+def test_only_the_english_pipeline_is_looked_up(tmp_path, monkeypatch):
+    """The German and French pipelines missing does not hide the English one."""
+    from deriva.adapters.nlp import verbs
+
+    asked = []
+    monkeypatch.setattr(verbs, "ensure_spacy_package", lambda package, models_dir, download: asked.append(package.folder) or tmp_path)
+    monkeypatch.setattr("deriva.adapters.nlp.models.ensure_spacy", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("de missing")))
+    monkeypatch.setattr("spacy.load", lambda path: "english")
+    verbs._english.cache_clear()
+    try:
+        assert verbs.has_english(tmp_path) and asked == [verbs.SPACY_PACKAGES["en"].folder]
+    finally:
+        verbs._english.cache_clear()
+
+
+def test_a_missing_english_pipeline_gives_no_model_and_no_verbs(tmp_path, monkeypatch):
+    from deriva.adapters.nlp import verbs
+
+    def missing(package, models_dir, download):
+        raise FileNotFoundError(f"spaCy pipeline {package.folder} is missing")
+
+    monkeypatch.setattr(verbs, "ensure_spacy_package", missing)
+    verbs._english.cache_clear()
+    try:
+        assert verbs._english(str(tmp_path)) is None
+        assert not verbs.has_english(tmp_path) and verbs.state_verbs(["APPROVED"], tmp_path) == {}
+    finally:
+        verbs._english.cache_clear()
 
 
 def test_no_states_give_no_verbs(tmp_path):
