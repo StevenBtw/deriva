@@ -47,8 +47,24 @@ def doc_headings(documents: dict[str, str], terms: dict[str, set[str]], max_leve
     ``terms`` (key -> its words, as written in folder or element names) whose word appears in the heading or the text
     under it, up to the next heading."""
     out: list[Heading] = []
+    for path, level, text, body, _ in doc_sections(documents, max_level):
+        haystack = f"{text}\n" + "\n".join(body)
+        mentions = frozenset(key for key, words in terms.items() if any(mentions_word(haystack, w) for w in words if w))
+        out.append(Heading(path=path, level=level, text=text, mentions=mentions))
+    return out
+
+
+def mentions_word(text: str, word: str) -> bool:
+    """Whether a text holds a word as a whole word (case-insensitive; a hyphen joins words)."""
+    return bool(re.search(rf"(?i)(?<![\w-]){re.escape(word)}(?![\w-])", text))
+
+
+def doc_sections(documents: dict[str, str], max_level: int = 3) -> list[tuple[str, int, str, list[str], list[str]]]:
+    """(path, level, heading text without markup, lines under it up to the next heading, those lines without fenced
+    code) per heading up to ``max_level`` with text, in path order; a heading inside fenced code is none."""
+    out: list[tuple[str, int, str, list[str], list[str]]] = []
     for path in sorted(documents):
-        sections: list[tuple[int, str, list[str]]] = []
+        sections: list[tuple[int, str, list[str], list[str]]] = []
         fenced = False
         for line in documents[path].splitlines():
             if line.strip().startswith("```"):
@@ -56,15 +72,12 @@ def doc_headings(documents: dict[str, str], terms: dict[str, set[str]], max_leve
                 continue
             match = None if fenced else _HEADING.match(line)
             if match:
-                sections.append((len(match.group(1)), clean_heading(match.group(2)), []))
+                sections.append((len(match.group(1)), clean_heading(match.group(2)), [], []))
             elif sections:
                 sections[-1][2].append(line)
-        for level, text, body in sections:
-            if level > max_level or not text:
-                continue
-            haystack = f"{text}\n" + "\n".join(body)
-            mentions = frozenset(key for key, words in terms.items() if any(re.search(rf"(?i)(?<![\w-]){re.escape(w)}(?![\w-])", haystack) for w in words if w))
-            out.append(Heading(path=path, level=level, text=text, mentions=mentions))
+                if not fenced:
+                    sections[-1][3].append(line)
+        out += [(path, level, text, body, prose) for level, text, body, prose in sections if level <= max_level and text]
     return out
 
 

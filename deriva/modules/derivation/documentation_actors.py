@@ -10,10 +10,11 @@ candidates is dropped, an unreadable answer gives no actor.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from deriva.common.json_utils import extract_json_from_response
-from deriva.modules.derivation.application_grouping import doc_headings
+from deriva.modules.derivation.application_grouping import clean_heading, doc_headings, doc_sections, mentions_word
 
 
 def verified_candidates(documents: dict[str, str], applications: dict[str, set[str]], concepts: dict[str, str]) -> dict[str, list[str]]:
@@ -28,6 +29,62 @@ def verified_candidates(documents: dict[str, str], applications: dict[str, set[s
         for app in apps:
             together.setdefault(app, set()).update(found)
     return {app: sorted(ids) for app, ids in sorted(together.items()) if ids}
+
+
+_ITEM = re.compile(r"^([-*+]|\d+[.)]|>)\s+")
+_TERM = re.compile(r"^(?:\*\*|__)([^*_]+?)[.:]?(?:\*\*|__)[.:]?\s+")
+
+
+def _sentences(lines: list[str]) -> list[str]:
+    """The sentences of a section's prose: paragraphs and list items split at sentence ends, markup left out; a table
+    row is no sentence."""
+    blocks: list[list[str]] = [[]]
+    for line in lines:
+        text = line.strip()
+        if not text or _ITEM.match(text) or text.startswith("|"):
+            blocks.append([])
+        if text and not text.startswith("|"):
+            blocks[-1].append(_ITEM.sub("", text))
+    out: list[str] = []
+    for block in blocks:
+        # A glossary entry's bold term ("**Shopper.** A Shopper buys") stays with its definition
+        prose = clean_heading(_TERM.sub(r"\1: ", " ".join(block)))
+        out += [s for s in re.split(r"(?<=[.!?])\s+(?=[\"'(A-Z0-9])", prose) if s]
+    return out
+
+
+def _cut(sentence: str, word: str, max_chars: int) -> str:
+    """A sentence of at most ``max_chars`` characters around a word's first use; "..." marks a cut."""
+    if len(sentence) <= max_chars:
+        return sentence
+    found = re.search(rf"(?i)(?<![\w-]){re.escape(word)}(?![\w-])", sentence)
+    start = max(0, min((found.start() if found else 0) - max_chars // 2, len(sentence) - max_chars))
+    end = start + max_chars
+    return ("..." if start else "") + sentence[start:end].strip() + ("..." if end < len(sentence) else "")
+
+
+def actor_evidence(
+    documents: dict[str, str], applications: dict[str, set[str]], concepts: dict[str, str], verified: dict[str, list[str]], max_chars: int
+) -> dict[str, dict[str, str]]:
+    """Application key -> candidate name -> the documentation that names it with the application: of the sections
+    (path order) that mention both, the first sentence that names the candidate and the application, else the first
+    that names the candidate, cut to ``max_chars`` around the candidate, with the file and heading."""
+    sections = [(path, heading, f"{heading}\n" + "\n".join(body), _sentences(prose)) for path, _, heading, body, prose in doc_sections(documents)]
+    out: dict[str, dict[str, str]] = {}
+    for app, ids in sorted(verified.items()):
+        words = {w for w in applications.get(app, set()) if w}
+        for name in sorted({concepts[c] for c in ids if c in concepts}):
+            named = [
+                (s, path, heading)
+                for path, heading, haystack, sentences in sections
+                if mentions_word(haystack, name) and any(mentions_word(haystack, w) for w in words)
+                for s in sentences
+                if mentions_word(s, name)
+            ]
+            if named:
+                sentence, path, heading = next((n for n in named if any(mentions_word(n[0], w) for w in words)), named[0])
+                out.setdefault(app, {})[name] = f'{_cut(sentence, name, max_chars)} ({path}, "{heading}")'
+    return out
 
 
 def actor_schema(candidates: dict[str, list[str]]) -> dict[str, Any]:
@@ -51,12 +108,21 @@ def actor_schema(candidates: dict[str, list[str]]) -> dict[str, Any]:
     }
 
 
-def build_actor_prompt(instruction: str, applications: list[dict[str, Any]], candidates: dict[str, list[str]], documentation: str = "") -> str:
+def build_actor_prompt(
+    instruction: str,
+    applications: list[dict[str, Any]],
+    candidates: dict[str, list[str]],
+    documentation: str = "",
+    evidence: dict[str, dict[str, str]] | None = None,
+) -> str:
     """The actor prompt; it depends only on the instruction, the repository's introduction, the applications (key,
-    name, units) and their candidates."""
+    name, units), their candidates and, when given, the documentation sentence per candidate."""
     shown = json.dumps(applications, sort_keys=True, separators=(",", ":"))
     listed = "\n".join(f"- {key}: {json.dumps(names)}" for key, names in candidates.items())
     intro = f"\n## Repository documentation\n{documentation}\n" if documentation else ""
+    found = evidence or {}
+    proof = "".join(f"- {key}:\n" + "".join(f"  - {name}: {found[key][name]}\n" for name in names if name in found[key]) for key, names in candidates.items() if found.get(key))
+    proof = f"\n## Evidence per candidate\n{proof}" if proof else ""
     return f"""{instruction}
 {intro}
 ## Applications
@@ -66,7 +132,7 @@ def build_actor_prompt(instruction: str, applications: list[dict[str, Any]], can
 
 ## Candidate actors per application
 {listed}
-
+{proof}
 Return {{"actors": {{"<application key>": ["<candidate>", ...], ...}}}}, each candidate exactly as written; an empty list where none fits."""
 
 

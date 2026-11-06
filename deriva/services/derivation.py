@@ -112,7 +112,7 @@ from deriva.modules.derivation.component_services import ComponentServicesConfig
 from deriva.modules.derivation.core_type import core_type_class
 from deriva.modules.derivation.data_object import DataObjectDerivation
 from deriva.modules.derivation.device import DeviceDerivation
-from deriva.modules.derivation.documentation_actors import actor_schema, build_actor_prompt, parse_actors, verified_candidates
+from deriva.modules.derivation.documentation_actors import actor_evidence, actor_schema, build_actor_prompt, parse_actors, verified_candidates
 from deriva.modules.derivation.element_base import ElementDerivationBase
 from deriva.modules.derivation.function_model import (
     EvidenceRules,
@@ -871,10 +871,12 @@ def _application_grouping_config(params: str | None) -> dict[str, Any] | None:
         or not isinstance(intro, int)
         or intro < 0
         or title not in ("all", "first", "marked")
+        or settings.get("without_documentation", "ask") not in ("ask", "title")
     ):
         raise ValueError(
             "params.application_grouping is an object with kind_words (words dropped from a component's name), intro_chars (the root README's"
-            " introduction shown, in characters) and title (all, first or marked: the title's parts offered, only its first, or all with the first marked)"
+            " introduction shown, in characters), title (all, first or marked: the title's parts offered, only its first, or all with the first marked)"
+            " and without_documentation (ask or title: with no introduction and no component title, ask the LLM or put every component under the title)"
         )
     return settings
 
@@ -917,9 +919,13 @@ def _application_grouping_step(
         candidates = grouping_candidates(titles, [own[c.identifier] for c in top])
         shown = [{"key": c.identifier, "name": by_id[c.identifier].name, "folder": c.folder, "title": " - ".join(title_parts(documents, c.folder))} for c in top]
         intro = introduction(documents, repo, int(settings.get("intro_chars", 0)))
-        prompt = build_grouping_prompt(instruction, shown, candidates, intro, len(titles), mark_name=settings.get("title") == "marked")
-        content, error = extract_response_content(llm_query_fn(prompt, grouping_schema([c.identifier for c in top], candidates)))
-        assignment = parse_grouping("" if error else content, own, candidates)
+        if settings.get("without_documentation") == "title" and not intro and not any(s["title"] for s in shown):
+            # No documentation to judge from: structure decides, every component belongs to the application its title names
+            assignment = {c.identifier: titles[0] if titles else own[c.identifier] for c in top}
+        else:
+            prompt = build_grouping_prompt(instruction, shown, candidates, intro, len(titles), mark_name=settings.get("title") == "marked")
+            content, error = extract_response_content(llm_query_fn(prompt, grouping_schema([c.identifier for c in top], candidates)))
+            assignment = parse_grouping("" if error else content, own, candidates)
         decisions |= assignment
         for name, keys in applications(assignment):
             identity = f"{APPLICATION_PREFIX}{repo}::{name_key(name)}"
@@ -940,9 +946,12 @@ def _documentation_actors_config(params: str | None) -> dict[str, Any] | None:
     settings = json.loads(params).get("documentation_actors") if isinstance(params, str) and params else None
     if settings is None:
         return None
-    intro = settings.get("intro_chars", 0) if isinstance(settings, dict) else None
-    if not isinstance(settings, dict) or not isinstance(intro, int) or intro < 0 or not all(isinstance(w, str) for w in settings.get("kind_words", [])):
-        raise ValueError("params.documentation_actors is an object with kind_words and intro_chars (the root README's introduction shown, in characters)")
+    counts = [settings.get(key, 0) for key in ("intro_chars", "evidence_chars")] if isinstance(settings, dict) else []
+    if not isinstance(settings, dict) or not all(isinstance(n, int) and n >= 0 for n in counts) or not all(isinstance(w, str) for w in settings.get("kind_words", [])):
+        raise ValueError(
+            "params.documentation_actors is an object with kind_words, intro_chars (the root README's introduction shown, in characters) "
+            "and evidence_chars (the sentence shown per candidate, in characters; 0 shows none)"
+        )
     return settings
 
 
@@ -987,21 +996,19 @@ def _documentation_actors_step(
     documents = _documentation_files(graph_manager)
     chosen: dict[str, list[str]] = {}
     # A joint run's graph holds several repositories: each chooses from its own documentation and concepts
-    partitions = _by_repository(top, sources)
-    for key, apps in partitions:
-        if len(partitions) == 1:
-            scoped, known = documents, concepts
-            repo = next((s.split("::")[1] for s in sources.values() if s.count("::") >= 2), "")
-        else:
-            repo = key
-            scoped = {p: t for p, t in documents.items() if p.startswith(f"{repo}/")}
-            known = {c: n for c, n in concepts.items() if c.split("::")[1:2] == [repo]}
+    # (paths and concept ids carry the repository, so a graph of one repository keeps all of them)
+    for repo, apps in _by_repository(top, sources):
+        scoped = {p: t for p, t in documents.items() if p.startswith(f"{repo}/")}
+        known = {c: n for c, n in concepts.items() if c.split("::")[1:2] == [repo]}
         verified = verified_candidates(scoped, {app: words[app] for app in apps}, known)
         if not verified:
             continue
         candidates = {app: sorted({known[c] for c in ids}) for app, ids in verified.items()}
         shown = [{"key": app, "name": by_id[app].name, "units": sorted(folders[u] for u in units[app] if folders.get(u))} for app in sorted(candidates)]
-        prompt = build_actor_prompt(instruction, shown, candidates, introduction(scoped, repo, int(settings.get("intro_chars", 0))))
+        # The sentence that names each candidate with its application, so the choice rests on the documentation
+        chars = int(settings.get("evidence_chars", 0))
+        evidence = actor_evidence(scoped, {app: words[app] for app in apps}, known, verified, chars) if chars else {}
+        prompt = build_actor_prompt(instruction, shown, candidates, introduction(scoped, repo, int(settings.get("intro_chars", 0))), evidence)
         content, error = extract_response_content(llm_query_fn(prompt, actor_schema(candidates)))
         chosen |= parse_actors("" if error else content, candidates)
     if not chosen:
