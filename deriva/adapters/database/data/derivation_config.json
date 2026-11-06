@@ -380,10 +380,10 @@
     "created_at": "2026-10-25T23:09:39.548596"
   },
   {
-    "id": 798,
+    "id": 868,
     "step_name": "ApplicationGrouping",
     "phase": "generate",
-    "version": 1,
+    "version": 2,
     "sequence": 19,
     "enabled": true,
     "llm": true,
@@ -391,13 +391,13 @@
     "input_model_query": null,
     "instruction": "You group the top-level components of one software repository into the applications its documentation describes.\n\nRead the repository documentation shown, then give each component exactly one candidate from the closed list:\n- a part of the repository's title, when the documentation describes the repository, or that part of it, as one application or one system that these components together make up (for example a set of services and the user interface that together are one application);\n- a component's own name, when the documentation presents the component as an application of its own (several separate applications or digital services offered side by side), or as a supporting tool.\n\nRules:\n- Base the decision on what the documentation says about the repository as a whole: one application or system made of parts, or several applications.\n- Components that share a name apart from their kind (a backend and its frontend) belong to the same application.\n- Use only the information shown (documentation, names, folders, README titles). Do not invent candidates.\n- The same input always gives the same answer.\n",
     "example": "{\"assignments\": {\"ac_<frontend unit>\": \"<Application from the title>\", \"ac_<backend unit>\": \"<Application from the title>\", \"ac_<separate tool>\": \"<Tool's own name>\"}}\n",
-    "params": "{\n \"application_grouping\": {\n  \"kind_words\": [\n   \"Backend\",\n   \"Frontend\",\n   \"Server\",\n   \"Client\"\n  ],\n  \"intro_chars\": 1500,\n  \"title\": \"first\"\n }\n}",
+    "params": "{\n \"application_grouping\": {\n  \"kind_words\": [\n   \"Backend\",\n   \"Frontend\",\n   \"Server\",\n   \"Client\"\n  ],\n  \"intro_chars\": 1500,\n  \"title\": \"first\",\n  \"without_documentation\": \"title\"\n }\n}\n",
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 10,
     "temperature": 0.0,
     "max_tokens": null,
-    "created_at": "2026-10-26T09:45:14.117527"
+    "created_at": "2026-11-06T21:40:36.596284"
   },
   {
     "id": 799,
