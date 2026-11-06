@@ -501,11 +501,20 @@ def _name_words(text: str) -> list[str]:
 
 def _with_stem(stem: str, name: str, taken: set[str]) -> str:
     """The stem in front of a name, a word the stem ends in and the name starts with written once ("Ledger Order" and
-    "Order Management": "Ledger Order Management"); the plain stem in front when the merged name is taken."""
+    "Order Management": "Ledger Order Management"); the plain stem in front when the merged name is taken, and the
+    first free number after it when that is taken too (two components with the same stem)."""
     stem_words, words = stem.split(), name.split()
     shared = max((n for n in range(1, min(len(stem_words), len(words)) + 1) if [w.casefold() for w in stem_words[-n:]] == [w.casefold() for w in words[:n]]), default=0)
     merged = " ".join([*stem_words, *words[shared:]])
-    return merged if shared and name_key(merged) not in taken else f"{stem} {name}"
+    if shared and name_key(merged) not in taken:
+        return merged
+    plain = f"{stem} {name}"
+    number = 2
+    candidate = plain
+    while name_key(candidate) in taken:
+        candidate = f"{plain} {number}"
+        number += 1
+    return candidate
 
 
 def clean_member_name(name: str, kind_words: tuple[str, ...], generic_names: tuple[str, ...]) -> str | None:

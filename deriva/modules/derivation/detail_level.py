@@ -46,8 +46,9 @@ def _relationship(kind: str, source: str, target: str) -> dict[str, Any]:
 
 def _member_names(members: list[dict[str, Any]], files: dict[str, str]) -> dict[str, str]:
     """Each endpoint member's name by its node: a file's name without its extension and with a capital first letter, a
-    name two members share with their folder in front; a template whose name starts with an underscore (a partial or
-    layout) is no endpoint and has none. Other members keep their names."""
+    name two members share with their folders in front (nearest first, each with a capital first letter) until it
+    differs; a template whose name starts with an underscore (a partial or layout) is no endpoint and has none. Other
+    members keep their names."""
     names: dict[str, str] = {}
     for m in members:
         node, name = str(m.get("source") or ""), str(m.get("name") or m.get("source") or "")
@@ -57,11 +58,18 @@ def _member_names(members: list[dict[str, Any]], files: dict[str, str]) -> dict[
         elif not PurePosixPath(path).name.startswith("_"):
             stem = PurePosixPath(path).stem
             names[node] = stem[:1].upper() + stem[1:]
-    repeats = Counter(name_key(n) for n in names.values())
-    for node, name in names.items():
-        if node in files and repeats[name_key(name)] > 1 and (folder := PurePosixPath(files[node]).parent.name):
-            names[node] = f"{folder} {name}"
-    return names
+    # A name two file members share takes its folders in front, nearest first, until it differs (or its path ends)
+    base = dict(names)
+    depth: dict[str, int] = {}
+    while True:
+        repeats = Counter(name_key(n) for n in names.values())
+        grow = [n for n, name in names.items() if n in files and repeats[name_key(name)] > 1 and depth.get(n, 0) < len(PurePosixPath(files[n]).parent.parts)]
+        if not grow:
+            return names
+        for node in grow:
+            depth[node] = depth.get(node, 0) + 1
+            folders = [f[:1].upper() + f[1:] for f in PurePosixPath(files[node]).parent.parts[-depth[node] :]]
+            names[node] = " ".join([*folders, base[node]])
 
 
 def detail_level(elements: list[dict[str, Any]], lineage: DetailLineage) -> DetailLevel:

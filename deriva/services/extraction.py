@@ -801,6 +801,10 @@ def _unit_rules(params: str | None) -> deployable_units.UnitRules:
     if not isinstance(web, dict) or set(web) - set(keys) or not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in web.values()):
         raise ValueError(f"DeployableUnit params: web_ui holds lists of strings under {sorted(keys)}")
     signals = {field: tuple(x.lower() for x in web[key]) for key, field in keys.items() if key in web}
+    check = settings.get("tool_check")
+    # A malformed tooling check is an error, not a check silently turned off
+    if check is not None and (not isinstance(check, dict) or set(check) != {"instruction"} or not isinstance(check["instruction"], str) or not check["instruction"].strip()):
+        raise ValueError("DeployableUnit params: tool_check is an object with one key, instruction (the tooling check's instruction text)")
     naming = settings.get("naming", {})
     if not isinstance(naming, dict):
         raise ValueError("DeployableUnit params: naming must be an object")
@@ -1836,9 +1840,13 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
     )
     units = deployable_units.detect_units(facts, rules)
     errors: list[str] = []
+    warnings: list[str] = []
     check = (json.loads(cfg.params) if cfg.params else {}).get("tool_check")
     instruction = str(check.get("instruction") or "") if isinstance(check, dict) else ""
-    asked = deployable_units.tool_candidates(units, repo.name) if instruction and llm_query_fn is not None else []
+    asked = deployable_units.tool_candidates(units, repo.name) if instruction else []
+    if asked and llm_query_fn is None:
+        warnings.append(f"The tooling check was skipped (no LLM): {len(asked)} units stay components without the check")
+        asked = []
     if asked and llm_query_fn is not None:
         # Structure proposes the units, the LLM labels each application or tooling, a tooling unit is excluded
         keys = [deployable_units.tool_key(u) for u in asked]
@@ -1884,7 +1892,7 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
         for target in sorted({file_ids[p] for p in unit.members | set(unit.web_entries) if p in file_ids} | unit.nodes):
             graph_manager.add_edge(node_id, target, INCLUDES)
             edges += 1
-    return {"nodes_created": nodes, "edges_created": edges, "errors": errors}
+    return {"nodes_created": nodes, "edges_created": edges, "errors": errors, "warnings": warnings}
 
 
 def _extract_repository(repo: Any, graph_manager: GraphManager) -> dict[str, Any]:
