@@ -438,6 +438,15 @@ class TestExtractMethodsBatch:
 class TestExtractMethodsFromSource:
     """Tests for extract_methods_from_source function."""
 
+    def test_a_go_method_belongs_to_its_type_declared_in_another_file_of_the_package(self):
+        """Go puts a method's receiver type anywhere in the package (its folder): the edge starts at the type's file."""
+        source = "package frontend\n\nfunc (s *server) homeHandler() {}\n\nfunc (s *local) ping() {}\n"
+
+        result = extract_methods_from_source("src/frontend/handlers.go", source, "r", type_files={"server": "src/frontend/main.go"})
+
+        sources = sorted(e["from_node_id"] for e in result["data"]["edges"])
+        assert sources == ["typedef::r::src_frontend_handlers.go::local", "typedef::r::src_frontend_main.go::server"]
+
     def test_extracts_python_methods(self):
         """Should extract methods from Python source."""
         source = '''

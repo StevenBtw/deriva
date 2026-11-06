@@ -102,7 +102,7 @@ class TestGetSupportedLanguages:
         """Should return a list."""
         languages = TreeSitterManager.get_supported_languages()
         assert type(languages) is list
-        assert sorted(languages) == ["bms", "cobol", "csharp", "java", "javascript", "jcl", "python", "sql"]
+        assert sorted(languages) == ["bms", "cobol", "csharp", "golang", "java", "javascript", "jcl", "python", "sql"]
 
     def test_includes_known_languages(self):
         """Should include known languages."""

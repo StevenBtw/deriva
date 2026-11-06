@@ -1854,6 +1854,50 @@ def test_a_bare_import_resolves_against_an_import_root_only_when_nothing_else_re
     assert external["type"] == "external"
 
 
+class TestGoImports:
+    """A Go import of a package of the repository's own module (go.mod) reaches the package folder's files; the standard
+    library is no package; any other import is the external module that holds it."""
+
+    MOD = "module example.com/shop\n\ngo 1.22\n\nrequire github.com/acme/router v1.4.0\n"
+
+    @staticmethod
+    def _source(path: str, content: str, subtype: str = "golang", file_type: str = "source") -> dict:
+        return {"path": path, "file_type": file_type, "subtype": subtype, "content": content}
+
+    def _edges(self, *files: dict, external: set[str] | None = None) -> dict:
+        return extract_edges_batch(files=list(files), repo_name="r", repo_path="/repo", edge_types={EdgeType.IMPORTS, EdgeType.USES}, external_packages=external)
+
+    def _go(self, main: str, external: set[str] | None = None) -> dict:
+        return self._edges(
+            self._source("svc/go.mod", self.MOD, "go", "dependency"),
+            self._source("svc/main.go", main),
+            self._source("svc/cart/cart.go", "package cart\n\ntype Cart struct{}\n"),
+            self._source("svc/cart/items.go", "package cart\n\ntype Item struct{}\n"),
+            self._source("svc/cart/cart_test.go", "package cart\n"),
+            external=external,
+        )
+
+    def test_an_import_of_an_own_package_reaches_the_package_files_but_not_its_tests(self):
+        result = self._go('package main\n\nimport (\n    "fmt"\n    "example.com/shop/cart"\n)\n\nfunc main() { fmt.Println(cart.Cart{}) }\n')
+
+        imported = {(e["from_node_id"].rsplit("::", 1)[-1], e["to_node_id"].rsplit("::", 1)[-1]) for e in result["data"]["edges"] if e["relationship_type"] == "IMPORTS"}
+        assert imported == {("svc_main.go", "svc_cart_cart.go"), ("svc_main.go", "svc_cart_items.go")}
+        assert result["stats"]["imports"]["external"] == 0  # fmt is the standard library
+
+    def test_another_module_is_external_and_named_by_its_module_path(self):
+        result = self._go('package main\n\nimport "github.com/acme/router/middleware"\n\nfunc main() {}\n', external={"github.com/acme/router"})
+
+        uses = [e for e in result["data"]["edges"] if e["relationship_type"] == "USES"]
+        assert [e["to_node_id"] for e in uses] == ["extdep::r::github_com/acme/router"]
+        assert [n["properties"]["dependencyName"] for n in result["data"]["nodes"]] == ["github.com/acme/router"]
+        assert {n["properties"]["ecosystem"] for n in result["data"]["nodes"]} == {"go"}
+
+    def test_an_undeclared_module_is_named_by_the_whole_path_after_its_host(self):
+        result = self._go('package main\n\nimport "example.org/tools/lint"\n\nfunc main() {}\n')
+
+        assert [n["properties"]["dependencyName"] for n in result["data"]["nodes"]] == ["example.org/tools/lint"]
+
+
 class TestCsharpImports:
     """A using of a namespace the repository declares reaches the files it names; it is no external package."""
 
