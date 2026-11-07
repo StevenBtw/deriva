@@ -197,6 +197,54 @@ class TestMarkdownFileTypeMigration:
         assert conn.execute("SELECT file_type, subtype FROM file_type_registry WHERE extension = '.markdown'").fetchall() == [("exclude", "generated")]
 
 
+class TestProtoFileTypeMigration:
+    """A database from before 0.9.0 gets the .proto file type (an interface schema) once; one that has it keeps its row."""
+
+    def test_an_existing_database_gets_proto_once_as_in_the_seed(self):
+        import json
+
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        TestMarkdownFileTypeMigration._registry(conn)
+
+        run_migrations(conn)
+        run_migrations(conn)
+
+        seed = {r["extension"]: r for r in json.loads((SCRIPTS_DIR.parent / "data" / "file_types.json").read_text(encoding="utf-8"))}
+        assert conn.execute("SELECT extension, file_type, subtype FROM file_type_registry WHERE extension = '.proto'").fetchall() == [(".proto", "schema", "proto")]
+        assert (seed[".proto"]["file_type"], seed[".proto"]["subtype"]) == ("schema", "proto")
+
+    def test_a_proto_row_deleted_after_the_migration_stays_deleted(self):
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        TestMarkdownFileTypeMigration._registry(conn)
+        run_migrations(conn)
+        conn.execute("DELETE FROM file_type_registry WHERE extension = '.proto'")
+
+        run_migrations(conn)
+
+        assert _scalar(conn, "SELECT COUNT(*) FROM file_type_registry WHERE extension = '.proto'") == 0
+
+    def test_a_database_with_its_own_proto_row_keeps_it(self):
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        TestMarkdownFileTypeMigration._registry(conn)
+        conn.execute("INSERT INTO file_type_registry (extension, file_type, subtype) VALUES ('.proto', 'exclude', 'generated')")
+
+        run_migrations(conn)
+
+        assert conn.execute("SELECT file_type, subtype FROM file_type_registry WHERE extension = '.proto'").fetchall() == [("exclude", "generated")]
+
+
 class TestEnsureDatabase:
     """A fresh install creates the schema and seeds the shipped configuration on first use."""
 
