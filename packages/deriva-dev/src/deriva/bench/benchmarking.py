@@ -2868,7 +2868,7 @@ class BenchmarkAnalyzer:
         """
         Compute structural stability - how consistently elements maintain their connections.
 
-        Parses relationship IDs (format: {Type}_{Source}_{Target}) to extract connections,
+        Parses relationship IDs (format: {Type}|{Source}|{Target}) to extract connections,
         then measures how stable each connection is across runs.
 
         Args:

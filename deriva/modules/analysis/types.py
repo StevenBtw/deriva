@@ -41,7 +41,7 @@ class ConfigDeviation:
     config_id: str  # node_type or step_name
     deviation_count: int  # Number of objects that deviate
     total_objects: int  # Total objects produced by this config
-    consistency_score: float | None  # 0.0 to 1.0 (1.0 = fully consistent); None: no object in any run
+    consistency_score: float | None  # 0.0 to 1.0 (1.0 = fully consistent); None: nothing to compare (fewer than two runs, or no object in any run)
     deviating_objects: list[str] = field(default_factory=list)
     stable_objects: list[str] = field(default_factory=list)
 
