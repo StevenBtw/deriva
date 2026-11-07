@@ -164,6 +164,18 @@ function Runs() {
 
 const KIND_LABEL = { repository: "repository", shared: "shared graph", orphaned: "no repository" } as const;
 
+/** The columns of both tables in the Storage card (area or database, size, what it holds, action), so the graph
+ * databases line up under the areas; each table would otherwise size its columns to its own content. */
+function StorageColumns() {
+  return (
+    <colgroup>
+      {["40%", "15%", "25%", "20%"].map((width) => (
+        <col key={width} style={{ width }} />
+      ))}
+    </colgroup>
+  );
+}
+
 /** What each area of the workspace takes on disk, with the actions that free it. */
 function Disk() {
   const [data, setData] = useState<StorageOverview | null>(null);
@@ -210,7 +222,8 @@ function Disk() {
       )}
       {data && (
         <>
-          <table>
+          <table className="storage-table">
+            <StorageColumns />
             <thead>
               <tr>
                 <th>Area</th>
@@ -271,7 +284,8 @@ function Disk() {
             <h3>Graph databases</h3>
             <span className="note">One per repository; a database whose repository was deleted can go here</span>
           </div>
-          <table>
+          <table className="storage-table">
+            <StorageColumns />
             <tbody>
               {data.graphs.map((g) => (
                 <tr key={g.key}>

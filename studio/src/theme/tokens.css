@@ -1163,6 +1163,16 @@ table.rules tbody th {
   vertical-align: top;
 }
 
+/* The Storage card's tables share their column widths (their colgroup), so the graph databases line up under the areas */
+.storage-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.storage-table td {
+  overflow-wrap: anywhere;
+}
+
 .card.models td:last-child,
 .card.models th:last-child {
   width: 130px;
