@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { IntermediateOntology, NodeType } from "../api/types";
-import { layoutSchema, schemaGraph, type SchemaColors, typeEdges } from "./ontologySchema";
+import { labelBoxes, layoutSchema, schemaGraph, type SchemaColors, typeEdges } from "./ontologySchema";
 
 const type = (name: string, group: string, count: number): NodeType => ({ name, group, count, description: "", properties: [], sample: {}, producers: [], consumers: [] });
 
@@ -85,6 +85,48 @@ describe("layoutSchema", () => {
     const distance = (a: string, b: string) => Math.hypot(at.get(a)!.x - at.get(b)!.x, at.get(a)!.y - at.get(b)!.y);
 
     expect(distance("Method", "TypeDefinition")).toBeLessThan(distance("Method", "Technology"));
+  });
+
+  it("keeps every type's label clear of the others around a hub, the same way every time", () => {
+    // The intermediate ontology's own types with File as the hub: linked types of one group (Directory and
+    // Repository, DataDomain and DataEntity) end up close together, and their labels met before the collision pass
+    const types: [string, string, number][] = [
+      ["BuildModule", "structure", 4], ["Directory", "structure", 80], ["File", "structure", 650], ["Module", "structure", 0], ["Repository", "structure", 1],
+      ["ExternalDependency", "code", 60], ["Method", "code", 2700], ["Service", "code", 0], ["Test", "code", 0], ["TypeDefinition", "code", 2200],
+      ["BusinessConcept", "business", 20], ["DataDomain", "business", 7], ["DataEntity", "business", 7], ["Lifecycle", "business", 0], ["LifecycleEvent", "business", 0], ["Role", "business", 0],
+      ["DeployableUnit", "deployment", 2], ["Deployment", "deployment", 0], ["Environment", "deployment", 0], ["Software", "deployment", 4], ["Technology", "deployment", 15],
+    ];
+    const edge = (name: string, pairs: [string, string][]) => ({ name, count: 10, pairs });
+    const hub: IntermediateOntology = {
+      groups: ["structure", "code", "business", "deployment"],
+      node_types: types.map(([name, group, count]) => type(name, group, count)),
+      edge_types: [
+        edge("BUILDS", [["DeployableUnit", "BuildModule"]]),
+        edge("CALLS", [["Method", "Method"]]),
+        edge("CONFIGURES", [["File", "Technology"]]),
+        edge("CONTAINS", [["Directory", "Directory"], ["Directory", "File"], ["File", "Method"], ["File", "TypeDefinition"], ["Repository", "Directory"], ["Repository", "File"], ["TypeDefinition", "Method"]]),
+        edge("IMPORTS", [["File", "File"]]),
+        edge("INCLUDES", [["BuildModule", "File"], ["DataDomain", "DataEntity"], ["DataEntity", "TypeDefinition"], ["DeployableUnit", "File"]]),
+        edge("INHERITS", [["TypeDefinition", "TypeDefinition"]]),
+        edge("NAMED_IN", [["DataEntity", "File"]]),
+        edge("NESTS", [["BuildModule", "BuildModule"]]),
+        edge("REFERENCES", [["File", "BusinessConcept"], ["Method", "TypeDefinition"]]),
+        edge("REPRESENTS", [["Directory", "Technology"]]),
+        edge("SERVES", [["Software", "DeployableUnit"]]),
+        edge("USES", [["File", "ExternalDependency"]]),
+      ],
+      other_steps: [],
+    };
+
+    const first = layoutSchema(hub);
+    expect([...first]).toEqual([...layoutSchema(hub)]);
+    const boxes = labelBoxes(first, hub);
+    for (const [i, a] of boxes.entries()) {
+      for (const b of boxes.slice(i + 1)) {
+        const apart = a.x2 <= b.x1 || b.x2 <= a.x1 || a.y2 <= b.y1 || b.y2 <= a.y1;
+        expect(apart, `${a.name} and ${b.name}`).toBe(true);
+      }
+    }
   });
 });
 
