@@ -380,3 +380,23 @@ class TestImportsJoinLibraries:
 
         assert "imported library::alpha" in collected.items
         assert collected.declared["imported library::alpha"] == {"r/a.py"}
+
+
+def test_an_image_label_without_a_system_is_no_label_and_the_first_label_in_key_order_wins():
+    """A label with a category but no system names nothing: the image keeps its own name (fallback software) instead of
+    being dropped as none. Two labelled items that name the same image: the first key decides."""
+    files = [
+        _file("a/Dockerfile", "FROM acme/kv:1\n", "infra", "docker"),
+        _file("b/Dockerfile", "FROM acme/kv:2\n", "infra", "docker"),
+        _file("c/Dockerfile", "FROM acme/cache:1\n", "infra", "docker"),
+    ]
+    collected = tc.collect(files, [])
+    by_text = {item.text: key for key, item in collected.items.items()}
+    first, second = sorted([by_text["acme/kv:1"], by_text["acme/kv:2"]])
+    labels = {
+        first: {"category": "system_software", "system": "Key Value Store"},
+        second: {"category": "system_software", "system": "Other Store"},
+        by_text["acme/cache:1"]: {"category": "system_software", "system": ""},
+    }
+
+    assert tc.image_labels(labels, collected) == {"acme/kv": "Key Value Store"}

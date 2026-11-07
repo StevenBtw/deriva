@@ -259,6 +259,27 @@ def test_an_image_off_the_list_takes_the_name_the_technology_labels_give_it():
     assert sorted(s.name for s in plain.software) == ["acme/dbadmin", "acme/keyvalue", "acme/other", "acme/pgfork"]
 
 
+def test_the_label_of_an_image_as_written_comes_before_the_label_of_the_image_it_is_built_on():
+    """A project-built image (acme/kv, FROM alpine) runs what its own label names; a written image labelled none, or
+    one without a label, is named as the image it is built on, as before."""
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    files = {
+        "r/docker-compose.yml": "services:\n  kv:\n    image: acme/kv\n  shop:\n    build: ./shop\n    depends_on: [kv]\n",
+        "r/kv/build.sh": "docker build -t acme/kv .\n",
+        "r/kv/Dockerfile": "FROM alpine:3.20\n",
+    }
+
+    def names(labels):
+        layer = technology_layer("r", files, UNITS, DeploymentRules(), catalog_from_params(CATALOG_ENTRIES), {}, image_labels=labels)
+        return sorted(s.name for s in layer.software)
+
+    assert names({"acme/kv": "Key Value Store", "alpine": ""}) == ["Key Value Store"]
+    assert names({"acme/kv": "", "alpine": "Alpine Linux"}) == ["Alpine Linux"]
+    assert names({"alpine": "Alpine Linux"}) == ["Alpine Linux"]
+
+
 def test_mainframe_subsystems_without_another_environment_make_a_mainframe_environment():
     layer = _layer({}, sources={"r/shop/cbl/a.cbl": "EXEC CICS RETURN END-EXEC"})
 
