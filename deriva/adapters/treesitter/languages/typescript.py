@@ -73,15 +73,34 @@ class TypeScriptExtractor(JavaScriptExtractor):
 
     def extract_methods(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedMethod]:
         methods = super().extract_methods(tree, source)
+        for class_name, field, name_node, arrow in self._field_arrows(tree.root_node, source):
+            methods.append(self._extract_arrow_method(field, name_node, arrow, source, class_name))
         for declaration, name_node, arrow in self._exported_arrows(tree.root_node):
             methods.append(self._extract_arrow_function(declaration, name_node, arrow, source))
         return methods
 
     def extract_calls(self, tree: tree_sitter.Tree, source: bytes) -> list[ExtractedCall]:
         calls = super().extract_calls(tree, source)
+        for class_name, _, name_node, arrow in self._field_arrows(tree.root_node, source):
+            calls.extend(self._extract_calls_from_arrow(arrow, source, self.get_node_text(name_node, source), class_name))
         for _, name_node, arrow in self._exported_arrows(tree.root_node):
             calls.extend(self._extract_calls_from_arrow(arrow, source, self.get_node_text(name_node, source), None))
         return calls
+
+    def _field_arrows(self, root: tree_sitter.Node, source: bytes) -> list[tuple[str, tree_sitter.Node, tree_sitter.Node, tree_sitter.Node]]:
+        """(class, field, name, arrow function) of each class field that holds an arrow function (``handler = () => ...``):
+        TypeScript calls the field public_field_definition, with a name field, where JavaScript has field_definition
+        with a property field, which the JavaScript extractor reads."""
+        found = []
+        for class_node in self._classes(root):
+            body = self.find_child_by_field(class_node, "body")
+            for item in body.children if body is not None else []:
+                if item.type != "public_field_definition":
+                    continue
+                value, name_node = self.find_child_by_field(item, "value"), self.find_child_by_field(item, "name")
+                if value is not None and value.type == "arrow_function" and name_node is not None:
+                    found.append((self._get_class_name(class_node, source), item, name_node, value))
+        return found
 
     # =========================================================================
     # Classes, methods and functions
@@ -107,6 +126,17 @@ class TypeScriptExtractor(JavaScriptExtractor):
     def _extract_function(self, node: tree_sitter.Node, source: bytes) -> ExtractedMethod:
         extracted = super()._extract_function(node, source)
         extracted.return_annotation = self._return_type(node, source)
+        return extracted
+
+    def _extract_arrow_function(self, decl_node: tree_sitter.Node, name_node: tree_sitter.Node, arrow_node: tree_sitter.Node, source: bytes) -> ExtractedMethod:
+        extracted = super()._extract_arrow_function(decl_node, name_node, arrow_node, source)
+        extracted.return_annotation = self._return_type(arrow_node, source)
+        return extracted
+
+    def _extract_arrow_method(self, field_node: tree_sitter.Node, name_node: tree_sitter.Node, arrow_node: tree_sitter.Node, source: bytes, class_name: str) -> ExtractedMethod:
+        extracted = super()._extract_arrow_method(field_node, name_node, arrow_node, source, class_name)
+        extracted.return_annotation = self._return_type(arrow_node, source)
+        extracted.visibility = self._accessibility(field_node, source)
         return extracted
 
     def _exported_arrows(self, root: tree_sitter.Node) -> list[tuple[tree_sitter.Node, tree_sitter.Node, tree_sitter.Node]]:
