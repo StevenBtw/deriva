@@ -38,7 +38,7 @@ from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.models import layer_of
 from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 from deriva.adapters.database import get_connection, run_migrations
-from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, database_bytes, database_exists, delete_database, use_database
+from deriva.adapters.grafeo import DEFAULT_DATABASE, check_read_only, close_database, database_bytes, database_exists, delete_database, use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
 from deriva.common.exceptions import NoModelConfigured, RunStopped
@@ -566,13 +566,24 @@ class PipelineSession:
         return self._archimate_manager.query(query)
 
     def query_graph_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict]:
-        """Run a user-typed query on the Graph namespace, in ``language`` or the configured one; writes are rolled back."""
+        """Run a user-typed query on the Graph namespace, in ``language`` or the configured one; writes are rolled back.
+
+        Raises:
+            QueryRefused: a query a rollback cannot make safe (a schema or LOAD clause, a procedure that is not
+                read-only), before the database is asked
+        """
+        check_read_only(query)
         self._ensure_connected()
         assert self._graph_manager is not None
         return self._graph_manager.query_read_only(query, params, language)
 
     def query_model_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict]:
-        """Run a user-typed query on the Model namespace, in ``language`` or the configured one; writes are rolled back."""
+        """Run a user-typed query on the Model namespace, in ``language`` or the configured one; writes are rolled back.
+
+        Raises:
+            QueryRefused: as ``query_graph_read_only``
+        """
+        check_read_only(query)
         self._ensure_connected()
         assert self._archimate_manager is not None
         return self._archimate_manager.query_read_only(query, params, language)

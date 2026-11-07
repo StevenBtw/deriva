@@ -39,13 +39,16 @@ Benchmarking lives in deriva.bench (deriva-dev).
 from __future__ import annotations
 
 from deriva.adapters.database import ConfigDatabaseBusy
+from deriva.adapters.grafeo import READ_PROCEDURES, QueryRefused, is_write_query, read_only_refusal, refused_procedure
 
 from . import config, config_models, derivation, extraction, pipeline, storage
 from .session import PipelineSession, RunCancelled, UnknownRepository
 
 __all__ = [
+    "READ_PROCEDURES",
     "ConfigDatabaseBusy",
     "PipelineSession",
+    "QueryRefused",
     "RunCancelled",
     "UnknownRepository",
     "config",
@@ -54,4 +57,7 @@ __all__ = [
     "derivation",
     "pipeline",
     "storage",
+    "is_write_query",
+    "read_only_refusal",
+    "refused_procedure",
 ]

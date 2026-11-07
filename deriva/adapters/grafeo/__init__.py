@@ -30,10 +30,14 @@ from .manager import (
     list_databases,
     use_database,
 )
+from .query_guard import READ_PROCEDURES, QueryRefused, check_read_only, is_write_query, read_only_refusal, refused_procedure
 
 __all__ = [
     "DEFAULT_DATABASE",
+    "READ_PROCEDURES",
     "GrafeoConnection",
+    "QueryRefused",
+    "check_read_only",
     "close_database",
     "database_bytes",
     "database_exists",
@@ -41,6 +45,9 @@ __all__ = [
     "delete_database",
     "engine_info",
     "get_database",
+    "is_write_query",
     "list_databases",
+    "read_only_refusal",
+    "refused_procedure",
     "use_database",
 ]

@@ -2,103 +2,15 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
+
+# The read-only query guard lives in Deriva's grafeo adapter (one check for the routes and the services alike)
+from deriva.services import READ_PROCEDURES, is_write_query, refused_procedure  # noqa: F401 - re-exported
 
 NAMESPACES = ("Graph", "Model")
 # Property that names a node when it has no "name" (the widget labels nodes by name, title or first label); methodName
 # before typeName, since a method also carries its class's typeName
 DISPLAY_KEYS = ("name", "techName", "conceptName", "methodName", "typeName", "fileName", "repoName", "repositoryName", "dependencyName", "path", "id")
-
-# String literals, backticked names and comments: words there are no clauses (scanned left to right, so a // inside a
-# string stays part of the string). The two languages differ in comments: GQL also starts one with --, which in Cypher is
-# an undirected edge, so a query is read both ways and a finding in either reading counts (a quote inside a -- comment
-# would otherwise open a string that hides what follows)
-_STRING = r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\""
-_SKIPPED_CYPHER = re.compile(_STRING + r"|`[^`]*`|//[^\n]*|/\*.*?\*/", re.DOTALL)
-_SKIPPED_GQL = re.compile(_STRING + r"|`[^`]*`|//[^\n]*|--[^\n]*|/\*.*?\*/", re.DOTALL)
-# A backticked name stays visible as this mark, so a procedure named in backticks cannot pass as no name
-_HIDDEN = "\x00"
-_WRITE = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|INSERT|LOAD)\b", re.IGNORECASE)
-# The procedures a user-typed query may call: grafeo's read-only ones (graph algorithms, catalog lists, searches), as
-# grafeo.procedures() lists them. Any other is refused, so a procedure added later stays out until it is listed here:
-# grafeo.load_nodes_csv and grafeo.load_edges_csv read local files, and a rolled-back query still returns what they read.
-# A stopgap: grafeo 0.6.2 is to offer a read-only (untrusted) transaction that refuses all file IO, which replaces it
-READ_PROCEDURES = frozenset(
-    {
-        "grafeo.articulation_points",
-        "grafeo.bellman_ford",
-        "grafeo.betweenness_centrality",
-        "grafeo.bfs",
-        "grafeo.bridges",
-        "grafeo.closeness_centrality",
-        "grafeo.clustering_coefficient",
-        "grafeo.connected_components",
-        "grafeo.degree_centrality",
-        "grafeo.dfs",
-        "grafeo.dijkstra",
-        "grafeo.floyd_warshall",
-        "grafeo.kcore",
-        "grafeo.kruskal",
-        "grafeo.label_propagation",
-        "grafeo.labels",
-        "grafeo.louvain",
-        "grafeo.max_flow",
-        "grafeo.min_cost_max_flow",
-        "grafeo.pagerank",
-        "grafeo.prim",
-        "grafeo.procedures",
-        "grafeo.propertykeys",
-        "grafeo.relationshiptypes",
-        "grafeo.search.mmr",
-        "grafeo.search.text",
-        "grafeo.search.vector",
-        "grafeo.sssp",
-        "grafeo.strongly_connected_components",
-        "grafeo.topological_sort",
-    }
-)
-# CALL and what follows it: a procedure name (dotted), or a subquery's brace
-# CALL as a word of its own, not a property (n.call) or a label (:Call); what follows decides whether it is a clause
-_CALL = re.compile(r"(?<![.:\w$])CALL\b", re.IGNORECASE)
-_NAME = re.compile(r"[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*")
-
-
-def _readings(query: str) -> tuple[str, str]:
-    """The query with its strings and comments blanked, read as Cypher and as GQL (backticked names marked)."""
-
-    def blank(match: re.Match[str]) -> str:
-        return _HIDDEN if match.group(0).startswith("`") else " "
-
-    return _SKIPPED_CYPHER.sub(blank, query), _SKIPPED_GQL.sub(blank, query)
-
-
-def is_write_query(query: str) -> bool:
-    """True when the query uses a write clause outside string literals, backticked names and comments, read as either
-    language."""
-    return any(_WRITE.search(reading) for reading in _readings(query))
-
-
-def refused_procedure(query: str) -> str | None:
-    """The first procedure the query calls that is not on ``READ_PROCEDURES`` (``"?"`` for one whose name is hidden in
-    backticks, in whole or in part), in either reading; None when every CALL clause is a listed procedure or a subquery
-    (``CALL { ... }``). A CALL followed by no name (a variable or label called call) is no clause."""
-    for reading in _readings(query):
-        for call in _CALL.finditer(reading):
-            rest = reading[call.end() :].lstrip()
-            if rest.startswith("{"):
-                continue
-            if rest.startswith(_HIDDEN):
-                return "?"
-            name = _NAME.match(rest)
-            if name is None:
-                continue
-            if rest[name.end() :].lstrip().startswith((".", _HIDDEN)):
-                return "?"
-            written = re.sub(r"\s+", "", name.group(0))
-            if written.lower() not in READ_PROCEDURES:
-                return written
-    return None
 
 
 def _strip_namespace(name: str) -> str:
