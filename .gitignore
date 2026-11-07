@@ -12,3 +12,5 @@ walt/*
 # Built studio front end (npm run build in studio/)
 packages/deriva-studio/src/deriva/studio/static/
 studio/node_modules/
+# The type checker's incremental cache (written by npm run typecheck)
+studio/*.tsbuildinfo
