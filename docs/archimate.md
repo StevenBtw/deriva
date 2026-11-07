@@ -167,7 +167,7 @@ Technology functionality that is explicitly exposed, and the internal behavior t
 
 - **Aspect:** behavior.
 - **Deriva's candidates:** every technology realizer (the environment and the service software in it) whose kind a closed table names gets one function and one service; a kind the table does not list gets none. No LLM call.
-- **Naming:** a service noun by the realizer's kind, such as "Data Storage"; the function is named after its realizer.
+- **Naming:** both by the realizer's kind from closed tables: the service by what it offers, such as "Relational Database" or "Container Hosting", the function by what it does, as a verb phrase, such as "Store and Query Data" or "Run Containers". When two functions would share a name, the realizer follows in brackets: "Store and Query Data (PostgreSQL)".
 
 ### Artifact
 
