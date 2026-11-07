@@ -363,7 +363,8 @@ tbody tr.clickable:hover td {
   background: var(--ok);
   margin-right: 4px;
 }
-.db-held .dot {
+.db-held .dot,
+.db-unanswered .dot {
   background: var(--warn);
 }
 .db-not_connected .dot {

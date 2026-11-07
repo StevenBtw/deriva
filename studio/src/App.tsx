@@ -49,7 +49,13 @@ type ShellStatus = {
   locked?: boolean;
 };
 
-/** Database ownership, version, installed features and whether a model exists; polled so the banners follow changes. */
+// While the studio does not answer, the wait between status requests doubles from the poll interval up to this
+const MAX_POLL_MS = 60000;
+
+/** Database ownership, version, installed features and whether a model exists; polled so the banners follow changes.
+ * A studio that does not answer at all (a network error, no response) is asked again later and later (the interval
+ * doubled per miss, at most a minute), and only for its status; an error answer counts as an answer; one that refuses
+ * this browser (401) is not asked again: only its launch link helps. */
 function useShellStatus(intervalMs = 10000): ShellStatus {
   const [shell, setShell] = useState<ShellStatus>({
     db: { state: "not_connected" },
@@ -59,45 +65,61 @@ function useShellStatus(intervalMs = 10000): ShellStatus {
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
+    let misses = 0;
+    const next = (ms: number) => {
+      if (!cancelled) timer = window.setTimeout(poll, ms);
+    };
     const poll = () => {
       fetchStatus()
-        .then(
-          (s) =>
-            !cancelled &&
-            setShell((now) => ({
-              ...now,
-              locked: false,
-              db: s.db,
-              version: s.version,
-              benchmark: s.features?.benchmark ?? true,
-              environment: s.environment,
-            })),
-        )
+        .then((s) => {
+          if (cancelled) return;
+          misses = 0;
+          setShell((now) => ({
+            ...now,
+            locked: false,
+            db: s.db,
+            version: s.version,
+            benchmark: s.features?.benchmark ?? true,
+            environment: s.environment,
+          }));
+          modelConfigs
+            .list()
+            .then(
+              (models) =>
+                !cancelled &&
+                setShell((now) => ({ ...now, noModel: models.length === 0 })),
+            )
+            .catch(() => {});
+          next(intervalMs);
+        })
         .catch((reason) => {
           if (cancelled) return;
-          if (reason instanceof ApiError && reason.status === 401)
+          if (reason instanceof ApiError && reason.status === 401) {
             setShell((now) => ({ ...now, locked: true }));
+            return;
+          }
+          // An error answer (500, 503) is still an answer: the studio is there, so no notice and the usual interval,
+          // and the database keeps its last known state
+          if (reason instanceof ApiError) {
+            misses = 0;
+            setShell((now) => ({ ...now, db: { ...now.db, unanswered: false } }));
+            next(intervalMs);
+            return;
+          }
           // No answer (a slow or stopped studio) says nothing about the database: keep its last known state
-          else
-            setShell((now) => ({
-              ...now,
-              db: { ...now.db, unanswered: true },
-            }));
+          setShell((now) => ({
+            ...now,
+            db: { ...now.db, unanswered: true },
+          }));
+          misses += 1;
+          next(Math.min(intervalMs * 2 ** misses, MAX_POLL_MS));
         });
-      modelConfigs
-        .list()
-        .then(
-          (models) =>
-            !cancelled &&
-            setShell((now) => ({ ...now, noModel: models.length === 0 })),
-        )
-        .catch(() => {});
     };
     poll();
-    const timer = window.setInterval(poll, intervalMs);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [intervalMs]);
 
