@@ -294,19 +294,23 @@ def config_update(
 
     with PipelineSession() as session:
         if step_type == "derivation":
-            result = config.create_derivation_config_version(
-                session._engine,
-                name,
-                instruction=instruction,
-                example=example,
-                input_graph_query=query,
-                params=params,
-                batch_size=batch_size,
-                max_candidates=max_candidates,
-                temperature=temperature,
-                sequence=sequence,
-                llm=llm,
-            )
+            try:
+                result = config.create_derivation_config_version(
+                    session._engine,
+                    name,
+                    instruction=instruction,
+                    example=example,
+                    input_graph_query=query,
+                    params=params,
+                    batch_size=batch_size,
+                    max_candidates=max_candidates,
+                    temperature=temperature,
+                    sequence=sequence,
+                    llm=llm,
+                )
+            except ValueError as e:  # a query that writes or reads files (QueryRefused), a negative sequence
+                typer.echo(f"Error: {e}", err=True)
+                raise typer.Exit(1) from e
         elif step_type == "extraction":
             result = config.create_extraction_config_version(
                 session._engine,

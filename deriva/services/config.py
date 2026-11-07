@@ -34,6 +34,8 @@ import json
 import re
 from typing import Any
 
+from deriva.adapters.grafeo import QueryRefused, read_only_refusal
+
 # Phases a derivation_config row can belong to (same set as DerivationConfigModel.phase)
 # "baseline": rows the pipeline never runs (the benchmark's baseline B1 loads its own by name)
 DERIVATION_PHASES = ("prep", "generate", "refine", "relationship", "baseline")
@@ -43,6 +45,45 @@ def _affected_rows(result: Any) -> int:
     # DuckDB reports rowcount -1 for UPDATE/DELETE; the count comes back as a row.
     row = result.fetchone()
     return int(row[0]) if row else 0
+
+
+def config_queries(input_graph_query: str | None = None, input_model_query: str | None = None, params: str | None = None) -> list[tuple[str, str]]:
+    """The graph queries a derivation config holds, as (field, query): its two query columns and the params that list
+    queries the derivation runs (graph_links rules, component_services links, function_model evidence links).
+    Params that are no JSON object hold none here (``validate_params`` refuses them on its own)."""
+    found = [("input_graph_query", input_graph_query), ("input_model_query", input_model_query)]
+    try:
+        settings = json.loads(params) if isinstance(params, str) and params else {}
+    except ValueError:
+        settings = {}
+    if isinstance(settings, dict):
+
+        def listed(value: Any) -> list[Any]:
+            return value if isinstance(value, list) else []
+
+        def section(value: Any) -> dict[str, Any]:
+            return value if isinstance(value, dict) else {}
+
+        for i, rule in enumerate(listed(settings.get("graph_links"))):
+            found.append((f"params.graph_links[{i}].query", section(rule).get("query")))
+        services = section(settings.get("component_services"))
+        for key in ("interface_links", "object_links"):
+            found += [(f"params.component_services.{key}[{i}]", q) for i, q in enumerate(listed(services.get(key)))]
+        evidence = section(section(settings.get("function_model")).get("evidence"))
+        found += [(f"params.function_model.evidence.member_links[{i}]", q) for i, q in enumerate(listed(evidence.get("member_links")))]
+    return [(field, query) for field, query in found if isinstance(query, str) and query]
+
+
+def check_config_queries(step_name: str, input_graph_query: str | None = None, input_model_query: str | None = None, params: str | None = None) -> None:
+    """Refuse a derivation config whose queries a read-only query may not run (a write, schema or LOAD clause, a
+    procedure that is not read-only): the derivation runs them on the graph without a rollback.
+
+    Raises:
+        QueryRefused: naming the step, the field and the reason
+    """
+    for field, query in config_queries(input_graph_query, input_model_query, params):
+        if (reason := read_only_refusal(query)) is not None:
+            raise QueryRefused(f"{step_name}: {field}: {reason}")
 
 
 def validate_params(params: str) -> None:
@@ -514,7 +555,12 @@ def update_derivation_config(
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> bool:
-    """Update a derivation configuration."""
+    """Update a derivation configuration.
+
+    Raises:
+        QueryRefused: a query the read-only check refuses (``check_config_queries``)
+    """
+    check_config_queries(step_name, input_graph_query, input_model_query, params)
     updates = []
     query_params = []
 
@@ -586,6 +632,7 @@ def add_derivation_step(
 
     Raises:
         ValueError: phase is not a derivation phase, sequence is negative, or params is not a JSON object.
+        QueryRefused: params hold a query the read-only check refuses (``check_config_queries``).
     """
     if phase not in DERIVATION_PHASES:
         raise ValueError(f"phase must be one of {', '.join(DERIVATION_PHASES)}, got {phase!r}")
@@ -593,6 +640,7 @@ def add_derivation_step(
         raise ValueError(f"sequence must be >= 0, got {sequence}")
     if params is not None:
         validate_params(params)
+        check_config_queries(step_name, params=params)
     exists = engine.execute("SELECT 1 FROM derivation_config WHERE step_name = ? LIMIT 1", [step_name]).fetchone()
     if exists:
         return False
@@ -1038,6 +1086,10 @@ def create_derivation_config_version(
 
     Returns:
         Dict with success, new_version, old_version
+
+    Raises:
+        ValueError: sequence is negative
+        QueryRefused: the new version holds a query the read-only check refuses (``check_config_queries``)
     """
     if sequence is not None and sequence < 0:
         raise ValueError(f"sequence must be >= 0, got {sequence}")
@@ -1088,6 +1140,8 @@ def create_derivation_config_version(
     new_max_candidates = max_candidates if max_candidates is not None else cur_max_candidates
     sequence_new = sequence if sequence is not None else cur_sequence
     new_llm = llm if llm is not None else cur_llm
+    # The version written is checked as a whole: its queries run on the graph without a rollback
+    check_config_queries(step_name, new_graph_query, new_model_query, new_params)
 
     # Deactivate old config
     engine.execute(
@@ -1297,6 +1351,13 @@ def restore_config_version(engine: Any, step_type: str, name: str, version: int)
     earlier = engine.execute(f"SELECT {', '.join(columns)} FROM {table} WHERE {key} = ? AND version = ?", [name, version]).fetchone()
     if not earlier:
         return {"success": False, "error": f"{name} has no version {version}"}
+    if step_type == "derivation":
+        # A version saved before saves were checked may hold a query the derivation must not run
+        restored = dict(zip(columns, earlier, strict=True))
+        try:
+            check_config_queries(name, restored.get("input_graph_query"), restored.get("input_model_query"), restored.get("params"))
+        except QueryRefused as refused:
+            return {"success": False, "error": str(refused)}
     (latest,) = engine.execute(f"SELECT MAX(version) FROM {table} WHERE {key} = ?", [name]).fetchone()
     (next_id,) = engine.execute(f"SELECT COALESCE(MAX(id), 0) + 1 FROM {table}").fetchone()
     new_version = int(latest) + 1
