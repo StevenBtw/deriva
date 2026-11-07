@@ -668,3 +668,87 @@ def test_a_dockerfile_path_with_backslashes_finds_its_folder():
     text = "services:\n  shop:\n    build:\n      context: .\n      dockerfile: 'src\\web\\Dockerfile'\n"
     environment = _compose("r/docker-compose.yml", text, units, DeploymentRules())
     assert environment is not None and environment.services[0].unit == "unit::web"
+
+
+# .NET Aspire: an app host declares the projects it runs and the resources they reference
+ASPIRE = DeploymentRules(
+    aspire_host="DistributedApplication.CreateBuilder",
+    aspire_suffixes=(".cs",),
+    aspire_projects=("AddProject", "AddDotnetProject"),
+    aspire_resource="Add",
+    aspire_references=("WithReference",),
+)
+APP_HOST = """
+var builder = DistributedApplication.CreateBuilder(args);
+
+builder.AddCloudEnvironment("cloud");
+var cache = builder.AddKeyValue("cache");
+var postgres = builder.AddPostgres("postgres")
+    .WithLifetime(ContainerLifetime.Persistent);
+var shopDb = postgres.AddDatabase("shopdb");
+
+// builder.AddProject<Projects.Old>("old");
+var shop = builder.AddProject<Projects.Shop_Api>("shop-api", o => o.LaunchProfileName = "https")
+    .WithReference(shopDb)
+    .WithEnvironment("Url", "https://example.org/x;y");
+builder.AddDotnetProject("billing", "../services/billing")
+    .WithReference(shop);
+shop.WithReference(cache);
+
+builder.Build().Run();
+"""
+ASPIRE_UNITS = [
+    {"id": "unit::r::shop", "path": "r/shop", "name": "shop", "manifest": "Shop.Api"},
+    {"id": "unit::r::services/billing", "path": "r/services/billing", "name": "billing"},
+    {"id": "unit::r::host", "path": "r/host", "name": "host", "manifest": "Shop.AppHost"},
+]
+
+
+def test_an_aspire_app_host_is_an_environment_that_runs_its_projects_and_resources():
+    result = detect_deployments("r", {"r/host/AppHost.cs": APP_HOST}, ASPIRE_UNITS, ASPIRE)
+
+    env = result.primary
+    assert env is not None and (env.kind, env.name, env.file) == ("aspire", "Aspire", "r/host/AppHost.cs")
+    by_name = {s.name: s for s in env.services}
+    # A project by its manifest name (Projects.Shop_Api is Shop.Api) or by its path from the host's folder; the commented one is none
+    assert by_name["shop-api"].unit == "unit::r::shop" and by_name["billing"].unit == "unit::r::services/billing"
+    assert "old" not in by_name
+    # A resource is its technology; a database added to it is a part of it, so a reference to the database uses the resource
+    assert (by_name["postgres"].unit, by_name["postgres"].image, by_name["postgres"].kind) == (None, "postgres", "resource")
+    assert by_name["cache"].image == "keyvalue" and "shopdb" not in by_name
+    assert by_name["shop-api"].depends_on == ["cache", "postgres"]  # a reference later in the file counts too
+    assert by_name["billing"].depends_on == ["shop-api"]
+
+
+def test_a_project_without_a_written_name_is_named_after_its_project_type():
+    host = "var builder = DistributedApplication.CreateBuilder(args);\nbuilder\n    .AddProject<Projects.Shop_Api>(nameof(Projects.Shop_Api).ToLower());\n"
+
+    env = detect_deployments("r", {"r/host/AppHost.cs": host}, ASPIRE_UNITS, ASPIRE).primary
+
+    assert env is not None and [(s.name, s.unit) for s in env.services] == [("Shop_Api", "unit::r::shop")]
+
+
+def test_a_file_without_the_host_call_or_without_aspire_rules_is_no_environment():
+    assert detect_deployments("r", {"r/host/AppHost.cs": APP_HOST.replace("DistributedApplication.CreateBuilder", "Other.Create")}, ASPIRE_UNITS, ASPIRE).primary is None
+    assert detect_deployments("r", {"r/host/AppHost.cs": APP_HOST}, ASPIRE_UNITS, DeploymentRules()).primary is None
+
+
+def test_a_compose_file_ranks_before_an_aspire_app_host():
+    result = detect_deployments("r", {"r/host/AppHost.cs": APP_HOST, "r/docker-compose.yml": COMPOSE}, ASPIRE_UNITS, ASPIRE)
+
+    assert result.primary is not None and result.primary.kind == "compose"
+    assert [e.kind for e in result.others] == ["aspire"]
+
+
+def test_aspire_resources_are_software_only_on_the_closed_list_and_serve_the_projects_that_reference_them():
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    layer = technology_layer("r", {"r/host/AppHost.cs": APP_HOST}, ASPIRE_UNITS, ASPIRE, catalog_from_params(CATALOG_ENTRIES), {})
+
+    assert layer.environment is not None and layer.environment.kind == "aspire"
+    assert layer.deployed == ["unit::r::services/billing", "unit::r::shop"]
+    # The cloud environment and the key-value resource are no entry of the list: no fallback software for a resource
+    [postgres] = layer.software
+    assert (postgres.name, postgres.in_environment, postgres.serves) == ("PostgreSQL", True, ["unit::r::shop"])
+    assert postgres.evidence == ["resource postgres"]

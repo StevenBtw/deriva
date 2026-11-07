@@ -3446,6 +3446,46 @@ class TestDeploymentStep:
         with pytest.raises(ValueError, match="Deployment"):
             _run_extraction_step(self._cfg({**self.PARAMS, "markers": [{"pattern": "("}]}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
 
+    ASPIRE = {"host": "DistributedApplication.CreateBuilder", "suffixes": [".cs"], "projects": ["AddProject"], "resource_prefix": "Add", "references": ["WithReference"]}
+
+    def test_an_aspire_app_host_is_the_environment_its_projects_and_resources_run_in(self, graph, tmp_path):
+        host = (
+            "var builder = DistributedApplication.CreateBuilder(args);\n"
+            'var db = builder.AddPostgres("db");\n'
+            'builder.AddProject<Projects.Shop>("shop").WithReference(db);\n'
+            'builder.AddProject<Projects.Billing>("billing");\n'
+        )
+        # A test host (a test file) declares its own resources: it is no environment of the system
+        fixture = 'var builder = DistributedApplication.CreateBuilder();\nvar cache = builder.AddRedis("cache");\n'
+        self._repo(graph, tmp_path, {"host/AppHost.cs": host, "shop/Program.cs": "var app = WebApplication.CreateBuilder(args);\n", "tests/Fixture.cs": fixture})
+        graph.update_node_property("file::r::host/AppHost.cs", "fileType", "source")
+        graph.update_node_property("file::r::tests/Fixture.cs", "fileType", "test")
+
+        result = _run_extraction_step(self._cfg({**self.PARAMS, "aspire": self.ASPIRE}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == [] and result["environment"] == "aspire r/host/AppHost.cs" and result["other_environments"] == []
+        (env,) = graph.query("MATCH (e:Graph:Environment) RETURN e.id AS id, e.name AS name")
+        assert (env["id"], env["name"]) == ("environment::r::aspire", "Aspire")
+        deploys = graph.query("MATCH (:Graph:Environment)-[:`Graph:RUNS`]->(d:Graph:Deployment)-[:`Graph:DEPLOYS`]->(u) RETURN d.name AS d, u.id AS u ORDER BY d")
+        assert [(r["d"], r["u"]) for r in deploys] == [("billing", "unit::r::billing"), ("shop", "unit::r::shop")]
+        # A resource is software (on the list), no deployment
+        assert [r["d"] for r in graph.query("MATCH (d:Graph:Deployment) RETURN d.name AS d ORDER BY d")] == ["billing", "shop"]
+        serves = graph.query("MATCH (s:Graph:Software)-[:`Graph:SERVES`]->(u:Graph:DeployableUnit) RETURN s.name AS s, u.id AS u")
+        assert [(r["s"], r["u"]) for r in serves] == [("PostgreSQL", "unit::r::shop")]
+
+    def test_without_aspire_signals_an_app_host_is_no_environment(self, graph, tmp_path):
+        self._repo(graph, tmp_path, {"host/AppHost.cs": 'var b = DistributedApplication.CreateBuilder(args);\nb.AddProject<Projects.Shop>("shop");\n'})
+        graph.update_node_property("file::r::host/AppHost.cs", "fileType", "source")
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["environment"] is None
+
+    def test_the_aspire_signals_are_validated(self, graph, tmp_path):
+        for wrong in ({**self.ASPIRE, "projects": "AddProject"}, {**self.ASPIRE, "host": ""}, {**self.ASPIRE, "colour": "x"}, {**self.ASPIRE, "suffixes": [""]}):
+            with pytest.raises(ValueError, match="aspire"):
+                _run_extraction_step(self._cfg({**self.PARAMS, "aspire": wrong}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
 
 class TestCooperationStep:
     """The Cooperation step writes CONSUMES and SENDS_TO edges between deployable units, from structure (no LLM)."""
