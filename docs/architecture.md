@@ -28,7 +28,7 @@ Repository --> Extraction --> Graph --> Derivation --> ArchiMate model --> Expor
               and view, which Archi and other tools import
 ```
 
-Most extraction is deterministic: directories and files come from the file system, type definitions and methods from parsing the code with tree-sitter (Python, JavaScript, TypeScript, Java, C# and Go) or with structural parsers (COBOL programs and copybooks, JCL jobs and BMS screen maps), dependencies and tests from parsers. LLM steps classify within closed sets, for example which documented terms are business concepts. Derivation picks its candidates from the graph with queries and graph properties, and asks the LLM to classify and name them.
+Most extraction is deterministic: directories and files come from the file system, type definitions and methods from parsing the code with tree-sitter (Python, JavaScript, TypeScript with the JavaScript grammar, Java, C# and Go) or with structural parsers (COBOL programs and copybooks, JCL jobs and BMS screen maps), dependencies and tests from parsers. LLM steps classify within closed sets, for example which documented terms are business concepts. Derivation picks its candidates from the graph with queries and graph properties, and asks the LLM to classify and name them.
 
 ## Abstraction levels
 
@@ -201,7 +201,7 @@ Structure gives every candidate, every identifier and the relationships between 
 | Interface role | Files and methods that look like entry points | Which are interfaces, and what kind |
 | Service names | Name candidates from the component's interfaces, ordered by how much of the component each covers | The object or activity of the service; its verb stays structural |
 | Tooling | The repository's deployable units, with the README title and lines | Which units are tooling around the product rather than part of it |
-| Software an image runs | Container images that are not on the closed list of technologies | The system each image runs, or none, as the technology label names it |
+| Software an image runs | Every container image, among the technology items it labels | The system each image runs, or none; the label names the software of an image that is not on the closed list of technologies |
 
 The LLM also labels the documentation's terms, directories and technologies, which feed later steps. Everything else, the element types, the levels and the relationships, comes from structure: given the same LLM answers, it is the same in every run. Steps marked experimental may use the LLM in further ways; they are off by default.
 
