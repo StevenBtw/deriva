@@ -112,3 +112,30 @@ def test_javascript_is_unchanged_by_the_typescript_extractor():
     data = _all("export class A extends B { m() { return f(); } }\n", "web/a.js")
 
     assert [(t.name, t.bases) for t in data["types"]] == [("A", ["B"])]
+
+
+FIELDS = """export class Panel {
+  private onClick = async (e: Event): Promise<void> => { track(e); };
+  protected size = 3;
+  private close(): void {}
+}
+export const label = (n: number): string => String(n);
+"""
+
+
+def test_a_class_field_arrow_function_is_a_method_with_its_return_type_and_accessibility():
+    """TypeScript's class field is a public_field_definition (JavaScript's field_definition): its arrow is a method."""
+    data = _all(FIELDS, "web/panel.ts")
+    methods = {(m.class_name, m.name): m for m in data["methods"]}
+
+    click = methods[("Panel", "onClick")]
+    assert (click.return_annotation, click.visibility, [p["annotation"] for p in click.parameters]) == ("Promise<void>", "private", ["Event"])
+    assert ("Panel", "size") not in methods  # a field that holds no function is no method
+    assert ("onClick", "track") in {(c.caller_name, c.callee_name) for c in data["calls"]}
+
+
+def test_arrow_functions_keep_their_return_type_and_methods_their_accessibility():
+    methods = {(m.class_name, m.name): m for m in _all(FIELDS, "web/panel.ts")["methods"]}
+
+    assert methods[(None, "label")].return_annotation == "string"
+    assert (methods[("Panel", "close")].visibility, methods[("Panel", "close")].return_annotation) == ("private", "void")

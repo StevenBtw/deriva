@@ -689,7 +689,7 @@ class TestJavaAndScriptImports:
     """Java imports resolve to the repository file that declares the class; script imports by relative path."""
 
     @staticmethod
-    def _edges(imports, file_path, all_files, stdlib=None):
+    def _edges(imports, file_path, all_files, stdlib=None, aliases=()):
         from deriva.adapters.treesitter.models import FilterConstants
         from deriva.modules.extraction.edges import _extract_import_edges
 
@@ -701,7 +701,33 @@ class TestJavaAndScriptImports:
             external_packages=set(),
             edge_types={EdgeType.IMPORTS, EdgeType.USES},
             filter_constants=FilterConstants(stdlib_modules=stdlib or set()),
+            script_aliases=aliases,
         )
+
+    def test_a_script_sub_path_import_is_its_package(self):
+        """A bare specifier names its package by its first segment, or two for a scoped one: aws-cdk-lib/aws-s3 is
+        aws-cdk-lib, @scope/pkg/sub is @scope/pkg; a node: builtin is the standard library."""
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        imports = [ExtractedImport(module=m, names=["x"]) for m in ("aws-cdk-lib/aws-s3", "aws-cdk-lib", "@scope/pkg/sub", "lodash/fp", "node:fs")]
+        edges, nodes, _ = self._edges(imports, "app/stack.ts", {"app/stack.ts"}, stdlib={"fs"})
+
+        assert {(t, n) for t, n in self._targets(edges)} == {("USES", "extdep::r::aws_cdk_lib"), ("USES", "extdep::r::@scope_pkg"), ("USES", "extdep::r::lodash")}
+        assert sorted(n["properties"]["dependencyName"] for n in nodes) == ["@scope/pkg", "aws-cdk-lib", "lodash"]
+
+    def test_an_alias_import_is_own_code_found_by_its_alias_or_no_dependency(self):
+        """@/... is no package: with an alias of the nearest config folder it reaches the file, without one it names
+        nothing (internal, unresolved) instead of an external dependency."""
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"app/src/router/index.js", "app/src/components/Menu.js", "other/main.js"}
+        imports = [ExtractedImport(module="@/components/Menu", names=["Menu"])]
+
+        aliased, nodes, _ = self._edges(imports, "app/src/router/index.js", files, aliases=(("app", "@/", "app/src/"),))
+        plain, plain_nodes, stats = self._edges(imports, "other/main.js", files, aliases=(("app", "@/", "app/src/"),))
+
+        assert self._targets(aliased) == {("IMPORTS", "file::r::app_src_components_Menu.js")} and nodes == []
+        assert plain == [] and plain_nodes == [] and stats["unresolved"] == 1
 
     @staticmethod
     def _targets(edges):
@@ -2080,3 +2106,17 @@ class TestCsharpAliasTargets:
         page = "using static   Acme.Core.Order ;\nclass Page { }\n"
 
         assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+
+def test_script_aliases_are_read_from_tsconfig_paths_and_bundler_aliases():
+    """A tsconfig or jsconfig ``paths`` entry (comments and trailing commas allowed) and a vite or webpack alias (an
+    object key or a find/replacement pair) map an import prefix to a folder; each applies below its config's folder."""
+    from deriva.modules.extraction.edges import script_aliases
+
+    configs = {
+        "app/tsconfig.json": '{"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["src/*"], "#lib/*": ["lib/*"],},}, /* the source root */}',
+        "web/vite.config.ts": "export default { resolve: { alias: { '@': path.resolve(__dirname, './src') } } }",
+        "x/vite.config.js": "alias: [{ find: '~', replacement: fileURLToPath(new URL('./lib', import.meta.url)) }]",
+    }
+
+    assert script_aliases(configs) == (("app", "#lib/", "app/lib/"), ("app", "@/", "app/src/"), ("web", "@/", "web/src/"), ("x", "~/", "x/lib/"))

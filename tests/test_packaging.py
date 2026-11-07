@@ -67,7 +67,10 @@ def test_every_runtime_requirement_stops_before_its_next_breaking_release(built_
             open_ended.append(str(requirement))
             continue
         low, high = specs.get(">="), specs["<"]
-        if low is not None and (high.major > low.major + 1 or (low.major == 0 and (high.major, high.minor) > (0, low.minor + 1))):
+        # The next breaking release after the lower bound: the next major, or for 0.x the next minor (<2.1 above
+        # >=1.2 is too wide, since it lets 2.0 in)
+        boundary = (Version(f"{low.major + 1}") if low.major >= 1 else Version(f"0.{low.minor + 1}")) if low is not None else None
+        if boundary is not None and high > boundary:
             too_wide.append(str(requirement))
     assert (open_ended, too_wide) == ([], [])
 
