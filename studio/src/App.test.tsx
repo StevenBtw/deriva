@@ -233,8 +233,11 @@ describe("Status polling", () => {
     expect(status).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByText("DB")).toBeInTheDocument();
+    // An error answer refreshes the model list as any answer does, so "no model" cannot go stale
+    expect(modelConfigs.list).toHaveBeenCalledTimes(2);
     await after(10_000);
     expect(status).toHaveBeenCalledTimes(3);
+    expect(modelConfigs.list).toHaveBeenCalledTimes(3);
   });
 
   it("clears the not-reachable notice when the studio answers again, even with an error", async () => {
@@ -250,14 +253,22 @@ describe("Status polling", () => {
     expect(status).toHaveBeenCalledTimes(3);
   });
 
-  it("stops asking once the studio refuses this browser, and points to the launch link", async () => {
+  it("points a refused browser to the launch link, keeps asking for the status only, and unlocks on the first answer", async () => {
+    // The launch link opened in another tab sets the cookie for this tab too: the next answer lets it in
     vi.mocked(status).mockRejectedValue(new ApiError(401, "Open the studio from the link", { detail: "Open the studio from the link" }));
     at("/");
     await after(0);
     expect(screen.getByRole("heading", { name: "Open the studio from its launch link" })).toBeInTheDocument();
 
-    await after(120_000);
-    expect(status).toHaveBeenCalledTimes(1);
+    await after(10_000);
+    expect(status).toHaveBeenCalledTimes(2);
+    await after(10_000);
+    expect(status).toHaveBeenCalledTimes(3);
     expect(modelConfigs.list).toHaveBeenCalledTimes(0);
+
+    vi.mocked(status).mockResolvedValue(ANSWER);
+    await after(10_000);
+    expect(screen.queryByRole("heading", { name: "Open the studio from its launch link" })).not.toBeInTheDocument();
+    expect(modelConfigs.list).toHaveBeenCalledTimes(1);
   });
 });

@@ -110,6 +110,14 @@ describe("Banner", () => {
     expect(screen.getByRole("status")).toHaveTextContent("241896");
   });
 
+  it("says the studio is not reachable before anything it last knew, a held database included", () => {
+    render(<Banner db={{ state: "held", held_by: 7, unanswered: true }} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/The studio is not reachable/);
+    // The last known state may be out of date: the held notice waits until the studio answers again
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
   it("says a pipeline step is running when the status reports the session busy", () => {
     render(<Banner db={{ state: "owned", busy: true }} />);
 
