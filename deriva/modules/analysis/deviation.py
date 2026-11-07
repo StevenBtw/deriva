@@ -126,7 +126,8 @@ def compute_deviation_stats(
         else:
             deviating.append(obj_id)
 
-    consistency = len(stable) / len(all_objects) if all_objects else 1.0
+    # Nothing to compare (fewer than two runs, or no object in any run): no score
+    consistency = len(stable) / len(all_objects) if all_objects and len(all_runs) >= 2 else None
 
     return ConfigDeviation(
         config_type=config_type,
@@ -233,6 +234,8 @@ def generate_recommendations(deviations: list[ConfigDeviation]) -> list[str]:
     recommendations = []
 
     for cd in deviations:
+        if cd.consistency_score is None:
+            continue  # Nothing to compare: no object in any run
         if cd.consistency_score < 0.5:
             recommendations.append(
                 f"HIGH PRIORITY: {cd.config_type} config '{cd.config_id}' has only "
@@ -246,8 +249,10 @@ def generate_recommendations(deviations: list[ConfigDeviation]) -> list[str]:
                 "more specific examples or constrained output format."
             )
 
-    if not recommendations:
-        recommendations.append("All configs show good consistency (>80%). No immediate action needed.")
+    if not any(cd.consistency_score is not None for cd in deviations):
+        recommendations.append("No config was measured: there is nothing to compare (fewer than two runs, or no object in any run).")
+    elif not recommendations:
+        recommendations.append("All measured configs show good consistency (>80%). No immediate action needed.")
 
     return recommendations
 
@@ -274,8 +279,11 @@ def build_deviation_report(
     sorted_deviations = sorted(config_deviations, key=lambda x: x.deviation_count, reverse=True)
 
     total_deviations = sum(cd.deviation_count for cd in config_deviations)
-    total_objects = sum(cd.total_objects for cd in config_deviations)
-    overall_consistency = (total_objects - total_deviations) / total_objects if total_objects > 0 else 1.0
+    # Over the measured configs only: one with nothing to compare (fewer than two runs) says nothing about consistency
+    measured = [cd for cd in config_deviations if cd.consistency_score is not None]
+    measured_objects = sum(cd.total_objects for cd in measured)
+    measured_deviations = sum(cd.deviation_count for cd in measured)
+    overall_consistency = (measured_objects - measured_deviations) / measured_objects if measured_objects > 0 else None
 
     return DeviationReport(
         session_id=session_id,

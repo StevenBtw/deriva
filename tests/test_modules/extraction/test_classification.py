@@ -140,6 +140,19 @@ class TestClassifyFiles:
 
         assert [f["file_type"] for f in result["classified"]] == ["exclude"]
 
+    def test_model_files_are_excluded_whatever_their_extension(self):
+        """An ArchiMate exchange file saved as .xml is a model file like .archimate, never configuration or documentation."""
+        files = ["r/docs/model.xml", "r/pom.xml"]
+        registry = [
+            {"extension": "path:**/docs/**", "file_type": "docs", "subtype": "directory"},
+            {"extension": ".xml", "file_type": "config", "subtype": "xml"},
+        ]
+
+        result = classify_files(files, registry, model_files={"r/docs/model.xml"})
+
+        types = {f["path"]: (f["file_type"], f["subtype"]) for f in result["classified"]}
+        assert types == {"r/docs/model.xml": ("exclude", "output"), "r/pom.xml": ("config", "xml")}
+
     def test_returns_undefined_for_unknown_extensions(self):
         """Should return undefined for unknown file types."""
         files = ["app.xyz", "data.unknown"]

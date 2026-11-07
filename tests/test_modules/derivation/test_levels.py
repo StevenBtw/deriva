@@ -158,6 +158,24 @@ AC_REALIZES_AS = ("ApplicationComponent", "Realization", "ApplicationService")
 AC_ASSIGNED_AS = ("ApplicationComponent", "Assignment", "ApplicationService")
 
 
+def test_a_system_accesses_the_business_object_its_units_data_object_realizes():
+    """PDR 5 (Appendix B.3): a dependency on what realizes an element may carry over to that element. Only the viewpoint's
+    rules hold it: the rules scoring against a reference stay the valid ones."""
+    from deriva.adapters.archimate.models import ENTERPRISE_DERIVATION_RULES, STRUCTURAL_STRENGTH, VALID_DERIVATION_RULES, relationship_tier
+
+    types = {"sys": "ApplicationComponent", "unit": "ApplicationComponent", "fn": "ApplicationFunction", "data": "DataObject", "object": "BusinessObject"}
+    levels = {"sys": EA, "unit": SA, "fn": SA, "data": SA, "object": EA}
+    relationships = [("r1", "sys", "Composition", "unit"), ("r2", "unit", "Assignment", "fn"), ("r3", "fn", "Access", "data"), ("r4", "data", "Realization", "object")]
+    pattern = ("ApplicationComponent", "Access", "BusinessObject")
+
+    derived = enterprise_derivations(relationships, levels, types, [pattern], ENTERPRISE_DERIVATION_RULES, STRUCTURAL_STRENGTH, relationship_tier)
+
+    assert [(s, k, t, chain) for s, k, t, chain, _ in derived] == [("sys", "Access", "object", ("r1", "r2", "r3", "r4"))]
+    assert "PDR 5" in derived[0][4]
+    assert _derive(relationships, levels, types, [pattern]) == []
+    assert not [rule for rule in VALID_DERIVATION_RULES if rule[0].startswith("PDR")]
+
+
 def test_the_enterprise_viewpoint_draws_what_a_direct_chain_below_it_derives_one_per_pair_the_weaker():
     """The system composes a unit whose function realizes the service (DR 2): the system realizes it. Through the unit's
     interface the system is also assigned to it; of the two, the weaker structural type is drawn."""

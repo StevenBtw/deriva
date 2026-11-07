@@ -250,6 +250,10 @@ tbody tr.clickable:hover td {
   position: relative;
   vertical-align: middle;
 }
+.toggle[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: progress;
+}
 .toggle::after {
   content: "";
   position: absolute;

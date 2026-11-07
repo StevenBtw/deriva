@@ -64,3 +64,63 @@ def test_a_deployment_is_no_detail_artifact():
 
     assert not any(e["element_type"] == "Artifact" for e in detail.elements)
     assert not any("node_env" in (r["source"], r["target"]) for r in detail.relationships)
+
+
+def test_a_file_member_is_named_without_its_extension_and_a_repeat_takes_its_folder():
+    """Pages and code files are members by their file: the name drops the extension and starts with a capital, two members
+    of one interface with the same name each take their folder in front, and a template whose name starts with an
+    underscore (a partial or layout) is no endpoint. A type member keeps its name."""
+    members = [
+        {"name": "Index.cshtml", "source": "file::r::a"},
+        {"name": "Index.cshtml", "source": "file::r::b"},
+        {"name": "list.html", "source": "file::r::c"},
+        {"name": "_Layout.cshtml", "source": "file::r::d"},
+        {"name": "OrderController.java", "source": "file::r::e"},
+        {"name": "OrderResource", "source": "typedef::r::OrderResource"},
+    ]
+    files = {
+        "file::r::a": "r/web/Views/Home/Index.cshtml",
+        "file::r::b": "r/web/Views/Account/Index.cshtml",
+        "file::r::c": "r/web/templates/list.html",
+        "file::r::d": "r/web/Views/Shared/_Layout.cshtml",
+        "file::r::e": "r/web/src/OrderController.java",
+    }
+    elements = [_el("ai_web__ui", "ApplicationInterface", "Web UI", source="unit::r::web", role="web", members=members)]
+
+    detail = detail_level(elements, DetailLineage(files=files))
+
+    assert sorted(e["name"] for e in detail.elements) == ["Account Index", "Home Index", "List", "OrderController", "OrderResource"]
+
+
+def test_a_file_member_named_as_written_keeps_its_name():
+    """A file that registers a service is a member by the service it registers (as_written): it keeps that name."""
+    members = [{"name": "CartService", "source": "file::r::a", "as_written": True}, {"name": "main.go", "source": "file::r::b"}]
+    files = {"file::r::a": "r/cart/main.go", "file::r::b": "r/shop/main.go"}
+    elements = [_el("ai_cart__rpc", "ApplicationInterface", "Cart RPC API", source="unit::r::cart", role="rpc", members=members)]
+
+    detail = detail_level(elements, DetailLineage(files=files))
+
+    assert sorted(e["name"] for e in detail.elements) == ["CartService", "Main"]
+
+
+def test_a_member_named_as_written_keeps_its_name_when_a_file_member_shares_it():
+    """Only the file member named after its file takes folders in front; the one named as written stays as it is."""
+    members = [{"name": "Cart", "source": "file::r::a", "as_written": True}, {"name": "cart.go", "source": "file::r::b"}]
+    files = {"file::r::a": "r/svc/server/main.go", "file::r::b": "r/svc/model/cart.go"}
+    elements = [_el("ai_cart__rpc", "ApplicationInterface", "Cart RPC API", source="unit::r::cart", role="rpc", members=members)]
+
+    detail = detail_level(elements, DetailLineage(files=files))
+
+    assert sorted(e["name"] for e in detail.elements) == ["Cart", "Model Cart"]
+
+
+def test_members_whose_folders_repeat_take_folders_until_their_names_differ():
+    """An area's page and the main page of the same folder name (Areas/Admin/Views/Home and Views/Home) take further
+    folders in front until the names differ; a name that is unique keeps a single folder."""
+    members = [{"name": "Index.cshtml", "source": f"file::r::{k}"} for k in "abc"]
+    files = {"file::r::a": "r/web/Areas/Admin/Views/Home/Index.cshtml", "file::r::b": "r/web/Views/Home/Index.cshtml", "file::r::c": "r/web/Views/Account/Index.cshtml"}
+    elements = [_el("ai_web__ui", "ApplicationInterface", "Web UI", source="unit::r::web", role="web", members=members)]
+
+    detail = detail_level(elements, DetailLineage(files=files))
+
+    assert sorted(e["name"] for e in detail.elements) == ["Account Index", "Admin Views Home Index", "Web Views Home Index"]

@@ -28,7 +28,7 @@ class TestExtractionConfigModel:
     def test_requires_node_type(self):
         """Should require node_type."""
         with pytest.raises(ValidationError, match=r"node_type\n  Field required"):
-            ExtractionConfigModel()
+            ExtractionConfigModel()  # ty: ignore[missing-argument]: testing the required field
 
     def test_validates_temperature_range(self):
         """Should validate temperature range."""
@@ -48,7 +48,7 @@ class TestExtractionConfigModel:
         assert config.extraction_method == "ast"
 
         with pytest.raises(ValidationError):
-            ExtractionConfigModel(node_type="Test", extraction_method="invalid")  # type: ignore[arg-type]
+            ExtractionConfigModel(node_type="Test", extraction_method="invalid")  # ty: ignore[invalid-argument-type]: testing validation
 
 
 class TestDerivationConfigModel:
@@ -69,7 +69,7 @@ class TestDerivationConfigModel:
     def test_validates_phase(self):
         """Should validate phase values."""
         with pytest.raises(ValidationError, match=r"phase\n  Input should be 'prep', 'generate', 'refine', 'relationship' or 'baseline'"):
-            DerivationConfigModel(step_name="Test", phase="invalid_phase")  # type: ignore[arg-type]
+            DerivationConfigModel(step_name="Test", phase="invalid_phase")  # ty: ignore[invalid-argument-type]: testing validation
 
 
 class TestFileTypeModel:

@@ -112,6 +112,17 @@ class TestAnswerStability:
 
         assert result == {"Step": (1, 1)}
 
+    def test_runs_with_a_bench_hash_share_their_prompts(self):
+        """--bench-hash puts the run into every cache key; read from call logs, one prompt in two runs is one prompt."""
+        analyzer = BenchmarkAnalyzer.__new__(BenchmarkAnalyzer)
+        analyzer.ocel_logs = {"s1": OCELLog()}
+        analyzer.repositories = ["repo"]
+        analyzer.call_logs = {"s1": [{"run_id": f"s1:repo:m:{n}", "step": "Step", "cache_key": f"repo:m:{n}", "prompt": "p", "response": '{"keep": true}'} for n in (1, 2)]}
+
+        result = {s.step: (s.prompts, s.identical) for s in analyzer.analyze_answer_stability()["repo"]}
+
+        assert result == {"Step": (1, 1)}
+
     def test_a_failed_call_is_no_answer(self):
         """A failed call records the failure, not an answer: as in the event log, it has no decision."""
         analyzer = BenchmarkAnalyzer.__new__(BenchmarkAnalyzer)

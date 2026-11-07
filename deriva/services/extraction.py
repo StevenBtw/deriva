@@ -37,6 +37,7 @@ import logging
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from types import ModuleType
@@ -74,11 +75,12 @@ from deriva.adapters.graph.models import (
     repo_relative,
 )
 from deriva.adapters.nlp import NlpTool
+from deriva.adapters.nlp.verbs import has_english, state_verbs
 from deriva.adapters.repository import RepoManager
 from deriva.adapters.treesitter import cdk
 from deriva.common.cache_utils import hash_inputs
 from deriva.common.document_reader import read_document
-from deriva.common.file_utils import describe_os_error, long_path, read_file_with_encoding
+from deriva.common.file_utils import describe_os_error, is_inside, long_path, read_file_with_encoding
 from deriva.common.naming import UNCOUNTABLE_WORDS, name_key
 from deriva.common.ocel import create_edge_id
 from deriva.modules import extraction
@@ -114,12 +116,63 @@ def repository_root(repo: Any) -> Path:
 
 
 def list_repo_files(repo_path: Path, excluded_dirs: list[str]) -> list[str]:
-    """Repository-relative file paths (forward slashes), skipping excluded directories and .pyc files."""
+    """Repository-relative file paths (forward slashes), skipping excluded directories, .pyc files and links."""
     return [
         rel
         for f in repo_path.rglob("*")
-        if f.is_file() and not str(f).endswith(".pyc") and not extraction.is_excluded_path(rel := f.relative_to(repo_path).as_posix(), excluded_dirs)
+        if f.is_file() and not str(f).endswith(".pyc") and not extraction.is_excluded_path(rel := f.relative_to(repo_path).as_posix(), excluded_dirs) and is_inside(f, repo_path)
     ]
+
+
+# The ArchiMate exchange format's namespace, which an exchange file declares at its root element
+# The running step's max_read_bytes, for the structural readers (no limit outside a step)
+_read_limit: ContextVar[int | None] = ContextVar("read_limit", default=None)
+
+_EXCHANGE_NAMESPACE = b"opengroup.org/xsd/archimate/"
+_EXCHANGE_HEAD_BYTES = 65536
+_XML_PROLOG = re.compile(rb"<!--.*?-->|<\?.*?\?>|<!DOCTYPE[^>]*>", re.DOTALL)
+_XML_ROOT = re.compile(rb"<[A-Za-z_][^>]*>")
+
+
+def model_files(repo_path: Path, file_paths: list[str]) -> set[str]:
+    """The .xml files that are ArchiMate exchange models (by the namespace on their root element): like .archimate files,
+    an architecture model is never an input, so a model shipped with the repository cannot become its own answer."""
+    found = set()
+    for rel in file_paths:
+        if not rel.lower().endswith(".xml"):
+            continue
+        file = repo_path / rel
+        try:
+            with open(file, "rb") as handle:
+                head = handle.read(_EXCHANGE_HEAD_BYTES)
+        except OSError:
+            continue
+        root = _XML_ROOT.search(_XML_PROLOG.sub(b"", head))
+        if root is not None and _EXCHANGE_NAMESPACE in root.group(0) and is_inside(file, repo_path):
+            found.add(rel)
+    return found
+
+
+def _skip_reason(file_path: Path, repo_path: Path, max_bytes: int) -> str | None:
+    """Why a repository file is not read, or None: a link out of the checkout, or a file over the size limit."""
+    if not is_inside(file_path, repo_path):
+        return "a link out of the repository"
+    try:
+        size = file_path.stat().st_size
+    except OSError:
+        return None  # the read reports it
+    return f"larger than {max_bytes} bytes (max_read_bytes)" if size > max_bytes else None
+
+
+def missing_checkout(repo: Any, repo_path: Path, file_paths: list[str]) -> str | None:
+    """Why a repository cannot be extracted, or None: a step that runs sweeps its earlier output, so a checkout that
+    is gone (moved, deleted) or lists no file must run none, or the graph keeps only what the first steps rebuild."""
+    if file_paths:
+        return None
+    shown = Path(str(repo.path))
+    if not repo_path.is_dir():
+        return f"Repository folder not found: {shown} | repo={repo.name} (clone it again, or remove the repository)"
+    return f"The repository has no files to extract (all excluded, or an empty checkout): {shown} | repo={repo.name}"
 
 
 def _unreadable_reason(shown: Path, opened: Path) -> str:
@@ -328,9 +381,13 @@ def run_extraction(
 
         # Get all files for classification (outside excluded dependency directories)
         file_paths = list_repo_files(repo_path, config.get_excluded_directories(engine))
+        missing = missing_checkout(repo, repo_path, file_paths)
+        if missing:
+            errors.append(missing)
+            continue
 
         # Classify files (always needed - prerequisite for parse phase)
-        classification_result = classification.classify_files(file_paths, registry_list)
+        classification_result = classification.classify_files(file_paths, registry_list, model_files(repo_path, file_paths))
         classified_files = classification_result["classified"]
         undefined_files = classification_result["undefined"]
 
@@ -431,6 +488,8 @@ def run_extraction(
                         error_with_context = f"[Extraction - {node_type}] {err}"
                         errors.append(error_with_context)
                         logger.error(error_with_context)
+                # The step's own warnings (a switch it could not apply, inputs it found none of)
+                warnings.extend(f"[Extraction - {node_type}] {w}" for w in result.get("warnings", []))
 
             except Exception as e:
                 error_msg = f"Error in {node_type}: {str(e)}"
@@ -601,7 +660,26 @@ def _run_step_writes(
     engine: Any,
     model: str | None = None,
 ) -> dict[str, Any]:
-    """Run a single extraction step based on node type (its writes; the sweep is _run_extraction_step's)."""
+    """Run a single extraction step based on node type (its writes; the sweep is _run_extraction_step's), with the
+    max_read_bytes setting as the structural readers' limit for that step only."""
+    token = _read_limit.set(config.get_max_read_bytes(engine))
+    try:
+        return _step_writes(cfg, repo, repo_path, classified_files, undefined_files, graph_manager, llm_query_fn, engine, model)
+    finally:
+        _read_limit.reset(token)
+
+
+def _step_writes(
+    cfg: config.ExtractionConfig,
+    repo: Any,
+    repo_path: Path,
+    classified_files: list[dict],
+    undefined_files: list[dict],
+    graph_manager: GraphManager,
+    llm_query_fn: Callable | None,
+    engine: Any,
+    model: str | None,
+) -> dict[str, Any]:
     node_type = cfg.node_type
 
     if node_type == "Repository":
@@ -629,8 +707,9 @@ def _run_step_writes(
         # Persistent concepts from structure (roots, ORM entities, shared records, tables); no LLM
         result = _extract_data_entities(cfg, repo, repo_path, graph_manager)
     elif node_type == "DeployableUnit":
-        # Deployable units from structure (containers, manifest entry points, mainframe applications); no LLM
-        result = _extract_deployable_units(cfg, repo, repo_path, graph_manager)
+        # Deployable units from structure (containers, manifest entry points, mainframe applications); the tooling
+        # check (params.tool_check) is one closed LLM classification
+        result = _extract_deployable_units(cfg, repo, repo_path, graph_manager, llm_query_fn)
     elif node_type == "BuildModule":
         # Build modules and parent systems from the manifests; which unit builds which module; no LLM
         result = _extract_build_modules(cfg, repo, repo_path, graph_manager)
@@ -654,6 +733,7 @@ def _run_step_writes(
             repo=repo,
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
+            samples=config.get_llm_samples(engine),
         )
     elif node_type == "Technology":
         if llm_query_fn is None:
@@ -665,6 +745,7 @@ def _run_step_writes(
             classified_files=classified_files,
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
+            max_bytes=config.get_max_read_bytes(engine),
         )
     elif node_type == "BusinessConcept":
         if llm_query_fn is None:
@@ -676,6 +757,7 @@ def _run_step_writes(
             classified_files=classified_files,
             graph_manager=graph_manager,
             llm_query_fn=llm_query_fn,
+            max_bytes=config.get_max_read_bytes(engine),
         )
     elif node_type in ["TypeDefinition", "Method", "ExternalDependency", "Test"]:
         # Without an LLM the parsers still run (tree-sitter, manifest files); only Test is LLM-only
@@ -719,12 +801,17 @@ def _unit_rules(params: str | None) -> deployable_units.UnitRules:
     if not isinstance(web, dict) or set(web) - set(keys) or not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in web.values()):
         raise ValueError(f"DeployableUnit params: web_ui holds lists of strings under {sorted(keys)}")
     signals = {field: tuple(x.lower() for x in web[key]) for key, field in keys.items() if key in web}
+    check = settings.get("tool_check")
+    # A malformed tooling check is an error, not a check silently turned off
+    if check is not None and (not isinstance(check, dict) or set(check) != {"instruction"} or not isinstance(check["instruction"], str) or not check["instruction"].strip()):
+        raise ValueError("DeployableUnit params: tool_check is an object with one key, instruction (the tooling check's instruction text)")
     naming = settings.get("naming", {})
     if not isinstance(naming, dict):
         raise ValueError("DeployableUnit params: naming must be an object")
     words, cut, nouns, docs = naming.get("generic_words", []), naming.get("title_cut_words", []), naming.get("kind_nouns", {}), naming.get("max_doc_names", 3)
+    suffixes = naming.get("split_suffixes", [])
     if (
-        not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in (words, cut))
+        not all(isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in (words, cut, suffixes))
         or not isinstance(nouns, dict)
         or not all(isinstance(k, str) and isinstance(v, str) and v for k, v in nouns.items())
         or not isinstance(docs, int)
@@ -732,7 +819,7 @@ def _unit_rules(params: str | None) -> deployable_units.UnitRules:
         or docs < 0
     ):
         raise ValueError(
-            "DeployableUnit params: naming holds generic_words and title_cut_words (lists of strings), kind_nouns (unit kind -> noun) and max_doc_names (a whole number)"
+            "DeployableUnit params: naming holds generic_words, title_cut_words and split_suffixes (string lists), kind_nouns (kind -> noun) and max_doc_names (a whole number)"
         )
     return deployable_units.UnitRules(
         code_subtypes=frozenset(subtypes),
@@ -742,6 +829,7 @@ def _unit_rules(params: str | None) -> deployable_units.UnitRules:
         title_cut_words=tuple(cut),
         kind_nouns=tuple(sorted(nouns.items())),
         max_doc_names=docs,
+        split_suffixes=tuple(suffixes),
         **signals,
     )
 
@@ -761,6 +849,7 @@ _ENTITY_LISTS = (
     "name_suffixes",
     "table_annotations",
     "table_attributes",
+    "test_words",
 )
 
 
@@ -905,10 +994,13 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
     file name patterns ``compose_files``, ``compose_defaults`` (the names Compose looks up, in order), ``compose_overrides``
     (the files it merges into them), ``build_scripts`` and ``marker_suffixes``, ``cloud_qualifiers``
     (resource type -> {property, default}), ``cdk_constructs`` ("module.Class" -> {type, environment, properties}) and
-    ``primary_runs_units`` (an environment that runs the repository's own units is the primary one before others)."""
+    ``primary_runs_units`` (an environment that runs the repository's own units is the primary one before others) and
+    ``classified_categories`` (the Technology step's categories whose answers join the system software)."""
     settings = json.loads(params) if params else {}
-    lists, maps = ("compose_files", "compose_defaults", "compose_overrides", "build_scripts", "marker_suffixes"), ("cloud_resources", "manifest_runtimes", "environment_names")
-    unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs", "primary_runs_units"}
+    lists = ("compose_files", "compose_defaults", "compose_overrides", "build_scripts", "marker_suffixes", "classified_categories")
+    maps = ("cloud_resources", "manifest_runtimes", "environment_names")
+    unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs", "primary_runs_units", "aspire"}
+    aspire = _aspire_signals(settings.get("aspire"))
     qualifiers, constructs = settings.get("cloud_qualifiers", {}), settings.get("cdk_constructs", {})
     text = lambda v: isinstance(v, str) and bool(v)  # noqa: E731 - a one-line helper
     qualifiers_ok = isinstance(qualifiers, dict) and all(isinstance(q, dict) and text(q.get("property")) and isinstance(q.get("default", ""), str) for q in qualifiers.values())
@@ -955,8 +1047,38 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
         marker_suffixes=tuple(s.lower() for s in settings.get("marker_suffixes", [])),
         manifest_runtimes=tuple(settings.get("manifest_runtimes", {}).items()),
         primary_runs_units=runs_units,
+        classified_categories=tuple(settings.get("classified_categories", [])),
+        **aspire,
     )
     return rules, catalog
+
+
+def _aspire_signals(settings: Any) -> dict[str, Any]:
+    """The Deployment step's .NET Aspire signals (``params.aspire``) as DeploymentRules fields; none without the key.
+
+    ``{"host": "DistributedApplication.CreateBuilder", "suffixes": [".cs"], "projects": ["AddProject"],
+    "resource_prefix": "Add", "references": ["WithReference"]}``: method names, matched as written.
+    """
+    if settings is None:
+        return {}
+    keys = {"host", "suffixes", "projects", "resource_prefix", "references"}
+    text = lambda v: isinstance(v, str) and bool(v)  # noqa: E731 - a one-line helper
+    if (
+        not isinstance(settings, dict)
+        or set(settings) - keys
+        or not text(settings.get("host"))
+        or not isinstance(settings.get("resource_prefix", ""), str)
+        or not all(isinstance(settings.get(k), list) and settings[k] and all(text(x) for x in settings[k]) for k in ("suffixes", "projects"))
+        or not (isinstance(settings.get("references", []), list) and all(text(x) for x in settings.get("references", [])))
+    ):
+        raise ValueError(f"Deployment params: aspire needs a host call, suffixes and projects (lists of names), a resource_prefix and references, got {settings!r}")
+    return {
+        "aspire_host": settings["host"],
+        "aspire_suffixes": tuple(s.lower() for s in settings["suffixes"]),
+        "aspire_projects": tuple(settings["projects"]),
+        "aspire_resource": settings.get("resource_prefix", ""),
+        "aspire_references": tuple(settings.get("references", [])),
+    }
 
 
 def _cdk_resources(paths: list[str], rules: deployments.DeploymentRules, repo: Any, repo_path: Path) -> dict[str, dict[str, Any]]:
@@ -1026,9 +1148,37 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
         )
 
     files = {p: text for p in paths if wanted(p) and (text := _read_checkout(repo_path, repo.name, p)) is not None}
+    if rules.aspire_host:
+        # An app host is a source file (a test host is test code) that calls the host builder: only those join the deployment files
+        rows = q("MATCH (f:Graph:File) WHERE f.active = true AND f.repository_name = $repo_name AND f.fileType = 'source' RETURN f.filePath AS path")
+        hosts = sorted({p for r in rows if (p := str(r.get("path") or "").replace(chr(92), "/")).lower().endswith(rules.aspire_suffixes)} - set(files))
+        files |= {p: text for p in hosts if (text := _read_checkout(repo_path, repo.name, p)) is not None and rules.aspire_host in text}
     sources = {p: text for p in paths if p.lower().endswith(rules.marker_suffixes) and rules.marker_suffixes and (text := _read_checkout(repo_path, repo.name, p)) is not None}
     units = _units_with_members(q)
-    layer = deployments.technology_layer(repo.name, files, units, rules, catalog, sources, cdk=_cdk_resources(paths, rules, repo, repo_path))
+    classified: dict[str, set[str]] = {}
+    if rules.classified_categories:
+        rows = q(
+            "MATCH (f:Graph:File)-[:`Graph:CONFIGURES`]->(t:Graph:Technology) WHERE t.active = true AND t.repository_name = $repo_name AND t.techCategory IN $categories "
+            "RETURN t.techName AS name, f.filePath AS path",
+            {"categories": list(rules.classified_categories)},
+        )
+        for row in rows:
+            if row.get("name") and row.get("path"):
+                classified.setdefault(str(row["name"]), set()).add(str(row["path"]).replace(chr(92), "/"))
+    # The Technology step's image labels (absent without that step's LLM call: images keep their own names)
+    stored = q("MATCH (r:Graph:Repository) WHERE r.id = $id RETURN r.imageLabels AS labels", {"id": f"repo::{repo.name}"})
+    image_labels = dict(str(p).split("=", 1) for p in stored[0]["labels"] if "=" in str(p)) if stored and stored[0].get("labels") is not None else None
+    layer = deployments.technology_layer(
+        repo.name,
+        files,
+        units,
+        rules,
+        catalog,
+        sources,
+        cdk=_cdk_resources(paths, rules, repo, repo_path),
+        classified=[(name, tuple(sorted(found))) for name, found in classified.items()],
+        image_labels=image_labels,
+    )
 
     nodes = edges = 0
     env = layer.environment
@@ -1053,8 +1203,10 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
             node_id=env_id,
         )
         nodes += 1
-        deployment_ids = _service_ids(f"deployment::{repo.name}::{env.kind}", [(s.name, s.unit) for s in env.services])
-        for service, deployment_id in zip(env.services, deployment_ids, strict=True):
+        # An Aspire resource is software (when the closed list has it), not a deployment
+        deployed_services = [s for s in env.services if s.kind != "resource"]
+        deployment_ids = _service_ids(f"deployment::{repo.name}::{env.kind}", [(s.name, s.unit) for s in deployed_services])
+        for service, deployment_id in zip(deployed_services, deployment_ids, strict=True):
             graph_manager.add_node(
                 DeploymentNode(
                     name=service.name, environment=env.kind, repository_name=repo.name, image=service.image or "", variables=service.environment, ports=service.ports, file=env.file
@@ -1107,8 +1259,10 @@ def _units_with_members(q: Callable[..., list[dict[str, Any]]]) -> list[dict[str
         if r.get("path"):
             members.setdefault(r["u"], set()).add(str(r["path"]).replace(chr(92), "/"))
     return [
-        {"id": r["id"], "path": str(r["path"]).replace(chr(92), "/"), "name": r["name"], "members": sorted(members.get(r["id"], ()))}
-        for r in q("MATCH (u:Graph:DeployableUnit) WHERE u.active = true AND u.repository_name = $repo_name RETURN u.id AS id, u.path AS path, u.name AS name")
+        {"id": r["id"], "path": str(r["path"]).replace(chr(92), "/"), "name": r["name"], "manifest": r.get("manifest") or "", "members": sorted(members.get(r["id"], ()))}
+        for r in q(
+            "MATCH (u:Graph:DeployableUnit) WHERE u.active = true AND u.repository_name = $repo_name RETURN u.id AS id, u.path AS path, u.name AS name, u.manifestName AS manifest"
+        )
     ]
 
 
@@ -1269,16 +1423,22 @@ def _extract_data_domains(cfg: config.ExtractionConfig, repo: Any, repo_path: Pa
 
 def _business_layer_rules(params: str | None) -> tuple[lifecycles.LifecycleRules, roles.RoleRules]:
     """The BusinessLayer step's signals (``params``): lifecycle words and patterns (``status_words``, ``min_states``,
-    ``value_pattern``, ``flow_words``, ``heading_noise``, ``unit_noise``, ``name_templates``) and the role signals
+    ``value_pattern``, ``flow_words``, ``heading_noise``, ``unit_noise``, ``name_templates``, ``status_members``, ``verb_names``) and the role signals
     (``markers``: patterns whose first group holds role constants, ``generic_roles``, ``generic_actors``)."""
     settings = json.loads(params) if params else {}
     lists = ("status_words", "flow_words", "heading_noise", "unit_noise", "name_templates", "markers", "generic_roles", "generic_actors")
-    unknown = set(settings) - {*lists, "min_states", "value_pattern"}
+    unknown = set(settings) - {*lists, "min_states", "value_pattern", "status_members", "verb_names"}
     lists_ok = all(isinstance(settings.get(k, []), list) and all(isinstance(x, str) and x for x in settings.get(k, [])) for k in lists)
     states = settings.get("min_states", lifecycles.LifecycleRules.min_states)
     pattern = settings.get("value_pattern", lifecycles.LifecycleRules.value_pattern)
-    if unknown or not lists_ok or not isinstance(states, int) or isinstance(states, bool) or states < 2 or not isinstance(pattern, str):
-        raise ValueError(f"BusinessLayer params: lists of strings under {list(lists)}, min_states a whole number of at least 2, value_pattern a pattern")
+    status_members = settings.get("status_members", lifecycles.LifecycleRules.status_members)
+    verb_names = settings.get("verb_names", lifecycles.LifecycleRules.verb_names)
+    switches_ok = isinstance(status_members, bool) and isinstance(verb_names, bool)
+    if unknown or not lists_ok or not isinstance(states, int) or isinstance(states, bool) or states < 2 or not isinstance(pattern, str) or not switches_ok:
+        raise ValueError(
+            f"BusinessLayer params: lists of strings under {list(lists)}, min_states a whole number of at least 2, value_pattern a pattern, "
+            "status_members and verb_names true or false"
+        )
     for p in [pattern, *settings.get("markers", [])]:
         try:
             re.compile(p)
@@ -1289,6 +1449,8 @@ def _business_layer_rules(params: str | None) -> tuple[lifecycles.LifecycleRules
         **{k: tuple(settings[k]) if k in settings else getattr(life_defaults, k) for k in ("status_words", "flow_words", "heading_noise", "unit_noise", "name_templates")},
         min_states=states,
         value_pattern=pattern,
+        status_members=status_members,
+        verb_names=verb_names,
     )
     return life, roles.RoleRules(**{k: tuple(settings.get(k, [])) for k in ("markers", "generic_roles", "generic_actors")})
 
@@ -1315,7 +1477,20 @@ def _extract_business_layer(cfg: config.ExtractionConfig, repo: Any, repo_path: 
         {"id": r["id"], "path": norm(r["path"]), "name": r["name"], "web": bool(r.get("web"))}
         for r in q("MATCH (u:Graph:DeployableUnit) WHERE u.active = true AND u.repository_name = $repo_name RETURN u.id AS id, u.path AS path, u.name AS name, u.webEntries AS web")
     ]
+    if life_rules.status_members:
+        members = lifecycles.status_members(members, files, life_rules)
     found = lifecycles.detect_lifecycles(files, members, units, life_rules, docs)
+    warnings: list[str] = []
+    if life_rules.verb_names and found:
+        # What happens to the object, from the states that are participles (the English pipeline; none without it)
+        models_dir = NlpTool().models_dir
+        if not has_english(models_dir):
+            warnings.append(f"BusinessLayer verb_names is on, but the English pipeline is missing in {models_dir}: no verb names (deriva-cli nlp fetch)")
+        verbs = state_verbs(sorted({s for life in found for s in life.states}), models_dir)
+        objects = {m["domain"]: m["object"] for m in members}
+        for life in found:
+            names = lifecycles.verb_names(life, [objects.get(life.domain, life.entity), life.entity], verbs)
+            life.name_candidates = list(dict.fromkeys([*life.name_candidates, *names]))
     concepts = [
         {"id": r["id"], "name": r["name"], "files": [norm(f) for f in r["files"] or []]}
         for r in q(
@@ -1366,15 +1541,27 @@ def _extract_business_layer(cfg: config.ExtractionConfig, repo: Any, repo_path: 
             graph_manager.add_edge(node, life, "ASSIGNED")
             edges += 1
     events = sum(len(life.events) for life in found)
-    return {"nodes_created": len(found) + events + len(found_roles), "edges_created": edges, "errors": [], "lifecycles": len(found), "events": events, "roles": len(found_roles)}
+    return {
+        "nodes_created": len(found) + events + len(found_roles),
+        "edges_created": edges,
+        "errors": [],
+        "warnings": warnings,
+        "lifecycles": len(found),
+        "events": events,
+        "roles": len(found_roles),
+    }
 
 
 def _read_checkout(repo_path: Path, repo_name: str, path: str, max_bytes: int = 200_000) -> str | None:
-    """A file's text from the checkout (graph paths start with the repository folder)."""
+    """A file's text from the checkout (graph paths start with the repository folder), up to ``max_bytes`` and
+    the max_read_bytes setting of the running step."""
+    limit = _read_limit.get()
+    if limit is not None:
+        max_bytes = min(max_bytes, limit)
     relative = path[len(repo_name) + 1 :] if path.startswith(repo_name + "/") else path
     file = repo_path / relative
     try:
-        if file.is_file() and file.stat().st_size <= max_bytes:
+        if file.is_file() and is_inside(file, repo_path) and file.stat().st_size <= max_bytes:
             return file.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
@@ -1541,8 +1728,11 @@ def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: P
         return at[0] if m.excluded is None and m.module and not m.system and len(at) == 1 and not nested else None
 
     if rules.min_behaviour is not None:
-        judged = [m for m in found if m.module and not m.system and m.excluded is None and not same_as(m)]
+        judged = [m for m in found if m.module and not m.system and not m.grouped and m.excluded is None and not same_as(m)]
         libraries = _judge_by_usage(q, norm, repo.name, found, judged, [path for _, path in units], files, manifests, rules)
+        library = build_modules.library_repository(found, [path for _, path in units]) if not libraries else None
+        if library is not None:
+            library.excluded = None
         found = sorted([*found, *libraries], key=lambda m: m.path)
         ids.update({m.path: build_modules.module_id(repo.name, m.path) for m in libraries})
     # Fixed before feature packages nest inside a unit's folder: the unit and its own module stay one element
@@ -1610,7 +1800,7 @@ def _extract_build_modules(cfg: config.ExtractionConfig, repo: Any, repo_path: P
     return {"nodes_created": nodes, "edges_created": edges, "errors": [], "modules": sum(1 for m in found if m.module), "systems": sum(1 for m in found if m.system)}
 
 
-def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager) -> dict[str, Any]:
+def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path: Path, graph_manager: GraphManager, llm_query_fn: Callable | None = None) -> dict[str, Any]:
     """Deployable unit nodes with INCLUDES edges to their members, from the graph and the manifests (no LLM)."""
     rules = _unit_rules(cfg.params)
     # A combined graph holds several repositories: every source read is this repository's
@@ -1624,7 +1814,11 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
         )
         if r.get("id") and r.get("path")
     ]
-    manifests = {f["path"]: text for f in files if f["name"].lower() in UNIT_MANIFESTS and (text := _read_checkout(repo_path, repo.name, f["path"])) is not None}
+    manifests = {
+        f["path"]: text
+        for f in files
+        if (f["name"].lower() in UNIT_MANIFESTS or f["name"].lower().endswith(".csproj")) and (text := _read_checkout(repo_path, repo.name, f["path"])) is not None
+    }
     documents = {f["path"]: text for f in files if f["file_type"] == "docs" and (text := _read_checkout(repo_path, repo.name, f["path"])) is not None}
     imports = [
         (norm(r["a"]), norm(r["b"]))
@@ -1686,6 +1880,27 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
         },
     )
     units = deployable_units.detect_units(facts, rules)
+    errors: list[str] = []
+    warnings: list[str] = []
+    check = (json.loads(cfg.params) if cfg.params else {}).get("tool_check")
+    instruction = str(check.get("instruction") or "") if isinstance(check, dict) else ""
+    asked = deployable_units.tool_candidates(units, repo.name) if instruction else []
+    if asked and llm_query_fn is None:
+        warnings.append(f"The tooling check was skipped (no LLM): {len(asked)} units stay components without the check")
+        asked = []
+    if asked and llm_query_fn is not None:
+        # Structure proposes the units, the LLM labels each application or tooling, a tooling unit is excluded
+        keys = [deployable_units.tool_key(u) for u in asked]
+        product = next((u.product for u in units if u.product), "")
+        prompt = deployable_units.build_tool_prompt(instruction, asked, product)
+        response = llm_query_fn(prompt, deployable_units.tool_schema(keys), temperature=cfg.temperature, max_tokens=cfg.max_tokens)
+        if getattr(response, "error", None):
+            errors.append(f"LLM error in the tooling check: {response.error}")
+        else:
+            tools = deployable_units.parse_tools(getattr(response, "content", "") or "", keys)
+            for unit in asked:
+                if deployable_units.tool_key(unit) in tools:
+                    unit.excluded = "tooling"
 
     # What an earlier run wrote and this one no longer produces is swept after the step (_run_extraction_step)
     file_ids = {f["path"]: f["id"] for f in files}
@@ -1718,7 +1933,7 @@ def _extract_deployable_units(cfg: config.ExtractionConfig, repo: Any, repo_path
         for target in sorted({file_ids[p] for p in unit.members | set(unit.web_entries) if p in file_ids} | unit.nodes):
             graph_manager.add_edge(node_id, target, INCLUDES)
             edges += 1
-    return {"nodes_created": nodes, "edges_created": edges, "errors": []}
+    return {"nodes_created": nodes, "edges_created": edges, "errors": errors, "warnings": warnings}
 
 
 def _extract_repository(repo: Any, graph_manager: GraphManager) -> dict[str, Any]:
@@ -1898,14 +2113,16 @@ def _extract_edges(
     edges_created = 0
     nodes_created = 0
 
-    # Get known external packages from the graph (for import resolution)
+    # Get known external packages from the graph (for import resolution): the declared ones (manifests), as a first run
+    # knows them; a dependency an earlier run of this step only found by an import is no known package (read back, it
+    # would turn the repository's own imports that it could not resolve once into external ones on every later run)
     external_packages: set[str] = set()
     try:
         extdeps = graph_manager.get_nodes_by_type("ExternalDependency")
         for dep in extdeps:
             props = dep.get("properties", {})
             name = props.get("name") or props.get("dependencyName")
-            if name:
+            if name and props.get("declared"):
                 # Normalize: flask-sqlalchemy -> flask_sqlalchemy
                 external_packages.add(name.lower().replace("-", "_"))
     except Exception:
@@ -2134,8 +2351,10 @@ def _extract_directory_classification(
     repo: Any,
     graph_manager: GraphManager,
     llm_query_fn: Callable,
+    samples: int | None = None,
 ) -> dict[str, Any]:
-    """Extract BusinessConcept and Technology nodes from Directory classification.
+    """Extract BusinessConcept and Technology nodes from Directory classification (``samples``: the llm_samples
+    setting, which replaces the step's own samples param while set).
 
     This queries Directory nodes from the graph and classifies them using LLM
     into business concepts, technologies, or skips.
@@ -2191,6 +2410,8 @@ def _extract_directory_classification(
         "example": cfg.example or "",
         "params": json.loads(cfg.params) if cfg.params else {},
     }
+    if samples is not None and "samples" in extraction_config["params"]:
+        extraction_config["params"]["samples"] = samples
 
     # A technology answer for a directory named after the repository is skipped (params.skip_repository_name)
     skip_name = extraction_config["params"].get("skip_repository_name", False)
@@ -2198,13 +2419,14 @@ def _extract_directory_classification(
         return {"nodes_created": 0, "edges_created": 0, "errors": [f"DirectoryClassification params.skip_repository_name must be true or false, got {skip_name!r}"]}
 
     # Wrap llm_query_fn with per-step temperature/max_tokens overrides
-    def step_llm_query_fn(prompt: str, schema: dict, system_prompt: str | None = None) -> Any:
+    def step_llm_query_fn(prompt: str, schema: dict, system_prompt: str | None = None, sample: int | None = None) -> Any:
         return llm_query_fn(
             prompt,
             schema,
             temperature=cfg.temperature,
             max_tokens=cfg.max_tokens,
             system_prompt=system_prompt,
+            **({"sample": sample} if sample is not None else {}),
         )
 
     # Directories the structure decides (skip names, skipped trees, path steps) never reach the LLM;
@@ -2368,7 +2590,7 @@ def _is_unreadable(file_info: dict) -> bool:
 
 
 # Languages the tree-sitter adapter extracts types and methods from
-_TREESITTER_LANGUAGES = frozenset({"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms", "sql"})
+_TREESITTER_LANGUAGES = frozenset({"python", "javascript", "typescript", "java", "csharp", "golang", "cobol", "jcl", "bms", "sql"})
 
 
 def _extract_llm_based(
@@ -2386,6 +2608,8 @@ def _extract_llm_based(
 
     Without an LLM (``llm_query_fn`` None) the parsers still run; files that only the LLM can read are skipped and counted.
     """
+    max_bytes = config.get_max_read_bytes(engine)
+    snippet_line_chars = config.get_max_snippet_line_chars(engine)
     nodes_created = 0
     edges_created = 0
     errors = []
@@ -2412,6 +2636,15 @@ def _extract_llm_based(
             return {"nodes_created": 0, "edges_created": 0, "errors": [f"Method params.languages must be a non-empty list of {sorted(_TREESITTER_LANGUAGES)}, got {languages!r}"]}
         matching_files = [f for f in classified_files if (f.get("subtype") or "").lower() in languages]
 
+    # A Go method's receiver type may sit in another file of its package (folder): the package's types by name
+    go_types: dict[str, dict[str, str]] = {}
+    if node_type == "Method" and any((f.get("subtype") or "").lower() == "golang" for f in matching_files):
+        rows = graph_manager.query("MATCH (t:Graph:TypeDefinition) WHERE t.repository_name = $repo_name RETURN t.typeName AS n, t.filePath AS p", {"repo_name": repo.name})
+        for row in rows:
+            path = str(row.get("p") or "").replace(chr(92), "/").removeprefix(f"{repo.name}/")
+            if path.endswith(".go") and row.get("n"):
+                go_types.setdefault(str(PurePosixPath(path).parent), {}).setdefault(str(row["n"]), path)
+
     if not matching_files:
         # Not an error - valid case when no files match input sources
         return {
@@ -2433,6 +2666,7 @@ def _extract_llm_based(
         "example": cfg.example or "",
         "input_sources": cfg.input_sources or "",
         "params": json.loads(cfg.params) if cfg.params else {},
+        "max_snippet_line_chars": snippet_line_chars,
     }
 
     # Wrap llm_query_fn with per-step temperature/max_tokens overrides
@@ -2456,6 +2690,10 @@ def _extract_llm_based(
         file_path = repo_path / file_info["path"]
 
         try:
+            skip = _skip_reason(file_path, repo_path, max_bytes)
+            if skip:
+                errors.append(f"Skipped {file_info['path']}: {skip} | repo={repo.name} | step={node_type}")
+                continue
             # Route document files to specialized reader
             if file_path.suffix.lower() in (".docx", ".pdf"):
                 content = read_document(file_path)
@@ -2494,9 +2732,10 @@ def _extract_llm_based(
         elif use_treesitter and is_treesitter_supported:
             # Use tree-sitter extraction for supported languages - faster and more precise
             if node_type == "TypeDefinition":
-                result = extraction.extract_types_from_source(file_info["path"], content, repo.name)
+                result = extraction.extract_types_from_source(file_info["path"], content, repo.name, max_line_chars=snippet_line_chars)
             else:  # Method
-                result = extraction.extract_methods_from_source(file_info["path"], content, repo.name)
+                package = go_types.get(str(PurePosixPath(file_info["path"].replace(chr(92), "/")).parent)) if file_subtype == "golang" else None
+                result = extraction.extract_methods_from_source(file_info["path"], content, repo.name, type_files=package)
             file_nodes = result["data"]["nodes"] if result["success"] else []
             file_edges = result["data"].get("edges", []) if result["success"] else []
             file_errors = result.get("errors", [])
@@ -2635,11 +2874,17 @@ def _code_names(graph_manager: GraphManager, repo_name: str) -> list[str]:
     return sorted({row["name"] for row in types + directories if row.get("name")})
 
 
-def _read_documents(repo_path: Path, files: list[dict], repo_name: str) -> tuple[list[dict[str, str]], list[str]]:
+def _read_documents(
+    repo_path: Path, files: list[dict], repo_name: str, max_bytes: int = config.LIMIT_DEFAULTS[config.MAX_READ_BYTES_SETTING]
+) -> tuple[list[dict[str, str]], list[str]]:
     """The text of every file in path order; empty files are left out, unreadable ones reported."""
     documents, errors = [], []
     for file_info in sorted(files, key=lambda f: f["path"]):
         file_path = repo_path / file_info["path"]
+        skip = _skip_reason(file_path, repo_path, max_bytes)
+        if skip:
+            errors.append(f"Skipped {file_info['path']}: {skip} | repo={repo_name} | step=BusinessConcept")
+            continue
         try:
             text = read_document(file_path) if file_path.suffix.lower() in (".docx", ".pdf") else read_file_with_encoding(file_path)
         except Exception as e:
@@ -2706,6 +2951,7 @@ def _extract_business_concepts(
     classified_files: list[dict],
     graph_manager: GraphManager,
     llm_query_fn: Callable,
+    max_bytes: int = config.LIMIT_DEFAULTS[config.MAX_READ_BYTES_SETTING],
 ) -> dict[str, Any]:
     """BusinessConcept step: structure decides the candidates, the LLM classifies them.
 
@@ -2732,7 +2978,7 @@ def _extract_business_concepts(
         return {"nodes_created": 0, "edges_created": 0, "errors": ["No input sources for BusinessConcept"]}
 
     files = [f for f in extraction.filter_files_by_input_sources(classified_files, input_sources) if not _is_unreadable(f)]
-    documents, errors = _read_documents(repo_path, files, repo.name)
+    documents, errors = _read_documents(repo_path, files, repo.name, max_bytes)
     if not documents:
         return {"nodes_created": 0, "edges_created": 0, "errors": errors, "warnings": [f"No documents for BusinessConcept in {repo.name}"]}
     # The system's own description for the classifier: the opening of the README at the repository root
@@ -2815,6 +3061,7 @@ def _extract_technologies(
     classified_files: list[dict],
     graph_manager: GraphManager,
     llm_query_fn: Callable,
+    max_bytes: int = config.LIMIT_DEFAULTS[config.MAX_READ_BYTES_SETTING],
 ) -> dict[str, Any]:
     """Technology step: structure decides the candidates, the LLM classifies them.
 
@@ -2836,12 +3083,30 @@ def _extract_technologies(
     for file_info in extraction.filter_files_by_input_sources(classified_files, input_sources):
         if _is_unreadable(file_info):
             continue
+        skip = _skip_reason(repo_path / file_info["path"], repo_path, max_bytes)
+        if skip:
+            errors.append(f"Skipped {file_info['path']}: {skip} | repo={repo.name} | step=Technology")
+            continue
         content = read_file_with_encoding(repo_path / file_info["path"])
         if content is None:
             errors.append(f"Could not read {repo_path / file_info['path']} | repo={repo.name} | step=Technology")
             continue
         files.append({**file_info, "content": content})
-    if not files:
+    use_imports = params.get("imported_libraries", False)
+    if not isinstance(use_imports, bool):
+        return {"nodes_created": 0, "edges_created": 0, "errors": [f"Technology params.imported_libraries must be true or false, got {use_imports!r}"]}
+    imported: dict[str, set[str]] = {}
+    if use_imports:
+        rows = graph_manager.query(
+            "MATCH (f:Graph:File)-[:`Graph:USES`]->(d:Graph:ExternalDependency) WHERE d.active = true AND d.repository_name = $repo_name "
+            "RETURN f.filePath AS path, d.dependencyName AS name",
+            {"repo_name": repo.name},
+        )
+        for row in rows:
+            if row.get("name") and row.get("path"):
+                # The node's path starts with the repository; declared files and their ids take the path inside it
+                imported.setdefault(str(row["name"]), set()).add(str(row["path"]).replace(chr(92), "/").removeprefix(f"{repo.name}/"))
+    if not files and not imported:
         return {"nodes_created": 0, "edges_created": 0, "errors": errors, "warnings": [f"No input files for Technology in {repo.name}"]}
 
     try:
@@ -2851,7 +3116,7 @@ def _extract_technologies(
     skip_name = params.get("skip_repository_name", False)
     if not isinstance(skip_name, bool):
         return {"nodes_created": 0, "edges_created": 0, "errors": [f"Technology params.skip_repository_name must be true or false, got {skip_name!r}"]}
-    collected = technology_candidates.collect(files, params["platforms"], own_units, repository_name=repo.name if skip_name else "")
+    collected = technology_candidates.collect(files, params["platforms"], own_units, repository_name=repo.name if skip_name else "", imported=imported)
     labels: dict[str, dict[str, str]] = {}
     issues = {"unmatched": 0, "duplicates": 0, "missing": 0}
     retries = {"calls": 0, "recovered": 0}
@@ -2870,6 +3135,9 @@ def _extract_technologies(
     rows = graph_manager.query("MATCH (t:Graph:Technology) WHERE t.repository_name = $repo_name RETURN t.id AS id, t.techName AS name", {"repo_name": repo.name})
     existing = {name_key(row["name"]): row["id"] for row in rows if row.get("name")}
     nodes, edges = technology_candidates.technology_nodes_and_edges(labels, collected, repo.name, float(params["confidence"]), existing)
+    # What each labelled image runs ("image=system", empty for none), on the repository: the Deployment step names its software by it
+    images = technology_candidates.image_labels(labels, collected)
+    graph_manager.update_node_property(f"repo::{repo.name}", "imageLabels", [f"{image}={system}" for image, system in sorted(images.items())])
     for node_data in nodes:
         graph_manager.add_node(_create_node_from_data("Technology", node_data, repo.name, node_data["method"]), node_id=node_data["node_id"])
     edge_ids: list[str] = []
@@ -3086,6 +3354,7 @@ def _create_node_from_data(node_type: str, node_data: dict, repo_name: str, extr
             origin_source=props.get("origin_source", props.get("source_file")),
             confidence=props.get("confidence", 0.8),
             extraction_method=extraction_method,
+            indirect=props.get("indirect"),
         )
     elif node_type == "Test":
         return TestNode(
@@ -3142,6 +3411,7 @@ def run_extraction_iter(
         "steps_skipped": 0,
     }
     errors: list[str] = []
+    warnings: list[str] = []
 
     # Get repositories
     repo_mgr = RepoManager()
@@ -3191,9 +3461,13 @@ def run_extraction_iter(
 
         # Get all files for classification (outside excluded dependency directories)
         file_paths = list_repo_files(repo_path, config.get_excluded_directories(engine))
+        missing = missing_checkout(repo, repo_path, file_paths)
+        if missing:
+            errors.append(missing)
+            continue
 
         # Classify files
-        classification_result = classification.classify_files(file_paths, registry_list)
+        classification_result = classification.classify_files(file_paths, registry_list, model_files(repo_path, file_paths))
         classified_files = classification_result["classified"]
         undefined_files = classification_result["undefined"]
 
@@ -3220,6 +3494,7 @@ def run_extraction_iter(
                 if result.get("skipped"):
                     # An LLM-only step without an LLM did not run: a warning, not an error
                     stats["steps_skipped"] += 1
+                    warnings.append(result["skipped"])
                     yield ProgressUpdate(
                         phase="extraction",
                         step=node_type,
@@ -3248,8 +3523,12 @@ def run_extraction_iter(
                 )
 
                 for err in result.get("errors", []):
-                    if "LLM required" not in err and "No input sources" not in err:
+                    if "LLM required" in err or "No input sources" in err:
+                        warnings.append(err)
+                    else:
                         errors.append(err)
+                # The step's own warnings (a switch it could not apply, inputs it found none of)
+                warnings.extend(f"[Extraction - {node_type}] {w}" for w in result.get("warnings", []))
 
             except Exception as e:
                 error_msg = f"Error in {node_type}: {e!s}"
@@ -3282,5 +3561,6 @@ def run_extraction_iter(
             "success": len(errors) == 0,
             "stats": stats,
             "errors": errors,
+            "warnings": warnings,
         },
     )

@@ -4,22 +4,36 @@ The intermediate ontology lists every node type of the graph metamodel in its gr
 code, business, deployment) with what the graph holds of it, the extraction steps that wrote its
 nodes and the derivation steps whose candidate query reads it; the edge types and the types they
 connect are read from the graph itself. The output ontology is ArchiMate as Deriva
-derives it: the 13 element types per layer with their derivation step, the relationship
-types with their counts in the model, and the allowed relationships per pair of types
-(direct or derived) from the ArchiMate 3.2 table.
+derives it: the element types per layer and aspect with the derivation steps that make them
+(what the studio selects the derived part of the metamodel with), the relationship types with
+their counts in the model, and the allowed relationships per pair of types (direct or derived)
+from the ArchiMate 3.2 table.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from typing import Any
 
-from deriva.adapters.archimate.models import DERIVABLE_RELATIONSHIP_TYPES, RELATIONSHIP_TABLE, layer_of, relationship_tier
+from deriva.adapters.archimate.models import DERIVABLE_RELATIONSHIP_TYPES, ELEMENT_TYPES, RELATIONSHIP_TABLE, layer_of, relationship_tier
+from deriva.adapters.database import DATA_DIR
 from deriva.adapters.graph.metamodel import GROUP_ORDER, get_all_node_classes, get_node_properties, node_description, node_group
 
 NAMESPACES = ("Graph", "Model")
 SAMPLE_TEXT = 200
+# Steps that make elements of a type besides the type's own step: a type's switch covers them too
+TYPE_EXTRA_STEPS = {"BusinessActor": ("DocumentationActors",), "ApplicationComponent": ("ApplicationGrouping",), "BusinessFunction": ("BusinessFunctionModel",)}
+# The types whose elements another type's are built on: with one of these off, the type comes out empty or partly so
+TYPE_NEEDS = {
+    "ApplicationInterface": ("ApplicationComponent",),
+    "ApplicationFunction": ("ApplicationComponent",),
+    "ApplicationService": ("ApplicationComponent", "ApplicationInterface"),
+    "Artifact": ("ApplicationComponent",),
+    "BusinessActor": ("ApplicationComponent", "ApplicationService"),  # Its Serving link at the enterprise level
+    "BusinessObject": ("DataObject",),  # Its Access link at the enterprise level
+}
 
 
 def _short(value: Any) -> Any:
@@ -84,16 +98,34 @@ def intermediate_ontology(session: Any) -> dict[str, Any]:
     return {"groups": list(GROUP_ORDER), "node_types": node_types, "edge_types": edge_types, "other_steps": other_steps}
 
 
+def _shipped_steps() -> set[str]:
+    """The derivation steps the release switches on: a layer switched back on gets these, not every step it has."""
+    rows = json.loads((DATA_DIR / "derivation_config.json").read_text(encoding="utf-8"))
+    return {row["step_name"] for row in rows if row.get("enabled")}
+
+
 def output_ontology(session: Any) -> dict[str, Any]:
-    """Element types per layer (count, derivation step), relationship types (count) and the allowed relationships per pair of types."""
+    """Element types per layer and aspect (count, the steps that make them, the types they need), relationship types
+    (count) and the allowed relationships per pair of types."""
     counts = session.get_archimate_stats().get("by_type", {})
-    versions = session.get_config_versions().get("derivation", {})
+    # A step switched off keeps its version
+    versions = session.get_config_versions(include_disabled=True).get("derivation", {})
     steps = {c["element_type"]: c for c in session.get_derivation_configs()}
+    shipped = _shipped_steps()
     element_types = []
     for name in sorted({source for source, _ in RELATIONSHIP_TABLE}):
         step = steps.get(name)
+        makers = [n for n in (name, *TYPE_EXTRA_STEPS.get(name, ())) if n in steps]
         element_types.append(
-            {"name": name, "layer": layer_of(name), "count": counts.get(name, 0), "step": {"enabled": step["enabled"], "version": versions.get(name)} if step else None}
+            {
+                "name": name,
+                "layer": layer_of(name),
+                "aspect": ELEMENT_TYPES[name].aspect,
+                "count": counts.get(name, 0),
+                "step": {"enabled": step["enabled"], "version": versions.get(name)} if step else None,
+                "steps": [{"name": n, "enabled": steps[n]["enabled"], "version": versions.get(n), "shipped": n in shipped} for n in makers],
+                "needs": list(TYPE_NEEDS.get(name, ())),
+            }
         )
     relationship_counts = Counter(r.get("relationship_type") for r in session.get_archimate_relationships())
     rules = []

@@ -177,7 +177,7 @@ class TestComputeTypeBreakdown:
 
     def test_phase_attribute(self):
         """Should set correct phase attribute."""
-        objects_by_run = {"run1": {"ac_x"}}
+        objects_by_run = {"run1": {"ac_x"}, "run2": {"ac_x"}}
         result = compute_type_breakdown(objects_by_run, extract_element_type, "extraction")
         assert result[0].phase == "extraction"
 
@@ -329,8 +329,8 @@ class TestAggregateStabilityMetrics:
         """Should handle empty input gracefully."""
         result = aggregate_stability_metrics({})
 
-        assert result["avg_extraction_consistency"] == 0.0
-        assert result["avg_derivation_consistency"] == 0.0
+        assert result["avg_extraction_consistency"] is None
+        assert result["avg_derivation_consistency"] is None
         assert result["best_element_types"] == []
         assert result["worst_element_types"] == []
 
@@ -463,7 +463,7 @@ class TestAnswerStability:
     def test_counts_prompts_answered_identically_in_every_run(self):
         from deriva.modules.analysis import compute_answer_stability
 
-        runs = {
+        runs: dict[str, dict[tuple[str, str], list[str | None]]] = {
             "r1": {("Naming", "k1"): ["a"], ("Naming", "k2"): ["b"], ("Concepts", "k3"): ["c"]},
             "r2": {("Naming", "k1"): ["a"], ("Naming", "k2"): ["x"], ("Concepts", "k3"): ["c"]},
             "r3": {("Naming", "k1"): ["a"], ("Naming", "k2"): ["b"], ("Concepts", "k3"): ["c"], ("Concepts", "k4"): ["d"]},
@@ -477,7 +477,7 @@ class TestAnswerStability:
     def test_repeated_prompts_compare_as_multisets(self):
         from deriva.modules.analysis import compute_answer_stability
 
-        runs = {"r1": {("S", "k"): ["a", "b"]}, "r2": {("S", "k"): ["b", "a"]}}
+        runs: dict[str, dict[tuple[str, str], list[str | None]]] = {"r1": {("S", "k"): ["a", "b"]}, "r2": {("S", "k"): ["b", "a"]}}
 
         (stability,) = compute_answer_stability(runs)
 
@@ -618,12 +618,12 @@ class TestStepOutputConsistency:
         assert (result.groups["Concept"].present, result.groups["Concept"].total) == (1, 1)
         assert (result.groups["Edge"].present, result.groups["Edge"].total) == (0, 1)
 
-    def test_no_output_in_any_run_is_consistent(self):
+    def test_no_output_in_any_run_is_not_measured(self):
         from deriva.modules.analysis import compare_step_outputs
 
         result = compare_step_outputs([{}, {}, {}])
 
-        assert (result.presence_score, result.exact_score, result.counts) == (1.0, 1.0, [0, 0, 0])
+        assert (result.presence_score, result.exact_score, result.counts) == (None, None, [0, 0, 0])
 
     def test_to_dict_carries_scores_and_groups(self):
         from deriva.modules.analysis import compare_step_outputs
@@ -656,4 +656,19 @@ class TestDecisionStability:
     def test_no_items(self):
         from deriva.modules.analysis import decision_stability
 
-        assert decision_stability([{}, {}]).score == 1.0
+        assert decision_stability([{}, {}]).score is None
+
+
+def test_one_run_compares_with_nothing_in_every_measure():
+    """Fewer than two runs is nothing to compare: each measure is n/a (None), not 100%, so a one-run benchmark can
+    pass no consistency budget."""
+    from deriva.modules.analysis.deviation import compute_deviation_stats
+    from deriva.modules.analysis.run_consistency import _score
+    from deriva.modules.analysis.stability_analysis import compare_step_outputs, decision_stability
+
+    one = {("File", "a"): {"name": "a"}}
+    assert _score([{"a", "b"}]) == (2, 2, None)
+    assert compute_deviation_stats("Step", "derivation", {"run1": {"a", "b"}}).consistency_score is None
+    assert (compare_step_outputs([one]).presence_score, compare_step_outputs([one]).exact_score) == (None, None)
+    assert decision_stability([{"a": "x"}]).score is None
+    assert compute_type_breakdown({"run1": {"ac_x"}}, extract_element_type, "derivation") == []

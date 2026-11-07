@@ -45,8 +45,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from deriva.adapters.archimate import ArchimateManager
-from deriva.adapters.archimate.models import Element, Relationship, validate_relationship_rule
+from deriva.adapters.archimate.models import ELEMENT_TYPES, Element, Relationship, relationship_tier, validate_relationship_rule
 from deriva.common.naming import name_key
+from deriva.common.ocel import create_edge_id
 from deriva.common.paths import workspace
 from deriva.common.types import PipelineResult, ProgressUpdate
 
@@ -84,6 +85,7 @@ from deriva.modules.derivation.base import (
     NestedFilter,
     PerCandidateConfig,
     RelationshipLLMConfig,
+    RelationshipRule,
     RoleConfig,
     SameNameRule,
     UnitFilter,
@@ -95,6 +97,7 @@ from deriva.modules.derivation.base import (
     file_imports,
     get_enrichments_from_graph,
     graph_link_pairs,
+    repository_in_identifiers,
     source_concept_names,
     unit_scopes,
 )
@@ -107,9 +110,10 @@ from deriva.modules.derivation.business_object import BusinessObjectDerivation
 from deriva.modules.derivation.business_process import BusinessProcessDerivation
 from deriva.modules.derivation.business_role import BusinessRoleDerivation
 from deriva.modules.derivation.component_services import ComponentServicesConfig, derive_component_services, derive_member_services, derive_unit_services
+from deriva.modules.derivation.core_type import core_type_class
 from deriva.modules.derivation.data_object import DataObjectDerivation
 from deriva.modules.derivation.device import DeviceDerivation
-from deriva.modules.derivation.documentation_actors import actor_schema, build_actor_prompt, parse_actors, verified_candidates
+from deriva.modules.derivation.documentation_actors import actor_evidence, actor_schema, build_actor_prompt, parse_actors, verified_candidates
 from deriva.modules.derivation.element_base import ElementDerivationBase
 from deriva.modules.derivation.function_model import (
     EvidenceRules,
@@ -181,6 +185,23 @@ DERIVATION_REGISTRY: dict[str, type[ElementDerivationBase]] = {
     "Device": DeviceDerivation,
     "SystemSoftware": SystemSoftwareDerivation,
 }
+
+# Experimental core types: every element type of the metamodel without a step of its own gets the generic step (off
+# by default in its config row), related through the direct relationships the metamodel draws for it
+EXPERIMENTAL_TYPES: tuple[str, ...] = tuple(t for t in ELEMENT_TYPES if t not in DERIVATION_REGISTRY)
+CORE_RELATIONSHIPS = ("Composition", "Aggregation", "Assignment", "Realization", "Serving", "Access", "Triggering", "Flow")
+
+
+def _metamodel_rules(element_type: str) -> tuple[list[RelationshipRule], list[RelationshipRule]]:
+    """The direct relationships of the metamodel from and to ``element_type``, in table order."""
+    outbound = [RelationshipRule(other, rel) for other in ELEMENT_TYPES for rel in CORE_RELATIONSHIPS if relationship_tier(element_type, rel, other) == "direct"]
+    others = [other for other in ELEMENT_TYPES if other != element_type]
+    inbound = [RelationshipRule(other, rel) for other in others for rel in CORE_RELATIONSHIPS if relationship_tier(other, rel, element_type) == "direct"]
+    return outbound, inbound
+
+
+for _type in EXPERIMENTAL_TYPES:
+    DERIVATION_REGISTRY[_type] = core_type_class(_type, *_metamodel_rules(_type))
 
 # Instance cache for reuse
 _DERIVATION_INSTANCES: dict[str, ElementDerivationBase] = {}
@@ -465,6 +486,9 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
     business_functions = settings.get("business_functions", defaults.business_functions)
     if not isinstance(business_functions, bool):
         raise ValueError(f"params.component_services.business_functions must be true or false, got {business_functions!r}")
+    verb_choice = settings.get("verb_choice", defaults.verb_choice)
+    if not isinstance(verb_choice, bool):
+        raise ValueError(f"params.component_services.verb_choice must be true or false, got {verb_choice!r}")
     return ComponentServicesConfig(
         **whole,
         **{k: tuple(v) for k, v in words.items()},
@@ -483,6 +507,7 @@ def _component_services_config(params: str | None) -> ComponentServicesConfig | 
         object_links=tuple(settings.get("object_links", [])),
         business_functions=business_functions,
         service_verbs=tuple((role, verb) for role, verb in verbs),
+        verb_choice=verb_choice,
     )
 
 
@@ -845,14 +870,27 @@ def _application_grouping_config(params: str | None) -> dict[str, Any] | None:
         not isinstance(settings, dict)
         or not all(isinstance(w, str) for w in settings.get("kind_words", []))
         or not isinstance(intro, int)
+        or isinstance(intro, bool)
         or intro < 0
         or title not in ("all", "first", "marked")
+        or settings.get("without_documentation", "ask") not in ("ask", "title")
     ):
         raise ValueError(
             "params.application_grouping is an object with kind_words (words dropped from a component's name), intro_chars (the root README's"
-            " introduction shown, in characters) and title (all, first or marked: the title's parts offered, only its first, or all with the first marked)"
+            " introduction shown, in characters), title (all, first or marked: the title's parts offered, only its first, or all with the first marked)"
+            " and without_documentation (ask or title: with no introduction and no component title, ask the LLM or put every component under the title)"
         )
     return settings
+
+
+def _by_repository(identifiers: list[str], sources: dict[str, str]) -> list[tuple[str, list[str]]]:
+    """Element ids per repository (the second part of each source, ``unit::<repository>::<path>``), by repository: a
+    joint run's graph holds several, and each is decided on its own."""
+    groups: dict[str, list[str]] = {}
+    for identifier in identifiers:
+        source = sources.get(identifier, "")
+        groups.setdefault(source.split("::")[1] if source.count("::") >= 2 else "", []).append(identifier)
+    return sorted(groups.items())
 
 
 def _application_grouping_step(
@@ -860,40 +898,49 @@ def _application_grouping_step(
 ) -> dict[str, Any]:
     """Group the top-level components into the applications the documentation names: structure decides where it can (a
     system component is the anchor, a single top-level component its own application), else one closed LLM choice per
-    repository; the result has the shape of ``generate_element``'s, with the choice per component (``grouping_decisions``)."""
+    repository (a joint run decides each repository on its own); the result has the shape of ``generate_element``'s,
+    with the choice per component (``grouping_decisions``)."""
     stored = archimate_manager.get_elements()
     by_id = {e.identifier: e for e in stored}
-    components, sources, units_at, built_by = component_hierarchy(stored, graph_manager)
-    parents = component_parents(components, units_at, built_by)
-    top = sorted((c for c in components if parents[c.identifier] is None and c.kind in ("unit", "module")), key=lambda c: c.identifier)
-    empty = _stored_services([], archimate_manager) | {"grouping_decisions": {}}
-    if any(c.kind in ("system", "application") for c in components) or len(top) < 2:
-        return empty
-    repo = sources[top[0].identifier].split("::")[1]
-    documents = _documentation_files(graph_manager)
-    kind_words = tuple(settings.get("kind_words", []))
-    own = {c.identifier: own_name(by_id[c.identifier].name, kind_words) for c in top}
-    parts = title_parts(documents, repo)
-    titles = grouping_candidates(parts[:1] if settings.get("title") == "first" else parts, [])
-    candidates = grouping_candidates(titles, [own[c.identifier] for c in top])
-    shown = [{"key": c.identifier, "name": by_id[c.identifier].name, "folder": c.folder, "title": " - ".join(title_parts(documents, c.folder))} for c in top]
-    intro = introduction(documents, repo, int(settings.get("intro_chars", 0)))
-    prompt = build_grouping_prompt(instruction, shown, candidates, intro, len(titles), mark_name=settings.get("title") == "marked")
-    content, error = extract_response_content(llm_query_fn(prompt, grouping_schema([c.identifier for c in top], candidates)))
-    assignment = parse_grouping("" if error else content, own, candidates)
-    created = []
-    for name, keys in applications(assignment):
-        identity = f"{APPLICATION_PREFIX}{repo}::{name_key(name)}"
-        created.append(
-            {
-                "identifier": element_identifier("ApplicationComponent", identity),
-                "name": name,
-                "element_type": "ApplicationComponent",
-                "documentation": "",
-                "properties": {"source": identity, "sources": sorted(sources[k] for k in keys), "candidates": candidates, "structure_name": name},
-            }
-        )
-    return _stored_services(created, archimate_manager) | {"grouping_decisions": assignment}
+    every, sources, units_at, built_by = component_hierarchy(stored, graph_manager)
+    parents = component_parents(every, units_at, built_by)
+    created: list[dict[str, Any]] = []
+    decisions: dict[str, str] = {}
+    documents: dict[str, str] | None = None
+    of = {c.identifier: c for c in every}
+    for repo, members in _by_repository([c.identifier for c in every], sources):
+        components = [of[m] for m in members]
+        top = sorted((c for c in components if parents[c.identifier] is None and c.kind in ("unit", "module")), key=lambda c: c.identifier)
+        if any(c.kind in ("system", "application") for c in components) or len(top) < 2:
+            continue
+        documents = _documentation_files(graph_manager) if documents is None else documents
+        kind_words = tuple(settings.get("kind_words", []))
+        own = {c.identifier: own_name(by_id[c.identifier].name, kind_words) for c in top}
+        parts = title_parts(documents, repo)
+        titles = grouping_candidates(parts[:1] if settings.get("title") == "first" else parts, [])
+        candidates = grouping_candidates(titles, [own[c.identifier] for c in top])
+        shown = [{"key": c.identifier, "name": by_id[c.identifier].name, "folder": c.folder, "title": " - ".join(title_parts(documents, c.folder))} for c in top]
+        intro = introduction(documents, repo, int(settings.get("intro_chars", 0)))
+        if settings.get("without_documentation") == "title" and not intro and not any(s["title"] for s in shown):
+            # No documentation to judge from: structure decides, every component belongs to the application its title names
+            assignment = {c.identifier: titles[0] if titles else own[c.identifier] for c in top}
+        else:
+            prompt = build_grouping_prompt(instruction, shown, candidates, intro, len(titles), mark_name=settings.get("title") == "marked")
+            content, error = extract_response_content(llm_query_fn(prompt, grouping_schema([c.identifier for c in top], candidates)))
+            assignment = parse_grouping("" if error else content, own, candidates)
+        decisions |= assignment
+        for name, keys in applications(assignment):
+            identity = f"{APPLICATION_PREFIX}{repo}::{name_key(name)}"
+            created.append(
+                {
+                    "identifier": element_identifier("ApplicationComponent", identity),
+                    "name": name,
+                    "element_type": "ApplicationComponent",
+                    "documentation": "",
+                    "properties": {"source": identity, "sources": sorted(sources[k] for k in keys), "candidates": candidates, "structure_name": name},
+                }
+            )
+    return _stored_services(created, archimate_manager) | {"grouping_decisions": decisions}
 
 
 def _documentation_actors_config(params: str | None) -> dict[str, Any] | None:
@@ -901,9 +948,17 @@ def _documentation_actors_config(params: str | None) -> dict[str, Any] | None:
     settings = json.loads(params).get("documentation_actors") if isinstance(params, str) and params else None
     if settings is None:
         return None
-    intro = settings.get("intro_chars", 0) if isinstance(settings, dict) else None
-    if not isinstance(settings, dict) or not isinstance(intro, int) or intro < 0 or not all(isinstance(w, str) for w in settings.get("kind_words", [])):
-        raise ValueError("params.documentation_actors is an object with kind_words and intro_chars (the root README's introduction shown, in characters)")
+    counts = [settings.get(key, 0) for key in ("intro_chars", "evidence_chars")] if isinstance(settings, dict) else []
+    words = [settings.get(key, []) for key in ("kind_words", "generic_actors")] if isinstance(settings, dict) else []
+    if (
+        not isinstance(settings, dict)
+        or not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in counts)
+        or not all(isinstance(w, list) and all(isinstance(x, str) for x in w) for w in words)
+    ):
+        raise ValueError(
+            "params.documentation_actors is an object with kind_words, intro_chars (the root README's introduction shown, in characters), "
+            "evidence_chars (the sentence shown per candidate, in characters; 0 shows none) and generic_actors (words for people that are no actor)"
+        )
     return settings
 
 
@@ -926,6 +981,7 @@ def _documentation_actors_step(
     if not top:
         return empty
     kind_words = tuple(settings.get("kind_words", []))
+    generic = {name_key(w) for w in settings.get("generic_actors", [])}
 
     def descendants(root: str) -> list[str]:
         out, frontier = [root], [root]
@@ -946,15 +1002,26 @@ def _documentation_actors_step(
         if r.get("id") and r.get("name")
     }
     documents = _documentation_files(graph_manager)
-    verified = verified_candidates(documents, words, concepts)
-    if not verified:
+    chosen: dict[str, list[str]] = {}
+    # A joint run's graph holds several repositories: each chooses from its own documentation and concepts
+    # (paths and concept ids carry the repository, so a graph of one repository keeps all of them)
+    for repo, apps in _by_repository(top, sources):
+        scoped = {p: t for p, t in documents.items() if p.startswith(f"{repo}/")}
+        # A generic word for people (generic_actors, by name key) is no candidate: the LLM never sees it
+        known = {c: n for c, n in concepts.items() if c.split("::")[1:2] == [repo] and name_key(n) not in generic}
+        verified = verified_candidates(scoped, {app: words[app] for app in apps}, known)
+        if not verified:
+            continue
+        candidates = {app: sorted({known[c] for c in ids}) for app, ids in verified.items()}
+        shown = [{"key": app, "name": by_id[app].name, "units": sorted(folders[u] for u in units[app] if folders.get(u))} for app in sorted(candidates)]
+        # The sentence that names each candidate with its application, so the choice rests on the documentation
+        chars = int(settings.get("evidence_chars", 0))
+        evidence = actor_evidence(scoped, {app: words[app] for app in apps}, known, verified, chars) if chars else {}
+        prompt = build_actor_prompt(instruction, shown, candidates, introduction(scoped, repo, int(settings.get("intro_chars", 0))), evidence)
+        content, error = extract_response_content(llm_query_fn(prompt, actor_schema(candidates)))
+        chosen |= parse_actors("" if error else content, candidates)
+    if not chosen:
         return empty
-    candidates = {app: sorted({concepts[c] for c in ids}) for app, ids in verified.items()}
-    shown = [{"key": app, "name": by_id[app].name, "units": sorted(folders[u] for u in units[app] if folders.get(u))} for app in sorted(candidates)]
-    repo = next((s.split("::")[1] for s in sources.values() if s.count("::") >= 2), "")
-    prompt = build_actor_prompt(instruction, shown, candidates, introduction(documents, repo, int(settings.get("intro_chars", 0))))
-    content, error = extract_response_content(llm_query_fn(prompt, actor_schema(candidates)))
-    chosen = parse_actors("" if error else content, candidates)
 
     # One element per concept: an actor or role of the same name the model holds already is that element
     existing = {name_key(e.name): e for e in stored if e.element_type in ("BusinessActor", "BusinessRole")}
@@ -1046,7 +1113,7 @@ def _per_candidate_config(params: str | None) -> PerCandidateConfig | None:
     return PerCandidateConfig(min_pool=int(settings["min_pool"]), rules=settings["rules"], persona=settings["persona"], decorators=decorators)
 
 
-def _naming_config(params: str | None) -> NamingConfig | None:
+def _naming_config(params: str | None, samples: int | None = None) -> NamingConfig | None:
     """Read the isolated naming step from an element config's params.
 
     ``{"naming": {"instruction": "...", "samples": 1}}`` switches it on; without
@@ -1078,7 +1145,8 @@ def _naming_config(params: str | None) -> NamingConfig | None:
         raise ValueError("params.naming.source_order lists name sources in rank order (strings)")
     return NamingConfig(
         instruction=settings["instruction"],
-        samples=int(settings.get("samples", 1)),
+        # The llm_samples setting replaces the step's own samples while set
+        samples=samples if samples is not None else int(settings.get("samples", 1)),
         choose_instruction=choose,
         guards=NameGuards(generic_words=frozenset(w.lower() for w in words), kind_nouns=dict(nouns), reserved_labels=tuple(labels)),
         source_order=tuple(source_order),
@@ -1163,7 +1231,29 @@ def _role_config(params: str | None) -> RoleConfig | None:
     one_per_unit = settings.get("one_per_unit", False)
     if not isinstance(one_per_unit, bool) or (one_per_unit and element_per != "unit"):
         raise ValueError(f"params.roles.one_per_unit (true or false) merges a unit's roles into one element: it needs element_per 'unit', got {one_per_unit!r}")
+    registrations = _registrations(settings, element_per)
+    subject_as_written = settings.get("subject_as_written", [])
+    if not isinstance(subject_as_written, list) or not all(isinstance(label, str) and label for label in subject_as_written):
+        raise ValueError(f"params.roles.subject_as_written is a list of graph labels, got {subject_as_written!r}")
+    repeat_template = settings.get("repeat_template", "")
+    if subject_as_written and (element_per != "candidate" or not any("{subject}" in str(t) for t in (name_template, repeat_template))):
+        raise ValueError("params.roles.subject_as_written names how {subject} is filled: it needs element_per 'candidate' and {subject} in the name_template or repeat_template")
+    if not isinstance(repeat_template, str) or (
+        repeat_template
+        and (
+            element_per != "candidate"
+            or not name_template
+            or not any(p in repeat_template for p in ("{subject}", "{container}"))
+            or not _template_fields_known(repeat_template, {"container", "subject", "role"})
+        )
+    ):
+        raise ValueError(
+            "params.roles.repeat_template names candidates whose names would repeat: it needs element_per 'candidate', a name_template "
+            f"and {{subject}} or {{container}} in it, got {repeat_template!r}"
+        )
     return RoleConfig(
+        repeat_template=repeat_template,
+        subject_as_written=frozenset(subject_as_written),
         one_per_unit=one_per_unit,
         name_priority=tuple(name_priority),
         unit_roles=tuple((rule["property"], rule["role"]) for rule in unit_roles),
@@ -1179,7 +1269,53 @@ def _role_config(params: str | None) -> RoleConfig | None:
         show_path=show_path,
         naming_call=naming_call,
         structural_as_written=structural_as_written,
+        registration_role=registrations[0],
+        registrations=registrations[1],
+        excluded_services=registrations[2],
     )
+
+
+def _template_fields_known(template: str, known: set[str]) -> bool:
+    """Whether a name template is well formed and fills only ``known`` fields (``{role} ({subject})``), tried as the
+    names are made: another field would fail then, after the step has run."""
+    try:
+        template.format(**dict.fromkeys(known, ""))
+    except KeyError, IndexError, ValueError, AttributeError:
+        return False
+    return True
+
+
+def _registrations(settings: dict[str, Any], element_per: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """The role, call patterns and technical services of ``params.roles.registrations`` (empty without the key).
+
+    ``{"role": key, "patterns": ["...(?P<service>...)..."], "excluded_services": ["..."]}``: a unit's source file
+    that calls a registration takes the role without a call (element_per "unit" only).
+    """
+    rule = settings.get("registrations")
+    if rule is None:
+        return "", (), ()
+    role = rule.get("role") if isinstance(rule, dict) else None
+    patterns = rule.get("patterns") if isinstance(rule, dict) else None
+    excluded = rule.get("excluded_services", []) if isinstance(rule, dict) else None
+    if element_per != "unit" or role not in settings["names"] or not isinstance(patterns, list) or not patterns or not isinstance(excluded, list):
+        raise ValueError(f"params.roles.registrations needs element_per 'unit', a role key of names and a list of patterns, got {rule!r}")
+    for pattern in [*patterns, *excluded]:
+        try:
+            compiled = re.compile(pattern) if isinstance(pattern, str) else None
+        except re.error as exc:
+            raise ValueError(f"params.roles.registrations pattern {pattern!r} is no valid pattern: {exc}") from exc
+        if compiled is None:
+            raise ValueError(f"params.roles.registrations patterns are text, got {pattern!r}")
+        if pattern in patterns and "service" not in compiled.groupindex:
+            raise ValueError(f"params.roles.registrations pattern {pattern!r} needs a (?P<service>...) group: the service it registers")
+    return str(role), tuple(patterns), tuple(excluded)
+
+
+def _source_reader(engine: Any) -> Callable[[str], str | None]:
+    """Reads a repository file's text from the checkout by its graph path (``_checkout_text`` with max_read_bytes);
+    None for a missing or empty file, one larger than max_read_bytes or a link that leads out of the checkout."""
+    max_bytes = config.get_max_read_bytes(engine)
+    return lambda path: _checkout_text(path.replace(chr(92), "/"), max_bytes) or None
 
 
 def _skip_when_directory_is(params: str | None) -> frozenset[str] | None:
@@ -1406,6 +1542,7 @@ def generate_element(
             skip_nested=skip_nested,
             deployable_units=deployable_units,
             on_candidates=on_candidates,
+            source_text=_source_reader(engine) if roles is not None and roles.registrations else None,
         )
         return {
             "success": result.success,
@@ -1611,12 +1748,68 @@ def _run_prep_step(
 # =============================================================================
 
 
+def _refine_message(result: Any) -> str:
+    """What a refine step changed, after what it only flagged: a check that changes nothing says so (its findings are a
+    report, no fault)."""
+    plural = {1: "relationship"}
+    changes = [
+        f"{n} {what}"
+        for n, what in (
+            (result.elements_disabled, "disabled"),
+            (result.elements_merged, "merged"),
+            (result.relationships_created, f"{plural.get(result.relationships_created, 'relationships')} created"),
+            (result.relationships_deleted, f"{plural.get(result.relationships_deleted, 'relationships')} deleted"),
+        )
+        if n
+    ]
+    if not changes:
+        return f"Refine: {result.issues_found} flagged, nothing changed" if result.issues_found else "Refine: nothing to change"
+    flagged = [f"{result.issues_found} flagged"] if result.issues_found else []
+    return "Refine: " + ", ".join([*flagged, *changes])
+
+
 def _model_totals(archimate_manager: ArchimateManager) -> str:
     """The closing summary: what the model holds, counted as the studio's model stats count it. The step counters
     miss what refine steps add and delete (graph relationships, duplicates), so they stay in ``stats`` only."""
     return f"{len(archimate_manager.get_elements())} elements, {len(archimate_manager.get_relationships())} relationships in the model"
 
 
+def combined_run(graph_manager: Any) -> bool:
+    """Whether the graph holds several repositories (a combined run): its element identifiers keep the repository."""
+    try:
+        rows = graph_manager.query("MATCH (r:Graph:Repository) RETURN count(r) AS n")
+        return bool(rows) and int(rows[0].get("n") or 0) > 1
+    except Exception:  # no graph to ask (tests, a closed connection): the identifiers of one repository
+        return False
+
+
+def _graph_of(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+    return kwargs.get("graph_manager", args[1] if len(args) > 1 else None)
+
+
+def _identifier_scope[**P, R](run: Callable[P, R]) -> Callable[P, R]:
+    """Run a derivation with the element identifiers of its graph: with the repository in a combined run."""
+
+    @functools.wraps(run)
+    def scoped(*args: P.args, **kwargs: P.kwargs) -> R:
+        with repository_in_identifiers(combined_run(_graph_of(args, kwargs))):
+            return run(*args, **kwargs)
+
+    return scoped
+
+
+def _identifier_scope_iter[**P, U](run: Callable[P, Iterator[U]]) -> Callable[P, Iterator[U]]:
+    """``_identifier_scope`` for a derivation that yields its progress: the scope lasts until the last update."""
+
+    @functools.wraps(run)
+    def scoped(*args: P.args, **kwargs: P.kwargs) -> Iterator[U]:
+        with repository_in_identifiers(combined_run(_graph_of(args, kwargs))):
+            yield from run(*args, **kwargs)
+
+    return scoped
+
+
+@_identifier_scope
 def run_derivation(
     engine: Any,
     graph_manager: GraphManager,
@@ -1787,7 +1980,7 @@ def run_derivation(
                 step_ctx = run_logger.step_start(cfg.step_name, f"Generating {cfg.element_type} elements")
 
             # Wrap llm_query_fn with per-step temperature/max_tokens overrides
-            def step_llm_query_fn(prompt: str, schema: dict) -> Any:
+            def step_llm_query_fn(prompt: str, schema: dict, sample: int | None = None) -> Any:
                 if llm_query_fn is None:
                     raise ValueError("llm_query_fn is required for generate phase")
                 return llm_query_fn(
@@ -1795,6 +1988,7 @@ def run_derivation(
                     schema,
                     temperature=cfg.temperature,
                     max_tokens=cfg.max_tokens,
+                    **({"sample": sample} if sample is not None else {}),
                 )
 
             # Validate required config parameters (a function model step reads no candidates: only its instruction)
@@ -1860,7 +2054,7 @@ def run_derivation(
                         relationship_config=relationship_config(),
                         name_match_skip=_name_match_skip(relationship_configs),
                         per_candidate=_per_candidate_config(cfg.params),
-                        naming=_naming_config(cfg.params),
+                        naming=_naming_config(cfg.params, config.get_llm_samples(engine)),
                         pattern_labels=_pattern_labels(cfg.params),
                         roles=_role_config(cfg.params),
                         skip_when_directory_is=_skip_when_directory_is(cfg.params),
@@ -1891,9 +2085,7 @@ def run_derivation(
                 step_created_relationships = step_result.get("created_relationships", [])
                 if step_ctx and step_created_relationships:
                     for rel_data in step_created_relationships:
-                        # Build deterministic relationship ID: {Type}_{Source}_{Target}
-                        rel_id = f"{rel_data['relationship_type']}_{rel_data['source']}_{rel_data['target']}"
-                        step_ctx.add_relationship(rel_id)
+                        step_ctx.add_relationship(create_edge_id(rel_data["source"], rel_data["relationship_type"], rel_data["target"]))
 
                 # Complete step logging
                 if step_ctx:
@@ -2010,7 +2202,7 @@ def run_derivation(
                 progress.complete_step(f"{rel_count} relationships")
             if rel_ctx:
                 for rel_data in relationships:
-                    rel_ctx.add_relationship(f"{rel_data['relationship_type']}_{rel_data['source']}_{rel_data['target']}")
+                    rel_ctx.add_relationship(create_edge_id(rel_data["source"], rel_data["relationship_type"], rel_data["target"]))
                 rel_ctx.items_created = rel_count
                 rel_ctx.complete()
 
@@ -2086,14 +2278,11 @@ def run_derivation(
 
                 if step_ctx:
                     for relationship_type, source, target in sorted(_relationship_keys(archimate_manager) - before):
-                        step_ctx.add_relationship(f"{relationship_type}_{source}_{target}")
+                        step_ctx.add_relationship(create_edge_id(source, relationship_type, target))
                     step_ctx.complete()
 
                 if progress:
-                    msg = f"Refine: {refine_result.issues_found} issues"
-                    if refine_result.elements_disabled > 0:
-                        msg += f", {refine_result.elements_disabled} disabled"
-                    progress.complete_step(msg)
+                    progress.complete_step(_refine_message(refine_result))
 
                 if refine_result.errors:
                     errors.extend(refine_result.errors)
@@ -2140,6 +2329,7 @@ def run_derivation(
 # in base.py (derive_batch_relationships).
 
 
+@_identifier_scope_iter
 def run_derivation_iter(
     engine: Any,
     graph_manager: GraphManager,
@@ -2251,7 +2441,7 @@ def run_derivation_iter(
                 print(f"  Generate: {cfg.step_name}")
 
             # Wrap llm_query_fn with per-step temperature/max_tokens overrides
-            def step_llm_query_fn(prompt: str, schema: dict) -> Any:
+            def step_llm_query_fn(prompt: str, schema: dict, sample: int | None = None) -> Any:
                 if llm_query_fn is None:
                     raise ValueError("llm_query_fn is required for generate phase")
                 return llm_query_fn(
@@ -2259,6 +2449,7 @@ def run_derivation_iter(
                     schema,
                     temperature=cfg.temperature,
                     max_tokens=cfg.max_tokens,
+                    **({"sample": sample} if sample is not None else {}),
                 )
 
             # Validate required config parameters (a function model step reads no candidates: only its instruction)
@@ -2331,7 +2522,7 @@ def run_derivation_iter(
                         relationship_config=relationship_config(),
                         name_match_skip=_name_match_skip(relationship_configs),
                         per_candidate=_per_candidate_config(cfg.params),
-                        naming=_naming_config(cfg.params),
+                        naming=_naming_config(cfg.params, config.get_llm_samples(engine)),
                         pattern_labels=_pattern_labels(cfg.params),
                         roles=_role_config(cfg.params),
                         skip_when_directory_is=_skip_when_directory_is(cfg.params),
@@ -2521,9 +2712,7 @@ def run_derivation_iter(
                 if refine_result.report is not None:
                     cast("dict[str, Any]", stats).setdefault("refine_reports", {})[cfg.step_name] = refine_result.report
 
-                msg = f"Refine: {refine_result.issues_found} issues"
-                if refine_result.elements_disabled > 0:
-                    msg += f", {refine_result.elements_disabled} disabled"
+                msg = _refine_message(refine_result)
 
                 yield ProgressUpdate(
                     phase="derivation",

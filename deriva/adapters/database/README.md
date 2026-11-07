@@ -67,7 +67,7 @@ conn.close()
 **derivation_config**:
 - `id` (PK), `step_name`, `phase`, `version`, `sequence`
 - `enabled`, `is_active`, `llm`: Activation and mode flags
-- `input_graph_query`, `input_model_query`: Cypher queries
+- `input_graph_query`, `input_model_query`: graph queries (GQL by default)
 - `instruction`, `example`: LLM prompts
 - `params`: JSON for graph algorithms
 - `max_candidates`, `batch_size`: Processing limits

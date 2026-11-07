@@ -33,7 +33,14 @@ def test_clone_passes_url_name_and_branch(make_client):
     assert response.status_code == 201
     assert response.json()["name"] == "sampleapp"
     args, kwargs = session.called("clone_repository")[0]
-    assert kwargs == {"url": "https://github.com/example/sample-app", "name": "sampleapp", "branch": None}
+    # Never allow_local: a request to the studio cannot clone a local repository
+    assert kwargs == {"url": "https://github.com/example/sample-app", "name": "sampleapp", "branch": None, "submodules": True}
+
+
+def test_clone_without_submodules(make_client):
+    session = FakeSession(clone_repository={"success": True, "name": "x", "path": "p", "url": "u"})
+    make_client(session).post("/api/repositories", json={"url": "https://example.org/x.git", "submodules": False})
+    assert session.called("clone_repository")[0][1]["submodules"] is False
 
 
 def test_failed_clone_answers_400_with_the_error(make_client):

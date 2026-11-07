@@ -22,7 +22,7 @@ Deriva brings determinism to AI-assisted architecture model derivation. From rep
 
 1. **Repository** (clone): the code as it is, a Git repository cloned locally. Deriva classifies every file by type, from source and config to docs, tests and build files.
 2. **Intermediate graph** (extract): parsing (tree-sitter for most languages) turns the code into a graph of directories, files, types, methods, dependencies, technologies and business concepts. Graph metrics (PageRank, Louvain communities, k-core) then rank what matters.
-3. **Output graph** (derive): graph structure picks the candidates; an LLM classifies and names them within ArchiMate's rules, then refine steps tidy the result. The studio shows both graphs side by side.
+3. **Output graph** (derive): graph structure picks the candidates and names them; an LLM makes the closed choices structure cannot (a directory's role, which documented concepts and actors count, how components group into applications), each from a fixed list, within ArchiMate's rules; then refine steps tidy the result. The studio shows both graphs side by side.
 4. **ArchiMate model** (export): the output graph exports in the Open Group ArchiMate exchange format, ready to open in Archi.
 
 ## Install
@@ -56,7 +56,7 @@ uv tool install --python 3.14 deriva-studio
 deriva
 ```
 
-`deriva` starts the studio and opens it in your browser at http://127.0.0.1:8765. It listens on this machine only; `--port` picks another port, `--no-browser` leaves the browser closed, and the API documentation is at `/docs`.
+`deriva` starts the studio and opens it in your browser at http://127.0.0.1:8765. It listens on this machine only; `--port` picks another port, `--no-browser` leaves the browser closed, and the API documentation is at `/docs`. Each start prints a launch link with a fresh token: the studio answers only a browser that opened that link (or a script that sends the token as an `X-Deriva-Token` header), so another website open in your browser cannot use it. To reach it from other machines, use `--host <address> --allow-remote --tls-cert <file> --tls-key <file>`; it does not start without TLS, because the launch link would cross the network readable.
 
 To try Deriva without installing it:
 
@@ -113,7 +113,7 @@ uv tool install --python 3.14 deriva-dev
 Every GitHub release has a `constraints.txt` with the exact version of every dependency. Download it from the release's assets into the current folder, then install against it:
 
 ```bash
-uv tool install --python 3.14 deriva-dev==0.8.0 -c constraints.txt
+uv tool install --python 3.14 deriva-dev==0.9.0 -c constraints.txt
 ```
 
 ### Next to other Python packages
@@ -326,6 +326,19 @@ uv run deriva-cli config setting show excluded_directories
 uv run deriva-cli config setting set excluded_directories '[".git", "node_modules", "third_party"]'
 ```
 
+**Limits for untrusted repositories:** extraction does not read a file larger than `max_read_bytes` (default 50 MB; it is reported, and the run goes on), and a run makes at most `max_llm_calls_per_run` LLM calls (default 2000; a call's own retries after a provider error are not counted, so failing providers can see up to `LLM_MAX_RETRIES` more requests per call), after which every further call of that run fails with a message naming the setting. A type's code snippet keeps at most `max_snippet_line_chars` characters of each line (default 2000), so a minified or generated one-line file cannot fill the disk. Raise them for a very large repository.
+
+```bash
+uv run deriva-cli config setting set max_llm_calls_per_run 5000
+```
+
+**LLM answers per decision:** the steps that vote (directory classification and element naming) ask the same question `samples` times and keep the majority answer; every step ships with 1. The `llm_samples` setting (1 to 20, also on the studio's **General** page) replaces that for all of them while it is set, and `config setting unset llm_samples` gives each step its own value again. Answers only differ when the model samples (a temperature above 0); more answers cost that many more calls. Benchmark sessions record the value, so measure consistency with 1.
+
+```bash
+uv run deriva-cli config setting set llm_samples 3
+uv run deriva-cli config setting unset llm_samples
+```
+
 **Derivation name patterns:** some derivation steps use include and exclude patterns on the names of their code candidates; business concepts are already classified and skip them. Most of these steps reject a name that contains an exclude pattern and keep one that contains an include pattern, and a name that matches neither follows the step's default (rejected by most steps, kept by BusinessFunction, ApplicationInterface, SystemSoftware and TechnologyService). BusinessObject (type definitions) and BusinessEvent (methods) use the patterns to rank candidates instead, and fill their remaining slots with names that did not match. A step that uses the default candidate filter (ApplicationComponent, ApplicationInterface, BusinessFunction, DataObject, Device, Node, SystemSoftware, TechnologyService) can limit the patterns to candidates with given graph labels with its `pattern_labels` param, and set a k-core threshold with `graph_filter`. Patterns are stored per step, type and category.
 
 ```bash
@@ -396,9 +409,9 @@ The studio is Deriva's local web UI (`uv run deriva`): a FastAPI backend over `P
 | **Intermediate / Output ontology** | Every node type and element type with its count and the step that produces it, the edge and relationship types, and the matrix of what connects to what |
 | **Extraction / Derivation config** | Step tables with versions; edit instructions and examples, save as a new version, switch steps on or off |
 
-The graphs use [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) (its query bar runs read-only Cypher against the embedded databases) and the model uses [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate). While a CLI run holds the databases, the studio says so and shows what it can.
+The graphs use [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) (its query bar runs read-only GQL or Cypher against the embedded databases) and the model uses [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate). While a CLI run holds the databases, the studio says so and shows what it can.
 
-For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` (Vite forwards the API to port 8765, or to `DERIVA_STUDIO_API` for a studio on another port); `npm test`, `npm run lint` and `npm run typecheck` check it.
+For front-end development, run `uv run deriva` and, in `studio/`, `npm run dev` (Vite forwards the API to port 8765, or to `DERIVA_STUDIO_API` for a studio on another port), then open the printed launch link with the dev server's address (`http://localhost:5173/api/auth?token=...`); `npm test`, `npm run lint` and `npm run typecheck` check it.
 
 ---
 
@@ -423,26 +436,28 @@ These actions wait for a run to end.
 
 The Repositories page's **Coverage** section (and `deriva-cli coverage --repo <name>`, with `--json` for every file) compares a repository's checkout with its graph: how many files reached the graph, per extension which step reads them for types and methods and how many gave some, and the files that could not be read with the reason. An extraction is **incomplete** when files did not reach the graph, could not be read, or when not one source file gave a type or method; source files no step reads (shell scripts, say) are listed as notes. The run's **Errors** tab lists the errors of every step, also the files a completed step could not read, with a download of the whole list.
 
-The model panel's **Quality** pill (and `deriva-cli quality --repo <name>`, with `--json`) judges a derived model from its structure. A model is **weak** when more than a quarter of its elements have no relationship, when nearly all relationships are Composition or Aggregation, when the Application or Technology layer is empty, or when elements have no file, type or method behind their sources (a component derived from a folder that holds no source file). The thresholds are the settings `quality_max_orphan_share` and `quality_max_structural_share` (`deriva-cli config setting set`). The verdict is a report; it changes nothing in the model.
+The model panel's **Quality** pill (and `deriva-cli quality --repo <name>`, with `--json`) judges a derived model from its structure. A model is **weak** when more than a quarter of its elements have no relationship, when more than that same share of its business elements at the enterprise level connect to nothing there, when nearly all relationships are Composition or Aggregation, when the Application or Technology layer is empty, or when elements have no file, type or method behind their sources (a component derived from a folder that holds no source file). The thresholds are the settings `quality_max_orphan_share` and `quality_max_structural_share` (`deriva-cli config setting set`). The verdict is a report; it changes nothing in the model.
 
 ---
 
 ## Querying the Graph
 
-In the Workspace's Separate view, each graph panel has a query bar that runs read-only Cypher against the embedded Grafeo database. A few to start with:
+In the Workspace's Separate view, each graph panel has a query bar that runs read-only queries against the embedded Grafeo database, in ISO GQL by default (the bar's settings switch it to Cypher). A few to start with:
 
-```cypher
-// All repositories
+```gql
+-- All repositories
 MATCH (r:Graph:Repository) RETURN r.repoName, r.url
 
-// The files of one repository, with their type
-MATCH (repo:Graph:Repository)-[:`Graph:CONTAINS`*]->(f:Graph:File)
+-- The files of one repository, with their type
+MATCH (repo:Graph:Repository)-[:`Graph:CONTAINS`]->{1,}(f:Graph:File)
 WHERE repo.repoName = 'my-repo'
 RETURN f.filePath, f.fileType
 
-// Type definitions
+-- Type definitions
 MATCH (td:Graph:TypeDefinition) RETURN td.typeName, td.category, td.filePath
 ```
+
+Deriva itself queries in GQL too; `GRAFEO_QUERY_LANGUAGE=cypher` in `.env` switches its own queries to Cypher.
 
 ---
 
@@ -482,6 +497,8 @@ uv run deriva-cli config show extraction BusinessConcept
 # must also be implemented and registered in code under the same name
 uv run deriva-cli config add derivation my_refine_step --phase refine --sequence 4 --params '{"dry_run": true}'
 uv run deriva-cli config enable derivation my_refine_step
+# --llm adds a step that uses the LLM (an element step classifying candidates, for example)
+uv run deriva-cli config add derivation MyElementType --phase generate --sequence 40 --llm
 
 # Manage file types
 uv run deriva-cli config filetype list
@@ -564,7 +581,13 @@ uv sync --reinstall
 
 ### The business concept step cannot download its models
 
-On its first run this step downloads its language models (the spaCy pipelines and the translation models) into `workspace/cache/nlp` in your home folder and checks them by SHA-256. Check that the machine can reach the model hosts and run the step again. `DERIVA_NLP_MODELS_DIR` in `.env` moves the folder.
+On its first run with an LLM this step downloads its language models into `workspace/cache/nlp` in your home folder and checks them by SHA-256: three spaCy pipelines (English, German, French, about 63 MB) from GitHub and two translation models (German and French to English, about 220 MB) from argos-net.com, about 300 MB on disk. A run without an LLM skips the step and downloads nothing. Check that the machine can reach the model hosts and run the step again, or fetch the models ahead of time (for example before going offline):
+
+```bash
+uv run deriva-cli nlp fetch
+```
+
+`DERIVA_NLP_MODELS_DIR` in `.env` moves the folder. Their licences are listed in `THIRD_PARTY_NOTICES.md`.
 
 ---
 

@@ -22,11 +22,12 @@ function milliseconds(ms?: number | null): string {
   return `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
 }
 
-/** Step, tokens, latency, cache state and temperature of one call, plus its error; a metric the call did not record says so. */
+/** Step, tokens, latency, cache state and temperature of one call, plus its error; a metric the call did not record
+ * says so, and a cache hit (no request sent) has no tokens or latency. */
 function facts(d: CallFacts): string[] {
   const tokens = d.tokens_in == null ? "tokens not recorded" : `${number.format(d.tokens_in)} tokens in`;
   const cache = d.cache_hit == null ? "cache not recorded" : d.cache_hit ? "cache hit" : "cache miss";
-  const parts = [d.step ?? "no step", tokens, milliseconds(d.latency_ms), cache];
+  const parts = d.cache_hit ? [d.step ?? "no step", cache] : [d.step ?? "no step", tokens, milliseconds(d.latency_ms), cache];
   if (d.temperature != null) parts.push(`temperature ${d.temperature}`);
   return d.error ? [...parts, `error: ${d.error}`] : parts;
 }

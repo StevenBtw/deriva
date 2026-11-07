@@ -106,6 +106,7 @@ def test_the_export_writes_the_level_property_and_the_views(tmp_path):
     definitions = root.findall("a:propertyDefinitions/a:propertyDefinition", NS)
     assert [d.findtext("a:name", namespaces=NS) for d in definitions] == ["level"]
     line = root.find("a:elements/a:element[@identifier='do_detail_line']", NS)
+    assert line is not None
     assert line.findtext("a:properties/a:property/a:value", namespaces=NS) == "detail"
     diagrams = root.findall("a:views/a:diagrams/a:view", NS)
     assert len(diagrams) == len(views)
@@ -151,5 +152,6 @@ def test_relationships_carry_their_level_property(tmp_path):
     root = etree.parse(str(out)).getroot()
     assert [d.findtext("a:name", namespaces=NS) for d in root.findall("a:propertyDefinitions/a:propertyDefinition", NS)] == ["level"]
     rel = root.find(f"a:relationships/a:relationship[@identifier='{RELATIONSHIPS[0].identifier}']", NS)
+    assert rel is not None
     assert rel.findtext("a:properties/a:property/a:value", namespaces=NS) == "cross-level"
     assert [etree.QName(child).localname for child in rel][-1] == "properties"

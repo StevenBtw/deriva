@@ -6,7 +6,7 @@ ArchimateManager expect.
 
 Features:
 - Embedded graph database (no external server)
-- Cypher query language support
+- ISO GQL queries by default; Cypher when GRAFEO_QUERY_LANGUAGE=cypher
 - Namespace isolation via label prefixes
 - Configurable storage: one persistent `.grafeo` file per workspace key (a repository,
   or the joined names for a combined run) in `workspace/graphs` of the home folder
@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from deriva.common.paths import resolve
-from deriva.common.settings import GrafeoSettings
+from deriva.common.settings import QUERY_LANGUAGES, GrafeoSettings
 from deriva.common.timing import query_stats
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ def _record_query(label: str, started: float, slow_ms: float) -> None:
 # ---------------------------------------------------------------------------
 
 DEFAULT_DATABASE = "default"
+_LANGUAGE_NAMES = {"gql": "GQL", "cypher": "Cypher"}
 
 _db: Any | None = None
 _db_key: str = DEFAULT_DATABASE
@@ -138,10 +139,12 @@ def get_database() -> Any:
     if _db is None:
         import grafeo
 
-        # Every query is Cypher; a grafeo build without it (a narrow local build) is refused before a file opens
-        if "cypher" not in grafeo.features():
+        # Every query is in GRAFEO_QUERY_LANGUAGE; a grafeo build without it (a narrow local build) is refused before a file opens
+        language = GrafeoSettings().query_language
+        if language not in grafeo.features():
             raise RuntimeError(
-                "This grafeo build has no Cypher support, which Deriva uses for every query: install the released wheel, or build the Python binding with its default features"
+                f"This grafeo build has no {_LANGUAGE_NAMES[language]} support, which Deriva uses for every query (GRAFEO_QUERY_LANGUAGE={language}): "
+                "install the released wheel, or build the Python binding with its default features"
             )
         path = database_file(_db_key)
         _db = grafeo.GrafeoDB(path)
@@ -218,6 +221,7 @@ class GrafeoConnection:
         grafeo = GrafeoSettings()
         self._log_queries = grafeo.log_queries
         self._slow_query_ms = grafeo.slow_query_ms
+        self.query_language = grafeo.query_language
 
         logger.info("Initialized GrafeoConnection with namespace: %s", namespace)
 
@@ -265,10 +269,10 @@ class GrafeoConnection:
         parameters: dict[str, Any] | None = None,
         database: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Execute a Cypher query and return results as list of dicts.
+        """Execute a query in the connection's query language (GQL by default) and return results as list of dicts.
 
         Args:
-            query: Cypher query string.
+            query: Query string.
             parameters: Query parameters (``$param`` syntax).
             database: Ignored (single embedded database).
 
@@ -285,7 +289,7 @@ class GrafeoConnection:
         started = time.perf_counter()
         try:
             params = parameters if parameters is not None else {}
-            result = self.db.execute_cypher(query, params)
+            result = self.db.execute(query, params) if self.query_language == "gql" else self.db.execute_cypher(query, params)
             return result.to_list()
 
         except Exception as e:
@@ -323,17 +327,27 @@ class GrafeoConnection:
         """
         return self.execute(query, parameters, database)
 
-    def execute_rolled_back(self, query: str, parameters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def execute_rolled_back(self, query: str, parameters: dict[str, Any] | None = None, language: str | None = None) -> list[dict[str, Any]]:
         """Run a query inside a transaction that is always rolled back: reads see the data, writes never persist.
 
-        Used for queries typed by a user (the studio's graph view), where nothing may change the graph.
+        Used for queries typed by a user (the studio's graph view), where nothing may change the graph. ``language``
+        (gql or cypher) overrides the connection's query language for this query.
         """
         if self.db is None:
             raise RuntimeError(f"Not connected to grafeo. Call connect() first. (Namespace: {self.namespace})")
+        language = self.query_language if language is None else language.strip().lower()
+        if language not in QUERY_LANGUAGES:
+            raise ValueError(f"Unknown query language {language!r}: one of {', '.join(QUERY_LANGUAGES)}")
+        import grafeo
+
+        if language not in grafeo.features():
+            raise ValueError(f"This grafeo build has no {_LANGUAGE_NAMES[language]} support")
         started = time.perf_counter()
         transaction = self.db.begin_transaction()
         try:
-            return transaction.execute_cypher(query, parameters if parameters is not None else {}).to_list()
+            params = parameters if parameters is not None else {}
+            result = transaction.execute(query, params) if language == "gql" else transaction.execute_cypher(query, params)
+            return result.to_list()
         finally:
             transaction.rollback()
             _record_query(query, started, self._slow_query_ms)
@@ -346,7 +360,7 @@ class GrafeoConnection:
             updates: Mapping of key value to the properties to set.
 
         Returns:
-            Number of nodes updated (unknown key values are skipped).
+            Number of key values that matched a node of this namespace (unknown ones and empty updates are skipped).
         """
         if self.db is None:
             raise RuntimeError("Not connected to grafeo. Call connect() first.")
@@ -354,24 +368,11 @@ class GrafeoConnection:
         started = time.perf_counter()
         if not self.db.has_property_index(key):
             self.db.create_property_index(key)
-        count = 0
-        for value, props in updates.items():
-            if not props:
-                continue
-            for node in self._find_nodes(key, value):
-                # The database is shared by all namespaces; touch only this one's nodes
-                if self.namespace not in (self.db.get_node_labels(node) or []):
-                    continue
-                for name, prop in props.items():
-                    self.db.set_node_property(node, name, prop)
-                count += 1
+        rows = [{key: value, **props} for value, props in updates.items() if props]
+        # The database is shared by all namespaces; the label touches only this one's nodes
+        result = self.db.update_nodes([self.namespace], rows, key=key)
         _record_query(f"set_node_properties({key})", started, self._slow_query_ms)
-        return count
-
-    def _find_nodes(self, key: str, value: Any) -> list[int]:
-        """Nodes with ``key`` = ``value`` via the property index (deleted nodes are not returned)."""
-        assert self.db is not None
-        return list(self.db.find_nodes_by_property(key, value))
+        return result["updated"]
 
     def merge_node(self, key: str, value: Any, labels: list[str], properties: dict[str, Any], replace: bool = False) -> None:
         """Create or update the node with ``key`` = ``value`` and all ``labels``, through grafeo's index-backed upsert.

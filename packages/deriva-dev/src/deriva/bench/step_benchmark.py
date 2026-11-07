@@ -28,6 +28,7 @@ from deriva.bench.analysis import BenchmarkAnalyzer
 from deriva.common.paths import workspace
 from deriva.common.timing import query_stats
 from deriva.modules.analysis import AnswerStability, DecisionStability, StepConsistency, compare_step_outputs, decision_stability
+from deriva.modules.analysis.measures import mean_measured, share_text
 from deriva.services import config as config_service
 from deriva.services import derivation
 
@@ -124,9 +125,8 @@ class StepBenchmarkResult:
     unscored: list[str] = field(default_factory=list)  # properties reported but not scored in exact
 
     def average(self, score: str) -> float | None:
-        """Mean of ``presence_score`` or ``exact_score`` over the repositories."""
-        scores = [getattr(consistency, score) for consistency in self.repositories.values()]
-        return sum(scores) / len(scores) if scores else None
+        """Mean of ``presence_score`` or ``exact_score`` over the repositories that produced something."""
+        return mean_measured(getattr(consistency, score) for consistency in self.repositories.values())
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -296,7 +296,7 @@ class StepBenchmark(benchmarking.BenchmarkOrchestrator):
 
         consistency = compare_step_outputs(outputs, unscored=plan.unscored)
         if verbose:
-            print(f"  {repo}: presence {consistency.presence_score:.1%} ({consistency.present}/{consistency.total}), exact {consistency.exact_score:.1%}")
+            print(f"  {repo}: presence {share_text(consistency.presence_score)} ({consistency.present}/{consistency.total}), exact {share_text(consistency.exact_score)}")
 
         def in_every_run(per_run: list[dict[str, Any] | None]) -> list[dict[str, Any]]:
             reported = [d for d in per_run if d is not None]

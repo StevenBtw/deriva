@@ -73,12 +73,22 @@ def _ensure_extractors_loaded() -> None:
         pass
 
     try:
+        from . import typescript  # noqa: F401
+    except ImportError:
+        pass
+
+    try:
         from . import java  # noqa: F401
     except ImportError:
         pass
 
     try:
         from . import csharp  # noqa: F401
+    except ImportError:
+        pass
+
+    try:
+        from . import golang  # noqa: F401
     except ImportError:
         pass
 

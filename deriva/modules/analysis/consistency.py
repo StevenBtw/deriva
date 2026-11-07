@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .measures import mean_measured, share_text
 from .types import InconsistencyInfo
 
 __all__ = [
@@ -16,10 +17,12 @@ __all__ = [
     "find_inconsistencies",
     "compare_object_sets",
     "jaccard_similarity",
+    "mean_measured",
+    "share_text",
 ]
 
 
-def compute_consistency_score(objects_by_run: dict[str, set[str]]) -> float:
+def compute_consistency_score(objects_by_run: dict[str, set[str]]) -> float | None:
     """
     Compute overall consistency score for objects across runs.
 
@@ -28,14 +31,15 @@ def compute_consistency_score(objects_by_run: dict[str, set[str]]) -> float:
 
     Returns:
         Float between 0.0 and 1.0, where 1.0 means all objects
-        appear in all runs.
+        appear in all runs; None when there is nothing to compare (fewer
+        than two runs, or no object in any run), which averages leave out.
     """
     if len(objects_by_run) < 2:
-        return 1.0
+        return None
 
     all_objects = set.union(*objects_by_run.values()) if objects_by_run else set()
     if not all_objects:
-        return 1.0
+        return None
 
     # Count objects that appear in ALL runs
     consistent_count = sum(1 for obj in all_objects if all(obj in objs for objs in objects_by_run.values()))
@@ -118,7 +122,7 @@ def compare_object_sets(
     }
 
 
-def jaccard_similarity(set_1: set[str], set_2: set[str]) -> float:
+def jaccard_similarity(set_1: set[str], set_2: set[str]) -> float | None:
     """
     Compute Jaccard similarity between two sets.
 
@@ -127,12 +131,8 @@ def jaccard_similarity(set_1: set[str], set_2: set[str]) -> float:
         set_2: Second set
 
     Returns:
-        Float between 0.0 and 1.0 (1.0 = identical sets)
+        Float between 0.0 and 1.0 (1.0 = identical sets); None when both are
+        empty (nothing to compare)
     """
-    if not set_1 and not set_2:
-        return 1.0
-
-    intersection = set_1 & set_2
     union = set_1 | set_2
-
-    return len(intersection) / len(union) if union else 1.0
+    return len(set_1 & set_2) / len(union) if union else None

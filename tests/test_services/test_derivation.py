@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deriva.adapters.graph import GraphManager
 from deriva.modules.derivation.base import PerCandidateConfig, RelationshipLLMConfig
 from deriva.modules.derivation.prep import GraphMetrics
+from deriva.modules.derivation.refine.base import RefineResult
 from deriva.services import derivation
 
 # =============================================================================
@@ -370,7 +373,7 @@ class TestRunEnrichments:
     def test_one_read_until_invalidated(self):
         reads = []
         with patch.object(derivation, "get_enrichments_from_graph", side_effect=lambda gm: reads.append(gm) or {"n": len(reads)}):
-            run = derivation._RunEnrichments("gm")
+            run = derivation._RunEnrichments(cast("GraphManager", "gm"))
             first = run.get()
             assert run.get() is first
             run.invalidate()
@@ -1429,6 +1432,7 @@ class TestCollectRelationshipRules:
             "Device",
             "Node",
             "SystemSoftware",
+            *derivation.EXPERIMENTAL_TYPES,  # the direct relationships of the metamodel
         }  # Artifact, BusinessRole, TechnologyFunction and TechnologyService relate through structure only
 
     def test_contains_rules_for_registered_types(self):
@@ -1445,6 +1449,8 @@ class TestCollectRelationshipRules:
 
         for element_type, (outbound, inbound) in rules.items():
             assert type(outbound) is list and type(inbound) is list, element_type
+            if element_type in derivation.EXPERIMENTAL_TYPES:
+                continue  # Their rules are the metamodel's direct relationships to any type (test_core_type)
             for rule in outbound + inbound:
                 assert rule.target_type in {
                     "ApplicationComponent",
@@ -1937,12 +1943,7 @@ class TestRunDerivationIterRefinePhase:
         with patch.object(derivation.config, "get_derivation_configs") as mock_get:
             mock_get.side_effect = lambda engine, enabled_only, phase: [refine_cfg] if phase == "refine" else []
             with patch.object(derivation, "run_refine_step") as mock_refine:
-                mock_result = MagicMock()
-                mock_result.elements_disabled = 1
-                mock_result.relationships_deleted = 0
-                mock_result.issues_found = 2
-                mock_result.errors = []
-                mock_refine.return_value = mock_result
+                mock_refine.return_value = RefineResult(success=True, step_name="deduplicate", elements_disabled=1, issues_found=2)
 
                 updates = list(
                     derivation.run_derivation_iter(
@@ -1955,8 +1956,7 @@ class TestRunDerivationIterRefinePhase:
 
         step_updates = [u for u in updates if u.step == "deduplicate"]
         assert len(step_updates) == 1
-        assert "2 issues" in step_updates[0].message
-        assert "1 disabled" in step_updates[0].message
+        assert step_updates[0].message == "Refine: 2 flagged, 1 disabled"
 
     def test_yields_error_for_refine_exception(self):
         """Should yield error update when refine step fails."""
@@ -2965,7 +2965,9 @@ class TestRoleConfig:
     def test_params_can_ask_for_one_element_per_candidate(self):
         params = '{"roles": {"labels": ["Technology"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate"}}'
 
-        assert derivation._role_config(params).element_per == "candidate"
+        roles = derivation._role_config(params)
+
+        assert roles is not None and roles.element_per == "candidate"
 
     def test_element_per_must_be_role_or_candidate(self):
         with pytest.raises(ValueError, match="element_per"):
@@ -2988,12 +2990,15 @@ class TestRoleConfig:
 
         roles = derivation._role_config(params)
 
+        assert roles is not None
         assert (roles.name_template, roles.container_type, roles.show_path) == ("{container} {subject} {role}", "ApplicationComponent", True)
 
     def test_params_can_name_role_elements_with_the_naming_call(self):
         params = {"roles": {"labels": ["T"], "instruction": "I", "names": {"a": "A"}, "element_per": "candidate", "naming_call": True}, "naming": {"instruction": "N"}}
 
-        assert derivation._role_config(json.dumps(params)).naming_call is True
+        roles = derivation._role_config(json.dumps(params))
+
+        assert roles is not None and roles.naming_call is True
 
     @pytest.mark.parametrize(
         "params",
@@ -3080,7 +3085,9 @@ class TestRelationshipTemperature:
     def test_row_temperature_is_part_of_the_config(self):
         row = SimpleNamespace(step_name="GlobalRelationships", instruction="rules", params='{"persona": "P"}', temperature=0.0)
 
-        assert derivation._relationship_llm_config([row]).temperature == 0.0
+        config = derivation._relationship_llm_config([row])
+
+        assert config is not None and config.temperature == 0.0
 
     @pytest.mark.parametrize("runner", [_run_derivation, _run_derivation_iter])
     def test_consolidated_pass_uses_it(self, runner):
@@ -3147,7 +3154,7 @@ def test_created_elements_and_deferred_relationships_reach_the_run_log():
         )
 
     assert [c.args[0] for c in contexts["gen_app"].add_object.call_args_list] == ["e1", "e2"]
-    assert [c.args[0] for c in contexts["ConsolidatedRelationships"].add_relationship.call_args_list] == ["Access_e1_e2"]
+    assert [c.args[0] for c in contexts["ConsolidatedRelationships"].add_relationship.call_args_list] == ["Access|e1|e2"]
 
 
 def test_relationships_a_refine_step_adds_reach_the_run_log():
@@ -3182,7 +3189,7 @@ def test_relationships_a_refine_step_adds_reach_the_run_log():
         am.disconnect()
         close_database()
 
-    assert [c.args[0] for c in contexts["abstraction_hierarchy"].add_relationship.call_args_list] == ["Serving_ac_a_ac_b"]
+    assert [c.args[0] for c in contexts["abstraction_hierarchy"].add_relationship.call_args_list] == ["Serving|ac_a|ac_b"]
 
 
 class TestStructuralRoleConfig:
@@ -3267,8 +3274,10 @@ class TestGraphLinkConfig:
     def test_structural_roles_can_keep_the_name_as_written(self):
         roles = {"names": {"component": "C"}, "element_per": "candidate", "structural": [{"property": "category", "pattern": "^program$", "role": "component"}]}
 
-        assert derivation._role_config(json.dumps({"roles": roles})).structural_as_written is False
-        assert derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": True}})).structural_as_written is True
+        default, as_written = derivation._role_config(json.dumps({"roles": roles})), derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": True}}))
+
+        assert default is not None and default.structural_as_written is False
+        assert as_written is not None and as_written.structural_as_written is True
         with pytest.raises(ValueError, match="structural_as_written"):
             derivation._role_config(json.dumps({"roles": {**roles, "structural_as_written": "yes"}}))
 
@@ -3362,6 +3371,89 @@ class TestUnitConfigs:
                 json.dumps({"roles": {**base, "element_per": "candidate", "name_template": "{subject}", "unit_roles": [{"property": "webEntries", "role": "web"}]}})
             )
 
+    def test_registrations_name_a_known_role_and_a_service_group_and_need_roles_per_unit(self):
+        base = {
+            "names": {"rpc": "RPC API"},
+            "labels": ["File"],
+            "instruction": "x",
+            "element_per": "unit",
+            "container_type": "ApplicationComponent",
+            "name_template": "{container} {role}",
+        }
+        registrations = {"role": "rpc", "patterns": [r"\bRegister(?P<service>\w+?)Server\("], "excluded_services": ["Health"]}
+
+        config = derivation._role_config(json.dumps({"roles": {**base, "registrations": registrations}}))
+
+        assert config is not None
+        assert (config.registration_role, config.registrations, config.excluded_services) == ("rpc", (r"\bRegister(?P<service>\w+?)Server\(",), ("Health",))
+        for wrong in (
+            {**registrations, "role": "desktop"},  # no role key of names
+            {**registrations, "patterns": [r"\bRegister\w+Server\("]},  # no service group
+            {**registrations, "patterns": ["(?P<service>"]},  # no valid pattern
+            {**registrations, "patterns": [123]},  # no text
+            {**registrations, "excluded_services": ["("]},
+            {**registrations, "patterns": []},
+        ):
+            with pytest.raises(ValueError, match="registrations"):
+                derivation._role_config(json.dumps({"roles": {**base, "registrations": wrong}}))
+        with pytest.raises(ValueError, match="registrations"):
+            derivation._role_config(json.dumps({"roles": {**base, "element_per": "candidate", "name_template": "{subject}", "registrations": registrations}}))
+
+    def test_the_source_reader_reads_the_checkout_and_no_link_out_of_it_or_large_file(self, tmp_path, monkeypatch):
+        repositories = tmp_path / "repositories"
+        (repositories / "r" / "src").mkdir(parents=True)
+        (repositories / "r" / "src" / "main.go").write_text("pb.RegisterCartServiceServer(srv, svc)\n", encoding="utf-8")
+        (repositories / "r" / "src" / "big.go").write_text("x" * 100, encoding="utf-8")
+        (tmp_path / "secret.go").write_text("secret", encoding="utf-8")
+        monkeypatch.setattr(derivation, "workspace", lambda: tmp_path)
+        monkeypatch.setattr(derivation.config, "get_max_read_bytes", lambda engine: 50)
+        try:
+            (repositories / "r" / "src" / "link.go").symlink_to(tmp_path / "secret.go")
+        except OSError:
+            pass  # no symlinks on this machine: the guard is still read below
+
+        read = derivation._source_reader(MagicMock())
+
+        assert read("r/src/main.go") == "pb.RegisterCartServiceServer(srv, svc)\n"
+        assert read("r\\src\\main.go") == "pb.RegisterCartServiceServer(srv, svc)\n"  # a stored Windows path
+        assert read("r/src/big.go") is None and read("r/src/missing.go") is None
+        assert read("r/src/link.go") is None and read("../secret.go") is None
+
+    def test_generate_element_passes_a_source_reader_only_to_a_step_with_registrations(self):
+        roles = derivation._role_config(
+            json.dumps(
+                {
+                    "roles": {
+                        "names": {"rpc": "RPC API"},
+                        "structural": [{"property": "category", "pattern": "^x$", "role": "rpc"}],
+                        "element_per": "unit",
+                        "container_type": "ApplicationComponent",
+                        "name_template": "{container} {role}",
+                        "registrations": {"role": "rpc", "patterns": [r"(?P<service>\w+)\.serve\("]},
+                    }
+                }
+            )
+        )
+        from deriva.modules.derivation.base import GenerationResult
+
+        for step_roles, expected in ((roles, True), (None, False)):
+            with patch.object(derivation, "_get_derivation") as mock_get, patch.object(derivation.config, "get_derivation_patterns", return_value={}):
+                mock_get.return_value.generate.return_value = GenerationResult(success=True)
+                derivation.generate_element(
+                    graph_manager=MagicMock(),
+                    archimate_manager=MagicMock(),
+                    engine=MagicMock(),
+                    llm_query_fn=MagicMock(),
+                    element_type="ApplicationInterface",
+                    query="MATCH (n) RETURN n",
+                    instruction="test",
+                    example="{}",
+                    max_candidates=10,
+                    batch_size=5,
+                    roles=step_roles,
+                )
+            assert (mock_get.return_value.generate.call_args.kwargs["source_text"] is not None) is expected
+
     def test_name_match_skip_pairs_are_read_from_the_relationship_row(self):
         row = SimpleNamespace(params=json.dumps({"name_match_skip": [{"source": "ApplicationInterface", "target": "ApplicationService"}]}))
 
@@ -3374,7 +3466,8 @@ class TestUnitConfigs:
         config = derivation._naming_config(json.dumps({"naming": {"instruction": "x", "choose_instruction": "CHOOSE"}}))
 
         assert config is not None and config.choose_instruction == "CHOOSE"
-        assert derivation._naming_config(json.dumps({"naming": {"instruction": "x"}})).choose_instruction == ""
+        default = derivation._naming_config(json.dumps({"naming": {"instruction": "x"}}))
+        assert default is not None and default.choose_instruction == ""
         with pytest.raises(ValueError, match="choose_instruction"):
             derivation._naming_config(json.dumps({"naming": {"instruction": "x", "choose_instruction": 3}}))
 
@@ -3386,7 +3479,8 @@ class TestUnitConfigs:
         assert config is not None
         assert config.guards.generic_words == frozenset({"app", "cli"}) and config.guards.kind_nouns["container"] == "Server"
         assert config.guards.reserved_labels == ("Technology", "ExternalDependency")
-        assert derivation._naming_config(json.dumps({"naming": {"instruction": "x"}})).guards.generic_words == frozenset()
+        default = derivation._naming_config(json.dumps({"naming": {"instruction": "x"}}))
+        assert default is not None and default.guards.generic_words == frozenset()
         with pytest.raises(ValueError, match="guards"):
             derivation._naming_config(json.dumps({"naming": {"instruction": "x", "guards": {"generic_words": "app"}}}))
         with pytest.raises(ValueError, match="guards"):
@@ -3437,3 +3531,25 @@ class TestNothingChangesTheModelAfterTheJointSelection:
         result = self._run(lambda am, Relationship: am.update_element_properties({"ac_a": {"levels": ["enterprise"]}}))
 
         assert not any("after the joint selection" in e for e in result["errors"])
+
+
+class TestRefineMessage:
+    """A refine step's progress line says what it changed; findings it only reports are flagged, never "issues"."""
+
+    def test_a_check_that_changes_nothing_says_so(self):
+        result = RefineResult(success=True, step_name="structural_consistency", issues_found=95)
+
+        assert derivation._refine_message(result) == "Refine: 95 flagged, nothing changed"
+
+    def test_a_step_that_only_adds_relationships_says_how_many(self):
+        result = RefineResult(success=True, step_name="graph_relationships", relationships_created=12)
+
+        assert derivation._refine_message(result) == "Refine: 12 relationships created"
+
+    def test_every_change_is_named(self):
+        result = RefineResult(success=True, step_name="x", elements_disabled=2, elements_merged=1, relationships_created=1, relationships_deleted=3, issues_found=4)
+
+        assert derivation._refine_message(result) == "Refine: 4 flagged, 2 disabled, 1 merged, 1 relationship created, 3 relationships deleted"
+
+    def test_a_step_that_found_nothing(self):
+        assert derivation._refine_message(RefineResult(success=True, step_name="x")) == "Refine: nothing to change"

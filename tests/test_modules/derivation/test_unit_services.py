@@ -4,6 +4,7 @@ family and by the data domain they reach; business functions where cooperating c
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 from deriva.modules.derivation.base import UnitScopes
@@ -51,7 +52,7 @@ def _run(elements, reach, *, bases=None, lines=(), objects=None, deciding=None, 
     def query(prompt, schema, **kwargs):
         calls.append(prompt)
         choice = (llm or (lambda options: options[0]))(schema["schema"]["properties"]["name"]["enum"])
-        return {"content": json.dumps({"name": choice})}
+        return SimpleNamespace(content=json.dumps({"name": choice}))
 
     services, functions = derive_unit_services(
         elements,
@@ -147,7 +148,8 @@ def test_names_are_a_closed_set_and_one_candidate_needs_no_call():
 
     assert len(calls) == 1 and '"Policy"' in calls[0] and '"Policy Administration"' in calls[0]
     assert '- "Policy Management"' not in calls[0]  # the component's own name is no service name candidate
-    assert services[0]["name"] == "Policy Administration"  # the choice, one of the candidates
+    assert services[0]["name"] == "Policy"  # the choice (the fake answers the last candidate), one of the candidates
+    assert services[0]["properties"]["name_choice"] is True
 
 
 def test_a_business_function_is_a_shared_business_domain_of_cooperating_components():
@@ -552,6 +554,8 @@ def test_with_service_verbs_a_service_is_named_from_structure_without_a_call():
     assert by_unit["unit::pm"]["name"] == "Policy Management" and by_unit["unit::jobs"]["name"] == "Transaction Processing"
     assert {s["properties"]["name_rule"] for s in services} == {"domain object"}
     assert calls == []
+    # No LLM chose the name (the benchmark's LLM-dependent split reads this)
+    assert {s["properties"]["name_choice"] for s in services} == {False}
 
 
 def test_with_service_verbs_an_activity_names_a_group_that_reaches_no_domain_and_else_the_stem():
@@ -592,3 +596,165 @@ def test_with_service_verbs_a_name_two_components_repeat_is_qualified_by_each_co
 
     assert sorted((s["properties"]["sources"][0], s["name"]) for s in services) == [("unit::cart", "Cart Order Management"), ("unit::shop", "Shop Order Management")]
     assert all(s["properties"]["structure_name"] == "Order Management" for s in services)  # the unqualified name stays recorded
+
+
+def test_a_stem_that_ends_in_the_names_first_word_writes_that_word_once():
+    """A stem "Ledger Order" in front of "Order Management" gives "Ledger Order Management", not "Ledger Order Order
+    Management"; a merged name another service already holds keeps the plain stem in front."""
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_verbs=VERBS)
+    elements = [
+        _component("ledger", "Ledger Order"),
+        _interface("ledger", "rest", ["OrderHolder", "OrderResource"]),
+        _component("cart", "Cart"),
+        _interface("cart", "rest", ["CartHolder", "CartResource"]),
+        _data("order", "Order"),
+    ]
+    reach = {"OrderHolder": ["order"], "OrderResource": ["order"], "CartHolder": ["order"], "CartResource": ["order"]}
+
+    services, _, _ = _run(elements, reach, objects={"domain::order": "Order"}, config=config)
+
+    assert sorted((s["properties"]["sources"][0], s["name"]) for s in services) == [("unit::cart", "Cart Order Management"), ("unit::ledger", "Ledger Order Management")]
+
+
+def test_two_components_with_the_same_stem_still_give_two_names():
+    """Two components that clean to the same stem ("Shop") and repeat a service name share no word with it: the second
+    qualified name another service already holds takes the first free number."""
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_verbs=VERBS)
+    elements = [
+        _component("east", "Shop"),
+        _interface("east", "rest", ["OrderHolder", "OrderResource"]),
+        _component("west", "Shop"),
+        _interface("west", "rest", ["CartHolder", "CartResource"]),
+        _data("order", "Order"),
+    ]
+    reach = {"OrderHolder": ["order"], "OrderResource": ["order"], "CartHolder": ["order"], "CartResource": ["order"]}
+
+    services, _, _ = _run(elements, reach, objects={"domain::order": "Order"}, config=config)
+
+    assert sorted(s["name"] for s in services) == ["Shop Order Management", "Shop Order Management 2"]
+
+
+def _two_domain_shop():
+    elements = [
+        _component("auth", "Auth Service"),
+        _interface("auth", "rest", ["UserHolder", "OrderResource", "OrderHolder"]),
+        _data("order", "Order"),
+        _data("user", "User"),
+    ]
+    reach = {"UserHolder": ["user"], "OrderResource": ["order"], "OrderHolder": ["order"]}
+    return elements, reach, {"domain::order": "Order", "domain::user": "User"}
+
+
+def test_with_verb_choice_the_llm_chooses_the_object_and_the_verb_stays_structural():
+    """service_verbs gives one verb (from the interface role); verb_choice lets the LLM choose among the objects."""
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_verbs=VERBS, verb_choice=True)
+    elements, reach, objects = _two_domain_shop()
+    seen: list[list[str]] = []
+
+    def pick_user(options):
+        seen.append(options)
+        return "User Management"
+
+    services, _, calls = _run(elements, reach, objects=objects, config=config, llm=pick_user)
+
+    [service] = services
+    assert service["name"] == "User Management"
+    assert len(calls) == 1 and seen[0][:2] == ["Order Management", "User Management"]  # the objects with the role's verb first
+    assert service["properties"]["name_choice"] is True
+    assert service["properties"]["structure_name"] == "Order Management"  # structure's own choice stays recorded
+
+
+def test_without_verb_choice_service_verbs_names_without_a_call():
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_verbs=VERBS)
+    elements, reach, objects = _two_domain_shop()
+
+    services, _, calls = _run(elements, reach, objects=objects, config=config, llm=lambda options: options[-1])
+
+    assert [s["name"] for s in services] == ["Order Management"] and calls == []
+    assert services[0]["properties"]["name_choice"] is False
+
+
+def test_with_verb_choice_the_choice_is_recorded_only_when_there_was_one():
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_verbs=VERBS, verb_choice=True)
+    elements = [_component("pm", "Policy Backend"), _interface("pm", "rest", ["PolicyHolder", "PolicyResource"]), _data("policy", "Policy")]
+
+    services, _, _ = _run(elements, {"PolicyHolder": ["policy"], "PolicyResource": ["policy"]}, objects={"domain::policy": "Policy"}, config=config)
+
+    assert [s["name"] for s in services] == ["Policy Management"]  # the fake picks the first
+    assert services[0]["properties"]["name_choice"] is (len(services[0]["properties"]["name_candidates"]) > 1)
+
+
+def test_with_verb_choice_a_choice_never_takes_a_siblings_structural_name():
+    """Two services of one component: a choice equal to the sibling's structural name falls back to the service's own
+    structural name, whatever order the services come in, so the sibling keeps its name."""
+    import dataclasses
+
+    config = dataclasses.replace(CONFIG, service_verbs=VERBS, verb_choice=True, max_per_component=2, min_members=1)
+    elements = [
+        _component("core", "Core"),
+        _interface("core", "rest", ["LoanHolder", "LoanResource", "AccountHolder", "AccountResource"]),
+        _data("loan", "Loan"),
+        _data("account", "Account"),
+    ]
+    reach = {"LoanHolder": ["loan"], "LoanResource": ["loan"], "AccountHolder": ["account"], "AccountResource": ["account", "loan"]}
+
+    services, _, _ = _run(
+        elements,
+        reach,
+        objects={"domain::loan": "Loan", "domain::account": "Account"},
+        config=config,
+        llm=lambda options: "Loan Management" if "Loan Management" in options else options[0],
+    )
+
+    by_structure = {s["properties"]["structure_name"]: s["name"] for s in services}
+    assert by_structure == {"Account Management": "Account Management", "Loan Management": "Loan Management"}
+
+
+def test_a_stem_in_front_writes_each_object_word_once_and_keeps_the_verb():
+    """Two components offer the same "<object> <verb>": each copy takes its component's stem in front. A word of the
+    object that the component's own words already hold is written once, wherever they hold it; the last word (the
+    verb) stays. Words at the front of the stem that spell a token of the repository's name are the product's, not
+    the component's own: they never count as written."""
+    from deriva.modules.derivation.component_services import _with_stem
+
+    assert _with_stem("Ledger Order", "Order Management", set()) == "Ledger Order Management"  # the stem ends in it
+    assert _with_stem("Ftgo Order History", "Order Management", set(), "ftgo-application") == "Ftgo Order History Management"
+    assert _with_stem("Credit Card Authorizations", "Card Processing", set(), "aws-mainframe-modernization-carddemo") == "Credit Card Authorizations Processing"
+    # "Card Demo" spells the repository's token carddemo: the product's words, so the service keeps its object
+    assert _with_stem("Card Demo Online", "Card Management", set(), "aws-mainframe-modernization-carddemo") == "Card Demo Online Card Management"
+    assert _with_stem("Card Demo Batch", "Card Processing", set(), "aws-mainframe-modernization-carddemo") == "Card Demo Batch Card Processing"
+    # The verb is never dropped, even when the stem holds it
+    assert _with_stem("Transaction Type Management", "Card Management", set()) == "Transaction Type Management Card Management"
+    # No shared word: the plain stem in front, as before
+    assert _with_stem("Shop", "Order Management", set()) == "Shop Order Management"
+
+
+def test_the_product_words_of_a_stem_are_the_leading_ones_that_spell_repository_tokens():
+    from deriva.modules.derivation.component_services import _own_words
+
+    assert _own_words(["Card", "Demo", "Online"], "aws-mainframe-modernization-carddemo") == ["Online"]
+    assert _own_words(["Ftgo", "Order", "History"], "ftgo-application") == ["Order", "History"]
+    assert _own_words(["Ftgo", "Application", "Order"], "ftgo-application") == ["Order"]  # several tokens in a row
+    assert _own_words(["Order", "Ftgo"], "ftgo-application") == ["Order", "Ftgo"]  # only at the front
+    assert _own_words(["Ftgo"], "ftgo-application") == ["Ftgo"]  # a stem that is only the product keeps its word
+    assert _own_words(["Order", "History"], "") == ["Order", "History"]
+
+
+def test_a_taken_shorter_name_falls_back_to_the_plain_stem_then_a_number():
+    from deriva.common.naming import name_key
+    from deriva.modules.derivation.component_services import _with_stem
+
+    taken = {name_key("Ftgo Order History Management")}
+    assert _with_stem("Ftgo Order History", "Order Management", taken) == "Ftgo Order History Order Management"
+    taken |= {name_key("Ftgo Order History Order Management")}
+    assert _with_stem("Ftgo Order History", "Order Management", taken) == "Ftgo Order History Order Management 2"

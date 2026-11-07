@@ -55,6 +55,31 @@ def test_set_node_properties_counts_only_nodes_it_changed(conn):
     assert conn.set_node_properties("id", {"a": {}}) == 0
 
 
+def test_set_node_properties_writes_each_value_and_skips_unknown_keys(conn):
+    conn.execute("CREATE (:Graph {id: 'a', old: 1, kept: 'k'})")
+    conn.execute("CREATE (:Graph {id: 'b'})")
+
+    count = conn.set_node_properties("id", {"a": {"old": None, "rank": 0.5, "steps": ["A", "B"]}, "b": {"on": True}, "missing": {"x": 1}})
+
+    assert count == 2
+    rows = conn.execute("MATCH (n:Graph) RETURN n.id AS id, properties(n) AS p ORDER BY id")
+    assert rows == [
+        {"id": "a", "p": {"id": "a", "kept": "k", "rank": 0.5, "steps": ["A", "B"]}},
+        {"id": "b", "p": {"id": "b", "on": True}},
+    ]
+
+
+def test_set_node_properties_writes_a_batch_in_one_grafeo_call(conn):
+    conn.execute("CREATE (:Graph {id: 'a'})")
+    conn.execute("CREATE (:Graph {id: 'b'})")
+
+    with patch.object(conn, "db", wraps=conn.db) as db:
+        conn.set_node_properties("id", {"a": {"x": 1}, "b": {"x": 2}, "empty": {}})
+
+    db.update_nodes.assert_called_once_with(["Graph"], [{"id": "a", "x": 1}, {"id": "b", "x": 2}], key="id")
+    db.set_node_property.assert_not_called()
+
+
 @pytest.mark.parametrize("key", ["../elsewhere", "a/b", r"a\b", "..", ""])
 def test_database_key_must_be_a_plain_file_name(key, tmp_path, monkeypatch):
     from deriva.adapters.grafeo.manager import database_file
@@ -205,22 +230,115 @@ class TestDatabasePerKey:
             get_database()
 
 
-def test_a_grafeo_build_without_cypher_is_refused(monkeypatch):
-    """Deriva queries only through Cypher; a build without it (per grafeo.features()) is refused before a database opens."""
+@pytest.mark.parametrize(("language", "features"), [("gql", ["cypher", "algos"]), ("cypher", ["gql", "algos"])])
+def test_a_grafeo_build_without_the_query_language_is_refused(language, features, monkeypatch):
+    """A build without the configured language (per grafeo.features()) is refused before a database opens."""
     import grafeo
 
     from deriva.adapters.grafeo import manager
 
     opened = []
     close_database()
-    monkeypatch.setattr(grafeo, "features", lambda: ["gql", "algos"])
+    monkeypatch.setenv("GRAFEO_QUERY_LANGUAGE", language)
+    monkeypatch.setattr(grafeo, "features", lambda: features)
     monkeypatch.setattr(grafeo, "GrafeoDB", lambda *args, **kwargs: opened.append(args))
 
-    with pytest.raises(RuntimeError, match="Cypher"):
+    with pytest.raises(RuntimeError, match=language.upper() if language == "gql" else "Cypher"):
         manager.get_database()
 
     assert opened == []  # no database file is touched
     assert manager._db is None
+
+
+def test_a_build_without_cypher_opens_when_queries_are_gql(monkeypatch):
+    import grafeo
+
+    from deriva.adapters.grafeo import manager
+
+    close_database()
+    monkeypatch.setenv("GRAFEO_QUERY_LANGUAGE", "gql")
+    monkeypatch.setattr(grafeo, "features", lambda: ["gql", "algos"])
+    try:
+        assert manager.get_database() is not None
+    finally:
+        close_database()
+
+
+# FOR is GQL only; Cypher rejects it. EXISTS is a reserved word in GQL, so only Cypher takes it as an alias.
+GQL_ONLY = "FOR v IN [1, 2] RETURN v"
+CYPHER_ONLY = "RETURN 1 AS exists"
+
+
+def _connection(monkeypatch, language: str | None) -> GrafeoConnection:
+    if language is None:
+        monkeypatch.delenv("GRAFEO_QUERY_LANGUAGE", raising=False)
+    else:
+        monkeypatch.setenv("GRAFEO_QUERY_LANGUAGE", language)
+    close_database()
+    c = GrafeoConnection(namespace="Graph")
+    c.connect()
+    return c
+
+
+def test_queries_are_gql_by_default(monkeypatch):
+    c = _connection(monkeypatch, None)
+    try:
+        assert c.query_language == "gql"
+        assert c.execute(GQL_ONLY) == [{"v": 1}, {"v": 2}]
+        assert c.execute_rolled_back(GQL_ONLY) == [{"v": 1}, {"v": 2}]
+        with pytest.raises(Exception, match="GQL"):
+            c.execute(CYPHER_ONLY)
+    finally:
+        c.disconnect()
+        close_database()
+
+
+def test_the_setting_switches_queries_to_cypher(monkeypatch):
+    c = _connection(monkeypatch, "Cypher")
+    try:
+        assert c.query_language == "cypher"
+        assert c.execute(CYPHER_ONLY) == [{"exists": 1}]
+        assert c.execute_rolled_back(CYPHER_ONLY) == [{"exists": 1}]
+        with pytest.raises(Exception, match="Cypher"):
+            c.execute(GQL_ONLY)
+    finally:
+        c.disconnect()
+        close_database()
+
+
+def test_a_rolled_back_query_can_name_its_language(monkeypatch):
+    """The studio's query bar sends the language its user picked; it overrides the setting for that query only."""
+    c = _connection(monkeypatch, None)
+    try:
+        assert c.execute_rolled_back(CYPHER_ONLY, language="cypher") == [{"exists": 1}]
+        assert c.execute_rolled_back(GQL_ONLY, language="GQL") == [{"v": 1}, {"v": 2}]
+        with pytest.raises(ValueError, match="gql"):
+            c.execute_rolled_back(GQL_ONLY, language="gremlin")
+    finally:
+        c.disconnect()
+        close_database()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    ["COMMIT", "ROLLBACK", "START TRANSACTION", "/* c */ COMMIT", "-- c\nCOMMIT", "CREATE (:Graph {id: 'kept'}) NEXT COMMIT"],
+)
+def test_a_rolled_back_query_cannot_end_its_transaction(statement, monkeypatch):
+    """The rolled-back path relies on grafeo refusing transaction statements inside a transaction (since 0.6.1)."""
+    c = _connection(monkeypatch, None)
+    try:
+        with pytest.raises(Exception, match="inside a transaction|part of another statement"):
+            c.execute_rolled_back(statement)
+        assert c.execute("MATCH (n:Graph) RETURN n.id AS id") == []
+    finally:
+        c.disconnect()
+        close_database()
+
+
+def test_an_unknown_query_language_is_refused(monkeypatch):
+    monkeypatch.setenv("GRAFEO_QUERY_LANGUAGE", "gremlin")
+    with pytest.raises(ValueError, match="gql"):
+        GrafeoConnection(namespace="Graph")
 
 
 def test_tests_never_use_a_persistent_database():
@@ -416,3 +534,8 @@ def test_the_slow_query_threshold_is_read_once_per_connection(monkeypatch):
     monkeypatch.setenv("GRAFEO_SLOW_QUERY_MS", "250")
 
     assert GrafeoConnection("Graph")._slow_query_ms == 250.0
+
+
+def test_a_language_the_build_lacks_is_refused_per_query_too(conn):
+    with patch("grafeo.features", return_value=["gql"]), pytest.raises(ValueError, match="no Cypher support"):
+        conn.execute_rolled_back("MATCH (n) RETURN n", language="cypher")

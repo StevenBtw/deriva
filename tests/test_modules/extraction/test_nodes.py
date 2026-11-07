@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,11 +50,11 @@ class TestTypeDefinitionModule:
 
     def test_schema_has_required_structure(self):
         """Should have properly structured JSON schema."""
-        schema = type_definition.TYPE_DEFINITION_SCHEMA
+        schema: dict[str, Any] = type_definition.TYPE_DEFINITION_SCHEMA
 
         assert "name" in schema
         assert "schema" in schema
-        assert "types" in schema["schema"]["properties"]  # type: ignore[operator,index]
+        assert "types" in schema["schema"]["properties"]
 
     def test_build_extraction_prompt(self):
         """Should build prompt with all components."""
@@ -109,11 +110,11 @@ class TestMethodModule:
 
     def test_schema_has_required_structure(self):
         """Should have properly structured JSON schema."""
-        schema = method.METHOD_SCHEMA
+        schema: dict[str, Any] = method.METHOD_SCHEMA
 
         assert "name" in schema
         assert "schema" in schema
-        assert "methods" in schema["schema"]["properties"]  # type: ignore[operator,index]
+        assert "methods" in schema["schema"]["properties"]
 
     def test_build_extraction_prompt(self):
         """Should build prompt with all components."""
@@ -172,11 +173,11 @@ class TestExternalDependencyModule:
 
     def test_schema_has_required_structure(self):
         """Should have properly structured JSON schema."""
-        schema = external_dependency.EXTERNAL_DEPENDENCY_SCHEMA
+        schema: dict[str, Any] = external_dependency.EXTERNAL_DEPENDENCY_SCHEMA
 
         assert "name" in schema
         assert "schema" in schema
-        assert "dependencies" in schema["schema"]["properties"]  # type: ignore[operator,index]
+        assert "dependencies" in schema["schema"]["properties"]
 
     def test_build_extraction_prompt(self):
         """Should build prompt with all components."""
@@ -268,11 +269,11 @@ class TestTestExtractionModule:
 
     def test_schema_has_required_structure(self):
         """Should have properly structured JSON schema."""
-        schema = test_module.TEST_SCHEMA
+        schema: dict[str, Any] = test_module.TEST_SCHEMA
 
         assert "name" in schema
         assert "schema" in schema
-        assert "tests" in schema["schema"]["properties"]  # type: ignore[operator,index]
+        assert "tests" in schema["schema"]["properties"]
 
     def test_build_extraction_prompt(self):
         """Should build prompt with all components."""

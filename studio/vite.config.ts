@@ -5,7 +5,8 @@ import { defineConfig, loadEnv } from "vite";
 export default defineConfig(({ mode }) => {
   // The studio API (deriva) runs on 8765; the dev server forwards the API paths to it.
   // A studio started on another port (deriva --port 9000) is reached with DERIVA_STUDIO_API=http://127.0.0.1:9000
-  const api = loadEnv(mode, ".", "DERIVA_").DERIVA_STUDIO_API || "http://127.0.0.1:8765";
+  const api =
+    loadEnv(mode, ".", "DERIVA_").DERIVA_STUDIO_API || "http://127.0.0.1:8765";
 
   return {
     plugins: [react()],
@@ -14,13 +15,13 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
     },
     server: {
-      proxy: {
-        "/api": api,
-        "/grafeo": api,
-        "/widgets": api,
-        "/docs": api,
-        "/openapi.json": api,
-      },
+      // changeOrigin off: the studio's guard compares a write's Origin with its Host, so the Host must stay the dev
+      // server's (the string shorthand would rewrite it to the API's address and every write would be refused)
+      proxy: Object.fromEntries(
+        ["/api", "/grafeo", "/widgets", "/docs", "/openapi.json"].map(
+          (path) => [path, { target: api, changeOrigin: false }],
+        ),
+      ),
     },
     test: {
       environment: "jsdom",

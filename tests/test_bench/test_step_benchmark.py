@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -274,7 +275,7 @@ class TestRunStep:
 
         def fake_extraction(benchmark, *, graph_manager, steps, **kwargs):
             if steps == ["Repository"]:
-                graph_manager.add_node(RepositoryNode(name="r", url="u", created_at=None), node_id="repo::r")
+                graph_manager.add_node(RepositoryNode(name="r", url="u", created_at=datetime.now()), node_id="repo::r")
             else:
                 for name in next(answers):
                     graph_manager.add_node(_concept(name), node_id=f"concept::r::{name.lower()}")

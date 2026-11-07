@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from tests.test_studio.conftest import FakeSession
 
 LISTED = [{"name": "anthropic-haiku", "provider": "anthropic", "model": "claude-haiku", "url": None, "key": "sk-...abcd", "key_env": None}]
@@ -58,7 +60,7 @@ def test_model_configs_need_no_database(make_client):
 
 
 def test_a_model_config_is_tested_with_one_small_call(make_client):
-    answer = {"ok": True, "model": "mistral-small4", "provider": "mistral", "model_id": "mistral-small-2603"}
+    answer: dict[str, Any] = {"ok": True, "model": "mistral-small4", "provider": "mistral", "model_id": "mistral-small-2603"}
     answer |= {"served_model": "mistral-small-2603", "latency_ms": 812.4, "answer": "OK"}
     session = FakeSession(check_model_config=answer)
     client = make_client(session)

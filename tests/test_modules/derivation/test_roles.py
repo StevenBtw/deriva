@@ -562,3 +562,67 @@ def test_a_unit_and_the_module_at_its_folder_both_become_elements_with_their_own
 
     created = {c.args[0].properties["source"]: c.args[0].identifier for c in am.add_element.call_args_list}
     assert created == {"module::r::shop": "te_module__shop", "unit::r::shop": "te_shop"}
+
+
+def _software(name, kind):
+    return Candidate(node_id=f"software::r::{name.lower()}", name=name, labels=["Graph", "Software"], properties={"kind": kind})
+
+
+def _functions(candidates, roles):
+    """The functions a structural role step names for technologies: name and documentation per source."""
+    with (
+        patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+        patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
+    ):
+        result = Derivation().generate(
+            graph_manager=MagicMock(query=MagicMock(return_value=[])),
+            archimate_manager=MagicMock(get_elements=MagicMock(return_value=[])),
+            llm_query_fn=MagicMock(side_effect=AssertionError("structure decides: no call")),
+            query="MATCH (n) RETURN n",
+            instruction="Test",
+            example="{}",
+            max_candidates=10,
+            batch_size=5,
+            existing_elements=[],
+            prompt=TEST_PROMPT,
+            roles=roles,
+        )
+    return {e["properties"]["source"]: (e["name"], e["documentation"]) for e in result.created_elements}
+
+
+FUNCTIONS = RoleConfig(
+    labels=frozenset(),
+    instruction="",
+    names={"database": "Store and Query Data", "cache": "Cache Data"},
+    element_per="candidate",
+    name_template="{role}",
+    structural=(("kind", "database", "database"), ("kind", "cache", "cache")),
+    documentation="{role}, performed by {members}.",
+    repeat_template="{role} ({subject})",
+    subject_as_written=frozenset({"Software"}),
+)
+
+
+def test_a_function_is_named_by_its_kind_and_a_shared_name_takes_its_realizer_as_written():
+    """The activity of a kind names the function; two functions that would share that name each take their realizer's
+    name, as the closed list writes it (PostgreSQL, not Postgre SQL). A name nothing repeats stays as it is."""
+    functions = _functions([_software("PostgreSQL", "database"), _software("MongoDB", "database"), _software("Redis", "cache")], FUNCTIONS)
+
+    assert functions == {
+        "software::r::postgresql": ("Store and Query Data (PostgreSQL)", "Store and Query Data, performed by PostgreSQL."),
+        "software::r::mongodb": ("Store and Query Data (MongoDB)", "Store and Query Data, performed by MongoDB."),
+        "software::r::redis": ("Cache Data", "Cache Data, performed by Redis."),
+    }
+
+
+def test_without_a_repeat_template_a_repeated_name_is_left_out_as_before():
+    functions = _functions([_software("PostgreSQL", "database"), _software("MongoDB", "database")], dataclasses.replace(FUNCTIONS, repeat_template=""))
+
+    assert [name for name, _ in functions.values()] == ["Store and Query Data"]
+
+
+def test_a_subject_of_a_label_named_as_written_keeps_its_casing():
+    """Without subject_as_written the realizer's name is split by case, as code names are."""
+    functions = _functions([_software("PostgreSQL", "database"), _software("MongoDB", "database")], dataclasses.replace(FUNCTIONS, subject_as_written=frozenset()))
+
+    assert functions["software::r::postgresql"][0] == "Store and Query Data (Postgre SQL)"

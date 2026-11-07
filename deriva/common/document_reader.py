@@ -7,7 +7,18 @@ Uses heading-based structure to enable intelligent chunking.
 
 from __future__ import annotations
 
+import logging
+import zipfile
 from pathlib import Path
+
+# A document's own limits, for repositories nobody vetted: a small .docx can unpack to gigabytes and a PDF can hold
+# thousands of pages (decompression bombs). pypdf caps every decompressed stream itself (75 MB in pypdf 6.21).
+logger = logging.getLogger(__name__)
+
+MAX_DOCX_UNPACKED = 100_000_000
+MAX_PDF_UNPACKED = 100_000_000
+MAX_PDF_PAGES = 2000
+MAX_DOCUMENT_CHARS = 20_000_000
 
 __all__ = [
     "is_docx_available",
@@ -84,6 +95,10 @@ def read_docx(file_path: Path) -> str | None:
     try:
         import docx
 
+        with zipfile.ZipFile(file_path) as archive:
+            if sum(member.file_size for member in archive.infolist()) > MAX_DOCX_UNPACKED:
+                logger.warning("%s not read: it unpacks to more than %d bytes", file_path, MAX_DOCX_UNPACKED)
+                return None
         doc = docx.Document(str(file_path))
         lines: list[str] = []
 
@@ -205,9 +220,25 @@ def read_pdf(file_path: Path) -> str | None:
 
         reader = pypdf.PdfReader(str(file_path))
         sections: list[str] = []
+        chars = 0
+        unpacked = 0
 
         for i, page in enumerate(reader.pages, start=1):
+            # A page past the page or text limit is not even unpacked: a bad stream there cannot cost the pages read
+            if i > MAX_PDF_PAGES or chars >= MAX_DOCUMENT_CHARS:
+                logger.warning("%s read up to page %d: it passes the limits on pages, text or unpacked size", file_path, i - 1)
+                break
+            # What a page's streams unpack to counts too: a page of drawing commands adds no text but all the work
+            contents = page.get_contents()
+            unpacked += len(contents.get_data()) if contents is not None else 0
+            if unpacked > MAX_PDF_UNPACKED:
+                logger.warning("%s read up to page %d: it passes the limits on pages, text or unpacked size", file_path, i - 1)
+                break
             text = page.extract_text()
+            chars += len(text or "")
+            if chars > MAX_DOCUMENT_CHARS:
+                logger.warning("%s read up to page %d: it passes the limits on pages, text or unpacked size", file_path, i - 1)
+                break
             if text and text.strip():
                 # Clean up the text
                 text = text.strip()

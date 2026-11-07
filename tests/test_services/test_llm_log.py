@@ -82,7 +82,8 @@ def test_read_and_find(tmp_path):
     call = log.record(prompt="p", response="a", step="Node")
 
     assert LlmCallLog.read(path)[0]["call_id"] == call["call_id"]
-    assert LlmCallLog.find(path, call["call_id"])["prompt"] == "p"
+    found = LlmCallLog.find(path, call["call_id"])
+    assert found is not None and found["prompt"] == "p"
     assert LlmCallLog.find(path, "nope") is None
     assert LlmCallLog.read(tmp_path / "missing.jsonl") == []
 

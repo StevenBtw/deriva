@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Collection
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from deriva.services import about
+from deriva.studio.guard import Guard
 from deriva.studio.provider import DatabaseHeld, SessionBusy, SessionProvider
 from deriva.studio.routers import configs, grafeo, graph, models, ontology, repositories, session, settings, status, storage, trace, widgets
 from deriva.studio.routers import runs as runs_router
@@ -31,8 +32,17 @@ ROOTS = ("api", "grafeo", "widgets")
 SHUTDOWN_WAIT = 5.0
 
 
-def create_app(provider: SessionProvider | None = None, static_dir: Path | None = STATIC_DIR, runs_dir: Path = RUNS_DIR) -> FastAPI:
-    """Build the studio app; tests pass a provider with a fake session, ``static_dir=None`` and a temporary ``runs_dir``."""
+def create_app(
+    provider: SessionProvider | None = None,
+    static_dir: Path | None = STATIC_DIR,
+    runs_dir: Path = RUNS_DIR,
+    token: str | None = None,
+    allowed_hosts: Collection[str] | None = None,
+) -> FastAPI:
+    """Build the studio app; tests pass a provider with a fake session, ``static_dir=None`` and a temporary ``runs_dir``.
+
+    ``token`` and ``allowed_hosts`` arm the request guard (``deriva`` passes a fresh token and, bound to this machine,
+    its local names); without them it still refuses cross-site writes."""
     session_provider = provider or SessionProvider()
 
     @asynccontextmanager
@@ -74,6 +84,7 @@ def create_app(provider: SessionProvider | None = None, static_dir: Path | None 
     app.include_router(ontology.router)
     app.include_router(storage.router)
     _mount_front_end(app, static_dir)
+    app.add_middleware(Guard, token=token, allowed_hosts=allowed_hosts)
     return app
 
 

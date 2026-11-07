@@ -1,554 +1,720 @@
-# Deriva Changelog
+# Changelog
 
-Deriving ArchiMate models from code using knowledge graphs, heuristics, and LLMs, a journey through architectural decisions, strategic purges, and lots (and lots) of trial and error.
+All notable changes to Deriva, which derives ArchiMate models from code with knowledge graphs, heuristics and LLMs: a record of architectural decisions, resets, and a lot of trial and error.
 
----
+## [0.9.0] - Unreleased
 
-# v0.8.x - Deriva Studio (October 2026 - )
-
-Version 0.8.x makes the pipeline transparent and editable in a local web UI and prepares the final benchmark.
-
-## v0.8.10 - Reproducible benchmark input (October 26 2026)
-
-The shipped configuration now carries every input exclusion the final benchmark used, so a fresh install from this release reads the same files as the benchmark did. The pipeline code is unchanged from 0.8.9.
-
-### Configuration
-
-- **Reference-model documents are excluded on a fresh install**: the shipped file types exclude the documents that describe a benchmark's reference model (two design documents and the readme of a folder that holds a model), as the benchmark's own configuration did; each rule matches its document both where extraction and where the B1 baseline looks for it. Every step still ships at version 1
-
-## v0.8.9 - Reference scoring fixes (October 26 2026)
-
-Two fixes to how reference models are scored, found while preparing the final benchmark: a reference written in ArchiMate 2 names is read with its ArchiMate 3 types, and the derivable labels set the scope as soon as they are final. The pipeline is unchanged from 0.8.8.
-
-### Benchmark
-
-- **Reference models in ArchiMate 2 names are scored**: an Archi file written in ArchiMate 2 names is read with the ArchiMate 3 types (InfrastructureService, InfrastructureInterface and InfrastructureFunction as TechnologyService, TechnologyInterface and TechnologyFunction, CommunicationPath as Path, Network as CommunicationNetwork, and the relationships UsedBy, Realisation and Specialisation as Serving, Realization and Specialization), so its technology services count in the scope and its relationships can match. The scoring reads them so (`parse_archi_xml(path, archimate3=True)`); without the flag the parser reports the types as the file writes them
-- **Final derivable labels set the golden scope**: the gate scores a golden model on the elements the user labelled derivable as soon as that file is final, also while the accepted names (matches) are still a template; the row then says the matches are provisional (`matches_provisional`) instead of falling back to every element of a derived type
-
-## v0.8.8 - ArchiMate metamodel conformance pass (October 26 2026)
-
-The model follows the ArchiMate 3.2 metamodel figures: only relationships a figure draws are direct, the enterprise level is a viewpoint derived through the valid derivation rules, and the application and technology layers gain functions, artifacts and technology services from structure. Most naming calls are gone; the LLM calls that remain are closed choices, asked once. Every step ships at version 1.
-
-### Metamodel
-
-- **Direct relationships from the metamodel figures**: a relationship is direct only where an ArchiMate 3.2 figure draws it (the layer, cross-layer and same-type figures), else derived; storing a relationship checks the relationship table, so no step can write one the metamodel does not allow
-- **New element types**: ApplicationFunction, Artifact (until now only the export's detail level), BusinessRole, BusinessService and TechnologyFunction; the views, the convention checks and the B1 baseline's output types include them
-
-### Extraction
-
-- **Deployable units**: serverless functions (an `(event, context)` handler) and static frontends (an `index.html` outside every unit) are units, a package with several project scripts is one unit, and a front-end module whose bundler output lies in a unit's folder gives that unit its web UI. A unit offers one application interface, named after its main channel (`roles.one_per_unit`)
-- **Build modules by who uses them**: a module two or more units use is a shared library, a component only when it carries behaviour (`min_behaviour`); shared code without a manifest is a library as well. A package listed only as a development dependency is tooling and gives no component, and feature packages (each with a route handler and a data entity) split a unit (`feature_markers`)
-- **Deployments**: the primary environment is the one that runs the repository's own units (`primary_runs_units`), preferring Compose's default file names (`compose_defaults`); a unit that only a variant file next to it deploys is no component, and `.devcontainer` is excluded
-- **Data entities**: a class the code declares persistent (an entity annotation, an aggregate root, an ORM base) is an entity whatever its name; aggregates are scoped to the root's folder, join tables are no entities, and an ORM entity records its table (`table_attributes`), so a query naming that table reaches it
-- **Import roots from Dockerfiles**: a folder a Dockerfile copies onto `PYTHONPATH`, `NODE_PATH` or `CLASSPATH` resolves bare imports that nothing else resolves
-- **Names**: a Maven unit takes the project's own `<name>` (never a license's, nor one with an unresolved `${...}` property), an aggregator its folder's name and a static frontend the name of the module that ships it; `Impl` is dropped from entity names
-
-### Derivation
-
-- **Structure decides**: components and their names (`naming.source_order`), services (`<object> <verb>`, `service_verbs`), one data object per entity, one application function per unit, library or feature package, one artifact per deployable, one platform node per environment and business roles all come from structure, without an LLM call
-- **Technology layer**: the platform node and each service in its environment that the closed kind table names get a technology function and a technology service ("Container Hosting", "Relational Database") that serves the application functions of the units it runs; a runtime is assigned to the artifacts it runs, and service software a unit embeds is realized by the unit's artifact
-- **Relationships rest on structure**: none from names in code (`named_in_code` is empty); libraries are aggregated by their users; an application function accesses the data objects of the entities its own files declare; a service name two components share is qualified by its component
-- **Enterprise viewpoint**: the enterprise relationships come from a versioned pattern table (`enterprise_patterns`), each drawn only where ArchiMate's valid derivation rules derive it from the direct relationships below, its chain recorded (`derivedFrom`, `derivationRules`); edge technology services stay at the solution level
-- **Documentation steps**: one closed LLM call per repository groups the top-level components into the applications the README names (`ApplicationGrouping`), and one chooses which documented business actors each application serves (`DocumentationActors`). Majority voting over three answers was tested and made no choice more stable, so every closed choice is asked once
-- **Business layer**: no business function per data domain, and no business process or event from a status lifecycle (a process needs a human actor)
-
-### Export
-
-- **Schema locations as in the standard's examples**: `xsi:schemaLocation` names the diagram schema (the export carries views) and the Dublin Core schema of the metadata
-
-### Benchmark
-
-- **Reference scoring**: a reference relationship counts as found when the valid derivation rules derive it from a chain of the model's direct relationships (only drawn ones count for external systems); behaviour matches within its layer; elements derived from a reference's lineage map one to one
-- **B1 baseline**: leaves out the files the file-type registry excludes, and takes build and source files in turn within its character budget
-- **Session reports**: samples and re-asks per LLM step (`llm_samples`, `llm_reasks`; a re-asked decision counts as stable only when every run answered it alike), the joint selection's variables and constraints per run and model, and an "all LLMs" row for answer and decision stability
-
-### Fixes
-
-- **A re-ask reaches the model**: an answer that holds no JSON where a schema was asked for is no longer cached, and one already in the cache counts as a miss, so a step that asks again gets a new answer instead of the same unusable one
-
-### Configuration
-
-- **Every step starts at version 1**: `config reset-versions --yes` makes each active row version 1 and removes the history (it stays in the older releases); the shipped defaults match the active configuration again, and `config update derivation <step> --llm/--no-llm` sets whether a step calls the LLM
-
-## v0.8.7 - Database upgrades (October 24 2026)
-
-A major database upgrade: both of Deriva's databases move to a new major release, grafeo 0.6.0 for the graphs and DuckDB 2.0 for the configs. The models are the same, derivation is faster, and installs no longer need a pre-release.
-
-### Dependencies
-
-- **grafeo 0.6.0** (requires `>=0.6.0`, the stable release instead of the 0.6.0b1 preview): Deriva's models are identical on it, and a run is faster, most of all in derivation, whose graph queries take less than half the time (and 50 times faster than Neo4j). grafeo 0.6.0 writes a newer storage version: a workspace's graph files are updated on their first open, after which Deriva 0.8.6 or older (on grafeo 0.6.0b1) cannot open them
-- **DuckDB 2.0** (requires `>=2`) for the config database: an existing database keeps its storage format, so an earlier Deriva (on DuckDB 1.5) still opens it, and every config, version and setting reads as before
-- **The other dependencies** at their latest releases, among them anthropic 2.2, pydantic-ai 2.60, openai 3.37, FastAPI 0.162 and httpx2 2.16; Vite 8.3.5 for the studio's build
-- **No pre-release requirements**: a test reads the built wheels and fails when a runtime requirement names a pre-release, which uv does not install for a dependency (it then fell back to the empty 0.0.1 placeholder of the package)
-
-## v0.8.6 - Trace and dimming fixes (October 20 2026)
-
-Two fixes found while taking the 0.8.5 screenshots: the Trace tab works with a benchmark as the shown run, and the ontology graph's dimmed types stay visible on a light canvas (anywidget-graph 0.4.6).
-
-### Fixes
-
-- **Trace after a benchmark**: with a benchmark as the run shown in the workspace, the Trace tab shows the selected element (its sources and relationships) instead of "Unknown run". A benchmark keeps its LLM calls in its session, not in the run's folder, so the trace lists none; a run the studio does not know is still refused
-
-### Dependencies
-
-- **anywidget-graph 0.4.6** (deriva-studio requires `>=0.4.6`): a selection dims the other types and edges of the ontology graph so they stay visible on a light canvas too (they all but vanished there, and barely dimmed on a dark one)
-
-## v0.8.5 - Ontology graph and honest counters (October 20 2026)
-
-The intermediate ontology is a graph again, drawn with anywidget-graph 0.4.5 (arrows, loops, a selection that lights its neighbours, positions placed by the page); the graph views' size is a setting; and the run summary, the step counter, the ontology's readers and the benchmark inspector now report what is there.
-
-### Studio
-
-- **Intermediate ontology as a graph again**: the page opens on the schema graph: every node type a node, sized by its count and coloured by its group (types without nodes small and grey), the edge types between two types as one arrow from source to target, an edge type from a type to itself as a loop. The page places the types itself, the same way every time, with each group in its own part of the canvas. Selecting a type keeps its neighbours and their edges lit and names its edge types; the panel beside it shows the type's description, the steps that produce it (with their switches), the derivation steps that read it, its edges (the type at the other end opens), its properties and a sample node. Group, empty-type and edge-type filters hold in all three views: Graph, Matrix (the edge types and the edges between types) and Cards (every type per group with its steps' switches). Needs anywidget-graph 0.4.5
-- **Graph view size**: the General page sets how many graph nodes the Workspace and Benchmark graph views sample (50 to 5,000, 300 until set; the model is always shown whole). CLI: `config setting set graph_view_nodes <count>`
-
-### Fixes
-
-- **Derivation summary counts the model**: the line that closes a derivation (live log, progress) says how many elements and relationships the model holds, as the Repositories page counts them. It added up only what the generate and relationship steps created, so relationships from the refine steps were missing (40 where the model had 46); the per-step counters stay in the run's stats
-- **Ontology pages find every step that reads a type**: a candidate query that tests a node's labels (`"BusinessConcept" IN labels(n)`) now counts as reading that type, as `n:Graph:BusinessConcept` does, so ApplicationService shows as a reader of BusinessConcept and TypeDefinition
-- **Step counter of a derivation**: the deferred relationship pass counts in the run's step total, so the live log no longer counts past it (25/24)
-- **Benchmark inspector groups say what differs**: grouped by cause, an element whose name differs between runs (or that some runs lack) goes under "name differs" (or "not in every run") instead of "other" when the flip analysis gives it no cause, and the header says what the elements are matched by ("3 of 51 elements differ, matched by source")
-
-### Dependencies
-
-- **anywidget-graph 0.4.5** (deriva-studio requires `>=0.4.5`): arrows, self-loops, neighbour highlight and the `preset` layout for the ontology graph
-
-## v0.8.4 - Studio management and field fixes (October 19 2026)
-
-The studio now manages what a workspace keeps (repositories, graph databases, runs, benchmark sessions, storage), and a test on a large repository led to fixes in cloning, long paths and cut LLM answers, and to two read-only reports: extraction coverage and model quality.
-
-### Studio management
-
-- **A repository's graph database on its page**: the Repositories page shows what each repository's database holds (graph nodes and edges, model elements and relationships, size on disk) and its last extraction and derivation run, with **Clear model** (the graph stays), **Clear graph and model** and **Update clone** (`git pull --ff-only`, refused with uncommitted changes); the confirmations name what goes. **Delete** can take the repository's graph and model along (before, its `.grafeo` file stayed behind). The actions wait for a run to end, and so do clearing the graph or the model through the API, which a step could otherwise go on writing into. CLI: `repo update <name>`, `repo delete <name> --with-data`
-- **Export downloads the model**: **Export XML** in the workspace saves the exchange file in the browser, named after the repository and the time (`<repository>-<yyyymmdd-hhmmss>.xml`); the copy in `workspace/output` keeps that name, so exports no longer overwrite one another in `model.xml`
-- **Runs & storage page, runs**: a new page lists every run the studio kept (not only the latest 8), a page at a time, by repository and kind, and deletes a run with its live log, LLM calls and inputs, every interrupted run, or every run past the latest N; the run in progress always stays (`GET /api/runs/history?offset=&repository=&kind=`, `DELETE /api/runs/{id}`, `POST /api/runs/prune`)
-- **Runs & storage page, storage**: what the workspace keeps on disk per area (LLM cache, exported models, runs, benchmark sessions) and per graph database (a repository's, the shared one, or one whose repository is gone), with **Clear LLM cache** (its warning says the next runs call the LLM again and may answer differently), **Delete exports** (the `.xml` files in `workspace/output`; reports stay) and **Delete** for a graph database without a repository. The actions wait for a run to end (`GET /api/storage`, `DELETE /api/storage/llm-cache`, `/exports`, `/graphs/{key}`)
-- **Benchmark sessions** (deriva-dev): the studio's session list finds every session, not only the latest 20: by text (id or description), repository, model and status, a page at a time, each row with its date, description, repositories, models, runs and size. The selected sessions can be deleted with their runs, metrics and folders, or marked failed while they still say running. CLI: `benchmark delete <ids>`, `benchmark prune --keep N | --failed` (asks first unless `--yes`); running sessions always stay
-- **Restore a config version**: **Use this version** in a step's History tab makes an earlier version's texts, queries, params and generation settings the step's new version (empty fields too), after the overfit scan of its texts; the step's place in its phase and its switch stay, and the history keeps every version. CLI: `config restore <type> <name> <version>`
-- **Intermediate ontology like the output ontology**: the page lists every node type of the graph metamodel, also the ones the current graph has no nodes of, in group cards (structure, code, business, deployment) with its count and the switches of the steps that produced its nodes (read from the steps' tags, so Software shows its Deployment step and Lifecycle its BusinessLayer step); edge types get short codes, and the edges between types show as a matrix, as the allowed relationships do on the output page. A type opens its description, properties (the metamodel's when the graph has none), producing and reading steps and a sample
-
-- **Clone and delete say what happened**: the Repositories page says what it is doing while it clones and what it cloned (branch, commit, size), suggests the folder name a URL gives, and after a delete says what went and what stayed. Git's errors become a sentence a user can act on (not found or private, no connection, credentials needed or refused, no such branch, a folder of that name exists, a clone with commits of its own), with git's own line kept; git no longer waits for a username on the studio's terminal when a repository needs credentials
-- **Test a model config**: **Test** next to each model config (and `deriva-cli config model test <name>`) makes one small call with it, without the cache, and says whether it works (which model answered, how fast) or what to fix: a refused key, a key without access, an unknown model id, a rate limit, an unreachable server or a timeout, with the provider's own message
-- **Extraction coverage**: the Repositories page's Coverage section and `deriva-cli coverage --repo <name>` (`--json` for every file) compare a repository's checkout with its graph: files in the graph, per extension the step that reads them for types and methods (the parser or the LLM) and how many gave some, and the files that could not be read with the reason. An extraction is marked incomplete when files did not reach the graph, could not be read, or when not one source file gave a type or method; source files no step reads are notes. It reads only (no LLM, no writes), and a repository without a graph database gets none made
-- **Every error of a run**: the run's Errors tab lists also the errors of steps that completed (a file a step could not read), not only of steps that failed, the first 50 with a download of the whole list. Read errors name the repository path and the system's reason (`Could not read src/a.py`, `[Errno 13] Permission denied`) instead of the absolute path
-- **Model quality verdict**: the model panel's Quality pill and `deriva-cli quality --repo <name>` (`--json`) judge a derived model from its structure: weak when more than a quarter of its elements have no relationship, when more than 80% of its relationships are Composition or Aggregation, when the Application or Technology layer is empty (an empty business layer is allowed), or when elements have no file, type or method behind their sources (a component derived from a folder that holds no source file). The thresholds are the settings `quality_max_orphan_share` and `quality_max_structural_share`; the verdict is a report and changes nothing in the model (`GET /api/model/quality`)
-
-### Fixes
-
-- **Joint selection outside a source checkout**: `joint_consistency` wrote its report (`report_path`) relative to the current folder and failed where `workspace/output` did not exist, so an installed tool applied no merges, redirects or drops. A relative report path is now under the Deriva home folder, its folder is created, and a report that cannot be written is logged without stopping the selection
-- **Unknown `--repo` names**: `run`, `status`, `export`, `clear` and `graph tag-steps` refuse a name that is no repository in the workspace and has no graph database, list the known repositories and exit 1, instead of creating an empty graph database for the typo. `default` and the joined names of combined runs (once their database exists) stay valid
-- **Cancelling a studio run**: a cancel now also stops the running step: the session refuses every further LLM call of the run (`RunCancelled`), so a long step ends at its next call instead of running to its end, and the run ends as `cancelled`. A call already under way still finishes
-- **Stopping the studio during a run**: the first Ctrl+C or SIGTERM cancels the run and ends the open event streams. The server waited for those streams before its shutdown, and a stream lasted until its run ended, so stopping hung until the step was done
-- **Interrupted runs in the studio history**: a run whose studio process ended before the run did (a crash, a killed process) is listed as `interrupted`, with its kind, repository and times from its kept events; its live log replays and ends with a note that the studio stopped, instead of the run missing from the history
-- **Runs without an LLM**: with `--no-llm` an LLM-only extraction step (directory classification, business concepts, technologies) counts under `Steps skipped` with its warning, instead of as a completed step that logged "had errors"; it still keeps what it wrote in an earlier run. The `--no-llm` help says what runs: the extraction parsers and derivation's prep phase, so no elements
-- **Which graph `status` reads**: `deriva-cli status` names its graph; without `--repo` that is the shared `default` graph, with a hint to pass `--repo`
-- **Temperature for models that refuse one**: a model config without `SAMPLING` now follows the model, as pydantic-ai knows it: an Anthropic model that takes no temperature (Claude Haiku 5.5) gets none, instead of a warning on every call that the temperature was dropped. An explicit `SAMPLING` still wins
-- **Local context windows**: a model config takes its context size (`LLM_{NAME}_CONTEXT`, `config model set --context N`), and a call that fills it is logged as a warning: Ollama cuts a prompt longer than its window (4096 tokens unless started with `OLLAMA_CONTEXT_LENGTH`) without an error, and its OpenAI-compatible API cannot set the window per call
-- **Studio config and ontology pages**: the derivation config list heads each phase (prep, generate, refine), since step numbers start again per phase; a step without LLM calls shows no empty Instruction or Example editor and opens on its params (stored texts stay shown). The allowed-relationships matrix takes the page's full width with abbreviated row labels (the full type on hover), so it fits from 1280 pixels wide instead of running past its card
-- **Graph widget without a CDN**: the studio requires anywidget-graph 0.4.4, which bundles its graph libraries. With 0.4.3 the graphs failed with "Failed to fetch dynamically imported module" wherever esm.sh or cdn.jsdelivr.net could not be reached (offline, a network filter, a blocker)
-- **Azure's v1 API**: a model config whose URL is an Azure `/openai/v1/` endpoint now goes through the OpenAI-compatible client without an `api_version`, which that API refuses; other Azure URLs keep the versioned client
-- **"DB not connected" while the database was fine**: a status request the studio did not answer (a long step, a restart) showed the database as not connected. The top bar now says the studio is not answering and keeps the last known database state on hover
-- **Cloning blocked the studio**: a clone held the studio's session for its whole duration, so every other page answered "busy" until it finished. A clone needs no graph database and now holds no session (reads go on); a run still cannot start while a clone runs
-- **Failed clones left a folder behind**: a clone goes into a staging folder in the workspace and becomes the repository's folder only when it worked, so a failed checkout leaves nothing and a retry with the same name works. A git folder in the workspace without a record (a lost record, a checkout put there by hand) can be registered instead of cloned again: **Register** on the Repositories page, `deriva-cli repo register [name]`
-- **Clones on Windows, and credentials in URLs**: removing a staging folder or a deleted clone now goes through Windows' extended path form, so files deeper than 260 characters no longer stop the cleanup where long paths are off. A git that Windows cannot start (error `0xC0000142`, from git or its https helper) is reported as such, with what to try (`git --version` in a terminal, repairing Git for Windows, an antivirus exclusion, starting Deriva from a normal terminal) and without the repository URL. The user and token part of a URL (`https://user:token@host/...`) is removed from git's errors, the URL checks' messages, the stored repository records and the CLI's output; git still gets the URL as given
-- **Stale repository records**: a record whose folder is gone or is no git checkout shows as stale (with the reason), Update is off for it, and Delete removes the record only, never files; before, its delete failed with "Not a Git repository"
-- **Deep paths on Windows**: where long paths are off in the registry (the Windows default), files deeper than 260 characters failed with `WinError 3` during extraction, and deeper folders were skipped without a word. Extraction now walks and reads the repository in Windows' extended path form (`\\?\C:\...`), as do the clone's size and file counts; graph paths stay relative, so nothing else changes
-- **Opening a repository created a graph database**: the Repositories page's counts for a repository without a graph database (not extracted yet, or a stale record) opened, and so created, an empty one, which Runs & storage then listed. The counts are now zero without a database being made
-- **Why the LLM is not configured**: a model config without a key stopped runs with "LLM not configured" only. The message now names the variable to set (the config's `KEY_ENV` reference or its own `LLM_{NAME}_KEY`, never a value) and the `.env` this install reads; the CLI's warning, a derivation's error and the studio's run say it
-- **Answers cut at the output limit**: a structured answer that reached the step's `max_tokens` was asked again by pydantic-ai, and a shorter answer that still validated was taken, so part of a batch could go unanswered without an error (in a check, 2 directory classifications instead of 12). Such a call now fails as cut (`IncompleteToolCall`, not cached, not retried as transient). Directory classification then splits the batch in halves until each answer fits, sends the batches that are answered as before, and reports the directories whose answer alone does not fit as not classified. Plain-text answers (documentation) are kept as they come
-- **TLS drops**: an `SSL EOF` or a connection reset is retried as a transient error (tests now pin this; the classification already did)
-- **Cut answers whose retries failed**: when pydantic-ai's retries after a cut answer failed in another way, it raised "Exceeded maximum output retries", and the batch was lost as an error. A run that holds a cut response now fails as cut (`IncompleteToolCall`) in that case too, so directory classification splits it like any other cut batch
-
-### Dependencies
-
-- **Up to date**: every Python dependency is at its latest release (among them pydantic-ai-slim 2.57, httpx2 2.14, FastAPI 0.149, uvicorn 0.54, anywidget 0.11, pydantic 2.14, ty 0.0.89), and the studio's npm packages at their latest within their ranges. Types follow the newer `ty`: `@contextmanager` functions return `Generator`, and mixed-value rows say so
-- **Tests that check the result**: 170 tests whose only checks were weak (`is not None`, `isinstance`, a length above zero, a mock called without its arguments, `pytest.raises` without the message) now assert the exact values, calls and messages. A rate limiter test that slept a minute now checks the wait it asks for, so the Python suite runs in about half the time. The tighter tests showed what the code parsers got wrong, now fixed (see below)
-- **Code parser fixes**: every JavaScript (and TypeScript) class also gave an unnamed class, because the grammar's `class` keyword token has the same node type as a class expression; that left TypeDefinition nodes without a name (41 in one repository's graph). An exported class was given twice, `extends` was not read (no INHERITS edge), a class expression did not take its variable's name, and generator functions were not extracted. Python class decorators were never read (`@dataclass` and the like, which data entity detection uses), a Python `type X = ...` alias had no name, and C# methods had no return type. On three development repositories whose graphs these change, the derived models stay identical (cached runs, 0 or 1 new LLM calls)
-- **TypeScript 7**: the studio's type check (`npm run typecheck`, part of `npm run build`) runs on TypeScript 7, the native compiler. TypeScript 6 stays for `typescript-eslint`, which needs the TypeScript 6 API (`typescript-eslint` 8.72 supports TypeScript below 6.1)
-
-## v0.8.3 - Adding abstraction to consistency (October 18 2026)
-
-The model now has two abstraction levels, enterprise and solution, built from structure without LLM calls, and the benchmark gate judges a change per level.
-
-### Abstraction levels
-
-- **Build modules from structure**: a new structural extraction step `BuildModule` finds the folders with a build manifest and code of their own (`manifests`, `code_subtypes`), their nesting, and a parent system where an aggregator manifest lists at least two of them (Maven modules, npm, yarn or pnpm workspaces, uv workspace members, Gradle includes). A module that is the folder of exactly one unit is one structure with it
-- **Components for modules and libraries**: ApplicationComponent also takes the build modules and systems, named from structure without a call. A module is named after its manifest, or its folder where that says more; a name already taken by a unit or another module gets its kind noun (`kind_nouns`, `<name> System`) or the words of its path, so no two components share a name. Modules for infrastructure as code (`iac_dependencies`), with only test dependencies (`test_dependencies`) or with a test word in their name (`test_words`) stay in the graph with their reason (`excluded`) but become no component
-- **Module dependencies**: a module serves the module whose files import its files (a new `graph_links` rule), so libraries serve the services that use them on the solution level
-- **Two levels in one model**: every element and relationship carries its levels, enterprise (the business layer, services, top-level components, the platform node) or solution (units, modules and libraries, interfaces, data objects, system software), from a versioned table per type (`roles` places one role of a type on its own levels) and the component hierarchy by folder. A relationship is on the levels both ends share, else it is a cross-level link
-- **Component hierarchy**: roll-up Compositions follow system, units, modules and libraries; only the hierarchy composes one component into another. The top-level component realizes the services of the units below it, so the enterprise level stands on its own. Where a unit builds several modules, an interface whose files lie in one of them is composed by that module
-- **Service nodes**: every deployment (a compose service, a cloud or Kubernetes workload, a ready-made image such as a database) becomes a solution-level Node that serves the component of the unit it deploys; the environment Node composes them
-- **Relationships lifted to the enterprise level**: a Serving, Access, Flow or Triggering relationship below the enterprise level implies one between the nearest enterprise elements above its ends, and an Access to a data object reaches the business object it realizes; each lift lists its sources (`liftedFrom`) and is on the enterprise level only
-- **Nothing changes the model after the joint selection**: the hierarchy's relationships, removals and lifts come from a new step before it (`abstraction_hierarchy`), which decides on them with the other evidence; `abstraction_levels` after it only writes the level tags. A refine step after the joint selection that adds or removes anything is an error of the run
-- **Data access through services**: GlobalRelationships v35 drops the two rules that let a component access a data object directly; a service of the component had the same access in 36 of 46 cases, and no development reference models component access. Solution relationship precision rose on 5 of 6 development repositories (75.0% to 90.0% and 39.0% to 66.7% among them), recall unchanged
-- **Levels in the exchange file**: an element's `level` property is the set of its levels (`enterprise`, `solution`, `enterprise solution`; `detail` for members) instead of `architect`, and relationships carry one too (`cross-level` without a shared level). Relationship ids come from the ends, type and level, so they are the same in every run. The files validate against the Open Group 3.1 schema and import into Archi
-- **Views per level**: five enterprise views (Layered, Application Cooperation, Information Structure, Implementation and Deployment, Business), four solution views (Application Structure with the component hierarchy, Application Cooperation, Information Structure, Implementation and Deployment with the service nodes) and three detail views (Information Structure, Implementation and Deployment, Application Interfaces with each interface's endpoints, pages or jobs). A view shows the elements and relationships of its level; a cross-level link is in no view and an empty view is left out
-- **Studio levels**: the studio shows the enterprise, solution or detail level, each with its own relationships and views as in the exchange file, and a view draws only the relationships it holds (lifts and cross-level links no longer appear next to another level's relationships)
-- **Levels in every run snapshot**: elements and relationships carry `levels` (and `cross_level`), and consistency by id is measured per level
-- **Versioned step order**: `config update derivation <step> --sequence N` moves a step within its phase as a new config version, and `config sequence` versions every step it moves
-
-### Benchmark
-
-- **Gate for a change**: `deriva-cli benchmark gate --baseline <sessions> [--candidate <sessions>]` reports per repository and level (enterprise, solution, union) the element and relationship recall and precision, against a development reference or a golden model's derivable subset, and the consistency by id. A candidate passes a level when one measure rises by at least 1 point on two thirds of the measured repositories, none drops more than 2 points and consistency stays at 95% or more; with too few better and nothing dropping, the level is held (`HELD`). The change passes when no level fails and at least one passes. A reference without level tags, golden models included, votes on the union only (`no level tags`). Markdown and JSON output
-- **Golden matching by structure**: a golden element's accepted matches can name repository structure as well as names (`{"names": [...], "structure_refs": ["path:<folder or file>", "<structural id>"]}`); an unmatched golden element is found by the element derived from that folder, file or id, and relationships follow the matched ends. `benchmark analyze` and `benchmark gate` share this matching
-- **Reference levels**: a development reference tags its elements and relationships with their levels (`levels`), and the reference evaluation scores one level or all (`level`)
-- **Name candidates next to every chosen name**: an element named by a closed-set choice keeps its candidates in order (`name_candidates`) in the model and each run snapshot; whether a call made the choice is recorded (`name_choice`)
-- **Commit in every session**: `session_metadata.json` records the code commit a session started on and whether the working tree had changes (`code`: `commit`, `dirty`)
-- **Event logs complete and in order**: a refine step names the relationships it adds in the OCEL and case logs (lifts and roll-ups were missing), and step durations are kept to the microsecond, so tools that order by start time no longer swap short steps
-
-### Fixes
-
-- **Data entities lost in 0.8.2 when every service declares its own ORM base**: a repository whose services each declare `class Base(DeclarativeBase)` got no data entities, and so no data domains, lifecycles, business events or the elements built on them. A base class is now resolved through its nearest definition (the one sharing the most leading folders)
-- **Images that name their service in the tag**: a deployment whose image carries the service in its tag or last name segment now deploys the unit of that name or folder, matched exactly
-- **Two services of one name**: cloud services that share a name are no longer merged into one deployment
-- **Names from documentation lists**: a bold term, table cell or link label used as a component name loses the separator before its description ("**Order Desk:** takes orders" named the component "Order Desk:")
-- **Studio run history**: a run that has just ended is listed at once, and a run of an earlier studio process replays its live log from its folder (`events.jsonl`) instead of failing (404); a run without LLM calls lists no calls instead of failing
-- **Benchmark form starts on the default model**: the studio's benchmark form selects `LLM_DEFAULT_MODEL` instead of the first configured model
-- **Repositories in a moved workspace**: extraction reads `REPOSITORY_WORKSPACE_DIR` like `repo list` does; with another folder, extraction found no repositories
-- **CLI messages**: `run all` lists its errors (it only counted them); a config database held by the studio or another run gives one line instead of a traceback; `config update extraction --sequence` is refused (only derivation steps move); the hints after `benchmark run` and an empty `repo list` name `deriva-cli`
-
-## v0.8.2 - Pre-benchmark refinement (October 17 2026)
-
-Most of the model now comes from structure: new structural extraction steps find deployable units, data entities and domains, deployments, cooperation lines and lifecycles, and the LLM mainly chooses among structural candidates.
-
-### Application layer
-
-- **Deployable units**: new structural step `DeployableUnit` finds what runs on its own (a folder with a container file and its own code, a manifest entry point, a mainframe application split into online and batch); a repository without any is one unit
-- **One component per deployable unit**, instead of one per module, package or folder
-- **One interface per unit and channel** (REST API, Web UI, Commands, Messaging API, RPC API, Batch Jobs) with the endpoints, screens or jobs as its `members`; page files give a Web UI interface without an LLM call
-- **Services per component** (`component_services.group_by: "unit"`): members that extend one base type form one service, the others group by the data domain they reach; at most `max_per_component` per component, none for a pure front end
-- **Business functions across components**: a business domain that the services of two or more cooperating components access
-- **Names chosen from a closed set**: component, service and function names come from structural and documentation candidates, and one call chooses only when there are several. Component names agree in 97% of runs (was 81%) with 10 naming calls per run instead of 36
-- **Relationships follow the units**: the relationship rules find a node's component through the units' members
-- **Name matching reads structure**: the name tier compares `structure_name`, never an LLM name (relationship consistency 89.7% to 95.2%)
-- **Convention checklist**: `benchmark conventions <session...>` checks run snapshots against ArchiMate modelling conventions and writes a review page per repository and model, and a summary
-- `config add extraction <node type> --sequence N` adds an extraction step (disabled)
-
-### Data
-
-- **Data entities from structure**: new step `DataEntity` finds aggregate roots, ORM entities, shared mainframe records and DDL tables, and leaves out ids, value objects, DTOs, configuration and technical records with their reason; with `table_mentions` a table links to the code files that query it
-- **Information domains**: new step `DataDomain` groups the entities as an architect would (an aggregate with its parts, an entity with its owner, a lookup with the domain that uses it)
-- **Data and business objects per domain**: one DataObject per domain and one BusinessObject per domain with a business anchor, which the data object realizes. Element and relationship consistency 93.1% and 94.3% to 97.0% and 98.9%, LLM calls per session 611 to 346
-
-### Technology layer
-
-- **Deployment from structure**: new step `Deployment` reads compose files, Kubernetes manifests, cloud templates and Dockerfiles. The primary environment (the cloud, else the root compose file, else Kubernetes) runs services that deploy units; a unit's runtime comes from its own Dockerfile, through build commands and the `FROM` chain. Secret-looking variables and URL passwords are not stored
-- **System software from a closed list** (`technologies`): images, runtimes, managed services, manifest dependencies and content markers are matched to a versioned list where each alias names one technology; mainframe subsystems make a mainframe environment
-- **Nodes and system software without an LLM**, from the environment and the listed software; TechnologyService and Device are switched off. The technology layer is identical in every run
-- **AWS CDK apps without synth**: read statically with tree-sitter TypeScript through a versioned construct table (`cdk_constructs`), from literal values and literal loops only
-- **Engine-qualified managed services** (`cloud_qualifiers`), such as `Amazon RDS for PostgreSQL`; an engine found through drivers merges into its managed service
-
-### Cooperation and business
-
-- **Cooperation from structure**: new step `Cooperation` finds `CONSUMES` and `SENDS_TO` lines between units from endpoint URLs, message destinations, service catalogs, gateway routes and code edges; the provider's interface serves the consumer, and messages are a Flow
-- **Business layer from structure**: new step `BusinessLayer` finds lifecycles (a status attribute with its states, transitions from guarded assignments, `UPDATE ... WHERE`, transition tables and documented flows), the events that hand them on and the roles that act in them: a BusinessProcess per lifecycle, a BusinessEvent per hand-off, a BusinessActor per role
-- **Business functions from a process catalog**: `BusinessFunctionModel` classifies documentation against APQC PCF (notice in THIRD_PARTY_NOTICES.md); disabled by default
-
-### Pipeline
-
-- **Re-runnable extraction steps**: every node and edge carries the step and config version that wrote it, and after a clean run a step removes what it no longer produces; `graph tag-steps` tags an existing graph, and `--only-step` lists the later steps that may read its output
-- **Joint decision as the last refine step**: the MILP decides relationships and merges in a canonical order, with evidence tiers from a versioned table; its solve report is in every run snapshot
-- **No confidence gates**: no step filters on an LLM-reported confidence; `circular_relationships` and `relationship_consolidation` are removed
-- **SQL tables without an LLM**: `CREATE TABLE` statements in `.sql` and `.ddl` files
-
-### Export
-
-- **Two levels in one file**: the architect level (the derived model) and a detail level with the members of its elements (entities, endpoints, programs, deployed artifacts); every element carries a `level`
-- **Generated views**: Layered, Application Cooperation, Information Structure, Implementation and Deployment, and Business Process Cooperation, laid out deterministically; the files validate against the ArchiMate 3.1 exchange schema and open in Archi
-- The studio's model panel switches level and view; the metamodel knows Artifact
-
-### Benchmark
-
-- **Reference models**: `benchmark reference <session>` compares the runs with reference models (JSON or Archi format): recall and precision per element type, layer and relationship kind, split elements, chain completeness, accepted names and a derivable subset
-- **Extraction per run**: `benchmark run --extract-per-run` repeats the whole pipeline in every run, on a graph of its own and with the run's own model
-- **What each run sent**: every call records temperature, top_p, seed, reasoning level and the model that answered; a model config can set its own temperature (`LLM_{NAME}_TEMPERATURE`)
-- **More in `benchmark analyze`**: consistency by source identity and by type and name (share and mean Jaccard) per layer; answer and decision stability and Krippendorff's alpha per decision type; answers outside their candidates; the share of differences from extraction or derivation; `--also` for agreement across sessions
-- **Baseline B1**: `benchmark run --baseline b1` lets the LLM generate the whole model in one go from raw repository material, validated against the ArchiMate rules and repaired at most twice (config row `BaselineB1`)
-
-### Studio
-
-- A GitHub link and a Report issue button with the environment filled in
-
-### Fixes
-
-- **Imports inside functions and blocks** (Python) and `require()` or dynamic `import()` (JavaScript) are extracted
-- **Call resolution**: the caller's own file first (paths now compare), then the files it imports, then its module root, always in the caller's language (`call_languages` for cross-language calls); a bare call means the caller's own method only in Java and C#
-- **Python from-imports**: `from . import x` and `import y as z` resolve correctly
-- A top folder named like the repository is no longer dropped from stored paths
-- LLM config values are stripped of padding inside quotes; `config query` no longer claims to be safe during a benchmark; small studio layout fixes
-
-## v0.8.1 - Cleanup (October 12 2026)
-
-- **Smaller install**: `pydantic-ai-slim` with only the providers Deriva builds, and unused dependencies removed; deriva-cli installs 86 packages instead of 146
-- **Library boundaries in Ruff**: `TID251` also checks third-party imports; the Ollama warm-up uses httpx
-- **Studio without the notebook stack**: anywidget-graph 0.4.3 and anywidget-archimate 0.3.1 no longer install marimo; the model view keeps its zoom
-- **LLM configuration**: keys, URLs and model names are stripped of padding and quotes, permanent client errors are not retried, and API keys are redacted from error text
-- **CLI output**: the derivation summary counts the elements refine disabled; no pydantic-ai banner on start
-
-## v0.8.0 - Studio (October 11 2026)
-
-### Studio
-
-- **Deriva Studio replaces the marimo app**: `uv run deriva` starts a local web UI (FastAPI, React) on http://127.0.0.1:8765 with the API documented at `/docs`; the marimo app and `deriva-app` are removed
-- **Workspace**: pick a repository and a scope, then start, follow and cancel runs. The repository, the intermediate graph and the output graph are lanes of one live canvas (anywidget-graph) that grows step by step, each element linked to its sources, followed by the model (anywidget-archimate) with XML export
-- **Readable large graphs**: samples keep every node type in proportion, most connected first (8 to 13 times as many edges as a random pick); layer rows, lane labels and colours checked for colour-blind readers; elements refine rejected show in grey
-- **Configuration**: steps with their versions; instruction, example, params, candidate query and batch size are edited and saved as a new version, with a history diff, an overfit scan before saving and a read-only dry run
-- **Ontology pages**: the graph's node types with counts, the steps that produce and read them and the schema; the 13 ArchiMate element types with their steps, and the allowed relationships per pair
-- **Repositories, settings, file types and model configs** (also `config model list|set|delete`; keys are masked and only written)
-- **Fresh installs work out of the box**: the configuration ships as seed data, and the database is created on first use
-- **Visual identity**: the inverted isoline logo and the "Tide" colours (SVGs in `assets/brand/`)
-- **One owner of the databases**: one session behind a lock; typed graph queries run in a transaction that is always rolled back, behind a write guard
-- **Full runs start from an empty model** (`derivation_clear_model` switches it off); runs of one phase or step keep it
-- First-run hints, a theme switch that reaches every view, and runs that survive a reload
-
-### Benchmark mode
-
-- **Start benchmarks from the studio**: end to end or derivation only, with single calls
-- **Read sessions together**: consistency per repository by name and by source, and answer stability per step as a heatmap
-- **Flips with their cause**: the candidate stage, no candidate or a missing source node; the deciding calls show whether the LLM or something upstream changed
-- **Model inspector**: all runs, one run or two side by side, as boxes or as an ArchiMate diagram with comparison badges
-- **Trace an element** across runs, and **export** a session as one verified bundle
-
-### Observability
-
-- **Every LLM call is kept** in a log per run (prompt, answer, kind, tokens, latency, cache state, error, generation settings), shown in the live log, the Prompts tab and the element trace (`GET /api/trace/{element}`)
-- **Inputs recorded**: every benchmark session and studio run records its config versions, samples per step, file types, name patterns, settings and environment (`session_inputs.json`, `inputs.json`)
-- **Benchmark export**: `benchmark export <session> -o <zip>` writes a reproducible zip with the config texts, the environment and a sha256 manifest
-- **Process mining logs** in OCEL 2.0 and as a case log (`cases.csv`, `cases.xes`); `benchmark ocel` exports several sessions as one log
-- **Newer models**: a model config can take no temperature (`LLM_{NAME}_SAMPLING`) and set a reasoning level (`LLM_{NAME}_REASONING`); each call records the model that answered, as a retired id can be served by another model
-- Run snapshots record refine disables with their reason, capped candidates (`over_cap`) and BusinessConcept output stability; the event log names every node, edge, element and relationship a step created
-
-### Distribution
-
-- **Three packages on PyPI**: `deriva-studio` (studio and CLI), `deriva-cli` (CLI only) and `deriva-dev` (both, plus benchmarking), installed with `uv tool install --python 3.14 deriva-studio`
-- **One home folder** (`~/.deriva`, moved with `DERIVA_HOME`) and **one settings layer** (pydantic-settings; the environment wins over `.env`)
-- **grafeo 0.6.0b1** from PyPI (graph files of earlier versions are extracted again); spaCy pipelines are downloaded on first use, pinned by version and SHA-256
-- **Release workflow**: version checks, wheel smoke tests, trusted publishing with PEP 740 attestations and a `constraints.txt` per release; CI installs the packages as tools on Linux, Windows and macOS
-- **Documentation** moved to `docs/` and is published at docs.deriva.dev
-- Known limitation: ISI's deriva-py (`deriva` on PyPI) cannot share a Python environment with Deriva
+Hardening release: Deriva is safe to run on untrusted repositories, the bugs found since 0.8.10 are fixed, and the default configuration covers more kinds of repositories (Go, TypeScript, .NET, gRPC). Some changes alter derived models; use 0.8.10 for its exact output. Changes to the shipped configuration reach a new database; an existing one keeps its versions until they are updated.
 
 ### Security
 
-- **Cache files cannot run code**: pickled cache rows are refused (diskcache CVE-2025-69872)
-- **Studio API input checks**: plain labels, bounded limits, exports only into `workspace/output`, no listening beyond this machine without `--allow-remote`; the CI token is read-only
-- **Secrets stay out** of exports and session inputs; `.env` writes are atomic and refuse line breaks
+- **Links stay inside the repository**: every repository walk and file read skips symlinks and Windows junctions, so a link to a file outside the clone (`.env` with provider keys, SSH keys) is never read, stored or sent to an LLM. Clones check symlinks out as plain files.
+- **Git runs locked down**: clones, pulls and remote checks allow only the https, http, ssh and git protocols (submodules too), git gets no provider variables or API keys, and a clone stops after `DERIVA_GIT_TIMEOUT` seconds (default 1800). Submodules are cloned unless `repo clone --no-submodules` or `submodules: false` is given; a `file://` URL works from the command line only.
+- **Cloning refuses two more git attacks**: no bundle a server advertises is fetched (`transfer.bundleURI=false`), and a git older than the July 2025 submodule fixes clones without submodules, checked before the clone. On such a git, repositories with submodules lose that content until git is updated.
+- **The studio answers only its own launch**: each start prints a launch link with a fresh token that sets an HttpOnly, SameSite=Strict cookie, which every server path requires (scripts send `X-Deriva-Token`). A local studio answers only to its local host names, and a state-changing request from another site is refused.
+- **A remote studio needs TLS**: `--allow-remote` requires `--tls-cert` and `--tls-key` and serves HTTPS with a Secure cookie. Bound to `0.0.0.0`, the launch link names the machine.
+- **Another site's cookie cannot take the studio down**: a same-host cookie with an illegal name no longer makes every request fail.
+- **The model diagram renders names as text**: anywidget-archimate 0.5.1 renders element names, documentation and properties as text, so a hostile name cannot run script in the studio. It also draws elements without a type, has every ArchiMate 3.2 notation icon and scrolls a long filter panel.
+- **The graph views render names as text**: anywidget-graph 0.5.2 renders node names, keys and values as text. Its query box connects on the first query, draws at most 300 nodes of a typed query (the best connected) and explains a result with nothing to draw.
+- **The query view runs only read-only procedures**: a procedure outside grafeo's read-only list is refused however its name is written, and so is `LOAD CSV`. grafeo's load procedures read local files, even in a rolled-back query.
+- **The query bar cannot end its transaction**: grafeo 0.6.1 refuses `COMMIT`, `ROLLBACK` and `START TRANSACTION` inside the always rolled-back transaction of a typed query. Before, a GQL `COMMIT` kept the query's writes.
+- **Limits on reading and on LLM calls**: extraction skips files above `max_read_bytes` (default 50 MB, reported per file), and a run makes at most `max_llm_calls_per_run` LLM calls (default 2000). Both are system settings.
+- **Hostile documents are bounded**: a `.docx` that unpacks to more than 100 MB is skipped, and a PDF is read up to 2000 pages, 20 million characters and 100 MB of unpacked page content (pypdf 7.0 caps each stream). A document cut or refused at a limit says so in the log.
+- **Snippet lines are capped**: a type's snippet keeps at most `max_snippet_line_chars` characters per line (default 2000), so a minified one-line file can no longer fill the disk with snippets. Files are split once for all their types, and title separators no longer take quadratic time on long runs of spaces.
+- **Metadata extraction takes a folder name only**: like every other repository command.
 
-### Model quality
+### Extraction
 
-- **Business concepts the code names are kept and connected** (`named_in_code`, `code_support.single_word_names`)
-- **Mainframe sources are parsed**: COBOL programs and copybooks, JCL and BMS maps, by structural parsers
-- **Roles from structure** (`roles.structural`): an annotation or a kind gives a candidate its role without an LLM call
-- **Application services as capabilities** (`component_services`): identity and relationships come from structure, one call writes the name and a sentence
-- **Relationships from graph links** (`graph_links`, `listed_members`), without an LLM call
-- BusinessConcept tie groups (`evidence_keep_ties`); pipeline terms and licence files are no concepts; domain-free prompt examples; proper names keep their spelling; `repo clone` fetches submodules
-
-### Fixes
-
-- **A first start works end to end**: graphs persist in the home folder by default, the first saved model becomes the default, and a model's own key and URL reach the provider
-- **Structure without an LLM**: `--no-llm` and **Structural steps only** make no LLM call
-- **`benchmark analyze`** compares the runs of one repository with one model (a two-repository session read 2.7%), and a single run reads "not measured"
-- `benchmark mark-failed`; `config model set` on duplicated keys; long paths on Windows; `run` without `-v`; runs and benchmarks that end cleanly; JSON answers that quote a code fence; half-made configuration databases; and many studio fixes (keyboard access, live regions, contrast)
-
-# v0.7.x - Deriva (March 2026 - )
-
-Version 0.7.x is all about stability, portability, user experience, documentation and clean architecture/code standards.
-
-## v0.7.1 - Stability and Consistency (October 7 2026)
-
-### Code Quality
-
-- **Layer boundaries are enforced again**: the per-layer `ruff.toml` files now extend the project configuration. Before, those folders ran on ruff's defaults, so the architecture bans (TID251) and the project rules never applied there
-- **CLI goes through services only**: `config query` and `config snapshot` open their read-only connection through the config service, and `benchmark deviations` takes its recommendations from the deviation service
-- **Derivation modules no longer read the config database**: the service loads each step's include/exclude patterns and passes them to the element module (`generate()` takes `patterns` instead of a database connection)
-- The remaining imports of adapter types in derivation and extraction modules are marked as a documented exception (see ARCHITECTURE.MD)
-- Code in the layer folders reformatted to the project line length (180)
-- ruff 0.16; Markdown files are excluded from ruff formatting, so documentation examples keep their hand formatting
-- Removed dead code: the unused BusinessObject suffix collapse in duplicate detection, and the element scan that fed it; the graph adapter's index and constraint stubs (no-ops left from the Neo4j adapter, never called)
-- **All prompt text in versioned config**: the texts that steer the LLM and were still written in code moved into the steps' config rows, byte-identical (cached runs on the benchmark repositories made no live LLM call and gave identical models; snapshot tests pin the assembled prompts):
-  - the batch element prompt's persona, note on the candidates, rules and abstention rule, into each element step's `params.prompt`;
-  - the opening line of the single-candidate element prompt, into `params.per_candidate.persona`;
-  - the opening line of the relationship prompt, into the relationship row's `params.persona`;
-  - the opening sentence and the task sentence of the TypeDefinition, Method, Test and ExternalDependency extraction prompts, into each step's `params.prompt`.
-
-  Code keeps only headings, the serialized input and the output contract. A step whose config lacks one of these texts reports an error instead of using built-in text
-- **Duplicate detection makes no LLM call**: its semantic check, an LLM prompt written in code without a config row, is removed. The pipeline never passed that step a model, so duplicates were already found from exact and fuzzy name matches only; results do not change (verified with cached runs on the benchmark repositories)
-- **`config pattern` commands**: a derivation step's name patterns can be listed, added and removed from the CLI (`config pattern list|add|delete`); a category left without patterns is deactivated. The shipped SystemSoftware include patterns, a list of product names, are removed: that step keeps candidates that match no include pattern, so the list had no effect (verified: the same candidates on the benchmark repositories), and product names do not belong in configuration
-- **grafeo 0.5.44**: the minimum grafeo version is now 0.5.44. Cached runs on the benchmark repositories make no live LLM call and give identical models, and derivation runs faster (up to four times on the largest repository). Graph files written by 0.5.43 open without re-extraction
-- **solvOR 0.6.3**: the minimum solvOR version is 0.6.3, which Deriva now uses only for the joint-consistency optimization; its new MILP solver (presolve, warm branch and bound, a Rust LP kernel) makes the same decisions on Deriva's joint-consistency instances in milliseconds where 0.6.2 took up to minutes or did not finish
-- **Graph writes through grafeo's upsert helpers**: nodes and edges are created or updated with grafeo's index-backed `upsert_nodes` / `upsert_edges` instead of a lookup and one property write at a time, and the per-edge-type cache of existing edges is gone
-- **Properties stored natively**: nodes, edges, elements and relationships no longer keep a JSON copy of their properties next to them. Graph nodes store their properties (nested values included) directly, edges their own properties, elements and relationships one `properties` map; a re-added node holds exactly its last write, and properties without a value are not stored. Graphs written by earlier versions are extracted again on their next run. Exported models list element properties in sorted order
-- **grafeo builds without Cypher are refused before a database opens**: Deriva sends every query as Cypher; it now checks grafeo's feature list (`grafeo.features()`) first, where a build without Cypher used to fail only at the first query, with an attribute error
-- The id index lookups no longer filter out deleted nodes: grafeo's property index stopped returning them (a test pins that behaviour)
-- **Refine steps no longer read the model's storage format**: orphan detection asks the ArchiMate manager for the orphan elements (sorted by identifier), and the Flow-to-Access fix retypes the relationship through the manager, which keeps its identifier, name, documentation and properties and validates the new type before removing the old relationship (it used to copy fields by hand into a raw query). An unused element-source helper is removed
-
-### Benchmarking
-
-- **Model quality next to consistency**: `benchmark analyze` reports the structure of every model a session exported: elements and relationships, relationships per element, elements in no relationship, parts composed into more than one whole, pairs linked by more than one relationship type, how many elements of a type are linked to the type a reader expects next to them (a business process to an application service, a data object to a business object, a component to a node), elements that repeat another of the same type and name (the pipeline should derive none), and precision and recall of the elements against the repository's reference model, counting only matches on name and type and each reference element once. Combined multi-repository sessions are read under their joined name. Consistency shows whether runs agree; these measures show whether the model is usable
-- **Relationships are derived after the elements by default**: `benchmark run` now defers relationships to one pass after all elements, like the pipeline (`--no-defer-relationships` for the old mode). In the old mode, elements that a step classifies into roles got no relationships, so benchmark models had almost none
-- **`benchmark step`**: repeats one extraction step on a fixed input and compares only what it produces. The input (every earlier step) is built once from the LLM cache and kept in the session folder; each run starts from a copy of it, in a separate work database, and calls the LLM for the step without the cache. The report gives presence and exact consistency per repository and per node or edge type, the properties that differ, live LLM calls and answer stability (`step_results.json`). `run_extraction` gained a `steps` filter for it
-- **`benchmark step` measures derivation steps**: `prep` (the prep phase), an element step, `ConsolidatedRelationships` (the relationship pass) or a refine step, each on the whole extraction and every earlier derivation step built from the cache. A run's output adds the model's elements by identifier and its relationships by type and ends. `run_derivation` gained a `steps` filter for it
-- **Decision stability for element steps**: `benchmark step` compares every candidate's decision (the stage it reached and the element it became) across runs, so keep decisions and role classifications report the share of candidates decided alike in every run
-- **Element steps are scored on identity**: for an element step, `benchmark step` reports documentation, the LLM's own name for the element and its confidence but does not count them in exact consistency (no later step reads them for identity; the report names them). Element timestamps (`derived_at`) are left out like other timestamps
-- **Decision stability in `benchmark step`**: a step that classifies items in batches reports its decision per item, and the step benchmark gives the share of items with the same decision in every run (reject labels included). One changed label makes a whole batch answer differ, so the answer stability of such a step says little on its own
-- **Step reports**: an extraction step can return its own statistics (for business concepts: list sizes, labels, skipped terms, tool versions, decisions); they are written to the run log and the event log, and `run_extraction` returns them per repository and step
-- **LLM answer stability in `benchmark analyze`**: per step, how many prompts got the same raw LLM decisions in every run (descriptions, documentation and confidence are left out, so a reworded description is not counted as a different answer; extraction and derivation runs compared separately), in the JSON and Markdown reports next to output consistency, so voting or post-processing cannot hide LLM variance
-- **LLM samples per step recorded**: `session_metadata.json` lists the answers asked per decision for every LLM step (above 1 means majority voting), so every consistency number shows whether it came from single calls
-- **Display names in the run snapshot**: business concept and technology names are recorded next to their ids (the ids have lost their word boundaries)
-- **Extraction routes in the run snapshot**: each business concept and technology lists the routes that produced it (directory classification, document extraction, structural or LLM technology extraction; technology edges carry a `route` property), so stability can be measured per route
-- **Fixed: `benchmark analyze` found no repositories**: the analyzer read `summary.json`, which the benchmark had renamed to `session_metadata.json`, so the per-repository analyses were empty
-- **Keep rates and call kinds**: each run snapshot records every candidate decision (element type, source node, stage), and each LLM call event records its kind (the output schema: keep, naming, relationship or extraction), so LLM usage and keep rates can be analysed per step
-
-### Consistency
-
-- **Relationships from containment**: the relationship pass can decide ownership from structure: the nearest component whose directory holds an element's source composes a nested component or an interface, realizes a service and accesses a data object defined inside it, set per type pair in the relationship config (`params.containment`, each rule checked against the ArchiMate metamodel). Composition stays exclusive (a part belongs to one whole), components can now compose components, and these relationships are the same in every run. For an element that containment places under an owner, no other tier relates it to that owner, and the community, graph-neighbour, name-overlap and LLM tiers add no further composition, aggregation, assignment or realization to it; usage relationships to other elements (serving, flow, access through code edges) stay. Elements that containment cannot place (for example a service named after a business concept) are related as before. Before, word overlap between names composed one interface into several components, and a component next to a service got both an assignment and a realization
-- **Technology relationships from structure**: a node made for a hosting role composes the system software of the technologies in that role, system software realizes the technology service of its kind, and a technology service serves the component whose directory holds a manifest, build or container file that configures one of its technologies (relationship config `params.membership` and `params.configuration`, checked against the metamodel). The chain from component to technology service, system software and node is now the same in every run, and system software has at most one node: a node made from a container file lists no technologies and no longer composes system software
-- **Relationships without free LLM proposals**: the relationship config can switch off the LLM pass that proposed relationships freely (`params.llm_proposals`, true when absent), so every relationship comes from structure: containment, membership, configuration files, communities, graph neighbours, code edges and name overlap. The shipped configuration switches it off: the proposals changed between runs (they related generic actors to generic processes and functions by name), and no evidence in the repository backed them. Business elements that structure cannot relate are left without relationships
-- **Fixed: Java and TypeScript imports did not resolve**: import resolution only knew Python file layouts, so every Java import became an external dependency named after its first segment (`com`, `org`, a project's own package root), the Java standard library was never recognised, and relative TypeScript and JavaScript imports stayed unresolved. A Java import now resolves to the repository file that declares the class (by its package path under any source root; a nested class or static member to its outer class's file; the nearest module when a class exists in several), the standard library by package prefix, a wildcard import of an own package to no dependency, and a relative script import to the file with any script extension or the directory's index file. On the Java benchmark repositories this recovers about 2,450 and 1,700 internal import edges and removes the false hub dependencies that skewed graph metrics and communities; the relationships derived from those hubs disappear
-- **Dependencies between components from imports**: the relationship pass can relate elements by the imports between their files (relationship config `params.dependency`, checked against the metamodel). The shipped configuration lets a component serve the component whose files import its files. Each dependency is drawn between siblings: between the two components just below the deepest component that holds both ends, so a module that uses another module's part shows as a dependency between the two modules, and imports within a component or into its own parts add nothing. Deriva's own model now shows its layers (command line to services, services to modules, adapters and common code, modules to adapters and common code), and the benchmark repositories gain 2, 31 and 9 such lines, the same in every run
-- **Annotations and decorators are kept in the graph**: type definitions and methods now store the annotations or decorators they carry (`decorators`), which extraction read but dropped. Derivation queries can select on them; the ApplicationInterface query's existing clause for decorated methods now matches, so a decorated web route becomes an interface. Prompts are unchanged
-- **Components at the deployable-unit level**: a derivation step can select its directory candidates by deployable unit (step param `deployable_units`: the build, dependency and container file names that make a directory a unit, and the minimum number of units). When a repository has at least that many outermost units, those units are the candidates, before any ranking or cut; a repository with fewer keeps its candidates. The shipped ApplicationComponent configuration uses it with common build, dependency and container files and a minimum of two: on the multi-module benchmark repositories the components are now the modules and services (Gateway and the audit and integration hooks, which the centrality ranking had cut, are in; user interface folders and deep packages are out), and the components of single-unit repositories are unchanged
-- **Elements made from a directory's concept lie in that directory**: a source node without a path of its own (a concept found in a directory name) now takes the path of the directory that represents it, or the deepest directory shared by several. Containment, configuration and dependency rules can then place such elements: a service found in a module's directory name is realized by the module it comes from
-- **Fixed: long file extensions were not recognised**: registered extensions longer than four letters (`.gradle`, `.properties`, `.coffee`, `.parquet`) were kept with the dotfile names and never matched a file's suffix, so Gradle build files and Java properties files were of unknown type. They now classify by suffix. The technology step reads Gradle builds again (with the configuration-file relationships that follow); directory classification prompts list the corrected file types
-- **A repository's own modules are no technologies**: a compose service named like one of the repository's own modules, or running an image tagged like one, is no technology candidate (Technology step param `own_modules`: the file types and subtypes whose directories are modules, here build, dependency and container files). The shipped configuration uses it; the compose services of a repository's own microservices no longer reach the classification, which had named them technologies in some runs
-- **Data objects from persistence entities**: a derivation step can let an annotation decide (step param `per_candidate.decorators`, a pattern): a candidate carrying a matching annotation passes the name filters and the cut and is only named, never judged; the other candidates take the batch path as before. The shipped DataObject configuration selects types annotated as persistence entities (`Entity`, `Table`, `Document`, `Embeddable`, `MappedSuperclass`) and, in a repository that has them, no longer the name-suffix candidates (message and event classes). In a repository with annotated entities the data objects are now its domain entities (each accessed by its component) instead of nine message classes; repositories without entities keep their data objects
-- **A data object realizes the business object its type names**: the relationship pass can relate elements whose structural sources carry the same name (relationship config `params.same_name`, checked against the metamodel, with suffixes to remove such as an implementation suffix). The shipped configuration lets a data object realize the business object of the same name; in a repository with such entities they now realize the business objects of the same name, the first business-to-application links from structure
-- **Business elements need an anchor in the application or technology layer**: the cross-layer refine step can disable the elements of a layer that have no relationship to another layer, directly or through relationships within their own layer (`cross_layer_coherence` param `disable_unanchored`, a list of layers; it only flagged them before). The shipped configuration applies it to the business layer: business elements that no derived relationship connects to the rest of the model leave it, together with the relationships between them. Most of them were generic terms from documentation (actors such as Actor, Person and Role, events such as Event Occurred) and the main source of run-to-run variance. On the benchmark repositories the business layer drops from 12, 10 and 76 elements to 0, 0 and 7 (the business objects that one repository's entities realize); on a domain-driven repository the business processes and objects realized by its components stay. Valid business elements without a relationship leave too, until structure can relate them
-- **The concept classifier can be told what the system is for**: BusinessConcept params `system_description_chars` (the prose opening of the README at the repository root, with headings, images, badges, HTML, tables and code blocks left out) and `context_sources` (the document of each context line) add both to the classification prompt; without them the prompt is unchanged. Tried with an instruction that judges terms by what the system's users work with: it found far more of a technical product's domain (a data platform's entities and projections, a modelling tool's models and derivation steps) and fewer terms from licenses and example domains, but it doubled the concepts and made them vary more between runs, so the shipped configuration does not use it
-- **Business elements the code names stay**: the cross-layer refine step can keep an unanchored element whose source concept the code carries (`cross_layer_coherence` param `code_support`: how many distinct type definition or directory names must contain the concept's words in a row, for names of several words and for single words, where null means a single word never counts). The shipped configuration keeps names of several words that one code name carries and never single words: single words that many class names contain (actor, client, provider, role, manager) were mostly noise. On the benchmark repositories elements such as Generate Like, Process Rating, Business Concept and Extract Data come back; the kept elements have no relationships yet
-- **Fixed: methods of Java, TypeScript, JavaScript and C# never reached the graph**: the Method step parsed only Python files with tree-sitter, although the parsers for the other languages exist, so on a Java repository there were no methods, no method annotations and no call edges. The step now parses the languages in its `languages` param (Python when absent); the shipped configuration lists all five. Graph metrics now count the methods of every language, as they already did for Python. The interface step's method clauses match decorator registrations only (`app.route(...)`, `router.get(...)`, `app.command(...)`), so a web route or command registered by a decorator still becomes an interface, while an annotated REST method of a controller class does not become an interface of its own: the controller file stays the interface
-- **The repository itself is no technology it uses**: with the new param `skip_repository_name` (Technology and DirectoryClassification), an item named after the repository (a container image, a library, a compose service running such an image) is no technology candidate, and a technology answer for a directory named after the repository is skipped. A name counts in any spelling as one or more whole words (`acme/toolshed-persistence` and the directory `tool_shed_api` both name a repository called ToolShed). The shipped configuration uses it: a repository's own images, client libraries and module directories no longer turn up as technologies in some runs
-- **Nodes from the technologies a repository runs**: the Node step now also considers technologies classified as system software (databases, message brokers, caches found in manifests), not only platforms and infrastructure, and its role classification decides which of them need a host. Before, a database or broker got its node only when a directory carried its name, so nodes depended on directory classification; now Apache Kafka, MongoDB, MySQL, MariaDB, ActiveMQ and Ehcache get their message broker, database or cache server
-- **Steadier element names**: the repository's name is removed from the start of an element name also when it is spread over several words ("Tool Shed Registry" becomes "Registry" in a repository called ToolShed), and the naming step takes a word's casing from the source when the source spells it with capitals (the type `CrudTypeImpl` gives "Crud Type" whether the answer says "CRUD Type" or "Crud Type"; a lowercase directory name carries no casing). Two names that varied between runs no longer do
-- **No relationships from co-mention**: business actors are no longer assigned to every business process or function mentioned in the same document (on one benchmark repository about 390 of 470 relationships came from this)
-- **LLM relationship proposals must fit a rule for their element types**: a proposal is kept only when its source type, target type and relationship type match a relationship rule; before, any relationship type that some rule of the element type allowed was accepted, between any pair
-- **Application components are parts of the software**: the shipped ApplicationComponent configuration takes only directories with source code below them (configuration, schema and data folders were components), and one closed classification per batch keeps a directory as a component or leaves out build and task tooling, start and deployment scripts, container setup, data sets and documentation. A directory that holds nearly all of the source files of a selected directory above it (a source root such as `src` inside its module) is represented by that module: new step param `skip_nested` (`file_type`, `min_share`), applied after the candidates are ranked and cut, so no lower-ranked directory takes the freed place. Names still come from the naming call; the documentation comes from the template. Repeated runs on the benchmark repositories agree on every component, with half the LLM calls
-- **Business elements only from business concepts**: the shipped BusinessActor, BusinessFunction, BusinessProcess and BusinessEvent configurations take only the business concepts that concept classification gave the matching label and that the documentation mentions, ranked by graph importance. One closed classification per batch keeps a concept as that element type or chooses none, which is the default for anything technical or generic; a repository without business elements of a type gets none. Each kept concept then gets one naming call that follows the ArchiMate naming convention of its type (a role or organization for an actor, a noun phrase for a function, verb and object for a process, object and past-tense verb for an event). Before, these steps also took methods and type definitions whose names matched a fixed word list, so the software's own operations became business functions and processes and functions became events under another name. The steps' name pattern lists are removed, and a concept that names a module which is already an application component is left out. New role param `naming_call` (needs one element per candidate and the step's `naming` params). Repeated runs of the four steps on the benchmark repositories agree on every element and every decision; process names agree on about 95% (the naming call varies the verb)
-- **One technology service per kind**: the shipped TechnologyService configuration classifies each candidate technology into a closed list of service kinds (data storage, message queuing, caching, runtime, application hosting and more) in one call, and each kind found becomes one service named from the list, with the technologies that offer it as sources. Services were named per product before ("Node.js", "Java 8"), and names flipped in letter case between runs. Technologies that are a module of the application itself are left out. The step's name pattern lists are removed: its exclude list of standard library and tool names matched inside other names ("re" in "Eureka", "os" in "JBoss") and left out real system software, and its include list had no effect
-- **Application interfaces by protocol, named from structure**: the LLM no longer names each interface. One closed classification per batch chooses the protocol a candidate is offered over (HTTP, web UI, command line, messaging, RPC) or none, which leaves out clients of other components, configuration classes and UI helpers. The name is built from structure: the application component that contains the candidate, its own name without the type word, and the protocol (for example `<Component> <Subject> HTTP API`). New role params `name_template`, `container_type` and `show_path`; on the benchmark repositories the step gives identical output in every run with 1 or 2 calls instead of one or two per candidate
-- **Application service candidates from structure**: the shipped ApplicationService configuration takes types whose name ends in "Service" (it matched the word anywhere, so application bootstrap, constants and controller classes became services), and a concept that names a module which is already an application component is left out (one source, one element)
-- **One application service per contract**: a candidate type that implements or extends another candidate type of the repository (an implementation class of a service interface, for example) is left out before the candidate list is ranked and cut, so the interface represents it. Before, the interface and each implementation became separate services that competed for one name. New step param `skip_subtypes`, used by the shipped ApplicationService configuration; a placeholder for an external base type never represents a candidate
-- **Graph thresholds are step config and can be limited to some candidates**: the Node step's k-core threshold (the 30th percentile) was a constant in code and applied to every candidate, also to technologies chosen by their category. The percentile is computed over the whole graph, so an unrelated change elsewhere in the graph moved valid technologies below it and a hosting role disappeared. The threshold is now the step param `graph_filter` (`min_kcore_percentile`, optional `labels`); the shipped Node configuration applies it to file candidates only
-- **Directory classification answers with decisions only**: the LLM chooses the classification and a type from fixed lists and no longer writes a description or a confidence. Directory concepts and technologies get the confidence set in the step's params (`confidence`); the confidence gate at 0.7 is gone (the instruction already sends uncertain directories to skip)
-- **Business concepts from candidate terms**: the LLM no longer reads each document and writes concepts. A new NLP adapter finds candidate terms with spaCy (noun phrases and verb with object) in the documentation, in English, German and French; a pinned translation model gives every term an English form, which is its identity, and the adapter records where each term occurs. Terms with evidence (at least two mentions, or words that are part of a type definition or directory name) are ranked, and the list holds 80% of the evidence (with a budget cap as a guard). The LLM only classifies each term into a closed set of business labels (object, process, function, actor, role, event, service) or reject labels (technical, attribute, quality, generic, documentation), in batches whose membership depends only on the term. Names, ids, document references and the original wordings (`sourceTerms`) come from the candidates, never from the LLM, and the confidence comes from the step's params. Repeated runs of the step agree on about 95% of their output (was about 73%) with 1 to 16 LLM calls per repository instead of one or more per document; the share of valid business concepts in a hand check did not change (about a quarter). spaCy and CTranslate2 are new dependencies and the translation models are downloaded on the step's first run (see README); new step params `evidence_min_count`, `evidence_share`, `max_candidates`, `support_factor` (the score factor for terms named in the code), `missing_retries`, `confidence` and `nlp`, and the step's batch size is the number of terms per call
-- **Business concept classification rejects the software's own operations**: the shipped instruction counts the data structures the software keeps and the operations it performs on them (also when named as a verb with an object, such as "update field") as technical, and chooses a business label only for what people in the organization would name in their own work without knowing how the software is built. In a hand check on the benchmark repositories, the technical share of the accepted concepts fell from about half to under a third, and no valid concept was rejected
-- **Business concept terms left out of an answer are asked again**: the model sometimes leaves one or two of several hundred terms out of its classification answer, so those terms had no decision in that run. They are now asked again on their own, up to `missing_retries` times (one decision per term, no voting); the step reports the retry calls and the labels they recovered
-- **Technologies from structure**: the LLM no longer reads each manifest and writes technologies. Structure finds the candidates in the step's input files: the platforms their types imply (a versioned table in the step's params: a build descriptor implies its language runtime, a compose file the container platform) and the items they declare (libraries without test scope, build plugins and profiles, compose services with their image and the names of their environment variables, container base images, environment variable names; values never reach a prompt). The LLM puts each item into one of the technology categories or none and names the system it runs or connects to, in batches whose membership depends only on the item; ids, categories, confidence and edges come from structure and those labels, and a technology that directory classification already found keeps its node. Repeated runs of the step on the benchmark repositories agree on about 99% of their output (was about 77%) with 1 to 4 LLM calls per repository instead of one per input file, and no longer produce the project itself or tools as technologies. New step params `platforms`, `confidence` and `missing_retries`; the per-file prompt, its schema, and the structural path with its fixed tables of container images and environment variables are removed
-- **Translated phrases are no business concepts**: a candidate whose English name holds a stop word (new step param `stop_words`; the shipped list holds articles and forms of "be") is a clause or phrase that machine translation produced from a term, such as "actors are divided", and is left out of the classifier's list. It is left out after the evidence selection, so its evidence still counts and no other term moves in or out
-- **Candidate support from structure only**: a concept that directory classification made (an LLM decision) no longer raises a term's evidence, so a changed answer upstream cannot change which terms reach the classifier
-- **One classification per directory name**: directories with the same name (by canonical name key) reach the LLM as one entry listing all their paths, and all of them share the decision. Copies used to land in different prompts and could get different answers in one run, while they already shared one concept identity. The answer is matched back by name key, and the concept takes the directory's name, not the answer's spelling
-- **Structure skips directories before the LLM**: the directory classification step's params list names to skip (`skip_names`), trees to skip with everything inside (`skip_trees`, such as test trees) and whether path steps without files and with one subdirectory are skipped (`skip_pass_through`). Those directories never reach the LLM (on one benchmark repository 234 of 625 directories, 8 prompts instead of 13)
-- **Single LLM calls by default**: element naming asks once by default (it took the majority of three), and the shipped configuration uses one answer per decision for every step. Majority voting over samples made consistency look better than the single-call behaviour of the pipeline
-- **One identity per concept and technology name**: business concept and technology ids come from one canonical name key (words split at spaces, separators and camel-case, parenthetical asides dropped, every word singular, joined and casefolded) in every step that creates them (document concepts, directory classification, structural and LLM technologies). Spelling variants such as "Claims Handling" and the directory `claims_handling` used to become separate nodes. Existing ids with separators change (new baseline)
-- **Prompts built from structure only**: a prompt no longer contains what earlier LLM calls answered, so one drifting answer cannot change every later prompt. Per-candidate element prompts no longer list the names chosen for earlier candidates (duplicate names are still checked after the call); Technology prompts list the repository's dependencies sorted by name and no longer the technologies found by earlier calls (still used to deduplicate); relationship prompts sample existing elements by graph importance instead of LLM confidence
-- Removed the per-document business concept extraction: its prompts, multi-file batching, structural seed concepts, voting and name normalization
-- **Element names can no longer remove elements**: which candidates become elements is decided by structure before any LLM call. A candidate whose structure name repeats an earlier candidate's (for example once the repository prefix is stripped) is left out, and the naming step never gives an element another candidate's structure name or a name given earlier in the step (batch mode now checks across batches, not only within one). Before, a naming answer could take the name of a later candidate, which was then dropped as a duplicate: on one benchmark repository a top-level module disappeared in some runs because a package inside it was named after it. An element records its structure name (`structure_name`) only when the naming step changed its name
-- **Application components derived one candidate at a time in every repository**: the shipped configuration uses per-candidate mode from the first candidate (`per_candidate.min_pool` 1, was 6), so the graph filter decides which directories become components everywhere; repositories with fewer than six candidates used to be judged in one batch, where a directory flipped between runs. Repeated runs of the step on the benchmark repositories now agree on every component and on about 96% of their names and structure (was 92 to 93% of components)
-- **Technology nodes can become Nodes**: a derivation step's name patterns can be limited to candidates with given graph labels (new step param `pattern_labels`); the shipped Node configuration applies them to files only. Technologies selected by their category in the Node query used to be dropped unless their name contained a pattern such as "docker", so two of the benchmark repositories had no Node at all; they now get Nodes for their platforms and servers, and repeated runs agree on every Node
-- **Nodes from technologies by hosting role**: a derivation step can classify candidates into a closed, versioned list of roles (new step param `roles`: the candidate labels, the instruction, the role names, an optional documentation template and `missing_retries`). One call per batch chooses a role or none for each candidate, and every chosen role becomes one element whose identity and name come from the role, with all its candidates recorded (`sources`). The shipped Node configuration classifies technologies into application server, database server, message broker, cache server, directory server, monitoring server and container host, so several application servers become one Application Server node instead of one node per product, and runtimes that need no host of their own are left out. Repeated runs of the Node step agree on every node and every classification, with one call per repository for the technologies
-- **SystemSoftware by closed kind**: the role classification can also keep one element per candidate (`element_per: "candidate"`): each candidate keeps its own identity and name and stores its role. The shipped SystemSoftware configuration classifies technologies into database, message broker, runtime, application server, web server, cache, directory service, monitoring, service registry, data processing, container platform or none, instead of keeping candidates whose LLM confidence passes 0.5. Libraries such as HTTP clients or token libraries are left out in every run instead of flipping at the threshold, names are the technologies' own names (no naming call), and the step needs one or two calls per repository instead of five to thirteen
-- **One structural source, one element**: a derivation step can leave out candidates whose directory is already the source of an element of given types (new step param `skip_when_directory_is`). The shipped SystemSoftware configuration uses it for application components: a module directory that directory classification also marked as a technology is no longer system software next to the component (the system software it runs comes from the manifests). Repeated runs of the SystemSoftware step on the benchmark repositories now agree on every element
-- **Duplicate detection without domain vocabulary**: name comparison for duplicates no longer maps business words onto each other (client, buyer and account to customer; purchase and sale to order; generation to rendering) or singularizes a fixed list of business nouns; only generic architecture synonyms and abbreviations remain
-
-### Fixes
-
-- **Graph metrics computed natively in grafeo**: the prep phase runs PageRank, Louvain, k-core, articulation points and degree in grafeo, on the graph namespace, instead of exporting the edge list to solvor (solvor remains for the joint-consistency optimization). This changes results: Louvain now merges communities level by level (far fewer, larger communities), articulation points no longer fail on deep graphs, every graph node is scored (nodes without edges included), and PageRank is computed on the undirected graph with each connected pair once. Requires the grafeo 0.6.0 development build until 0.6.0 is released
-- **Results no longer depend on the graph's result order**: candidates come in node id order (equal PageRank ranks by node id before the `max_candidates` cap), the graph readers return nodes in id order (a type name defined in several files used to resolve to whichever definition the graph returned first), and the graph metrics are computed in node id order. Verified with grafeo's shuffled result order: identical models and no new LLM calls on the benchmark repositories
-- **Derivation steps read the graph metrics of their own run**: the element steps read PageRank, communities, k-core, articulation points and degree through a disk cache keyed only by the node and edge counts, so after a solver upgrade, a change of prep parameters or a graph with the same counts they could read values from an earlier run while the stored queries saw the new ones. The values are now read from the graph once per derivation run, and again after any prep step. The `benchmark run` options `--no-enrichment-cache` and `--nocache-enrichment-configs` are removed (there is no cache left to switch off), and so are the `use_enrichment_cache` / `nocache_enrichment_configs` arguments of `run_derivation` and `PipelineSession.run_benchmark`; the files under `workspace/cache/graph/enrichments` are no longer used and can be deleted
-- **Retyping a relationship keeps everything written on it**: the Flow-to-Access fix rebuilt the relationship from its stored properties only, so a confidence and the consolidation mark that relationship consolidation writes on the edge were lost, and later refine steps read the default confidence instead
-- **ApplicationInterface honours `graph_filter` and `pattern_labels`**: its candidate filter did not pass the step params on to the shared filter, so both had no effect on that step
-- **`skip_nested` refuses an unknown file type**: a file type that is not registered counted no files and silently left nothing out; it is now an error when the step runs
-- **Answer stability of combined sessions**: `benchmark analyze` dropped the derivation answers of a session that derives several repositories together, because their runs carry the joined repository name
-- **`repo clone --overwrite` works on Windows**: replacing an existing clone failed with "Access is denied", because Git keeps its pack files read-only; the overwrite now removes the directory the way `repo delete` does
-- **Name keys keep acronyms apart**: the shared name key made acronyms singular ("AWS" became "aw", "DNS" became "dn"), split an acronym plural into two words ("APIs" and "API" were two identities) and dropped "+" and "#" ("C++", "C#" and "C" were one technology). Acronyms now stay as written, an acronym plural meets its acronym, and a trailing "+" or "#" belongs to its word. A name written entirely in capitals with several words (a constant) is still made singular word by word. The benchmark repositories keep all their ids
-- **Document text cleanup**: RTF paragraph marks now end a segment instead of joining paragraphs, and RTF Unicode escapes are decoded (their fallback character dropped), so umlauts and other non-ASCII letters survive. Tag removal only takes real tags, comments, declarations and template directives (a name or one of `! ? # @` after "<"), so text such as "a < b > c" stays, and a tag whose quoted attribute holds "<", ">" or a URL goes whole (tags are now removed before URLs)
-- **Relationship prompts sample elements by graph importance**: when a type has more elements than the prompt shows, the sample was meant to take the elements whose source is most central in the graph, but it read a property elements do not carry and fell back to identifier order. It now reads the source's pagerank that every element stores
-- **Role elements never share a name**: with a name template, two candidates could get the same planned name (a component, a subject and a role), and both became elements with that name. A candidate whose planned name repeats a name given before is now left out, as candidates with a repeated structure name already are
-- **A represented candidate takes no place in the cut**: `skip_when_directory_is` left out candidates whose directory is already an element's source only after the candidates were ranked and cut, so they could take places from eligible candidates. They now leave before the cut (no change on the benchmark repositories)
-- **Business events from concepts and methods together**: when the BusinessEvent query returned business concepts next to other candidates, all of them took the method path (name patterns, pagerank threshold), which could drop the concepts. Concepts now keep their query order and come first; only the other candidates take the method path. The shipped configuration returns concepts only, so its results do not change
-- **Inheritance points at the repository's own types**: an inheritance edge whose base type is defined in another file used to point at a placeholder type (an unresolved external reference), so a class lost its link to the interface or base class it extends, and every step that reads type definitions saw the placeholder as one more type. Once every file is extracted, the edge now points at the repository's type of that name when exactly one exists; type arguments are not part of the name, and qualified names or names defined more than once keep the placeholder. On two of the benchmark repositories 433 of 649 and 97 of 266 inheritance edges now reach a real type (were 13 and 1)
-- **One identity for the singular and the plural of a name**: the shared name key dropped "es" from every word ending in "-ses", "-zes" or "-ches" ("databases" became "database"), turned "-ies" into "-y" also for words ending in "-ie" ("cookies"), and cut the final "s" of singular words such as "alias" or "canvas". The singular and the plural of such words became two identities (business concepts, directory concepts, technologies). The rules now know singular words ending in "s", words ending in "-che" or "-ie", and more irregular plurals, so a singular stays as it is and its plural meets it. Ids of the affected names change; re-extract stored graphs
-- **Excluded file types are never inputs, wherever they live**: a location rule (for example files under `docs/`) used to win over an excluded extension, and extension entries longer than four letters (such as `.archimate`) never matched as extensions. ArchiMate model files in documentation folders were therefore read as documentation. Excluded extensions now come first, at any length; `.bak` backups are excluded too
-- **Directory classification sees each directory's files**: the query behind the classification matched no directory-to-file edges and read a file-type property that does not exist, so every directory reached the LLM with only its name and path. The prompt now carries the file counts per type and the languages, and directories come in path order
-- **Directory classification votes as configured**: the step's `params` (`samples`, `min_votes`) never reached the classification, so it always asked once; the configured majority vote now runs
-- **Voting fixes**: element naming votes treat spacing variants as one name ("HTTPServer" and "HTTP Server"); directories with the same name each get their REPRESENTS edge (one of them used to lose it); "series" and "species" are no longer singularized
-- **One failed sample no longer fails the step**: with several samples, a failed first answer (for example a rate limit) made the whole file or batch fail; the other samples now still vote, and the step fails only when every sample failed
-- **Candidate decisions name the created element**: in batch mode a created candidate's decision recorded the identifier the LLM proposed, which no element has; it now records the element's structural identifier (as the per-candidate mode already did)
-- **Sampled extraction steps**: token usage in the step details sums all samples instead of the first; directories without a majority classification count as skipped; parallel sample threads are capped at 8
-- **Config input validation**: step params must be a JSON object (`config update -p`, `config add`); arrays or scalars used to pass and fail later in the step. `config update --temperature` accepts 0 to 2
-- **Switching graph databases checks the key first**: an invalid database key used to close the open database before failing, leaving the process without an active database
-- **Extraction warns when no step matches**: a method-filtered extraction that selects no enabled step now returns a warning instead of a silent success
-- **Rate limits slow the throttle even when a retry succeeds**: a 429 answered by a successful retry used to leave the adaptive request rate unchanged
-- **Joint consistency solves each part of the model separately**: constraints and cycles never cross between unconnected parts of the model, so each part is its own small exact problem (same optimum). The single solve grew exponentially with the number of parts (8 parts: 5.5 s, 10 parts: minutes; one benchmark session spent 18 minutes in it); 500 parts now take 1 s. The step stays disabled until it is measured on the benchmark models
-- **Faster directory extraction**: directories are walked once and excluded directories are never entered (the old walk descended into `node_modules` and re-walked each directory's subtree for its size); same nodes in the same order, 10 to 18 times faster on the benchmark repositories
-- **Re-added graph edges replace their properties**: an edge re-added without properties kept its old ones
-- **LLM extraction steps keep their edge properties**: edges written by the LLM-based extraction steps (business concepts, technologies, type definitions, methods, tests) lost their properties on the way to the graph; they are now stored. No step reads them yet, so models are unchanged
-- `benchmark run --help` states that `--no-cache-extraction` and `--no-cache-extraction-llm` re-extract but still read LLM answers from the cache unless `--no-cache` is given
-
-## v0.7.0 - Grafeo Migration (September 27, 2026)
-
-Replaced Neo4j (Docker container) with grafeo, an embedded Rust graph database. Removes the external Docker dependency entirely and the graph database now runs in-process. (500-1000x speedup yah!)
-
-### Infrastructure
-
-- **Grafeo adapter**: New `deriva/adapters/grafeo/` with `GrafeoConnection`, a drop-in replacement for the old `Neo4jConnection`, using a shared `GrafeoDB` singleton with namespace isolation
-- **No Docker required**: Graph database is embedded (in-memory by default, persistent via `GRAFEO_DB_DIR`)
-- **One graph database per repository**: `GRAFEO_DB_DIR` holds a `<repository>.grafeo` file per repository (combined benchmark runs use the joined repository names, commands without `--repo` use `default.grafeo`). Benchmark runs are isolated per repository; `run`, `export`, `clear` and `status` accept `--repo`
-- **Faster graph access**: property indexes on `id` and `identifier`; enrichment write-back and `graph_relationships` use index lookups and Python joins instead of unindexed Cypher joins
-- **Observability**: real step durations in benchmark event logs, extraction events, LLM latency/rate-limit wait/requests/tokens per call, slow-query warnings (`GRAFEO_SLOW_QUERY_MS`) and a `timings.json` summary per benchmark session
-- **Removed Neo4j**: Deleted `deriva/adapters/neo4j/` and all Neo4j driver dependencies
-- **Dependency directories are excluded from extraction**: one `excluded_directories` system setting (default `.git`, `__pycache__`, `node_modules`, `bower_components`, `vendor`, `.venv`, `venv`, `site-packages`, matched as whole path segments) now applies to every repository walk, so third-party code no longer becomes Directory/File nodes or derivation candidates; it replaces five inconsistent hardcoded lists. New `config setting show|set` CLI command; the setting is part of the extraction fingerprint
-- **TypeDefinition LLM fallback limited to code**: TypeDefinition input sources list programming-language subtypes only, so markup, stylesheets, templates and shell/batch scripts are no longer sent to the LLM
-- **pydantic-ai 2**: the Mistral provider is now a declared extra (`pydantic-ai-slim[mistral]`); LLM agents are kept per thread so parallel calls do not share an HTTP client across event loops; token usage is read from pydantic-ai 2's `usage` property
-- **LLM timeouts and retries**: `LLM_TIMEOUT` now bounds every LLM call (a stalled request used to hang the run), and timeouts, connection errors, rate limits and 5xx responses are retried up to `LLM_MAX_RETRIES` with exponential backoff (honouring Retry-After); other errors fail at once
-- **grafeo and solvor from PyPI**: grafeo 0.5.43 and solvor 0.6.2 are regular PyPI dependencies again, no local builds needed
-- **Security**: locked dependencies with known vulnerabilities upgraded (among others cryptography, pypdf, requests and urllib3); the CI dependency audit skips Deriva itself, which is not published on PyPI
-- **Fixed: migrations could skip statements**: a comment line directly above a statement in a migration script hid that statement from the migration runner
+- **TypeScript is parsed as TypeScript**: `.ts` files use the TypeScript grammar and `.tsx` the TSX grammar, so abstract classes, interfaces, type aliases, enums, decorators, typed parameters, return types and exported arrow functions are kept. `.tsx`, `.mts`, `.cts`, `.jsx`, `.mjs` and `.cjs` are source files, also in existing databases. *Changes models of TypeScript and React repositories.*
+- **Go is parsed**: tree-sitter reads Go types, methods with their receiver (also across the files of a package), imports and calls instead of the LLM, and an import of the repository's own module reaches its files through go.mod (Method v2). *Changes models of Go repositories.*
+- **go.mod dependencies are declared**: the require lines of each go.mod are declared dependencies, so an import of a required module or one of its packages is that dependency. One id rule names a dependency from a manifest or an import, so a name with a dot or slash is no longer two nodes.
+- **Script imports name their package**: a JavaScript or TypeScript sub-path import is its package (`aws-cdk-lib/aws-s3` is `aws-cdk-lib`) and `node:` imports are the standard library. Aliases from tsconfig, jsconfig, vite, webpack or vue configs reach the repository file they lead to.
+- **C# imports reach files**: a `using` of a namespace the repository declares links to that namespace's files whose types the file names, instead of counting as an external package. *Changes models of C# repositories.*
+- **.NET solutions have structure**: a `.csproj` is a build manifest, and one with the web or worker SDK or an executable output is a deployable unit. Folders that repeat one layout across features are one module each. *Changes models of .NET repositories.*
+- **.NET Framework web projects are web units**: a project whose ProjectTypeGuids mark a web application or web site is an entry point, also with OutputType Library. *Changes models of .NET repositories.*
+- **.NET Aspire app hosts are environments**: each project an app host adds deploys its unit, listed technology resources are system software serving the projects that reference them, and the host is a Container Platform node (Deployment v2, `aspire`). *Changes models of repositories with an Aspire app host.*
+- **System software is named after what an image runs**: an image off the technology list becomes the system its Technology label names, or the listed technology inside that name ("Apache Kafka" is Kafka); an image labelled none is no software. The labels stay on the repository node (`imageLabels`) for a Deployment rerun. *Changes models of repositories that run such images.*
+- **Tooling is no part of the product**: one closed LLM call per repository labels each deployable unit as product or tooling (build, orchestration, deployment, seeding, load, tests, monitoring), and a tooling unit gives no component, function or artifact. The unit at the repository root is never asked. *Changes models.*
+- **Unit names read like the product's**: the README's first heading is the product title only when it is the only top-level heading or shares a word with the repository or manifest name, and a `.csproj` unit takes its AssemblyName. Glued names (`shopapi`) are split and identifier-style titles are cased like folder names. *Changes models.*
+- **Units are found by their manifest name**: a deployment that names a unit's manifest deploys that unit, and a Kubernetes image named like one of the repository's modules is no technology. *Changes models.*
+- **Test code and event-sourced roots are no data entities**: a type below a folder named with a test word is test code, and a type named like an event-sourced root marker is the marker; a root another type extends stays a root. *Changes models.*
+- **Fewer generic words as business behaviour**: the concept classifier (BusinessConcept v2) rejects general activity words, software method vocabulary and work on the project itself, and asks whether a term would mean the same in another business. Over three runs on eleven repositories about half as many such words are kept and labels vary less; models change only through the steps that read concepts.
+- **Enum states in any naming style**: an enum's constants are its states in any case (C# `Submitted = 1` too), its constructor arguments and attributes are left out, and Kotlin's `enum class` counts.
+- **Status types join their domain (experimental, BusinessLayer `status_members`, off by default)**: a status type named after a member plus a status word, declared in a member's file or kept in a member's folder joins that member's business domain, so its lifecycle is found.
+- **Process names from what happens to the object (experimental, BusinessLayer `verb_names`, off by default)**: a lifecycle offers `<Verb> <Object>` for each past-participle state ("Approved" gives "Approve") and `Manage <Object>` as name candidates.
+- **`.markdown` is documentation**: such files are read and split like `.md`; existing databases get the file type through a migration.
+- **Step warnings reach the run**: what a step reports as a warning (directories not classified, no documents, a switch it could not apply) is in the run's warnings, also in the studio.
 
 ### Derivation
 
-- **Joint consistency refine step (experimental, disabled by default)**: `joint_consistency` selects relationships and duplicate-element merges together in one exact optimization (solvor MILP) under metamodel constraints: at most one relationship per ordered element pair, a single parent for single-parent relationship types, no cycles in acyclic relationship types, and no merge of two related elements. Stronger evidence tiers are optimized first. With `dry_run` (the default) it only writes a report
-- **`config add derivation`**: new CLI command to add a derivation step (created disabled) with `--phase`, `--sequence` and `-p/--params`; `config update` gained `--temperature` and `--max-candidates`
+- **The metamodel holds the ArchiMate core**: all 35 core element types of ArchiMate 3.2 with their full direct and derived relationship table, matching Archi cell by cell (strategy, motivation, physical, Grouping and Location stay out). Derived models do not change.
+- **Every core type has a step (experimental, off by default)**: the 18 core types without a step get a disabled one that keeps or rejects broad graph candidates per batch and draws the type's direct relationships. Switch one on in the Output ontology page or with `config enable`; these first versions are rough.
+- **The LLM's role is measured**: against a run whose LLM answers are all empty, the LLM changes the model in five decisions: it adds the actors the documentation names, groups components into applications, gives entry points their interface role, names a service's object among structural candidates, and leaves tooling units out. Where an image is off the closed list of technologies, its label also names the software it runs. Identities and relationships come from structure: the same LLM answers give the same model.
+- **Known variance between runs**: the grouping into applications can leave a component out of its application, which moves it and its relationships in or out of the enterprise level, and a service's object can differ where several candidates fit a component about equally, which renames the service under the same identifier. The solution level depends on neither and was identical in three uncached runs of each measured repository.
+- **gRPC services are interfaces**: a source file that registers a gRPC server (Go, Python, C#, Java, Node) is an RPC interface of its unit with the registered services as members, without an LLM call (ApplicationInterface v4, `roles.registrations`). `.proto` files are a schema file type, also in existing databases. *Changes models of gRPC repositories.*
+- **Service names are chosen from structure**: with `component_services.verb_choice` the LLM picks a service's object among structural candidates ranked by how much of the component each covers, and the verb stays structural. A choice equal to a sibling's structural name falls back to the service's own. *Changes models.*
+- **Service names are shorter**: a word the stem already holds is written once and the verb stays ("Order History Order Management" becomes "Order History Management"); leading stem words that spell the repository's name do not count. *Changes models.*
+- **Technology functions are named by what they do**: a technology function takes its realizer kind's activity from a closed table (TechnologyFunction v3), such as "Store and Query Data" or "Route Messages", with the realizer in brackets when two would share a name. *Changes models.*
+- **Actors are judged by their evidence**: each documentation actor candidate comes with the sentence that names it (`documentation_actors.evidence_chars`), and generic words for people (`documentation_actors.generic_actors`) are no candidates. Actors such as People, User or a demo login no longer appear, and actors agree between runs on more repositories. *Changes models.*
+- **Documentation is read as prose**: grouping, actors and component documentation skip fenced code, an underscore inside a word keeps it one word, and the root README's line names a component only as a whole word.
+- **Grouping without documentation makes no call**: when the grouping prompt would show neither an introduction nor a README title, structure decides (`application_grouping.without_documentation`, "title" as shipped), so the grouping no longer varies there.
+- **Combined runs decide per repository**: application grouping and documentation actors are decided per repository, so one repository's system component no longer switches grouping off for the others.
+- **Combined runs keep their repositories apart**: element identifiers in a multi-repository run carry the repository (`ac_shop__frontend`), so two repositories' parts of one name stay two elements; single-repository identifiers are unchanged. An element that would replace one from another source is logged.
+- **Libraries serve their users**: a library module serves the modules and units that import it (Serving) instead of being aggregated by them. Relationship recall and precision rise by 6 to 15 points on the development references with shared libraries. *Changes models.*
+- **The enterprise view connects the business layer**: a system serves the actors its services serve and accesses the business objects its data objects realize, the second through potential derivation rule PDR 5 for this view only. *Changes models.*
+- **Aggregate roots by marker interface**: a class implementing `IAggregateRoot` is a data entity; an interface extending it is not. *Changes models.*
+- **Relationship identifiers come from the relationship**: an identifier is a hash of type, ends and origin, so it is the same in every run and the last tie-break of joint selection is deterministic. Exported models are unchanged.
+- **Joint selection keeps one relationship per pair under two merges**: two merges that join both ends of two relationships no longer leave both on one pair. Without merge candidates (every run so far) the model is unchanged.
+- **The quality report names floating business elements**: business elements that connect to nothing at the enterprise level make a model weak above the orphan share, and the reason names them. Other layers, roles and a level with one element may stand alone.
 
-### Benchmarking
+### Studio
 
-- **Consistency snapshots**: every benchmark run writes a JSON file next to its exported model with each element (identifier, type, name, source node), each relationship (with origin and confidence) and the LLM-extracted graph nodes (business concepts with their types, technologies), so runs can be compared on names and on source nodes
-- **`--no-cache` covers extraction**: with `--no-cache` the extraction steps also bypass the LLM cache, so a no-cache benchmark measures the whole pipeline
+- **Choose what to derive**: the Output ontology page selects the part of ArchiMate to derive by layer, aspect and type. A type's switch covers every step that makes it, and a selected type says when it needs one that is off.
+- **Run limits on the General page**: it sets the largest file extraction reads and the LLM calls a run may make, or restores their defaults.
+- **Views load on demand**: each page and the config editor are their own chunk, so the first load drops from about 1 MB to under 300 kB of JavaScript. A page shows a loading line meanwhile and says so when it fails to load.
 
-### Prompts in Versioned Config
+### CLI
 
-- **Relationship prompt rules are config**: the ArchiMate conventions and rules of the LLM relationship pass, and its confidence cutoff, come from the `relationship` phase row `GlobalRelationships` (`instruction`, `params.min_confidence`). Disabling that row skips the LLM relationship pass (graph-derived relationships still run)
-- **Per-candidate naming is config**: switched on per element type with `params.per_candidate` (`min_pool`, `rules`) instead of class constants
-- **Extraction steps have versioned params**: `extraction_config.params` (JSON, added by a migration that runs automatically when a session connects), set with `config update extraction <step> -p/--params-file`. The Technology prompt headings and closing instruction live in `params.prompt`
-- **Fixed: business concept names lost their word boundaries**: name normalization lowercased everything after the first letter (`RealTimeDataStreaming` became `Realtimedatastreaming`) and singularized words such as "analysis"; it now keeps the original casing and only singularizes real plurals
-- **Fixed: derivation ran at the default temperature**: element steps kept their intended temperature in `params`, which was never read; the temperature now lives in the step's `temperature` column (new `config update --temperature`), and the relationship row's temperature applies to the consolidated relationship pass
-- **Stable business concept extraction**: directory classification only classifies (business, technology or skip, plus a type); the concept or technology name comes from the directory name. Document concept extraction asks the same prompt several times and keeps only concepts found by a majority (`params.samples`, `params.min_votes` on the extraction step); samples run in parallel
-- **Isolated element naming**: element names come from a separate naming call whose prompt depends only on the element's source node, its type and a configurable naming convention (`params.naming` on each element step); a majority of several answers wins, with the name from the code structure as fallback
-- **Element names come from the code structure**: an element's name and identifier are derived from its source node (directory, file, type, concept or technology name), so the same source always yields the same element; the LLM decides whether to keep a candidate and writes its documentation (its proposed name is kept as `llm_name`)
-- **Business concepts keep every type**: when files classify the same concept differently (for example entity in one document, actor in another), the concept node keeps all types (`conceptTypes`) instead of the last file's, so extraction results no longer depend on file order; derivation queries match on the set
-- **Fixed: LLM-extracted technologies were silently dropped**: the enforced output schema names fields `technologyName`/`technologyType` while the Technology module read `techName`/`techCategory`; the module now matches the enforced schema
-- **Technology extraction reads dependency manifests and build files**, and its instruction covers the runtime a manifest implies and the system a client library connects to
-- **BusinessConcept system prompt is config**: the extraction instruction is the whole system prompt, sent verbatim
-- Prompts are byte-identical to before the move (identical models)
-- Removed unused relationship prompt builders: `build_relationship_prompt`, `build_element_relationship_prompt`, `build_per_element_relationship_prompt`, `derive_element_relationships`
-- **LLM cache key covers every response-shaping input**: the key now includes the system prompt and the effective temperature and max_tokens, so changing any of them is never answered from a cache entry made with other settings (existing cache entries are invalidated once)
+- **`deriva-cli nlp fetch`**: downloads the BusinessConcept step's pinned language models (about 300 MB on disk) for a machine that runs offline later. The README states sizes and hosts, and `THIRD_PARTY_NOTICES.md` lists each model with its SHA-256 and licence.
 
-### Breaking Changes
+### Benchmark
 
-- `Neo4jSettings` → `GrafeoSettings` (env prefix: `GRAFEO_`)
-- `GRAFEO_DB_PATH` (single file) → `GRAFEO_DB_DIR` (directory, one database per repository); a set `GRAFEO_DB_PATH` now raises an error
-- `NEO4J_GRAPH_NAMESPACE` → `GRAPH_NAMESPACE`, `NEO4J_NAMESPACE_ARCHIMATE` → `ARCHIMATE_NAMESPACE`
-- `session.start_neo4j()` / `stop_neo4j()` → `start_graph_db()` / `stop_graph_db()`
-- `get_enrichments_from_neo4j()` → `get_enrichments_from_graph()`
+- **Consistency per level**: `benchmark analyze` reports consistency by id for the solution level (direct relationships), the enterprise level and the whole model, also in `analysis/summary.json` (`consistency_levels`).
+- **The gate's consistency budget**: `benchmark gate` requires consistency by id of 90% for elements and 80% for relationships, each on its own, instead of 95% for both.
+- **The gate shows naming apart**: `benchmark gate` adds element recall and precision by name alone and a per-type table of reference, found, found by name and derived elements; the verdict is unchanged.
+- **Empty sets are n/a everywhere**: with nothing to compare (fewer than two runs, or nothing in any run), every consistency measure reports n/a and leaves it out of averages. Before, some counted it as 100% and some as 0%.
+- **Event-log relationship ids are unambiguous**: an edge or relationship in the run log is `Type|source|target`, as the old `Type_source_target` could give two pairs one id. Older logs keep their types; their structural stability is n/a.
 
----
+### Configuration
 
-# v0.6.x - Deriva (December 2025 - March 2026)
+- **GQL is the query language**: every graph query runs in ISO GQL by default and `GRAFEO_QUERY_LANGUAGE=cypher` switches back; a grafeo build without the chosen language is refused before a database opens. Every query gives the same rows in both languages on the development repositories, and derived models do not change.
+- **One setting for the answers per decision**: `llm_samples` (1 to 20, on the General page or with `config setting set llm_samples 3`) overrides every voting step's `samples` until `config setting unset`. Sessions record it; above 1 the answers are combined by majority, so measure consistency with 1.
+- **`config add --llm`**: a new derivation step can be added as an LLM step (still disabled until `config enable`); without the flag it stays structural.
+- **`.env.example` starts local and repeatable**: the default model is a local Ollama model at temperature 0, provider keys are commented out (a placeholder was sent as a key), and the example models and token limits are current.
+- **The shipped file types name no repository's documents**: three exclusions of one benchmark repository's reference-model documents left the seed; a database that has them keeps them. Every session records its file types in `session_inputs.json`.
 
-Version 0.6.x is the first robust, end-to-end implementation of Deriva, but still very unstable. The goal for 0.6.x is to be fully feature complete, and have good performance in quality, efficiency, consistency and generalizability. 0.6.x will be the last version using neo4j, which will be replaced with grafeo for performance/stability reasons.
+### Fixes
 
-## v0.6.9 - Benchmarks, Relationships & Analysis (March 1, 2026)
+- **A second extraction gives the same graph**: the import step treats only declared manifest packages as external, as a first run does. Before, a repeated `run extraction` or `run all` turned the repository's own imports into external ones (114 import edges lost on Deriva's own repository); benchmarks were not affected.
+- **Running without a model**: `run all` with no LLM model runs as `--no-llm` does instead of failing in the LLM steps, and the missing-model message names what to set. The summary reads "PIPELINE FAILED" when the run failed.
+- **The LLM cache keeps providers apart**: the cache key holds the provider and its base URL, so one model id served by two providers never shares answers. Existing entries are not reused: the first run after the upgrade calls the LLM again.
+- **Sampling caches each answer**: a voting step numbers its answers and caches each one, so a cached run votes over the answers the run got; a single call keeps its cache key. Before, every sample read one cached answer.
+- **A missing checkout leaves the graph alone**: a repository whose folder is gone or lists no file runs no extraction step and fails with a message naming the folder. Before, the later steps swept their output and the graph kept only what the first steps rebuilt.
+- **Architecture models are never an input**: an `.xml` file in the ArchiMate exchange format is excluded like a `.archimate` file, so a model shipped with a repository never feeds the model derived from it. Such files change type, and so does the classification prompt of their folder.
+- **A library repository is modelled**: a repository whose only units are examples or tests keeps its own module as its component, and test or example code is recognised by its own folder and manifest name or an exact test-word folder above it. *Changes models of such repositories.*
+- **Compose builds from the repository root find their unit**: a service with `context: .` and a `dockerfile` in a subfolder deploys the unit in that folder, and its image name is no longer system software. *Changes models of such repositories.*
+- **Combined runs strip the first repository's name**: the repository whose name is stripped from element names is the first by name, not whichever a query returned first.
+- **Answer stability with `--bench-hash`**: answer stability keys a prompt by everything the call sent except its benchmark run, so `--bench-hash` sessions no longer report 0 of 0 prompts.
+- **Analysis counts what it says**: the two-level tables pool a model's runs over sessions (one row per model), and structure-named application services no longer count as LLM-dependent in the origin split.
+- **Studio run consistency by source**: relationships are keyed by the type and source of both ends, so a component's and its function's relationships no longer collapse into one. The studio's numbers now equal `benchmark analyze`'s.
+- **The graph widget finds the schema**: the studio answers the schema request at `/grafeo/db/<name>/schema` too, and query results come in grafeo-server's shape, so the widget's query box connects and draws them.
+- **Local clones are named after their folder**: `repo clone file:///.../name/.git` clones into `name`, and a working tree's URL without `.git` is accepted.
+- **The run summary counts honestly**: extraction reports "Nodes written" followed by the graph's distinct nodes, as `deriva-cli status` counts them.
+- **Repository errors are said once**: `repo delete` and `repo info` print one error for an unknown repository.
+- **One-line command summaries**: every command's summary in `--help` is one line.
+- **The live log names the phase it closes**: "✓ derivation (30/30)".
+- **Runs from outside the studio are named**: the Repositories page says "run outside the studio" when a repository holds a graph or model the studio did not record.
+- **No polling during a run**: the run panel stops reloading repositories and the session while a run holds them.
+- **Refine says what changed**: "Refine: 4 flagged, 2 disabled, 1 merged", or that nothing changed.
+- **Cache hits in the LLM call list**: a cached call shows "cache hit" instead of zero tokens and latency.
+- **One warning per missing model**: a model that cannot be loaded is reported once per reason, not again inside a run.
 
-I have been running a lot of benchmarks on flask_invoice_generator, full-stack-fastapi-template and taiga-back/taiga-front. Besides a lot of new config versions, I also added a few improvements to further reduce tokens per run and added some things to make my life easier while benchmarking and trying to get the % up without any overly canonical or repository specific prompts. Currently not breaking the 60% barrier, for relationships (the hardest one).
+### Dependencies
+
+- **grafeo 0.6.1** (requires `>=0.6.1`): models are identical and derivation's graph queries take about a third less time; a run as a whole takes about the same. Graph files written by 0.6.1 still open in 0.6.0.
+- **Every runtime requirement has an upper bound**: each requirement of the three packages is pinned or bounded below its next breaking release (`pydantic>=2.14.3,<3`, `grafeo>=0.6.1,<0.7`), so an installed tool, which resolves without the lockfile, does not pick up a breaking release. A test checks every published wheel.
+- **Dependencies at their latest**: pydantic 2.14.3, pypdf 7.0, typer 0.28, ruff 0.17.4 and ty 0.0.99; the business concept translation stack moves to CTranslate2 4.8.5 and sentencepiece 0.2.3.
+
+### Development
+
+- **Version 0.9.0 for all three packages**: deriva-cli, deriva-studio and deriva-dev move together (the studio and dev packages pin the release beside them), and the studio front end reports 0.9.0.
+- **ty checks the whole repository**: CI and the pre-commit hook run `ty check .`, tests included.
+
+## [0.8.10] - 2026-10-26
+
+Reproducible benchmark input release: the shipped configuration carries every input exclusion the final benchmark used, so a fresh install reads the same files as the benchmark did. The pipeline code is unchanged from 0.8.9.
+
+### Configuration
+
+- **Reference-model documents are excluded on a fresh install**: the shipped file types exclude the documents that describe a benchmark's reference model, both where extraction and where the B1 baseline look for them. Every step still ships at version 1.
+
+## [0.8.9] - 2026-10-26
+
+Reference scoring release: a reference written in ArchiMate 2 names is read with its ArchiMate 3 types, and final derivable labels set the scope. The pipeline is unchanged from 0.8.8.
+
+### Benchmark
+
+- **Reference models in ArchiMate 2 names are scored**: Archi files with ArchiMate 2 names (InfrastructureService, CommunicationPath, UsedBy and the like) are read as their ArchiMate 3 types, so their technology services count and their relationships can match. The scoring calls `parse_archi_xml(path, archimate3=True)`; without the flag the parser keeps the file's own types.
+- **Final derivable labels set the golden scope**: the gate scores a golden model on the elements labelled derivable as soon as that file is final, even while the accepted names are still a template. The row then says the matches are provisional (`matches_provisional`).
+
+## [0.8.8] - 2026-10-26
+
+ArchiMate metamodel conformance release: only relationships an ArchiMate 3.2 figure draws are direct, the enterprise level is a viewpoint derived through the valid derivation rules, and the application and technology layers gain functions, artifacts and technology services from structure. Most naming calls are gone, the remaining LLM calls are closed choices asked once, and every step ships at version 1. Derived models change.
+
+### Extraction
+
+- **Serverless functions and static frontends are units**: an `(event, context)` handler and an `index.html` outside every unit are deployable units, a package with several project scripts is one unit, and a front-end module built into a unit's folder gives that unit its web UI. A unit offers one application interface, named after its main channel (`roles.one_per_unit`). *Changes models.*
+- **Build modules are classed by who uses them**: a module two or more units use is a shared library, and a component only when it carries behaviour (`min_behaviour`). A development-only package gives no component, and feature packages (each with a route handler and a data entity) split a unit (`feature_markers`). *Changes models.*
+- **The primary environment runs the repository's units**: it is the one that runs the repository's own units (`primary_runs_units`), preferring Compose's default file names (`compose_defaults`). A unit that only a variant file deploys is no component, and `.devcontainer` is excluded. *Changes models.*
+- **Declared persistent classes are entities**: a class with an entity annotation, an aggregate root or an ORM base is an entity whatever its name; aggregates are scoped to the root's folder and join tables are no entities. An ORM entity records its table (`table_attributes`), so a query naming that table reaches it. *Changes models.*
+- **Dockerfiles give import roots**: a folder a Dockerfile copies onto `PYTHONPATH`, `NODE_PATH` or `CLASSPATH` resolves bare imports that nothing else resolves.
+- **Units take their project's own name**: a Maven unit takes the project's `<name>` (never a license's, nor one with an unresolved `${...}`), an aggregator its folder's name and a static frontend the name of the module that ships it. `Impl` is dropped from entity names. *Changes models.*
+
+### Derivation
+
+- **Direct relationships follow the metamodel figures**: a relationship is direct only where an ArchiMate 3.2 figure draws it (layer, cross-layer and same-type figures), else derived. Storing a relationship checks the relationship table, so no step can write one the metamodel does not allow. *Changes models.*
+- **Five more element types are derived**: ApplicationFunction, Artifact (until now only the export's detail level), BusinessRole, BusinessService and TechnologyFunction. The views, the convention checks and the B1 baseline's output types include them. *Changes models.*
+- **Structure decides most elements**: components and their names (`naming.source_order`), services (`<object> <verb>`, `service_verbs`), one data object per entity, one application function per unit, library or feature package, one artifact per deployable, one platform node per environment and business roles all come from structure, without an LLM call. *Changes models.*
+- **The technology layer gains functions and services**: the platform node and each service the closed kind table names get a technology function and a technology service ("Container Hosting", "Relational Database") that serves the application functions of the units it runs. A runtime is assigned to the artifacts it runs, and service software a unit embeds is realized by the unit's artifact. *Changes models.*
+- **Relationships rest on structure**: none come from names in code (`named_in_code` is empty), libraries are aggregated by their users, and an application function accesses the data objects of the entities its own files declare. A service name two components share is qualified by its component. *Changes models.*
+- **The enterprise viewpoint is derived**: its relationships come from a versioned pattern table (`enterprise_patterns`), each drawn only where ArchiMate's valid derivation rules derive it from the direct relationships below, with its chain recorded (`derivedFrom`, `derivationRules`). Edge technology services stay at the solution level. *Changes models.*
+- **Documentation steps ask once**: one closed LLM call per repository groups the top-level components into the applications the README names (`ApplicationGrouping`), and one chooses which documented business actors each application serves (`DocumentationActors`). Majority voting over three answers made no choice more stable, so every closed choice is asked once.
+- **Fewer business elements come from data**: no business function per data domain, and no business process or event from a status lifecycle (a process needs a human actor). *Changes models.*
+
+### Export
+
+- **Schema locations follow the standard's examples**: `xsi:schemaLocation` names the diagram schema (the export carries views) and the Dublin Core schema of the metadata.
+
+### Benchmark
+
+- **Derived reference relationships count as found**: a reference relationship counts when the valid derivation rules derive it from a chain of the model's direct relationships (only drawn ones count for external systems). Behaviour matches within its layer, and elements derived from a reference's lineage map one to one.
+- **The B1 baseline reads what extraction reads**: it leaves out the files the file-type registry excludes, and takes build and source files in turn within its character budget.
+- **Session reports show samples and the joint selection**: samples and re-asks per LLM step (`llm_samples`, `llm_reasks`; a re-asked decision is stable only when every run answered it alike), the joint selection's variables and constraints per run and model, and an "all LLMs" row for answer and decision stability.
+
+### Configuration
+
+- **Every step starts at version 1**: `config reset-versions --yes` makes each active row version 1 and removes the history (it stays in the older releases), so the shipped defaults match the active configuration again. `config update derivation <step> --llm/--no-llm` sets whether a step calls the LLM.
+
+### Fixes
+
+- **A re-ask reaches the model**: an answer without JSON where a schema was asked for is no longer cached, and one already in the cache counts as a miss. A step that asks again gets a new answer instead of the same unusable one.
+
+## [0.8.7] - 2026-10-24
+
+Database upgrade release: grafeo 0.6.0 for the graphs and DuckDB 2.0 for the configs, both new major releases. Models are the same, derivation is faster, and installs no longer need a pre-release.
+
+### Dependencies
+
+- **grafeo 0.6.0** (requires `>=0.6.0`, the stable release instead of the 0.6.0b1 preview): models are identical, and derivation's graph queries take less than half the time (50 times faster than on Neo4j). Graph files are upgraded on their first open, after which Deriva 0.8.6 or older cannot open them.
+- **DuckDB 2.0** (requires `>=2`) for the config database: an existing database keeps its storage format, so an earlier Deriva (on DuckDB 1.5) still opens it and every config, version and setting reads as before.
+- **Other dependencies at their latest**: among them anthropic 2.2, pydantic-ai 2.60, openai 3.37, FastAPI 0.162 and httpx2 2.16, and Vite 8.3.5 for the studio's build.
+
+### Development
+
+- **No pre-release requirements**: a test reads the built wheels and fails when a runtime requirement names a pre-release. uv does not install one for a dependency and fell back to the empty 0.0.1 placeholder of the package.
+
+## [0.8.6] - 2026-10-20
+
+Trace and dimming fix release: two fixes found while taking the 0.8.5 screenshots.
+
+### Fixes
+
+- **Trace works after a benchmark**: with a benchmark as the run shown in the workspace, the Trace tab shows the selected element's sources and relationships instead of "Unknown run". It lists no LLM calls, since a benchmark keeps them in its session; a run the studio does not know is still refused.
+
+### Dependencies
+
+- **anywidget-graph 0.4.6** (deriva-studio requires `>=0.4.6`): a selection dims the other types and edges of the ontology graph so they stay visible on a light canvas too.
+
+## [0.8.5] - 2026-10-20
+
+Ontology graph and honest counters release: the intermediate ontology is a graph again (anywidget-graph 0.4.5), the graph views' size is a setting, and the run summary, the step counter, the ontology's readers and the benchmark inspector report what is there.
+
+### Studio
+
+- **The intermediate ontology is a graph again**: every node type is a node sized by its count and coloured by its group, and edge types are arrows (a loop for a type to itself), placed the same way every time. Selecting a type lights its neighbours and opens its description, producing and reading steps, edges, properties and a sample node; group, empty-type and edge-type filters hold in the Graph, Matrix and Cards views.
+- **Graph view size is a setting**: the General page sets how many nodes the Workspace and Benchmark graph views sample (50 to 5,000, 300 until set; the model is always shown whole). On the CLI, `config setting set graph_view_nodes <count>`.
+
+### Fixes
+
+- **The derivation summary counts the model**: the line that closes a derivation says how many elements and relationships the model holds, as the Repositories page counts them. It added up only the generate and relationship steps, so refine relationships were missing (40 where the model had 46).
+- **Ontology pages find every step that reads a type**: a candidate query that tests a node's labels (`"BusinessConcept" IN labels(n)`) counts as reading that type, as `n:Graph:BusinessConcept` does.
+- **The step counter includes the deferred relationship pass**: the live log no longer counts past the step total (25/24).
+- **Benchmark inspector groups say what differs**: an element whose name differs between runs, or that some runs lack, goes under "name differs" or "not in every run" instead of "other". The header says what the elements are matched by ("3 of 51 elements differ, matched by source").
+
+### Dependencies
+
+- **anywidget-graph 0.4.5** (deriva-studio requires `>=0.4.5`): arrows, self-loops, neighbour highlight and the `preset` layout for the ontology graph.
+
+## [0.8.4] - 2026-10-19
+
+Studio management and field fix release: the studio manages what a workspace keeps (repositories, graph databases, runs, benchmark sessions, storage), and a test on a large repository led to fixes in cloning, long paths and cut LLM answers. Two read-only reports are new: extraction coverage and model quality.
+
+### Security
+
+- **Credentials in URLs stay out of output**: the user and token part of a URL (`https://user:token@host/...`) is removed from git's errors, the URL checks' messages, the stored repository records and the CLI's output. Git still gets the URL as given.
+
+### Studio
+
+- **The Repositories page manages each graph database**: it shows what each repository's database holds and its last runs, with **Clear model**, **Clear graph and model** and **Update clone** (`git pull --ff-only`, refused with uncommitted changes), and **Delete** can take the graph and model along. The actions wait for a run to end; on the CLI, `repo update <name>` and `repo delete <name> --with-data`.
+- **Export downloads the model**: **Export XML** saves the exchange file in the browser as `<repository>-<yyyymmdd-hhmmss>.xml`. The copy in `workspace/output` keeps that name, so exports no longer overwrite one another in `model.xml`.
+- **The Runs & storage page lists every run**: a page at a time, by repository and kind, and deletes a run with its live log, LLM calls and inputs, every interrupted run, or every run past the latest N. The run in progress always stays (`GET /api/runs/history`, `DELETE /api/runs/{id}`, `POST /api/runs/prune`).
+- **The Runs & storage page shows storage**: disk use per area (LLM cache, exports, runs, benchmark sessions) and per graph database, with **Clear LLM cache**, **Delete exports** and **Delete** for a graph database without a repository. The actions wait for a run to end (`GET /api/storage` and its `DELETE` routes).
+- **Benchmark sessions are searchable and deletable** (deriva-dev): the session list finds every session by text, repository, model and status, a page at a time, and deletes the selected ones or marks them failed. On the CLI, `benchmark delete <ids>` and `benchmark prune --keep N | --failed` (asks first unless `--yes`); running sessions always stay.
+- **A config version can be restored**: **Use this version** in a step's History tab makes an earlier version's texts, queries, params and generation settings the step's new version, after the overfit scan; its place in the phase and its switch stay. On the CLI, `config restore <type> <name> <version>`.
+- **The intermediate ontology looks like the output ontology**: every node type of the graph metamodel is listed in group cards with its count and the switches of the steps that produced it, also types without nodes. Edge types get short codes and show as a matrix; a type opens its description, properties, producing and reading steps and a sample.
+- **Clone and delete say what happened**: the Repositories page reports clone progress and result (branch, commit, size), suggests the folder name a URL gives, and says what a delete removed and kept. Git's errors become a sentence a user can act on, with git's own line kept, and git no longer waits for a username on the studio's terminal.
+- **A model config can be tested**: **Test** next to each model config (and `deriva-cli config model test <name>`) makes one small uncached call and says which model answered and how fast. A failure names what to fix: a refused key, a key without access, an unknown model id, a rate limit, an unreachable server or a timeout.
+- **Extraction coverage is reported**: the Repositories page's Coverage section and `deriva-cli coverage --repo <name>` (`--json`) compare a checkout with its graph per extension and reading step, and list the files that could not be read with the reason. It only reads, and marks an extraction incomplete when files are missing or unreadable or no source file gave a type or method.
+- **Every error of a run is listed**: the Errors tab also shows the errors of steps that completed, the first 50 with a download of the whole list. Read errors name the repository path and the system's reason instead of the absolute path.
+- **Models get a quality verdict**: the model panel's Quality pill and `deriva-cli quality --repo <name>` (`--json`) call a model weak when over a quarter of its elements have no relationship, over 80% of its relationships are Composition or Aggregation, the Application or Technology layer is empty, or elements have no file, type or method behind them. The thresholds are `quality_max_orphan_share` and `quality_max_structural_share`, and the verdict changes nothing in the model (`GET /api/model/quality`).
+
+### Fixes
+
+- **Joint selection works outside a source checkout**: a relative `report_path` is now under the Deriva home folder and its folder is created, so an installed tool applies its merges, redirects and drops again. A report that cannot be written is logged without stopping the selection.
+- **Unknown `--repo` names are refused**: `run`, `status`, `export`, `clear` and `graph tag-steps` list the known repositories and exit 1 instead of creating an empty graph database for the typo. `default` and the joined names of existing combined runs stay valid.
+- **Cancelling a studio run stops the running step**: the session refuses every further LLM call of the run (`RunCancelled`), so a long step ends at its next call and the run ends as `cancelled`. A call already under way still finishes.
+- **Stopping the studio during a run no longer hangs**: the first Ctrl+C or SIGTERM cancels the run and ends the open event streams, which the server used to wait for.
+- **Interrupted runs stay in the history**: a run whose studio process ended first is listed as `interrupted`, with its kind, repository and times from its kept events. Its live log replays and ends with a note that the studio stopped.
+- **Runs without an LLM count skipped steps**: with `--no-llm` an LLM-only extraction step counts under `Steps skipped` with its warning instead of "had errors", and keeps what an earlier run wrote. The `--no-llm` help says what runs: the extraction parsers and derivation's prep phase, so no elements.
+- **`status` names its graph**: without `--repo` that is the shared `default` graph, with a hint to pass `--repo`.
+- **Models that refuse a temperature get none**: a model config without `SAMPLING` follows the model as pydantic-ai knows it, so an Anthropic model without temperature (Claude Haiku 5.5) no longer warns on every call. An explicit `SAMPLING` still wins.
+- **Local context windows are a setting**: a model config takes its context size (`LLM_{NAME}_CONTEXT`, `config model set --context N`), and a call that fills it is logged as a warning. Ollama cuts a longer prompt without an error (4096 tokens unless started with `OLLAMA_CONTEXT_LENGTH`).
+- **Studio config and ontology pages read better**: the derivation config list heads each phase, a step without LLM calls opens on its params with no empty text editors, and the allowed-relationships matrix fits from 1280 pixels wide with abbreviated row labels.
+- **The graph widget needs no CDN**: deriva-studio requires anywidget-graph 0.4.4, which bundles its graph libraries. With 0.4.3 the graphs failed with "Failed to fetch dynamically imported module" wherever esm.sh or cdn.jsdelivr.net could not be reached.
+- **Azure's v1 API works**: a model URL on an Azure `/openai/v1/` endpoint goes through the OpenAI-compatible client without an `api_version`, which that API refuses. Other Azure URLs keep the versioned client.
+- **"DB not connected" only when it is so**: when the studio does not answer a status request (a long step, a restart), the top bar says the studio is not answering and keeps the last known database state on hover.
+- **Cloning no longer blocks the studio**: a clone holds no session, so other pages keep answering; a run still cannot start while a clone runs.
+- **Failed clones leave nothing behind**: a clone goes into a staging folder and becomes the repository's folder only when it worked, so a retry with the same name works. A git folder without a record can be registered instead of cloned again (**Register**, `deriva-cli repo register [name]`).
+- **Clones clean up on Windows**: removing a staging folder or a deleted clone uses Windows' extended path form, so files deeper than 260 characters no longer stop it. A git that Windows cannot start (`0xC0000142`) is reported as such, with what to try and without the repository URL.
+- **Stale repository records show as stale**: a record whose folder is gone or is no git checkout shows the reason, Update is off for it, and Delete removes only the record, never files.
+- **Deep paths on Windows are read**: extraction walks and reads the repository in Windows' extended path form (`\\?\C:\...`), so files deeper than 260 characters no longer fail with `WinError 3` or get skipped where long paths are off. Graph paths stay relative.
+- **Opening a repository creates no graph database**: the counts for a repository without one are zero, and no empty database is made.
+- **The LLM-not-configured message says what to set**: it names the variable (the config's `KEY_ENV` reference or its own `LLM_{NAME}_KEY`, never a value) and the `.env` this install reads, in the CLI, a derivation's error and the studio's run.
+- **Answers cut at the output limit fail as cut**: a structured answer that reached the step's `max_tokens` fails as `IncompleteToolCall` (not cached, not retried as transient) instead of a shorter re-asked answer that could leave part of a batch unanswered. Directory classification then halves the batch until each answer fits, and reports directories whose answer alone does not fit as not classified.
+- **Cut answers whose retries failed fail as cut too**: a run that holds a cut response fails as `IncompleteToolCall` also when pydantic-ai's retries raised "Exceeded maximum output retries", so directory classification splits that batch as well.
+- **TLS drops are retried**: an `SSL EOF` or a connection reset is retried as a transient error, now pinned by tests.
+- **Code parsers read classes correctly**: JavaScript and TypeScript no longer give an extra unnamed class per class (41 nameless TypeDefinition nodes in one graph) or an exported class twice, and read `extends`, class expression names and generator functions. Python class decorators and `type X = ...` aliases and C# return types are read; derived models stayed identical on three development repositories.
+
+### Dependencies
+
+- **Python and npm dependencies at their latest**: among them pydantic-ai-slim 2.57, httpx2 2.14, FastAPI 0.149, uvicorn 0.54, anywidget 0.11, pydantic 2.14 and ty 0.0.89, and the studio's npm packages within their ranges. Types follow the newer `ty` (`@contextmanager` functions return `Generator`).
+
+### Development
+
+- **Tests check the result**: 170 tests whose only checks were weak now assert exact values, calls and messages, and a rate limiter test no longer sleeps a minute, so the Python suite runs in about half the time. The tighter tests found the code parser bugs listed under Fixes.
+- **TypeScript 7 type-checks the studio**: `npm run typecheck` (part of `npm run build`) runs on the native compiler. TypeScript 6 stays for `typescript-eslint`, which needs the TypeScript 6 API.
+
+## [0.8.3] - 2026-10-18
+
+Abstraction levels release: the model has two abstraction levels, enterprise and solution, built from structure without LLM calls, and the benchmark gate judges a change per level. Derived models change.
+
+### Extraction
+
+- **Build modules come from structure**: a new structural step `BuildModule` finds the folders with a build manifest and code of their own (`manifests`, `code_subtypes`), their nesting, and a parent system where an aggregator manifest lists at least two of them (Maven modules, npm, yarn or pnpm workspaces, uv workspace members, Gradle includes). A module that is the folder of exactly one unit is one structure with it.
+
+### Derivation
+
+- **Modules and libraries are components**: ApplicationComponent also takes the build modules and systems, named from structure after their manifest or folder, with a kind noun (`kind_nouns`) or path words where a name is taken. Modules for infrastructure as code (`iac_dependencies`), with only test dependencies (`test_dependencies`) or with a test word in their name (`test_words`) stay in the graph with their reason (`excluded`) but become no component. *Changes models.*
+- **Libraries serve the modules that import them**: a module serves the module whose files import its files (a new `graph_links` rule). *Changes models.*
+- **One model holds two levels**: every element and relationship carries its levels, enterprise (business layer, services, top-level components, the platform node) or solution (units, modules, libraries, interfaces, data objects, system software), from a versioned table per type (`roles` places one role on its own levels). A relationship is on the levels both ends share, else it is a cross-level link.
+- **Components form a hierarchy**: roll-up Compositions follow system, units, modules and libraries, and only the hierarchy composes one component into another. The top-level component realizes the services of the units below it, so the enterprise level stands on its own. *Changes models.*
+- **Every deployment is a service node**: a compose service, a cloud or Kubernetes workload or a ready-made image becomes a solution-level Node that serves the component of the unit it deploys. The environment Node composes them. *Changes models.*
+- **Relationships are lifted to the enterprise level**: a Serving, Access, Flow or Triggering relationship below that level implies one between the nearest enterprise elements above its ends, and an Access to a data object reaches the business object it realizes. Each lift lists its sources (`liftedFrom`) and is on the enterprise level only. *Changes models.*
+- **Nothing changes the model after the joint selection**: the hierarchy's relationships, removals and lifts come from a new step before it (`abstraction_hierarchy`), and `abstraction_levels` after it only writes the level tags. A refine step after the joint selection that adds or removes anything is an error of the run.
+- **Data access goes through services**: GlobalRelationships v35 drops the two rules that let a component access a data object directly; a service of the component had the same access in 36 of 46 cases. Solution relationship precision rose on 5 of 6 development repositories, with recall unchanged. *Changes models.*
+
+### Export
+
+- **The exchange file carries levels**: an element's `level` property is its set of levels (`enterprise`, `solution`, `enterprise solution`; `detail` for members) instead of `architect`, relationships carry one too (`cross-level` without a shared level), and relationship ids come from the ends, type and level, so they are the same in every run. The files validate against the Open Group 3.1 schema and import into Archi.
+- **Each level has its own views**: five enterprise views, four solution views and three detail views (Application Interfaces lists each interface's endpoints, pages or jobs), each showing only its level's elements and relationships. A cross-level link is in no view, and an empty view is left out.
+
+### Studio
+
+- **The studio shows each level**: enterprise, solution or detail, each with its own relationships and views as in the exchange file. A view draws only the relationships it holds.
+
+### Benchmark
+
+- **`benchmark gate` judges a change**: `deriva-cli benchmark gate --baseline <sessions> [--candidate <sessions>]` reports element and relationship recall, precision and consistency by id per repository and level against a development reference or a golden model's derivable subset. A level passes when one measure rises at least 1 point on two thirds of the repositories, none drops more than 2 points and consistency stays at 95% or more (`HELD` with too few gains); the change passes when no level fails and one passes.
+- **Golden matches can name structure**: an accepted match can list `structure_refs` (`path:<folder or file>` or a structural id) next to names, so an unmatched golden element is found by the element derived from that structure. `benchmark analyze` and `benchmark gate` share this matching.
+- **References carry levels**: a development reference tags its elements and relationships with `levels`, and the reference evaluation scores one level or all (`level`).
+- **Run snapshots carry levels**: elements and relationships carry `levels` (and `cross_level`), and consistency by id is measured per level.
+- **Chosen names keep their candidates**: an element named by a closed-set choice keeps its candidates in order (`name_candidates`) in the model and each run snapshot, with whether a call made the choice (`name_choice`).
+- **Sessions record their commit**: `session_metadata.json` records the code commit a session started on and whether the working tree had changes (`code`: `commit`, `dirty`).
+- **Event logs are complete and in order**: a refine step names the relationships it adds in the OCEL and case logs, and step durations are kept to the microsecond, so tools that order by start time no longer swap short steps.
+
+### Configuration
+
+- **Step order is versioned**: `config update derivation <step> --sequence N` moves a step within its phase as a new config version, and `config sequence` versions every step it moves.
+
+### Fixes
+
+- **Data entities are found when every service declares its own ORM base**: since 0.8.2 such repositories got no data entities and none of the elements built on them; a base class now resolves through its nearest definition. *Changes models.*
+- **Images that name their service in the tag deploy it**: a deployment whose image carries the service in its tag or last name segment deploys the unit of that exact name or folder. *Changes models.*
+- **Two cloud services of one name stay two**: they are no longer merged into one deployment. *Changes models.*
+- **Names from documentation lists lose their separator**: a bold term, table cell or link label used as a component name no longer keeps the colon before its description ("Order Desk:"). *Changes models.*
+- **The studio run history is current**: a run that has just ended is listed at once, a run of an earlier studio process replays its live log from `events.jsonl` instead of a 404, and a run without LLM calls lists none instead of failing.
+- **The benchmark form starts on the default model**: it selects `LLM_DEFAULT_MODEL` instead of the first configured model.
+- **Extraction reads a moved workspace**: it reads `REPOSITORY_WORKSPACE_DIR` as `repo list` does; with another folder it found no repositories.
+- **CLI messages are clearer**: `run all` lists its errors, a config database held by the studio or another run gives one line instead of a traceback, `config update extraction --sequence` is refused, and the hints after `benchmark run` and an empty `repo list` name `deriva-cli`.
+
+## [0.8.2] - 2026-10-17
+
+Pre-benchmark refinement release: most of the model now comes from structure. New structural extraction steps find deployable units, data entities and domains, deployments, cooperation lines and lifecycles, and the LLM mainly chooses among structural candidates. Derived models change.
+
+### Extraction
+
+- **Deployable units are found**: a new structural step `DeployableUnit` finds what runs on its own (a folder with a container file and its own code, a manifest entry point, a mainframe application split into online and batch). A repository without any is one unit.
+- **Data entities come from structure**: a new step `DataEntity` finds aggregate roots, ORM entities, shared mainframe records and DDL tables, and leaves out ids, value objects, DTOs, configuration and technical records with their reason. With `table_mentions` a table links to the code files that query it.
+- **Entities are grouped into information domains**: a new step `DataDomain` groups an aggregate with its parts, an entity with its owner and a lookup with the domain that uses it.
+- **Deployments come from structure**: a new step `Deployment` reads compose files, Kubernetes manifests, cloud templates and Dockerfiles; the primary environment (the cloud, else the root compose file, else Kubernetes) runs the services that deploy units, and a unit's runtime comes from its Dockerfile's `FROM` chain. Secret-looking variables and URL passwords are not stored.
+- **System software comes from a closed list** (`technologies`): images, runtimes, managed services, manifest dependencies and content markers are matched to a versioned list where each alias names one technology. Mainframe subsystems make a mainframe environment.
+- **AWS CDK apps are read without synth**: tree-sitter TypeScript reads them statically through a versioned construct table (`cdk_constructs`), from literal values and literal loops only.
+- **Managed services name their engine** (`cloud_qualifiers`): for example `Amazon RDS for PostgreSQL`; an engine found through drivers merges into its managed service.
+- **Cooperation comes from structure**: a new step `Cooperation` finds `CONSUMES` and `SENDS_TO` lines between units from endpoint URLs, message destinations, service catalogs, gateway routes and code edges. The provider's interface serves the consumer, and messages are a Flow.
+- **The business layer comes from structure**: a new step `BusinessLayer` finds lifecycles (a status attribute with its states and transitions), the events that hand them on and the roles that act in them. They give a BusinessProcess per lifecycle, a BusinessEvent per hand-off and a BusinessActor per role.
+- **Extraction steps can be re-run**: every node and edge carries the step and config version that wrote it, and after a clean run a step removes what it no longer produces. `graph tag-steps` tags an existing graph, and `--only-step` lists the later steps that may read its output.
+- **SQL tables are read without an LLM**: from `CREATE TABLE` statements in `.sql` and `.ddl` files.
+
+### Derivation
+
+- **One component per deployable unit**: instead of one per module, package or folder. *Changes models.*
+- **One interface per unit and channel**: REST API, Web UI, Commands, Messaging API, RPC API or Batch Jobs, with the endpoints, screens or jobs as its `members`. Page files give a Web UI interface without an LLM call. *Changes models.*
+- **Services are grouped per component** (`component_services.group_by: "unit"`): members that extend one base type form one service and the others group by the data domain they reach, at most `max_per_component` per component and none for a pure front end. *Changes models.*
+- **Business functions span components**: a business domain that the services of two or more cooperating components access becomes a business function. *Changes models.*
+- **Names are chosen from a closed set**: component, service and function names come from structural and documentation candidates, and one call chooses only when there are several. Component names agree in 97% of runs (was 81%) with 10 naming calls per run instead of 36.
+- **Relationships follow the units**: the relationship rules find a node's component through the units' members.
+- **Name matching reads structure**: the name tier compares `structure_name`, never an LLM name (relationship consistency 89.7% to 95.2%).
+- **One data object and one business object per domain**: a DataObject per domain and a BusinessObject per domain with a business anchor, which the data object realizes. Element and relationship consistency rose from 93.1% and 94.3% to 97.0% and 98.9%, with 346 LLM calls per session instead of 611. *Changes models.*
+- **Nodes and system software need no LLM**: they come from the environment and the listed software, and TechnologyService and Device are switched off. The technology layer is identical in every run. *Changes models.*
+- **Business functions can come from a process catalog**: `BusinessFunctionModel` classifies documentation against APQC PCF (notice in `THIRD_PARTY_NOTICES.md`); disabled by default.
+- **The joint decision is the last refine step**: the MILP decides relationships and merges in a canonical order, with evidence tiers from a versioned table. Its solve report is in every run snapshot.
+- **No confidence gates**: no step filters on an LLM-reported confidence, and `circular_relationships` and `relationship_consolidation` are removed. *Changes models.*
+
+### Export
+
+- **One file holds two levels**: the architect level (the derived model) and a detail level with the members of its elements (entities, endpoints, programs, deployed artifacts), for which the metamodel gains Artifact. Every element carries a `level`.
+- **Views are generated**: Layered, Application Cooperation, Information Structure, Implementation and Deployment, and Business Process Cooperation, laid out deterministically. The files validate against the ArchiMate 3.1 exchange schema and open in Archi.
+
+### Studio
+
+- **The model panel switches level and view**: between the architect and detail levels and the generated views.
+- **Issues can be reported from the studio**: a Report issue button fills in the environment, next to a GitHub link.
+
+### Benchmark
+
+- **Runs are checked against modelling conventions**: `benchmark conventions <session...>` checks run snapshots against ArchiMate modelling conventions and writes a review page per repository and model, and a summary.
+- **Runs are compared with reference models**: `benchmark reference <session>` reports recall and precision per element type, layer and relationship kind against JSON or Archi references, with split elements, chain completeness, accepted names and a derivable subset.
+- **Extraction can repeat per run**: `benchmark run --extract-per-run` repeats the whole pipeline in every run, on a graph of its own and with the run's own model.
+- **Each call records what it sent**: temperature, top_p, seed, reasoning level and the model that answered. A model config can set its own temperature (`LLM_{NAME}_TEMPERATURE`).
+- **`benchmark analyze` reports more**: consistency by source identity and by type and name (share and mean Jaccard) per layer, answer and decision stability with Krippendorff's alpha per decision type, answers outside their candidates, and the share of differences from extraction or derivation. `--also` gives agreement across sessions.
+- **Baseline B1 generates the whole model in one go**: `benchmark run --baseline b1` asks the LLM for the model from raw repository material, validated against the ArchiMate rules and repaired at most twice (config row `BaselineB1`).
+
+### Configuration
+
+- **Extraction steps can be added**: `config add extraction <node type> --sequence N` adds a disabled extraction step.
+
+### Fixes
+
+- **Nested and dynamic imports are extracted**: Python imports inside functions and blocks, and JavaScript `require()` and dynamic `import()`.
+- **Calls resolve like the language does**: the caller's own file first, then the files it imports, then its module root, always in the caller's language (`call_languages` for cross-language calls). A bare call means the caller's own method only in Java and C#.
+- **Python relative and aliased imports resolve**: `from . import x` and `import y as z`.
+- **A top folder named like the repository is kept**: it is no longer dropped from stored paths.
+- **Smaller fixes**: LLM config values are stripped of padding inside quotes, `config query` no longer claims to be safe during a benchmark, and the studio layout has small fixes.
+
+## [0.8.1] - 2026-10-12
+
+Cleanup release: a smaller install, a studio without the notebook stack, and stricter LLM configuration.
+
+### CLI
+
+- **CLI output is complete and quiet**: the derivation summary counts the elements refine disabled, and no pydantic-ai banner prints on start.
+
+### Fixes
+
+- **LLM configuration is cleaned**: keys, URLs and model names are stripped of padding and quotes, permanent client errors are not retried, and API keys are redacted from error text.
+
+### Dependencies
+
+- **The install is smaller**: `pydantic-ai-slim` with only the providers Deriva builds, and unused dependencies removed; deriva-cli installs 86 packages instead of 146.
+- **The studio installs no notebook stack**: anywidget-graph 0.4.3 and anywidget-archimate 0.3.1 no longer install marimo, and the model view keeps its zoom.
+
+### Development
+
+- **Ruff checks library boundaries**: `TID251` also checks third-party imports, and the Ollama warm-up uses httpx.
+
+## [0.8.0] - 2026-10-11
+
+Studio release: Deriva Studio, a local FastAPI and React web UI, replaces the marimo app, with a benchmark mode, a log of every LLM call and three packages on PyPI. Derived models change.
+
+### Security
+
+- **Cache files cannot run code**: pickled cache rows are refused (diskcache CVE-2025-69872).
+- **The studio API checks its input**: plain labels, bounded limits, exports only into `workspace/output`, and no listening beyond this machine without `--allow-remote`. The CI token is read-only.
+- **Secrets stay out of exports**: exports and session inputs hold no secrets, and `.env` writes are atomic and refuse line breaks.
+
+### Extraction
+
+- **Mainframe sources are parsed**: COBOL programs and copybooks, JCL and BMS maps, by structural parsers.
+- **Business concepts are cleaner**: ties at the evidence cut are kept as groups (`evidence_keep_ties`), pipeline terms and licence files are no concepts, prompt examples name no domain, and proper names keep their spelling.
+
+### Derivation
+
+- **Business concepts the code names stay in the model**: they are kept and connected (`named_in_code`, `code_support.single_word_names`). *Changes models.*
+- **Roles come from structure** (`roles.structural`): an annotation or a kind gives a candidate its role without an LLM call.
+- **Application services are capabilities** (`component_services`): identity and relationships come from structure, and one call writes the name and a sentence.
+- **Relationships come from graph links** (`graph_links`, `listed_members`): drawn without an LLM call.
+- **Full runs start from an empty model**: `derivation_clear_model` switches it off; runs of one phase or step keep the model.
+
+### Studio
+
+- **Deriva Studio replaces the marimo app**: `uv run deriva` starts a local web UI (FastAPI, React) on http://127.0.0.1:8765 with the API documented at `/docs`. The marimo app and `deriva-app` are removed.
+- **The workspace runs and shows the pipeline**: pick a repository and a scope, then start, follow and cancel runs on one live canvas (anywidget-graph) where the repository, the intermediate graph and the output graph grow step by step, each element linked to its sources. The model (anywidget-archimate) follows, with XML export.
+- **Large graphs stay readable**: samples keep every node type in proportion, most connected first (8 to 13 times as many edges as a random pick), with layer rows, lane labels and colours checked for colour-blind readers. Elements refine rejected show in grey.
+- **Configuration is edited in the studio**: a step's instruction, example, params, candidate query and batch size are saved as a new version, with a history diff, an overfit scan before saving and a read-only dry run.
+- **Both ontologies have pages**: the graph's node types with counts, producing and reading steps and the schema, and the 13 ArchiMate element types with their steps and the allowed relationships per pair.
+- **Repositories, settings, file types and model configs are managed in the studio**: model configs also with `config model list|set|delete`; keys are masked and only written.
+- **The studio has a visual identity**: the inverted isoline logo and the "Tide" colours (SVGs in `assets/brand/`).
+- **One session owns the databases**: one session behind a lock; typed graph queries run in a transaction that is always rolled back, behind a write guard.
+- **The studio guides a first run**: first-run hints, a theme switch that reaches every view, and runs that survive a reload.
+- **Every LLM call is kept**: a log per run holds prompt, answer, kind, tokens, latency, cache state, error and generation settings, shown in the live log, the Prompts tab and the element trace (`GET /api/trace/{element}`).
+
+### CLI
+
+- **`repo clone` fetches submodules**: a clone includes the repository's submodules.
+
+### Benchmark
+
+- **Benchmarks start from the studio**: end to end or derivation only, with single calls.
+- **Sessions are read together**: consistency per repository by name and by source, and answer stability per step as a heatmap.
+- **Flips show their cause**: the candidate stage, no candidate or a missing source node, with the deciding calls showing whether the LLM or something upstream changed.
+- **The model inspector compares runs**: all runs, one run or two side by side, as boxes or as an ArchiMate diagram with comparison badges.
+- **Elements trace across runs and sessions export**: an element is followed across runs, and a session is exported as one verified bundle.
+- **Every run records its inputs**: benchmark sessions and studio runs record their config versions, samples per step, file types, name patterns, settings and environment (`session_inputs.json`, `inputs.json`).
+- **Sessions export reproducibly**: `benchmark export <session> -o <zip>` writes a zip with the config texts, the environment and a sha256 manifest.
+- **Runs write process mining logs**: OCEL 2.0 and a case log (`cases.csv`, `cases.xes`); `benchmark ocel` exports several sessions as one log.
+- **Run snapshots record more**: refine disables with their reason, capped candidates (`over_cap`) and BusinessConcept output stability. The event log names every node, edge, element and relationship a step created.
+
+### Configuration
+
+- **Fresh installs work out of the box**: the configuration ships as seed data, and the database is created on first use.
+- **One home folder and one settings layer**: `~/.deriva` (moved with `DERIVA_HOME`) and pydantic-settings, where the environment wins over `.env`.
+- **Newer models are configurable**: a model config can take no temperature (`LLM_{NAME}_SAMPLING`) and set a reasoning level (`LLM_{NAME}_REASONING`). Each call records the model that answered, as a retired id can be served by another model.
+
+### Fixes
+
+- **A first start works end to end**: graphs persist in the home folder by default, the first saved model becomes the default, and a model's own key and URL reach the provider.
+- **Structure-only runs make no LLM call**: with `--no-llm` or **Structural steps only**.
+- **`benchmark analyze` compares like with like**: it compares the runs of one repository with one model (a two-repository session read 2.7%), and a single run reads "not measured".
+- **Smaller fixes**: `benchmark mark-failed`, `config model set` on duplicated keys, long paths on Windows, `run` without `-v`, runs and benchmarks that end cleanly, JSON answers that quote a code fence, half-made configuration databases, and studio keyboard access, live regions and contrast.
+
+### Dependencies
+
+- **grafeo 0.6.0b1 from PyPI**: graph files of earlier versions are extracted again. spaCy pipelines are downloaded on first use, pinned by version and SHA-256.
+- **deriva-py cannot share an environment**: ISI's deriva-py (`deriva` on PyPI) cannot share a Python environment with Deriva (known limitation).
+
+### Development
+
+- **Three packages on PyPI**: `deriva-studio` (studio and CLI), `deriva-cli` (CLI only) and `deriva-dev` (both, plus benchmarking), installed with `uv tool install --python 3.14 deriva-studio`.
+- **Releases are checked and attested**: version checks, wheel smoke tests, trusted publishing with PEP 740 attestations and a `constraints.txt` per release. CI installs the packages as tools on Linux, Windows and macOS.
+- **Documentation is published at docs.deriva.dev**: its sources moved to `docs/`.
+
+## [0.7.1] - 2026-10-07
+
+Stability and consistency release: every prompt text is versioned config, extraction and derivation take their candidates, identities and most relationships from structure with closed LLM classifications, and `benchmark step` measures one step at a time. Most changes alter derived models, and graphs written by earlier versions are extracted again on their next run.
+
+### Extraction
+
+- **Business concepts come from candidate terms**: a new NLP adapter finds candidate terms in the documentation with spaCy (English, German and French, each translated to an English identity), and the LLM only classifies each term into a closed set of business or reject labels, in batches that depend only on the term. Repeated runs agree on about 95% of the output (was about 73%) with 1 to 16 LLM calls per repository; spaCy and CTranslate2 are new dependencies, and the translation models download on the step's first run. *Changes models.*
+- **Per-document business concept extraction is removed**: its prompts, multi-file batching, structural seed concepts, voting and name normalization are gone.
+- **Business concept classification rejects the software's own operations**: the shipped instruction labels the data structures the software keeps and the operations on them (also as a verb with an object) as technical. In a hand check the technical share of accepted concepts fell from about half to under a third, with no valid concept rejected. *Changes models.*
+- **Business concept terms left out of an answer are asked again**: each missing term is asked on its own, up to `missing_retries` times (one decision per term, no voting), and the step reports the retries.
+- **Translated phrases are no business concepts**: a candidate whose English name holds a stop word (`stop_words`: articles and forms of "be") is left out after the evidence selection, so no other term moves in or out.
+- **Candidate support comes from structure only**: a concept that directory classification made no longer raises a term's evidence, so an upstream LLM answer cannot change which terms reach the classifier.
+- **The concept classifier can be told what the system is for**: BusinessConcept params `system_description_chars` and `context_sources` add the README's prose opening and each context line's document to the prompt. The shipped configuration leaves them off: they doubled the concepts and made them vary more between runs.
+- **Technologies come from structure**: the platforms that file types imply (a versioned `platforms` table) and the items the input files declare are the candidates, and the LLM only puts each item in a technology category or none, in batches that depend only on the item. Repeated runs agree on about 99% of the output (was about 77%) with 1 to 4 calls per repository, and the project itself and its tools are no longer technologies. *Changes models.*
+- **A repository's own modules are no technologies**: a compose service named like one of the repository's own modules, or running an image tagged like one, is no candidate (Technology param `own_modules`). *Changes models.*
+- **The repository itself is no technology it uses**: with `skip_repository_name` (Technology and DirectoryClassification), an image, library, compose service or directory named after the repository, in any spelling, is no technology. *Changes models.*
+- **Directory classification answers with decisions only**: the LLM picks a classification and a type from fixed lists and writes no description or confidence. The confidence comes from the step's `confidence` param, and the 0.7 confidence gate is gone.
+- **One classification per directory name**: directories with the same name key reach the LLM as one entry listing all their paths and share its decision, and the concept takes the directory's name, not the answer's spelling.
+- **Structure skips directories before the LLM**: `skip_names`, `skip_trees` and `skip_pass_through` keep directories away from the classification (on one benchmark repository 234 of 625 directories, 8 prompts instead of 13).
+- **One identity per concept and technology name**: every step that creates business concepts or technologies takes the id from one canonical name key, so spelling variants such as "Claims Handling" and `claims_handling` are one node. Existing ids with separators change. *Changes models.*
+- **Annotations and decorators are kept in the graph**: type definitions and methods store the annotations or decorators they carry (`decorators`), so the ApplicationInterface query's clause for decorated methods matches and a decorated web route becomes an interface. *Changes models.*
+- **Properties are stored natively**: graph nodes, edges, elements and relationships store their properties directly instead of a JSON copy, and properties without a value are not stored. Graphs written by earlier versions are extracted again on their next run, and exported models list element properties in sorted order.
+- **Directory extraction is faster**: directories are walked once and excluded ones are never entered, giving the same nodes in the same order 10 to 18 times faster on the benchmark repositories.
+
+### Derivation
+
+- **Relationships from containment**: the relationship pass can decide ownership from structure (`params.containment`, checked against the metamodel): the nearest component whose directory holds an element's source composes a nested component or interface, realizes a service and accesses a data object inside it. Composition stays exclusive, components can compose components, and other tiers add no further structural relationship to an element placed this way. *Changes models.*
+- **Technology relationships from structure**: a hosting node composes the system software of its role, system software realizes the technology service of its kind, and a technology service serves the component whose files configure it (`params.membership`, `params.configuration`). The chain from component to node is the same in every run. *Changes models.*
+- **Relationships without free LLM proposals**: `params.llm_proposals` can switch off the LLM pass that proposed relationships freely, and the shipped configuration does, so every relationship comes from structure. Business elements that structure cannot relate are left without relationships. *Changes models.*
+- **Dependencies between components from imports**: with `params.dependency` a component serves the component whose files import its files, drawn between the siblings below the deepest component that holds both ends. Deriva's own model now shows its layers, and the benchmark repositories gain 2, 31 and 9 such lines, the same in every run. *Changes models.*
+- **Components at the deployable-unit level**: with step param `deployable_units`, a repository with at least the minimum number of outermost units (build, dependency or container files) takes those units as component candidates. The shipped ApplicationComponent configuration uses a minimum of two; single-unit repositories keep their components. *Changes models.*
+- **Application components are parts of the software**: the shipped ApplicationComponent configuration takes only directories with source code below them, and one closed classification per batch leaves out tooling, scripts, container setup, data sets and documentation. A source root that holds nearly all files of the directory above it is represented by that module (`skip_nested`), and repeated runs agree on every component with half the LLM calls. *Changes models.*
+- **Application components are derived one candidate at a time**: `per_candidate.min_pool` is 1 (was 6), so small repositories are no longer judged in one batch where a directory flipped between runs. Repeated runs agree on every component and on about 96% of names and structure (was 92 to 93%). *Changes models.*
+- **Elements made from a directory's concept lie in that directory**: a source node without a path of its own takes the path of the directory that represents it, so containment, configuration and dependency rules can place such elements. *Changes models.*
+- **Data objects from persistence entities**: with `per_candidate.decorators` a candidate with a matching annotation passes the filters and is only named; the shipped DataObject configuration selects persistence-entity annotations (`Entity`, `Table`, `Document`, `Embeddable`, `MappedSuperclass`). In a repository with annotated entities the data objects are its domain entities instead of message classes. *Changes models.*
+- **A data object realizes the business object its type names**: `params.same_name` relates elements whose structural sources share a name, and the shipped configuration lets a data object realize the business object of that name, the first business-to-application links from structure. *Changes models.*
+- **Business elements need an anchor in the application or technology layer**: `cross_layer_coherence` param `disable_unanchored` disables the elements of a layer with no relationship to another layer, and the shipped configuration applies it to the business layer. On the benchmark repositories the business layer drops from 12, 10 and 76 elements to 0, 0 and 7, removing the main source of run-to-run variance. *Changes models.*
+- **Business elements the code names stay**: `cross_layer_coherence` param `code_support` keeps an unanchored element whose concept a type or directory name carries; the shipped configuration counts names of several words, never single words. The kept elements have no relationships yet. *Changes models.*
+- **Business elements only from business concepts**: the shipped BusinessActor, BusinessFunction, BusinessProcess and BusinessEvent configurations take only the concepts classified with their label and mentioned in the documentation; one closed classification per batch keeps or rejects each, then a naming call (`naming_call`) follows the type's ArchiMate naming convention. Methods and types matched by word lists no longer become business elements, the name pattern lists are removed, and repeated runs agree on every element (process names on about 95%). *Changes models.*
+- **Nodes from the technologies a repository runs**: the Node step also considers technologies classified as system software (databases, message brokers, caches), and its role classification decides which need a host, so a node no longer depends on a directory carrying its name. *Changes models.*
+- **Technology nodes can become Nodes**: step param `pattern_labels` limits name patterns to candidates with given labels, and the shipped Node configuration applies them to files only, so repositories that had no Node get Nodes for their platforms and servers. *Changes models.*
+- **Nodes by hosting role**: step param `roles` classifies candidates into a closed, versioned list of roles, and each chosen role becomes one element named after it with all its candidates as `sources`. The shipped Node configuration uses application server, database server, message broker, cache server, directory server, monitoring server and container host, and repeated runs agree on every node with one call per repository. *Changes models.*
+- **SystemSoftware by closed kind**: with `element_per: "candidate"` each candidate keeps its identity and name and stores its role, and the shipped SystemSoftware configuration classifies technologies into a closed list of kinds instead of keeping those with an LLM confidence above 0.5. Libraries are left out in every run, and the step needs one or two calls per repository instead of five to thirteen. *Changes models.*
+- **One structural source, one element**: step param `skip_when_directory_is` leaves out candidates whose directory already is an element's source; the shipped SystemSoftware configuration uses it for application components, and repeated runs agree on every element. *Changes models.*
+- **One technology service per kind**: the shipped TechnologyService configuration classifies candidate technologies into a closed list of service kinds in one call, and each kind found is one service named from the list. Its name pattern lists are removed (the exclude list matched inside other names). *Changes models.*
+- **Application interfaces by protocol, named from structure**: one closed classification per batch chooses the protocol (HTTP, web UI, command line, messaging, RPC) or none, and the name is built from the component, the candidate and the protocol (`name_template`, `container_type`, `show_path`). The step gives identical output in every run with 1 or 2 calls instead of one or two per candidate. *Changes models.*
+- **Application service candidates from structure**: the shipped ApplicationService configuration takes types whose name ends in "Service" (it matched the word anywhere), and a concept that names a module that is already a component is left out. *Changes models.*
+- **One application service per contract**: with `skip_subtypes` a candidate that implements or extends another candidate is left out before ranking, so the interface represents its implementations. *Changes models.*
+- **Graph thresholds are step config**: the Node step's k-core threshold (the 30th percentile) is step param `graph_filter` (`min_kcore_percentile`, optional `labels`) instead of a constant, and the shipped Node configuration applies it to file candidates only. *Changes models.*
+- **Element names can no longer remove elements**: structure decides which candidates become elements before any LLM call, and the naming step never gives an element another candidate's structure name or a name given earlier in the step. An element records its `structure_name` only when naming changed its name. *Changes models.*
+- **Steadier element names**: the repository's name is removed from the start of a name also when spread over several words, and naming takes a word's casing from the source where the source uses capitals. *Changes models.*
+- **Prompts are built from structure only**: no prompt holds what earlier LLM calls answered; per-candidate prompts list no earlier names, Technology prompts list dependencies by name, and relationship prompts sample elements by graph importance. *Changes models.*
+- **No relationships from co-mention**: business actors are no longer assigned to every business process or function mentioned in the same document (on one benchmark repository about 390 of 470 relationships came from this). *Changes models.*
+- **LLM relationship proposals must fit a rule**: a proposal is kept only when its source type, target type and relationship type match one relationship rule. *Changes models.*
+- **Duplicate detection makes no LLM call**: its semantic check, a prompt in code without a config row, is removed. The pipeline never passed it a model, so results do not change.
+- **Duplicate detection uses no domain vocabulary**: names are no longer mapped onto business words or singularized by a fixed noun list; only generic architecture synonyms and abbreviations remain. *Changes models.*
+- **Graph metrics are computed in grafeo**: the prep phase runs PageRank, Louvain, k-core, articulation points and degree natively on the graph namespace instead of in solvor. Louvain gives far fewer, larger communities, every node is scored and PageRank is undirected; this requires the grafeo 0.6.0 development build until 0.6.0 is released. *Changes models.*
+- **Joint consistency solves each part of the model separately**: constraints never cross unconnected parts, so each part is a small exact problem with the same optimum, and 500 parts take 1 s where 10 took minutes. The step stays disabled until it is measured.
+
+### Benchmark
+
+- **Model quality next to consistency**: `benchmark analyze` reports the structure of every exported model (relationships per element, orphans, parts composed more than once, expected type links, duplicates) and element precision and recall against the repository's reference model. Combined sessions are read under their joined name.
+- **Relationships are derived after the elements by default**: `benchmark run` defers relationships to one pass after all elements, as the pipeline does. `--no-defer-relationships` keeps the old mode, in which role-classified elements got no relationships.
+- **`benchmark step` repeats one extraction step**: the input is built once from the LLM cache, and each run calls the LLM for the step without the cache, in its own work database. The report gives presence and exact consistency per node and edge type, the properties that differ, live calls and answer stability (`step_results.json`).
+- **`benchmark step` measures derivation steps**: `prep`, an element step, `ConsolidatedRelationships` or a refine step, each on a cached extraction and the earlier derivation steps. A run's output is its elements by identifier and its relationships by type and ends.
+- **Decision stability for element steps**: `benchmark step` compares every candidate's decision (the stage it reached and the element it became) across runs, so keep and role decisions report the share decided alike.
+- **Element steps are scored on identity**: documentation, the LLM's own name and its confidence are reported but not counted in exact consistency, as no later step reads them for identity; `derived_at` is left out like other timestamps.
+- **Decision stability for batch classification steps**: a step that classifies items in batches reports its decision per item, and `benchmark step` gives the share of items decided alike in every run. One changed label changes a whole batch answer, so answer stability alone says little for such steps.
+- **Step reports**: an extraction step can return its own statistics (for business concepts: list sizes, labels, skipped terms, tool versions, decisions), written to the run log and the event log.
+- **LLM answer stability in `benchmark analyze`**: per step, the share of prompts that got the same raw decisions in every run (descriptions, documentation and confidence left out), next to output consistency, so voting or post-processing cannot hide LLM variance.
+- **LLM samples per step are recorded**: `session_metadata.json` lists the answers asked per decision for every LLM step (above 1 means majority voting).
+- **Display names in the run snapshot**: business concept and technology names are recorded next to their ids.
+- **Extraction routes in the run snapshot**: each business concept and technology lists the routes that produced it (technology edges carry `route`), so stability can be measured per route.
+- **Keep rates and call kinds**: each run snapshot records every candidate decision (element type, source node, stage), and each LLM call event records its kind (keep, naming, relationship or extraction).
+
+### Configuration
+
+- **All prompt text is versioned config**: the persona, candidate note, rules and abstention rule of the batch element prompt (`params.prompt`), the openings of the single-candidate and relationship prompts (`params.per_candidate.persona`, `params.persona`) and the opening and task sentences of the TypeDefinition, Method, Test and ExternalDependency prompts (`params.prompt`) moved from code into config rows, byte-identical. A step whose config lacks one of these texts reports an error instead of using built-in text.
+- **`config pattern list|add|delete`**: a derivation step's name patterns are managed from the CLI, and a category left without patterns is deactivated. The shipped SystemSoftware include patterns, a list of product names without effect, are removed.
+- **Single LLM calls by default**: element naming asks once (it took the majority of three), and the shipped configuration uses one answer per decision for every step.
+
+### Fixes
+
+- **Java and TypeScript imports resolve**: a Java import reaches the repository file that declares the class, the Java standard library is recognised, and a relative script import reaches its file or the directory's index file. On the Java benchmark repositories this recovers about 2,450 and 1,700 internal import edges and removes false hub dependencies. *Changes models.*
+- **Methods of Java, TypeScript, JavaScript and C# reach the graph**: the Method step parses the languages in its `languages` param (the shipped configuration lists all five), where it parsed only Python. The interface step's method clauses match decorator registrations only, so a controller file stays the interface. *Changes models.*
+- **Long file extensions are recognised**: extensions longer than four letters (`.gradle`, `.properties`, `.coffee`, `.parquet`) classify by suffix, so the Technology step reads Gradle builds again. *Changes models.*
+- **Excluded file types are never inputs**: excluded extensions win over location rules at any length, so ArchiMate model files in documentation folders are no longer read as documentation; `.bak` backups are excluded too. *Changes models.*
+- **Directory classification sees each directory's files**: the prompt carries the file counts per type and the languages (its query matched no edges and read a missing property), and directories come in path order. *Changes models.*
+- **Directory classification votes as configured**: the step's `samples` and `min_votes` reach the classification, which always asked once.
+- **Inheritance points at the repository's own types**: once every file is extracted, an inheritance edge to a base type defined in another file reaches the repository's type of that name when exactly one exists. On two benchmark repositories 433 of 649 and 97 of 266 edges now reach a real type (were 13 and 1). *Changes models.*
+- **Name keys keep acronyms apart**: acronyms stay as written ("AWS" was "aw"), an acronym plural meets its acronym, and a trailing "+" or "#" belongs to its word ("C++", "C#" and "C" were one technology).
+- **The singular and the plural of a name are one identity**: the name key knows singular words ending in "s", words ending in "-che" or "-ie" and more irregular plurals. Ids of the affected names change; re-extract stored graphs. *Changes models.*
+- **Results no longer depend on the graph's result order**: candidates, graph readers and graph metrics all go in node id order, verified with grafeo's shuffled result order (identical models, no new LLM calls).
+- **Derivation steps read the graph metrics of their own run**: the metrics are read from the graph once per derivation run and after any prep step, not from a disk cache keyed by node and edge counts. `--no-enrichment-cache`, `--nocache-enrichment-configs` and their `run_derivation` and `PipelineSession.run_benchmark` arguments are removed, and `workspace/cache/graph/enrichments` can be deleted.
+- **Retyping a relationship keeps everything written on it**: the Flow-to-Access fix lost the confidence and the consolidation mark, so later refine steps read the default confidence.
+- **ApplicationInterface honours `graph_filter` and `pattern_labels`**: its candidate filter did not pass the step params on, so both had no effect there.
+- **`skip_nested` refuses an unknown file type**: an unregistered file type is an error when the step runs, instead of silently leaving nothing out.
+- **Relationship prompts sample elements by graph importance**: the sample reads the source's pagerank that every element stores; it read a missing property and fell back to identifier order.
+- **Role elements never share a name**: a candidate whose planned name repeats an earlier one is left out.
+- **A represented candidate takes no place in the cut**: `skip_when_directory_is` applies before ranking and the cut (no change on the benchmark repositories).
+- **Business events from concepts and methods together**: concepts keep their query order and come first, and only the other candidates take the method path. The shipped configuration returns concepts only.
+- **Document text cleanup**: RTF paragraph marks end a segment and RTF Unicode escapes are decoded, and tag removal takes only real tags, so text such as "a < b > c" stays.
+- **Voting fixes**: element naming treats spacing variants as one name, directories with the same name each get their REPRESENTS edge, and "series" and "species" are no longer singularized.
+- **One failed sample no longer fails the step**: with several samples the others still vote, and the step fails only when every sample failed.
+- **Candidate decisions name the created element**: in batch mode a decision records the element's structural identifier, not the one the LLM proposed.
+- **Sampled extraction steps**: token usage sums all samples, directories without a majority count as skipped, and parallel sample threads are capped at 8.
+- **Config input validation**: step params must be a JSON object (`config update -p`, `config add`), and `config update --temperature` accepts 0 to 2.
+- **Switching graph databases checks the key first**: an invalid key no longer closes the open database before failing.
+- **Extraction warns when no step matches**: a method-filtered extraction that selects no enabled step returns a warning.
+- **Rate limits slow the throttle even when a retry succeeds**: a 429 answered by a successful retry left the adaptive rate unchanged.
+- **Re-added graph edges replace their properties**: an edge re-added without properties kept its old ones.
+- **LLM extraction steps keep their edge properties**: edges written by the LLM-based extraction steps are stored with their properties; no step reads them yet.
+- **`benchmark analyze` finds repositories again**: it read `summary.json`, which the benchmark had renamed to `session_metadata.json`.
+- **Answer stability of combined sessions**: `benchmark analyze` keeps the derivation answers of a session that derives several repositories together.
+- **`repo clone --overwrite` works on Windows**: Git's read-only pack files made the overwrite fail with "Access is denied"; it now removes the directory as `repo delete` does.
+- **`benchmark run --help` is accurate on caching**: it states that `--no-cache-extraction` and `--no-cache-extraction-llm` still read LLM answers from the cache unless `--no-cache` is given.
+- **grafeo builds without Cypher are refused before a database opens**: Deriva checks `grafeo.features()` first, where such a build failed at the first query with an attribute error.
+
+### Dependencies
+
+- **grafeo 0.5.44** (requires `>=0.5.44`): cached runs on the benchmark repositories give identical models, and derivation runs up to four times faster on the largest one. Graph files written by 0.5.43 open without re-extraction.
+- **solvOR 0.6.3** (requires `>=0.6.3`): now used only for the joint-consistency optimization, where its new MILP solver makes the same decisions in milliseconds where 0.6.2 took up to minutes.
+
+### Development
+
+- **Layer boundaries are enforced again**: the per-layer `ruff.toml` files extend the project configuration, so the architecture bans (TID251) and project rules apply in those folders.
+- **The CLI goes through services only**: `config query` and `config snapshot` open their connection through the config service, and `benchmark deviations` takes its recommendations from the deviation service.
+- **Derivation modules no longer read the config database**: the service passes each step's patterns to the element module (`generate()` takes `patterns`).
+- **Remaining adapter-type imports are a documented exception**: the imports of adapter types left in derivation and extraction modules are marked as such.
+- **Layer folders are reformatted**: their code follows the project line length (180).
+- **ruff 0.16**: Markdown files are excluded from formatting, so documentation examples keep their hand formatting.
+- **Dead code is removed**: the unused BusinessObject suffix collapse in duplicate detection with its element scan, and the graph adapter's index and constraint stubs left from Neo4j.
+- **Graph writes use grafeo's upsert helpers**: nodes and edges go through the index-backed `upsert_nodes` and `upsert_edges`, and the per-edge-type cache of existing edges is gone.
+- **Id index lookups no longer filter deleted nodes**: grafeo's property index stopped returning them, and a test pins that.
+- **Refine steps no longer read the model's storage format**: orphan detection and the Flow-to-Access fix go through the ArchiMate manager, which keeps a retyped relationship's identifier and properties and validates the new type.
+
+## [0.7.0] - 2026-09-27
+
+Grafeo migration release: grafeo, an embedded graph database that runs in-process, replaces Neo4j and its Docker container, 500 to 1000 times faster. Settings and API names that named Neo4j are renamed, which breaks existing `.env` files and scripts (see Configuration and Development). Element names and identities come from structure, so derived models change.
+
+### Security
+
+- **Vulnerable locked dependencies are upgraded**: among them cryptography, pypdf, requests and urllib3. The CI dependency audit skips Deriva itself, which is not on PyPI.
+
+### Extraction
+
+- **Dependency directories are excluded from extraction**: one `excluded_directories` system setting (`.git`, `__pycache__`, `node_modules`, `bower_components`, `vendor`, `.venv`, `venv`, `site-packages`, as whole path segments) applies to every repository walk, replaces five hardcoded lists and is edited with `config setting show|set`. Third-party code no longer becomes Directory or File nodes or derivation candidates. *Changes models.*
+- **The TypeDefinition LLM fallback reads code only**: its input sources list programming-language subtypes, so markup, stylesheets, templates and shell scripts no longer reach the LLM. *Changes models.*
+- **Directory classification only classifies**: it answers business, technology or skip plus a type, and the concept or technology name comes from the directory name. Document concept extraction keeps only the concepts a majority of samples found (`params.samples`, `params.min_votes`), with samples in parallel. *Changes models.*
+- **Business concepts keep every type**: a concept that files classify differently keeps all its types (`conceptTypes`) instead of the last file's, so results no longer depend on file order; derivation queries match on the set. *Changes models.*
+- **Technology extraction reads dependency manifests and build files**: its instruction covers the runtime a manifest implies and the system a client library connects to. *Changes models.*
+
+### Derivation
+
+- **Element names come from the code structure**: an element's name and identifier come from its source node, so the same source always gives the same element. The LLM decides whether to keep a candidate and writes its documentation (its proposed name is kept as `llm_name`). *Changes models.*
+- **Element naming is isolated**: names come from a separate naming call whose prompt depends only on the source node, its type and a configurable convention (`params.naming`); a majority of several answers wins, with the structure name as fallback. *Changes models.*
+- **Joint consistency refine step (experimental, off by default)**: `joint_consistency` selects relationships and duplicate merges together in one exact solvor MILP under metamodel constraints (one relationship per ordered pair, single parents, no cycles where acyclic, no merge of related elements). With `dry_run` (the default) it only writes a report.
+- **Graph access is faster**: property indexes on `id` and `identifier`, and enrichment write-back and `graph_relationships` use index lookups and Python joins instead of unindexed Cypher joins.
+
+### CLI
+
+- **One graph database per repository**: `GRAFEO_DB_DIR` holds a `<repository>.grafeo` file per repository (joined names for combined runs, `default.grafeo` without `--repo`), and `run`, `export`, `clear` and `status` accept `--repo`. Benchmark runs are isolated per repository.
+
+### Benchmark
+
+- **Consistency snapshots**: every benchmark run writes a JSON file next to its model with each element, relationship and LLM-extracted graph node, so runs can be compared on names and on source nodes.
+- **`--no-cache` covers extraction**: the extraction steps also bypass the LLM cache, so a no-cache benchmark measures the whole pipeline.
+- **Runs are observable**: benchmark event logs carry real step durations and extraction events, each LLM call its latency, rate-limit wait and tokens, slow queries warn (`GRAFEO_SLOW_QUERY_MS`), and each session writes `timings.json`.
+
+### Configuration
+
+- **No Docker required**: the graph database is embedded, in memory by default and persistent with `GRAFEO_DB_DIR`.
+- **`GRAFEO_DB_DIR` replaces `GRAFEO_DB_PATH`**: the setting is a directory with one database per repository, and a set `GRAFEO_DB_PATH` raises an error.
+- **`GrafeoSettings` replaces `Neo4jSettings`**: the environment prefix is `GRAFEO_`.
+- **Namespace settings drop Neo4j**: `NEO4J_GRAPH_NAMESPACE` is `GRAPH_NAMESPACE` and `NEO4J_NAMESPACE_ARCHIMATE` is `ARCHIMATE_NAMESPACE`.
+- **Relationship prompt rules are config**: the ArchiMate conventions, rules and confidence cutoff of the LLM relationship pass come from the `relationship` phase row `GlobalRelationships` (`instruction`, `params.min_confidence`). Disabling the row skips the LLM pass; graph-derived relationships still run.
+- **Per-candidate naming is config**: it is switched on per element type with `params.per_candidate` (`min_pool`, `rules`) instead of class constants.
+- **Extraction steps have versioned params**: `extraction_config.params` (added by an automatic migration) is set with `config update extraction <step> -p/--params-file`, and the Technology prompt headings and closing instruction live in `params.prompt`.
+- **The BusinessConcept system prompt is config**: the extraction instruction is sent verbatim as the whole system prompt.
+- **Moved prompts are byte-identical**: the prompts that moved into config give identical models.
+- **`config add derivation`**: adds a disabled derivation step with `--phase`, `--sequence` and `-p/--params`; `config update` gains `--temperature` and `--max-candidates`.
+
+### Fixes
+
+- **Business concept names keep their word boundaries**: normalization lowercased everything after the first letter (`RealTimeDataStreaming` became `Realtimedatastreaming`) and singularized words such as "analysis". It keeps the casing and singularizes only real plurals. *Changes models.*
+- **Derivation runs at its configured temperature**: the temperature lives in the step's `temperature` column (`config update --temperature`), as the value in `params` was never read, and the relationship row's temperature applies to the consolidated relationship pass. *Changes models.*
+- **LLM-extracted technologies are kept**: the Technology module read `techName` and `techCategory` while the enforced schema names `technologyName` and `technologyType`, so they were silently dropped. *Changes models.*
+- **LLM timeouts and retries**: `LLM_TIMEOUT` bounds every call (a stalled request hung the run), and timeouts, connection errors, rate limits and 5xx responses are retried up to `LLM_MAX_RETRIES` with exponential backoff and Retry-After. Other errors fail at once.
+- **The LLM cache key covers every response-shaping input**: the system prompt and the effective temperature and max_tokens are part of the key. Existing cache entries are invalidated once.
+- **Migrations run every statement**: a comment line directly above a statement hid it from the migration runner.
+
+### Dependencies
+
+- **Neo4j is removed**: `deriva/adapters/neo4j/` and all Neo4j driver dependencies are deleted.
+- **grafeo 0.5.43 and solvor 0.6.2 from PyPI**: both are regular PyPI dependencies again, with no local builds.
+- **pydantic-ai 2**: the Mistral provider is a declared extra (`pydantic-ai-slim[mistral]`), LLM agents are kept per thread so parallel calls share no HTTP client across event loops, and token usage is read from the `usage` property.
+
+### Development
+
+- **Grafeo adapter**: `deriva/adapters/grafeo/` with `GrafeoConnection` replaces `Neo4jConnection`, on a shared `GrafeoDB` singleton with namespace isolation.
+- **Session methods drop Neo4j**: `session.start_neo4j()` and `stop_neo4j()` are `start_graph_db()` and `stop_graph_db()`.
+- **Enrichment reads drop Neo4j**: `get_enrichments_from_neo4j()` is `get_enrichments_from_graph()`.
+- **Unused relationship prompt builders are removed**: `build_relationship_prompt`, `build_element_relationship_prompt`, `build_per_element_relationship_prompt` and `derive_element_relationships`.
+
+## [0.6.9] - 2026-03-01
+
+Benchmarks, relationships and analysis release: many benchmark runs on three open-source web applications led to new config versions, fewer tokens per run and tools for benchmarking without repository-specific prompts. Relationship consistency stayed below 60%.
 
 ### CLI
 
@@ -585,9 +751,9 @@ I have been running a lot of benchmarks on flask_invoice_generator, full-stack-f
 - **Graph Labels**: Split Neo4j labels into namespace (Graph/Model) and node type, enabling cleaner queries and consistent naming across extraction and derivation
 - **Database Locking**: Non-blocking during benchmarks/pipeline runs, versions used for isolation
 
-## v0.6.8 - Library Migration & Overall Cleanup (January 16, 2026)
+## [0.6.8] - 2026-01-16
 
-Big migration replacing 6 custom implementations with off-the-shelf libraries, reducing the amount of code and improving maintainability.
+Library migration and cleanup release: six custom implementations replaced with off-the-shelf libraries, with less code to maintain.
 
 ### LLM Adapter Rewrite
 - **PydanticAI Integration**: Replaced custom REST provider implementations with `pydantic-ai` library
@@ -628,9 +794,9 @@ Big migration replacing 6 custom implementations with off-the-shelf libraries, r
 - **Tree-sitter Test Consolidation**: Merged per-language test files into single `test_languages.py`
 - **Coverage Threshold**: Updated CI coverage threshold to 80%
 
----
+## [0.6.7] - 2026-01-15
 
-## v0.6.7 - Gotta save some Tokens (January 15, 2026)
+Token savings release.
 
 ### Caching & Performance
 - **Graph Cache**: New `cache.py` in graph adapter with hash-based cache for expensive graph queries
@@ -641,7 +807,7 @@ Big migration replacing 6 custom implementations with off-the-shelf libraries, r
 - **Extraction Phases**: Added `--phase classify` and `--phase parse` options to extraction CLI for granular control
 
 ### Configuration Rationalization
-- **Settings Principle**: New "Who Changes It" architecture - `.env` for ops/deployment (secrets, connections, provider settings), database for user tuning (algorithms, thresholds)
+- **Settings Principle**: New "Who Changes It" architecture: `.env` for ops/deployment (secrets, connections, provider settings), database for user tuning (algorithms, thresholds)
 - **Algorithm Settings in DB**: PageRank damping/iterations/tolerance, Louvain resolution, confidence thresholds, batch sizes now in `system_settings` table
 - **LLM Settings in .env**: Rate limits, timeouts, backoff config remain in environment (provider-specific operational settings)
 
@@ -662,9 +828,9 @@ Big migration replacing 6 custom implementations with off-the-shelf libraries, r
 - **Smarter retries**: Added retry-after header parsing to rate_limiter.py and updated providers.py to pass headers to rate limiter
 - **Muted Neo4j**: Suppressed Neo4j notifications during benchmark runs, with toggle in .env
 
----
+## [0.6.6] - 2026-01-13
 
-## v0.6.6 - ElementDerivationBase & Document Parsing (January 13, 2026)
+ElementDerivationBase and document parsing release.
 
 ### Derivation Module Refactoring
 
@@ -681,9 +847,9 @@ PDF (`pypdf`) and DOCX (`python-docx`) parsing moved from optional to core depen
 - **Coverage**: Increased from 75% to 80%, new test modules for tree-sitter, document reader, types
 - **Docs**: New `ARCHITECTURE.MD`, `OPTIMIZATION.md`, enhanced docstrings
 
----
+## [0.6.5] - 2026-01
 
-## v0.6.5 - Tree-sitter & Graph-First Relationships (Unreleased)
+Tree-sitter and graph-first relationships release.
 
 ### Tree-sitter Adapter
 
@@ -704,9 +870,9 @@ Deterministic graph techniques for relationship consistency:
 - OCEL phase tracking, structured output logging, token optimization
 - Bug fixes: chunking logic, TypeDefinitionNode constructor, test fixes
 
----
+## [0.6.4] - 2026-01-10
 
-## v0.6.4 - Benchmark with Deriva (this repo) runs stable and successful! (January 10, 2026)
+Stable benchmark release: the benchmark on Deriva's own repository runs stable end to end.
 
 ### Refine Module (NEW)
 
@@ -746,7 +912,7 @@ Removed and added a lot of tests, now fully caught up with all the changes. New 
 - `TestPercentileNormalization`, `TestGraphMetadata`, `TestPercentileEnrichments` for enrich module
 - Comprehensive refine step tests for all 5 steps
 
-Test coverage didn't jump because I deleted a lot of weak tests. Marimo (app) tests are still excluded.
+Test coverage did not rise because many weak tests were deleted. Marimo (app) tests are still excluded.
 
 ### Graph Enrichment Module
 
@@ -785,9 +951,9 @@ Refactor of `modules/extraction/base.py`:
 - Singularization helper with irregular plurals support
 - Removed `ast_extraction.py` and `input_sources.py`
 
----
+## [0.6.3] - 2026-01-09
 
-## v0.6.3 - Database Adapter and Benchmark Improvements (January 9, 2026)
+Database adapter and benchmark release.
 
 ### Database Adapter Refactor
 
@@ -804,9 +970,9 @@ Refactor of `modules/extraction/base.py`:
 - External dependency extractor: Major improvements
 - Config service: New configuration functions
 
----
+## [0.6.2] - 2026-01-07
 
-## v0.6.2 - New Derivation Modules & LLM Provider Expansion (January 7, 2026)
+New derivation modules and LLM providers release.
 
 ### New Derivation Modules
 
@@ -833,9 +999,9 @@ Major expansion with 6 new ArchiMate element modules:
 - Aligned CI test coverage at 70%
 - Updated documentation
 
----
+## [0.6.1] - 2026-01-03
 
-## v0.6.1 - Extraction Refactor, Chunking, AST & Tests (January 3, 2026)
+Extraction refactor release: chunking, AST parsing and tests.
 
 ### Extraction Module Refactor
 
@@ -853,46 +1019,34 @@ Major expansion with 6 new ArchiMate element modules:
 
 Comprehensive test coverage across adapters, common utilities, extraction, derivation, and services. Enforced 70% minimum code coverage in CI.
 
----
+## [0.6.0] - 2026-01-01
 
-## v0.6.0 - Rename to Deriva (January 1, 2026)
-
-**AutoMate is now Deriva.**
+Rename release: AutoMate is now Deriva.
 
 The project has been renamed to reflect its broader scope. While initially focused on ArchiMate models, the architecture can derive other model types (C4, BPMN, UML, etc.) from source repositories.
 
 Changes: renamed package directory, updated all imports, CLI commands, Docker containers, and documentation.
 
----
+## [0.5.11] - 2025-08 to 2025-12
 
-# v0.5.x - The Adapters/Modules/Services/Marimo+CLI Era (August 2025 - December 2025)
-
-**Architectural paradigm:** Marimo notebook (`deriva/app/app.py`) with domain adapters and reusable modules.
-
-**Process model:** Import -> Extraction -> Derivation -> Export
-
-**Solution space:** 7 adapters (database, neo4j, repository, graph, archimate, llm, ast) + modular extraction/derivation functions + DuckDB config storage
-
----
-
-## v0.5.11 - Improvements to the derivation module using graph techniques
+Graph techniques in derivation release.
 
 - Flattened repo into single project layout
 - Completed derivation module placeholders and stabilized graph-driven derivation
 - Reached ~95% derivation consistency on small repo benchmark
 - CLI now supports clearing Graph and Model namespaces
 
----
+## [0.5.10] - 2025-08 to 2025-12
 
-## v0.5.10 - Adapters Rename & Cleanup
+Adapters rename and cleanup release.
 
 - Renamed managers to adapters to clarify layering
 - Consolidated operations and merged metamodel into models
 - Added `.github/` scaffolding
 
----
+## [0.5.9] - 2025-08 to 2025-12
 
-## v0.5.9 - PipelineSession & Benchmarking
+PipelineSession and benchmarking release.
 
 ### PipelineSession
 
@@ -923,9 +1077,9 @@ Object-Centric Event Logging for process mining traceability, compliant with OCE
 
 New per-directory ruff.toml files enforcing layer hierarchy (CLI/App -> services -> managers/modules -> common).
 
----
+## [0.5.8] - 2025-08 to 2025-12
 
-## v0.5.8 - Consistency Framework & Config Versioning
+Consistency framework and config versioning release.
 
 ### Consistency Service
 
@@ -947,9 +1101,9 @@ New commands for config management, consistency checking, and history viewing.
 
 Comprehensive ArchiMate metamodel validation including relationship rules, naming conventions, orphan detection, and coverage checks.
 
----
+## [0.5.7] - 2025-08 to 2025-12
 
-## v0.5.7 - Operations Pattern & Neo4j Migration
+Operations pattern and Neo4j migration release.
 
 ### Graph Operations Rewritten
 
@@ -966,9 +1120,9 @@ New operations following the graph manager pattern for elements, relationships, 
 
 Fixed 60+ linter issues, updated type annotations, added documentation for the operations pattern.
 
----
+## [0.5.6] - 2025-08 to 2025-12
 
-## v0.5.6 - Code Quality & Standardization
+Code quality and standardization release.
 
 ### Standardized Pipeline Response Structure
 
@@ -982,9 +1136,9 @@ Fixed all deprecated `datetime.utcnow()` occurrences across extraction modules a
 
 New test file with 15 tests covering cache operations, statistics, and error handling.
 
----
+## [0.5.5] - 2025-08 to 2025-12
 
-## v0.5.5 - Complete Derivation Pipeline
+Complete derivation pipeline release.
 
 ### Derivation Service Rewrite
 
@@ -1000,9 +1154,9 @@ New `export` command for ArchiMate 3.0 Exchange Format, compatible with Archi mo
 
 Complete flow: extraction -> derivation -> validation -> export to `.archimate` file.
 
----
+## [0.5.4] - 2025-08 to 2025-12
 
-## v0.5.4 - Services Layer & CLI
+Services layer and CLI release.
 
 ### Services Layer Architecture
 
@@ -1019,9 +1173,9 @@ Fully functional headless interface with configuration commands, pipeline execut
 
 All workspace-related paths now use `workspace/` folder in project root.
 
----
+## [0.5.3] - 2025-08 to 2025-12
 
-## v0.5.3 - All Extraction Modules Complete
+Complete extraction modules release.
 
 **Structural extraction (no LLM):** Repository, Directory, File modules
 
@@ -1032,9 +1186,9 @@ All workspace-related paths now use `workspace/` folder in project root.
 - Config-driven extraction with `input_sources` JSON column
 - Module pattern standardization with shared base files and registry pattern
 
----
+## [0.5.2] - 2025-08 to 2025-12
 
-## v0.5.2 - Pipeline & Logging System
+Pipeline and logging release.
 
 ### 3-Level JSONL Logging System
 
@@ -1050,9 +1204,9 @@ All workspace-related paths now use `workspace/` folder in project root.
 
 Removed YAML config dependency, now uses `.env` configuration with multi-provider support.
 
----
+## [0.5.1] - 2025-08 to 2025-12
 
-## v0.5.1 - Foundation Complete
+Foundation release.
 
 ### Infrastructure
 
@@ -1068,9 +1222,9 @@ ArchimateManager, DatabaseManager, GraphManager, LLMManager, SourceManager, Deri
 
 4-column Marimo notebook layout for configuration, extraction, derivation, and status display.
 
----
+## [0.5.0] - 2025-08 to 2025-12
 
-## v0.5.0 - AutoMate V2 Merge
+AutoMate V2 merge release.
 
 **Complete codebase replacement** merging parallel V2 development.
 
@@ -1084,219 +1238,159 @@ ArchimateManager, DatabaseManager, GraphManager, LLMManager, SourceManager, Deri
 
 Classification -> Extraction -> Derivation -> Validation -> Export
 
----
+## [0.4.0] - 2025-06 to 2025-07
 
-# v0.4.x - The FastAPI/Jinja2 Era (June-July 2025)
+FastAPI and Jinja2 release: a web UI prototype with an 8-week implementation roadmap, and Run ID traceability linking every artifact from the cloned repository to the final `.archimate` file.
 
-**Architectural paradigm:** FastAPI backend + Jinja2 templates + Run ID traceability
+## [0.3.5] - 2025-04
 
-**Process model:** Repository Selection -> Run ID Definition -> Pipeline Execution
-
----
-
-## v0.4.0 - FastAPI/Jinja2 Architecture
-
-Web UI prototype with 8-week implementation roadmap. Introduced Run ID traceability linking all artifacts from cloned repos to final `.archimate` file.
-
----
-
-# v0.3.x - The UV/Extraction Functions Era
-
-**Architectural paradigm:** UV package manager + extraction functions + layered steps
-
-**Process model:** Clone -> Classify -> Extract (layered steps) -> Store in Neo4j
-
----
-## v0.3.5 - Pre-V2 Preparation
+Pre-V2 preparation release.
 
 - Refactored derivation module
 - Preparing codebase for V2 merge
 
----
+## [0.3.4] - 2025-04
 
-## v0.3.4 - Business & Technology Extraction
+Business and technology extraction release.
 
 - BusinessConcept extraction: First LLM-based extraction from documentation
 - Technology extraction: Infrastructure component identification
 
----
+## [0.3.3] - 2025-04
 
-## v0.3.3 - ArchiMate Model Generation
+ArchiMate model generation release.
 
 - Full ArchiMate model working: JSON to XML transformation
 - Schema validation and file export with `.archimate` extension
 
----
+## [0.3.2] - 2025-04
 
-## v0.3.2 - ArchiMate Layer Extraction
+ArchiMate layer extraction release.
 
 - Application layer extraction: First ArchiMate-aware step
 - LLM prompt templates and ArchiMate schema
 
----
+## [0.3.1] - 2025-04
 
-## v0.3.1 - Neo4j & Graph Operations
+Neo4j and graph operations release.
 
 - Neo4j fully integrated with graph manager
 - Graph operations layer for node/edge CRUD
 - Docker compose for containerized Neo4j
 
----
+## [0.3.0] - 2025-04
 
-## v0.3.0 - UV Rebuild & Extraction Functions
+UV rebuild release: a second complete reset for MVP focus, with function-based extraction.
 
-### The Second Purge
+### Reset
 
-Complete reset for MVP focus - removed all previous extraction strategies, tests, and UI components.
+Complete reset for MVP focus: removed all previous extraction strategies, tests and UI components.
 
-### Post-Purge Changes
+### Changes
 
 - UV package manager replacing pip
 - Function-based extraction with file type detection system
 - Layered extraction steps
 
----
+## [0.2.5] - 2025-02 to 2025-04
 
-# v0.2.x - The FastAPI/Streamlit/Services Era
+Windows support release: PowerShell scripts and cross-platform compatibility improvements.
 
-**Architectural paradigm:** FastAPI backend + Streamlit UI + Service layer + Strategy pattern
+## [0.2.4] - 2025-02 to 2025-04
 
-**Process model:** Clone -> Extract (via strategies) -> Store in Neo4j
+Documentation release: Python version pinned, documentation updates, `.gitignore` cleanup.
 
----
+## [0.2.3] - 2025-02 to 2025-04
 
-## v0.2.5 - Windows Support
-
-PowerShell scripts and cross-platform compatibility improvements.
-
----
-
-## v0.2.4 - Documentation & Polish
-
-Python version pinned, documentation updates, `.gitignore` cleanup.
-
----
-
-## v0.2.3 - Layered Strategy Implementation
+Layered strategy release.
 
 - Layered extraction strategy implementing 7-step extraction flow
 - ArchiMate metamodel and Pydantic models
 - Utility modules for code analysis, config parsing, and module discovery
 
----
+## [0.2.2] - 2025-02 to 2025-04
 
-## v0.2.2 - Submodule Regret
+Submodule removal release: all 10 tree-sitter submodules removed in favour of Python's AST.
 
-Removed all 10 tree-sitter submodules. Decided to use Python's AST instead.
+## [0.2.1] - 2025-02 to 2025-04
 
----
-
-## v0.2.1 - Template Explosion
+Extraction templates release.
 
 - 5 extraction strategy templates as Mermaid flowcharts
 - Tree-sitter submodules for 10 languages
 - Strategy pattern with base and specific implementations
 
----
+## [0.2.0] - 2025-02 to 2025-04
 
-## v0.2.0 - The Phoenix Rises
+Rewrite release: the first complete reset, with a FastAPI backend and a Streamlit UI.
 
-### The First Purge
+### Reset
 
-Complete architectural reset - removed entire `src/` directory.
+Complete architectural reset: removed the entire `src/` directory.
 
-### Post-Purge Changes
+### Changes
 
 - FastAPI backend with Streamlit UI
 - Service layer for repository and extraction
 - Mermaid metamodel parsing
 
----
+## [0.1.8] - 2025-02
 
-# v0.1.x - The Initial Development Era
+Pre-refactor release: the monolithic analysis split into focused analyzers (business concepts, dependencies, methods, parameters, services, technologies, types).
 
-**Architectural paradigm:** Monolithic pipeline with JSON config files
+## [0.1.7] - 2025-02
 
-**Process model:** Clone -> Chunk -> Extract -> Analyze -> Store
+Memory and metamodel release: persistent context storage, the full metamodel and Mermaid definitions.
 
----
+## [0.1.6] - 2025-02
 
-## v0.1.8 - Pre-Refactor Milestone
+Pipeline refactor release: a config restructure with a three-stage pipeline (Chunk, Extract, Analyze).
 
-Split monolithic analysis into focused analyzers (business concepts, dependencies, methods, parameters, services, technologies, types).
+## [0.1.5] - 2025-02
 
----
+Robustness release: LLM retries with schema validation, response caching and ArchiMate validation.
 
-## v0.1.7 - Memory & Metamodel
+## [0.1.4] - 2025-02
 
-Persistent context storage, full metamodel, mermaid definitions.
+Local development release: a Docker Compose setup and dev scripts.
 
----
+## [0.1.3] - 2025-02
 
-## v0.1.6 - Pipeline Refactor
+Type system release: Pydantic models and model validation tests.
 
-Config restructure with three-stage pipeline: Chunk -> Extract -> Analyze.
+## [0.1.2] - 2025-02
 
----
+Housekeeping release: import fixes and `.gitignore` additions.
 
-## v0.1.5 - Robustness
+## [0.1.1] - 2025-02
 
-LLM retry mechanism with schema validation, response caching, and ArchiMate validation.
+Initial fixes release: an import warning fixed.
 
----
+## [0.1.0] - 2025-02
 
-## v0.1.4 - Local Development
+Initial release: pipeline architecture, LLM client (OpenAI), Neo4j storage, Streamlit UI, ArchiMate schema validation and Docker deployment.
 
-Docker compose local setup and dev scripts.
+## Release series
 
----
+| Series | Dates | Summary |
+| --- | --- | --- |
+| 0.9.x | 2026-10 onward | Hardening: safe on untrusted repositories, bugs found since 0.8.10 fixed, defaults for more kinds of repositories |
+| 0.8.x | 2026-10 | Deriva Studio: the pipeline transparent and editable in a local web UI (FastAPI, React), and the final benchmark prepared |
+| 0.7.x | 2026-03 to 2026-10 | grafeo replaces Neo4j as an embedded graph; stability, portability, prompts in versioned config and consistency |
+| 0.6.x | 2025-12 to 2026-03 | AutoMate renamed to Deriva; the first end-to-end implementation, with benchmarks and optimization; the last series on Neo4j |
+| 0.5.x | 2025-08 to 2025-12 | A Marimo notebook with domain adapters, reusable extraction and derivation modules and DuckDB config storage (Import, Extraction, Derivation, Export) |
+| 0.4.x | 2025-06 to 2025-07 | A FastAPI backend with Jinja2 templates and Run ID traceability (Repository Selection, Run ID Definition, Pipeline Execution) |
+| 0.3.x | 2025-04 | The second reset: UV, extraction functions, file types and layered steps stored in Neo4j (Clone, Classify, Extract, Store) |
+| 0.2.x | 2025-02 to 2025-04 | The first reset: a FastAPI backend, a Streamlit UI, a service layer and extraction strategies (Clone, Extract, Store in Neo4j) |
+| 0.1.x | 2025-02 | A monolithic pipeline with JSON config files (Clone, Chunk, Extract, Analyze, Store) |
 
-## v0.1.3 - Type System
-
-Pydantic models and model validation tests.
-
----
-
-## v0.1.2 - Housekeeping
-
-Import fixes and `.gitignore` additions.
-
----
-
-## v0.1.1 - Initial Fixes
-
-Import warning fix.
-
----
-
-## v0.1.0 - The Big Bang
-
-Initial release with pipeline architecture, LLM client (OpenAI), Neo4j storage, Streamlit UI, ArchiMate schema validation, and Docker deployment.
+- From 0.1.0 to the first reset (0.2.0) took four days.
+- Four months passed between 0.3.x (April 2025) and 0.5.x (August 2025).
+- The UI went from Streamlit to FastAPI with Jinja2, Gradio, Marimo, and FastAPI with React.
+- Configuration went from JSON files to YAML templates to DuckDB tables.
+- The name Deriva reflects that the approach generalizes beyond ArchiMate.
 
 ---
 
-# Version Boundary Summary
-
-| Era | Dates | Key Event | Architecture |
-|-----|-------|-----------|--------------|
-| **0.1.x** | Feb 22-25 '25 | Initial development | Monolithic pipeline + JSON configs |
-| **0.2.x** | Feb 26-Apr 15 '25 | First Purge | FastAPI/Streamlit/Services/Strategies |
-| **0.3.x** | Apr 15-25 '25 | Second Purge | UV/Extraction functions/File types |
-| **0.4.x** | Jun-Jul '25 | Web UI prototype | FastAPI/Jinja2 |
-| **0.5.x** | Aug-Nov '25 | Final development | Managers/Modules/Marimo/DuckDB |
-| **0.6.x** | Dec '25-Jan '26| AutoMate renamed to Deriva | Focus on benchmark and optimization |
-| **0.7.x** | Mar '26- | Grafeo migration | Embedded graph, prompts in versioned config, consistency |
-
----
-
-# Some highlights:
-
-- **Rapid iteration**: v0.1.0 to v0.2.0 (First Purge) took only 4 days
-- **The long gap**: 4 months between v0.3.x (Apr) and v0.5.x (Aug)
-- **UI evolution**: Streamlit -> FastAPI+Jinja2 -> Gradio -> Marimo -> FastAPI+React (Final)
-- **Config evolution**: JSON files -> YAML templates -> DuckDB tables
-- **Deriva**: new name to underscore generalizability beyond ArchiMate
-
----
-
-Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) | Versioning: [SemVer](https://semver.org/spec/v2.0.0.html)
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).

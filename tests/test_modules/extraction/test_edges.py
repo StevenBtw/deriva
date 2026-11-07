@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deriva.adapters.treesitter.models import ExtractedMethod
 from deriva.modules.extraction.base import generate_method_node_id
 from deriva.modules.extraction.edges import (
     ALL_EDGE_TYPES,
@@ -193,6 +195,15 @@ class TestResolveImport:
         assert result["type"] == "external"
         assert result["package"] == "flask"
 
+    def test_a_dotted_distribution_is_matched_whole_before_its_top_level_name(self):
+        """zope.interface is declared as itself: the import is matched against the declared packages by its full module
+        and then by its shorter prefixes, longest first, before the top-level name alone."""
+        for module in ("zope.interface", "zope.interface.declarations"):
+            result = _resolve_import(module=module, current_file="src/main.py", all_file_paths={"src/main.py"}, external_packages={"zope.interface", "flask"})
+            assert (result["type"], result["package"]) == ("external", "zope.interface")
+        other = _resolve_import(module="zope.schema", current_file="src/main.py", all_file_paths={"src/main.py"}, external_packages={"zope.interface"})
+        assert (other["type"], other["package"]) == ("external", "zope")  # an undeclared one keeps its top-level name
+
     def test_resolves_stdlib_import(self):
         """Should identify stdlib imports."""
         all_files = {"src/main.py"}
@@ -270,7 +281,7 @@ class TestBuildMethodLookup:
 
         methods = [mock_method1, mock_method2]
 
-        result = _build_method_lookup(methods)
+        result = _build_method_lookup(cast("list[ExtractedMethod]", methods))
 
         # Keys are just method names, not "ClassName.method"
         assert "func_a" in result
@@ -297,7 +308,7 @@ class TestBuildMethodLookup:
 
         methods = [mock_method1, mock_method2]
 
-        result = _build_method_lookup(methods)
+        result = _build_method_lookup(cast("list[ExtractedMethod]", methods))
 
         assert "func" in result
         # Both methods should be in the list
@@ -687,7 +698,7 @@ class TestJavaAndScriptImports:
     """Java imports resolve to the repository file that declares the class; script imports by relative path."""
 
     @staticmethod
-    def _edges(imports, file_path, all_files, stdlib=None):
+    def _edges(imports, file_path, all_files, stdlib=None, aliases=()):
         from deriva.adapters.treesitter.models import FilterConstants
         from deriva.modules.extraction.edges import _extract_import_edges
 
@@ -699,7 +710,53 @@ class TestJavaAndScriptImports:
             external_packages=set(),
             edge_types={EdgeType.IMPORTS, EdgeType.USES},
             filter_constants=FilterConstants(stdlib_modules=stdlib or set()),
+            script_aliases=aliases,
         )
+
+    def test_a_script_sub_path_import_is_its_package(self):
+        """A bare specifier names its package by its first segment, or two for a scoped one: aws-cdk-lib/aws-s3 is
+        aws-cdk-lib, @scope/pkg/sub is @scope/pkg; a node: builtin is the standard library."""
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        imports = [ExtractedImport(module=m, names=["x"]) for m in ("aws-cdk-lib/aws-s3", "aws-cdk-lib", "@scope/pkg/sub", "lodash/fp", "node:fs")]
+        edges, nodes, _ = self._edges(imports, "app/stack.ts", {"app/stack.ts"}, stdlib={"fs"})
+
+        assert {(t, n) for t, n in self._targets(edges)} == {("USES", "extdep::r::aws_cdk_lib"), ("USES", "extdep::r::@scope_pkg"), ("USES", "extdep::r::lodash")}
+        assert sorted(n["properties"]["dependencyName"] for n in nodes) == ["@scope/pkg", "aws-cdk-lib", "lodash"]
+
+    def test_an_alias_import_is_own_code_found_by_its_alias_or_no_dependency(self):
+        """@/... is no package: with an alias of the nearest config folder it reaches the file, without one it names
+        nothing (internal, unresolved) instead of an external dependency."""
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"app/src/router/index.js", "app/src/components/Menu.js", "other/main.js"}
+        imports = [ExtractedImport(module="@/components/Menu", names=["Menu"])]
+
+        aliased, nodes, _ = self._edges(imports, "app/src/router/index.js", files, aliases=(("app", "@/", "app/src/"),))
+        plain, plain_nodes, stats = self._edges(imports, "other/main.js", files, aliases=(("app", "@/", "app/src/"),))
+
+        assert self._targets(aliased) == {("IMPORTS", "file::r::app_src_components_Menu.js")} and nodes == []
+        assert plain == [] and plain_nodes == [] and stats["unresolved"] == 1
+
+    def test_an_exact_alias_reaches_its_file_and_only_its_own_specifier(self):
+        """An exact alias ("jquery" to vendor/jquery/dist/jquery) is the file it names; a specifier that only starts
+        with the key (jquery-ui, jquery/plugin) stays a package. A root alias (empty target) reaches root files."""
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"vendor/jquery/dist/jquery.js", "src/main.ts", "lib/util.ts"}
+        aliases = (("", "@/", ""), ("", "jquery", "vendor/jquery/dist/jquery"))
+        imports = [ExtractedImport(module=m, names=["x"]) for m in ("jquery", "jquery-ui", "jquery/plugin", "@/lib/util")]
+
+        edges, nodes, _ = self._edges(imports, "src/main.ts", files, aliases=aliases)
+
+        # Each import with its own edge: a swap of the two aliases' targets would fail here
+        assert sorted((e["properties"]["module"], e["relationship_type"], e["to_node_id"]) for e in edges) == [
+            ("@/lib/util", "IMPORTS", "file::r::lib_util.ts"),
+            ("jquery", "IMPORTS", "file::r::vendor_jquery_dist_jquery.js"),
+            ("jquery-ui", "USES", "extdep::r::jquery_ui"),
+            ("jquery/plugin", "USES", "extdep::r::jquery"),
+        ]
+        assert sorted(n["properties"]["dependencyName"] for n in nodes) == ["jquery", "jquery-ui"]
 
     @staticmethod
     def _targets(edges):
@@ -806,7 +863,7 @@ class TestJavaAndScriptImports:
 
         edges, _, _ = self._edges([ExtractedImport(module="@angular/core", names=["Component"])], "app/src/pages/home.component.ts", {"app/src/pages/home.component.ts"})
 
-        assert self._targets(edges) == {("USES", "extdep::r::@angular/core")}
+        assert self._targets(edges) == {("USES", "extdep::r::@angular_core")}  # one id rule with the manifests
 
 
 # =============================================================================
@@ -1850,3 +1907,258 @@ def test_a_bare_import_resolves_against_an_import_root_only_when_nothing_else_re
     assert dotted == {"type": "internal", "target_path": "shared/middleware/__init__.py"}
     assert existing == {"type": "internal", "target_path": "security/__init__.py"}  # a repository-relative match wins
     assert external["type"] == "external"
+
+
+class TestGoImports:
+    """A Go import of a package of the repository's own module (go.mod) reaches the package folder's files; the standard
+    library is no package; any other import is the external module that holds it."""
+
+    MOD = "module example.com/shop\n\ngo 1.22\n\nrequire github.com/acme/router v1.4.0\n"
+
+    @staticmethod
+    def _source(path: str, content: str, subtype: str = "golang", file_type: str = "source") -> dict:
+        return {"path": path, "file_type": file_type, "subtype": subtype, "content": content}
+
+    def _edges(self, *files: dict, external: set[str] | None = None) -> dict:
+        return extract_edges_batch(files=list(files), repo_name="r", repo_path="/repo", edge_types={EdgeType.IMPORTS, EdgeType.USES}, external_packages=external)
+
+    def _go(self, main: str, external: set[str] | None = None) -> dict:
+        return self._edges(
+            self._source("svc/go.mod", self.MOD, "go", "dependency"),
+            self._source("svc/main.go", main),
+            self._source("svc/cart/cart.go", "package cart\n\ntype Cart struct{}\n"),
+            self._source("svc/cart/items.go", "package cart\n\ntype Item struct{}\n"),
+            self._source("svc/cart/cart_test.go", "package cart\n"),
+            external=external,
+        )
+
+    def test_an_import_of_an_own_package_reaches_the_package_files_but_not_its_tests(self):
+        result = self._go('package main\n\nimport (\n    "fmt"\n    "example.com/shop/cart"\n)\n\nfunc main() { fmt.Println(cart.Cart{}) }\n')
+
+        imported = {(e["from_node_id"].rsplit("::", 1)[-1], e["to_node_id"].rsplit("::", 1)[-1]) for e in result["data"]["edges"] if e["relationship_type"] == "IMPORTS"}
+        assert imported == {("svc_main.go", "svc_cart_cart.go"), ("svc_main.go", "svc_cart_items.go")}
+        assert result["stats"]["imports"]["external"] == 0  # fmt is the standard library
+
+    def test_another_module_is_external_and_named_by_its_module_path(self):
+        result = self._go('package main\n\nimport "github.com/acme/router/middleware"\n\nfunc main() {}\n', external={"github.com/acme/router"})
+
+        uses = [e for e in result["data"]["edges"] if e["relationship_type"] == "USES"]
+        assert [e["to_node_id"] for e in uses] == ["extdep::r::github_com_acme_router"]  # one id rule with the manifests
+        assert [n["properties"]["dependencyName"] for n in result["data"]["nodes"]] == ["github.com/acme/router"]
+        assert {n["properties"]["ecosystem"] for n in result["data"]["nodes"]} == {"go"}
+
+    def test_a_declared_module_with_a_hyphen_holds_its_subpackages(self):
+        """Known packages come normalized ("-" as "_"), so the import is compared the same way: one dependency, not one per
+        subpackage."""
+        result = self._go('package main\n\nimport "github.com/acme/my-router/middleware"\n\nfunc main() {}\n', external={"github.com/acme/my_router"})
+
+        assert [n["properties"]["dependencyName"] for n in result["data"]["nodes"]] == ["github.com/acme/my_router"]
+
+    def test_an_undeclared_module_is_named_by_the_whole_path_after_its_host(self):
+        result = self._go('package main\n\nimport "example.org/tools/lint"\n\nfunc main() {}\n')
+
+        assert [n["properties"]["dependencyName"] for n in result["data"]["nodes"]] == ["example.org/tools/lint"]
+
+
+class TestCsharpImports:
+    """A using of a namespace the repository declares reaches the files it names; it is no external package."""
+
+    @staticmethod
+    def _source(path: str, content: str) -> dict:
+        return {"path": path, "file_type": "source", "subtype": "csharp", "content": content}
+
+    def _edges(self, *files: dict) -> dict:
+        return extract_edges_batch(files=list(files), repo_name="r", repo_path="/repo", edge_types={EdgeType.IMPORTS, EdgeType.USES})
+
+    @staticmethod
+    def _imported(result: dict) -> set[tuple[str, str]]:
+        return {(edge["from_node_id"].rsplit("::", 1)[-1], edge["to_node_id"].rsplit("::", 1)[-1]) for edge in result["data"]["edges"] if edge["relationship_type"] == "IMPORTS"}
+
+    def test_a_using_reaches_the_files_of_the_namespace_it_names(self):
+        result = self._edges(
+            self._source("web/Page.cs", "using Acme.Core;\nnamespace Acme.Web;\nclass Page { Order o; }\n"),
+            self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+            self._source("core/Unused.cs", "namespace Acme.Core { class Unused { } }\n"),
+        )
+
+        assert self._imported(result) == {("web_Page.cs", "core_Order.cs")}
+        assert result["stats"]["imports"]["internal"] == 1
+        assert result["stats"]["imports"]["external"] == 0
+
+    def test_a_namespace_named_only_in_the_using_line_reaches_no_file_of_that_name(self):
+        """``using Acme.Core;`` names Core, but the file uses no type Core: Core.cs is not reached."""
+        result = self._edges(
+            self._source("web/Page.cs", "using Acme.Core;\nnamespace Acme.Web;\nclass Page { Order o; }\n"),
+            self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+            self._source("core/Core.cs", "namespace Acme.Core;\nclass Core { }\n"),
+        )
+
+        assert self._imported(result) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_an_alias_using_of_a_type_reaches_the_file_of_that_type(self):
+        result = self._edges(
+            self._source("web/Page.cs", "using Item = Acme.Core.Order;\nnamespace Acme.Web;\nclass Page { Item o; }\n"),
+            self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+        )
+
+        assert self._imported(result) == {("web_Page.cs", "core_Order.cs")}
+        assert result["stats"]["imports"]["external"] == 0
+
+    def test_an_own_namespace_without_a_named_file_is_no_external_package(self):
+        result = self._edges(
+            self._source("web/Page.cs", "using Acme;\nusing Acme.Core;\nnamespace Acme.Web;\nclass Page { }\n"),
+            self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+        )
+
+        assert self._imported(result) == set()
+        assert not [node for node in result["data"]["nodes"] if node["properties"].get("dependencyName") == "Acme"]
+
+    def test_another_namespace_stays_an_external_package(self):
+        result = self._edges(
+            self._source("web/Page.cs", "using Vendor.Tools;\nnamespace Acme.Web;\nclass Page { }\n"),
+            self._source("core/Vendor.cs", "namespace Acme.Core;\nclass Vendor { }\n"),
+        )
+
+        assert self._imported(result) == set()
+        assert [node["properties"]["dependencyName"] for node in result["data"]["nodes"]] == ["Vendor"]
+
+    def test_a_using_static_reaches_the_file_of_its_type(self):
+        result = self._edges(
+            self._source("web/Page.cs", "using static Acme.Core.Limits;\nnamespace Acme.Web;\nclass Page { int m = Max; }\n"),
+            self._source("core/Limits.cs", "namespace Acme.Core;\nstatic class Limits { public const int Max = 1; }\n"),
+        )
+
+        assert result["stats"]["imports"]["internal"] == 1
+        assert result["stats"]["imports"]["external"] == 0
+
+
+class TestCsharpDirectivesOnOneLine:
+    """A using or namespace directive ends at its semicolon or brace: a declaration on the same line still names types."""
+
+    _source = staticmethod(TestCsharpImports._source)
+    _imported = staticmethod(TestCsharpImports._imported)
+    _edges = TestCsharpImports._edges
+
+    def _order(self, page: str) -> set[tuple[str, str]]:
+        return self._imported(
+            self._edges(
+                self._source("web/Page.cs", page),
+                self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+                self._source("core/Unused.cs", "namespace Acme.Core;\nclass Unused { }\n"),
+            )
+        )
+
+    def test_a_class_after_the_using_on_its_line(self):
+        assert self._order("using Acme.Core; public class Page { Order o; }\n") == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_class_after_a_file_scoped_namespace_on_its_line(self):
+        assert self._order("using Acme.Core;\nnamespace Acme.Web; class Page : Order { }\n") == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_block_namespace_on_one_line(self):
+        assert self._order("using Acme.Core;\nnamespace Acme.Web { class Page : Order { } }\n") == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_name_only_in_the_directive_still_reaches_nothing(self):
+        """The namespace's last part (Core) names a file and a type there: the directive alone still reaches neither,
+        while a page that uses the type reaches its file."""
+        files = lambda page: (  # noqa: E731 - a one-line helper
+            self._source("web/Page.cs", page),
+            self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n"),
+            self._source("core/Core.cs", "namespace Acme.Core;\nclass Core { }\n"),
+        )
+
+        assert self._imported(self._edges(*files("using Acme.Core; namespace Acme.Web { class Page { } }\n"))) == set()
+        assert self._imported(self._edges(*files("using Acme.Core; namespace Acme.Web { class Page { Core c; } }\n"))) == {("web_Page.cs", "core_Core.cs")}
+
+
+class TestCsharpAliasTargets:
+    """An alias of a built-in or composite type imports nothing; an alias of a type path still reaches its file; a using
+    statement or declaration in a method is no directive."""
+
+    _source = staticmethod(TestCsharpImports._source)
+    _imported = staticmethod(TestCsharpImports._imported)
+    _edges = TestCsharpImports._edges
+
+    def _run(self, page: str) -> dict:
+        order = self._source("core/Order.cs", "namespace Acme.Core;\nclass Order { }\n")
+        return self._edges(self._source("web/Page.cs", page), order)
+
+    def test_built_in_and_composite_aliases_are_no_packages(self):
+        result = self._run("using Number = int;\nusing IntArr = int[];\nusing Pair = (int, string);\nusing Name = string;\nclass Page { }\n")
+
+        assert result["stats"]["imports"]["external"] == 0
+        assert self._imported(result) == set()
+
+    def test_an_alias_with_the_global_prefix_reaches_the_file_of_its_type(self):
+        result = self._run("using Item = global::Acme.Core.Order;\nclass Page { Item i; }\n")
+
+        assert self._imported(result) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_an_alias_to_a_namespace_starting_with_a_non_ascii_letter_reaches_its_file(self):
+        """C# names may start with any letter: Élément is a namespace segment, no composite type."""
+        element = self._source("élément/Order.cs", "namespace Élément.Core;\nclass Order { }\n")
+        result = self._edges(self._source("web/Page.cs", "using Item = Élément.Core.Order;\nclass Page { Item i; }\n"), element)
+
+        assert result["stats"]["imports"]["internal"] == 1 and result["stats"]["imports"]["external"] == 0
+        assert self._imported(result) == {("web_Page.cs", "élément_Order.cs")}
+
+    def test_a_using_declaration_in_a_method_still_names_its_types(self):
+        page = "using Acme.Core;\nclass Page {\n    void Run() {\n        using var order = new Order();\n    }\n}\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_using_statement_in_a_method_still_names_its_types(self):
+        page = "using Acme.Core;\nclass Page {\n    void Run() {\n        using (var order = new Order()) { }\n    }\n}\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_namespace_using_with_the_global_prefix_reaches_the_files_it_names(self):
+        page = "using global::Acme.Core;\nclass Page { Order o; }\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_global_using_directive_still_hides_its_own_names(self):
+        page = "global using Acme.Core;\nclass Page { }\n"
+
+        assert self._imported(self._run(page)) == set()
+
+    def test_a_using_alias_of_a_namespace_keeps_its_names_out(self):
+        page = "using Core = Acme.Core;\nclass Page { Core.Order o; }\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_using_declaration_with_a_type_name_stays_code(self):
+        page = "using Acme.Core;\nclass Page {\n    void Run() {\n        using Order order = new Order();\n    }\n}\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+    def test_a_using_static_directive_with_an_alias_like_spacing_is_still_a_directive(self):
+        page = "using static   Acme.Core.Order ;\nclass Page { }\n"
+
+        assert self._imported(self._run(page)) == {("web_Page.cs", "core_Order.cs")}
+
+
+def test_script_aliases_are_read_from_tsconfig_paths_and_bundler_aliases():
+    """A tsconfig or jsconfig ``paths`` entry (comments and trailing commas allowed) and a vite or webpack alias (an
+    object key or a find/replacement pair) map an import prefix to a folder; each applies below its config's folder."""
+    from deriva.modules.extraction.edges import script_aliases
+
+    configs = {
+        "app/tsconfig.json": '{"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["src/*"], "#lib/*": ["lib/*"],},}, /* the source root */}',
+        "web/vite.config.ts": "export default { resolve: { alias: { '@': path.resolve(__dirname, './src') } } }",
+        "x/vite.config.js": "alias: [{ find: '~', replacement: fileURLToPath(new URL('./lib', import.meta.url)) }]",
+    }
+
+    assert script_aliases(configs) == (("app", "#lib/", "app/lib/"), ("app", "@/", "app/src/"), ("web", "@/", "web/src/"), ("x", "~/", "x/lib/"))
+
+
+def test_an_exact_paths_entry_and_a_target_at_the_root_are_aliases():
+    """A ``paths`` key without a wildcard maps that one specifier to its target (no trailing slash: it is no prefix),
+    and a target at the repository root is the empty prefix, not "/"."""
+    from deriva.modules.extraction.edges import script_aliases
+
+    configs = {
+        "tsconfig.json": '{"compilerOptions": {"paths": {"@/*": ["*"], "jquery": ["vendor/jquery/dist/jquery"]}}}',
+        "vite.config.ts": "alias: { '~': path.resolve(__dirname, '.') }",
+    }
+
+    assert script_aliases(configs) == (("", "@/", ""), ("", "jquery", "vendor/jquery/dist/jquery"), ("", "~/", ""))

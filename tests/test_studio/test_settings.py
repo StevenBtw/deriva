@@ -67,3 +67,13 @@ def test_an_invalid_setting_value_is_a_client_error(make_client):
 
     assert response.status_code == 400
     assert "JSON list" in response.json()["detail"]
+
+
+def test_a_setting_can_be_unset(make_client):
+    session = FakeSession(delete_setting=True)
+    client = make_client(session)
+
+    response = client.delete("/api/settings/llm_samples")
+
+    assert response.json() == {"key": "llm_samples", "deleted": True}
+    assert session.called("delete_setting") == [(("llm_samples",), {})]

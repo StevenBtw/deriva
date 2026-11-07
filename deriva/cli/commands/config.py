@@ -156,6 +156,7 @@ def config_add(
     method: Annotated[str | None, typer.Option("--method", help="structural (default), treesitter, ast or llm (extraction)")] = None,
     params: Annotated[str | None, typer.Option("--params", "-p", help="Params JSON")] = None,
     params_file: Annotated[str | None, typer.Option("--params-file", help="Read params JSON from file")] = None,
+    llm: Annotated[bool, typer.Option("--llm", help="The step uses the LLM (derivation)")] = False,
 ) -> None:
     """Add a new step (created disabled; enable with 'config enable')."""
     if step_type not in ("extraction", "derivation"):
@@ -167,6 +168,9 @@ def config_add(
     # Options that do not apply to the step type, or that conflict, are refused rather than ignored
     if step_type == "extraction" and phase:
         typer.echo("Error: --phase applies to derivation steps only", err=True)
+        raise typer.Exit(1)
+    if step_type == "extraction" and llm:
+        typer.echo("Error: --llm applies to derivation steps only (an extraction step uses --method llm)", err=True)
         raise typer.Exit(1)
     if step_type == "derivation" and method:
         typer.echo("Error: --method applies to extraction steps only", err=True)
@@ -186,7 +190,7 @@ def config_add(
             if step_type == "extraction":
                 added = session.add_extraction_step(name, sequence, extraction_method="structural" if method is None else method, params=params)
             else:
-                added = session.add_derivation_step(name, phase or "", sequence, params=params)
+                added = session.add_derivation_step(name, phase or "", sequence, params=params, llm=llm)
         except ValueError as e:
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1) from e
@@ -410,8 +414,7 @@ def config_versions() -> None:
 def config_reset_versions(
     yes: Annotated[bool, typer.Option("--yes", help="Confirm: the version history is removed")] = False,
 ) -> None:
-    """Make every active config row version 1 and remove the version history (a release reset; the history stays in
-    the older releases)."""
+    """Make every active config row version 1 and remove the version history (a release reset; the history stays in the older releases)."""
     if not yes:
         typer.echo("This removes the version history of every step (the active rows become version 1). Run again with --yes.", err=True)
         raise typer.Exit(1)
@@ -713,6 +716,18 @@ def setting_set(
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1) from e
         typer.echo(f"Set {key} = {value}")
+
+
+@setting_app.command("unset")
+def setting_unset(
+    key: Annotated[str, typer.Argument(help="Setting key (e.g., 'llm_samples')")],
+) -> None:
+    """Unset a system setting: its default applies again."""
+    with PipelineSession() as session:
+        if session.delete_setting(key):
+            typer.echo(f"Unset {key}")
+        else:
+            typer.echo(f"Setting not set: {key}")
 
 
 # =============================================================================

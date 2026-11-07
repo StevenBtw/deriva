@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from deriva.modules.extraction.data_entities import EntityRules, detect_entities
 
 RULES = EntityRules(
@@ -34,6 +36,33 @@ def _reasons(result) -> dict[str, str]:
     return {x.name: x.reason for x in result.excluded}
 
 
+def test_an_interface_the_parser_finds_is_stored_as_an_interface():
+    """From the real parser to the stored category: the rule below reads what the pipeline writes."""
+    from deriva.adapters.treesitter import TreeSitterManager
+    from deriva.modules.extraction.type_definition import _build_type_node_from_treesitter
+
+    source = "public interface IShipmentRoot : AggregateRoot { }\npublic class Shipment : AggregateRoot { }\n"
+    found = TreeSitterManager().extract_types(source, "r/core/Shipment.cs")
+    nodes = {t.name: _build_type_node_from_treesitter(t, "r/core/Shipment.cs", source, "r") for t in found}
+    categories = {name: node["properties"]["category"] for name, node in nodes.items()}
+
+    assert categories == {"IShipmentRoot": "interface", "Shipment": "class"}
+    types = [_t(name, "r/core/Shipment.cs", category=category, bases=["AggregateRoot"]) for name, category in categories.items()]
+    assert _names(detect_entities(types, {}, {}, RULES)) == ["Shipment"]
+
+
+def test_an_interface_extending_a_root_marker_is_no_entity_and_marks_no_root():
+    types = [
+        _t("ICatalogRoot", "r/core/ICatalogRoot.cs", category="interface", bases=["AggregateRoot"]),
+        _t("Order", "r/core/Order.cs", bases=["AggregateRoot"]),
+    ]
+    assert _names(detect_entities(types, {}, {}, RULES)) == ["Order"]
+
+    # An interface alone does not switch the repository to "only the roots are entities"
+    types = [_t("IRoot", "r/core/IRoot.cs", category="interface", bases=["AggregateRoot"]), _t("Customer", "r/core/Customer.java", decorators=["Entity"])]
+    assert _names(detect_entities(types, {}, {}, RULES)) == ["Customer"]
+
+
 def test_when_a_repository_marks_aggregate_roots_only_the_roots_are_entities():
     types = [
         _t("CustomerAggregateRoot", "r/core/Customer.java", decorators=["Entity"], bases=["RootEntity"]),
@@ -62,6 +91,40 @@ def test_orm_entities_are_found_by_annotation_and_by_inheritance_over_two_steps(
     # The owning unit's name is no part of the entity's name; the ORM base itself is no entity
     assert _names(result) == ["Lease Application", "Order"]
     assert _reasons(result)["LeaseCreate"] == "dto"
+
+
+def test_types_in_a_test_folder_are_no_entities():
+    """With ``test_words``, a type in a folder whose name holds one of them (below the repository folder) is test code."""
+    types = [
+        _t("TestAggregateRoot", "r/src/Shop.IntegrationTests/Fixture.cs", bases=["AggregateRoot"]),
+        _t("Order", "r/src/Shop/Order.cs", bases=["AggregateRoot"]),
+        _t("Invoice", "tests-repo/core/Invoice.cs", bases=["AggregateRoot"]),  # the repository's own name does not count
+    ]
+    rules = replace(RULES, test_words=("test", "tests"))
+
+    result = detect_entities(types, {}, {}, rules)
+
+    assert _names(result) == ["Invoice", "Order"]
+    assert _reasons(result) == {"TestAggregateRoot": "test code"}
+    assert len(detect_entities(types, {}, {}, RULES).entities) == 3
+
+
+def test_the_marker_type_itself_is_no_root_and_a_root_others_extend_stays_one():
+    """A type named like a root marker (the EventSourced base class that implements IEventSourced) is the marker, no
+    entity; a concrete root that another type extends (Order, and SpecialOrder over it) stays an entity."""
+    import dataclasses
+
+    rules = dataclasses.replace(RULES, root_markers=("AggregateRoot", "EventSourced", "IEventSourced"))
+    types = [
+        _t("EventSourced", "r/lib/EventSourced.cs", bases=["IEventSourced"]),
+        _t("Booking", "r/core/Booking.cs", bases=["EventSourced"]),
+        _t("Order", "r/core/Order.cs", bases=["AggregateRoot"]),
+        _t("SpecialOrder", "r/core/SpecialOrder.cs", bases=["Order"]),
+    ]
+
+    names = _names(detect_entities(types, {}, {}, rules))
+
+    assert "Booking" in names and "Order" in names and "Event Sourced" not in names and "EventSourced" not in names
 
 
 def test_dtos_configs_and_technical_records_are_out_with_their_reason():

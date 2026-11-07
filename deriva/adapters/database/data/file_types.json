@@ -432,6 +432,14 @@
     "chunk_overlap": 0
   },
   {
+    "extension": ".markdown",
+    "file_type": "docs",
+    "subtype": "markdown",
+    "chunk_delimiter": "\n## ",
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
     "extension": ".md",
     "file_type": "docs",
     "subtype": "markdown",
@@ -712,33 +720,9 @@
     "chunk_overlap": 0
   },
   {
-    "extension": "path:**/AIM18 Documentation/Archimate_Dokumentation.docx",
-    "file_type": "exclude",
-    "subtype": "reference-model",
-    "chunk_delimiter": null,
-    "chunk_max_tokens": null,
-    "chunk_overlap": 0
-  },
-  {
-    "extension": "path:**/AIM18 Documentation/IST_Analyse.docx",
-    "file_type": "exclude",
-    "subtype": "reference-model",
-    "chunk_delimiter": null,
-    "chunk_max_tokens": null,
-    "chunk_overlap": 0
-  },
-  {
     "extension": "path:**/coverage/**",
     "file_type": "exclude",
     "subtype": "test",
-    "chunk_delimiter": null,
-    "chunk_max_tokens": null,
-    "chunk_overlap": 0
-  },
-  {
-    "extension": "path:**/diagrams/README.md",
-    "file_type": "exclude",
-    "subtype": "reference-model",
     "chunk_delimiter": null,
     "chunk_max_tokens": null,
     "chunk_overlap": 0
@@ -1072,6 +1056,14 @@
     "chunk_overlap": 0
   },
   {
+    "extension": ".proto",
+    "file_type": "schema",
+    "subtype": "proto",
+    "chunk_delimiter": null,
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
     "extension": "*.bundle.js",
     "file_type": "skip",
     "subtype": "bundle",
@@ -1256,6 +1248,14 @@
     "chunk_overlap": 0
   },
   {
+    "extension": ".cjs",
+    "file_type": "source",
+    "subtype": "javascript",
+    "chunk_delimiter": "\nfunction ",
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
     "extension": ".cob",
     "file_type": "source",
     "subtype": "cobol",
@@ -1300,6 +1300,14 @@
     "file_type": "source",
     "subtype": "stylesheet",
     "chunk_delimiter": null,
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
+    "extension": ".cts",
+    "file_type": "source",
+    "subtype": "typescript",
+    "chunk_delimiter": "\nfunction ",
     "chunk_max_tokens": null,
     "chunk_overlap": 0
   },
@@ -1355,6 +1363,30 @@
     "extension": ".js",
     "file_type": "source",
     "subtype": "javascript",
+    "chunk_delimiter": "\nfunction ",
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
+    "extension": ".jsx",
+    "file_type": "source",
+    "subtype": "javascript",
+    "chunk_delimiter": "\nfunction ",
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
+    "extension": ".mjs",
+    "file_type": "source",
+    "subtype": "javascript",
+    "chunk_delimiter": "\nfunction ",
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
+    "extension": ".mts",
+    "file_type": "source",
+    "subtype": "typescript",
     "chunk_delimiter": "\nfunction ",
     "chunk_max_tokens": null,
     "chunk_overlap": 0
@@ -1425,6 +1457,14 @@
   },
   {
     "extension": ".ts",
+    "file_type": "source",
+    "subtype": "typescript",
+    "chunk_delimiter": "\nfunction ",
+    "chunk_max_tokens": null,
+    "chunk_overlap": 0
+  },
+  {
+    "extension": ".tsx",
     "file_type": "source",
     "subtype": "typescript",
     "chunk_delimiter": "\nfunction ",

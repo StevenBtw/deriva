@@ -43,6 +43,12 @@ def set_setting(key: str, body: SettingValue, session: Any = Depends(get_session
     return {"key": key, "value": body.value}
 
 
+@router.delete("/settings/{key}")
+def delete_setting(key: str, session: Any = Depends(get_session)) -> dict[str, Any]:
+    """Unset a setting: its default (or each step's own value) applies again."""
+    return {"key": key, "deleted": bool(session.delete_setting(key))}
+
+
 @router.get("/filetypes")
 def list_file_types(session: Any = Depends(get_session)) -> dict[str, Any]:
     return {"file_types": session.get_file_types(), "stats": session.get_file_type_stats()}

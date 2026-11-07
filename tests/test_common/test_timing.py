@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from deriva.common.ocel import OCELLog
 from deriva.common.timing import QueryStats, summarize_run_events
 
@@ -89,7 +91,7 @@ def test_top_reports_a_consistent_snapshot():
                 entry[0] += 1
                 entry[1] += 1000.0
 
-    stats._lock = RecordOnRelease()  # type: ignore[assignment]
+    stats._lock = cast(Any, RecordOnRelease())
 
     (row,) = stats.top()
     assert (row["count"], row["total_ms"]) == (1, 5.0)

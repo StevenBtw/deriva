@@ -8,6 +8,8 @@ import { changedElements, lanesChanged, linkedNote, newItems, removedItems, toWi
 
 const EMPTY: GraphView = { nodes: [], edges: [] };
 
+type Drawn = { nodes: number; edges: number };
+
 /** The intermediate graph and the output graph: linked in one canvas (live links), or as two separate graphs to explore. */
 export function GraphLanes({ refresh, dark, pulse = [], onOpenModel }: { refresh: number; dark: boolean; pulse?: string[]; onOpenModel?: () => void }) {
   const [mode, setMode] = useState<"linked" | "separate">("linked");
@@ -130,6 +132,15 @@ function SeparateLanes({ refresh, dark }: { refresh: number; dark: boolean }) {
   const [views, setViews] = useState<{ graph: GraphView; model: GraphView }>({ graph: EMPTY, model: EMPTY });
   // Each graph loads and fails on its own: one failed query keeps the other lane
   const [errors, setErrors] = useState<{ graph?: string; model?: string }>({});
+  // What each widget draws: its view, or the result of a query typed in its query box
+  const [drawn, setDrawn] = useState<{ graph?: Drawn; model?: Drawn }>({});
+  const onDrawn = useMemo(
+    () => ({
+      graph: (counts: Drawn) => setDrawn((current) => ({ ...current, graph: counts })),
+      model: (counts: Drawn) => setDrawn((current) => ({ ...current, model: counts })),
+    }),
+    [],
+  );
   // The model pane's nodes are all elements (the output lane's role in the linked view)
   const colors = useMemo(
     () => ({ graph: typeColors([], dark), model: typeColors(views.model.nodes.map((node) => ({ ...node, lane: "output" })), dark) }),
@@ -159,10 +170,10 @@ function SeparateLanes({ refresh, dark }: { refresh: number; dark: boolean }) {
         <section key={database} className="lane">
           <div className="lane-title">
             {database === "graph" ? "Intermediate graph" : "Output graph (model)"}
-            <span className="note">{viewNote(views[database])}</span>
+            <span className="note">{viewNote(views[database], drawn[database])}</span>
           </div>
           <div className="lane-body">
-            {errors[database] ? <div className="widget-error">{errors[database]}</div> : <GraphWidget database={database} view={views[database]} typeColors={colors[database]} dark={dark} />}
+            {errors[database] ? <div className="widget-error">{errors[database]}</div> : <GraphWidget database={database} view={views[database]} typeColors={colors[database]} dark={dark} onDrawn={onDrawn[database]} />}
           </div>
         </section>
       ))}

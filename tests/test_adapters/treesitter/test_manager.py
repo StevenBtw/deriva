@@ -102,7 +102,7 @@ class TestGetSupportedLanguages:
         """Should return a list."""
         languages = TreeSitterManager.get_supported_languages()
         assert type(languages) is list
-        assert sorted(languages) == ["bms", "cobol", "csharp", "java", "javascript", "jcl", "python", "sql"]
+        assert sorted(languages) == ["bms", "cobol", "csharp", "golang", "java", "javascript", "jcl", "python", "sql", "typescript"]
 
     def test_includes_known_languages(self):
         """Should include known languages."""
@@ -312,13 +312,11 @@ class TestResolveLanguage:
         lang = treesitter_manager._resolve_language(None, None)
         assert lang is None
 
-    def test_typescript_maps_to_javascript(self, treesitter_manager):
-        """Should map TypeScript to JavaScript."""
-        lang = treesitter_manager._resolve_language(None, "typescript")
-        assert lang == "javascript"
-
-        lang = treesitter_manager._resolve_language("test.ts", None)
-        assert lang == "javascript"
+    def test_typescript_is_a_language_of_its_own(self, treesitter_manager):
+        """TypeScript has its own extractor (the TypeScript and TSX grammars), no longer the JavaScript one."""
+        assert treesitter_manager._resolve_language(None, "typescript") == "typescript"
+        assert treesitter_manager._resolve_language("test.ts", None) == "typescript"
+        assert treesitter_manager._resolve_language("App.tsx", None) == "typescript"
 
 
 class TestParserCaching:

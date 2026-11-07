@@ -30,6 +30,7 @@ import typer
 
 from deriva.cli.commands.config import app as config_app
 from deriva.cli.commands.graph import app as graph_app
+from deriva.cli.commands.nlp import app as nlp_app
 from deriva.cli.commands.repo import app as repo_app
 from deriva.cli.commands.run import (
     _print_derivation_result,
@@ -51,6 +52,7 @@ app = typer.Typer(
 app.add_typer(config_app, name="config")
 app.add_typer(repo_app, name="repo")
 app.add_typer(graph_app, name="graph")
+app.add_typer(nlp_app, name="nlp")
 BENCHMARK_MISSING = "Benchmarking is part of deriva-dev: uv tool install --python 3.14 deriva-dev"
 
 if about.features()["benchmark"]:
@@ -149,7 +151,12 @@ def run_stage(
             typer.echo(f"LLM configured: {llm_info['provider']}/{llm_info['model']}")
         else:
             reason = session.llm_error
-            typer.echo(f"Warning: LLM not configured: {reason}. LLM-based steps will be skipped." if reason else "Warning: LLM not configured. LLM-based steps will be skipped.")
+            if stage == "all" and reason and not session.llm_no_model:
+                # A configured model that cannot start: a full run needs it and stops (no structural run in its place)
+                typer.echo(f"Warning: LLM not available: {reason}. A full run needs the configured model and stops; fix it, or run with --no-llm.")
+            else:
+                skipped = "LLM-based steps will be skipped."
+                typer.echo(f"Warning: LLM not configured: {reason}. {skipped}" if reason else f"Warning: LLM not configured. {skipped}")
 
         # Create progress reporter
         progress_reporter = create_progress_reporter(quiet=quiet or verbose)
@@ -171,6 +178,7 @@ def run_stage(
                     phases=phases,
                 )
             _print_extraction_result(result)
+            _print_graph_total(session)
             if later_steps:
                 typer.echo(f"Later steps that may read what {only_step} writes (run them again to update them): {', '.join(later_steps)}")
 
@@ -225,9 +233,19 @@ def run_stage(
                     no_llm=no_llm,
                 )
             _print_pipeline_result(result)
+            _print_graph_total(session)
 
         if not result.get("success"):
             raise typer.Exit(1)
+
+
+def _print_graph_total(session: PipelineSession) -> None:
+    """The graph's distinct nodes after the run (the summary counts writes: a step can write a node another wrote)."""
+    try:
+        total = session.get_graph_stats()["total_nodes"]
+    except Exception:  # the summary stands without it
+        return
+    typer.echo(f"  Graph nodes:   {total} (distinct, as deriva-cli status counts them)")
 
 
 # =============================================================================
@@ -278,8 +296,9 @@ def quality(
     repo: Annotated[str, typer.Option("--repo", help="Repository whose model to judge")],
     as_json: Annotated[bool, typer.Option("--json", help="The whole report as JSON")] = False,
 ) -> None:
-    """The verdict on a repository's model from its structure: orphans, relationship types, layers, and elements
-    without a file, type or method behind them (a report; no LLM, nothing changes)."""
+    """The verdict on a repository's model from its structure (a report; no LLM, nothing changes).
+
+    Orphans, relationship types, layers, and elements without a file, type or method behind them."""
     PipelineSession.check_repository(repo)
     with PipelineSession(repository=repo) as session:
         report = session.model_quality()

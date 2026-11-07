@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -35,7 +35,8 @@ def test_the_bundled_pcf_model_reads_and_leaves_out_an_excluded_category():
 
     assert text.startswith("# ©2026 APQC. ALL RIGHTS RESERVED.")  # the licence notice travels with the file
     assert len(model.level(1)) == 12 and model.get("20607") is None and model.get("20608") is None  # Manage IT and its groups
-    assert model.get("10105").name == "Develop and manage sales plans" and model.get("10105").parent == "10004"
+    sales = model.get("10105")
+    assert sales is not None and sales.name == "Develop and manage sales plans" and sales.parent == "10004"
 
 
 def test_a_missing_model_file_is_an_error():
@@ -84,7 +85,7 @@ def test_only_services_that_touch_a_business_domain_are_classified_and_their_fun
     config = derivation.FunctionModelConfig(name="fixture", path=str(FIXTURE))
     store = _Store()
 
-    result = derivation._function_model_step(config, "Classify.", _Graph(), store, query, elements)  # type: ignore[arg-type]
+    result = derivation._function_model_step(config, "Classify.", cast(Any, _Graph()), cast(Any, store), query, elements)
 
     assert result["function_decisions"] == {"as_engine": ("F100", "F110")}  # the cache service touches no business domain
     assert all("cache" not in p for p in prompts) and "trading-engine" in prompts[0] and "Bid Lifecycle" in prompts[0]
@@ -104,7 +105,7 @@ def test_a_data_object_made_from_an_entity_touches_its_business_domain():
         return SimpleNamespace(content=json.dumps({"choices": dict.fromkeys(keys, "F100" if "level 1" in prompt else "F110")}))
 
     config = derivation.FunctionModelConfig(name="fixture", path=str(FIXTURE))
-    result = derivation._function_model_step(config, "Classify.", _Graph(), _Store(), query, elements)  # type: ignore[arg-type]
+    result = derivation._function_model_step(config, "Classify.", cast(Any, _Graph()), cast(Any, _Store()), query, elements)
 
     assert result["function_decisions"] == {"as_engine": ("F100", "F110")}
 
@@ -170,7 +171,7 @@ def test_the_richer_evidence_classifies_services_with_data_or_endpoints_but_not_
     config = derivation._function_model_config(json.dumps(params))
     assert config is not None
 
-    result = derivation._function_model_step(config, "Classify.", _RichGraph(), _Store(), query, elements)  # type: ignore[arg-type]
+    result = derivation._function_model_step(config, "Classify.", cast(Any, _RichGraph()), cast(Any, _Store()), query, elements)
 
     assert set(result["function_decisions"]) == {"as_engine", "as_board"}  # the login service is technical
     prompt = prompts[0]

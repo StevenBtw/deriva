@@ -14,12 +14,22 @@ from .types import LLMDetails, PipelineResult
 
 __all__ = [
     "describe_os_error",
+    "is_inside",
     "long_path",
     "read_file_with_encoding",
     "create_pipeline_result",
 ]
 
 _EXTENDED = "\\\\?\\"
+
+
+def is_inside(path: Path, root: Path) -> bool:
+    """True when ``path`` is no symlink and resolves inside ``root``. A link in a cloned repository (a symlink, or a
+    junction on Windows) must never reach files outside it, such as the user's ``.env`` or SSH keys."""
+    try:
+        return not path.is_symlink() and path.resolve().is_relative_to(root.resolve())
+    except OSError:
+        return False
 
 
 def long_path(path: Path) -> Path:

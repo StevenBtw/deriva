@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { configs, ontology } from "../api/client";
-import type { IntermediateOntology, NodeType, OntologyStep, OutputOntology, RelationshipRule, StepType } from "../api/types";
+import type { IntermediateOntology, NodeType, OntologyStep, OutputElementType, OutputOntology, RelationshipRule, StepType } from "../api/types";
 import { useTheme } from "../theme/theme";
 import { GraphWidget } from "../widgets/GraphWidget";
 import { type SchemaColors, schemaGraph, typeEdges } from "./ontologySchema";
@@ -46,7 +46,38 @@ function useOntology<T>(load: () => Promise<T>) {
     }
   }, []);
 
-  return { data, error, notice, retry, toggle, dismiss: useCallback(() => setNotice(null), []) };
+  // Several steps at once (a layer, an aspect, a type with more than one step), one after the other. Nothing else starts
+  // until they are written and the page has reloaded: what it shows meanwhile is the state before them
+  const [applying, setApplying] = useState(false);
+  const running = useRef(false);
+  const applySteps = useCallback(
+    async (stepType: StepType, changes: { name: string; enabled: boolean }[]) => {
+      if (running.current || !changes.length) return;
+      running.current = true;
+      setApplying(true);
+      let saved = 0;
+      try {
+        for (const change of changes) {
+          await configs.setEnabled(stepType, change.name, change.enabled);
+          saved += 1;
+        }
+        setNotice(null);
+      } catch (reason) {
+        setNotice(changes.length > 1 ? `${saved} of ${changes.length} changes saved: ${message(reason)}` : message(reason));
+      }
+      try {
+        setData(await load());
+        setError(null);
+      } catch (reason) {
+        setError(message(reason));
+      }
+      running.current = false;
+      setApplying(false);
+    },
+    [load],
+  );
+
+  return { data, error, notice, retry, toggle, applying, applySteps, dismiss: useCallback(() => setNotice(null), []) };
 }
 
 /** A failed load (with Retry) or a failed switch (dismissable) above the page, which stays usable. */
@@ -506,6 +537,23 @@ function EdgeMatrix({ data, visible, edgeType }: { data: IntermediateOntology; v
 
 const LETTER: Record<string, string> = { Access: "a", Composition: "c", Flow: "f", Aggregation: "g", Assignment: "i", Realization: "r", Serving: "v", Triggering: "t" };
 const LAYERS = ["Business", "Application", "Technology"];
+const ASPECTS: [string, string][] = [
+  ["Structure", "active structure"],
+  ["Behavior", "behaviour"],
+  ["Passive", "passive structure"],
+  ["Composite", "composite"],
+];
+
+const isSelected = (t: OutputElementType) => t.steps.some((s) => s.enabled);
+
+/** The step changes of a switch over these types: any step on turns them all off, else the shipped steps come on, and
+ * every step where none ships on (chosen by hand: a type or an aspect the release leaves off). */
+function switchChanges(types: OutputElementType[]): { name: string; enabled: boolean }[] {
+  const steps = types.flatMap((t) => t.steps);
+  if (steps.some((s) => s.enabled)) return steps.filter((s) => s.enabled).map((s) => ({ name: s.name, enabled: false }));
+  const shipped = steps.filter((s) => s.shipped);
+  return (shipped.length ? shipped : steps).map((s) => ({ name: s.name, enabled: true }));
+}
 
 function ruleCell(rule?: RelationshipRule): { text: string; title: string } {
   if (!rule) return { text: "", title: "" };
@@ -520,12 +568,32 @@ function header(type: string): string {
   return match ? `${match[1][0]}·${match[2].slice(0, 10)}` : type.slice(0, 10);
 }
 
-/** ArchiMate as Deriva derives it: element types per layer with their derivation step, relationship types, and the rules matrix. */
+/** A switch over several types (a layer, an aspect): on while any of their steps is. */
+function SelectionSwitch({
+  label,
+  types,
+  disabled,
+  onApply,
+}: {
+  label: string;
+  types: OutputElementType[];
+  disabled: boolean;
+  onApply: (stepType: StepType, changes: { name: string; enabled: boolean }[]) => Promise<void>;
+}) {
+  if (!types.some((t) => t.steps.length)) return null;
+  return (
+    <button type="button" className="toggle" role="switch" aria-checked={types.some(isSelected)} aria-label={label} aria-disabled={disabled} onClick={() => void onApply("derivation", switchChanges(types))} />
+  );
+}
+
+/** ArchiMate as Deriva derives it: element types per layer and aspect with the switches that select them, relationship types, and the rules matrix. */
 export function OutputOntologyPage() {
-  const { data, error, notice, retry, toggle, dismiss } = useOntology<OutputOntology>(loadOutput);
+  const { data, error, notice, retry, applying, applySteps, dismiss } = useOntology<OutputOntology>(loadOutput);
   const problems = <Problems error={error} notice={notice} onRetry={retry} onDismiss={dismiss} />;
 
   if (!data) return <div className="page pad">{error ? problems : <span className="muted">Loading the output ontology…</span>}</div>;
+  const derivable = data.element_types.filter((t) => t.steps.length > 0);
+  const selected = new Set(derivable.filter(isSelected).map((t) => t.name));
   const sources = [...new Set(data.rules.map((r) => r.source))];
   const targets = [...new Set(data.rules.map((r) => r.target))];
   const rule = (s: string, t: string) => data.rules.find((r) => r.source === s && r.target === t);
@@ -534,43 +602,72 @@ export function OutputOntologyPage() {
     <section className="page">
       <div className="pagehead">
         <h2>Output ontology</h2>
-        <span className="sub">The ArchiMate types derivation may create; the switches turn a type's step on or off in its active version (as config enable/disable)</span>
+        <span className="sub">
+          Choose the part of ArchiMate to derive: {selected.size} of {derivable.length} types selected. The switches hold from the next derivation run; a layer or aspect switched back on takes the steps the release ships on, or all its steps where none ships on.
+        </span>
       </div>
       {problems}
-      <div className="pad cols" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+      {/* Three layers side by side where they fit, else fewer: a switch must stay on its own row */}
+      <div className="pad cols" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))" }}>
         {LAYERS.map((layer) => (
           <div key={layer} className="card">
             <div className="hd">
               <h3>{layer} layer</h3>
+              <SelectionSwitch label={`Derive the ${layer} layer`} types={data.element_types.filter((t) => t.layer === layer)} disabled={applying} onApply={applySteps} />
             </div>
             <table>
-              <tbody>
-                {data.element_types
-                  .filter((t) => t.layer === layer)
-                  .map((t) => (
-                    <tr key={t.name}>
-                      <td>{t.name}</td>
-                      <td>{t.count}</td>
+              {ASPECTS.map(([aspect, title]) => {
+                const types = data.element_types.filter((t) => t.layer === layer && t.aspect === aspect);
+                if (!types.length) return null;
+                return (
+                  <tbody key={aspect}>
+                    <tr className="onto-aspect">
+                      <th colSpan={2} scope="rowgroup">
+                        {title}
+                      </th>
                       <td>
-                        {t.step ? (
-                          <span className="stepswitch">
-                            <button
-                              type="button"
-                              className="toggle"
-                              role="switch"
-                              aria-checked={t.step.enabled}
-                              aria-label={`Enable ${t.name}`}
-                              onClick={() => void toggle("derivation", t.name, !t.step?.enabled)}
-                            />
-                            {t.step.version !== null ? `v${t.step.version}` : ""}
-                          </span>
-                        ) : (
-                          <span className="faint">no step</span>
-                        )}
+                        <SelectionSwitch label={`Derive ${layer} ${title}`} types={types} disabled={applying} onApply={applySteps} />
                       </td>
                     </tr>
-                  ))}
-              </tbody>
+                    {types.map((t) => {
+                      const missing = isSelected(t) ? t.needs.filter((need) => !selected.has(need)) : [];
+                      const extra = t.steps.filter((s) => s.name !== t.name);
+                      return (
+                        <tr key={t.name}>
+                          <td style={{ overflowWrap: "anywhere" }}>
+                            {t.name}
+                            {extra.length > 0 && <span className="faint"> + {extra.map((s) => s.name).join(", ")}</span>}
+                            {missing.length > 0 && (
+                              <div className="error-text">
+                                needs {missing.join(", ")}, which {missing.length === 1 ? "is" : "are"} off
+                              </div>
+                            )}
+                          </td>
+                          <td>{t.count}</td>
+                          <td>
+                            {t.steps.length ? (
+                              <span className="stepswitch">
+                                <button
+                                  type="button"
+                                  className="toggle"
+                                  role="switch"
+                                  aria-checked={isSelected(t)}
+                                  aria-label={`Enable ${t.name}`}
+                                  aria-disabled={applying}
+                                  onClick={() => void applySteps("derivation", switchChanges([t]))}
+                                />
+                                {t.step && t.step.version !== null ? `v${t.step.version}` : ""}
+                              </span>
+                            ) : (
+                              <span className="faint">no step</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                );
+              })}
             </table>
           </div>
         ))}

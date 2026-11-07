@@ -483,6 +483,7 @@ class ExternalDependencyNode:
     extraction_method: str = "llm"  # structural, ast, or llm
     declared: bool = True  # True if found in manifest file
     used: bool = False  # True if imported in code
+    indirect: bool | None = None  # A Go module go.mod marks // indirect (None: the manifest says nothing)
 
     def generate_id(self) -> str:
         """Generate a unique ID for this node."""
@@ -503,6 +504,7 @@ class ExternalDependencyNode:
             "declared": self.declared,
             "used": self.used,
             "type": "ExternalDependency",
+            **({"indirect": self.indirect} if self.indirect is not None else {}),
         }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -319,7 +320,8 @@ class TestModelTest:
     def _config(**over):
         from deriva.adapters.llm.models import BenchmarkModelConfig
 
-        return BenchmarkModelConfig(**{"name": "mistral-small4", "provider": "mistral", "model": "mistral-small-2603", "api_key": "sk-test", **over})
+        settings: dict[str, Any] = {"name": "mistral-small4", "provider": "mistral", "model": "mistral-small-2603", "api_key": "sk-test", **over}
+        return BenchmarkModelConfig(**settings)
 
     @staticmethod
     def _manager(response, latency=812.4, served="mistral-small-2603"):

@@ -25,7 +25,9 @@ def test_the_model_reads_levels_one_and_two_and_skips_notes_and_deeper_rows():
 
     assert [f.id for f in model.level(1)] == ["F100", "F200", "F300"]
     assert [f.id for f in model.children("F100")] == ["F110", "F120"]
-    assert model.get("F120").name == "Match, clear, and settle"
+    settle = model.get("F120")
+    assert settle is not None
+    assert settle.name == "Match, clear, and settle"
     assert model.get("F311") is None  # level 3 is not read
 
 
@@ -110,7 +112,7 @@ def test_an_answer_outside_the_options_counts_as_none():
 
 def test_the_elements_are_the_chosen_functions_named_and_identified_by_the_model():
     model = parse_function_model(FIXTURE, name="fixture")
-    decisions = {"as_floor": ("F100", "F110"), "as_floor_2": ("F100", "F120"), "as_members": ("F300", None)}
+    decisions: dict[str, tuple[str | None, str | None]] = {"as_floor": ("F100", "F110"), "as_floor_2": ("F100", "F120"), "as_members": ("F300", None)}
     processes = {"as_floor": ["lifecycle::r::bid"], "as_floor_2": [], "as_members": []}
 
     elements = {e["properties"]["source"]: e for e in function_elements(decisions, model, processes)}
@@ -239,3 +241,13 @@ def test_only_the_first_root_readme_line_that_names_a_component_counts():
     docs = {"repo/README.md": "| order-core | Keeps the orders. |\n| finding | order-core logs too much |\n"}
 
     assert component_documentation("repo/order-core", "order-core", docs, max_chars=300) == "order-core | Keeps the orders."
+
+
+def test_a_root_readme_line_names_a_component_as_a_whole_word_and_outside_code():
+    """The root README's mention is prose: a line in a fenced block (a command) does not name the component, and its
+    name inside a longer identifier (order inside order_service) is no mention either."""
+    from deriva.modules.derivation.function_model import component_documentation
+
+    docs = {"repo/README.md": "```sh\ncd order && make\n```\n| order_service | Ships the orders. |\n| order | Takes the orders. |\n"}
+
+    assert component_documentation("repo/order", "order", docs, max_chars=300) == "order | Takes the orders."

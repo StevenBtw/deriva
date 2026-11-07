@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import Counter
 
+import pytest
+
 from tests.test_studio.conftest import FakeSession
 from tests.test_studio.test_grafeo_compat import EDGE, NODE
 
@@ -21,6 +23,18 @@ def test_query_on_the_graph_database(make_client):
     assert response.status_code == 200
     assert response.json()["columns"] == ["a", "r"]
     assert session.called("query_graph_read_only")[0][0] == ("MATCH (a)-[r]->(b) RETURN a, r", None)
+
+
+def test_the_query_runs_in_the_language_the_widget_chose(make_client):
+    session = FakeSession(query_graph_read_only=[])
+    client = make_client(session)
+
+    client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "language": "Cypher"})
+    client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "language": "gql"})
+    client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n"})
+
+    # Without a language the query runs in GRAFEO_QUERY_LANGUAGE
+    assert [kwargs for _, kwargs in session.called("query_graph_read_only")] == [{"language": "cypher"}, {"language": "gql"}, {"language": None}]
 
 
 def test_default_database_is_the_graph_and_model_is_separate(make_client):
@@ -45,6 +59,72 @@ def test_write_query_is_rejected_before_it_reaches_the_database(make_client):
     assert session.called("query_graph_read_only") == []
 
 
+def test_a_query_that_reads_a_local_file_is_rejected(make_client):
+    """grafeo's LOAD CSV reads any local file (file:///...): the studio's query view must never pass it on."""
+    session = FakeSession(query_graph_read_only=[])
+    client = make_client(session)
+
+    for query in ("LOAD CSV FROM 'file:///etc/passwd' AS row RETURN row", "load csv with headers from 'file:///x' as r return r"):
+        response = client.post("/grafeo/query", json={"query": query, "language": "cypher"})
+        assert response.status_code == 400
+    assert session.called("query_graph_read_only") == []
+
+
+def test_a_procedure_that_is_not_read_only_is_refused(make_client):
+    """grafeo's load procedures read local files, and a rolled-back query still returns what they read: the query view
+    calls only grafeo's read-only procedures, however the name is written."""
+    session = FakeSession(query_graph_read_only=[])
+    client = make_client(session)
+
+    for query in (
+        "CALL grafeo.load_nodes_csv({path: '/etc/passwd', labels: ['L']}) YIELD rows MATCH (n:L) RETURN n",
+        "call GRAFEO . load_edges_csv({path: 'x'}) YIELD rows RETURN rows",
+        "CALL `grafeo.load_nodes_csv`({path: 'x'}) YIELD rows RETURN rows",
+        "CALL db.labels()",
+    ):
+        response = client.post("/grafeo/query", json={"query": query, "language": "cypher"})
+        assert response.status_code == 400 and "read-only procedures" in response.json()["detail"]
+    assert session.called("query_graph_read_only") == []
+
+    for query in ("CALL grafeo.pagerank() YIELD node_id, score RETURN node_id", "MATCH (n) CALL { MATCH (m) RETURN m } RETURN n"):
+        assert client.post("/grafeo/query", json={"query": query, "language": "cypher"}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "-- don't\nCALL grafeo.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows",  # a GQL comment's quote opens no string
+        "-- don't\nLOAD CSV FROM 'file:///x' AS r RETURN r",
+        "CALL grafeo.`load_nodes_csv`({path: 'x'}) YIELD rows RETURN rows",
+        "CALL/**/grafeo.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows",
+        "CALL grafeo/**/.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows",
+        "MATCH (n) CALL { CALL grafeo.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows } RETURN n",
+    ],
+)
+def test_no_comment_or_quote_hides_a_file_reading_call(make_client, query):
+    """A query is read as Cypher and as GQL (whose -- starts a comment): a finding in either reading refuses it."""
+    session = FakeSession(query_graph_read_only=[])
+    for language in ("cypher", "gql"):
+        assert make_client(session).post("/grafeo/query", json={"query": query, "language": language}).status_code == 400
+    assert session.called("query_graph_read_only") == []
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "MATCH (call:Graph) RETURN call",
+        "MATCH (n:Call) RETURN n",
+        "MATCH (n) RETURN n.call AS c",
+        "MATCH (a)--(b) RETURN a, b",
+        "MATCH (n) WHERE n.name = 'CALL grafeo.load_nodes_csv' RETURN n",
+        "MATCH (n) WHERE n.name CONTAINS 'Load Balancing' RETURN n",
+    ],
+)
+def test_the_word_call_outside_a_call_clause_is_no_procedure(make_client, query):
+    """A variable, label or property named call, and text inside a string, are no CALL clause."""
+    assert make_client(FakeSession(query_graph_read_only=[])).post("/grafeo/query", json={"query": query, "language": "cypher"}).status_code == 200
+
+
 def test_unknown_database_and_language(make_client):
     client = make_client(FakeSession(query_graph_read_only=[]))
 
@@ -53,7 +133,7 @@ def test_unknown_database_and_language(make_client):
 
 
 def test_query_errors_are_400_with_the_message(make_client):
-    def fail(query, params):
+    def fail(query, params, language=None):
         raise ValueError("Syntax error at line 1")
 
     client = make_client(FakeSession(query_graph_read_only=fail))
@@ -192,12 +272,13 @@ def test_schema_lists_labels_and_edge_types_with_counts(make_client):
 
     client = make_client(FakeSession(query_graph_read_only=answer))
 
-    schema = client.get("/grafeo/databases/graph/schema").json()
-
-    assert schema == {
-        "labels": [{"name": "Directory", "count": 2}, {"name": "File", "count": 1}],
-        "edge_types": [{"name": "CONTAINS", "count": 4}],
-    }
+    # The widget's grafeo client asks /db/<name>/schema; the older /databases/<name>/schema answers the same
+    for path in ("/grafeo/db/graph/schema", "/grafeo/databases/graph/schema"):
+        schema = client.get(path).json()
+        assert schema == {
+            "labels": [{"name": "Directory", "count": 2}, {"name": "File", "count": 1}],
+            "edge_types": [{"name": "CONTAINS", "count": 4}],
+        }
 
 
 def test_a_query_answers_from_the_chosen_database_only(make_client):
@@ -206,10 +287,10 @@ def test_a_query_answers_from_the_chosen_database_only(make_client):
         {"n": {"_id": 1, "_labels": ["Graph", "File"], "id": "file_a"}},
         {"n": {"_id": 2, "_labels": ["Model", "Node"], "id": "n_server"}},
     ]
-    client = make_client(FakeSession(query_graph_read_only=lambda q, p: rows, query_model_read_only=lambda q, p: rows))
+    client = make_client(FakeSession(query_graph_read_only=lambda q, p, language=None: rows, query_model_read_only=lambda q, p, language=None: rows))
 
     graph = client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "database": "graph"}).json()
     model = client.post("/grafeo/query", json={"query": "MATCH (n) RETURN n", "database": "model"}).json()
 
-    assert [row[0]["id"] for row in graph["rows"]] == ["1"]
-    assert [row[0]["id"] for row in model["rows"]] == ["2"]
+    assert [row[0]["_id"] for row in graph["rows"]] == [1]
+    assert [row[0]["_id"] for row in model["rows"]] == [2]
