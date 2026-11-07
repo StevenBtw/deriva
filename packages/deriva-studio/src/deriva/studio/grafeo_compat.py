@@ -14,11 +14,63 @@ DISPLAY_KEYS = ("name", "techName", "conceptName", "methodName", "typeName", "fi
 # so a // inside a string stays part of the string)
 _SKIPPED = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|`[^`]*`|//[^\n]*|/\*.*?\*/", re.DOTALL)
 _WRITE = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|INSERT|LOAD)\b", re.IGNORECASE)
+# The procedures a user-typed query may call: grafeo's read-only ones (graph algorithms, catalog lists, searches), as
+# grafeo.procedures() lists them. Any other is refused, so a procedure added later stays out until it is listed here:
+# grafeo.load_nodes_csv and grafeo.load_edges_csv read local files, and a rolled-back query still returns what they read.
+# A stopgap: grafeo 0.6.2 is to offer a read-only (untrusted) transaction that refuses all file IO, which replaces it
+READ_PROCEDURES = frozenset(
+    {
+        "grafeo.articulation_points",
+        "grafeo.bellman_ford",
+        "grafeo.betweenness_centrality",
+        "grafeo.bfs",
+        "grafeo.bridges",
+        "grafeo.closeness_centrality",
+        "grafeo.clustering_coefficient",
+        "grafeo.connected_components",
+        "grafeo.degree_centrality",
+        "grafeo.dfs",
+        "grafeo.dijkstra",
+        "grafeo.floyd_warshall",
+        "grafeo.kcore",
+        "grafeo.kruskal",
+        "grafeo.label_propagation",
+        "grafeo.labels",
+        "grafeo.louvain",
+        "grafeo.max_flow",
+        "grafeo.min_cost_max_flow",
+        "grafeo.pagerank",
+        "grafeo.prim",
+        "grafeo.procedures",
+        "grafeo.propertykeys",
+        "grafeo.relationshiptypes",
+        "grafeo.search.mmr",
+        "grafeo.search.text",
+        "grafeo.search.vector",
+        "grafeo.sssp",
+        "grafeo.strongly_connected_components",
+        "grafeo.topological_sort",
+    }
+)
+# CALL and what follows it: a procedure name (dotted), or a subquery's brace
+_CALL = re.compile(r"\bCALL\b\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)?\s*(\{)?", re.IGNORECASE)
 
 
 def is_write_query(query: str) -> bool:
     """True when the query uses a write clause outside string literals, backticked names and comments."""
     return _WRITE.search(_SKIPPED.sub(" ", query)) is not None
+
+
+def refused_procedure(query: str) -> str | None:
+    """The first procedure the query calls that is not on ``READ_PROCEDURES`` (``"?"`` for one whose name is hidden,
+    in backticks or a string); None when every CALL is a listed procedure or a subquery (``CALL { ... }``)."""
+    for call in _CALL.finditer(_SKIPPED.sub(" ", query)):
+        name, subquery = call.group(1), call.group(2)
+        if name is None and subquery:
+            continue
+        if name is None or re.sub(r"\s+", "", name).lower() not in READ_PROCEDURES:
+            return re.sub(r"\s+", "", name) if name else "?"
+    return None
 
 
 def _strip_namespace(name: str) -> str:

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from deriva.studio.deps import get_session
-from deriva.studio.grafeo_compat import NAMESPACES, is_write_query, to_widget_graph, to_widget_result
+from deriva.studio.grafeo_compat import NAMESPACES, is_write_query, refused_procedure, to_widget_graph, to_widget_result
 from deriva.studio.linked_view import build_linked_view, element_sources
 from deriva.studio.sampling import sample_nodes
 
@@ -49,6 +49,8 @@ def query(request: QueryRequest, session: Any = Depends(get_session)) -> dict[st
     run = _runner(session, request.database)
     if is_write_query(request.query):
         raise HTTPException(status_code=400, detail="The studio graph view is read-only")
+    if (procedure := refused_procedure(request.query)) is not None:
+        raise HTTPException(status_code=400, detail=f"The studio graph view calls only grafeo's read-only procedures (graph algorithms, catalog lists, searches), not {procedure}")
     try:
         rows = run(request.query, None, language=language)
     except Exception as exc:
