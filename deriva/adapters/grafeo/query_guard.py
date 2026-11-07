@@ -21,7 +21,7 @@ _SKIPPED_CYPHER = re.compile(_STRING + r"|`[^`]*`|//[^\n]*|/\*.*?\*/", re.DOTALL
 _SKIPPED_GQL = re.compile(_STRING + r"|`[^`]*`|//[^\n]*|--[^\n]*|/\*.*?\*/", re.DOTALL)
 # A backticked name stays visible as this mark, so a procedure named in backticks cannot pass as no name
 _HIDDEN = "\x00"
-_WRITE = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|INSERT|LOAD)\b", re.IGNORECASE)
+_WRITE = re.compile(r"\b(ALTER|CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|INSERT|LOAD)\b", re.IGNORECASE)
 # The procedures a user-typed query may call: grafeo's read-only ones (graph algorithms, catalog lists, searches), as
 # grafeo.procedures() lists them. Any other is refused, so a procedure added later stays out until it is listed here:
 # grafeo.load_nodes_csv and grafeo.load_edges_csv read local files, and a rolled-back query still returns what they read.
