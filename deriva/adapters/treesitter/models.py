@@ -14,7 +14,7 @@ class ExtractedType:
     """Represents an extracted type definition (class, interface, function, etc.)."""
 
     name: str
-    kind: str  # 'class', 'interface', 'enum', 'struct', 'function', 'type_alias', 'package'
+    kind: str  # 'class', 'interface', 'enum', 'struct', 'function', 'type_alias', 'type' (a Go defined type), 'package'
     line_start: int
     line_end: int
     docstring: str | None = None

@@ -511,12 +511,14 @@ def extract_methods_from_source(
     for a language whose methods may sit in another file than their type, as Go's do within a package).
 
     This is deterministic and produces accurate line numbers.
-    Supports Python, JavaScript, Java, C#, and Perl.
+    Supports every language the tree-sitter manager reads (Python, JavaScript, TypeScript, Java, C#, Go and the
+    mainframe sources).
 
     Args:
         file_path: Path to the file being analyzed (relative to repo)
         file_content: Source code
         repo_name: Repository name
+        type_files: Type name -> the file that declares it; a method whose type sits in another file links there
 
     Returns:
         Dictionary with success, data, errors, stats (same format as LLM extraction)

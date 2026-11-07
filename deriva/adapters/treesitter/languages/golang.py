@@ -1,10 +1,13 @@
 """Go language extractor using tree-sitter.
 
-Types are a declaration's type specs: a struct, an interface, an alias (``type ID = string``) or a defined type over
-another type (``type Handler func(...)``, ``type total int``); embedded fields and embedded interfaces are a type's
-bases. Functions have no class; a method's class is its receiver's type (pointer and type arguments left out). An
-exported name (a capital first letter) is public, any other private; a type's or function's doc comment is the line
-comments right above it. Imports are paths with an optional alias; calls are the calls inside each function's body.
+Types are a declaration's type specs: a struct, an interface, an alias (``type ID = string``, kind type_alias) or a
+defined type over another type (``type Handler func(...)``, ``type total int``, kind type); embedded fields and
+embedded interfaces are a type's bases, without their type arguments (``Base[T]`` is Base), while a constraint's terms
+(``int | float64``, ``~int``) are none. Functions have no class; a method's class is its receiver's type (pointer and
+type arguments left out). An exported name (a capital first letter) is public, any other private; a type's or
+function's doc comment is the line comments right above it, a comment that ends the line before is none. Imports are
+paths with an optional alias; calls are the calls inside each function's body, also through an index or type
+arguments (``handlers[0]()``, ``makeThing[int]()``).
 """
 
 from __future__ import annotations
@@ -130,7 +133,8 @@ class GoExtractor(LanguageExtractor):
                     continue
                 name = self.get_node_text(name_node, source)
                 body = self.find_child_by_field(spec, "type")
-                kind = "type_alias"
+                # A type alias (type ID = string) is another name for a type; any other spec defines a type of its own
+                kind = "type_alias" if spec.type == "type_alias" else "type"
                 if spec.type == "type_spec" and body is not None and body.type in ("struct_type", "interface_type"):
                     kind = "struct" if body.type == "struct_type" else "interface"
                 # A grouped declaration (type ( ... )) has one spec per line: the spec is the type's extent
@@ -200,6 +204,9 @@ class GoExtractor(LanguageExtractor):
             caller, owner = self.get_node_text(name_node, source), self._receiver_type(node, source)
             for call in self.walk_tree(body, {"call_expression"}):
                 function = self.find_child_by_field(call, "function")
+                # A call through an index or with type arguments (handlers[0](), makeThing[int]()) calls its operand
+                while function is not None and function.type in ("index_expression", "parenthesized_expression"):
+                    function = self.find_child_by_field(function, "operand") or next(iter(function.named_children), None)
                 if function is None:
                     continue
                 if function.type == "identifier":
@@ -236,11 +243,22 @@ class GoExtractor(LanguageExtractor):
             for field in self.find_children_by_type(fields, "field_declaration") if fields is not None else []:
                 kind = self.find_child_by_field(field, "type")
                 if self.find_child_by_field(field, "name") is None and kind is not None:
-                    found.append(self.get_node_text(kind, source).lstrip("*"))
+                    found.append(self._base_name(kind, source))
         elif body.type == "interface_type":
+            # An embedded interface is an element of one plain term; a union (int | float64) or an approximation (~int)
+            # is a type constraint, no base
             for element in self.find_children_by_type(body, "type_elem"):
-                found += [self.get_node_text(c, source) for c in element.named_children if c.type in ("type_identifier", "qualified_type")]
+                terms = element.named_children
+                if len(terms) == 1 and terms[0].type in ("type_identifier", "qualified_type", "generic_type"):
+                    if (name := self._base_name(terms[0], source)) not in GO_BUILTIN_TYPES:
+                        found.append(name)
         return found
+
+    def _base_name(self, node: tree_sitter.Node, source: bytes) -> str:
+        """A type's name without pointer and type arguments (``*Other`` is Other, ``Base[T]`` is Base)."""
+        if node.type == "generic_type":
+            node = self.find_child_by_field(node, "type") or node.named_children[0]
+        return self.get_node_text(node, source).lstrip("*")
 
     def _parameters(self, node: tree_sitter.Node | None, source: bytes) -> list[dict[str, Any]]:
         """Each parameter's name and type; a variadic one is named with "..." in front, an unnamed one by its type."""
@@ -262,7 +280,9 @@ class GoExtractor(LanguageExtractor):
         previous, line = node.prev_sibling, node.start_point[0]
         while previous is not None and previous.type == "comment" and previous.end_point[0] == line - 1:
             text = self.get_node_text(previous, source)
-            if not text.startswith("//"):
+            # A comment that ends a line of code (func f() {} // ...) belongs to that code
+            before = previous.prev_sibling
+            if not text.startswith("//") or (before is not None and before.end_point[0] == previous.start_point[0]):
                 break
             lines.insert(0, text[2:].strip())
             previous, line = previous.prev_sibling, previous.start_point[0]
