@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { repositories } from "../api/client";
-import type { Coverage, Repository, RepositoryData, RunSummary } from "../api/types";
+import type { Coverage, CoverageRow, Repository, RepositoryData, RunSummary } from "../api/types";
 import { downloadText } from "../components/download";
 import { size } from "../components/size";
 
@@ -36,6 +36,12 @@ function message(reason: unknown): string {
 
 // The extensions with the most files; the CLI's coverage --json has every one
 const EXTENSIONS_SHOWN = 8;
+
+/** An extension's file types: the one type, or each with its files when there are several ("test 246, source 210"). */
+function fileTypes(row: CoverageRow): string {
+  if (row.file_types.length === 1) return row.file_types[0].file_type;
+  return row.file_types.map((t) => `${t.file_type} ${count(t.files)}`).join(", ");
+}
 
 /** What of the checkout reached the graph: the verdict with its reasons, notes, the largest extensions, and the
  * files that did not make it as a download. */
@@ -77,9 +83,10 @@ function CoverageSection({ name, coverage, note }: { name: string; coverage: Cov
             <tr key={row.extension}>
               <td className="mono">{row.extension}</td>
               <td>{row.in_graph === row.files ? count(row.files) : `${count(row.in_graph)} of ${count(row.files)}`}</td>
-              <td>{row.file_type ?? ""}</td>
-              {/* The type and method steps read code: a file that is no source (documentation, assets) has no parser to name */}
-              <td>{row.reader ?? (row.file_type === "source" ? "none" : "")}</td>
+              <td>{fileTypes(row)}</td>
+              {/* The type and method steps read code: an extension without source (documentation, assets) has no parser to
+                  name; one with source files and no reader says none, even when its tests outnumber them */}
+              <td>{row.reader ?? (row.file_types.some((t) => t.file_type === "source") ? "none" : "")}</td>
               <td>{row.reader ? count(row.with_symbols) : ""}</td>
             </tr>
           ))}

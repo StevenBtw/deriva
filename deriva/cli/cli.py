@@ -279,9 +279,14 @@ def coverage(
         typer.echo(f"    - {reason}")
     for note in report["notes"]:
         typer.echo(f"  Note: {note}")
-    typer.echo("\n  Extension        Files  In graph  Read by   Symbols  Unreadable")
+    typer.echo("\n  Extension        Files  In graph  Parsed by  Symbols  Unreadable  File type")
     for row in report["extensions"][:15]:
-        typer.echo(f"  {row['extension']:<16} {row['files']:>5}  {row['in_graph']:>8}  {row['reader'] or '-':<8} {row['with_symbols']:>8}  {row['unreadable']:>10}")
+        types = row["file_types"]
+        # The type and method steps read code: an extension without source files (documentation, assets) has no parser
+        # to name; one with source files and no reader says none, even when its tests outnumber them
+        parser = row["reader"] or ("none" if any(t["file_type"] == "source" for t in types) else "")
+        named = types[0]["file_type"] if len(types) == 1 else ", ".join(f"{t['file_type']} {t['files']}" for t in types)
+        typer.echo(f"  {row['extension']:<16} {row['files']:>5}  {row['in_graph']:>8}  {parser:<9} {row['with_symbols']:>8}  {row['unreadable']:>10}  {named}")
     for title, items in (("Not in the graph", report["missing"]), ("Could not be read", [f"{u['path']}: {u['reason']}" for u in report["unreadable"]])):
         if items:
             typer.echo(f"\n  {title} ({len(items)}):")

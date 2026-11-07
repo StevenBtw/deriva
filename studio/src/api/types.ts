@@ -44,7 +44,9 @@ export type CoverageRow = {
   extension: string;
   files: number;
   in_graph: number;
+  // The most common file type; file_types has every type with its files, most first
   file_type: string | null;
+  file_types: { file_type: string; files: number }[];
   subtype: string | null;
   reader: "parser" | "llm" | null;
   with_symbols: number;
