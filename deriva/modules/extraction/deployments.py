@@ -49,7 +49,13 @@ class DeploymentRules:
     compose_defaults: tuple[str, ...] = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
     # The override files Compose merges into a default-named file by default: part of the primary, no variant
     compose_overrides: tuple[str, ...] = ("compose.override.yaml", "compose.override.yml", "docker-compose.override.yaml", "docker-compose.override.yml")
-    environment_names: tuple[tuple[str, str], ...] = (("compose", "Docker Compose"), ("kubernetes", "Kubernetes"), ("cloud", "AWS ECS"), ("mainframe", "Mainframe"))
+    environment_names: tuple[tuple[str, str], ...] = (
+        ("compose", "Docker Compose"),
+        ("kubernetes", "Kubernetes"),
+        ("cloud", "AWS ECS"),
+        ("mainframe", "Mainframe"),
+        ("aspire", "Aspire"),
+    )
     # Files whose image build commands name a project's own images (scripts relative to their folder, YAML to the root)
     build_scripts: tuple[str, ...] = ("*.sh", "*.bash", "makefile", "*.mk", "*.yml", "*.yaml")
     # Content markers: (pattern, technology alias); a source file matching the pattern uses that technology
@@ -62,6 +68,16 @@ class DeploymentRules:
     primary_runs_units: bool = False
     # Categories of the Technology step whose answers join the system software; none: only this step's own signals
     classified_categories: tuple[str, ...] = ()
+    # .NET Aspire (off without aspire_host): a source file (aspire_suffixes) that calls aspire_host is an app host, an
+    # environment. On the builder it returns, a project call (aspire_projects: ``Name<Projects.X>("name")`` or
+    # ``Name("name", "path")``) deploys a unit and any other call named aspire_resource + technology (``AddRedis("cache")``)
+    # is a resource of that technology; a call of that kind on a resource adds a part of it (a database), and the
+    # aspire_references calls (``WithReference(x)``) name the resources and projects a project uses
+    aspire_host: str = ""
+    aspire_suffixes: tuple[str, ...] = ()
+    aspire_projects: tuple[str, ...] = ()
+    aspire_resource: str = ""
+    aspire_references: tuple[str, ...] = ()
 
 
 @dataclass
@@ -71,7 +87,7 @@ class DeployedService:
     name: str
     unit: str | None = None
     image: str | None = None
-    kind: str = "service"  # service (compose, Kubernetes) or container (cloud)
+    kind: str = "service"  # service (compose, Kubernetes), container (cloud) or resource (an Aspire technology, no image)
     depends_on: list[str] = field(default_factory=list)
     environment: dict[str, str] = field(default_factory=dict)
     ports: list[int] = field(default_factory=list)  # Published and container ports (compose)
@@ -250,6 +266,55 @@ def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Env
     return env
 
 
+_CODE_COMMENT = re.compile(r'"(?:[^"\\\n]|\\.)*"|//[^\n]*|/\*.*?\*/', re.DOTALL)
+_ASPIRE_CALL = re.compile(r'\s*(?:var\s+(\w+)\s*=\s*)?(\w+)\s*\.\s*(\w+)\s*(?:<\s*([\w.]+)\s*>)?\s*\(\s*(?:"([^"]*)"(?:\s*,\s*"([^"]*)")?)?')
+
+
+def _aspire(path: str, text: str, units: _Units, rules: DeploymentRules) -> Environment | None:
+    """The environment an Aspire app host declares (``DeploymentRules.aspire_host``), or None for any other file.
+
+    Read statement by statement, in order: a variable holds the service its statement adds (a part of a resource
+    stands for the resource); a project's references are the services those variables hold.
+    """
+    # Comments go, strings stay (a URL holds two slashes)
+    code = _CODE_COMMENT.sub(lambda m: m.group(0) if m.group(0).startswith('"') else "", text)
+    host = re.search(rf"\b(?:var\s+(\w+)\s*=\s*)?{re.escape(rules.aspire_host)}\s*\(", code)
+    if not rules.aspire_host or host is None:
+        return None
+    builder = host.group(1) or "builder"
+    env = Environment(kind="aspire", name=dict(rules.environment_names).get("aspire", "Aspire"), file=path)
+    services: dict[str, DeployedService] = {}
+    held: dict[str, str] = {}  # variable -> the service it holds
+    projects = "|".join(re.escape(name) for name in rules.aspire_projects)
+    references = "|".join(re.escape(name) for name in rules.aspire_references)
+    for statement in code.split(";"):
+        start = _ASPIRE_CALL.match(statement)
+        if start is None:
+            continue
+        variable, subject, method, generic, name, second = start.groups()
+        service: DeployedService | None = None
+        if subject == builder and (name or generic) and projects and re.fullmatch(projects, method):
+            # A project by its path from the host's folder, else by its manifest name (Projects.Shop_Api is Shop.Api);
+            # without a written name it is named after its project type
+            unit = units.by_folder(_normalize(f"{_parent(path)}/{second}")) if second else None
+            unit = unit or (units.by_image(generic.rsplit(".", 1)[-1]) if generic else None)
+            name = name or generic.rsplit(".", 1)[-1]
+            service = services.setdefault(name, DeployedService(name=name, unit=unit))
+        elif subject == builder and name and rules.aspire_resource and method.startswith(rules.aspire_resource) and len(method) > len(rules.aspire_resource):
+            service = services.setdefault(name, DeployedService(name=name, image=method[len(rules.aspire_resource) :].lower(), kind="resource"))
+        elif subject in held:
+            service = services[held[subject]]
+        if service is None:
+            continue
+        if variable:
+            held[variable] = service.name
+        if service.kind != "resource" and references:
+            used = {held[v] for v in re.findall(rf"\.\s*(?:{references})\s*\(\s*(\w+)\s*\)", statement) if v in held}
+            service.depends_on = sorted(set(service.depends_on) | used)
+    env.services = list(services.values())
+    return env
+
+
 _SECRET_KEY = re.compile(r"(?i)pass(?:word|wd)?|secret|token|api_?key|access_?key|private_?key|credential")
 _URL_PASSWORD = re.compile(r"(://[^:/@\s]+:)[^@/\s]+@")
 
@@ -379,6 +444,10 @@ def detect_deployments(
                 depth = len(PurePosixPath(path).relative_to(by_id[unit]).parts) if path.startswith(by_id[unit] + "/") else 0
                 runtimes.setdefault(unit, []).append((depth, image))
             continue
+        if rules.aspire_host and lower.endswith(rules.aspire_suffixes):
+            if env := _aspire(path, text, lookup, rules):
+                environments.append(env)
+            continue
         if any(fnmatch.fnmatchcase(lower, p) for p in rules.compose_files):
             if env := _compose(path, text, lookup, rules):
                 environments.append(env)
@@ -405,7 +474,7 @@ def detect_deployments(
     result.managed = managed
     if cloud:
         environments.append(cloud)
-    order = {"cloud": 0, "compose": 1, "kubernetes": 2}
+    order = {"cloud": 0, "compose": 1, "aspire": 2, "kubernetes": 3}
     defaults = [name.lower() for name in rules.compose_defaults]
     # The deployment tool's default file name, in its lookup order, before any other name (a variant can sort first)
     default_rank = lambda e: defaults.index(PurePosixPath(e.file).name.lower()) if PurePosixPath(e.file).name.lower() in defaults else len(defaults)  # noqa: E731 - a one-line helper
@@ -676,7 +745,11 @@ def technology_layer(
         for service in env.services:
             if service.unit is None and service.image:
                 users = tuple(s.unit for s in env.services if s.unit and (service.name in s.depends_on or any(_references(v, service.name) for v in s.environment.values())))
-                add(resolve_image(service.image, built, files), f"image of {service.name}", in_environment=True, serves=users, fallback=True)
+                if service.kind == "resource":
+                    # An Aspire resource names its technology, not an image: software only when the list has it
+                    add(service.image, f"resource {service.name}", in_environment=True, serves=users)
+                else:
+                    add(resolve_image(service.image, built, files), f"image of {service.name}", in_environment=True, serves=users, fallback=True)
     for unit, images in sorted(deployments.base_images.items()):
         for image in images:
             if unit in deployed:

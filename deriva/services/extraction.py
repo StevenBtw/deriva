@@ -999,7 +999,8 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
     settings = json.loads(params) if params else {}
     lists = ("compose_files", "compose_defaults", "compose_overrides", "build_scripts", "marker_suffixes", "classified_categories")
     maps = ("cloud_resources", "manifest_runtimes", "environment_names")
-    unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs", "primary_runs_units"}
+    unknown = set(settings) - {*lists, *maps, "technologies", "markers", "cloud_qualifiers", "cdk_constructs", "primary_runs_units", "aspire"}
+    aspire = _aspire_signals(settings.get("aspire"))
     qualifiers, constructs = settings.get("cloud_qualifiers", {}), settings.get("cdk_constructs", {})
     text = lambda v: isinstance(v, str) and bool(v)  # noqa: E731 - a one-line helper
     qualifiers_ok = isinstance(qualifiers, dict) and all(isinstance(q, dict) and text(q.get("property")) and isinstance(q.get("default", ""), str) for q in qualifiers.values())
@@ -1047,8 +1048,37 @@ def _deployment_rules(params: str | None) -> tuple[deployments.DeploymentRules, 
         manifest_runtimes=tuple(settings.get("manifest_runtimes", {}).items()),
         primary_runs_units=runs_units,
         classified_categories=tuple(settings.get("classified_categories", [])),
+        **aspire,
     )
     return rules, catalog
+
+
+def _aspire_signals(settings: Any) -> dict[str, Any]:
+    """The Deployment step's .NET Aspire signals (``params.aspire``) as DeploymentRules fields; none without the key.
+
+    ``{"host": "DistributedApplication.CreateBuilder", "suffixes": [".cs"], "projects": ["AddProject"],
+    "resource_prefix": "Add", "references": ["WithReference"]}``: method names, matched as written.
+    """
+    if settings is None:
+        return {}
+    keys = {"host", "suffixes", "projects", "resource_prefix", "references"}
+    text = lambda v: isinstance(v, str) and bool(v)  # noqa: E731 - a one-line helper
+    if (
+        not isinstance(settings, dict)
+        or set(settings) - keys
+        or not text(settings.get("host"))
+        or not isinstance(settings.get("resource_prefix", ""), str)
+        or not all(isinstance(settings.get(k), list) and settings[k] and all(text(x) for x in settings[k]) for k in ("suffixes", "projects"))
+        or not (isinstance(settings.get("references", []), list) and all(text(x) for x in settings.get("references", [])))
+    ):
+        raise ValueError(f"Deployment params: aspire needs a host call, suffixes and projects (lists of names), a resource_prefix and references, got {settings!r}")
+    return {
+        "aspire_host": settings["host"],
+        "aspire_suffixes": tuple(s.lower() for s in settings["suffixes"]),
+        "aspire_projects": tuple(settings["projects"]),
+        "aspire_resource": settings.get("resource_prefix", ""),
+        "aspire_references": tuple(settings.get("references", [])),
+    }
 
 
 def _cdk_resources(paths: list[str], rules: deployments.DeploymentRules, repo: Any, repo_path: Path) -> dict[str, dict[str, Any]]:
@@ -1118,6 +1148,11 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
         )
 
     files = {p: text for p in paths if wanted(p) and (text := _read_checkout(repo_path, repo.name, p)) is not None}
+    if rules.aspire_host:
+        # An app host is a source file (a test host is test code) that calls the host builder: only those join the deployment files
+        rows = q("MATCH (f:Graph:File) WHERE f.active = true AND f.repository_name = $repo_name AND f.fileType = 'source' RETURN f.filePath AS path")
+        hosts = sorted({p for r in rows if (p := str(r.get("path") or "").replace(chr(92), "/")).lower().endswith(rules.aspire_suffixes)} - set(files))
+        files |= {p: text for p in hosts if (text := _read_checkout(repo_path, repo.name, p)) is not None and rules.aspire_host in text}
     sources = {p: text for p in paths if p.lower().endswith(rules.marker_suffixes) and rules.marker_suffixes and (text := _read_checkout(repo_path, repo.name, p)) is not None}
     units = _units_with_members(q)
     classified: dict[str, set[str]] = {}
@@ -1168,8 +1203,10 @@ def _extract_deployments(cfg: config.ExtractionConfig, repo: Any, repo_path: Pat
             node_id=env_id,
         )
         nodes += 1
-        deployment_ids = _service_ids(f"deployment::{repo.name}::{env.kind}", [(s.name, s.unit) for s in env.services])
-        for service, deployment_id in zip(env.services, deployment_ids, strict=True):
+        # An Aspire resource is software (when the closed list has it), not a deployment
+        deployed_services = [s for s in env.services if s.kind != "resource"]
+        deployment_ids = _service_ids(f"deployment::{repo.name}::{env.kind}", [(s.name, s.unit) for s in deployed_services])
+        for service, deployment_id in zip(deployed_services, deployment_ids, strict=True):
             graph_manager.add_node(
                 DeploymentNode(
                     name=service.name, environment=env.kind, repository_name=repo.name, image=service.image or "", variables=service.environment, ports=service.ports, file=env.file
