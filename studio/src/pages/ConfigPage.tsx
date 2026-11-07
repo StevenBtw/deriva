@@ -317,7 +317,13 @@ function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: Edito
             </button>
           ))}
         </div>
-        <Suspense fallback={<div className="muted">Loading the editor…</div>}>
+        <Suspense
+          fallback={
+            <div className="muted" role="status">
+              Loading the editor…
+            </div>
+          }
+        >
           {tab === "instruction" && <CodeEditor label="Instruction" readOnly={saving} value={draft.instruction} onChange={(v) => update("instruction", v)} />}
           {tab === "example" && <CodeEditor label="Example" language="json" readOnly={saving} value={draft.example} onChange={(v) => update("example", v)} />}
           {tab === "params" && <CodeEditor label="Params" language="json" readOnly={saving} value={draft.params} onChange={(v) => update("params", v)} />}
