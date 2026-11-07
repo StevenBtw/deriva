@@ -241,3 +241,13 @@ def test_only_the_first_root_readme_line_that_names_a_component_counts():
     docs = {"repo/README.md": "| order-core | Keeps the orders. |\n| finding | order-core logs too much |\n"}
 
     assert component_documentation("repo/order-core", "order-core", docs, max_chars=300) == "order-core | Keeps the orders."
+
+
+def test_a_root_readme_line_names_a_component_as_a_whole_word_and_outside_code():
+    """The root README's mention is prose: a line in a fenced block (a command) does not name the component, and its
+    name inside a longer identifier (order inside order_service) is no mention either."""
+    from deriva.modules.derivation.function_model import component_documentation
+
+    docs = {"repo/README.md": "```sh\ncd order && make\n```\n| order_service | Ships the orders. |\n| order | Takes the orders. |\n"}
+
+    assert component_documentation("repo/order", "order", docs, max_chars=300) == "order | Takes the orders."
