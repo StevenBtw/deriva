@@ -71,13 +71,18 @@ function useShellStatus(intervalMs = 10000): ShellStatus {
     const next = (ms: number) => {
       if (!cancelled) timer = window.setTimeout(poll, ms);
     };
-    // Whether a model exists, after any answer but a refusal (an error answer included, so it cannot go stale)
+    // Whether a model exists, after any answer but a refusal (an error answer included, so it cannot go stale).
+    // Each request takes the next number and only the latest one's answer counts: a slow older answer cannot
+    // overwrite a newer one
+    let modelRequest = 0;
     const refreshModels = () => {
+      const request = ++modelRequest;
       modelConfigs
         .list()
         .then(
           (models) =>
             !cancelled &&
+            request === modelRequest &&
             setShell((now) => ({ ...now, noModel: models.length === 0 })),
         )
         .catch(() => {});
