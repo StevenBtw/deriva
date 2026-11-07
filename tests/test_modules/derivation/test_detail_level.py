@@ -103,6 +103,17 @@ def test_a_file_member_named_as_written_keeps_its_name():
     assert sorted(e["name"] for e in detail.elements) == ["CartService", "Main"]
 
 
+def test_a_member_named_as_written_keeps_its_name_when_a_file_member_shares_it():
+    """Only the file member named after its file takes folders in front; the one named as written stays as it is."""
+    members = [{"name": "Cart", "source": "file::r::a", "as_written": True}, {"name": "cart.go", "source": "file::r::b"}]
+    files = {"file::r::a": "r/svc/server/main.go", "file::r::b": "r/svc/model/cart.go"}
+    elements = [_el("ai_cart__rpc", "ApplicationInterface", "Cart RPC API", source="unit::r::cart", role="rpc", members=members)]
+
+    detail = detail_level(elements, DetailLineage(files=files))
+
+    assert sorted(e["name"] for e in detail.elements) == ["Cart", "Model Cart"]
+
+
 def test_members_whose_folders_repeat_take_folders_until_their_names_differ():
     """An area's page and the main page of the same folder name (Areas/Admin/Views/Home and Views/Home) take further
     folders in front until the names differ; a name that is unique keeps a single folder."""

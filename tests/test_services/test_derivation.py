@@ -3390,6 +3390,7 @@ class TestUnitConfigs:
             {**registrations, "role": "desktop"},  # no role key of names
             {**registrations, "patterns": [r"\bRegister\w+Server\("]},  # no service group
             {**registrations, "patterns": ["(?P<service>"]},  # no valid pattern
+            {**registrations, "patterns": [123]},  # no text
             {**registrations, "excluded_services": ["("]},
             {**registrations, "patterns": []},
         ):
