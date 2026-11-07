@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./workspace/Workspace", () => ({
   Workspace: () => <h2>Workspace page</h2>,
@@ -163,5 +163,101 @@ describe("Shell routes", () => {
     expect(
       await screen.findByText(/No LLM model is configured/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("Status polling", () => {
+  const ANSWER = { version: "0.8.0", db: { state: "owned" as const } };
+  // Lets the poll's promises settle and the timers up to then fire, without waiting for real
+  const after = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(status).mockReset();
+    vi.mocked(modelConfigs.list).mockReset().mockResolvedValue([{ name: "mistral" }] as never);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("asks every 10 seconds while the studio answers", async () => {
+    vi.mocked(status).mockResolvedValue(ANSWER);
+    at("/");
+    await after(0);
+    expect(status).toHaveBeenCalledTimes(1);
+
+    await after(10_000);
+    expect(status).toHaveBeenCalledTimes(2);
+    await after(10_000);
+    expect(status).toHaveBeenCalledTimes(3);
+    expect(modelConfigs.list).toHaveBeenCalledTimes(3);
+  });
+
+  it("backs off while the studio does not answer, says it is not reachable, and clears that once it answers", async () => {
+    vi.mocked(status).mockRejectedValue(new TypeError("Failed to fetch"));
+    at("/");
+    await after(0);
+    expect(status).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(/The studio is not reachable/);
+
+    // 20 s after the first miss, then 40 s, then never more than a minute between tries
+    await after(19_999);
+    expect(status).toHaveBeenCalledTimes(1);
+    await after(1);
+    expect(status).toHaveBeenCalledTimes(2);
+    await after(40_000);
+    expect(status).toHaveBeenCalledTimes(3);
+    await after(60_000);
+    expect(status).toHaveBeenCalledTimes(4);
+    await after(60_000);
+    expect(status).toHaveBeenCalledTimes(5);
+    // The model list is no use while the studio is gone: only the status is asked
+    expect(modelConfigs.list).toHaveBeenCalledTimes(0);
+
+    vi.mocked(status).mockResolvedValue(ANSWER);
+    await after(60_000);
+    expect(status).toHaveBeenCalledTimes(6);
+    expect(screen.queryByText(/The studio is not reachable/)).not.toBeInTheDocument();
+    expect(modelConfigs.list).toHaveBeenCalledTimes(1);
+    await after(10_000);
+    expect(status).toHaveBeenCalledTimes(7);
+  });
+
+  it("treats an error answer as an answer: no notice, the last known state kept, the next request at the normal interval", async () => {
+    vi.mocked(status).mockResolvedValueOnce(ANSWER);
+    at("/");
+    await after(0);
+    vi.mocked(status).mockRejectedValue(new ApiError(500, "Internal Server Error", { detail: "Internal Server Error" }));
+
+    await after(10_000);
+    expect(status).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("DB")).toBeInTheDocument();
+    await after(10_000);
+    expect(status).toHaveBeenCalledTimes(3);
+  });
+
+  it("clears the not-reachable notice when the studio answers again, even with an error", async () => {
+    vi.mocked(status).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    at("/");
+    await after(0);
+    expect(screen.getByRole("alert")).toHaveTextContent(/The studio is not reachable/);
+    vi.mocked(status).mockRejectedValue(new ApiError(503, "Service Unavailable", { detail: "Service Unavailable" }));
+
+    await after(20_000);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await after(10_000);
+    expect(status).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops asking once the studio refuses this browser, and points to the launch link", async () => {
+    vi.mocked(status).mockRejectedValue(new ApiError(401, "Open the studio from the link", { detail: "Open the studio from the link" }));
+    at("/");
+    await after(0);
+    expect(screen.getByRole("heading", { name: "Open the studio from its launch link" })).toBeInTheDocument();
+
+    await after(120_000);
+    expect(status).toHaveBeenCalledTimes(1);
+    expect(modelConfigs.list).toHaveBeenCalledTimes(0);
   });
 });

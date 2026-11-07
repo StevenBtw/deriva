@@ -38,6 +38,9 @@ describe("TopBar", () => {
 
     const label = screen.getByText("Studio not answering");
     expect(label).toHaveAttribute("title", expect.stringMatching(/last known state: owned/));
+    // Its dot is a warning, not the last known state's green
+    expect(label).toHaveClass("db-unanswered");
+    expect(label).not.toHaveClass("db-owned");
     expect(screen.queryByText("DB not connected")).not.toBeInTheDocument();
   });
 
