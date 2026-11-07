@@ -750,7 +750,11 @@ def setting_default(key: str) -> str | None:
 # chunked, take thousands of LLM calls), and a run makes at most max_llm_calls_per_run LLM calls, then stops calling
 MAX_READ_BYTES_SETTING = "max_read_bytes"
 LLM_CALL_BUDGET_SETTING = "max_llm_calls_per_run"
-LIMIT_DEFAULTS = {MAX_READ_BYTES_SETTING: 50_000_000, LLM_CALL_BUDGET_SETTING: 2000}
+# A type's code snippet keeps at most max_snippet_line_chars of each line: a one-line file (minified or generated code)
+# would otherwise store the whole file in every type it holds (thousands of types, gigabytes of snippets). Code lines
+# are far shorter (the longest line of any snippet in the development set is under 500 characters)
+MAX_SNIPPET_LINE_SETTING = "max_snippet_line_chars"
+LIMIT_DEFAULTS = {MAX_READ_BYTES_SETTING: 50_000_000, LLM_CALL_BUDGET_SETTING: 2000, MAX_SNIPPET_LINE_SETTING: 2000}
 
 
 def _parse_limit(key: str, raw: str) -> int:
@@ -801,6 +805,11 @@ def effective_samples(engine: Any, own: int) -> int:
 def get_max_read_bytes(engine: Any) -> int:
     """The largest file extraction reads (bytes): the max_read_bytes setting, or 50 MB."""
     return _get_limit(engine, MAX_READ_BYTES_SETTING)
+
+
+def get_max_snippet_line_chars(engine: Any) -> int:
+    """The characters a type's code snippet keeps of each line: the max_snippet_line_chars setting, or 2000."""
+    return _get_limit(engine, MAX_SNIPPET_LINE_SETTING)
 
 
 def get_llm_call_budget(engine: Any) -> int:
