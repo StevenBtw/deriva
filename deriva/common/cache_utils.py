@@ -134,14 +134,25 @@ _ENVIRONMENTS: dict[str, tuple[Any, int]] = {}
 _ENVIRONMENTS_LOCK = threading.Lock()
 
 
-def _open_environment(directory: Path, map_size: int) -> Any:
+def _open_environment(directory: Path, map_size: int, names: tuple[bytes, ...]) -> tuple[Any, list[Any]]:
+    """The folder's shared environment (opened by the first store) with the named databases, all under the lock:
+    lmdb wants mdb_dbi_open serialized on one environment, and cache_contents opens them under the same lock. A
+    database that cannot open releases this store's share before the error goes on, so a failed open holds no file."""
     key = os.path.normcase(str(directory.resolve()))
     with _ENVIRONMENTS_LOCK:
         env, users = _ENVIRONMENTS.get(key, (None, 0))
         if env is None:
             env = lmdb.open(str(directory), map_size=map_size, subdir=True, max_dbs=2)
         _ENVIRONMENTS[key] = (env, users + 1)
-        return env
+        try:
+            return env, [env.open_db(name) for name in names]
+        except lmdb.Error:
+            if users:
+                _ENVIRONMENTS[key] = (env, users)
+            else:
+                del _ENVIRONMENTS[key]
+                env.close()
+            raise
 
 
 def _close_environment(directory: Path) -> None:
@@ -216,13 +227,7 @@ class _LmdbStore:
         self._size_limit = size_limit
         # The map grows with the data up to map_size; twice the limit leaves room for one eviction pass
         # (the first store on a folder opens it; later ones share that environment)
-        self._env = _open_environment(self._dir, max(2 * size_limit, 64 * 1024 * 1024))
-        try:
-            self._entries = self._env.open_db(self._ENTRIES)
-            self._meta = self._env.open_db(self._META)
-        except lmdb.Error:
-            _close_environment(self._dir)  # this store's share of the environment, so a failed open holds no file
-            raise
+        self._env, (self._entries, self._meta) = _open_environment(self._dir, max(2 * size_limit, 64 * 1024 * 1024), (self._ENTRIES, self._META))
         self._closed = False
 
     def _read_state(self, txn) -> dict[str, int]:
