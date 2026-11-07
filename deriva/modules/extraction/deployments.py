@@ -722,11 +722,17 @@ def technology_layer(
 
     software: dict[str, Software] = {}
 
-    def add(alias: str, evidence: str, *, in_environment: bool = False, serves: tuple[str, ...] = (), fallback: bool = False, outside: str | None = None) -> None:
-        # serves: the deployed units among them; outside: a unit the environment does not run, served all the same
+    def add(
+        alias: str, evidence: str, *, in_environment: bool = False, serves: tuple[str, ...] = (), fallback: bool = False, outside: str | None = None, written: str = ""
+    ) -> None:
+        # serves: the deployed units among them; outside: a unit the environment does not run, served all the same;
+        # written: the image as the deployment writes it, before it is resolved to the image it is built on
         tech = match_technology(alias, catalog)
         if tech is None and not fallback:
             return
+        # The label of the image as written names what it runs; one labelled none still runs the image it is built on
+        if tech is None and image_labels and written and written != alias and image_labels.get(written):
+            alias = written
         if tech is None and image_labels is not None and alias in image_labels:
             # An image off the list runs the system its label names; labelled none, it is no software
             if not image_labels[alias]:
@@ -749,7 +755,7 @@ def technology_layer(
                     # An Aspire resource names its technology, not an image: software only when the list has it
                     add(service.image, f"resource {service.name}", in_environment=True, serves=users)
                 else:
-                    add(resolve_image(service.image, built, files), f"image of {service.name}", in_environment=True, serves=users, fallback=True)
+                    add(resolve_image(service.image, built, files), f"image of {service.name}", in_environment=True, serves=users, fallback=True, written=image_name(service.image))
     for unit, images in sorted(deployments.base_images.items()):
         for image in images:
             if unit in deployed:

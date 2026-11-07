@@ -328,14 +328,16 @@ def _item_image(item: TechnologyItem) -> str | None:
 
 def image_labels(labels: dict[str, dict[str, str]], collected: Collected) -> dict[str, str]:
     """Image -> the system its label names ("" for an image labelled none), for every labelled item that names a
-    container image; the first label in key order wins. The deployments read it to name the software an image runs."""
+    container image; the first label in key order wins. A label with a category but no system names nothing: the image
+    keeps its own name. The deployments read it to name the software an image runs."""
     out: dict[str, str] = {}
     for key in sorted(labels):
         item = collected.items.get(key)
         image = _item_image(item) if item else None
-        if image and image not in out:
-            label = labels[key]
-            out[image] = "" if label["category"] == "none" else label["system"].strip()
+        label = labels[key]
+        system = "" if label["category"] == "none" else label["system"].strip()
+        if image and image not in out and (system or label["category"] == "none"):
+            out[image] = system
     return out
 
 
