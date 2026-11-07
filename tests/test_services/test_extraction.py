@@ -1463,6 +1463,27 @@ class TestExtractEdges:
             assert "edges_created" in result
             mock_batch.assert_called_once()
 
+    def test_a_second_extraction_knows_only_the_declared_packages_as_a_first_one_does(self):
+        """An import the step could not resolve once leaves an undeclared dependency node; read back as a known package,
+        it would turn the repository's own imports external on the next run (a run on an existing graph)."""
+        from deriva.services.extraction import _extract_edges
+
+        mock_repo = MagicMock()
+        mock_repo.name = "shop"
+        dependencies = [
+            {"id": "extdep::shop::flask-sqlalchemy", "properties": {"dependencyName": "Flask-SQLAlchemy", "declared": True}},
+            {"id": "extdep::shop::shop", "properties": {"dependencyName": "shop", "declared": False}},
+        ]
+        graph_manager = MagicMock()
+        graph_manager.get_nodes_by_type.side_effect = lambda node_type, limit=None: dependencies if node_type == "ExternalDependency" else []
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch("deriva.modules.extraction.edges.extract_edges_batch") as mock_batch:
+            (Path(tmpdir) / "main.py").write_text("from shop.orders import x\n")
+            mock_batch.return_value = {"data": {"edges": []}, "stats": {}, "errors": []}
+            _extract_edges(mock_repo, Path(tmpdir), [{"path": "main.py", "file_type": "source", "subtype": "python"}], graph_manager)
+
+        assert mock_batch.call_args.kwargs["external_packages"] == {"flask_sqlalchemy"}
+
     def test_lookups_carry_repo_relative_paths_so_the_same_file_is_preferred(self):
         """The graph stores repo-prefixed paths; the files being parsed are repo-relative, so the lookups drop the prefix."""
         from deriva.services.extraction import _extract_edges
