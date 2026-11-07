@@ -264,6 +264,15 @@ class TestMain:
             assert main() == 1
         assert capsys.readouterr().err.strip() == "Error: The config database x is open in another Deriva process"
 
+    def test_main_names_a_busy_graph_database_in_one_line(self, capsys):
+        """Another process holds the repository's graph file: one line saying so, not a traceback."""
+        from deriva.services import GraphDatabaseBusy
+
+        with patch("deriva.cli.cli.app", side_effect=GraphDatabaseBusy("H:/w/graphs/repo-b.grafeo")):
+            assert main() == 1
+        err = capsys.readouterr().err.strip()
+        assert err.startswith("Error: The graph database H:/w/graphs/repo-b.grafeo is open in another Deriva process") and "\n" not in err
+
     def test_main_names_an_unknown_repository_in_one_line(self, capsys):
         from deriva.services import UnknownRepository
 

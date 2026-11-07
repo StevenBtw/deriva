@@ -118,3 +118,41 @@ def test_the_linux_lock_message_also_means_held(make_client):
 
     assert response.json()["db"]["state"] == "held"
     assert response.json()["db"]["held_by"] == 4242
+
+
+def test_a_config_database_held_by_a_cli_run_is_held_with_the_pid(make_client):
+    """Deriva's ConfigDatabaseBusy (DuckDB's lock error behind its own message) is a held database, matched by class."""
+    from deriva.services import ConfigDatabaseBusy
+
+    try:
+        raise OSError("IO Error: Cannot open file: being used by another process. File is already open in python.exe (PID 36740)")
+    except OSError as cause:
+        busy = ConfigDatabaseBusy("The config database x is open in another Deriva process (the studio or another deriva-cli run)")
+        busy.__cause__ = cause
+    client = make_client(FakeSession(connect_error=busy))
+
+    db = client.get("/api/status").json()["db"]
+
+    assert db["state"] == "held" and db["held_by"] == 36740
+
+
+def test_a_graph_held_by_another_process_is_held_and_the_half_open_session_is_closed():
+    from deriva.services import GraphDatabaseBusy
+    from deriva.studio.provider import DatabaseHeld, SessionProvider
+
+    let_go: list[str] = []
+
+    def factory() -> FakeSession:
+        session = FakeSession(connect_error=GraphDatabaseBusy("x.grafeo"))
+        session.disconnect = lambda: let_go.append("disconnect")  # type: ignore[method-assign]
+        return session
+
+    provider = SessionProvider(factory=factory)
+
+    with pytest.raises(DatabaseHeld) as raised, provider.session():
+        pass
+
+    assert raised.value.pid is None and "x.grafeo is open in another Deriva process" in str(raised.value)
+    assert provider.status()["state"] == "held"
+    # The session got as far as the config database before the graph refused it: it is let go, not kept open
+    assert let_go == ["disconnect"]

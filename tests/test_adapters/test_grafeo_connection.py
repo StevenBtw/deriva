@@ -539,3 +539,88 @@ def test_the_slow_query_threshold_is_read_once_per_connection(monkeypatch):
 def test_a_language_the_build_lacks_is_refused_per_query_too(conn):
     with patch("grafeo.features", return_value=["gql"]), pytest.raises(ValueError, match="no Cypher support"):
         conn.execute_rolled_back("MATCH (n) RETURN n", language="cypher")
+
+
+def _held_at(name: str):
+    """grafeo.GrafeoDB, except that the file ``name`` is held by another process (grafeo's GrafeoLockedError)."""
+    import grafeo
+
+    real = grafeo.GrafeoDB
+
+    def open_database(path=None, *args, **kwargs):
+        if path is not None and str(path).endswith(name):
+            raise grafeo.GrafeoLockedError(f"GRAFEO-S004: Database locked: the database at {path} is held by another process: close it there first")
+        return real(path, *args, **kwargs)
+
+    return open_database
+
+
+def test_a_graph_held_by_another_process_is_reported_as_busy(tmp_path, monkeypatch):
+    """grafeo's lock error, matched by its class, becomes Deriva's GraphDatabaseBusy naming the file."""
+    from deriva.adapters.grafeo import GraphDatabaseBusy
+    from deriva.adapters.grafeo.manager import get_database, use_database
+
+    monkeypatch.setenv("GRAFEO_DB_DIR", str(tmp_path))
+    monkeypatch.setenv("GRAFEO_DB_PATH", "")
+    close_database()
+    try:
+        with patch("grafeo.GrafeoDB", side_effect=_held_at("held.grafeo")):
+            use_database("held")
+            with pytest.raises(GraphDatabaseBusy, match=r"held\.grafeo is open in another Deriva process"):
+                get_database()
+    finally:
+        close_database()
+        use_database("default")
+
+
+def test_switching_to_a_held_graph_keeps_the_open_one(tmp_path, monkeypatch):
+    """A failed switch leaves the connections on the database they had, still usable, and says why."""
+    from deriva.adapters.grafeo import GraphDatabaseBusy
+    from deriva.adapters.grafeo.manager import use_database
+
+    monkeypatch.setenv("GRAFEO_DB_DIR", str(tmp_path))
+    monkeypatch.setenv("GRAFEO_DB_PATH", "")
+    close_database()
+    use_database("alpha")
+    c = GrafeoConnection(namespace="Graph")
+    c.connect()
+    try:
+        c.execute("INSERT (:Graph:File {id: 'f1'})")
+        with patch("grafeo.GrafeoDB", side_effect=_held_at("held.grafeo")), pytest.raises(GraphDatabaseBusy):
+            use_database("held")
+
+        assert c.execute("MATCH (n:Graph:File) RETURN n.id AS id") == [{"id": "f1"}]
+        use_database("alpha")  # already the active one: nothing to switch
+        assert c.execute("MATCH (n:Graph:File) RETURN n.id AS id") == [{"id": "f1"}]
+    finally:
+        c.disconnect()
+        close_database()
+        use_database("default")
+
+
+@pytest.mark.parametrize("manager", ["deriva.adapters.graph:GraphManager", "deriva.adapters.archimate:ArchimateManager"])
+def test_a_manager_on_a_held_graph_says_busy_and_can_connect_later(manager, tmp_path, monkeypatch):
+    """The managers pass GraphDatabaseBusy on (the CLI's one line, the studio's held state) and keep no half-made connection."""
+    import importlib
+
+    from deriva.adapters.grafeo import GraphDatabaseBusy
+    from deriva.adapters.grafeo.manager import use_database
+
+    module, name = manager.split(":")
+    cls = getattr(importlib.import_module(module), name)
+    monkeypatch.setenv("GRAFEO_DB_DIR", str(tmp_path))
+    monkeypatch.setenv("GRAFEO_DB_PATH", "")
+    close_database()
+    use_database("held")
+    m = cls()
+    try:
+        with patch("grafeo.GrafeoDB", side_effect=_held_at("held.grafeo")), pytest.raises(GraphDatabaseBusy):
+            m.connect()
+        assert m.db is None
+
+        m.connect()  # the other process let go
+        assert m.db is not None
+    finally:
+        m.disconnect()
+        close_database()
+        use_database("default")

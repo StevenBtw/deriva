@@ -78,6 +78,24 @@ class TestPipelineSessionLifecycle:
         assert use_database.call_args.args[0] == "darkgreen"
         assert session.repository == "darkgreen"
 
+    def test_a_switch_to_a_held_graph_keeps_the_repository(self):
+        """The graph database refused the switch (another process holds it): the session still reads its own."""
+        from deriva.services import GraphDatabaseBusy
+
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.use_database"),
+        ):
+            session = PipelineSession(repository="repo-a")
+            session.connect()
+            with patch("deriva.services.session.use_database", side_effect=GraphDatabaseBusy("repo-b.grafeo")), pytest.raises(GraphDatabaseBusy):
+                session.use_repository("repo-b")
+
+        assert session.repository == "repo-a"
+
     def test_a_cancelled_run_makes_no_further_llm_call(self):
         from deriva.services.session import RunCancelled
 
