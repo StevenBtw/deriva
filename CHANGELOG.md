@@ -123,6 +123,7 @@ Hardening release: Deriva is safe to run on untrusted repositories, the bugs fou
 - **Coverage names each file type**: the coverage table on the Repositories page and in `deriva-cli coverage` lists each extension's file types with their files ("test 236, source 220"), and its "Code read by" column (`parser`, `llm` or `none`) stays empty for documentation and assets instead of saying `none`. An extension with source files that no step reads says `none`.
 - **An open page notices a stopped studio**: while the studio does not answer, the page says so and asks again less and less often (up to once a minute), instead of every 10 seconds without end. An expired launch token stops the polling and shows the launch-link page.
 - **One warning per missing model**: a model that cannot be loaded is reported once per reason, not again inside a run.
+- **A held database is reported as held**: when a CLI run or another process holds the config database or a repository's graph file, the studio shows the held state (with the PID for the config database) and answers 503, and a switch to a held repository keeps the current one. `deriva-cli` prints one line instead of a traceback.
 
 ### Dependencies
 
