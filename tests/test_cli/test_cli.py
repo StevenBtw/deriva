@@ -3324,3 +3324,34 @@ class TestCommandSummaries:
         split = [" ".join(path) for path, command in walk(typer.main.get_command(app), []) if "\n" in (command.help or "").strip().split("\n\n")[0]]
 
         assert split == []
+
+
+class TestSavedQueriesAreRefused:
+    """A derivation config whose queries write or read files is refused at the CLI with one clear line, no traceback."""
+
+    REASON = "Node: input_graph_query: Queries here are read-only: this one writes or loads (LOAD)"
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_update_refuses_a_candidate_query_that_loads_a_file(self, mock_session_class):
+        from deriva.services import QueryRefused
+
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+        with patch("deriva.cli.commands.config.config.create_derivation_config_version", side_effect=QueryRefused(self.REASON)):
+            result = runner.invoke(app, ["config", "update", "derivation", "Node", "-q", "LOAD CSV FROM 'file:///x' AS r RETURN r"])
+
+        assert result.exit_code == 1
+        assert f"Error: {self.REASON}" in result.output and "Traceback" not in result.output
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_add_refuses_a_step_whose_params_hold_such_a_query(self, mock_session_class):
+        from deriva.services import QueryRefused
+
+        mock_session = MagicMock()
+        mock_session.add_derivation_step.side_effect = QueryRefused("Linked: params.graph_links[0].query: Only grafeo's read-only procedures can be called")
+        mock_session_class.return_value.__enter__.return_value = mock_session
+        params = '{"graph_links": [{"query": "CALL grafeo.load_nodes_csv({path: \'x\'}) YIELD rows RETURN rows"}]}'
+
+        result = runner.invoke(app, ["config", "add", "derivation", "Linked", "--phase", "relationship", "--sequence", "1", "--params", params])
+
+        assert result.exit_code == 1
+        assert "Error: Linked: params.graph_links[0].query" in result.output and "Traceback" not in result.output

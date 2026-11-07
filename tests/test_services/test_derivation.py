@@ -3553,3 +3553,41 @@ class TestRefineMessage:
 
     def test_a_step_that_found_nothing(self):
         assert derivation._refine_message(RefineResult(success=True, step_name="x")) == "Refine: nothing to change"
+
+
+class TestSavedQueriesAtRunTime:
+    """A saved query the read-only check refuses fails its own step, before the graph runs it; the others carry on."""
+
+    @staticmethod
+    def generate_cfg(name: str, query: str) -> MagicMock:
+        cfg = MagicMock()
+        cfg.step_name, cfg.element_type, cfg.input_graph_query, cfg.input_model_query = name, "ApplicationComponent", query, None
+        cfg.instruction, cfg.example, cfg.max_candidates, cfg.batch_size = "Generate", "{}", 10, 5
+        cfg.temperature = cfg.max_tokens = cfg.params = None
+        return cfg
+
+    @pytest.mark.parametrize("runner", ["run_derivation", "run_derivation_iter"])
+    def test_a_refused_candidate_query_fails_its_step_and_the_next_step_runs(self, runner):
+        refused = self.generate_cfg("LoadingStep", "LOAD CSV FROM 'file:///x' AS row RETURN row")
+        fine = self.generate_cfg("ReadingStep", "MATCH (n:Graph:File) RETURN n")
+        done = {"success": True, "elements_created": 1, "relationships_created": 0, "created_elements": [{"id": "e1"}], "errors": []}
+        graph_manager = MagicMock()
+
+        with patch.object(derivation.config, "get_derivation_configs") as mock_get:
+            mock_get.side_effect = lambda engine, enabled_only, phase: [refused, fine] if phase == "generate" else []
+            with patch.object(derivation, "generate_element", return_value=done) as generate:
+                if runner == "run_derivation":
+                    result = derivation.run_derivation(
+                        engine=MagicMock(), graph_manager=graph_manager, archimate_manager=MagicMock(), llm_query_fn=MagicMock(), phases=["generate"]
+                    )
+                    errors, skipped = result["errors"], result["stats"]["steps_skipped"]
+                else:
+                    updates = list(derivation.run_derivation_iter(engine=MagicMock(), graph_manager=graph_manager, archimate_manager=MagicMock(), phases=["generate"]))
+                    errors = [u.message for u in updates if u.status == "error"]
+                    skipped = None
+
+        assert [c.kwargs["query"] for c in generate.call_args_list] == ["MATCH (n:Graph:File) RETURN n"]
+        assert any("LoadingStep" in e and "input_graph_query" in e and "read-only" in e for e in errors), errors
+        if skipped is not None:
+            assert skipped == 1
+        assert not any("LOAD CSV" in str(c) for c in graph_manager.query.call_args_list)

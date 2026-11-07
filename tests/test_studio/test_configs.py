@@ -158,3 +158,23 @@ def test_a_version_that_cannot_be_restored_says_why(make_client):
 
     assert (response.status_code, response.json()["detail"]) == (400, "Version 9 of Node is the active one")
     assert client.post("/api/configs/unknown/Node/versions/1/restore").status_code == 404
+
+
+def test_a_save_or_restore_whose_query_is_refused_is_400_with_the_reason(make_client):
+    """The config service refuses a saved query that writes or reads files; the studio passes the reason on."""
+    from deriva.services import QueryRefused
+
+    def refuse(name, **kwargs):
+        raise QueryRefused("Node: input_graph_query: Queries here are read-only: this one writes or loads (LOAD)")
+
+    session = FakeSession(
+        save_derivation_config=refuse,
+        restore_config_version={"success": False, "error": "Node: input_graph_query: Queries here are read-only: this one writes or loads (LOAD)"},
+    )
+    client = make_client(session)
+
+    saved = client.put("/api/configs/derivation/Node", json={"input_graph_query": "LOAD CSV FROM 'file:///x' AS r RETURN r"})
+    restored = client.post("/api/configs/derivation/Node/versions/1/restore")
+
+    assert saved.status_code == 400 and saved.json()["detail"].startswith("Node: input_graph_query: Queries here are read-only")
+    assert restored.status_code == 400 and "input_graph_query" in restored.json()["detail"]
