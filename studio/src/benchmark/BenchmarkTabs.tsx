@@ -7,7 +7,7 @@ const HEADLINE: [string, string][] = [
 ];
 
 export function pct(row?: ConsistencyRow): string {
-  if (!row || row.union === 0) return "n/a";
+  if (!row || row.score === null) return "n/a";
   return (row.score * 100).toFixed(1);
 }
 
@@ -109,7 +109,7 @@ export function StepsHeatmap({ steps }: { steps: Record<string, StepStability[]>
               <td className="hm-step">{step}</td>
               {repos.map((repo) => {
                 const s = cell(repo, step);
-                return s ? (
+                return s && s.score !== null ? (
                   <td key={repo} className={band(s.score)} title={`${s.identical} of ${s.prompts} prompts answered identically`}>
                     {(s.score * 100).toFixed(1)} ({s.identical}/{s.prompts})
                   </td>

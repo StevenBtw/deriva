@@ -255,7 +255,8 @@ export type BenchmarkRequest = {
   no_cache_extraction: boolean;
   description?: string;
 };
-export type ConsistencyRow = { key: string; common: number; union: number; score: number };
+/** score: null when nothing was produced in any run (nothing to compare, shown as n/a) */
+export type ConsistencyRow = { key: string; common: number; union: number; score: number | null };
 export type BenchmarkGroup = {
   repository: string;
   model: string;
@@ -263,7 +264,8 @@ export type BenchmarkGroup = {
   counts: { label: string; elements: number; relationships: number }[];
   rows: ConsistencyRow[];
 };
-export type StepStability = { step: string; prompts: number; identical: number; score: number };
+/** score: null when no prompt was asked in every run */
+export type StepStability = { step: string; prompts: number; identical: number; score: number | null };
 export type Flip = {
   type: string;
   source: string;
