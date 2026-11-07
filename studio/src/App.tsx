@@ -1,17 +1,43 @@
-import { useEffect, useState } from "react";
-import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
+import { lazy, Suspense, useEffect, useState } from "react";
+import {
+  BrowserRouter,
+  Link,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 
 import { ApiError, status as fetchStatus, modelConfigs } from "./api/client";
 import type { DbStatus } from "./api/types";
-import { ConfigPage } from "./pages/ConfigPage";
-import { General } from "./pages/General";
-import { IntermediateOntologyPage, OutputOntologyPage } from "./pages/Ontology";
-import { Repositories } from "./pages/Repositories";
-import { Storage } from "./pages/Storage";
+import { Loading, LoadBoundary } from "./components/LazyLoad";
 import { Banner } from "./shell/Banner";
 import { Menu } from "./shell/Menu";
 import { type Mode, TopBar } from "./shell/TopBar";
-import { Workspace } from "./workspace/Workspace";
+
+// Each page is a chunk of its own, loaded when its address is first opened
+const ConfigPage = lazy(() =>
+  import("./pages/ConfigPage").then((m) => ({ default: m.ConfigPage })),
+);
+const General = lazy(() =>
+  import("./pages/General").then((m) => ({ default: m.General })),
+);
+const IntermediateOntologyPage = lazy(() =>
+  import("./pages/Ontology").then((m) => ({
+    default: m.IntermediateOntologyPage,
+  })),
+);
+const OutputOntologyPage = lazy(() =>
+  import("./pages/Ontology").then((m) => ({ default: m.OutputOntologyPage })),
+);
+const Repositories = lazy(() =>
+  import("./pages/Repositories").then((m) => ({ default: m.Repositories })),
+);
+const Storage = lazy(() =>
+  import("./pages/Storage").then((m) => ({ default: m.Storage })),
+);
+const Workspace = lazy(() =>
+  import("./workspace/Workspace").then((m) => ({ default: m.Workspace })),
+);
 
 type ShellStatus = {
   db: DbStatus;
@@ -114,6 +140,7 @@ export function Shell() {
   const [chosenMode, setMode] = useState<Mode>("run");
   const { db, version, benchmark, noModel, environment, locked } =
     useShellStatus();
+  const { pathname } = useLocation();
   // Without benchmarking installed there is only Run mode
   const mode = benchmark ? chosenMode : "run";
   if (locked) return <Locked />;
@@ -132,33 +159,46 @@ export function Shell() {
       <div className="body">
         <Menu />
         <main className="content">
-          <Routes>
-            <Route path="/" element={<Workspace mode={mode} />} />
-            <Route path="/repositories" element={<Repositories />} />
-            <Route
-              path="/general"
-              element={<General benchmark={benchmark} />}
-            />
-            <Route path="/storage" element={<Storage />} />
-            <Route
-              path="/ontology/intermediate"
-              element={<IntermediateOntologyPage />}
-            />
-            <Route
-              path="/config/extraction"
-              element={
-                <ConfigPage stepType="extraction" title="Extraction config" />
-              }
-            />
-            <Route path="/ontology/output" element={<OutputOntologyPage />} />
-            <Route
-              path="/config/derivation"
-              element={
-                <ConfigPage stepType="derivation" title="Derivation config" />
-              }
-            />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <LoadBoundary resetKey={pathname}>
+            <Suspense fallback={<Loading />}>
+              <Routes>
+                <Route path="/" element={<Workspace mode={mode} />} />
+                <Route path="/repositories" element={<Repositories />} />
+                <Route
+                  path="/general"
+                  element={<General benchmark={benchmark} />}
+                />
+                <Route path="/storage" element={<Storage />} />
+                <Route
+                  path="/ontology/intermediate"
+                  element={<IntermediateOntologyPage />}
+                />
+                <Route
+                  path="/config/extraction"
+                  element={
+                    <ConfigPage
+                      stepType="extraction"
+                      title="Extraction config"
+                    />
+                  }
+                />
+                <Route
+                  path="/ontology/output"
+                  element={<OutputOntologyPage />}
+                />
+                <Route
+                  path="/config/derivation"
+                  element={
+                    <ConfigPage
+                      stepType="derivation"
+                      title="Derivation config"
+                    />
+                  }
+                />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </LoadBoundary>
         </main>
       </div>
     </div>
