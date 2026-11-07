@@ -1284,7 +1284,7 @@ def _resolve_script_package(module: str, current_file: str, all_file_paths: set[
     current = PurePosixPath(current_file)
     below = [a for a in aliases if not a[0] or current.is_relative_to(a[0])]
     for _, prefix, target in sorted(below, key=lambda a: (-len(PurePosixPath(a[0]).parts) if a[0] else 0, -len(a[1]))):
-        if module.startswith(prefix):
+        if module.startswith(prefix) if prefix.endswith("/") else module == prefix:
             found = _script_file(target + module[len(prefix) :], all_file_paths)
             return {"type": "internal", "target_path": found} if found else {"type": "unknown", "reason": "alias_not_found"}
     if target_path := _resolve_absolute_import(module, all_file_paths):
@@ -1310,7 +1310,7 @@ _FIND_ALIAS = re.compile(r"""find\s*:\s*['"](?P<qkey>[^'"]+)['"]\s*,\s*replaceme
 
 
 def _alias_target(folder: str, path: str) -> str:
-    """A folder an alias leads to, from its config's folder, as a prefix ending in "/"."""
+    """A folder an alias leads to, from its config's folder, as a prefix ending in "/" ("" for the repository root)."""
     joined = PurePosixPath(folder, path.lstrip("/")) if folder else PurePosixPath(path.lstrip("/"))
     parts: list[str] = []
     for part in joined.parts:
@@ -1318,14 +1318,16 @@ def _alias_target(folder: str, path: str) -> str:
             parts = parts[:-1]
         elif part not in (".", ""):
             parts.append(part)
-    return "/".join(parts) + "/"
+    return "/".join(parts) + "/" if parts else ""
 
 
 def script_aliases(configs: dict[str, str]) -> tuple[tuple[str, str, str], ...]:
     """(config folder, import prefix, target folder) per script import alias the configs declare: a tsconfig or
     jsconfig ``compilerOptions.paths`` entry ``"@/*": ["src/*"]`` (from ``baseUrl``; comments and trailing commas
     allowed), and a bundler alias after ``alias`` (``'@': path.resolve(__dirname, './src')`` or ``{find: '@',
-    replacement: ...}``). An alias applies to the files below its config's folder."""
+    replacement: ...}``). An alias applies to the files below its config's folder. An exact ``paths`` entry
+    (``"jquery": ["vendor/jquery/dist/jquery"]``) has no trailing "/" on its prefix and target: it matches only that
+    specifier and leads to the path itself."""
     found: set[tuple[str, str, str]] = set()
     for path, text in configs.items():
         folder = str(PurePosixPath(path).parent)
@@ -1339,8 +1341,13 @@ def script_aliases(configs: dict[str, str]) -> tuple[tuple[str, str, str], ...]:
                 continue
             base = str(options.get("baseUrl") or ".")
             for key, targets in (options.get("paths") or {}).items():
-                if isinstance(key, str) and key.endswith("/*") and isinstance(targets, list) and targets and str(targets[0]).endswith("/*"):
-                    found.add((folder, key[:-1], _alias_target(folder, f"{base}/{str(targets[0])[:-2]}")))
+                if not (isinstance(key, str) and key and isinstance(targets, list) and targets and isinstance(targets[0], str)):
+                    continue
+                target = targets[0]
+                if key.endswith("/*") and (target == "*" or target.endswith("/*")) and "*" not in target[:-1]:
+                    found.add((folder, key[:-1], _alias_target(folder, f"{base}/{target[:-1]}")))
+                elif "*" not in key and "*" not in target and (exact := _alias_target(folder, f"{base}/{target}").rstrip("/")):
+                    found.add((folder, key, exact))
             continue
         at = text.find("alias")
         if at < 0:
