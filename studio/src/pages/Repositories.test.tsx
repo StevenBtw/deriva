@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,8 +20,8 @@ const DATA = {
   database_bytes: 2_831_155,
   last_runs: { extraction: RUN("r1", "all", "finished", 1_792_300_000), derivation: RUN("r2", "derivation", "cancelled", 1_792_310_000) },
 };
-const ROW = (extension: string, files: number, reader: "parser" | "llm" | null, with_symbols: number) => ({ extension, files, in_graph: files, file_type: "source", subtype: "", reader, with_symbols, unreadable: 0 });
-const COMPLETE = { files: 166, in_graph: 166, extensions: [ROW(".py", 87, "parser", 76)], missing: [], unreadable: [], nodes: {}, complete: true, reasons: [], notes: ["12 source files are read by no extraction step: .sh (10), .css (1), .html (1)"] };
+const ROW = (extension: string, files: number, reader: "parser" | "llm" | null, with_symbols: number, file_type = "source") => ({ extension, files, in_graph: files, file_type, subtype: "", reader, with_symbols, unreadable: 0 });
+const COMPLETE = { files: 166, in_graph: 166, extensions: [ROW(".py", 87, "parser", 76), ROW(".md", 24, null, 0, "docs"), ROW(".sh", 10, null, 0)], missing: [], unreadable: [], nodes: {}, complete: true, reasons: [], notes: ["12 source files are read by no extraction step: .sh (10), .css (1), .html (1)"] };
 const INCOMPLETE = {
   ...COMPLETE,
   files: 4,
@@ -169,6 +169,12 @@ describe("Repositories", () => {
     expect(await screen.findByText("Complete: 166 of 166 files in the graph")).toBeInTheDocument();
     expect(screen.getByText("12 source files are read by no extraction step: .sh (10), .css (1), .html (1)")).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: ".py" })).toBeInTheDocument();
+    // Documentation is no code: its row names its file type and leaves the parser empty; only unread source says none
+    const docs = screen.getByRole("cell", { name: ".md" }).closest("tr")!;
+    expect(within(docs).getByRole("cell", { name: "docs" })).toBeInTheDocument();
+    expect(within(docs).queryByText("none")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("cell", { name: ".sh" }).closest("tr")!).getByText("none")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Parsed by" })).toBeInTheDocument();
     expect(repositories.coverage).toHaveBeenCalledWith("deriva");
   });
 
