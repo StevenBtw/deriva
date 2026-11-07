@@ -51,6 +51,7 @@ describe("TracePanel", () => {
     expect(screen.getByText("evidence (3 items)")).toBeInTheDocument();
     expect(readme.closest("details")).not.toHaveAttribute("open");
     await userEvent.click(readme);
-    expect(readme.closest("details")).toHaveTextContent("Order Service keeps the orders and their state, from the first draft to the last change.");
+    // The unfolded value itself (not the summary beside it), one item per line: toHaveTextContent would join lines
+    expect(readme.closest("details")!.querySelector(":scope > div")!.textContent).toBe(README.join("\n"));
   });
 });

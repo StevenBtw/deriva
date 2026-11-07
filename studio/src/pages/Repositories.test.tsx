@@ -174,7 +174,7 @@ describe("Repositories", () => {
     expect(within(docs).getByRole("cell", { name: "docs" })).toBeInTheDocument();
     expect(within(docs).queryByText("none")).not.toBeInTheDocument();
     expect(within(screen.getByRole("cell", { name: ".sh" }).closest("tr")!).getByText("none")).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Parsed by" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Code read by" })).toBeInTheDocument();
     // Tests outnumber the sources: every type is named, and the unread source still says none
     const mixed = screen.getByRole("cell", { name: ".ts" }).closest("tr")!;
     expect(within(mixed).getByRole("cell", { name: "test 3, source 2" })).toBeInTheDocument();

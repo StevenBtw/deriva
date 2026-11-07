@@ -467,7 +467,7 @@ class TestCoverageCommand:
 
     @patch("deriva.cli.cli.PipelineSession")
     def test_coverage_names_each_extension_s_file_types_and_a_parser_only_for_code(self, mock_session_class):
-        """As in the studio: "Parsed by" names the type and method steps' reader; an extension with source files and no
+        """As in the studio: "Code read by" names the type and method steps' reader (parser or llm); an extension with source files and no
         reader says none, even when its tests outnumber them; documentation has no parser to name. The last column
         names every file type with its files when there are several."""
 
@@ -477,7 +477,7 @@ class TestCoverageCommand:
             counts = {"files": files, "in_graph": files, "with_symbols": 0, "unreadable": 0}
             return {"extension": extension, **counts, "file_type": types[0][0], "file_types": file_types, "subtype": "", "reader": reader}
 
-        rows = [row(".java", [("source", 3)], "parser"), row(".md", [("docs", 2)]), row(".py", [("test", 3), ("source", 2)])]
+        rows = [row(".java", [("source", 3)], "parser"), row(".cbl", [("source", 2)], "llm"), row(".md", [("docs", 2)]), row(".py", [("test", 3), ("source", 2)])]
         mock_session = MagicMock()
         mock_session.extraction_coverage.return_value = {**self.REPORT, "extensions": rows}
         mock_session_class.return_value.__enter__.return_value = mock_session
@@ -485,7 +485,8 @@ class TestCoverageCommand:
         result = runner.invoke(app, ["coverage", "--repo", "x"])
 
         lines = {line.split()[0]: line.split() for line in result.stdout.splitlines() if line.strip().startswith((".", "Extension"))}
-        assert lines["Extension"] == ["Extension", "Files", "In", "graph", "Parsed", "by", "Symbols", "Unreadable", "File", "type"]
+        assert lines["Extension"] == ["Extension", "Files", "In", "graph", "Code", "read", "by", "Symbols", "Unreadable", "File", "type"]
+        assert lines[".cbl"] == [".cbl", "2", "2", "llm", "0", "0", "source"]
         assert lines[".java"] == [".java", "3", "3", "parser", "0", "0", "source"]
         assert lines[".md"] == [".md", "2", "2", "0", "0", "docs"]
         assert lines[".py"] == [".py", "5", "5", "none", "0", "0", "test", "3,", "source", "2"]
