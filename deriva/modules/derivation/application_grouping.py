@@ -21,7 +21,9 @@ from deriva.common.json_utils import extract_json_from_response
 from deriva.common.naming import name_key
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
-_DASH = re.compile(r"\s+[-–—]\s+")
+# A match starts only at the first space of a run and takes the run whole: a long run of spaces (a one-line file) costs
+# linear time, where a plain \s+ would be tried again from every space in it
+_DASH = re.compile(r"(?<!\s)\s++[-–—]\s+")
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 

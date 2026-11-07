@@ -352,7 +352,8 @@ def _web_entries(unit: Unit, paths: set[str], nested: list[str], rules: UnitRule
     return sorted(entries)
 
 
-_SEPARATORS = re.compile(r"\s+[-–—|]\s+|:\s+")
+# A match starts only at the first space of a run and takes the run whole (linear on a long run of spaces)
+_SEPARATORS = re.compile(r"(?<!\s)\s++[-–—|]\s+|:\s+")
 
 
 def _plain(text: str) -> str:
