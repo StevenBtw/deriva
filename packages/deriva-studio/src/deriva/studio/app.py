@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from deriva.services import about
+from deriva.services import GraphDatabaseBusy, about
 from deriva.studio.guard import Guard
 from deriva.studio.provider import DatabaseHeld, SessionBusy, SessionProvider
 from deriva.studio.routers import configs, grafeo, graph, models, ontology, repositories, session, settings, status, storage, trace, widgets
@@ -59,6 +59,11 @@ def create_app(
     @app.exception_handler(DatabaseHeld)
     async def database_held(request: Request, exc: DatabaseHeld) -> JSONResponse:
         return JSONResponse(status_code=503, content={"detail": "The databases are held by another process", "held_by": exc.pid})
+
+    @app.exception_handler(GraphDatabaseBusy)
+    async def graph_database_busy(request: Request, exc: GraphDatabaseBusy) -> JSONResponse:
+        # A switch to a repository whose graph another process holds; the studio stays on the graph it had
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     @app.exception_handler(SessionBusy)
     async def session_busy(request: Request, exc: SessionBusy) -> JSONResponse:

@@ -38,7 +38,7 @@ from deriva.cli.commands.run import (
     _print_pipeline_result,
 )
 from deriva.cli.progress import create_progress_reporter
-from deriva.services import ConfigDatabaseBusy, UnknownRepository, about, derivation
+from deriva.services import ConfigDatabaseBusy, GraphDatabaseBusy, UnknownRepository, about, derivation
 from deriva.services.session import PipelineSession
 
 # Create main app
@@ -471,8 +471,8 @@ def main() -> int:
         return 0
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
-    except (ConfigDatabaseBusy, UnknownRepository) as e:
-        # The studio or another run holds the config database, or --repo names no repository: one line, no traceback
+    except (ConfigDatabaseBusy, GraphDatabaseBusy, UnknownRepository) as e:
+        # The studio or another run holds the config or graph database, or --repo names no repository: one line, no traceback
         typer.echo(f"Error: {e}", err=True)
         return 1
 
