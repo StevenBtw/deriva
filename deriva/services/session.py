@@ -165,18 +165,26 @@ class PipelineSession:
 
         # Database (get_connection uses DB_PATH from env); bring older schemas up to date
         self._engine = get_connection()
-        run_migrations(self._engine)
+        switched = False
+        try:
+            run_migrations(self._engine)
 
-        # Graph managers (grafeo embedded), in the session's repository database
-        use_database(self.repository)
-        self._graph_manager = GraphManager()
-        self._graph_manager.connect()
+            # Graph managers (grafeo embedded), in the session's repository database
+            use_database(self.repository)
+            switched = True
+            self._graph_manager = GraphManager()
+            self._graph_manager.connect()
 
-        self._archimate_manager = ArchimateManager()
-        self._archimate_manager.connect()
+            self._archimate_manager = ArchimateManager()
+            self._archimate_manager.connect()
 
-        # Repository manager
-        self._repo_manager = RepoManager(workspace_dir=self._workspace_dir)
+            # Repository manager
+            self._repo_manager = RepoManager(workspace_dir=self._workspace_dir)
+        except BaseException:
+            # A failed connect (a held graph file, a failed migration) keeps nothing open; a refused switch went back to
+            # the database other connections use, so the graph closes only when the switch succeeded
+            self._release(close_graph=switched)
+            raise
 
         self._connected = True
 
@@ -303,7 +311,10 @@ class PipelineSession:
         """Disconnect all managers."""
         if not self._connected:
             return
+        self._release(close_graph=True)
 
+    def _release(self, close_graph: bool) -> None:
+        """Disconnect the managers, close the config database connection and (``close_graph``) the shared grafeo database."""
         if self._graph_manager:
             self._graph_manager.disconnect()
             self._graph_manager = None
@@ -313,11 +324,17 @@ class PipelineSession:
             self._archimate_manager = None
 
         self._repo_manager = None
-        self._engine: Any | None = None
+        engine, self._engine = self._engine, None
         self._connected = False
+        if engine is not None:
+            try:
+                engine.close()
+            except Exception as exc:  # noqa: BLE001 - closing must not hide what ended the session
+                logger.debug("Closing the config database connection failed: %s", exc)
 
         # Release the shared grafeo database
-        close_database()
+        if close_graph:
+            close_database()
 
     def __enter__(self) -> PipelineSession:
         """Context manager entry."""

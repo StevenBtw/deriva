@@ -78,11 +78,7 @@ class SessionProvider:
                 match = _PID.search(text) or _PID.search(str(exc.__cause__ or ""))
                 self.held_by = int(match.group(1)) if match else None
                 self.error = text
-                # Release whatever the connect opened before the other database refused
-                try:
-                    candidate.disconnect()
-                except Exception:  # noqa: BLE001, S110 - the held error is the one to report
-                    pass
+                # The session's connect already closed what it opened before the other database refused
                 raise DatabaseHeld(text, self.held_by) from exc
             raise
         self.held_by = None
