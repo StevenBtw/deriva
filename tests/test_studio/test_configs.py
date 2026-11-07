@@ -122,6 +122,25 @@ def test_history_scan_and_dry_run_routes(make_client):
     assert session.called("dry_run_graph_query")[-1] == (("MATCH (n:Graph:Directory) RETURN n",), {})
 
 
+def test_a_dry_run_refuses_what_the_query_bar_refuses_before_the_session_runs_it(make_client):
+    """A draft candidate query is user-typed: a procedure that reads local files (written plainly or in backticks),
+    LOAD CSV, and a schema statement (which a rollback does not undo) get the query bar's 400, and nothing runs."""
+    session = FakeSession(dry_run_graph_query={"count": 0, "rows": []})
+    client = make_client(session)
+
+    for query, reason in (
+        ("CALL grafeo.load_nodes_csv({path: 'x', labels: ['L']}) YIELD rows RETURN rows", "read-only procedures"),
+        ("CALL `grafeo.load_edges_csv`({path: 'x'}) YIELD rows RETURN rows", "read-only procedures"),
+        ("LOAD CSV FROM 'file:///x' AS row RETURN row", "read-only"),
+        ("CREATE CONSTRAINT FOR (n:Graph) REQUIRE n.id IS UNIQUE", "read-only"),
+    ):
+        response = client.post("/api/configs/derivation/Node/dry-run", json={"query": query})
+        assert response.status_code == 400 and reason in response.json()["detail"], query
+    assert session.called("dry_run_graph_query") == []
+
+    assert client.post("/api/configs/derivation/Node/dry-run", json={"query": "MATCH (n:Graph:File) RETURN n"}).status_code == 200
+
+
 def test_an_earlier_version_is_restored_as_a_new_one(make_client):
     session = FakeSession(restore_config_version={"success": True, "old_version": 9, "new_version": 10, "restored": 7})
     client = make_client(session)

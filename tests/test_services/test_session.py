@@ -1307,6 +1307,26 @@ class TestPipelineSessionCypherQueries:
 
         connected_session._mock_archimate.query_read_only.assert_called_once_with("MATCH (e) RETURN e", None, None)
 
+    def test_a_user_typed_query_that_writes_or_reads_files_is_refused_before_the_database(self, connected_session):
+        """The read-only path refuses what a rollback cannot make safe (schema statements, LOAD CSV, file-reading
+        procedures) for every caller, the studio's routes and anything else, before a manager is asked."""
+        from deriva.services import QueryRefused
+
+        refused = (
+            "CREATE CONSTRAINT FOR (n:Graph) REQUIRE n.id IS UNIQUE",
+            "LOAD CSV FROM 'file:///x' AS r RETURN r",
+            "CALL grafeo.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows",
+        )
+        for query in refused:
+            with pytest.raises(QueryRefused):
+                connected_session.query_graph_read_only(query)
+            with pytest.raises(QueryRefused):
+                connected_session.query_model_read_only(query)
+            with pytest.raises(QueryRefused):
+                connected_session.dry_run_graph_query(query)
+        connected_session._mock_graph.query_read_only.assert_not_called()
+        connected_session._mock_archimate.query_read_only.assert_not_called()
+
     def test_query_graph_raises_when_not_connected(self):
         """Should raise RuntimeError when not connected."""
         session = PipelineSession()
