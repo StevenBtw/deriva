@@ -562,6 +562,12 @@ REDUNDANT_SUFFIXES = [
 # =============================================================================
 
 
+def dependency_node_id(repo_name: str, name: str) -> str:
+    """The graph id of an external dependency: one rule for a manifest's name and for the package an import resolves to,
+    so both are one node (case, and "-", ".", "/" and spaces, do not tell names apart)."""
+    return f"extdep::{repo_name}::{re.sub(r'[-./\s]', '_', name.lower())}"
+
+
 def normalize_package_name(name: str) -> str:
     """
     Normalize a package/dependency name to its canonical form.
@@ -618,8 +624,7 @@ def normalize_node(node: dict[str, Any], node_type: str, repo_name: str | None =
 
     # Update node_id if name changed and we have repo_name
     if node_type == "ExternalDependency" and "dependencyName" in props and repo_name:
-        name_slug = props["dependencyName"].lower().replace("-", "_").replace(" ", "_").replace("/", "_")
-        node_copy["node_id"] = f"extdep::{repo_name}::{name_slug}"
+        node_copy["node_id"] = dependency_node_id(repo_name, props["dependencyName"])
 
     return node_copy
 

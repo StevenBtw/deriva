@@ -25,6 +25,7 @@ from .base import (
     create_empty_llm_details,
     current_timestamp,
     deduplicate_nodes,
+    dependency_node_id,
     generate_edge_id,
     prompt_texts,
     strip_chunk_suffix,
@@ -343,6 +344,8 @@ def get_extraction_method(file_path: str, subtype: str | None) -> str:
         return "pyproject_toml"
     if filename == "package.json":
         return "package_json"
+    if filename == "go.mod":
+        return "go_mod"
 
     # Tree-sitter extraction for supported languages
     treesitter_languages = {"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms"}
@@ -537,6 +540,48 @@ def _extract_from_package_json(
             edges.append(edge)
 
     return _build_result(nodes, edges, errors, "deterministic")
+
+
+_GO_REQUIRE = re.compile(r"^\s*(?:require\s+)?([^\s()]+)\s+(v[^\s]+)(?:\s*//\s*(indirect))?")
+
+
+def _extract_from_go_mod(file_path: str, file_content: str, repo_name: str) -> dict[str, Any]:
+    """Extract the required modules from go.mod deterministically: ``require path version`` and the lines of a
+    ``require ( ... )`` block, an ``// indirect`` one flagged; module, go, replace and exclude lines are none."""
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    original_path = strip_chunk_suffix(file_path)
+    file_node_id = f"file::{repo_name}::{original_path.replace('/', '_').replace(chr(92), '_')}"
+    seen: set[str] = set()
+    in_block = False
+    for line in file_content.splitlines():
+        stripped = line.strip()
+        if in_block:
+            if stripped.startswith(")"):
+                in_block = False
+                continue
+        elif re.match(r"require\s*\(", stripped):
+            in_block = True
+            continue
+        elif not stripped.startswith("require "):
+            continue
+        found = _GO_REQUIRE.match(stripped)
+        if found is None or found.group(1).lower() in seen:
+            continue
+        seen.add(found.group(1).lower())
+        node, edge = _build_dependency_node_and_edge(
+            name=found.group(1),
+            version=found.group(2),
+            ecosystem="go",
+            origin_source=file_path,
+            repo_name=repo_name,
+            file_node_id=file_node_id,
+            extraction_method="deterministic",
+            extra={"indirect": found.group(3) is not None},
+        )
+        nodes.append(node)
+        edges.append(edge)
+    return _build_result(nodes, edges, [], "deterministic")
 
 
 # =============================================================================
@@ -828,10 +873,7 @@ def build_external_dependency_node(dep_data: dict[str, Any], origin_source: str,
     if category not in valid_categories:
         category = "library"
 
-    # Generate unique node ID using :: separator to avoid repo name conflicts
-    dep_name_slug = dep_data["dependencyName"].lower()
-    dep_name_slug = dep_name_slug.replace(" ", "_").replace("-", "_").replace("/", "_")
-    node_id = f"extdep::{repo_name}::{dep_name_slug}"
+    node_id = dependency_node_id(repo_name, dep_data["dependencyName"])
 
     node_data = {
         "node_id": node_id,
@@ -866,11 +908,10 @@ def _build_dependency_node_and_edge(
     repo_name: str,
     file_node_id: str,
     extraction_method: str,
+    extra: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Build a dependency node and its USES edge."""
-    # Generate unique node ID using :: separator to avoid repo name conflicts
-    dep_name_slug = name.lower().replace("-", "_").replace(" ", "_").replace("/", "_")
-    node_id = f"extdep::{repo_name}::{dep_name_slug}"
+    """Build a dependency node and its USES edge (``extra``: further properties, such as a Go module's indirect flag)."""
+    node_id = dependency_node_id(repo_name, name)
 
     node = {
         "node_id": node_id,
@@ -887,6 +928,7 @@ def _build_dependency_node_and_edge(
             "extraction_method": extraction_method,
             "declared": True,  # From manifest file
             "used": False,  # Will be updated by Imports step if imported
+            **(extra or {}),
         },
     }
 
@@ -958,6 +1000,8 @@ def extract_external_dependencies(
         return _extract_from_pyproject_toml(file_path, file_content, repo_name)
     elif method == "package_json":
         return _extract_from_package_json(file_path, file_content, repo_name)
+    elif method == "go_mod":
+        return _extract_from_go_mod(file_path, file_content, repo_name)
     elif method == "treesitter":
         if (subtype or "").lower() in MEMBER_LANGUAGES:
             # An include names a member of the repository or of the platform, never a package

@@ -47,6 +47,7 @@ from deriva.common.file_utils import describe_os_error
 
 from .base import (
     current_timestamp,
+    dependency_node_id,
     generate_edge_id,
     generate_file_node_id,
     generate_method_node_id,
@@ -863,8 +864,9 @@ def _extract_import_edges(
 
         elif resolved["type"] == "external" and EdgeType.USES in edge_types:
             package_name = resolved["package"]
-            package_slug = package_name.lower().replace("-", "_").replace(".", "_")
-            target_id = f"extdep::{repo_name}::{package_slug}"
+            # The manifests' id rule: a declared package and an imported one are one node
+            target_id = dependency_node_id(repo_name, package_name)
+            package_slug = target_id
 
             edge = {
                 "edge_id": generate_edge_id(source_file_id, target_id, "USES"),
