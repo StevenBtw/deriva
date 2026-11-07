@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import Counter
 
+import pytest
+
 from tests.test_studio.conftest import FakeSession
 from tests.test_studio.test_grafeo_compat import EDGE, NODE
 
@@ -86,6 +88,41 @@ def test_a_procedure_that_is_not_read_only_is_refused(make_client):
 
     for query in ("CALL grafeo.pagerank() YIELD node_id, score RETURN node_id", "MATCH (n) CALL { MATCH (m) RETURN m } RETURN n"):
         assert client.post("/grafeo/query", json={"query": query, "language": "cypher"}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "-- don't\nCALL grafeo.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows",  # a GQL comment's quote opens no string
+        "-- don't\nLOAD CSV FROM 'file:///x' AS r RETURN r",
+        "CALL grafeo.`load_nodes_csv`({path: 'x'}) YIELD rows RETURN rows",
+        "CALL/**/grafeo.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows",
+        "CALL grafeo/**/.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows",
+        "MATCH (n) CALL { CALL grafeo.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows } RETURN n",
+    ],
+)
+def test_no_comment_or_quote_hides_a_file_reading_call(make_client, query):
+    """A query is read as Cypher and as GQL (whose -- starts a comment): a finding in either reading refuses it."""
+    session = FakeSession(query_graph_read_only=[])
+    for language in ("cypher", "gql"):
+        assert make_client(session).post("/grafeo/query", json={"query": query, "language": language}).status_code == 400
+    assert session.called("query_graph_read_only") == []
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "MATCH (call:Graph) RETURN call",
+        "MATCH (n:Call) RETURN n",
+        "MATCH (n) RETURN n.call AS c",
+        "MATCH (a)--(b) RETURN a, b",
+        "MATCH (n) WHERE n.name = 'CALL grafeo.load_nodes_csv' RETURN n",
+        "MATCH (n) WHERE n.name CONTAINS 'Load Balancing' RETURN n",
+    ],
+)
+def test_the_word_call_outside_a_call_clause_is_no_procedure(make_client, query):
+    """A variable, label or property named call, and text inside a string, are no CALL clause."""
+    assert make_client(FakeSession(query_graph_read_only=[])).post("/grafeo/query", json={"query": query, "language": "cypher"}).status_code == 200
 
 
 def test_unknown_database_and_language(make_client):

@@ -14,6 +14,10 @@ vi.mock("./pages/ConfigPage", () => ({
     <h2>{stepType} config page</h2>
   ),
 }));
+// A page whose chunk cannot be fetched (a stopped studio, a newer build)
+vi.mock("./pages/Storage", () => {
+  throw new Error("Failed to fetch dynamically imported module");
+});
 vi.mock("./api/client", async () => {
   const actual =
     await vi.importActual<typeof import("./api/client")>("./api/client");
@@ -53,6 +57,40 @@ describe("Shell routes", () => {
     expect(
       await screen.findByRole("heading", { name: heading }),
     ).toBeInTheDocument();
+  });
+
+  it("loads a page on demand: its fallback first, then the page", async () => {
+    // A page loads once per studio: a fresh copy of the shell has loaded none yet
+    vi.resetModules();
+    const { Shell: FreshShell } = await import("./App");
+    render(
+      <MemoryRouter initialEntries={["/repositories"]}>
+        <FreshShell />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Repositories page" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Repositories page" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+  });
+
+  it("shows an error, not a blank page, when a page cannot be loaded", async () => {
+    // React reports the caught error on the console; the test needs only the page
+    const report = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      at("/storage");
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "This page could not be loaded",
+      );
+    } finally {
+      report.mockRestore();
+    }
   });
 
   it("answers an unknown address with a page that leads back to the workspace", async () => {
