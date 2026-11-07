@@ -564,8 +564,9 @@ REDUNDANT_SUFFIXES = [
 
 def dependency_node_id(repo_name: str, name: str) -> str:
     """The graph id of an external dependency: one rule for a manifest's name and for the package an import resolves to,
-    so both are one node (case, and "-", ".", "/" and spaces, do not tell names apart)."""
-    return f"extdep::{repo_name}::{re.sub(r'[-./\s]', '_', name.lower())}"
+    so both are one node. The id comes from the canonical name (``normalize_package_name``: torch is PyTorch), which a
+    manifest's node is stored under; case, and "-", ".", "/" and spaces, do not tell names apart."""
+    return f"extdep::{repo_name}::{re.sub(r'[-./\s]', '_', normalize_package_name(name).lower())}"
 
 
 def normalize_package_name(name: str) -> str:

@@ -1036,8 +1036,13 @@ def _resolve_import(
             return {"type": "internal", "target_path": target_path}
         return {"type": "unknown", "reason": "relative_not_found"}
 
-    # Check if it's a known external package
-    top_level = module.split(".")[0]
+    # Check if it's a known external package: the full module and then its shorter prefixes, longest first, so a dotted
+    # distribution (zope.interface) is matched as declared before its top-level name alone
+    parts = module.split(".")
+    for size in range(len(parts), 1, -1):
+        if (declared := ".".join(parts[:size])) in external_packages:
+            return {"type": "external", "package": declared}
+    top_level = parts[0]
     if top_level in external_packages:
         return {"type": "external", "package": top_level}
 
