@@ -749,12 +749,13 @@ class TestJavaAndScriptImports:
 
         edges, nodes, _ = self._edges(imports, "src/main.ts", files, aliases=aliases)
 
-        assert self._targets(edges) == {
-            ("IMPORTS", "file::r::vendor_jquery_dist_jquery.js"),
-            ("IMPORTS", "file::r::lib_util.ts"),
-            ("USES", "extdep::r::jquery_ui"),
-            ("USES", "extdep::r::jquery"),
-        }
+        # Each import with its own edge: a swap of the two aliases' targets would fail here
+        assert sorted((e["properties"]["module"], e["relationship_type"], e["to_node_id"]) for e in edges) == [
+            ("@/lib/util", "IMPORTS", "file::r::lib_util.ts"),
+            ("jquery", "IMPORTS", "file::r::vendor_jquery_dist_jquery.js"),
+            ("jquery-ui", "USES", "extdep::r::jquery_ui"),
+            ("jquery/plugin", "USES", "extdep::r::jquery"),
+        ]
         assert sorted(n["properties"]["dependencyName"] for n in nodes) == ["jquery", "jquery-ui"]
 
     @staticmethod
