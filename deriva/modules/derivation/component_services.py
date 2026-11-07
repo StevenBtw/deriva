@@ -499,14 +499,32 @@ def _name_words(text: str) -> list[str]:
     return re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", text)
 
 
-def _with_stem(stem: str, name: str, taken: set[str]) -> str:
-    """The stem in front of a name, a word the stem ends in and the name starts with written once ("Ledger Order" and
-    "Order Management": "Ledger Order Management"); the plain stem in front when the merged name is taken, and the
-    first free number after it when that is taken too (two components with the same stem)."""
+def _own_words(stem_words: list[str], repository: str) -> list[str]:
+    """A stem's own words: those after the leading words that spell tokens of the repository's name, one after another
+    ("Card Demo" spells carddemo of aws-mainframe-modernization-carddemo), which are the product's. A stem that is only
+    the product keeps all its words."""
+    tokens = {t for t in re.split(r"[^a-z0-9]+", repository.casefold()) if t}
+    cut, joined = 0, ""
+    for i, word in enumerate(stem_words[:-1]):
+        joined += re.sub(r"[^a-z0-9]", "", word.casefold())
+        if joined in tokens:
+            cut, joined = i + 1, ""
+        elif not any(t.startswith(joined) for t in tokens):
+            break
+    return stem_words[cut:]
+
+
+def _with_stem(stem: str, name: str, taken: set[str], repository: str = "") -> str:
+    """The stem in front of a name, each word of the name's object that the stem's own words already hold written once
+    ("Ledger Order" and "Order Management": "Ledger Order Management"; "Ftgo Order History" of ftgo-application: "Ftgo
+    Order History Management"); the product's words at the stem's front (``_own_words``) do not count, and the name's
+    last word (its verb) always stays. The plain stem in front when the merged name is taken, and the first free number
+    after it when that is taken too (two components with the same stem)."""
     stem_words, words = stem.split(), name.split()
-    shared = max((n for n in range(1, min(len(stem_words), len(words)) + 1) if [w.casefold() for w in stem_words[-n:]] == [w.casefold() for w in words[:n]]), default=0)
-    merged = " ".join([*stem_words, *words[shared:]])
-    if shared and name_key(merged) not in taken:
+    held = {w.casefold() for w in _own_words(stem_words, repository)}
+    kept = [w for w in words[:-1] if w.casefold() not in held] + words[-1:]
+    merged = " ".join([*stem_words, *kept])
+    if len(kept) < len(words) and name_key(merged) not in taken:
         return merged
     plain = f"{stem} {name}"
     number = 2
@@ -893,7 +911,10 @@ def derive_unit_services(
         for item in services:
             stem = clean_member_name(components[item["properties"]["sources"][0]]["name"], config.kind_words, ()) or ""
             if repeats[name_key(item["name"])] > 1 and stem and not name_key(item["name"]).startswith(name_key(stem)):
-                item["name"] = _with_stem(stem, item["name"], {name_key(s["name"]) for s in services if s is not item})
+                # The component's source (unit::<repository>::<path>) names its repository
+                source = str(item["properties"]["sources"][0])
+                repository = source.split("::")[1] if source.count("::") >= 2 else ""
+                item["name"] = _with_stem(stem, item["name"], {name_key(s["name"]) for s in services if s is not item}, repository)
 
     # Business functions: a business domain that services of cooperating components access
     undirected = {frozenset(pair) for pair in lines if len(set(pair)) == 2}
