@@ -197,6 +197,47 @@ class TestMarkdownFileTypeMigration:
         assert conn.execute("SELECT file_type, subtype FROM file_type_registry WHERE extension = '.markdown'").fetchall() == [("exclude", "generated")]
 
 
+class TestScriptFileTypesMigration:
+    """A database from before 0.9.0 gets the other JavaScript and TypeScript extensions once, as the seed lists them."""
+
+    EXTENSIONS = {".cjs": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cts": "typescript", ".mts": "typescript", ".tsx": "typescript"}
+
+    def test_an_existing_database_gets_them_once_as_in_the_seed(self):
+        import json
+
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        TestMarkdownFileTypeMigration._registry(conn)
+
+        run_migrations(conn)
+        run_migrations(conn)
+
+        seed = {r["extension"]: r for r in json.loads((SCRIPTS_DIR.parent / "data" / "file_types.json").read_text(encoding="utf-8"))}
+        rows = conn.execute(
+            "SELECT extension, file_type, subtype, chunk_delimiter FROM file_type_registry WHERE extension IN ('.cjs', '.jsx', '.mjs', '.cts', '.mts', '.tsx')"
+        ).fetchall()
+        assert sorted(rows) == sorted((ext, "source", subtype, "\nfunction ") for ext, subtype in self.EXTENSIONS.items())
+        assert all((seed[ext]["file_type"], seed[ext]["subtype"], seed[ext]["chunk_delimiter"]) == ("source", subtype, "\nfunction ") for ext, subtype in self.EXTENSIONS.items())
+
+    def test_one_deleted_after_the_migration_stays_deleted(self):
+        import duckdb
+
+        from deriva.adapters.database.manager import run_migrations
+
+        conn = duckdb.connect(":memory:")
+        TestMarkdownFileTypeMigration._registry(conn)
+        run_migrations(conn)
+        conn.execute("DELETE FROM file_type_registry WHERE extension = '.jsx'")
+
+        run_migrations(conn)
+
+        assert _scalar(conn, "SELECT COUNT(*) FROM file_type_registry WHERE extension = '.jsx'") == 0
+        assert _scalar(conn, "SELECT COUNT(*) FROM file_type_registry WHERE extension = '.tsx'") == 1
+
+
 class TestProtoFileTypeMigration:
     """A database from before 0.9.0 gets the .proto file type (an interface schema) once; one that has it keeps its row."""
 
