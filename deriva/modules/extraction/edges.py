@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+from collections import defaultdict
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -464,10 +465,12 @@ def extract_edges_from_file(
     csharp_namespaces: dict[str, list[str]] | None = None,
     import_roots: tuple[str, ...] = (),
     go_modules: dict[str, str] | None = None,
+    go_files: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """
     Extract edges from a single source file using a single AST parse (``go_modules``: module path -> the folder its
-    go.mod covers, so a Go import of an own package reaches that package's files).
+    go.mod covers, so a Go import of an own package reaches that package's files; ``go_files``: folder -> its Go
+    files, built from all_file_paths when missing).
 
     Args:
         file_path: Relative path to the file within the repo
@@ -524,7 +527,7 @@ def extract_edges_from_file(
             java_files = _java_file_index(all_file_paths)
         csharp_imports = _csharp_imports(imports, file_path, file_content, csharp_namespaces) if csharp_namespaces and file_path.endswith(".cs") else {}
         if go_modules and file_path.endswith(".go"):
-            csharp_imports = _go_imports(imports, go_modules, all_file_paths)
+            csharp_imports = _go_imports(imports, go_modules, go_files if go_files is not None else _go_file_index(all_file_paths))
 
         # Build lookups once (shared across edge types)
         type_lookup = {t.name: t for t in types}
@@ -682,6 +685,8 @@ def extract_edges_batch(
             if found := re.search(r"^\s*module\s+(\S+)", text, re.MULTILINE):
                 go_modules[found.group(1).strip('"')] = str(PurePosixPath(f["path"]).parent)
 
+    go_files = _go_file_index(all_file_paths) if go_modules else {}
+
     # Filter to only source files that Tree-sitter can parse
     source_files = [f for f in files if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES]
 
@@ -728,6 +733,7 @@ def extract_edges_batch(
             import_roots=tuple(roots),
             csharp_namespaces=csharp_namespaces,
             go_modules=go_modules,
+            go_files=go_files,
         )
 
         all_edges.extend(result["data"]["edges"])
@@ -1037,7 +1043,16 @@ def _resolve_import(
     return {"type": "external", "package": top_level}
 
 
-def _go_imports(imports: list[ExtractedImport], go_modules: dict[str, str], all_file_paths: set[str]) -> dict[str, list[str]]:
+def _go_file_index(all_file_paths: set[str]) -> dict[str, list[str]]:
+    """Folder -> its Go files without the test files, sorted: the files of the package in that folder."""
+    index: dict[str, list[str]] = defaultdict(list)
+    for path in sorted(all_file_paths):
+        if path.endswith(".go") and not path.endswith("_test.go"):
+            index[str(PurePosixPath(path).parent)].append(path)
+    return dict(index)
+
+
+def _go_imports(imports: list[ExtractedImport], go_modules: dict[str, str], go_files: dict[str, list[str]]) -> dict[str, list[str]]:
     """Import path -> the files of the own package it names (the longest module path it starts with, then the folder
     under that module's go.mod; test files left out). A path of an own module whose folder holds no file stays an own
     import with no file: it is no external package."""
@@ -1047,16 +1062,18 @@ def _go_imports(imports: list[ExtractedImport], go_modules: dict[str, str], all_
         if module is None:
             continue
         folder = str(PurePosixPath(go_modules[module], imp.module[len(module) :].lstrip("/")))
-        out[imp.module] = sorted(p for p in all_file_paths if str(PurePosixPath(p).parent) == folder and p.endswith(".go") and not p.endswith("_test.go"))
+        out[imp.module] = list(go_files.get(folder, []))
     return out
 
 
 def _resolve_go_import(module: str, external_packages: set[str]) -> dict[str, Any]:
     """A Go import that is no own package: the standard library when its first element has no dot (net/http), else the
-    external module that holds it, the longest declared module path it starts with or the whole path."""
+    external module that holds it, the longest declared module path it starts with or the whole path. The declared
+    paths are normalized as every known package is (lower case, "-" as "_"), so the import is compared the same way."""
     if "." not in module.split("/")[0]:
         return {"type": "stdlib", "module": module}
-    declared = max((p for p in external_packages if module == p or module.startswith(p + "/")), key=len, default=None)
+    normalized = module.lower().replace("-", "_")
+    declared = max((p for p in external_packages if normalized == p or normalized.startswith(p + "/")), key=len, default=None)
     return {"type": "external", "package": declared or module}
 
 
