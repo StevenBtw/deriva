@@ -40,17 +40,10 @@ def test_unknown_settings_are_refused_before_anything_loads(tmp_path):
 
 
 @pytest.fixture
-def spacy_models():
-    """The models directory holding the pinned spaCy pipelines, read only; without them the test is skipped instead of
-    downloading them (a test that depends on the network hides the next real failure)."""
-    from deriva.adapters.nlp.models import ensure_spacy
-
-    models_dir = NlpTool().models_dir
-    try:
-        ensure_spacy(models_dir, download=False)
-    except FileNotFoundError as missing:
-        pytest.skip(f"needs the pinned spaCy pipelines: {missing}")
-    return models_dir
+def spacy_models(pipelines, nlp_models_dir):
+    """The models directory holding the pinned spaCy pipelines, through the shared ``pipelines`` fixture (which downloads
+    them on a first run): the test runs in a fresh clone and in CI whatever the order, never skipped."""
+    return nlp_models_dir
 
 
 def test_extract_runs_in_process_with_the_given_settings(spacy_models, monkeypatch):
