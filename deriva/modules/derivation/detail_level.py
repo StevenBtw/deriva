@@ -51,6 +51,7 @@ def _member_names(members: list[dict[str, Any]], files: dict[str, str]) -> dict[
     with an underscore (a partial or layout) is no endpoint and has none. Other members, and a file member named as
     written (the services it registers), keep their names."""
     names: dict[str, str] = {}
+    as_written = {str(m.get("source") or "") for m in members if m.get("as_written")}
     for m in members:
         node, name = str(m.get("source") or ""), str(m.get("name") or m.get("source") or "")
         path = files.get(node)
@@ -64,7 +65,9 @@ def _member_names(members: list[dict[str, Any]], files: dict[str, str]) -> dict[
     depth: dict[str, int] = {}
     while True:
         repeats = Counter(name_key(n) for n in names.values())
-        grow = [n for n, name in names.items() if n in files and repeats[name_key(name)] > 1 and depth.get(n, 0) < len(PurePosixPath(files[n]).parent.parts)]
+        grow = [
+            n for n, name in names.items() if n in files and n not in as_written and repeats[name_key(name)] > 1 and depth.get(n, 0) < len(PurePosixPath(files[n]).parent.parts)
+        ]
         if not grow:
             return names
         for node in grow:
