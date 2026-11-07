@@ -42,14 +42,51 @@ def test_the_overview_measures_every_area_and_flags_graphs_without_a_repository(
         {"key": "gone", "bytes": 24, "kind": "orphaned", "active": False},
         {"key": "default", "bytes": 5, "kind": "shared", "active": False},
     ]
-    assert found["llm_cache"] == {"bytes": 150, "files": 2}
+    assert found["llm_cache"] == {"bytes": 150, "files": 2, "entries": None}
     assert found["exports"] == {"bytes": 20, "files": 2}
     assert found["benchmark_sessions"] == {"bytes": 14, "sessions": 2}
 
 
 def test_clearing_the_llm_cache_empties_it_and_says_how_much_went(home):
-    assert storage.clear_llm_cache() == {"bytes": 150, "files": 2}
-    assert storage.overview(repositories=set(), active="default")["llm_cache"] == {"bytes": 0, "files": 0}
+    assert storage.clear_llm_cache() == {"bytes": 150, "files": 2, "entries": None}
+    assert storage.overview(repositories=set(), active="default")["llm_cache"] == {"bytes": 0, "files": 0, "entries": None}
+
+
+def test_an_lmdb_cache_is_measured_by_what_it_holds_not_by_its_map_file(tmp_path, monkeypatch):
+    """lmdb's data.mdb is as large as its map (sparse on disk): the overview counts the cached answers and their bytes."""
+    from deriva.common.cache_utils import BaseDiskCache
+
+    monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+    monkeypatch.delenv("LLM_CACHE_DIR", raising=False)
+    folder = storage.llm_cache_folder()
+    cache = BaseDiskCache(folder)
+    for n in range(3):
+        cache.set(f"key{n}", {"content": "x" * 100})
+    cache.close()
+    map_file = (folder / "data.mdb").stat().st_size
+
+    found = storage.overview(repositories=set(), active="default")["llm_cache"]
+
+    assert found["entries"] == 3 and found["files"] == 2
+    assert 300 < found["bytes"] < 2000 < map_file
+    assert storage.clear_llm_cache() == found
+    assert storage.overview(repositories=set(), active="default")["llm_cache"] == {"bytes": 0, "files": 0, "entries": None}
+
+
+def test_a_map_file_lmdb_cannot_read_is_measured_by_its_files_and_left_as_it_was(tmp_path, monkeypatch):
+    """A data.mdb that is no lmdb map (damaged, another format) does not break the overview: the files are measured,
+    the answers are unknown, and the failed open leaves the file's bytes alone."""
+    monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+    monkeypatch.delenv("LLM_CACHE_DIR", raising=False)
+    folder = storage.llm_cache_folder()
+    folder.mkdir(parents=True)
+    junk = b"not an lmdb map" * 3
+    (folder / "data.mdb").write_bytes(junk)
+
+    found = storage.overview(repositories=set(), active="default")["llm_cache"]
+
+    assert found == {"bytes": len(junk), "files": 1, "entries": None}
+    assert (folder / "data.mdb").read_bytes() == junk
 
 
 def test_deleting_exports_removes_the_exchange_files_only(home):
