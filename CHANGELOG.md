@@ -29,6 +29,7 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 
 ### Fixes
 
+- **A second extraction gives the same graph**: the import step knows only the declared (manifest) packages as external, as a first run does. Before, a dependency an earlier run had only found by an unresolved import counted as a known package, so a repeated `run extraction` or `run all` on an existing graph turned the repository's own imports into external ones (on Deriva's own repository 114 import edges were lost). Benchmarks clear the graph first and were not affected
 - **Running without a model**: `run all` with no LLM model configured runs as `--no-llm` does (the structural extraction steps and the prep phase of derivation) instead of failing in the LLM steps; the summary heading reads "PIPELINE FAILED" when the run failed, and the message for a missing model names what to set instead of a provider the user never chose (the older single-provider settings no longer default to one)
 - **The LLM cache keeps providers apart**: the cache key holds the provider and its base URL, so one model id served by two providers (OpenAI and Azure, Ollama and LM Studio) never shares answers. Existing cache entries are not reused: the first run after the upgrade calls the LLM again
 - **Answer stability with `--bench-hash`**: per-model answer stability in `benchmark analyze` and in the two-level tables keys a prompt by everything the call sent except its benchmark run, so a session run with `--bench-hash` no longer reports 0 of 0 prompts; sessions without it give the same numbers as before
@@ -104,6 +105,8 @@ Some changes in this release can change derived models compared with 0.8.10; eac
 
 ### Development
 
+- **Unambiguous event-log relationship ids**: an edge or relationship in the run log is `Type|source|target`. Element ids hold underscores, so the old `Type_source_target` could give two pairs one id, and the benchmark's structural stability read the wrong ends from it (the type prefix of the source as its id); logs from earlier versions still give their types, and their structural stability is n/a
+- **One convention for empty sets in the consistency measures**: where there is nothing to compare (fewer than two runs, or nothing in any run), every measure (benchmark analyze, the session metrics, the step benchmark, the studio's run consistency, the OCEL scores) reports n/a and leaves it out of every average. Before, some counted it as 100% and some as 0%, so an element type that no run derives could raise or lower a session's consistency
 - **The gate shows naming apart**: `benchmark gate` reports element recall and precision from the element names alone next to its measures (an element found through its source counts whatever it is named), and a table per element type with the reference elements, those found, those found by name and those derived; the verdict is unchanged
 - **The gate's consistency budget**: `benchmark gate` requires consistency by id of 90% for elements and 80% for relationships, each on its own, instead of 95% for both
 - **ty checks the whole repository**: CI and the pre-commit hook run `ty check .`, tests included
