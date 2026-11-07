@@ -730,6 +730,15 @@ class TestExtractFromGoMod:
     def test_go_mod_is_parsed_deterministically(self):
         assert get_extraction_method("svc/go.mod", "golang") == "go_mod"
 
+    def test_a_comment_is_no_dependency_and_a_tab_separates_require(self):
+        """A // comment line in a require block is no dependency, also when it holds a word that looks like a version;
+        require may be followed by a tab."""
+        text = "module m\n\nrequire\tgithub.com/tabbed/one v1.0.0\n\nrequire (\n\t// v2 pinned until the next release\n\tgithub.com/a/b v1.2.0\n)\n"
+
+        result = extract_external_dependencies("go.mod", text, "r", subtype="golang")
+
+        assert sorted(n["properties"]["dependencyName"] for n in result["data"]["nodes"]) == ["github.com/a/b", "github.com/tabbed/one"]
+
 
 def test_a_declared_and_an_imported_dependency_have_one_node_id():
     """One id rule for every ecosystem: a manifest's name and the package an import resolves to give one node, also for
@@ -740,3 +749,15 @@ def test_a_declared_and_an_imported_dependency_have_one_node_id():
         node, _ = _build_dependency_node_and_edge(manifest, None, "x", "m", "r", "file::r::m", "deterministic")
         assert node["node_id"] == dependency_node_id("r", imported)
     assert dependency_node_id("r", "github.com/gin-gonic/gin") == "extdep::r::github_com_gin_gonic_gin"
+
+
+def test_a_package_under_another_name_has_the_id_of_its_canonical_name():
+    """A manifest's dependency is stored under its canonical name (torch is PyTorch, postgres PostgreSQL): the id comes
+    from that name for the manifest's node and for the package an import names, so both are one node."""
+    from deriva.modules.extraction.base import dependency_node_id, normalize_nodes
+
+    for written in ("torch", "postgres", "cv2"):
+        node, _ = _build_dependency_node_and_edge(written, None, "x", "m", "r", "file::r::m", "deterministic")
+        (normalized,) = normalize_nodes([node], "ExternalDependency", "r")
+        assert normalized["node_id"] == node["node_id"] == dependency_node_id("r", written)
+    assert dependency_node_id("r", "torch") == dependency_node_id("r", "PyTorch") == "extdep::r::pytorch"

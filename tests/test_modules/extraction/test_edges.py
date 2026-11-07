@@ -195,6 +195,15 @@ class TestResolveImport:
         assert result["type"] == "external"
         assert result["package"] == "flask"
 
+    def test_a_dotted_distribution_is_matched_whole_before_its_top_level_name(self):
+        """zope.interface is declared as itself: the import is matched against the declared packages by its full module
+        and then by its shorter prefixes, longest first, before the top-level name alone."""
+        for module in ("zope.interface", "zope.interface.declarations"):
+            result = _resolve_import(module=module, current_file="src/main.py", all_file_paths={"src/main.py"}, external_packages={"zope.interface", "flask"})
+            assert (result["type"], result["package"]) == ("external", "zope.interface")
+        other = _resolve_import(module="zope.schema", current_file="src/main.py", all_file_paths={"src/main.py"}, external_packages={"zope.interface"})
+        assert (other["type"], other["package"]) == ("external", "zope")  # an undeclared one keeps its top-level name
+
     def test_resolves_stdlib_import(self):
         """Should identify stdlib imports."""
         all_files = {"src/main.py"}

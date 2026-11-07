@@ -748,10 +748,12 @@ class TestCreateNodeFromData:
     def test_a_go_module_keeps_its_indirect_flag_and_other_dependencies_have_none(self):
         """A go.mod requirement marked // indirect is stored with the flag; a dependency without it stores no flag."""
         indirect = _create_node_from_data("ExternalDependency", {"properties": {"dependencyName": "github.com/a/b", "indirect": True}}, "r")
+        direct = _create_node_from_data("ExternalDependency", {"properties": {"dependencyName": "github.com/a/c", "indirect": False}}, "r")
         plain = _create_node_from_data("ExternalDependency", {"properties": {"dependencyName": "axios"}}, "r")
 
-        assert indirect is not None and plain is not None
+        assert indirect is not None and direct is not None and plain is not None
         assert indirect.to_dict()["indirect"] is True
+        assert direct.to_dict()["indirect"] is False  # a direct requirement says so, it is no missing flag
         assert "indirect" not in plain.to_dict()
 
     def test_handles_missing_properties(self):
