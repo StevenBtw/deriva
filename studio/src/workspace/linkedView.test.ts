@@ -87,13 +87,13 @@ describe("lane notes", () => {
     { source: "20", target: "model", label: "IN_MODEL", cross: true },
   ];
 
-  it("counts a sampled intermediate graph against its totals, and the elements in the model", () => {
+  it("counts the sampled graph, its repositories included, against its totals, and the elements in the model", () => {
     const sampled: LinkedView = { lanes, nodes, edges, missing_links: 0, totals: { nodes: { Repository: 1, File: 2754, Method: 2 }, edges: { CONTAINS: 4922 } } };
-    expect(linkedNote(sampled)).toBe("1 repository · 2 of 2,756 graph nodes · 1 of 4,922 edges · 2 elements, 1 in the model");
+    expect(linkedNote(sampled)).toBe("1 repository · 3 of 2,757 graph nodes · 1 of 4,922 edges · 2 elements, 1 in the model");
   });
 
   it("counts a graph shown whole without totals", () => {
-    expect(linkedNote({ lanes, nodes: nodes.slice(0, 4), edges: [], missing_links: 0 })).toBe("1 repository · 2 graph nodes · 1 element");
+    expect(linkedNote({ lanes, nodes: nodes.slice(0, 4), edges: [], missing_links: 0 })).toBe("1 repository · 3 graph nodes · 1 element");
   });
 
   it("says how much of a total is shown", () => {

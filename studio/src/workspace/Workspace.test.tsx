@@ -513,7 +513,7 @@ describe("Workspace", () => {
     render(<Workspace />);
 
     expect(await screen.findByText("Repository to model")).toBeInTheDocument();
-    expect(screen.getByText("1 repository · 2 graph nodes · 1 element")).toBeInTheDocument();
+    expect(screen.getByText("1 repository · 3 graph nodes · 1 element")).toBeInTheDocument();
   });
 
   it("ends the linked view with the model, whose glyph opens the model panel", async () => {
