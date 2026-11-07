@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["READ_PROCEDURES", "QueryRefused", "check_read_only", "is_write_query", "read_only_refusal", "refused_procedure"]
+__all__ = ["READ_PROCEDURES", "WRITE_CLAUSES", "QueryRefused", "check_read_only", "is_write_query", "read_only_refusal", "refused_procedure"]
 
 # String literals, backticked names and comments: words there are no clauses (scanned left to right, so a // inside a
 # string stays part of the string). The two languages differ in comments: GQL also starts one with --, which in Cypher is
@@ -21,7 +21,9 @@ _SKIPPED_CYPHER = re.compile(_STRING + r"|`[^`]*`|//[^\n]*|/\*.*?\*/", re.DOTALL
 _SKIPPED_GQL = re.compile(_STRING + r"|`[^`]*`|//[^\n]*|--[^\n]*|/\*.*?\*/", re.DOTALL)
 # A backticked name stays visible as this mark, so a procedure named in backticks cannot pass as no name
 _HIDDEN = "\x00"
-_WRITE = re.compile(r"\b(ALTER|CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|INSERT|LOAD)\b", re.IGNORECASE)
+# The clauses that write, change the schema or load files: the check and its refusal message both come from this list
+WRITE_CLAUSES = ("ALTER", "CREATE", "MERGE", "SET", "DELETE", "DETACH", "REMOVE", "DROP", "INSERT", "LOAD")
+_WRITE = re.compile(rf"\b({'|'.join(WRITE_CLAUSES)})\b", re.IGNORECASE)
 # The procedures a user-typed query may call: grafeo's read-only ones (graph algorithms, catalog lists, searches), as
 # grafeo.procedures() lists them. Any other is refused, so a procedure added later stays out until it is listed here:
 # grafeo.load_nodes_csv and grafeo.load_edges_csv read local files, and a rolled-back query still returns what they read.
@@ -111,7 +113,7 @@ def read_only_refusal(query: str) -> str | None:
     """Why a user-typed query is refused (a write or schema clause, LOAD, a procedure off ``READ_PROCEDURES``), or None
     when it may run."""
     if is_write_query(query):
-        return "Queries here are read-only: this one writes or loads (CREATE, MERGE, SET, DELETE, DETACH, REMOVE, DROP, INSERT or LOAD)"
+        return f"Queries here are read-only: this one writes or loads ({', '.join(WRITE_CLAUSES[:-1])} or {WRITE_CLAUSES[-1]})"
     if (procedure := refused_procedure(query)) is not None:
         return f"Only grafeo's read-only procedures can be called (graph algorithms, catalog lists, searches), not {procedure}"
     return None
