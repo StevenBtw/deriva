@@ -326,7 +326,7 @@ uv run deriva-cli config setting show excluded_directories
 uv run deriva-cli config setting set excluded_directories '[".git", "node_modules", "third_party"]'
 ```
 
-**Limits for untrusted repositories:** extraction does not read a file larger than `max_read_bytes` (default 50 MB; it is reported, and the run goes on), and a run makes at most `max_llm_calls_per_run` LLM calls (default 2000; a call's own retries after a provider error are not counted, so failing providers can see up to `LLM_MAX_RETRIES` more requests per call), after which every further call of that run fails with a message naming the setting. Raise them for a very large repository.
+**Limits for untrusted repositories:** extraction does not read a file larger than `max_read_bytes` (default 50 MB; it is reported, and the run goes on), and a run makes at most `max_llm_calls_per_run` LLM calls (default 2000; a call's own retries after a provider error are not counted, so failing providers can see up to `LLM_MAX_RETRIES` more requests per call), after which every further call of that run fails with a message naming the setting. A type's code snippet keeps at most `max_snippet_line_chars` characters of each line (default 2000), so a minified or generated one-line file cannot fill the disk. Raise them for a very large repository.
 
 ```bash
 uv run deriva-cli config setting set max_llm_calls_per_run 5000
