@@ -173,6 +173,100 @@ class TestPipelineSessionLifecycle:
             mock_graph.return_value.disconnect.assert_called_once()
             mock_archimate.return_value.disconnect.assert_called_once()
 
+    def test_disconnect_closes_the_config_database_connection(self):
+        with (
+            patch("deriva.services.session.get_connection") as mock_db,
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+            session.disconnect()
+
+        mock_db.return_value.close.assert_called_once()
+        assert session._engine is None
+
+    def test_a_connect_refused_by_a_held_graph_closes_what_it_opened(self):
+        """The graph file is held (GraphDatabaseBusy at the graph manager): the config connection and the graph close again."""
+        from deriva.services import GraphDatabaseBusy
+
+        with (
+            patch("deriva.services.session.get_connection") as mock_db,
+            patch("deriva.services.session.GraphManager") as mock_graph,
+            patch("deriva.services.session.ArchimateManager") as mock_archimate,
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.close_database") as close_database,
+        ):
+            mock_graph.return_value.connect.side_effect = GraphDatabaseBusy("repo-b.grafeo")
+            session = PipelineSession(repository="repo-b")
+            with pytest.raises(GraphDatabaseBusy):
+                session.connect()
+
+        mock_db.return_value.close.assert_called_once()
+        close_database.assert_called_once()
+        mock_archimate.assert_not_called()
+        assert not session.is_connected() and session._engine is None and session._graph_manager is None
+
+    def test_a_connect_refused_at_the_switch_closes_the_engine_and_leaves_the_graph(self):
+        """use_database refused (it went back to the database other connections use): that database stays open."""
+        from deriva.services import GraphDatabaseBusy
+
+        with (
+            patch("deriva.services.session.get_connection") as mock_db,
+            patch("deriva.services.session.GraphManager") as mock_graph,
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.use_database", side_effect=GraphDatabaseBusy("repo-b.grafeo")),
+            patch("deriva.services.session.close_database") as close_database,
+        ):
+            session = PipelineSession(repository="repo-b")
+            with pytest.raises(GraphDatabaseBusy):
+                session.connect()
+
+        mock_db.return_value.close.assert_called_once()
+        close_database.assert_not_called()
+        mock_graph.assert_not_called()
+        assert not session.is_connected() and session._engine is None
+
+    def test_a_failed_migration_closes_the_engine(self):
+        with (
+            patch("deriva.services.session.get_connection") as mock_db,
+            patch("deriva.services.session.run_migrations", side_effect=RuntimeError("migration failed")),
+            patch("deriva.services.session.GraphManager") as mock_graph,
+        ):
+            session = PipelineSession()
+            with pytest.raises(RuntimeError, match="migration failed"):
+                session.connect()
+
+        mock_db.return_value.close.assert_called_once()
+        mock_graph.assert_not_called()
+        assert session._engine is None
+
+    def test_after_a_refused_connect_another_process_can_open_the_config_database(self, tmp_path):
+        """A real DuckDB file: the failed connect leaves no handle on it (another process opens it at once)."""
+        import subprocess
+        import sys
+
+        import duckdb
+
+        from deriva.services import GraphDatabaseBusy
+
+        path = tmp_path / "config.db"
+        duckdb.connect(str(path)).close()
+        with (
+            patch("deriva.services.session.get_connection", side_effect=lambda: duckdb.connect(str(path))),
+            patch("deriva.services.session.run_migrations"),
+            patch("deriva.services.session.GraphManager") as mock_graph,
+            patch("deriva.services.session.close_database"),
+        ):
+            mock_graph.return_value.connect.side_effect = GraphDatabaseBusy("repo-b.grafeo")
+            session = PipelineSession(repository="repo-b")
+            with pytest.raises(GraphDatabaseBusy):
+                session.connect()
+
+        other = subprocess.run([sys.executable, "-c", "import sys, duckdb; duckdb.connect(sys.argv[1]).close()", str(path)], capture_output=True, text=True, timeout=60)
+        assert other.returncode == 0, other.stderr
+
 
 class TestPipelineSessionEnsureConnected:
     """Tests for _ensure_connected behavior."""

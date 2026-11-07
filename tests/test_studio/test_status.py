@@ -136,23 +136,16 @@ def test_a_config_database_held_by_a_cli_run_is_held_with_the_pid(make_client):
     assert db["state"] == "held" and db["held_by"] == 36740
 
 
-def test_a_graph_held_by_another_process_is_held_and_the_half_open_session_is_closed():
+def test_a_graph_held_by_another_process_is_held_and_no_session_is_kept():
+    """The session's connect closes what it opened (its own tests); the provider keeps no half-open session."""
     from deriva.services import GraphDatabaseBusy
     from deriva.studio.provider import DatabaseHeld, SessionProvider
 
-    let_go: list[str] = []
-
-    def factory() -> FakeSession:
-        session = FakeSession(connect_error=GraphDatabaseBusy("x.grafeo"))
-        session.disconnect = lambda: let_go.append("disconnect")  # type: ignore[method-assign]
-        return session
-
-    provider = SessionProvider(factory=factory)
+    provider = SessionProvider(factory=lambda: FakeSession(connect_error=GraphDatabaseBusy("x.grafeo")))
 
     with pytest.raises(DatabaseHeld) as raised, provider.session():
         pass
 
     assert raised.value.pid is None and "x.grafeo is open in another Deriva process" in str(raised.value)
     assert provider.status()["state"] == "held"
-    # The session got as far as the config database before the graph refused it: it is let go, not kept open
-    assert let_go == ["disconnect"]
+    assert provider._session is None
