@@ -67,7 +67,8 @@ function CoverageSection({ name, coverage, note }: { name: string; coverage: Cov
           <tr>
             <th>Extension</th>
             <th>Files</th>
-            <th>Read by</th>
+            <th>File type</th>
+            <th>Parsed by</th>
             <th>Gave symbols</th>
           </tr>
         </thead>
@@ -76,7 +77,9 @@ function CoverageSection({ name, coverage, note }: { name: string; coverage: Cov
             <tr key={row.extension}>
               <td className="mono">{row.extension}</td>
               <td>{row.in_graph === row.files ? count(row.files) : `${count(row.in_graph)} of ${count(row.files)}`}</td>
-              <td>{row.reader ?? "none"}</td>
+              <td>{row.file_type ?? ""}</td>
+              {/* The type and method steps read code: a file that is no source (documentation, assets) has no parser to name */}
+              <td>{row.reader ?? (row.file_type === "source" ? "none" : "")}</td>
               <td>{row.reader ? count(row.with_symbols) : ""}</td>
             </tr>
           ))}
