@@ -69,15 +69,17 @@ def coverage_report(
     rows: list[dict[str, Any]] = []
     for extension, paths in by_extension.items():
         known = [graph_files[p] for p in paths if p in graph_files]
-        # Every file type with its files, most first: one extension can hold sources and tests (file_type is the first)
+        # Every file type with its files, most first and then by name: one extension can hold sources and tests.
+        # file_type is the first of them ("" without any), so the two never disagree, on a tie neither
         types = Counter(t for f in known if (t := f.get("file_type", "")))
+        file_types = [{"file_type": t, "files": n} for t, n in sorted(types.items(), key=lambda item: (-item[1], item[0]))]
         rows.append(
             {
                 "extension": extension,
                 "files": len(paths),
                 "in_graph": len(known),
-                "file_type": _most_common([f.get("file_type", "") for f in known]),
-                "file_types": [{"file_type": t, "files": n} for t, n in sorted(types.items(), key=lambda item: (-item[1], item[0]))],
+                "file_type": file_types[0]["file_type"] if file_types else "",
+                "file_types": file_types,
                 "subtype": _most_common([f.get("subtype", "") for f in known]),
                 "reader": _most_common([read_by_step[p] for p in paths if p in read_by_step]),
                 "with_symbols": sum(1 for p in paths if p in symbols),
