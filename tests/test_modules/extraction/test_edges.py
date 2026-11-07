@@ -738,6 +738,25 @@ class TestJavaAndScriptImports:
         assert self._targets(aliased) == {("IMPORTS", "file::r::app_src_components_Menu.js")} and nodes == []
         assert plain == [] and plain_nodes == [] and stats["unresolved"] == 1
 
+    def test_an_exact_alias_reaches_its_file_and_only_its_own_specifier(self):
+        """An exact alias ("jquery" to vendor/jquery/dist/jquery) is the file it names; a specifier that only starts
+        with the key (jquery-ui, jquery/plugin) stays a package. A root alias (empty target) reaches root files."""
+        from deriva.adapters.treesitter.models import ExtractedImport
+
+        files = {"vendor/jquery/dist/jquery.js", "src/main.ts", "lib/util.ts"}
+        aliases = (("", "@/", ""), ("", "jquery", "vendor/jquery/dist/jquery"))
+        imports = [ExtractedImport(module=m, names=["x"]) for m in ("jquery", "jquery-ui", "jquery/plugin", "@/lib/util")]
+
+        edges, nodes, _ = self._edges(imports, "src/main.ts", files, aliases=aliases)
+
+        assert self._targets(edges) == {
+            ("IMPORTS", "file::r::vendor_jquery_dist_jquery.js"),
+            ("IMPORTS", "file::r::lib_util.ts"),
+            ("USES", "extdep::r::jquery_ui"),
+            ("USES", "extdep::r::jquery"),
+        }
+        assert sorted(n["properties"]["dependencyName"] for n in nodes) == ["jquery", "jquery-ui"]
+
     @staticmethod
     def _targets(edges):
         return {(e["relationship_type"], e["to_node_id"]) for e in edges}
@@ -2129,3 +2148,16 @@ def test_script_aliases_are_read_from_tsconfig_paths_and_bundler_aliases():
     }
 
     assert script_aliases(configs) == (("app", "#lib/", "app/lib/"), ("app", "@/", "app/src/"), ("web", "@/", "web/src/"), ("x", "~/", "x/lib/"))
+
+
+def test_an_exact_paths_entry_and_a_target_at_the_root_are_aliases():
+    """A ``paths`` key without a wildcard maps that one specifier to its target (no trailing slash: it is no prefix),
+    and a target at the repository root is the empty prefix, not "/"."""
+    from deriva.modules.extraction.edges import script_aliases
+
+    configs = {
+        "tsconfig.json": '{"compilerOptions": {"paths": {"@/*": ["*"], "jquery": ["vendor/jquery/dist/jquery"]}}}',
+        "vite.config.ts": "alias: { '~': path.resolve(__dirname, '.') }",
+    }
+
+    assert script_aliases(configs) == (("", "@/", ""), ("", "jquery", "vendor/jquery/dist/jquery"), ("", "~/", ""))
