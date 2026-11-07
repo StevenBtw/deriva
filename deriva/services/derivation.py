@@ -1281,21 +1281,10 @@ def _registrations(settings: dict[str, Any], element_per: str) -> tuple[str, tup
 
 
 def _source_reader(engine: Any) -> Callable[[str], str | None]:
-    """Reads a repository file's text from the checkout by its graph path; None for a missing file, one larger than
-    max_read_bytes or a link that leads out of the checkout."""
-    root = workspace() / "repositories"
+    """Reads a repository file's text from the checkout by its graph path (``_checkout_text`` with max_read_bytes);
+    None for a missing or empty file, one larger than max_read_bytes or a link that leads out of the checkout."""
     max_bytes = config.get_max_read_bytes(engine)
-
-    def read(path: str) -> str | None:
-        file = root / path.replace(chr(92), "/")
-        try:
-            if file.is_file() and file.resolve().is_relative_to(root.resolve()) and file.stat().st_size <= max_bytes:
-                return file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            pass
-        return None
-
-    return read
+    return lambda path: _checkout_text(path.replace(chr(92), "/"), max_bytes) or None
 
 
 def _skip_when_directory_is(params: str | None) -> frozenset[str] | None:
