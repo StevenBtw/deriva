@@ -28,6 +28,31 @@ def test_write_queries_are_detected(query):
 @pytest.mark.parametrize(
     "query",
     [
+        "ALTER GRAPH TYPE g ADD NODE TYPE t",  # plain, seen in both readings
+        "MATCH (n)--(m) ALTER n",  # Cypher reads -- as an edge: ALTER is a clause there
+        "-- a GQL comment\nalter property graph g",  # GQL hides the first line only
+    ],
+)
+def test_an_alter_statement_is_refused_in_either_reading(query):
+    from deriva.services import read_only_refusal
+
+    reason = read_only_refusal(query)
+    assert reason is not None and "ALTER" in reason
+
+
+def test_the_refusal_names_every_write_clause_the_check_knows():
+    """The message is built from the clause list the check uses, so the two cannot drift apart."""
+    from deriva.adapters.grafeo.query_guard import WRITE_CLAUSES
+    from deriva.services import read_only_refusal
+
+    reason = read_only_refusal("MATCH (n) DETACH DELETE n")
+    assert reason is not None
+    assert all(clause in reason for clause in WRITE_CLAUSES) and f"or {WRITE_CLAUSES[-1]})" in reason
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
         "MATCH (n:Graph:Directory) RETURN n LIMIT 10",
         "MATCH (n) WHERE n.name = 'CREATE something' RETURN n",
         "MATCH (a)-[r:`Graph:SET_UP`]->(b) RETURN a, r, b",

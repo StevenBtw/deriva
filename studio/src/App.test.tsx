@@ -271,4 +271,32 @@ describe("Status polling", () => {
     expect(screen.queryByRole("heading", { name: "Open the studio from its launch link" })).not.toBeInTheDocument();
     expect(modelConfigs.list).toHaveBeenCalledTimes(1);
   });
+
+  it("unlocks a refused page on an error answer too: the guard checks the token before every route", async () => {
+    vi.mocked(status).mockRejectedValueOnce(new ApiError(401, "Open the studio from the link", { detail: "Open the studio from the link" }));
+    vi.mocked(status).mockRejectedValue(new ApiError(500, "Internal Server Error", { detail: "Internal Server Error" }));
+    at("/");
+    await after(0);
+    expect(screen.getByRole("heading", { name: "Open the studio from its launch link" })).toBeInTheDocument();
+
+    await after(10_000);
+    expect(screen.queryByRole("heading", { name: "Open the studio from its launch link" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the newest model list when an older request answers after it", async () => {
+    vi.mocked(status).mockResolvedValue(ANSWER);
+    // The first model list request answers late; the second answers at once
+    let answerFirst: (models: { name: string }[]) => void = () => {};
+    vi.mocked(modelConfigs.list)
+      .mockImplementationOnce(() => new Promise((resolve) => (answerFirst = resolve as typeof answerFirst)) as never)
+      .mockResolvedValueOnce([] as never);
+    at("/");
+    await after(0);
+    await after(10_000);
+    expect(screen.getByText(/No LLM model is configured/)).toBeInTheDocument();
+
+    // The older answer (a model exists) arrives last and is ignored: the newest says there is none
+    await act(async () => answerFirst([{ name: "mistral" }]));
+    expect(screen.getByText(/No LLM model is configured/)).toBeInTheDocument();
+  });
 });
