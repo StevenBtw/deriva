@@ -2309,6 +2309,12 @@ class RoleConfig:
     structural: tuple[tuple[str, str, str], ...] = ()
     # A candidate with a structural role keeps its own name as written: no template, no naming call
     structural_as_written: bool = False
+    # element_per "candidate" only: graph labels whose candidates fill {subject} with their name as written (a product
+    # name the closed list writes, such as PostgreSQL), not split by case; other candidates' subjects are split
+    subject_as_written: frozenset[str] = frozenset()
+    # element_per "candidate" with a name_template only: candidates whose names would still repeat within the step are
+    # named by this template instead ("{role} ({subject})"); empty: a repeated name leaves the later candidate out
+    repeat_template: str = ""
     # element_per "unit" only: roles a deployable unit shows itself, (unit property, role key). A unit whose
     # property lists files (such as webEntries) gets that role's element with those files as members, no call
     unit_roles: tuple[tuple[str, str], ...] = ()

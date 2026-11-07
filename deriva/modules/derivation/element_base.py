@@ -994,7 +994,7 @@ class ElementDerivationBase(ABC):
             if roles.name_template:
                 # The name from structure: container + subject + role name, each word once
                 containers = self._containers_of(chosen, roles.container_type, graph_manager, archimate_manager, repo_name)
-                subjects = {c.node_id: structure_element_name(c.node_id, c.name, repo_name) for c in chosen}
+                subjects = {c.node_id: c.name if roles.subject_as_written.intersection(c.labels) else structure_element_name(c.node_id, c.name, repo_name) for c in chosen}
 
                 def planned_name(c: Candidate) -> str:
                     if c.node_id in as_written:
@@ -1011,6 +1011,13 @@ class ElementDerivationBase(ABC):
                         directory = distinct[c.node_id][: -len(c.name)].strip()
                         subjects[c.node_id] = f"{name_from_source(directory)} {subjects[c.node_id]}"
                         names[c.node_id] = planned_name(c)
+                # Names that still repeat within the step take the repeat template (the realizer's name in it)
+                if roles.repeat_template:
+                    counts = Counter(_display_key(name) for name in names.values())
+                    for c in chosen:
+                        if counts[_display_key(names[c.node_id])] > 1 and c.node_id not in as_written:
+                            role = roles.names[role_of[c.node_id] or ""]
+                            names[c.node_id] = _each_word_once(roles.repeat_template.format(container=containers[c.node_id], subject=subjects[c.node_id], role=role))
             else:
                 # Named as the candidate is (as written)
                 names = {c.node_id: c.name for c in chosen}

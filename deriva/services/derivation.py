@@ -1232,7 +1232,22 @@ def _role_config(params: str | None) -> RoleConfig | None:
     if not isinstance(one_per_unit, bool) or (one_per_unit and element_per != "unit"):
         raise ValueError(f"params.roles.one_per_unit (true or false) merges a unit's roles into one element: it needs element_per 'unit', got {one_per_unit!r}")
     registrations = _registrations(settings, element_per)
+    subject_as_written = settings.get("subject_as_written", [])
+    if not isinstance(subject_as_written, list) or not all(isinstance(label, str) and label for label in subject_as_written):
+        raise ValueError(f"params.roles.subject_as_written is a list of graph labels, got {subject_as_written!r}")
+    repeat_template = settings.get("repeat_template", "")
+    if subject_as_written and (element_per != "candidate" or not any("{subject}" in str(t) for t in (name_template, repeat_template))):
+        raise ValueError("params.roles.subject_as_written names how {subject} is filled: it needs element_per 'candidate' and {subject} in the name_template or repeat_template")
+    if not isinstance(repeat_template, str) or (
+        repeat_template and (element_per != "candidate" or not name_template or not any(p in repeat_template for p in ("{subject}", "{container}")))
+    ):
+        raise ValueError(
+            "params.roles.repeat_template names candidates whose names would repeat: it needs element_per 'candidate', a name_template "
+            f"and {{subject}} or {{container}} in it, got {repeat_template!r}"
+        )
     return RoleConfig(
+        repeat_template=repeat_template,
+        subject_as_written=frozenset(subject_as_written),
         one_per_unit=one_per_unit,
         name_priority=tuple(name_priority),
         unit_roles=tuple((rule["property"], rule["role"]) for rule in unit_roles),
