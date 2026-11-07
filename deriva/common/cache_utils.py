@@ -162,24 +162,40 @@ def cache_contents(directory: str | Path) -> tuple[int, int] | None:
     (none at all, a damaged one, another format, a lock it cannot take).
 
     The map file (data.mdb) is as large as its map size, so its size on disk says little about what the cache holds;
-    the store keeps the total row size in its meta database and lmdb counts the entries.
+    the store keeps the total row size in its meta database and lmdb counts the entries. Measuring never writes: the
+    environment this process already has open is used as it is, else the folder is opened read-only and closed after,
+    and Deriva's two databases are opened without creating them (a map without them is no Deriva cache).
     """
     folder = Path(directory)
     map_file = folder / "data.mdb"
     if not map_file.is_file():
         return None
-    # Opened with the map it already has (map size = twice the limit), so measuring never resizes the file; it only reads
+    key = os.path.normcase(str(folder.resolve()))
+    with _ENVIRONMENTS_LOCK:  # no store opens or closes the folder meanwhile
+        shared, _ = _ENVIRONMENTS.get(key, (None, 0))
+        env = shared
+        try:
+            if env is None:
+                env = lmdb.open(str(folder), readonly=True, subdir=True, max_dbs=2, map_size=max(1, map_file.stat().st_size))
+            with env.begin() as txn:
+                entries = env.open_db(_LmdbStore._ENTRIES, txn=txn, create=False)
+                meta = env.open_db(_LmdbStore._META, txn=txn, create=False)
+                count = txn.stat(entries)["entries"]
+                raw = txn.get(_LmdbStore._STATE, db=meta)
+        except lmdb.Error:
+            return None  # no lmdb map, another format, a lock it cannot take, or a map without Deriva's databases
+        finally:
+            if shared is None and env is not None:
+                env.close()
+    if raw is None:
+        return count, 0
     try:
-        store = _LmdbStore(folder, max(1, map_file.stat().st_size // 2))
-    except lmdb.Error:
+        state = json.loads(raw)
+    except ValueError:
         return None
-    try:
-        with store._env.begin() as txn:
-            return txn.stat(store._entries)["entries"], store._read_state(txn)["size"]
-    except lmdb.Error, ValueError, KeyError:
-        return None  # a map lmdb opens but whose entries or state are not Deriva's
-    finally:
-        store.close()
+    size = state.get("size") if isinstance(state, dict) else None
+    # A state of another shape ("[]", "3", a size that is no whole number) is not Deriva's
+    return (count, size) if isinstance(size, int) and not isinstance(size, bool) else None
 
 
 class _LmdbStore:
