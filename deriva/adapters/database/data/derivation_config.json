@@ -360,24 +360,24 @@
     "created_at": "2026-10-25T22:56:59.402233"
   },
   {
-    "id": 872,
+    "id": 873,
     "step_name": "TechnologyFunction",
     "phase": "generate",
-    "version": 2,
+    "version": 3,
     "sequence": 18,
     "enabled": true,
     "llm": false,
     "input_graph_query": "MATCH (n) WHERE n.active = true AND (('Environment' IN labels(n) AND n.kind IN ['compose', 'kubernetes', 'cloud', 'mainframe', 'aspire']) OR ('Software' IN labels(n) AND n.inEnvironment = true AND n.kind IN ['transaction monitor', 'file system', 'database', 'key-value store', 'cache', 'message broker', 'object storage', 'serverless', 'content delivery', 'load balancer', 'api gateway'])) RETURN n.id as id, n.name as name, labels(n) as labels, properties(n) as properties",
     "input_model_query": null,
-    "instruction": "Structure only, no LLM call: every technology realizer (the deployment environment, and each system software in it whose kind the technology services' name table lists) gets one technology function, its behaviour, named after the realizer. The realizer is assigned to it and it realizes the realizer's technology service.",
+    "instruction": "Structure only, no LLM call: every technology realizer (the deployment environment, and each system software in it whose kind the technology services' name table lists) gets one technology function, named by the activity its kind performs as a verb phrase (a database Store and Query Data, a message broker Route Messages); when two realizers would give one name, the realizer's name follows in brackets. The realizer is assigned to it and it realizes the realizer's technology service.",
     "example": "{\"elements\": [{\"identifier\": \"tf_<realizer>\", \"name\": \"<Realizer> Behaviour\", \"documentation\": \"Behaviour of <Realizer>.\", \"source\": \"<realizer id>\"}]}",
-    "params": "{\n  \"roles\": {\n    \"names\": {\n      \"behaviour\": \"Behaviour\"\n    },\n    \"element_per\": \"candidate\",\n    \"name_template\": \"{subject} {role}\",\n    \"structural\": [\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"compose|kubernetes|cloud|mainframe|aspire|transaction monitor|file system|database|key-value store|cache|message broker|object storage|serverless|content delivery|load balancer|api gateway\",\n        \"role\": \"behaviour\"\n      }\n    ],\n    \"documentation\": \"Behaviour of {members}.\"\n  }\n}\n",
+    "params": "{\n  \"roles\": {\n    \"element_per\": \"candidate\",\n    \"names\": {\n      \"container platform\": \"Run Containers\",\n      \"mainframe\": \"Run Batch Jobs\",\n      \"transaction monitor\": \"Process Transactions\",\n      \"file system\": \"Store Files\",\n      \"database\": \"Store and Query Data\",\n      \"key-value store\": \"Store Key-Value Data\",\n      \"cache\": \"Cache Data\",\n      \"message broker\": \"Route Messages\",\n      \"object storage\": \"Store Objects\",\n      \"serverless\": \"Run Functions\",\n      \"content delivery\": \"Deliver Content\",\n      \"load balancer\": \"Balance Load\",\n      \"api gateway\": \"Route API Requests\"\n    },\n    \"structural\": [\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"compose|kubernetes|cloud|aspire\",\n        \"role\": \"container platform\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"mainframe\",\n        \"role\": \"mainframe\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"transaction monitor\",\n        \"role\": \"transaction monitor\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"file system\",\n        \"role\": \"file system\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"database\",\n        \"role\": \"database\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"key-value store\",\n        \"role\": \"key-value store\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"cache\",\n        \"role\": \"cache\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"message broker\",\n        \"role\": \"message broker\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"object storage\",\n        \"role\": \"object storage\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"serverless\",\n        \"role\": \"serverless\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"content delivery\",\n        \"role\": \"content delivery\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"load balancer\",\n        \"role\": \"load balancer\"\n      },\n      {\n        \"property\": \"kind\",\n        \"pattern\": \"api gateway\",\n        \"role\": \"api gateway\"\n      }\n    ],\n    \"name_template\": \"{role}\",\n    \"repeat_template\": \"{role} ({subject})\",\n    \"subject_as_written\": [\n      \"Software\"\n    ],\n    \"documentation\": \"{role}, performed by {members}.\"\n  }\n}\n",
     "is_active": true,
     "max_candidates": 30,
     "batch_size": 10,
     "temperature": null,
     "max_tokens": null,
-    "created_at": "2026-11-07T07:47:58.134381"
+    "created_at": "2026-11-07T08:13:37.286356"
   },
   {
     "id": 868,
