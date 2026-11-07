@@ -2609,6 +2609,7 @@ def _extract_llm_based(
     Without an LLM (``llm_query_fn`` None) the parsers still run; files that only the LLM can read are skipped and counted.
     """
     max_bytes = config.get_max_read_bytes(engine)
+    snippet_line_chars = config.get_max_snippet_line_chars(engine)
     nodes_created = 0
     edges_created = 0
     errors = []
@@ -2665,6 +2666,7 @@ def _extract_llm_based(
         "example": cfg.example or "",
         "input_sources": cfg.input_sources or "",
         "params": json.loads(cfg.params) if cfg.params else {},
+        "max_snippet_line_chars": snippet_line_chars,
     }
 
     # Wrap llm_query_fn with per-step temperature/max_tokens overrides
@@ -2730,7 +2732,7 @@ def _extract_llm_based(
         elif use_treesitter and is_treesitter_supported:
             # Use tree-sitter extraction for supported languages - faster and more precise
             if node_type == "TypeDefinition":
-                result = extraction.extract_types_from_source(file_info["path"], content, repo.name)
+                result = extraction.extract_types_from_source(file_info["path"], content, repo.name, max_line_chars=snippet_line_chars)
             else:  # Method
                 package = go_types.get(str(PurePosixPath(file_info["path"].replace(chr(92), "/")).parent)) if file_subtype == "golang" else None
                 result = extraction.extract_methods_from_source(file_info["path"], content, repo.name, type_files=package)
@@ -3352,6 +3354,7 @@ def _create_node_from_data(node_type: str, node_data: dict, repo_name: str, extr
             origin_source=props.get("origin_source", props.get("source_file")),
             confidence=props.get("confidence", 0.8),
             extraction_method=extraction_method,
+            indirect=props.get("indirect"),
         )
     elif node_type == "Test":
         return TestNode(
