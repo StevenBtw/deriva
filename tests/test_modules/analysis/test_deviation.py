@@ -135,7 +135,7 @@ class TestComputeDeviationStats:
 
         result = compute_deviation_stats("test", "extraction", objects_by_run)
 
-        assert result.consistency_score == 1.0
+        assert result.consistency_score is None  # No object in any run: not measured
         assert result.total_objects == 0
 
     def test_limits_object_lists(self):
@@ -394,5 +394,5 @@ class TestBuildDeviationReport:
         report = build_deviation_report("sess", "2024-01-01", 3, [])
 
         assert report.total_deviations == 0
-        assert report.overall_consistency == 1.0
+        assert report.overall_consistency is None
         assert report.config_deviations == []

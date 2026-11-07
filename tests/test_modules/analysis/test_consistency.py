@@ -11,15 +11,12 @@ from deriva.modules.analysis.consistency import (
 class TestComputeConsistencyScore:
     """Tests for compute_consistency_score function."""
 
-    def test_single_run_returns_1(self):
-        """Single run should return perfect consistency."""
-        result = compute_consistency_score({"run1": {"a", "b", "c"}})
-        assert result == 1.0
+    def test_a_single_run_is_not_measured(self):
+        """One run compares with nothing: no score (n/a)."""
+        assert compute_consistency_score({"run1": {"a", "b", "c"}}) is None
 
-    def test_empty_runs_returns_1(self):
-        """Empty input should return perfect consistency."""
-        result = compute_consistency_score({})
-        assert result == 1.0
+    def test_no_runs_are_not_measured(self):
+        assert compute_consistency_score({}) is None
 
     def test_identical_runs_returns_1(self):
         """Identical runs should return perfect consistency."""
@@ -51,14 +48,9 @@ class TestComputeConsistencyScore:
         result = compute_consistency_score(objects_by_run)
         assert result == 0.0
 
-    def test_empty_sets_returns_1(self):
-        """Empty sets in runs should return 1."""
-        objects_by_run = {
-            "run1": set(),
-            "run2": set(),
-        }
-        result = compute_consistency_score(objects_by_run)
-        assert result == 1.0
+    def test_runs_without_objects_are_not_measured(self):
+        """Nothing in any run is nothing to compare: no score, left out of averages."""
+        assert compute_consistency_score({"run1": set(), "run2": set()}) is None
 
 
 class TestFindInconsistencies:
@@ -167,10 +159,8 @@ class TestJaccardSimilarity:
         result = jaccard_similarity({"a", "b", "c"}, {"b", "c", "d"})
         assert result == 0.5
 
-    def test_empty_sets_returns_1(self):
-        """Two empty sets should have similarity 1.0."""
-        result = jaccard_similarity(set(), set())
-        assert result == 1.0
+    def test_two_empty_sets_are_not_measured(self):
+        assert jaccard_similarity(set(), set()) is None
 
     def test_one_empty_set(self):
         """One empty set should have similarity 0.0."""

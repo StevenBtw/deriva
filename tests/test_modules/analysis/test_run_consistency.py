@@ -55,10 +55,10 @@ def test_breakdown_rows_follow_the_headline_rows():
     assert keys[7:] == sorted(keys[7:])
 
 
-def test_nothing_in_any_run_scores_one():
+def test_nothing_in_any_run_is_not_measured():
     rows = rows_by_key([run_sets(snapshot()), run_sets(snapshot())])
 
-    assert (rows["el_source"]["union"], rows["el_source"]["score"]) == (0, 1.0)
+    assert (rows["el_source"]["union"], rows["el_source"]["score"]) == (0, None)
 
 
 def call(step: str, prompt: str, cache_key: str, response: str = "{}") -> dict[str, Any]:
