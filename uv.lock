@@ -578,30 +578,30 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ctranslate2", specifier = "==4.8.5" },
-    { name = "duckdb", specifier = ">=2" },
-    { name = "grafeo", specifier = ">=0.6.1" },
-    { name = "httpx2", specifier = ">=2" },
-    { name = "lmdb", specifier = ">=1.6" },
-    { name = "lxml", specifier = ">=6" },
-    { name = "pydantic", specifier = ">=2.14.3" },
-    { name = "pydantic-ai-slim", extras = ["openai", "anthropic"], specifier = ">=2.57" },
-    { name = "pydantic-settings", specifier = ">=2" },
-    { name = "pypdf", specifier = ">=7.0" },
-    { name = "python-docx", specifier = ">=1.2" },
-    { name = "python-dotenv", specifier = ">=1.2" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "rich", specifier = ">=15" },
+    { name = "duckdb", specifier = ">=2,<3" },
+    { name = "grafeo", specifier = ">=0.6.1,<0.7" },
+    { name = "httpx2", specifier = ">=2,<3" },
+    { name = "lmdb", specifier = ">=3,<4" },
+    { name = "lxml", specifier = ">=6,<7" },
+    { name = "pydantic", specifier = ">=2.14.3,<3" },
+    { name = "pydantic-ai-slim", extras = ["openai", "anthropic"], specifier = ">=2.57,<3" },
+    { name = "pydantic-settings", specifier = ">=2,<3" },
+    { name = "pypdf", specifier = ">=7.0,<8" },
+    { name = "python-docx", specifier = ">=1.2,<2" },
+    { name = "python-dotenv", specifier = ">=1.2,<2" },
+    { name = "pyyaml", specifier = ">=6.0,<7" },
+    { name = "rich", specifier = ">=15,<16" },
     { name = "sentencepiece", specifier = "==0.2.3" },
-    { name = "solvor", specifier = ">=0.6.3" },
+    { name = "solvor", specifier = ">=0.6.3,<0.7" },
     { name = "spacy", specifier = "==3.8.18" },
-    { name = "tree-sitter", specifier = ">=0.26" },
-    { name = "tree-sitter-c-sharp", specifier = ">=0.23" },
-    { name = "tree-sitter-go", specifier = ">=0.25" },
-    { name = "tree-sitter-java", specifier = ">=0.23.0" },
-    { name = "tree-sitter-javascript", specifier = ">=0.23.0" },
-    { name = "tree-sitter-python", specifier = ">=0.23.0" },
+    { name = "tree-sitter", specifier = ">=0.26,<0.27" },
+    { name = "tree-sitter-c-sharp", specifier = ">=0.23,<0.24" },
+    { name = "tree-sitter-go", specifier = ">=0.25,<0.26" },
+    { name = "tree-sitter-java", specifier = ">=0.23.5,<0.24" },
+    { name = "tree-sitter-javascript", specifier = ">=0.25,<0.26" },
+    { name = "tree-sitter-python", specifier = ">=0.25,<0.26" },
     { name = "tree-sitter-typescript", specifier = "==0.23.2" },
-    { name = "typer", specifier = ">=0.28" },
+    { name = "typer", specifier = ">=0.28,<0.29" },
 ]
 
 [package.metadata.requires-dev]
@@ -641,11 +641,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anywidget-archimate", specifier = ">=0.5.1" },
-    { name = "anywidget-graph", specifier = ">=0.5.2" },
+    { name = "anywidget-archimate", specifier = ">=0.5.1,<0.6" },
+    { name = "anywidget-graph", specifier = ">=0.5.2,<0.6" },
     { name = "deriva-cli", editable = "." },
-    { name = "fastapi", specifier = ">=0.142.4" },
-    { name = "uvicorn", specifier = ">=0.41.0" },
+    { name = "fastapi", specifier = ">=0.162,<0.163" },
+    { name = "uvicorn", specifier = ">=0.54,<0.55" },
 ]
 
 [[package]]
