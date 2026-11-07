@@ -4,7 +4,7 @@ ExternalDependency extraction module.
 This module extracts ExternalDependency nodes representing libraries, external APIs,
 and external service integrations. It supports multiple extraction methods:
 
-1. Deterministic parsing (requirements.txt, pyproject.toml, package.json)
+1. Deterministic parsing (requirements.txt, pyproject.toml, package.json, go.mod)
 2. AST-based extraction (Python imports)
 3. LLM-based extraction (fallback for other files)
 
@@ -332,7 +332,7 @@ def get_extraction_method(file_path: str, subtype: str | None) -> str:
         subtype: File subtype from classification
 
     Returns:
-        One of: "requirements_txt", "pyproject_toml", "package_json",
+        One of: "requirements_txt", "pyproject_toml", "package_json", "go_mod",
                 "treesitter", "llm"
     """
     filename = file_path.lower().split("/")[-1].split("\\")[-1]
@@ -563,8 +563,10 @@ def _extract_from_go_mod(file_path: str, file_content: str, repo_name: str) -> d
         elif re.match(r"require\s*\(", stripped):
             in_block = True
             continue
-        elif not stripped.startswith("require "):
+        elif not re.match(r"require\s", stripped):
             continue
+        if stripped.startswith("//"):
+            continue  # A comment line, also inside a require block
         found = _GO_REQUIRE.match(stripped)
         if found is None or found.group(1).lower() in seen:
             continue
@@ -976,7 +978,7 @@ def extract_external_dependencies(
     Extract external dependencies from a file.
 
     Automatically selects the best extraction method:
-    1. Deterministic for requirements.txt, pyproject.toml, package.json
+    1. Deterministic for requirements.txt, pyproject.toml, package.json, go.mod
     2. AST for Python source files
     3. LLM for other files (requires llm_query_fn)
 
