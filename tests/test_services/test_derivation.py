@@ -3154,7 +3154,7 @@ def test_created_elements_and_deferred_relationships_reach_the_run_log():
         )
 
     assert [c.args[0] for c in contexts["gen_app"].add_object.call_args_list] == ["e1", "e2"]
-    assert [c.args[0] for c in contexts["ConsolidatedRelationships"].add_relationship.call_args_list] == ["Access_e1_e2"]
+    assert [c.args[0] for c in contexts["ConsolidatedRelationships"].add_relationship.call_args_list] == ["Access|e1|e2"]
 
 
 def test_relationships_a_refine_step_adds_reach_the_run_log():
@@ -3189,7 +3189,7 @@ def test_relationships_a_refine_step_adds_reach_the_run_log():
         am.disconnect()
         close_database()
 
-    assert [c.args[0] for c in contexts["abstraction_hierarchy"].add_relationship.call_args_list] == ["Serving_ac_a_ac_b"]
+    assert [c.args[0] for c in contexts["abstraction_hierarchy"].add_relationship.call_args_list] == ["Serving|ac_a|ac_b"]
 
 
 class TestStructuralRoleConfig:

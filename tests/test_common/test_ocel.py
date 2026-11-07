@@ -292,7 +292,7 @@ class TestOCELLog:
 
         score = log.compute_consistency_score("Element")
 
-        assert score == 1.0
+        assert score is None  # One run compares with nothing
 
     def test_compare_runs(self):
         """Should compare two runs."""
@@ -767,3 +767,16 @@ def test_an_id_that_looks_like_a_prefixed_one_stays_unique(tmp_path):
 
     ids = [o["id"] for o in data["objects"]]
     assert len(ids) == len(set(ids)) == 3
+
+
+def test_edge_ids_keep_their_ends_apart_and_read_back():
+    """Element identifiers hold underscores, so the separator is one they never hold: two pairs that an underscore
+    join would give one identifier stay two, and the parts read back; an id from an older log gives its type only."""
+    from deriva.common.ocel import create_edge_id, edge_type, parse_edge_id
+
+    first, second = create_edge_id("ac_a_b", "Serving", "ac_c"), create_edge_id("ac_a", "Serving", "b_ac_c")
+
+    assert first != second
+    assert parse_edge_id(first) == ("Serving", "ac_a_b", "ac_c")
+    assert parse_edge_id(create_edge_id("dir::r::a", "CONTAINS", "file::r::a/b.py")) == ("CONTAINS", "dir::r::a", "file::r::a/b.py")
+    assert (parse_edge_id("Serving_ac_a_ac_b"), edge_type("Serving_ac_a_ac_b"), edge_type(first)) == (None, "Serving", "Serving")

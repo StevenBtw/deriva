@@ -111,7 +111,7 @@ class TestRecording:
 
         assert written.nodes == ["dir::r::a", "dir::r::b"]
         # Edges by relationship, source and target: the edge ids of the benchmark's event log
-        assert written.edges == ["CONTAINS_dir::r::a_dir::r::b"]
+        assert written.edges == ["CONTAINS|dir::r::a|dir::r::b"]
 
     def test_a_failed_write_is_not_recorded(self):
         from deriva.adapters.graph.models import DirectoryNode
