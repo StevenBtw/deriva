@@ -151,7 +151,7 @@ def code_snippet(source: str | list[str], start_line: int, end_line: int, max_li
     return "\n".join(lines if max_line_chars is None else (line[:max_line_chars] for line in lines))
 
 
-def build_type_definition_node(type_data: dict[str, Any], file_path: str, repo_name: str, file_content: str = "", max_line_chars: int | None = None) -> dict[str, Any]:
+def build_type_definition_node(type_data: dict[str, Any], file_path: str, repo_name: str, file_content: str | list[str] = "", max_line_chars: int | None = None) -> dict[str, Any]:
     """
     Build a TypeDefinition graph node from extracted type data.
 
@@ -160,7 +160,8 @@ def build_type_definition_node(type_data: dict[str, Any], file_path: str, repo_n
             Expected keys: typeName, category, description, interfaceType, startLine, endLine, confidence
         file_path: Path to the file where the type was found
         repo_name: Repository name for node ID generation
-        file_content: Full content of the source file (used to extract code snippet)
+        file_content: The source file's text, or its lines split once for all its types (for the code snippet)
+        max_line_chars: The characters the snippet keeps of each line (None keeps them whole)
 
     Returns:
         Dictionary with:
@@ -369,12 +370,13 @@ def extract_type_definitions(
         safe_path = original_path.replace("/", "_").replace("\\", "_")
         file_node_id = f"file::{repo_name}::{safe_path}"
 
+        lines = file_content.split("\n")  # once for all the file's types
         for type_data in parse_result["data"]:
             node_result = build_type_definition_node(
                 type_data=type_data,
                 file_path=file_path,
                 repo_name=repo_name,
-                file_content=file_content,
+                file_content=lines,
                 max_line_chars=config.get("max_snippet_line_chars"),
             )
 
