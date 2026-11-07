@@ -33,7 +33,7 @@ def _file(path: str) -> Candidate:
     return Candidate(node_id=f"file::r::{path.replace('/', '_')}", name=path.rsplit("/", 1)[-1], labels=["Graph", "File"], properties={"path": path})
 
 
-def _generate(candidates, answer, roles=ROLES, web_entries=None, sources=None, methods=None):
+def _generate(candidates, answer, roles=ROLES, web_entries=None, sources=None, methods=None, enrichments=None, on_candidates=None, derivation=None):
     """``sources``: path -> text of the units' source files (read through ``source_text``); ``methods``: path -> names it defines."""
     prompts: list[str] = []
 
@@ -70,10 +70,10 @@ def _generate(candidates, answer, roles=ROLES, web_entries=None, sources=None, m
         else []
     )
     with (
-        patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value={}),
+        patch("deriva.modules.derivation.element_base.get_enrichments_from_graph", return_value=enrichments or {}),
         patch("deriva.modules.derivation.element_base.query_candidates", return_value=candidates),
     ):
-        result = Derivation().generate(
+        result = (derivation or Derivation)().generate(
             graph_manager=MagicMock(query=MagicMock(side_effect=query)),
             archimate_manager=archimate_manager,
             llm_query_fn=llm,
@@ -86,6 +86,7 @@ def _generate(candidates, answer, roles=ROLES, web_entries=None, sources=None, m
             prompt=TEST_PROMPT,
             roles=roles,
             source_text=None if sources is None else sources.get,
+            on_candidates=on_candidates,
         )
     return result, prompts
 
@@ -271,3 +272,26 @@ def test_without_registrations_a_registration_call_makes_no_interface(monkeypatc
     result, _ = _generate([], {}, roles=ROLES, sources={"r/cart/main.go": MAIN})
 
     assert result.created_elements == []
+
+
+class _DropsFiles(Derivation):
+    """A step whose filter drops every file candidate (a registered file the query found is filtered out)."""
+
+    def filter_candidates(self, candidates, enrichments, max_candidates, **kwargs):
+        return [c for c in candidates if "File" not in c.labels][:max_candidates]
+
+
+def test_a_registered_file_is_decided_once_with_its_graph_enrichment_and_reported_as_a_candidate(monkeypatch):
+    """Structure decides a registered file: a filter stage that dropped it leaves no decision of its own, the decision
+    and the candidate carry the file's graph measures, and the step reports the file among its candidates."""
+    monkeypatch.setitem(UNITS, "unit::r::cart", CART)
+    main = _file("r/cart/main.go")
+    reported: list[list[str]] = []
+    enrichments = {main.node_id: {"pagerank": 0.25, "louvain_community": "7", "in_degree": 3}}
+
+    result, _ = _generate([main], {}, roles=REGISTRATION, sources={"r/cart/main.go": MAIN}, enrichments=enrichments, on_candidates=reported.append, derivation=_DropsFiles)
+
+    decisions = [d for d in result.candidate_decisions if d.node_id == main.node_id]
+    assert len(decisions) == 1 and decisions[0].became_element
+    assert (decisions[0].pagerank, decisions[0].in_degree) == (0.25, 3)
+    assert reported == [[main.node_id]]

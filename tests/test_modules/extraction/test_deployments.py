@@ -773,3 +773,23 @@ def test_aspire_resources_are_software_only_on_the_closed_list_and_serve_the_pro
     [postgres] = layer.software
     assert (postgres.name, postgres.in_environment, postgres.serves) == ("PostgreSQL", True, ["unit::r::shop"])
     assert postgres.evidence == ["resource postgres"]
+
+
+def test_an_aspire_project_type_names_its_project_file_whatever_the_unit_is_called():
+    """Aspire names Projects.X after the project file (Shop.Api.csproj is Projects.Shop_Api); a unit whose folder, name
+    and assembly name all differ from it is still found by the project file among its members."""
+    units = [
+        {
+            "id": "unit::r::storefront",
+            "path": "r/storefront",
+            "name": "Storefront",
+            "manifest": "Acme.Sales.Assembly",
+            "members": ["r/storefront/Shop.Api.csproj", "r/storefront/Program.cs"],
+        },
+        {"id": "unit::r::billing", "path": "r/billing", "name": "billing", "manifest": "Billing", "members": ["r/billing/Billing.csproj"]},
+    ]
+    host = 'var builder = DistributedApplication.CreateBuilder(args);\nbuilder.AddProject<Projects.Shop_Api>("shop");\n'
+
+    env = detect_deployments("r", {"r/host/AppHost.cs": host}, units, ASPIRE).primary
+
+    assert env is not None and [(s.name, s.unit) for s in env.services] == [("shop", "unit::r::storefront")]
