@@ -21,6 +21,8 @@ from .consistency import (
     compute_consistency_score,
     find_inconsistencies,
     jaccard_similarity,
+    mean_measured,
+    share_text,
 )
 from .deviation import (
     analyze_config_deviations,
@@ -78,6 +80,8 @@ __all__ = [
     "find_inconsistencies",
     "compare_object_sets",
     "jaccard_similarity",
+    "mean_measured",
+    "share_text",
     # Deviation functions
     "analyze_config_deviations",
     "analyze_from_object_types",

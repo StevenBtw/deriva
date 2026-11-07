@@ -241,8 +241,9 @@ class ConfigDeviationAnalyzer:
         extraction_configs = [c for c in report.config_deviations if c.config_type == "extraction"]
         derivation_configs = [c for c in report.config_deviations if c.config_type == "derivation"]
 
-        most_stable = sorted(report.config_deviations, key=lambda x: x.consistency_score, reverse=True)
-        least_stable = sorted(report.config_deviations, key=lambda x: x.consistency_score)
+        # Unmeasured configs (no object in any run) go last in both lists
+        most_stable = sorted(report.config_deviations, key=lambda x: (x.consistency_score is not None, x.consistency_score or 0.0), reverse=True)
+        least_stable = sorted(report.config_deviations, key=lambda x: (x.consistency_score is None, x.consistency_score or 0.0))
 
         return {
             "session_id": self.session_id,
@@ -313,7 +314,7 @@ class ConfigDeviationAnalyzer:
         report = self.analyze()
 
         if sort_by == "consistency_score":
-            report.config_deviations.sort(key=lambda x: x.consistency_score)
+            report.config_deviations.sort(key=lambda x: (x.consistency_score is None, x.consistency_score or 0.0))
         elif sort_by == "total_objects":
             report.config_deviations.sort(key=lambda x: x.total_objects, reverse=True)
 

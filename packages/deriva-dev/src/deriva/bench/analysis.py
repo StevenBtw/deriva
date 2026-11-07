@@ -25,6 +25,7 @@ from deriva.modules.analysis.cross_repo_analysis import (
     generate_cross_repo_recommendations,
 )
 from deriva.modules.analysis.fit_analysis import create_fit_analysis
+from deriva.modules.analysis.measures import share_text
 from deriva.modules.analysis.semantic_matching import (
     create_semantic_match_report,
     parse_archi_xml,
@@ -501,7 +502,7 @@ class BenchmarkAnalyzer:
 
         # Compute summary metrics
         metrics = aggregate_stability_metrics(stability)
-        overall_consistency = metrics.get("avg_derivation_consistency", 0.0)
+        overall_consistency = metrics.get("avg_derivation_consistency")
 
         # Compute average precision/recall
         if semantic:
@@ -642,14 +643,14 @@ class BenchmarkAnalyzer:
                     # Aggregate element stats
                     total_elem = sum(b.total_count for b in derivation.element_breakdown)
                     stable_elem = sum(b.stable_count for b in derivation.element_breakdown)
-                    elem_stability = stable_elem / total_elem if total_elem > 0 else 0.0
+                    elem_stability = stable_elem / total_elem if total_elem > 0 else None
 
                     # Aggregate relationship stats
                     total_rel = sum(b.total_count for b in derivation.relationship_breakdown)
                     stable_rel = sum(b.stable_count for b in derivation.relationship_breakdown)
-                    rel_stability = stable_rel / total_rel if total_rel > 0 else 0.0
+                    rel_stability = stable_rel / total_rel if total_rel > 0 else None
 
-                    writer.writerow([repo, "all", "all", total_elem, stable_elem, f"{elem_stability:.2%}", total_rel, stable_rel, f"{rel_stability:.2%}"])
+                    writer.writerow([repo, "all", "all", total_elem, stable_elem, share_text(elem_stability, ".2%"), total_rel, stable_rel, share_text(rel_stability, ".2%")])
 
         return str(path)
 

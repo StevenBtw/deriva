@@ -58,7 +58,7 @@ def compare_across_repos(
         if repo in stability_reports and "derivation" in stability_reports[repo]:
             consistency_by_repo[repo] = stability_reports[repo]["derivation"].overall_consistency
         else:
-            consistency_by_repo[repo] = 0.0
+            consistency_by_repo[repo] = None
 
         # Precision and recall from semantic reports
         if repo in semantic_reports:
@@ -213,7 +213,7 @@ def identify_generalizable_patterns(
     for repo, phases in stability_reports.items():
         if "extraction" in phases:
             extraction = phases["extraction"]
-            if extraction.overall_consistency >= threshold:
+            if extraction.overall_consistency is not None and extraction.overall_consistency >= threshold:
                 patterns.append(f"Extraction phase is stable on {repo} ({extraction.overall_consistency:.0%})")
 
     return patterns
@@ -282,7 +282,7 @@ def identify_repo_specific_issues(
     for repo, phases in stability_reports.items():
         if "derivation" in phases:
             derivation = phases["derivation"]
-            if derivation.overall_consistency < low_consistency_threshold:
+            if derivation.overall_consistency is not None and derivation.overall_consistency < low_consistency_threshold:
                 issues[repo].append(f"Overall derivation consistency low: {derivation.overall_consistency:.0%}")
 
             # Check for problematic element types

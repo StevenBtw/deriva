@@ -79,15 +79,15 @@ def _decision_type(call: dict[str, Any]) -> str:
 
 
 def _share(sets: list[set[Any]]) -> float | None:
+    # Nothing to compare (fewer than two runs, or nothing in any run): no score
     union = set().union(*sets) if sets else set()
-    return round(len(set.intersection(*sets)) / len(union), 3) if union else None
+    return round(len(set.intersection(*sets)) / len(union), 3) if union and len(sets) >= 2 else None
 
 
 def _jbar(sets: list[set[Any]]) -> float | None:
-    pairs = list(itertools.combinations(sets, 2))
-    if not pairs:
-        return None
-    return round(sum((len(a & b) / len(a | b)) if (a | b) else 1.0 for a, b in pairs) / len(pairs), 3)
+    # A pair of empty sets has nothing to compare and is left out; None when no pair is left
+    scores = [len(a & b) / len(a | b) for a, b in itertools.combinations(sets, 2) if a | b]
+    return round(sum(scores) / len(scores), 3) if scores else None
 
 
 def _run_view(snapshot: dict[str, Any], classified: set[str]) -> dict[str, Any]:

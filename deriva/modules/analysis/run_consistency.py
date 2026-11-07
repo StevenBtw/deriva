@@ -49,10 +49,11 @@ def run_sets(snapshot: dict[str, Any]) -> dict[str, set]:
     return dict(out)
 
 
-def _score(runs: list[set]) -> tuple[int, int, float]:
+def _score(runs: list[set]) -> tuple[int, int, float | None]:
     union = set().union(*runs)
     common = set.intersection(*runs) if runs else set()
-    return len(common), len(union), (len(common) / len(union) if union else 1.0)
+    # Nothing to compare (fewer than two runs, or nothing in any run): no score
+    return len(common), len(union), (len(common) / len(union) if union and len(runs) >= 2 else None)
 
 
 def consistency_rows(runs: list[dict[str, set]]) -> list[dict[str, Any]]:
