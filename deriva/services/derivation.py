@@ -2021,6 +2021,9 @@ def run_derivation(
                 continue
 
             try:
+                # The step's saved queries run on the graph without a rollback: a refused one fails this step only
+                # (its candidate query and the params links; input_model_query is checked on save, nothing runs it)
+                config.check_config_queries(cfg.step_name, cfg.input_graph_query, params=cfg.params)
                 assert cfg.instruction is not None
                 component_services = _component_services_config(cfg.params) if cfg.element_type == "ApplicationService" else None
                 if function_model is not None:
@@ -2152,6 +2155,9 @@ def run_derivation(
         rel_ctx = run_logger.step_start(RELATIONSHIP_STEP, "Deriving relationships") if run_logger else None
 
         try:
+            # The relationship rules' graph_links queries run without a rollback: a refused one fails this pass
+            for rel_cfg in relationship_configs:
+                config.check_config_queries(rel_cfg.step_name, params=rel_cfg.params)
             relationship_rules = _collect_relationship_rules()
             relationships = derive_consolidated_relationships(
                 all_elements=elements_for_relationships,
@@ -2489,6 +2495,9 @@ def run_derivation_iter(
                 continue
 
             try:
+                # The step's saved queries run on the graph without a rollback: a refused one fails this step only
+                # (its candidate query and the params links; input_model_query is checked on save, nothing runs it)
+                config.check_config_queries(cfg.step_name, cfg.input_graph_query, params=cfg.params)
                 assert cfg.instruction is not None
                 component_services = _component_services_config(cfg.params) if cfg.element_type == "ApplicationService" else None
                 if function_model is not None:
@@ -2600,6 +2609,9 @@ def run_derivation_iter(
             print(f"  Deriving relationships for {len(elements_for_relationships)} elements...")
 
         try:
+            # The relationship rules' graph_links queries run without a rollback: a refused one fails this pass
+            for rel_cfg in relationship_configs:
+                config.check_config_queries(rel_cfg.step_name, params=rel_cfg.params)
             relationship_rules = _collect_relationship_rules()
             relationships = derive_consolidated_relationships(
                 all_elements=elements_for_relationships,
