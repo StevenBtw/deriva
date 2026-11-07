@@ -54,8 +54,9 @@ const MAX_POLL_MS = 60000;
 
 /** Database ownership, version, installed features and whether a model exists; polled so the banners follow changes.
  * A studio that does not answer at all (a network error, no response) is asked again later and later (the interval
- * doubled per miss, at most a minute), and only for its status; an error answer counts as an answer; one that refuses
- * this browser (401) is not asked again: only its launch link helps. */
+ * doubled per miss, at most a minute), and only for its status; an error answer counts as an answer. A studio that
+ * refuses this browser (401) is asked for its status only, at the usual interval: the launch link opened in another tab
+ * lets this one in, and its first answer unlocks the page. The model list follows every answer but a 401. */
 function useShellStatus(intervalMs = 10000): ShellStatus {
   const [shell, setShell] = useState<ShellStatus>({
     db: { state: "not_connected" },
@@ -70,6 +71,17 @@ function useShellStatus(intervalMs = 10000): ShellStatus {
     const next = (ms: number) => {
       if (!cancelled) timer = window.setTimeout(poll, ms);
     };
+    // Whether a model exists, after any answer but a refusal (an error answer included, so it cannot go stale)
+    const refreshModels = () => {
+      modelConfigs
+        .list()
+        .then(
+          (models) =>
+            !cancelled &&
+            setShell((now) => ({ ...now, noModel: models.length === 0 })),
+        )
+        .catch(() => {});
+    };
     const poll = () => {
       fetchStatus()
         .then((s) => {
@@ -83,27 +95,24 @@ function useShellStatus(intervalMs = 10000): ShellStatus {
             benchmark: s.features?.benchmark ?? true,
             environment: s.environment,
           }));
-          modelConfigs
-            .list()
-            .then(
-              (models) =>
-                !cancelled &&
-                setShell((now) => ({ ...now, noModel: models.length === 0 })),
-            )
-            .catch(() => {});
+          refreshModels();
           next(intervalMs);
         })
         .catch((reason) => {
           if (cancelled) return;
+          // Refused: the launch link page, and the status asked again (a 401 is a cheap answer) until this browser is let in
           if (reason instanceof ApiError && reason.status === 401) {
+            misses = 0;
             setShell((now) => ({ ...now, locked: true }));
+            next(intervalMs);
             return;
           }
           // An error answer (500, 503) is still an answer: the studio is there, so no notice and the usual interval,
           // and the database keeps its last known state
           if (reason instanceof ApiError) {
             misses = 0;
-            setShell((now) => ({ ...now, db: { ...now.db, unanswered: false } }));
+            setShell((now) => ({ ...now, locked: false, db: { ...now.db, unanswered: false } }));
+            refreshModels();
             next(intervalMs);
             return;
           }
