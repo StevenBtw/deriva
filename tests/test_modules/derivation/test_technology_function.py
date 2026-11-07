@@ -45,3 +45,59 @@ def test_a_realizer_gets_its_behaviour_and_its_service_named_by_kind_without_a_c
 
     assert function is not None and not function.labels and function.name_template == "{subject} {role}"
     assert service is not None and not service.labels and service.structural == (("kind", "database", "database"),)
+
+
+def test_subject_as_written_names_graph_labels_and_needs_a_subject_in_the_template():
+    import pytest
+
+    base = {
+        "names": {"behaviour": "Behaviour"},
+        "element_per": "candidate",
+        "name_template": "{subject} {role}",
+        "structural": [{"property": "kind", "pattern": "database", "role": "behaviour"}],
+    }
+
+    config = _role_config(json.dumps({"roles": {**base, "subject_as_written": ["Software"]}}))
+
+    assert config is not None and config.subject_as_written == frozenset({"Software"})
+    for wrong in ({**base, "subject_as_written": "Software"}, {**base, "subject_as_written": [""]}, {**base, "name_template": "{role}", "subject_as_written": ["Software"]}):
+        with pytest.raises(ValueError, match="subject_as_written"):
+            _role_config(json.dumps({"roles": wrong}))
+
+
+def test_repeat_template_needs_a_template_per_candidate():
+    import pytest
+
+    base = {
+        "names": {"database": "Store and Query Data"},
+        "element_per": "candidate",
+        "name_template": "{role}",
+        "structural": [{"property": "kind", "pattern": "database", "role": "database"}],
+    }
+
+    config = _role_config(json.dumps({"roles": {**base, "repeat_template": "{role} ({subject})"}}))
+
+    assert config is not None and config.repeat_template == "{role} ({subject})"
+    for wrong in ({**base, "repeat_template": 3}, {**base, "repeat_template": "{role}"}, {**base, "name_template": "", "repeat_template": "{role} ({subject})"}):
+        with pytest.raises(ValueError, match="repeat_template"):
+            _role_config(json.dumps({"roles": wrong}))
+
+
+def test_the_shipped_function_config_reads_its_realizer_only_in_the_repeat_template():
+    """Functions are named by kind ({role}); the realizer, as written, appears only when two names would repeat."""
+    config = _role_config(
+        json.dumps(
+            {
+                "roles": {
+                    "names": {"database": "Store and Query Data"},
+                    "element_per": "candidate",
+                    "name_template": "{role}",
+                    "repeat_template": "{role} ({subject})",
+                    "subject_as_written": ["Software"],
+                    "structural": [{"property": "kind", "pattern": "database", "role": "database"}],
+                }
+            }
+        )
+    )
+
+    assert config is not None and (config.name_template, config.repeat_template, config.subject_as_written) == ("{role}", "{role} ({subject})", frozenset({"Software"}))

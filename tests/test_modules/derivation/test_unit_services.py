@@ -718,3 +718,43 @@ def test_with_verb_choice_a_choice_never_takes_a_siblings_structural_name():
 
     by_structure = {s["properties"]["structure_name"]: s["name"] for s in services}
     assert by_structure == {"Account Management": "Account Management", "Loan Management": "Loan Management"}
+
+
+def test_a_stem_in_front_writes_each_object_word_once_and_keeps_the_verb():
+    """Two components offer the same "<object> <verb>": each copy takes its component's stem in front. A word of the
+    object that the component's own words already hold is written once, wherever they hold it; the last word (the
+    verb) stays. Words at the front of the stem that spell a token of the repository's name are the product's, not
+    the component's own: they never count as written."""
+    from deriva.modules.derivation.component_services import _with_stem
+
+    assert _with_stem("Ledger Order", "Order Management", set()) == "Ledger Order Management"  # the stem ends in it
+    assert _with_stem("Ftgo Order History", "Order Management", set(), "ftgo-application") == "Ftgo Order History Management"
+    assert _with_stem("Credit Card Authorizations", "Card Processing", set(), "aws-mainframe-modernization-carddemo") == "Credit Card Authorizations Processing"
+    # "Card Demo" spells the repository's token carddemo: the product's words, so the service keeps its object
+    assert _with_stem("Card Demo Online", "Card Management", set(), "aws-mainframe-modernization-carddemo") == "Card Demo Online Card Management"
+    assert _with_stem("Card Demo Batch", "Card Processing", set(), "aws-mainframe-modernization-carddemo") == "Card Demo Batch Card Processing"
+    # The verb is never dropped, even when the stem holds it
+    assert _with_stem("Transaction Type Management", "Card Management", set()) == "Transaction Type Management Card Management"
+    # No shared word: the plain stem in front, as before
+    assert _with_stem("Shop", "Order Management", set()) == "Shop Order Management"
+
+
+def test_the_product_words_of_a_stem_are_the_leading_ones_that_spell_repository_tokens():
+    from deriva.modules.derivation.component_services import _own_words
+
+    assert _own_words(["Card", "Demo", "Online"], "aws-mainframe-modernization-carddemo") == ["Online"]
+    assert _own_words(["Ftgo", "Order", "History"], "ftgo-application") == ["Order", "History"]
+    assert _own_words(["Ftgo", "Application", "Order"], "ftgo-application") == ["Order"]  # several tokens in a row
+    assert _own_words(["Order", "Ftgo"], "ftgo-application") == ["Order", "Ftgo"]  # only at the front
+    assert _own_words(["Ftgo"], "ftgo-application") == ["Ftgo"]  # a stem that is only the product keeps its word
+    assert _own_words(["Order", "History"], "") == ["Order", "History"]
+
+
+def test_a_taken_shorter_name_falls_back_to_the_plain_stem_then_a_number():
+    from deriva.common.naming import name_key
+    from deriva.modules.derivation.component_services import _with_stem
+
+    taken = {name_key("Ftgo Order History Management")}
+    assert _with_stem("Ftgo Order History", "Order Management", taken) == "Ftgo Order History Order Management"
+    taken |= {name_key("Ftgo Order History Order Management")}
+    assert _with_stem("Ftgo Order History", "Order Management", taken) == "Ftgo Order History Order Management 2"
