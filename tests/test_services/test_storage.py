@@ -89,6 +89,54 @@ def test_a_map_file_lmdb_cannot_read_is_measured_by_its_files_and_left_as_it_was
     assert (folder / "data.mdb").read_bytes() == junk
 
 
+def _files_measure(folder):
+    files = [p for p in folder.iterdir() if p.is_file()]
+    return {"bytes": sum(p.stat().st_size for p in files), "files": len(files), "entries": None}
+
+
+def test_a_cache_whose_state_is_not_deriva_s_is_measured_by_its_files(tmp_path, monkeypatch):
+    """A meta state that is JSON but no dict with a size ("[]") gives no answer count; the overview does not fail."""
+    import lmdb
+
+    from deriva.common.cache_utils import BaseDiskCache
+
+    monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+    monkeypatch.delenv("LLM_CACHE_DIR", raising=False)
+    folder = storage.llm_cache_folder()
+    cache = BaseDiskCache(folder)
+    cache.set("key", {"content": "x"})
+    cache.close()
+    env = lmdb.open(str(folder), max_dbs=2)
+    with env.begin(write=True) as txn:
+        txn.put(b"state", b"[]", db=env.open_db(b"meta", txn=txn))
+    env.close()
+
+    assert storage.overview(repositories=set(), active="default")["llm_cache"] == _files_measure(folder)
+
+
+def test_measuring_an_lmdb_map_that_is_not_deriva_s_writes_nothing_to_it(tmp_path, monkeypatch):
+    """A valid lmdb map with databases of its own is no Deriva cache: it is measured by its files, and measuring
+    opens it read-only, so it does not gain Deriva's entries and meta databases."""
+    import lmdb
+
+    monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+    monkeypatch.delenv("LLM_CACHE_DIR", raising=False)
+    folder = storage.llm_cache_folder()
+    folder.mkdir(parents=True)
+    env = lmdb.open(str(folder), max_dbs=2)
+    with env.begin(write=True) as txn:
+        txn.put(b"k", b"v", db=env.open_db(b"other", txn=txn))
+    env.close()
+
+    assert storage.overview(repositories=set(), active="default")["llm_cache"] == _files_measure(folder)
+
+    env = lmdb.open(str(folder), readonly=True, max_dbs=2)
+    with env.begin() as txn:
+        main = [key for key, _ in txn.cursor()]
+    env.close()
+    assert main == [b"other"]
+
+
 def test_deleting_exports_removes_the_exchange_files_only(home):
     assert storage.delete_exports() == {"bytes": 20, "files": 2}
     assert sorted(p.name for p in (home / "workspace" / "output").iterdir()) == ["joint_consistency.json"]
