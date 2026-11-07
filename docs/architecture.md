@@ -201,9 +201,11 @@ Structure gives every candidate, every identifier and the relationships between 
 | Interface role | Files and methods that look like entry points | Which are interfaces, and what kind |
 | Service names | Name candidates from the component's interfaces, ordered by how much of the component each covers | The object or activity of the service; its verb stays structural |
 | Tooling | The repository's deployable units, with the README title and lines | Which units are tooling around the product rather than part of it |
-| Software an image runs | Every container image, among the technology items it labels | The system each image runs, or none; the label names the software of an image that is not on the closed list of technologies |
+| Software an image runs | Every container image, among the technology items it labels | The system each image runs, or none; this changes the model only for an image that is not on the closed list of technologies |
 
 The LLM also labels the documentation's terms, directories and technologies, which feed later steps. Everything else, the element types, the levels and the relationships, comes from structure: given the same LLM answers, it is the same in every run. Steps marked experimental may use the LLM in further ways; they are off by default.
+
+Two of these decisions can still differ between runs on the same repository. The grouping into applications can leave a component out of its application in one run: identifiers stay the same, but the component and its relationships move in or out of the enterprise level. A service's chosen object can differ when several candidates cover a component about equally: the service keeps its identifier and gets another name. The solution level, which holds the units, modules, interfaces and data objects, does not depend on either.
 
 ## Design decisions
 
