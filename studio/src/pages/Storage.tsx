@@ -223,7 +223,7 @@ function Disk() {
               <tr>
                 <td>LLM cache</td>
                 <td>{size(data.llm_cache.bytes)}</td>
-                <td>{plural(data.llm_cache.files, "file")}</td>
+                <td>{data.llm_cache.entries === null ? plural(data.llm_cache.files, "file") : plural(data.llm_cache.entries, "answer")}</td>
                 <td>
                   <button
                     type="button"

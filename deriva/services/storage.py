@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from deriva.adapters.grafeo import DEFAULT_DATABASE, database_bytes, delete_database, list_databases
+from deriva.common.cache_utils import cache_contents
 from deriva.common.paths import resolve, workspace
 from deriva.common.settings import LlmSettings
 
@@ -28,6 +29,18 @@ def llm_cache_folder() -> Path:
     return resolve(LlmSettings().cache_dir)
 
 
+def _measure_llm_cache() -> dict[str, Any]:
+    """What the LLM cache holds: its cached answers and their bytes (an lmdb map file is as large as its map, most of
+    it unused), its files beside; a folder without an lmdb map is measured by its files (entries unknown)."""
+    folder = llm_cache_folder()
+    size, files = _measure(folder)
+    contents = cache_contents(folder) if files else None
+    if contents is None:
+        return {"bytes": size, "files": files, "entries": None}
+    entries, held = contents
+    return {"bytes": held, "files": files, "entries": entries}
+
+
 def exports_folder() -> Path:
     return workspace() / "output"
 
@@ -39,29 +52,28 @@ def overview(repositories: set[str], active: str) -> dict[str, Any]:
         kind = "repository" if key in repositories else "shared" if key == DEFAULT_DATABASE else "orphaned"
         graphs.append({"key": key, "bytes": database_bytes(key), "kind": kind, "active": key == active})
     graphs.sort(key=lambda g: (-g["bytes"], g["key"]))
-    cache_bytes, cache_files = _measure(llm_cache_folder())
     export_bytes, export_files = _measure(exports_folder(), "*.xml")
     sessions = workspace() / "benchmarks"
     session_bytes, _ = _measure(sessions)
     return {
         "graphs": graphs,
-        "llm_cache": {"bytes": cache_bytes, "files": cache_files},
+        "llm_cache": _measure_llm_cache(),
         "exports": {"bytes": export_bytes, "files": export_files},
         "benchmark_sessions": {"bytes": session_bytes, "sessions": sum(1 for p in sessions.iterdir() if p.is_dir()) if sessions.is_dir() else 0},
     }
 
 
-def clear_llm_cache() -> dict[str, int]:
+def clear_llm_cache() -> dict[str, Any]:
     """Delete every cached LLM answer (the next runs call the LLM again); the cache must not be open."""
     folder = llm_cache_folder()
-    size, files = _measure(folder)
+    held = _measure_llm_cache()
     if folder.is_dir():
         for child in folder.iterdir():
             if child.is_dir():
                 shutil.rmtree(child)
             else:
                 child.unlink()
-    return {"bytes": size, "files": files}
+    return held
 
 
 def delete_exports() -> dict[str, int]:

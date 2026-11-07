@@ -157,6 +157,31 @@ def _close_environment(directory: Path) -> None:
         env.close()
 
 
+def cache_contents(directory: str | Path) -> tuple[int, int] | None:
+    """(entries, bytes of their rows) of the lmdb cache in a folder, or None when the folder holds no map lmdb can read
+    (none at all, a damaged one, another format, a lock it cannot take).
+
+    The map file (data.mdb) is as large as its map size, so its size on disk says little about what the cache holds;
+    the store keeps the total row size in its meta database and lmdb counts the entries.
+    """
+    folder = Path(directory)
+    map_file = folder / "data.mdb"
+    if not map_file.is_file():
+        return None
+    # Opened with the map it already has (map size = twice the limit), so measuring never resizes the file; it only reads
+    try:
+        store = _LmdbStore(folder, max(1, map_file.stat().st_size // 2))
+    except lmdb.Error:
+        return None
+    try:
+        with store._env.begin() as txn:
+            return txn.stat(store._entries)["entries"], store._read_state(txn)["size"]
+    except lmdb.Error, ValueError, KeyError:
+        return None  # a map lmdb opens but whose entries or state are not Deriva's
+    finally:
+        store.close()
+
+
 class _LmdbStore:
     """A small diskcache-shaped key-value store on lmdb.
 
@@ -176,8 +201,12 @@ class _LmdbStore:
         # The map grows with the data up to map_size; twice the limit leaves room for one eviction pass
         # (the first store on a folder opens it; later ones share that environment)
         self._env = _open_environment(self._dir, max(2 * size_limit, 64 * 1024 * 1024))
-        self._entries = self._env.open_db(self._ENTRIES)
-        self._meta = self._env.open_db(self._META)
+        try:
+            self._entries = self._env.open_db(self._ENTRIES)
+            self._meta = self._env.open_db(self._META)
+        except lmdb.Error:
+            _close_environment(self._dir)  # this store's share of the environment, so a failed open holds no file
+            raise
         self._closed = False
 
     def _read_state(self, txn) -> dict[str, int]:

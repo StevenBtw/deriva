@@ -142,7 +142,7 @@ export const repositories = {
 export const storage = {
   overview: () => api.get<StorageOverview>("/api/storage"),
   /** Every cached LLM answer: the next runs call the LLM again */
-  clearLlmCache: () => api.del<{ bytes: number; files: number }>("/api/storage/llm-cache"),
+  clearLlmCache: () => api.del<{ bytes: number; files: number; entries: number | null }>("/api/storage/llm-cache"),
   /** The exported exchange files (*.xml) in workspace/output */
   deleteExports: () => api.del<{ bytes: number; files: number }>("/api/storage/exports"),
   /** A graph database without a repository */

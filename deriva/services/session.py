@@ -270,7 +270,7 @@ class PipelineSession:
         """What the workspace keeps on disk: graph databases (repository, shared, orphaned), LLM cache, exports, benchmark sessions."""
         return storage.overview(repositories=self._repository_names(), active=self.repository)
 
-    def clear_llm_cache(self) -> dict[str, int]:
+    def clear_llm_cache(self) -> dict[str, Any]:
         """Delete every cached LLM answer; the session's own cache closes first and reopens with the next call."""
         if self._llm_manager is not None:
             self._llm_manager.cache.close()

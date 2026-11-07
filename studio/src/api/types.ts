@@ -76,7 +76,8 @@ export type RepositoryData = {
 /** What the workspace keeps on disk; a graph database is a repository's, the shared one, or orphaned (its repository is gone). */
 export type StorageOverview = {
   graphs: { key: string; bytes: number; kind: "repository" | "shared" | "orphaned"; active: boolean }[];
-  llm_cache: { bytes: number; files: number };
+  // entries: the cached answers (null when the folder holds no lmdb map); bytes: what they take, not the map file
+  llm_cache: { bytes: number; files: number; entries: number | null };
   exports: { bytes: number; files: number };
   benchmark_sessions: { bytes: number; sessions: number };
   runs: { runs: number; bytes: number };
