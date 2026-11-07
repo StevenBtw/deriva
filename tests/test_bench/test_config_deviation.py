@@ -440,7 +440,7 @@ class TestConvenienceFunctions:
 
         assert isinstance(report, DeviationReport)
         # No runs: nothing deviates
-        assert (report.session_id, report.total_runs, report.total_deviations, report.overall_consistency, report.config_deviations) == ("session_123", 0, 0, 1.0, [])
+        assert (report.session_id, report.total_runs, report.total_deviations, report.overall_consistency, report.config_deviations) == ("session_123", 0, 0, None, [])
 
     def test_export_config_deviations_creates_file(self, tmp_path):
         """Should create export file."""

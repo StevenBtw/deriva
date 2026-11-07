@@ -363,3 +363,27 @@ def test_the_report_holds_consistency_per_level(tmp_path):
     solution = report["consistency_levels"]["solution"][0]["identities"]["id"]["relationships"]["cons"]
     enterprise = report["consistency_levels"]["enterprise"][0]["identities"]["id"]["relationships"]["cons"]
     assert (solution, whole, enterprise) == (1.0, 0.5, 0.5)
+
+
+def test_nothing_to_compare_is_no_score_in_either_consistency_measure():
+    """One convention: a run pair with nothing in it is left out of the mean Jaccard, and with nothing in any run both
+    measures are n/a (None), so an empty element type never raises a session's consistency."""
+    from deriva.bench.session_metrics import _jbar, _share
+
+    assert (_share([set(), set(), set()]), _jbar([set(), set(), set()])) == (None, None)
+    # Every pair with something in it counts; a pair of two empty runs is left out (it used to count as 1.0)
+    assert _jbar([{"a"}, {"a", "b"}, {"a", "b"}]) == round((0.5 + 0.5 + 1.0) / 3, 3)
+    assert _jbar([{"a"}, set(), set()]) == 0.0
+
+
+def test_the_measures_helpers_leave_unmeasured_values_out():
+    from deriva.modules.analysis.measures import mean_measured, share_text
+
+    assert (mean_measured([0.5, None, 1.0]), mean_measured([None, None]), mean_measured([])) == (0.75, None, None)
+    assert (share_text(0.875), share_text(None), share_text(0.5, ".0%")) == ("87.5%", "n/a", "50%")
+
+
+def test_one_run_is_no_consistency_score():
+    from deriva.bench.session_metrics import _jbar, _share
+
+    assert (_share([{"a", "b"}]), _jbar([{"a", "b"}])) == (None, None)

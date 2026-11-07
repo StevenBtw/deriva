@@ -669,9 +669,9 @@ class TestElementStructuralStability:
         assert len(elem.connections) == 2
 
     def test_structural_score_empty_connections(self):
-        """Should return 100 when no connections."""
+        """No connections is nothing to compare: no score."""
         elem = ElementStructuralStability(element_id="A")
-        assert elem.structural_score == 100.0
+        assert elem.structural_score is None  # No connections: nothing to compare
 
     def test_structural_score_calculation(self):
         """Should calculate average of connection stability scores."""
@@ -1563,30 +1563,30 @@ class TestBenchmarkAnalyzer:
             with patch("deriva.bench.benchmarking.get_benchmark_runs", return_value=[]):
                 analyzer = BenchmarkAnalyzer("sess-1", engine)
 
-                # Elements in each run (no underscores - format is Type_Source_Target)
+                # Element identifiers hold underscores (ac_web): the relationship ids keep their ends apart
                 elements_by_run = {
-                    "run1": {"elemA", "elemB", "elemC"},
-                    "run2": {"elemA", "elemB", "elemC"},
-                    "run3": {"elemA", "elemB"},  # elemC missing in run 3
+                    "run1": {"ac_web", "ac_api", "as_order_api"},
+                    "run2": {"ac_web", "ac_api", "as_order_api"},
+                    "run3": {"ac_web", "ac_api"},  # the service missing in run 3
                 }
 
-                # Relationships: format is {Type}_{Source}_{Target}
+                # Relationships: format is {Type}|{Source}|{Target} (create_edge_id)
                 relationships_by_run = {
-                    "run1": {"Serving_elemA_elemB", "Flow_elemB_elemC"},
-                    "run2": {"Serving_elemA_elemB", "Flow_elemB_elemC"},
-                    "run3": {"Serving_elemA_elemB"},  # Flow missing
+                    "run1": {"Serving|ac_web|ac_api", "Flow|ac_api|as_order_api"},
+                    "run2": {"Serving|ac_web|ac_api", "Flow|ac_api|as_order_api"},
+                    "run3": {"Serving|ac_web|ac_api"},  # Flow missing
                 }
 
                 result = analyzer._compute_structural_stability(elements_by_run, relationships_by_run, 3)
 
-                # Per element its outbound connections: elemA serves elemB in all 3 runs, elemB's flow to elemC in 2
+                # Per element its outbound connections: the web component serves the API in all 3 runs, its flow in 2
                 outbound = {
                     (s.element_id, c.connected_to, c.relationship_type, c.appearances, c.total_runs)
                     for s in result
                     for c in s.connections
                     if c.relationship_type.endswith("_outbound")
                 }
-                assert outbound == {("elemA", "elemB", "Serving_outbound", 3, 3), ("elemB", "elemC", "Flow_outbound", 2, 3)}
+                assert outbound == {("ac_web", "ac_api", "Serving_outbound", 3, 3), ("ac_api", "as_order_api", "Flow_outbound", 2, 3)}
 
     def test_compute_structural_stability_empty(self):
         """Should return empty list when no relationships."""
