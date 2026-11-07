@@ -808,7 +808,7 @@ class TestJavaAndScriptImports:
 
         edges, _, _ = self._edges([ExtractedImport(module="@angular/core", names=["Component"])], "app/src/pages/home.component.ts", {"app/src/pages/home.component.ts"})
 
-        assert self._targets(edges) == {("USES", "extdep::r::@angular/core")}
+        assert self._targets(edges) == {("USES", "extdep::r::@angular_core")}  # one id rule with the manifests
 
 
 # =============================================================================
@@ -1888,7 +1888,7 @@ class TestGoImports:
         result = self._go('package main\n\nimport "github.com/acme/router/middleware"\n\nfunc main() {}\n', external={"github.com/acme/router"})
 
         uses = [e for e in result["data"]["edges"] if e["relationship_type"] == "USES"]
-        assert [e["to_node_id"] for e in uses] == ["extdep::r::github_com/acme/router"]
+        assert [e["to_node_id"] for e in uses] == ["extdep::r::github_com_acme_router"]  # one id rule with the manifests
         assert [n["properties"]["dependencyName"] for n in result["data"]["nodes"]] == ["github.com/acme/router"]
         assert {n["properties"]["ecosystem"] for n in result["data"]["nodes"]} == {"go"}
 

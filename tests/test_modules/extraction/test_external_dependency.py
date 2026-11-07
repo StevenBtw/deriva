@@ -693,3 +693,50 @@ def test_a_member_language_has_no_package_dependencies():
     result = extract_external_dependencies("app/cbl/PROGA.cbl", source, "r", subtype="cobol")
 
     assert result["success"] and result["data"]["nodes"] == [] and result["data"]["edges"] == []
+
+
+GO_MOD = """module github.com/acme/shop
+
+go 1.22
+
+require github.com/single/line v1.0.0
+
+require (
+	github.com/gin-gonic/gin v1.10.0
+	github.com/gin-contrib/sse v0.1.0 // indirect
+	// a comment line
+)
+
+replace github.com/gin-gonic/gin => ../gin
+exclude github.com/old/thing v0.1.0
+"""
+
+
+class TestExtractFromGoMod:
+    """go.mod: every required module is a declared dependency (ecosystem go), the single-line and the block form; an
+    indirect one is flagged; the module line, replace and exclude are no dependencies."""
+
+    def test_required_modules_are_declared_go_dependencies(self):
+        result = extract_external_dependencies("go.mod", GO_MOD, "r", subtype="golang")
+
+        props = {n["properties"]["dependencyName"]: n["properties"] for n in result["data"]["nodes"]}
+        assert sorted(props) == ["github.com/gin-contrib/sse", "github.com/gin-gonic/gin", "github.com/single/line"]
+        gin = props["github.com/gin-gonic/gin"]
+        assert (gin["ecosystem"], gin["version"], gin["declared"], gin["indirect"]) == ("go", "v1.10.0", True, False)
+        assert props["github.com/gin-contrib/sse"]["indirect"] is True
+        assert result["stats"]["extraction_method"] == "deterministic"
+        assert {e["from_node_id"] for e in result["data"]["edges"]} == {"file::r::go.mod"}
+
+    def test_go_mod_is_parsed_deterministically(self):
+        assert get_extraction_method("svc/go.mod", "golang") == "go_mod"
+
+
+def test_a_declared_and_an_imported_dependency_have_one_node_id():
+    """One id rule for every ecosystem: a manifest's name and the package an import resolves to give one node, also for
+    names with dots or slashes (a Go module, a scoped npm package, a dotted Python distribution)."""
+    from deriva.modules.extraction.base import dependency_node_id
+
+    for manifest, imported in (("github.com/gin-gonic/gin", "github.com/gin_gonic/gin"), ("@angular/core", "@angular/core"), ("zope.interface", "zope.interface")):
+        node, _ = _build_dependency_node_and_edge(manifest, None, "x", "m", "r", "file::r::m", "deterministic")
+        assert node["node_id"] == dependency_node_id("r", imported)
+    assert dependency_node_id("r", "github.com/gin-gonic/gin") == "extdep::r::github_com_gin_gonic_gin"
