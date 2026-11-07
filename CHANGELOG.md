@@ -119,6 +119,7 @@ Hardening release: Deriva is safe to run on untrusted repositories, the bugs fou
 - **Cache hits in the LLM call list**: a cached call shows "cache hit" instead of zero tokens and latency.
 - **The LLM cache shows what it holds**: the Runs & storage page gives the number of cached answers and their size, not the size of the lmdb map file (2 GB on disk, mostly unused). A cache file lmdb cannot read is measured by its files.
 - **Coverage names each file type**: the coverage table on the Repositories page and in `deriva-cli coverage` lists each extension's file types with their files ("test 236, source 220"), and its "Parsed by" column stays empty for documentation and assets instead of saying `none`. An extension with source files that no step reads says `none`.
+- **An open page notices a stopped studio**: while the studio does not answer, the page says so and asks again less and less often (up to once a minute), instead of every 10 seconds without end. An expired launch token stops the polling and shows the launch-link page.
 - **One warning per missing model**: a model that cannot be loaded is reported once per reason, not again inside a run.
 
 ### Dependencies
