@@ -824,3 +824,14 @@ def test_the_shipped_tooling_check_runs_at_temperature_zero():
     row = next(r for r in json.loads(seed.read_text(encoding="utf-8")) if r["node_type"] == "DeployableUnit" and r.get("is_active"))
 
     assert json.loads(row["params"]).get("tool_check", {}).get("instruction") and row["temperature"] == 0.0
+
+
+def test_a_title_with_a_long_run_of_spaces_splits_in_linear_time():
+    """A one-line README can hold a very long run of spaces: the separator split takes it whole, once."""
+    import time
+
+    from deriva.modules.extraction.deployable_units import _SEPARATORS
+
+    started = time.perf_counter()
+    assert _SEPARATORS.split(" " * 200_000 + "Shop | Store: Admin") == [" " * 200_000 + "Shop", "Store", "Admin"]
+    assert time.perf_counter() - started < 1.0  # a plain \s+ took minutes here

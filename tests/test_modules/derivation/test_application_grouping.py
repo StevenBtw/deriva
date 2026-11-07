@@ -122,3 +122,14 @@ def test_an_underscore_inside_a_word_stays_and_emphasis_goes():
     from deriva.modules.derivation.application_grouping import clean_heading
 
     assert clean_heading("The _order_service_ and `__init__` in **bold**") == "The order_service and init in bold"
+
+
+def test_a_title_with_a_long_run_of_spaces_splits_in_linear_time():
+    """A one-line README can hold a very long run of spaces: the dash split takes it whole, once."""
+    import time
+
+    from deriva.modules.derivation.application_grouping import _DASH
+
+    started = time.perf_counter()
+    assert _DASH.split(" " * 200_000 + "Shop - Store") == [" " * 200_000 + "Shop", "Store"]
+    assert time.perf_counter() - started < 1.0  # a plain \s+ took minutes here

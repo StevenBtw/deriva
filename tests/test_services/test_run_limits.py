@@ -26,6 +26,11 @@ class TestSettings:
         assert config.setting_default("max_read_bytes") == "50000000"
         assert config.setting_default("max_llm_calls_per_run") == "2000"
 
+    def test_the_snippet_line_limit_defaults_to_2000_and_can_be_set(self, engine):
+        assert (config.get_max_snippet_line_chars(engine), config.setting_default("max_snippet_line_chars")) == (2000, "2000")
+        config.set_setting(engine, "max_snippet_line_chars", "500")
+        assert config.get_max_snippet_line_chars(engine) == 500
+
     def test_set_values_apply(self, engine):
         config.set_setting(engine, "max_read_bytes", "1000")
         config.set_setting(engine, "max_llm_calls_per_run", "10")
