@@ -3371,6 +3371,88 @@ class TestUnitConfigs:
                 json.dumps({"roles": {**base, "element_per": "candidate", "name_template": "{subject}", "unit_roles": [{"property": "webEntries", "role": "web"}]}})
             )
 
+    def test_registrations_name_a_known_role_and_a_service_group_and_need_roles_per_unit(self):
+        base = {
+            "names": {"rpc": "RPC API"},
+            "labels": ["File"],
+            "instruction": "x",
+            "element_per": "unit",
+            "container_type": "ApplicationComponent",
+            "name_template": "{container} {role}",
+        }
+        registrations = {"role": "rpc", "patterns": [r"\bRegister(?P<service>\w+?)Server\("], "excluded_services": ["Health"]}
+
+        config = derivation._role_config(json.dumps({"roles": {**base, "registrations": registrations}}))
+
+        assert config is not None
+        assert (config.registration_role, config.registrations, config.excluded_services) == ("rpc", (r"\bRegister(?P<service>\w+?)Server\(",), ("Health",))
+        for wrong in (
+            {**registrations, "role": "desktop"},  # no role key of names
+            {**registrations, "patterns": [r"\bRegister\w+Server\("]},  # no service group
+            {**registrations, "patterns": ["(?P<service>"]},  # no valid pattern
+            {**registrations, "excluded_services": ["("]},
+            {**registrations, "patterns": []},
+        ):
+            with pytest.raises(ValueError, match="registrations"):
+                derivation._role_config(json.dumps({"roles": {**base, "registrations": wrong}}))
+        with pytest.raises(ValueError, match="registrations"):
+            derivation._role_config(json.dumps({"roles": {**base, "element_per": "candidate", "name_template": "{subject}", "registrations": registrations}}))
+
+    def test_the_source_reader_reads_the_checkout_and_no_link_out_of_it_or_large_file(self, tmp_path, monkeypatch):
+        repositories = tmp_path / "repositories"
+        (repositories / "r" / "src").mkdir(parents=True)
+        (repositories / "r" / "src" / "main.go").write_text("pb.RegisterCartServiceServer(srv, svc)\n", encoding="utf-8")
+        (repositories / "r" / "src" / "big.go").write_text("x" * 100, encoding="utf-8")
+        (tmp_path / "secret.go").write_text("secret", encoding="utf-8")
+        monkeypatch.setattr(derivation, "workspace", lambda: tmp_path)
+        monkeypatch.setattr(derivation.config, "get_max_read_bytes", lambda engine: 50)
+        try:
+            (repositories / "r" / "src" / "link.go").symlink_to(tmp_path / "secret.go")
+        except OSError:
+            pass  # no symlinks on this machine: the guard is still read below
+
+        read = derivation._source_reader(MagicMock())
+
+        assert read("r/src/main.go") == "pb.RegisterCartServiceServer(srv, svc)\n"
+        assert read("r\\src\\main.go") == "pb.RegisterCartServiceServer(srv, svc)\n"  # a stored Windows path
+        assert read("r/src/big.go") is None and read("r/src/missing.go") is None
+        assert read("r/src/link.go") is None and read("../secret.go") is None
+
+    def test_generate_element_passes_a_source_reader_only_to_a_step_with_registrations(self):
+        roles = derivation._role_config(
+            json.dumps(
+                {
+                    "roles": {
+                        "names": {"rpc": "RPC API"},
+                        "structural": [{"property": "category", "pattern": "^x$", "role": "rpc"}],
+                        "element_per": "unit",
+                        "container_type": "ApplicationComponent",
+                        "name_template": "{container} {role}",
+                        "registrations": {"role": "rpc", "patterns": [r"(?P<service>\w+)\.serve\("]},
+                    }
+                }
+            )
+        )
+        from deriva.modules.derivation.base import GenerationResult
+
+        for step_roles, expected in ((roles, True), (None, False)):
+            with patch.object(derivation, "_get_derivation") as mock_get, patch.object(derivation.config, "get_derivation_patterns", return_value={}):
+                mock_get.return_value.generate.return_value = GenerationResult(success=True)
+                derivation.generate_element(
+                    graph_manager=MagicMock(),
+                    archimate_manager=MagicMock(),
+                    engine=MagicMock(),
+                    llm_query_fn=MagicMock(),
+                    element_type="ApplicationInterface",
+                    query="MATCH (n) RETURN n",
+                    instruction="test",
+                    example="{}",
+                    max_candidates=10,
+                    batch_size=5,
+                    roles=step_roles,
+                )
+            assert (mock_get.return_value.generate.call_args.kwargs["source_text"] is not None) is expected
+
     def test_name_match_skip_pairs_are_read_from_the_relationship_row(self):
         row = SimpleNamespace(params=json.dumps({"name_match_skip": [{"source": "ApplicationInterface", "target": "ApplicationService"}]}))
 

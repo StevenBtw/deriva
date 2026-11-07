@@ -92,6 +92,17 @@ def test_a_file_member_is_named_without_its_extension_and_a_repeat_takes_its_fol
     assert sorted(e["name"] for e in detail.elements) == ["Account Index", "Home Index", "List", "OrderController", "OrderResource"]
 
 
+def test_a_file_member_named_as_written_keeps_its_name():
+    """A file that registers a service is a member by the service it registers (as_written): it keeps that name."""
+    members = [{"name": "CartService", "source": "file::r::a", "as_written": True}, {"name": "main.go", "source": "file::r::b"}]
+    files = {"file::r::a": "r/cart/main.go", "file::r::b": "r/shop/main.go"}
+    elements = [_el("ai_cart__rpc", "ApplicationInterface", "Cart RPC API", source="unit::r::cart", role="rpc", members=members)]
+
+    detail = detail_level(elements, DetailLineage(files=files))
+
+    assert sorted(e["name"] for e in detail.elements) == ["CartService", "Main"]
+
+
 def test_members_whose_folders_repeat_take_folders_until_their_names_differ():
     """An area's page and the main page of the same folder name (Areas/Admin/Views/Home and Views/Home) take further
     folders in front until the names differ; a name that is unique keeps a single folder."""
