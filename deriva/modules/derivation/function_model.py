@@ -251,9 +251,18 @@ def component_documentation(unit_path: str, unit_name: str, documents: dict[str,
     roots = sorted(p for p in documents if p.rsplit("/", 1)[0] == repo and p.rsplit("/", 1)[-1].lower().startswith("readme") and repo != unit_path)
     names = {n for n in (unit_path.rsplit("/", 1)[-1], unit_name) if n}
     if roots and names:
-        pattern = re.compile("|".join(rf"(?<![A-Za-z0-9-]){re.escape(n)}(?![A-Za-z0-9-])" for n in sorted(names)), re.IGNORECASE)
-        # The first line that names it: a later one is usually a mention elsewhere (a finding, a log line)
-        parts += [plain for line in documents[roots[0]].splitlines() if not re.match(r"^#{1,6}\s", line) and pattern.search(line) and (plain := _plain(line))][:1]
+        # A whole word: the name inside a longer identifier (order in order_service) is no mention
+        pattern = re.compile("|".join(rf"(?<![A-Za-z0-9_-]){re.escape(n)}(?![A-Za-z0-9_-])" for n in sorted(names)), re.IGNORECASE)
+        # The first prose line that names it (a fenced block is code: a command, not a mention); a later one is
+        # usually a mention elsewhere (a finding, a log line)
+        fenced = ""
+        for line in documents[roots[0]].splitlines():
+            if (after := fence(line, fenced)) != fenced:
+                fenced = after
+                continue
+            if not fenced and not re.match(r"^#{1,6}\s", line) and pattern.search(line) and (plain := _plain(line)):
+                parts.append(plain)
+                break
     return _joined(list(dict.fromkeys(parts)), max_chars)
 
 
