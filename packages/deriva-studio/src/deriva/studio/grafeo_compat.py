@@ -10,9 +10,15 @@ NAMESPACES = ("Graph", "Model")
 # before typeName, since a method also carries its class's typeName
 DISPLAY_KEYS = ("name", "techName", "conceptName", "methodName", "typeName", "fileName", "repoName", "repositoryName", "dependencyName", "path", "id")
 
-# String literals, backticked names and comments: write words there are no clauses (scanned left to right,
-# so a // inside a string stays part of the string)
-_SKIPPED = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|`[^`]*`|//[^\n]*|/\*.*?\*/", re.DOTALL)
+# String literals, backticked names and comments: words there are no clauses (scanned left to right, so a // inside a
+# string stays part of the string). The two languages differ in comments: GQL also starts one with --, which in Cypher is
+# an undirected edge, so a query is read both ways and a finding in either reading counts (a quote inside a -- comment
+# would otherwise open a string that hides what follows)
+_STRING = r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\""
+_SKIPPED_CYPHER = re.compile(_STRING + r"|`[^`]*`|//[^\n]*|/\*.*?\*/", re.DOTALL)
+_SKIPPED_GQL = re.compile(_STRING + r"|`[^`]*`|//[^\n]*|--[^\n]*|/\*.*?\*/", re.DOTALL)
+# A backticked name stays visible as this mark, so a procedure named in backticks cannot pass as no name
+_HIDDEN = "\x00"
 _WRITE = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|INSERT|LOAD)\b", re.IGNORECASE)
 # The procedures a user-typed query may call: grafeo's read-only ones (graph algorithms, catalog lists, searches), as
 # grafeo.procedures() lists them. Any other is refused, so a procedure added later stays out until it is listed here:
@@ -53,23 +59,45 @@ READ_PROCEDURES = frozenset(
     }
 )
 # CALL and what follows it: a procedure name (dotted), or a subquery's brace
-_CALL = re.compile(r"\bCALL\b\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)?\s*(\{)?", re.IGNORECASE)
+# CALL as a word of its own, not a property (n.call) or a label (:Call); what follows decides whether it is a clause
+_CALL = re.compile(r"(?<![.:\w$])CALL\b", re.IGNORECASE)
+_NAME = re.compile(r"[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*")
+
+
+def _readings(query: str) -> tuple[str, str]:
+    """The query with its strings and comments blanked, read as Cypher and as GQL (backticked names marked)."""
+
+    def blank(match: re.Match[str]) -> str:
+        return _HIDDEN if match.group(0).startswith("`") else " "
+
+    return _SKIPPED_CYPHER.sub(blank, query), _SKIPPED_GQL.sub(blank, query)
 
 
 def is_write_query(query: str) -> bool:
-    """True when the query uses a write clause outside string literals, backticked names and comments."""
-    return _WRITE.search(_SKIPPED.sub(" ", query)) is not None
+    """True when the query uses a write clause outside string literals, backticked names and comments, read as either
+    language."""
+    return any(_WRITE.search(reading) for reading in _readings(query))
 
 
 def refused_procedure(query: str) -> str | None:
-    """The first procedure the query calls that is not on ``READ_PROCEDURES`` (``"?"`` for one whose name is hidden,
-    in backticks or a string); None when every CALL is a listed procedure or a subquery (``CALL { ... }``)."""
-    for call in _CALL.finditer(_SKIPPED.sub(" ", query)):
-        name, subquery = call.group(1), call.group(2)
-        if name is None and subquery:
-            continue
-        if name is None or re.sub(r"\s+", "", name).lower() not in READ_PROCEDURES:
-            return re.sub(r"\s+", "", name) if name else "?"
+    """The first procedure the query calls that is not on ``READ_PROCEDURES`` (``"?"`` for one whose name is hidden in
+    backticks, in whole or in part), in either reading; None when every CALL clause is a listed procedure or a subquery
+    (``CALL { ... }``). A CALL followed by no name (a variable or label called call) is no clause."""
+    for reading in _readings(query):
+        for call in _CALL.finditer(reading):
+            rest = reading[call.end() :].lstrip()
+            if rest.startswith("{"):
+                continue
+            if rest.startswith(_HIDDEN):
+                return "?"
+            name = _NAME.match(rest)
+            if name is None:
+                continue
+            if rest[name.end() :].lstrip().startswith((".", _HIDDEN)):
+                return "?"
+            written = re.sub(r"\s+", "", name.group(0))
+            if written.lower() not in READ_PROCEDURES:
+                return written
     return None
 
 
