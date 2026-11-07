@@ -118,6 +118,7 @@ Hardening release: Deriva is safe to run on untrusted repositories, the bugs fou
 - **Refine says what changed**: "Refine: 4 flagged, 2 disabled, 1 merged", or that nothing changed.
 - **Cache hits in the LLM call list**: a cached call shows "cache hit" instead of zero tokens and latency.
 - **The LLM cache shows what it holds**: the Runs & storage page gives the number of cached answers and their size, not the size of the lmdb map file (2 GB on disk, mostly unused). A cache file lmdb cannot read is measured by its files.
+- **Coverage names each file type**: the Repositories coverage table shows each extension's file type, and its "Parsed by" column stays empty for documentation and assets instead of saying `none`. Only source that no step reads says `none`.
 - **One warning per missing model**: a model that cannot be loaded is reported once per reason, not again inside a run.
 
 ### Dependencies
