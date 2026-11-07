@@ -78,26 +78,25 @@ def test_repeat_template_needs_a_template_per_candidate():
     config = _role_config(json.dumps({"roles": {**base, "repeat_template": "{role} ({subject})"}}))
 
     assert config is not None and config.repeat_template == "{role} ({subject})"
-    for wrong in ({**base, "repeat_template": 3}, {**base, "repeat_template": "{role}"}, {**base, "name_template": "", "repeat_template": "{role} ({subject})"}):
+    for wrong in (
+        {**base, "repeat_template": 3},
+        {**base, "repeat_template": "{role}"},
+        {**base, "name_template": "", "repeat_template": "{role} ({subject})"},
+        {**base, "repeat_template": "{role} ({subject}, {realizer})"},  # a field no name fills
+        {**base, "repeat_template": "{role} ({subject"},  # not well formed (an open brace)
+        {**base, "repeat_template": "{role} ({subject.name})"},  # an attribute the name text has not
+    ):
         with pytest.raises(ValueError, match="repeat_template"):
             _role_config(json.dumps({"roles": wrong}))
 
 
 def test_the_shipped_function_config_reads_its_realizer_only_in_the_repeat_template():
-    """Functions are named by kind ({role}); the realizer, as written, appears only when two names would repeat."""
-    config = _role_config(
-        json.dumps(
-            {
-                "roles": {
-                    "names": {"database": "Store and Query Data"},
-                    "element_per": "candidate",
-                    "name_template": "{role}",
-                    "repeat_template": "{role} ({subject})",
-                    "subject_as_written": ["Software"],
-                    "structural": [{"property": "kind", "pattern": "database", "role": "database"}],
-                }
-            }
-        )
-    )
+    """Functions are named by kind ({role}); the realizer, as written, appears only when two names would repeat. Read
+    from the shipped seed row, so the test fails when the seed loses either key."""
+    from deriva.adapters.database.manager import SCRIPTS_DIR
+
+    rows = json.loads((SCRIPTS_DIR.parent / "data" / "derivation_config.json").read_text(encoding="utf-8"))
+    [row] = [r for r in rows if r["step_name"] == "TechnologyFunction"]
+    config = _role_config(row["params"])
 
     assert config is not None and (config.name_template, config.repeat_template, config.subject_as_written) == ("{role}", "{role} ({subject})", frozenset({"Software"}))
