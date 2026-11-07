@@ -68,6 +68,7 @@ from deriva.modules.derivation.base import (
     compute_candidate_strength,
     derive_batch_relationships,
     element_identifier,
+    enrich_candidate,
     extract_response_content,
     get_enrichments_from_graph,
     guard_name,
@@ -739,7 +740,9 @@ class ElementDerivationBase(ABC):
         # Track candidates sent to LLM
         result.candidates_to_llm = len(filtered)
         if on_candidates is not None:
-            on_candidates([c.node_id for c in filtered])
+            # Registered files are candidates too, decided by structure (roles.registrations)
+            shown = {c.node_id for c in filtered}
+            on_candidates([c.node_id for c in filtered] + [node for node in sorted(registered) if node not in shown])
 
         llm_kwargs: dict[str, Any] = {}
         if temperature is not None:
@@ -759,10 +762,15 @@ class ElementDerivationBase(ABC):
             # A registered file is named after its services (the query may have found it too: it is not asked)
             if registered:
                 filtered = [c for c in filtered if c.node_id not in registered]
-                role_candidates = [c for c in role_candidates if c.node_id not in registered] + [
+                # Structure decides a registered file: no filter stage's decision for it stands (it is decided once, below)
+                result.candidate_decisions = [d for d in result.candidate_decisions if d.node_id not in registered]
+                synthesized = [
                     Candidate(node_id=node, name=", ".join(services), labels=["Graph", "File"], properties={"filePath": path, "registeredServices": services})
                     for node, (path, services) in sorted(registered.items())
                 ]
+                for c in synthesized:
+                    enrich_candidate(c, enrichments)
+                role_candidates = [c for c in role_candidates if c.node_id not in registered] + synthesized
             if role_candidates:
                 self._process_roles(
                     role_candidates, roles, llm_query_fn, llm_kwargs, graph_manager, archimate_manager, repo_name, batch_size, result, taken, naming, structure_names
