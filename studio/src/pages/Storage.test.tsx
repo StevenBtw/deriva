@@ -139,6 +139,16 @@ describe("Storage", () => {
     expect(await within(card).findByText("2 files")).toBeInTheDocument();
   });
 
+  it("lines the graph databases up under the areas: both tables share their column widths", async () => {
+    render(<Storage />);
+
+    const card = (await screen.findByRole("heading", { name: "Storage" })).closest(".card") as HTMLElement;
+    const widths = [...card.querySelectorAll("table")].map((table) => [...table.querySelectorAll("col")].map((col) => col.style.width));
+    expect(widths).toHaveLength(2);
+    expect(widths[0]).toEqual(["40%", "15%", "25%", "20%"]);
+    expect(widths[1]).toEqual(widths[0]);
+  });
+
   it("warns before clearing the LLM cache and says what was freed", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<Storage />);
