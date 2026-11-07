@@ -2076,14 +2076,16 @@ def _extract_edges(
     edges_created = 0
     nodes_created = 0
 
-    # Get known external packages from the graph (for import resolution)
+    # Get known external packages from the graph (for import resolution): the declared ones (manifests), as a first run
+    # knows them; a dependency an earlier run of this step only found by an import is no known package (read back, it
+    # would turn the repository's own imports that it could not resolve once into external ones on every later run)
     external_packages: set[str] = set()
     try:
         extdeps = graph_manager.get_nodes_by_type("ExternalDependency")
         for dep in extdeps:
             props = dep.get("properties", {})
             name = props.get("name") or props.get("dependencyName")
-            if name:
+            if name and props.get("declared"):
                 # Normalize: flask-sqlalchemy -> flask_sqlalchemy
                 external_packages.add(name.lower().replace("-", "_"))
     except Exception:
