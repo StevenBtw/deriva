@@ -68,6 +68,26 @@ def test_a_query_that_reads_a_local_file_is_rejected(make_client):
     assert session.called("query_graph_read_only") == []
 
 
+def test_a_procedure_that_is_not_read_only_is_refused(make_client):
+    """grafeo's load procedures read local files, and a rolled-back query still returns what they read: the query view
+    calls only grafeo's read-only procedures, however the name is written."""
+    session = FakeSession(query_graph_read_only=[])
+    client = make_client(session)
+
+    for query in (
+        "CALL grafeo.load_nodes_csv({path: '/etc/passwd', labels: ['L']}) YIELD rows MATCH (n:L) RETURN n",
+        "call GRAFEO . load_edges_csv({path: 'x'}) YIELD rows RETURN rows",
+        "CALL `grafeo.load_nodes_csv`({path: 'x'}) YIELD rows RETURN rows",
+        "CALL db.labels()",
+    ):
+        response = client.post("/grafeo/query", json={"query": query, "language": "cypher"})
+        assert response.status_code == 400 and "read-only procedures" in response.json()["detail"]
+    assert session.called("query_graph_read_only") == []
+
+    for query in ("CALL grafeo.pagerank() YIELD node_id, score RETURN node_id", "MATCH (n) CALL { MATCH (m) RETURN m } RETURN n"):
+        assert client.post("/grafeo/query", json={"query": query, "language": "cypher"}).status_code == 200
+
+
 def test_unknown_database_and_language(make_client):
     client = make_client(FakeSession(query_graph_read_only=[]))
 
