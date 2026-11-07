@@ -143,10 +143,11 @@ export function linkedNote(view: LinkedView): string {
   const output = inLane("output");
   const onGraph = new Set(view.nodes.filter((node) => node.lane !== "output").map((node) => node.id));
   const graphEdges = view.edges.filter((edge) => !edge.cross && onGraph.has(edge.source) && onGraph.has(edge.target)).length;
-  // Repositories are always shown whole, so the intermediate graph's total is the graph's total without them
+  // Graph nodes are the whole graph, its repositories included: the scope of the edges here (which include the
+  // repositories' edges) and of the Repositories page's counts, so one graph reads the same everywhere
   const totalNodes = sumOf(view.totals?.nodes);
   const totalEdges = sumOf(view.totals?.edges);
-  const parts = [countOf(repositories, "repository", "repositories"), ofTotal(inLane("intermediate").length, totalNodes === undefined ? undefined : totalNodes - repositories, "graph node", "graph nodes")];
+  const parts = [countOf(repositories, "repository", "repositories"), ofTotal(onGraph.size, totalNodes, "graph node", "graph nodes")];
   if (graphEdges || totalEdges !== undefined) parts.push(ofTotal(graphEdges, totalEdges, "edge", "edges"));
   const valid = output.filter(inModel).length;
   const elements = countOf(output.length, "element", "elements");
