@@ -68,8 +68,8 @@ ApplicationComponent is a structural container: it realizes services, but it doe
 A point of access where application services are made available to users or other systems.
 
 - **Aspect:** active structure (the external side of a component).
-- **Deriva's candidates:** source files whose names point at routes, endpoints, controllers or command line entry points, public methods with route or command decorators, controller classes, mainframe screens and batch jobs that run programs; the LLM decides which of them are interfaces and of what kind.
-- **Naming:** after the kind of access: "REST API", "Command Line Interface".
+- **Deriva's candidates:** source files whose names point at routes, endpoints, controllers or command line entry points, public methods with route or command decorators, controller classes, mainframe screens and batch jobs that run programs; the LLM decides which of them are interfaces and of what kind. A source file that registers a gRPC service (a call such as `Register<Name>Server` or `MapGrpcService<Name>`) is an RPC interface by structure, without an LLM call; health and reflection services are left out.
+- **Naming:** after the kind of access: "REST API", "Command Line Interface", "RPC API"; a gRPC member is named after the service it registers.
 
 An ApplicationInterface is the door, not the service behind it.
 
@@ -146,7 +146,7 @@ A process is causal: one step leads to the next. A function groups behavior by c
 A computational or physical resource that hosts, manipulates or interacts with other elements.
 
 - **Aspect:** active structure.
-- **Deriva's candidates:** the deployment environment the repository describes: Compose, Kubernetes, a cloud template or a mainframe setup.
+- **Deriva's candidates:** the deployment environment the repository describes: Compose, a .NET Aspire app host, Kubernetes, a cloud template or a mainframe setup.
 - **Naming:** an infrastructure noun: "Container Platform", "Mainframe".
 
 A Node is a logical resource; a Device is physical hardware. The Device step is off by default.
