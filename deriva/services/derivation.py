@@ -1231,6 +1231,7 @@ def _role_config(params: str | None) -> RoleConfig | None:
     one_per_unit = settings.get("one_per_unit", False)
     if not isinstance(one_per_unit, bool) or (one_per_unit and element_per != "unit"):
         raise ValueError(f"params.roles.one_per_unit (true or false) merges a unit's roles into one element: it needs element_per 'unit', got {one_per_unit!r}")
+    registrations = _registrations(settings, element_per)
     return RoleConfig(
         one_per_unit=one_per_unit,
         name_priority=tuple(name_priority),
@@ -1247,7 +1248,54 @@ def _role_config(params: str | None) -> RoleConfig | None:
         show_path=show_path,
         naming_call=naming_call,
         structural_as_written=structural_as_written,
+        registration_role=registrations[0],
+        registrations=registrations[1],
+        excluded_services=registrations[2],
     )
+
+
+def _registrations(settings: dict[str, Any], element_per: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """The role, call patterns and technical services of ``params.roles.registrations`` (empty without the key).
+
+    ``{"role": key, "patterns": ["...(?P<service>...)..."], "excluded_services": ["..."]}``: a unit's source file
+    that calls a registration takes the role without a call (element_per "unit" only).
+    """
+    rule = settings.get("registrations")
+    if rule is None:
+        return "", (), ()
+    role = rule.get("role") if isinstance(rule, dict) else None
+    patterns = rule.get("patterns") if isinstance(rule, dict) else None
+    excluded = rule.get("excluded_services", []) if isinstance(rule, dict) else None
+    if element_per != "unit" or role not in settings["names"] or not isinstance(patterns, list) or not patterns or not isinstance(excluded, list):
+        raise ValueError(f"params.roles.registrations needs element_per 'unit', a role key of names and a list of patterns, got {rule!r}")
+    for pattern in [*patterns, *excluded]:
+        try:
+            compiled = re.compile(pattern) if isinstance(pattern, str) else None
+        except re.error as exc:
+            raise ValueError(f"params.roles.registrations pattern {pattern!r} is no valid pattern: {exc}") from exc
+        if compiled is None:
+            raise ValueError(f"params.roles.registrations patterns are text, got {pattern!r}")
+        if pattern in patterns and "service" not in compiled.groupindex:
+            raise ValueError(f"params.roles.registrations pattern {pattern!r} needs a (?P<service>...) group: the service it registers")
+    return str(role), tuple(patterns), tuple(excluded)
+
+
+def _source_reader(engine: Any) -> Callable[[str], str | None]:
+    """Reads a repository file's text from the checkout by its graph path; None for a missing file, one larger than
+    max_read_bytes or a link that leads out of the checkout."""
+    root = workspace() / "repositories"
+    max_bytes = config.get_max_read_bytes(engine)
+
+    def read(path: str) -> str | None:
+        file = root / path.replace(chr(92), "/")
+        try:
+            if file.is_file() and file.resolve().is_relative_to(root.resolve()) and file.stat().st_size <= max_bytes:
+                return file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+        return None
+
+    return read
 
 
 def _skip_when_directory_is(params: str | None) -> frozenset[str] | None:
@@ -1474,6 +1522,7 @@ def generate_element(
             skip_nested=skip_nested,
             deployable_units=deployable_units,
             on_candidates=on_candidates,
+            source_text=_source_reader(engine) if roles is not None and roles.registrations else None,
         )
         return {
             "success": result.success,

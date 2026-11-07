@@ -2319,6 +2319,27 @@ class RoleConfig:
     # Graph labels in the order their candidates claim a structure name (two candidates with one structure name: the
     # earlier label keeps it, so a unit is never left out for a module beside it); empty: the step's ranking decides
     name_priority: tuple[str, ...] = ()
+    # element_per "unit" only: a source file whose text calls a registration (a pattern of ``registrations``, its
+    # ``service`` group the service it registers) takes ``registration_role`` without a call, with the services as its
+    # name. A match whose first name is a method the file defines is that definition (generated code), not a call; a
+    # service an ``excluded_services`` pattern matches in full, ignoring case, is a technical one and counts for nothing
+    registration_role: str = ""
+    registrations: tuple[str, ...] = ()
+    excluded_services: tuple[str, ...] = ()
+
+
+def registered_services(text: str, patterns: tuple[str, ...], excluded: tuple[str, ...], defined: set[str]) -> list[str]:
+    """The services a source text registers by a call (``RoleConfig.registrations``), sorted and each once."""
+    services: set[str] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            first = re.match(r"\W*(\w+)", match.group(0))
+            if first is not None and first.group(1) in defined:
+                continue
+            service = match.group("service")
+            if service and not any(re.fullmatch(x, service, re.IGNORECASE) for x in excluded):
+                services.add(service)
+    return sorted(services)
 
 
 ROLE_SCHEMA: dict[str, Any] = {

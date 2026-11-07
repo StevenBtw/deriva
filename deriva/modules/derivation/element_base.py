@@ -76,6 +76,7 @@ from deriva.modules.derivation.base import (
     parse_derivation_response,
     parse_role_answer,
     query_candidates,
+    registered_services,
     source_casing,
     source_words,
     structural_role,
@@ -440,6 +441,7 @@ class ElementDerivationBase(ABC):
         skip_nested: NestedFilter | None = None,
         deployable_units: UnitFilter | None = None,
         on_candidates: Callable[[list[str]], None] | None = None,
+        source_text: Callable[[str], str | None] | None = None,
     ) -> GenerationResult:
         """
         Generate elements of this type.
@@ -492,6 +494,8 @@ class ElementDerivationBase(ABC):
                 and cut (None: the candidates stay)
             on_candidates: Called once with the node ids of the candidates the step decides
                 about, after the structural filters and before any LLM call (the studio pulses them)
+            source_text: Reads a file's text by its graph path (None when it cannot be read), for
+                ``roles.registrations``; None reads no file
 
         Returns:
             GenerationResult with success status, counts, and any errors
@@ -515,7 +519,10 @@ class ElementDerivationBase(ABC):
                 errors=[f"Query failed for {self.ELEMENT_TYPE}: {e}"],
             )
 
-        if not candidates:
+        # A unit's source file that calls a registration is a candidate by structure (roles.registrations)
+        registered = self._registered_files(roles, graph_manager, source_text) if roles is not None and roles.registrations and source_text is not None else {}
+
+        if not candidates and not registered:
             self.logger.info("No candidates found for %s", self.ELEMENT_TYPE)
             return result
 
@@ -587,7 +594,7 @@ class ElementDerivationBase(ABC):
             uncapped = self.filter_candidates(eligible, enrichments, len(eligible), **filter_kwargs)
             over_cap = {c.node_id for c in uncapped if c.node_id not in filtered_ids}
 
-        if not filtered:
+        if not filtered and not registered:
             self.logger.info("No candidates passed filtering for %s", self.ELEMENT_TYPE)
             # Track rejected candidates
             for c in candidates:
@@ -674,7 +681,7 @@ class ElementDerivationBase(ABC):
                     )
                 )
 
-        if not filtered:
+        if not filtered and not registered:
             self.logger.info("All candidates matched existing elements for %s", self.ELEMENT_TYPE)
             return result
 
@@ -749,6 +756,13 @@ class ElementDerivationBase(ABC):
             role_ids = {c.node_id for c in filtered if roles.labels.intersection(c.labels) or structural_role(c, roles.structural) is not None}
             role_candidates = [c for c in filtered if c.node_id in role_ids]
             filtered = [c for c in filtered if c.node_id not in role_ids]
+            # A registered file is named after its services (the query may have found it too: it is not asked)
+            if registered:
+                filtered = [c for c in filtered if c.node_id not in registered]
+                role_candidates = [c for c in role_candidates if c.node_id not in registered] + [
+                    Candidate(node_id=node, name=", ".join(services), labels=["Graph", "File"], properties={"filePath": path, "registeredServices": services})
+                    for node, (path, services) in sorted(registered.items())
+                ]
             if role_candidates:
                 self._process_roles(
                     role_candidates, roles, llm_query_fn, llm_kwargs, graph_manager, archimate_manager, repo_name, batch_size, result, taken, naming, structure_names
@@ -877,6 +891,8 @@ class ElementDerivationBase(ABC):
         reserved = self._reserved_names(graph_manager, naming.guards.reserved_labels) if naming is not None and naming.guards.reserved_labels else set()
         # Structure first: a candidate whose annotation or kind shows its role is not asked
         role_of: dict[str, str | None] = {c.node_id: role for c in ordered if (role := structural_role(c, roles.structural)) is not None}
+        # A registration call shows its role too (roles.registrations)
+        role_of.update({c.node_id: roles.registration_role for c in ordered if c.properties.get("registeredServices")})
         as_written = set(role_of) if roles.structural_as_written else set()
         asked = [c for c in ordered if c.node_id not in role_of]
         for start in range(0, len(asked), batch_size):
@@ -1034,7 +1050,12 @@ class ElementDerivationBase(ABC):
                 # Grounded in the unit; the endpoints, screens or jobs it bundles are a property, not elements
                 properties["source"] = unit_of_element[identifier]
                 properties["sources"] = [c.node_id for c in group]
-                properties["members"] = [{"name": c.name, "source": c.node_id, "role": role_of_member.get((unit_of_element[identifier], c.node_id), key)} for c in group]
+                # A file that registers services is a member by those services, named as written (not after its file)
+                properties["members"] = [
+                    {"name": c.name, "source": c.node_id, "role": role_of_member.get((unit_of_element[identifier], c.node_id), key)}
+                    | ({"as_written": True} if c.properties.get("registeredServices") else {})
+                    for c in group
+                ]
                 properties["structure_name"] = structure_of_element[identifier]
                 if roles.one_per_unit:
                     properties["roles"] = roles_of_unit.get(unit_of_element[identifier], [key])
@@ -1255,6 +1276,27 @@ class ElementDerivationBase(ABC):
             )
             members += [(str(r["unit"]), key, str(r["node"]), str(r["path"])) for r in rows if r.get("unit") and r.get("node")]
         return sorted(members)
+
+    def _registered_files(self, roles: RoleConfig, graph_manager: GraphManager, source_text: Callable[[str], str | None]) -> dict[str, tuple[str, list[str]]]:
+        """File node id -> (path, services) for the units' source files that call a registration (roles.registrations)."""
+        rows = graph_manager.query(
+            "MATCH (u:Graph:DeployableUnit)-[:`Graph:INCLUDES`]->(f:Graph:File) WHERE f.active = true AND f.fileType = 'source' RETURN DISTINCT f.id AS node, f.filePath AS path"
+        )
+        files = sorted({(str(r["node"]), str(r["path"])) for r in rows if r.get("node") and r.get("path")})
+        found = {node: (path, text) for node, path in files if (text := source_text(path)) and any(re.search(p, text) for p in roles.registrations)}
+        if not found:
+            return {}
+        defined: dict[str, set[str]] = defaultdict(set)
+        for r in graph_manager.query(
+            "MATCH (m:Graph:Method) WHERE m.filePath IN $paths RETURN m.filePath AS path, m.methodName AS name", {"paths": sorted(path for path, _ in found.values())}
+        ):
+            if r.get("path") and r.get("name"):
+                defined[str(r["path"])].add(str(r["name"]))
+        registered = {}
+        for node, (path, text) in found.items():
+            if services := registered_services(text, roles.registrations, roles.excluded_services, defined[path]):
+                registered[node] = (path, services)
+        return registered
 
     def _apply_choice(
         self,
