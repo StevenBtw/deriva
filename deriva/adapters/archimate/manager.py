@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from deriva.adapters.grafeo import GrafeoConnection
+from deriva.adapters.grafeo import GrafeoConnection, GraphDatabaseBusy
 from deriva.common.settings import ArchimateSettings
 
 from .models import ArchiMateMetamodel, Element, Relationship
@@ -75,6 +75,10 @@ class ArchimateManager:
 
             logger.info(f"Successfully connected to grafeo with namespace '{self.namespace}'")
 
+        except GraphDatabaseBusy:
+            # Another process holds the file: passed on as is, and no half-made connection kept, so a later connect retries
+            self.db = None
+            raise
         except Exception as e:
             logger.error(f"Failed to connect to grafeo: {e}")
             raise ConnectionError(f"Could not connect to grafeo: {e}")

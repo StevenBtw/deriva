@@ -200,9 +200,13 @@ class PipelineSession:
             raise UnknownRepository(repository, names)
 
     def use_repository(self, repository: str) -> None:
-        """Switch the graph and model managers to another repository's database."""
-        self.repository = repository
+        """Switch the graph and model managers to another repository's database.
+
+        Raises:
+            GraphDatabaseBusy: another process holds that repository's graph file; the session keeps its repository
+        """
         use_database(repository)
+        self.repository = repository
 
     @contextmanager
     def in_repository(self, repository: str) -> Generator[None]:

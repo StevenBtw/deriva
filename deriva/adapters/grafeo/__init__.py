@@ -20,6 +20,7 @@ from __future__ import annotations
 from .manager import (
     DEFAULT_DATABASE,
     GrafeoConnection,
+    GraphDatabaseBusy,
     close_database,
     database_bytes,
     database_exists,
@@ -36,6 +37,7 @@ __all__ = [
     "DEFAULT_DATABASE",
     "READ_PROCEDURES",
     "GrafeoConnection",
+    "GraphDatabaseBusy",
     "QueryRefused",
     "check_read_only",
     "close_database",

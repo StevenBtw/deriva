@@ -31,7 +31,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-from deriva.adapters.grafeo import GrafeoConnection
+from deriva.adapters.grafeo import GrafeoConnection, GraphDatabaseBusy
 from deriva.common.ocel import create_edge_id
 from deriva.common.settings import GraphSettings
 
@@ -214,6 +214,10 @@ class GraphManager:
 
             logger.info(f"Successfully connected to grafeo with namespace '{self.namespace}'")
 
+        except GraphDatabaseBusy:
+            # Another process holds the file: passed on as is, and no half-made connection kept, so a later connect retries
+            self.db = None
+            raise
         except Exception as e:
             logger.error(f"Failed to connect to grafeo: {e}")
             raise ConnectionError(f"Could not connect to grafeo: {e}")

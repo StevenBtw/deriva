@@ -57,6 +57,16 @@ _LANGUAGE_NAMES = {"gql": "GQL", "cypher": "Cypher"}
 
 _db: Any | None = None
 _db_key: str = DEFAULT_DATABASE
+
+
+class GraphDatabaseBusy(RuntimeError):
+    """Another process (a deriva-cli run, a second studio) holds a repository's graph database file."""
+
+    def __init__(self, path: Any) -> None:
+        super().__init__(f"The graph database {path} is open in another Deriva process (the studio or another deriva-cli run). Close it, or wait for it to finish, then try again.")
+        self.path = path
+
+
 # Connected GrafeoConnections; they follow the active database when it changes
 _connections: weakref.WeakSet[GrafeoConnection] = weakref.WeakSet()
 
@@ -147,7 +157,10 @@ def get_database() -> Any:
                 "install the released wheel, or build the Python binding with its default features"
             )
         path = database_file(_db_key)
-        _db = grafeo.GrafeoDB(path)
+        try:
+            _db = grafeo.GrafeoDB(path)
+        except grafeo.GrafeoLockedError as exc:  # grafeo's lock error, by class (GRAFEO-S004)
+            raise GraphDatabaseBusy(path) from exc
         # Node lookups by id (Graph) and identifier (Model) must use an index
         for key in ("id", "identifier"):
             if not _db.has_property_index(key):
@@ -166,10 +179,19 @@ def use_database(key: str) -> None:
         return
     # Check the key before closing, so an invalid key leaves the active database in place
     database_file(key)
+    previous = _db_key
     close_database()
     _db_key = key
     if _connections:
-        db = get_database()
+        try:
+            db = get_database()
+        except GraphDatabaseBusy:
+            # Another process holds that file: back to the database that was open, so the connections stay usable
+            _db_key = previous
+            db = get_database()
+            for conn in list(_connections):
+                conn.db = db
+            raise
         for conn in list(_connections):
             conn.db = db
 
