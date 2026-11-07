@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.models import ELEMENT_TYPES, Element, Relationship, relationship_tier, validate_relationship_rule
 from deriva.common.naming import name_key
+from deriva.common.ocel import create_edge_id
 from deriva.common.paths import workspace
 from deriva.common.types import PipelineResult, ProgressUpdate
 
@@ -2015,9 +2016,7 @@ def run_derivation(
                 step_created_relationships = step_result.get("created_relationships", [])
                 if step_ctx and step_created_relationships:
                     for rel_data in step_created_relationships:
-                        # Build deterministic relationship ID: {Type}_{Source}_{Target}
-                        rel_id = f"{rel_data['relationship_type']}_{rel_data['source']}_{rel_data['target']}"
-                        step_ctx.add_relationship(rel_id)
+                        step_ctx.add_relationship(create_edge_id(rel_data["source"], rel_data["relationship_type"], rel_data["target"]))
 
                 # Complete step logging
                 if step_ctx:
@@ -2134,7 +2133,7 @@ def run_derivation(
                 progress.complete_step(f"{rel_count} relationships")
             if rel_ctx:
                 for rel_data in relationships:
-                    rel_ctx.add_relationship(f"{rel_data['relationship_type']}_{rel_data['source']}_{rel_data['target']}")
+                    rel_ctx.add_relationship(create_edge_id(rel_data["source"], rel_data["relationship_type"], rel_data["target"]))
                 rel_ctx.items_created = rel_count
                 rel_ctx.complete()
 
@@ -2210,7 +2209,7 @@ def run_derivation(
 
                 if step_ctx:
                     for relationship_type, source, target in sorted(_relationship_keys(archimate_manager) - before):
-                        step_ctx.add_relationship(f"{relationship_type}_{source}_{target}")
+                        step_ctx.add_relationship(create_edge_id(source, relationship_type, target))
                     step_ctx.complete()
 
                 if progress:

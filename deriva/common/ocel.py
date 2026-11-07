@@ -51,6 +51,8 @@ __all__ = [
     "hash_content",
     "create_run_id",
     "create_edge_id",
+    "parse_edge_id",
+    "edge_type",
     "parse_run_id",
     "load_benchmark_ocel",
 ]
@@ -447,22 +449,23 @@ class OCELLog:
 
         return inconsistent
 
-    def compute_consistency_score(self, object_type: str) -> float:
+    def compute_consistency_score(self, object_type: str) -> float | None:
         """
         Compute overall consistency score for an object type.
 
         Returns:
             Float between 0.0 and 1.0, where 1.0 means all objects
-            appear in all runs.
+            appear in all runs; None when there is nothing to compare (fewer
+            than two runs, or no object of the type in any run).
         """
         by_run = self.get_objects_by_run(object_type)
 
         if len(by_run) < 2:
-            return 1.0
+            return None
 
         all_objects = set.union(*by_run.values()) if by_run else set()
         if not all_objects:
-            return 1.0
+            return None
 
         # Count objects that appear in ALL runs
         consistent_count = sum(1 for obj in all_objects if all(obj in objs for objs in by_run.values()))
@@ -485,7 +488,7 @@ class OCELLog:
         only_in_2 = objects_2 - objects_1
         union = objects_1 | objects_2
 
-        jaccard = len(overlap) / len(union) if union else 1.0
+        jaccard = len(overlap) / len(union) if union else None
 
         return {
             "run_1": run_id_1,
@@ -726,9 +729,11 @@ def create_run_id(session_id: str, repo: str, model: str, iteration: int) -> str
 
 def create_edge_id(source_id: str, relationship_type: str, target_id: str) -> str:
     """
-    Create a unique edge/relationship identifier using triple hash.
+    Create a unique edge/relationship identifier from its type and ends.
 
-    Format: {relationship_type}_{source_id}_{target_id}
+    Format: {relationship_type}|{source_id}|{target_id}. Element identifiers hold only letters, digits and
+    underscores, so the parts of a relationship id can be read back (``parse_edge_id``) and two different pairs never
+    share an identifier. A graph node id carries a file path: a file name with "|" in it is not supported there.
 
     Used for comparing edges (extraction) and relationships (derivation)
     across benchmark runs.
@@ -741,7 +746,25 @@ def create_edge_id(source_id: str, relationship_type: str, target_id: str) -> st
     Returns:
         Unique identifier string for the edge/relationship
     """
-    return f"{relationship_type}_{source_id}_{target_id}"
+    return f"{relationship_type}{EDGE_SEPARATOR}{source_id}{EDGE_SEPARATOR}{target_id}"
+
+
+EDGE_SEPARATOR = "|"
+
+
+def parse_edge_id(edge_id: str) -> tuple[str, str, str] | None:
+    """(type, source, target) of an identifier made by ``create_edge_id``; None for one in the format of event logs
+    before 0.9.0 (``{type}_{source}_{target}``), whose ends cannot be told apart."""
+    parts = edge_id.split(EDGE_SEPARATOR, 2)
+    return (parts[0], parts[1], parts[2]) if len(parts) == 3 else None
+
+
+def edge_type(edge_id: str) -> str:
+    """The type of an edge or relationship identifier, also of one from an event log before 0.9.0 (its first word:
+    the types themselves hold no underscore, except DEPENDS_ON and HAS_*, which the older format reads as DEPENDS and
+    HAS)."""
+    parsed = parse_edge_id(edge_id)
+    return parsed[0] if parsed else edge_id.split("_", 1)[0]
 
 
 def parse_run_id(run_id: str) -> dict[str, str | int]:
