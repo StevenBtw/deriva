@@ -417,7 +417,8 @@ def test_two_caches_on_one_folder_share_it(tmp_path):
     second.set("j", {"answer": 2})
     assert second.get("j") == {"answer": 2}
     second.close()
-    assert BaseDiskCache(tmp_path / "shared").get("j") == {"answer": 2}
+    with BaseDiskCache(tmp_path / "shared") as reopened:  # closed again, so no environment stays open after the test
+        assert reopened.get("j") == {"answer": 2}
 
 
 class _FakeEnvironment:
