@@ -467,6 +467,7 @@ def extract_edges_from_file(
     import_roots: tuple[str, ...] = (),
     go_modules: dict[str, str] | None = None,
     go_files: dict[str, list[str]] | None = None,
+    script_aliases: tuple[tuple[str, str, str], ...] = (),
 ) -> dict[str, Any]:
     """
     Extract edges from a single source file using a single AST parse (``go_modules``: module path -> the folder its
@@ -547,6 +548,7 @@ def extract_edges_from_file(
                 java_files=java_files,
                 import_roots=import_roots,
                 csharp_imports=csharp_imports,
+                script_aliases=script_aliases,
             )
             edges.extend(import_edges)
             nodes.extend(import_nodes)
@@ -561,7 +563,7 @@ def extract_edges_from_file(
                 repo_name=repo_name,
                 filter_constants=filter_constants,
                 global_method_lookup=global_method_lookup,
-                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants, java_files, import_roots, csharp_imports),
+                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants, java_files, import_roots, csharp_imports, script_aliases),
                 call_languages=call_languages,
                 scope_of=scope_of,
             )
@@ -687,6 +689,9 @@ def extract_edges_batch(
                 go_modules[found.group(1).strip('"')] = str(PurePosixPath(f["path"]).parent)
 
     go_files = _go_file_index(all_file_paths) if go_modules else {}
+    # Script import aliases from the tsconfig/jsconfig and bundler configs (read once)
+    alias_configs = {f["path"]: text for f in files if _ALIAS_CONFIG.match(PurePosixPath(f["path"]).name) and (text := _source_text(f, repo_path)) is not None}
+    aliases = script_aliases(alias_configs)
 
     # Filter to only source files that Tree-sitter can parse
     source_files = [f for f in files if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES]
@@ -734,6 +739,7 @@ def extract_edges_batch(
             import_roots=tuple(roots),
             csharp_namespaces=csharp_namespaces,
             go_modules=go_modules,
+            script_aliases=aliases,
             go_files=go_files,
         )
 
@@ -793,6 +799,7 @@ def _extract_import_edges(
     java_files: dict[str, list[str]] | None = None,
     import_roots: tuple[str, ...] = (),
     csharp_imports: dict[str, list[str]] | None = None,
+    script_aliases: tuple[tuple[str, str, str], ...] = (),
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     """Extract IMPORTS and USES edges from import statements.
 
@@ -842,6 +849,7 @@ def _extract_import_edges(
             java_files=java_files,
             is_from_import=imp.is_from_import,
             import_roots=import_roots,
+            script_aliases=script_aliases,
         )
 
         if resolved["type"] == "internal" and EdgeType.IMPORTS in edge_types:
@@ -919,6 +927,7 @@ def _imported_paths(
     java_files: dict[str, list[str]] | None = None,
     import_roots: tuple[str, ...] = (),
     csharp_imports: dict[str, list[str]] | None = None,
+    script_aliases: tuple[tuple[str, str, str], ...] = (),
 ) -> set[str]:
     """The repository files a file imports (its internal imports, resolved as the IMPORTS edges are)."""
     stdlib_modules = filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
@@ -940,6 +949,7 @@ def _imported_paths(
             java_files=java_files,
             is_from_import=imp.is_from_import,
             import_roots=import_roots,
+            script_aliases=script_aliases,
         )
         if resolved["type"] == "internal":
             paths.add(resolved["target_path"])
@@ -993,11 +1003,13 @@ def _resolve_import(
     java_files: dict[str, list[str]] | None = None,
     is_from_import: bool = False,
     import_roots: tuple[str, ...] = (),
+    script_aliases: tuple[tuple[str, str, str], ...] = (),
 ) -> dict[str, Any]:
     """Resolve an import to determine if it's internal or external.
 
     For Java, ``is_from_import`` marks a static import (as the Java parser records it). ``import_roots``: repository
     folders a deployment puts on the import path; an absolute import nothing else resolves is tried against them.
+    ``script_aliases``: (config folder, prefix, target folder) of the script import aliases (``script_aliases()``).
     """
     # Use provided stdlib or fall back to Python stdlib
     stdlib = stdlib_modules if stdlib_modules else PYTHON_STDLIB
@@ -1014,6 +1026,8 @@ def _resolve_import(
         if script_target:
             return {"type": "internal", "target_path": script_target}
         return {"type": "unknown", "reason": "relative_not_found"}
+    if suffix in SCRIPT_EXTENSIONS:
+        return _resolve_script_package(module, current_file, all_file_paths, stdlib_modules or set(), script_aliases)
 
     # Handle relative imports
     if module.startswith("."):
@@ -1246,11 +1260,92 @@ def _resolve_script_import(module: str, current_file: str, all_file_paths: set[s
             resolved = resolved[:-1]
         elif part not in (".", ""):
             resolved.append(part)
-    base = "/".join(resolved)
+    return _script_file("/".join(resolved), all_file_paths)
+
+
+def _script_file(base: str, all_file_paths: set[str]) -> str | None:
+    """The script a path names: itself, with any script extension, or its directory's index file."""
     for candidate in (base, *(base + ext for ext in SCRIPT_EXTENSIONS), *(f"{base}/index{ext}" for ext in SCRIPT_EXTENSIONS)):
         if candidate in all_file_paths:
             return candidate
     return None
+
+
+def _resolve_script_package(module: str, current_file: str, all_file_paths: set[str], stdlib: set[str], aliases: tuple[tuple[str, str, str], ...]) -> dict[str, Any]:
+    """A bare JavaScript or TypeScript import. Through an alias of the nearest config folder that holds the file it is
+    the repository file the alias leads to; a file the path itself names stays one; a specifier shaped like an alias
+    (@/..., ~/..., #...) without one is own code that cannot be placed (no dependency); any other names its package,
+    the first segment or two for a scoped one (aws-cdk-lib/aws-s3 is aws-cdk-lib, @scope/pkg/sub is @scope/pkg)."""
+    current = PurePosixPath(current_file)
+    below = [a for a in aliases if not a[0] or current.is_relative_to(a[0])]
+    for _, prefix, target in sorted(below, key=lambda a: (-len(PurePosixPath(a[0]).parts) if a[0] else 0, -len(a[1]))):
+        if module.startswith(prefix):
+            found = _script_file(target + module[len(prefix) :], all_file_paths)
+            return {"type": "internal", "target_path": found} if found else {"type": "unknown", "reason": "alias_not_found"}
+    if target_path := _resolve_absolute_import(module, all_file_paths):
+        return {"type": "internal", "target_path": target_path}
+    first = module.split("/", 1)[0]
+    if first in ("@", "~") or first.startswith("#"):
+        return {"type": "unknown", "reason": "alias_unresolved"}
+    bare = module.removeprefix("node:")
+    parts = bare.split("/")
+    package = "/".join(parts[:2]) if bare.startswith("@") and len(parts) > 1 else parts[0]
+    if module.startswith("node:") or package in stdlib:
+        return {"type": "stdlib", "module": package}
+    return {"type": "external", "package": package}
+
+
+# Script import aliases: tsconfig/jsconfig ``paths`` and bundler aliases (vite, webpack, vue)
+_ALIAS_CONFIG = re.compile(r"^(?:[tj]sconfig[\w.-]*\.json|(?:vite|webpack|vue)\.config\.[cm]?[jt]s)$", re.IGNORECASE)
+_SCRIPT_COMMENT = re.compile(r'"(?:[^"\\\n]|\\.)*"|//[^\n]*|/\*.*?\*/', re.DOTALL)
+# A path a bundler alias leads to, as a literal or through path.resolve/join(__dirname, ...) or new URL(...)
+_ALIAS_PATH = r"""(?:path\.(?:resolve|join)\(\s*__dirname\s*,\s*|fileURLToPath\(\s*new\s+URL\(\s*)?['"](?P<path>[^'"]+)['"]"""
+_OBJECT_ALIAS = re.compile(r"""(?:['"](?P<qkey>[^'"]+)['"]|(?P<key>[@~#][\w-]*))\s*:\s*""" + _ALIAS_PATH)
+_FIND_ALIAS = re.compile(r"""find\s*:\s*['"](?P<qkey>[^'"]+)['"]\s*,\s*replacement\s*:\s*""" + _ALIAS_PATH)
+
+
+def _alias_target(folder: str, path: str) -> str:
+    """A folder an alias leads to, from its config's folder, as a prefix ending in "/"."""
+    joined = PurePosixPath(folder, path.lstrip("/")) if folder else PurePosixPath(path.lstrip("/"))
+    parts: list[str] = []
+    for part in joined.parts:
+        if part == "..":
+            parts = parts[:-1]
+        elif part not in (".", ""):
+            parts.append(part)
+    return "/".join(parts) + "/"
+
+
+def script_aliases(configs: dict[str, str]) -> tuple[tuple[str, str, str], ...]:
+    """(config folder, import prefix, target folder) per script import alias the configs declare: a tsconfig or
+    jsconfig ``compilerOptions.paths`` entry ``"@/*": ["src/*"]`` (from ``baseUrl``; comments and trailing commas
+    allowed), and a bundler alias after ``alias`` (``'@': path.resolve(__dirname, './src')`` or ``{find: '@',
+    replacement: ...}``). An alias applies to the files below its config's folder."""
+    found: set[tuple[str, str, str]] = set()
+    for path, text in configs.items():
+        folder = str(PurePosixPath(path).parent)
+        folder = "" if folder == "." else folder
+        name = PurePosixPath(path).name.lower()
+        if name.endswith(".json"):
+            cleaned = re.sub(r",(\s*[}\]])", r"\1", _SCRIPT_COMMENT.sub(lambda m: m.group(0) if m.group(0).startswith('"') else "", text))
+            try:
+                options = (json.loads(cleaned) or {}).get("compilerOptions") or {}
+            except ValueError, AttributeError:
+                continue
+            base = str(options.get("baseUrl") or ".")
+            for key, targets in (options.get("paths") or {}).items():
+                if isinstance(key, str) and key.endswith("/*") and isinstance(targets, list) and targets and str(targets[0]).endswith("/*"):
+                    found.add((folder, key[:-1], _alias_target(folder, f"{base}/{str(targets[0])[:-2]}")))
+            continue
+        at = text.find("alias")
+        if at < 0:
+            continue
+        for pattern in (_FIND_ALIAS, _OBJECT_ALIAS):
+            for match in pattern.finditer(text, at):
+                key = match.group("qkey") or match.groupdict().get("key") or ""
+                if key and not key.startswith(".") and "/" not in key.rstrip("/"):
+                    found.add((folder, key.rstrip("/") + "/", _alias_target(folder, match.group("path"))))
+    return tuple(sorted(found))
 
 
 def _resolve_relative_import(
