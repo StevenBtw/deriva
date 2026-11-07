@@ -211,6 +211,18 @@ class _Units:
                 return self.by_last[words[-1]]
         return None
 
+    def by_project_file(self, name: str, suffix: str = ".csproj") -> str | None:
+        """The one unit with a project file among its members whose name is ``name`` after normalisation
+        (``Shop.Api.csproj`` is ``Shop_Api``), whatever the unit, its folder or its assembly are called."""
+        key = "".join(_tokens(name))
+        found = {
+            str(u["id"])
+            for u in self.units
+            for member in u.get("members") or ()
+            if str(member).lower().endswith(suffix) and "".join(_tokens(PurePosixPath(str(member)).name[: -len(suffix)])) == key
+        }
+        return next(iter(found)) if len(found) == 1 else None
+
     def by_image(self, image: str | None) -> str | None:
         """The one unit whose name, folder name or manifest name equals the image's last name segment or its tag, exact
         after normalisation (one image repository for every service, the service in the tag: ``acme/suite:orderstore``)."""
@@ -297,7 +309,8 @@ def _aspire(path: str, text: str, units: _Units, rules: DeploymentRules) -> Envi
             # A project by its path from the host's folder, else by its manifest name (Projects.Shop_Api is Shop.Api);
             # without a written name it is named after its project type
             unit = units.by_folder(_normalize(f"{_parent(path)}/{second}")) if second else None
-            unit = unit or (units.by_image(generic.rsplit(".", 1)[-1]) if generic else None)
+            # Aspire names Projects.X after the project file; a unit's name, folder or manifest name as the fallback
+            unit = unit or (units.by_project_file(generic.rsplit(".", 1)[-1]) or units.by_image(generic.rsplit(".", 1)[-1]) if generic else None)
             name = name or generic.rsplit(".", 1)[-1]
             service = services.setdefault(name, DeployedService(name=name, unit=unit))
         elif subject == builder and name and rules.aspire_resource and method.startswith(rules.aspire_resource) and len(method) > len(rules.aspire_resource):
