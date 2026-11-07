@@ -131,7 +131,8 @@ function History({ stepType, name, draft, dirty, onStatus, onRestored }: History
               {v.is_active ? " · active" : ""}
               {v.enabled ? "" : " · off"}
             </span>
-            <span className="faint">{v.created_at?.slice(0, 16).replace("T", " ") ?? ""}</span>
+            {/* When the version was made (a shipped one keeps its own time, not when this database was seeded) */}
+            <span className="faint">{v.created_at ? `made ${v.created_at.slice(0, 16).replace("T", " ")}` : ""}</span>
           </button>
         ))}
       </div>
