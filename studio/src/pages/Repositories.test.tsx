@@ -20,8 +20,8 @@ const DATA = {
   database_bytes: 2_831_155,
   last_runs: { extraction: RUN("r1", "all", "finished", 1_792_300_000), derivation: RUN("r2", "derivation", "cancelled", 1_792_310_000) },
 };
-const ROW = (extension: string, files: number, reader: "parser" | "llm" | null, with_symbols: number, file_type = "source") => ({ extension, files, in_graph: files, file_type, subtype: "", reader, with_symbols, unreadable: 0 });
-const COMPLETE = { files: 166, in_graph: 166, extensions: [ROW(".py", 87, "parser", 76), ROW(".md", 24, null, 0, "docs"), ROW(".sh", 10, null, 0)], missing: [], unreadable: [], nodes: {}, complete: true, reasons: [], notes: ["12 source files are read by no extraction step: .sh (10), .css (1), .html (1)"] };
+const ROW = (extension: string, files: number, reader: "parser" | "llm" | null, with_symbols: number, file_type = "source", file_types = [{ file_type, files }]) => ({ extension, files, in_graph: files, file_type, file_types, subtype: "", reader, with_symbols, unreadable: 0 });
+const COMPLETE = { files: 166, in_graph: 166, extensions: [ROW(".py", 87, "parser", 76), ROW(".md", 24, null, 0, "docs"), ROW(".sh", 10, null, 0), ROW(".ts", 5, null, 0, "test", [{ file_type: "test", files: 3 }, { file_type: "source", files: 2 }])], missing: [], unreadable: [], nodes: {}, complete: true, reasons: [], notes: ["12 source files are read by no extraction step: .sh (10), .css (1), .html (1)"] };
 const INCOMPLETE = {
   ...COMPLETE,
   files: 4,
@@ -175,6 +175,10 @@ describe("Repositories", () => {
     expect(within(docs).queryByText("none")).not.toBeInTheDocument();
     expect(within(screen.getByRole("cell", { name: ".sh" }).closest("tr")!).getByText("none")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Parsed by" })).toBeInTheDocument();
+    // Tests outnumber the sources: every type is named, and the unread source still says none
+    const mixed = screen.getByRole("cell", { name: ".ts" }).closest("tr")!;
+    expect(within(mixed).getByRole("cell", { name: "test 3, source 2" })).toBeInTheDocument();
+    expect(within(mixed).getByText("none")).toBeInTheDocument();
     expect(repositories.coverage).toHaveBeenCalledWith("deriva");
   });
 

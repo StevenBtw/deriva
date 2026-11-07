@@ -22,8 +22,35 @@ def test_a_checkout_whose_source_files_gave_symbols_is_complete():
     assert report["complete"] is True and report["reasons"] == [] and report["notes"] == []
     assert report["files"] == 3 and report["in_graph"] == 3
     py = next(row for row in report["extensions"] if row["extension"] == ".py")
-    assert py == {"extension": ".py", "files": 2, "in_graph": 2, "file_type": "source", "subtype": "python", "reader": "parser", "with_symbols": 2, "unreadable": 0}
+    assert py == {
+        "extension": ".py",
+        "files": 2,
+        "in_graph": 2,
+        "file_type": "source",
+        "file_types": [{"file_type": "source", "files": 2}],
+        "subtype": "python",
+        "reader": "parser",
+        "with_symbols": 2,
+        "unreadable": 0,
+    }
     assert report["nodes"] == {"File": 3, "TypeDefinition": 4}
+
+
+def test_an_extension_lists_every_file_type_with_its_count_most_common_first():
+    """An extension whose tests outnumber its sources is no test extension: every type is named with its files
+    (file_type stays the most common one, for readers of the report that use it)."""
+    report = coverage_report(
+        checkout_files=["t1.py", "t2.py", "t3.py", "a.py", "b.py", "notes.txt"],
+        graph_files={**{f"t{n}.py": _file("test", "python") for n in (1, 2, 3)}, "a.py": _file("source", "python"), "b.py": _file("source", "python"), "notes.txt": _file("")},
+        read_by_step={},
+        symbol_files=set(),
+        node_counts={},
+        unreadable={},
+    )
+
+    py, txt = (next(row for row in report["extensions"] if row["extension"] == ext) for ext in (".py", ".txt"))
+    assert py["file_types"] == [{"file_type": "test", "files": 3}, {"file_type": "source", "files": 2}] and py["file_type"] == "test"
+    assert txt["file_types"] == []  # a file without a file type is counted under no type
 
 
 def test_extensions_are_listed_by_file_count():

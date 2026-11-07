@@ -429,7 +429,19 @@ class TestCoverageCommand:
     REPORT = {
         "files": 4,
         "in_graph": 3,
-        "extensions": [{"extension": ".java", "files": 3, "in_graph": 3, "file_type": "source", "subtype": "java", "reader": "parser", "with_symbols": 0, "unreadable": 1}],
+        "extensions": [
+            {
+                "extension": ".java",
+                "files": 3,
+                "in_graph": 3,
+                "file_type": "source",
+                "file_types": [{"file_type": "source", "files": 3}],
+                "subtype": "java",
+                "reader": "parser",
+                "with_symbols": 0,
+                "unreadable": 1,
+            }
+        ],
         "missing": ["gone.xsd"],
         "unreadable": [{"path": "deep/A.java", "reason": "path over 260 characters: [WinError 3]"}],
         "nodes": {"File": 3},
@@ -452,6 +464,31 @@ class TestCoverageCommand:
         assert "Incomplete" in result.stdout and "1 file is not in the graph (gone.xsd)" in result.stdout
         assert "1 source file is read by no extraction step: .kt (1)" in result.stdout
         assert ".java" in result.stdout and "deep/A.java: path over 260 characters" in result.stdout
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_coverage_names_each_extension_s_file_types_and_a_parser_only_for_code(self, mock_session_class):
+        """As in the studio: "Parsed by" names the type and method steps' reader; an extension with source files and no
+        reader says none, even when its tests outnumber them; documentation has no parser to name. The last column
+        names every file type with its files when there are several."""
+
+        def row(extension, types, reader=None):
+            files = sum(n for _, n in types)
+            file_types = [{"file_type": t, "files": n} for t, n in types]
+            counts = {"files": files, "in_graph": files, "with_symbols": 0, "unreadable": 0}
+            return {"extension": extension, **counts, "file_type": types[0][0], "file_types": file_types, "subtype": "", "reader": reader}
+
+        rows = [row(".java", [("source", 3)], "parser"), row(".md", [("docs", 2)]), row(".py", [("test", 3), ("source", 2)])]
+        mock_session = MagicMock()
+        mock_session.extraction_coverage.return_value = {**self.REPORT, "extensions": rows}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["coverage", "--repo", "x"])
+
+        lines = {line.split()[0]: line.split() for line in result.stdout.splitlines() if line.strip().startswith((".", "Extension"))}
+        assert lines["Extension"] == ["Extension", "Files", "In", "graph", "Parsed", "by", "Symbols", "Unreadable", "File", "type"]
+        assert lines[".java"] == [".java", "3", "3", "parser", "0", "0", "source"]
+        assert lines[".md"] == [".md", "2", "2", "0", "0", "docs"]
+        assert lines[".py"] == [".py", "5", "5", "none", "0", "0", "test", "3,", "source", "2"]
 
     @patch("deriva.cli.cli.PipelineSession")
     def test_coverage_as_json_has_the_full_lists(self, mock_session_class):
