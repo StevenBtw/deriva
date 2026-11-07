@@ -75,7 +75,7 @@ def test_types_are_structs_interfaces_aliases_and_defined_types_with_embedded_ty
     types = {t.name: t for t in extractor.extract_types(tree, SOURCE.encode("utf-8"))}
 
     assert sorted(types) == ["Cart", "Handler", "ID", "Store", "total"]
-    assert (types["Cart"].kind, types["Store"].kind, types["ID"].kind, types["Handler"].kind) == ("struct", "interface", "type_alias", "type_alias")
+    assert (types["Cart"].kind, types["Store"].kind, types["ID"].kind, types["Handler"].kind) == ("struct", "interface", "type_alias", "type")
     assert types["Cart"].bases == ["Base", "Logger"] and types["Store"].bases == ["Reader"]
     assert types["Cart"].docstring == "Cart holds the items of one user."
     assert (types["Cart"].visibility, types["total"].visibility) == ("public", "private")
@@ -120,3 +120,44 @@ def test_the_manager_reads_a_go_file_by_its_extension():
 
     assert "golang" in manager.get_supported_languages()
     assert sorted(t.name for t in manager.extract_types(SOURCE, file_path="shop/cart.go")) == ["Cart", "Handler", "ID", "Store", "total"]
+
+
+GENERICS = """package p
+
+type Number interface { int | float64 }
+type Approx interface { ~int }
+type RW interface { Reader[T]; io.Writer; Closer }
+type Box[T any] struct { Base[T]; *Other }
+
+func f() {} // trailing
+func g() {
+	handlers[0]()
+	makeThing[int]()
+	pkg.Make[int]()
+}
+"""
+
+
+def _parse(extractor: GoExtractor, text: str) -> tree_sitter.Tree:
+    raw_language: object = extractor.get_language()
+    return tree_sitter.Parser(tree_sitter.Language(raw_language)).parse(text.encode("utf-8"))
+
+
+def test_a_constraint_s_terms_are_no_bases_and_a_generic_base_is_named_without_its_arguments(extractor):
+    types = {t.name: t for t in extractor.extract_types(_parse(extractor, GENERICS), GENERICS.encode("utf-8"))}
+
+    assert (types["Number"].bases, types["Approx"].bases) == ([], [])
+    assert types["RW"].bases == ["Reader", "io.Writer", "Closer"]
+    assert types["Box"].bases == ["Base", "Other"]
+
+
+def test_a_comment_that_ends_the_line_before_is_no_doc_comment(extractor):
+    methods = {m.name: m for m in extractor.extract_methods(_parse(extractor, GENERICS), GENERICS.encode("utf-8"))}
+
+    assert methods["g"].docstring is None
+
+
+def test_a_call_through_an_index_or_with_type_arguments_names_its_function(extractor):
+    calls = [(c.callee_name, c.callee_qualifier) for c in extractor.extract_calls(_parse(extractor, GENERICS), GENERICS.encode("utf-8")) if c.caller_name == "g"]
+
+    assert calls == [("handlers", None), ("makeThing", None), ("Make", "pkg")]

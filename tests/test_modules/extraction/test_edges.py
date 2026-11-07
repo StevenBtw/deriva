@@ -1892,6 +1892,13 @@ class TestGoImports:
         assert [n["properties"]["dependencyName"] for n in result["data"]["nodes"]] == ["github.com/acme/router"]
         assert {n["properties"]["ecosystem"] for n in result["data"]["nodes"]} == {"go"}
 
+    def test_a_declared_module_with_a_hyphen_holds_its_subpackages(self):
+        """Known packages come normalized ("-" as "_"), so the import is compared the same way: one dependency, not one per
+        subpackage."""
+        result = self._go('package main\n\nimport "github.com/acme/my-router/middleware"\n\nfunc main() {}\n', external={"github.com/acme/my_router"})
+
+        assert [n["properties"]["dependencyName"] for n in result["data"]["nodes"]] == ["github.com/acme/my_router"]
+
     def test_an_undeclared_module_is_named_by_the_whole_path_after_its_host(self):
         result = self._go('package main\n\nimport "example.org/tools/lint"\n\nfunc main() {}\n')
 
