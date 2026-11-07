@@ -1239,7 +1239,13 @@ def _role_config(params: str | None) -> RoleConfig | None:
     if subject_as_written and (element_per != "candidate" or not any("{subject}" in str(t) for t in (name_template, repeat_template))):
         raise ValueError("params.roles.subject_as_written names how {subject} is filled: it needs element_per 'candidate' and {subject} in the name_template or repeat_template")
     if not isinstance(repeat_template, str) or (
-        repeat_template and (element_per != "candidate" or not name_template or not any(p in repeat_template for p in ("{subject}", "{container}")))
+        repeat_template
+        and (
+            element_per != "candidate"
+            or not name_template
+            or not any(p in repeat_template for p in ("{subject}", "{container}"))
+            or not _template_fields_known(repeat_template, {"container", "subject", "role"})
+        )
     ):
         raise ValueError(
             "params.roles.repeat_template names candidates whose names would repeat: it needs element_per 'candidate', a name_template "
@@ -1267,6 +1273,16 @@ def _role_config(params: str | None) -> RoleConfig | None:
         registrations=registrations[1],
         excluded_services=registrations[2],
     )
+
+
+def _template_fields_known(template: str, known: set[str]) -> bool:
+    """Whether a name template is well formed and fills only ``known`` fields (``{role} ({subject})``), tried as the
+    names are made: another field would fail then, after the step has run."""
+    try:
+        template.format(**dict.fromkeys(known, ""))
+    except KeyError, IndexError, ValueError, AttributeError:
+        return False
+    return True
 
 
 def _registrations(settings: dict[str, Any], element_per: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
