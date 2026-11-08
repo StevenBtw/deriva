@@ -127,7 +127,7 @@ Hardening release: Deriva is safe to run on untrusted repositories, the bugs fou
 
 ### Dependencies
 
-- **grafeo 0.6.2** (requires `>=0.6.2`): no result deriva relies on changes and the full suite passes; deriva's own read-only query guard stays until grafeo's read-only sessions replace it.
+- **grafeo 0.6.2** (requires `>=0.6.2`): Deriva relies on nothing that grafeo 0.6.2 changes, and the full suite passes; Deriva's own read-only query guard stays until grafeo's read-only sessions replace it.
 - **Every runtime requirement has an upper bound**: each requirement of the three packages is pinned or bounded below its next breaking release (`pydantic>=2.14.3,<3`, `grafeo>=0.6.2,<0.7`), so an installed tool, which resolves without the lockfile, does not pick up a breaking release. A test checks every published wheel.
 - **Dependencies at their latest**: pydantic 2.14.3, pypdf 7.0, typer 0.28, ruff 0.17.4 and ty 0.0.99; the business concept translation stack moves to CTranslate2 4.8.5 and sentencepiece 0.2.3.
 
