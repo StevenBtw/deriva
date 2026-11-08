@@ -2,7 +2,7 @@
 
 All notable changes to Deriva, which derives ArchiMate models from code with knowledge graphs, heuristics and LLMs: a record of architectural decisions, resets, and a lot of trial and error.
 
-## [0.9.0] - Unreleased
+## [0.9.0] - 2026-11-08
 
 Hardening release: Deriva is safe to run on untrusted repositories, the bugs found since 0.8.10 are fixed, and the default configuration covers more kinds of repositories (Go, TypeScript, .NET, gRPC). Some changes alter derived models; use 0.8.10 for its exact output. Changes to the shipped configuration reach a new database; an existing one keeps its versions until they are updated.
 
