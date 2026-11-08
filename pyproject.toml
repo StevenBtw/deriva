@@ -43,7 +43,7 @@ dependencies = [
     "lxml>=6,<7",
     # Databases
     "duckdb>=2,<3",
-    "grafeo>=0.6.1,<0.7",
+    "grafeo>=0.6.2,<0.7",
     # Code Analysis (tree-sitter)
     "tree-sitter>=0.26,<0.27",
     "tree-sitter-python>=0.25,<0.26",
